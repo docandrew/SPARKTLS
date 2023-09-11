@@ -1,0 +1,9 @@
+name = "sparktls"
+description = "SPARK implementation of TLS 1.3"
+version = "0.0.0"
+
+authors = ["Jon Andrew"]
+maintainers = ["Jon Andrew <jonfandrew@fastmail.com>"]
+maintainers-logins = ["docandrew"]
+[[depends-on]]  # Added by alr
+sparknacl = "^4.0.0"  # Added by alr
