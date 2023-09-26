@@ -1,7 +1,7 @@
-tls: tls.adb
-	gprclean -r -Ptls
-	rm -f tls
-	gprbuild -Ptls -XSPARKNACL_RUNTIME_CHECKS=enabled -XSPARKNACL_CONTRACTS=enabled -XSPARKNACL_BUILD_MODE=debug
+sparktls: ../src/tls.adb
+	gprclean -r -Ptests
+	rm -f sparktls
+	gprbuild -Ptests -XSPARKNACL_RUNTIME_CHECKS=enabled -XSPARKNACL_CONTRACTS=enabled -XSPARKNACL_BUILD_MODE=debug
 
 @PHONY: tlscert
 tlscert: openssl-25519.cnf
@@ -28,3 +28,7 @@ tlscert: openssl-25519.cnf
 	@echo -----------------------------------------
 	@echo Run server with:
 	@echo openssl s_server -tls1_3 -key tlscipher.lan.key -cert tlscipher.lan.crt -sigalgs "ed25519" -ciphersuites "TLS_CHACHA20_POLY1305_SHA256" -debug
+
+@PHONY: debugserver
+debugserver:
+	openssl s_server -tls1_3 -key tlscipher.lan.key -cert tlscipher.lan.crt -sigalgs "ed25519" -ciphersuites "TLS_CHACHA20_POLY1305_SHA256" -debug

@@ -9,7 +9,7 @@ with System;
 with SPARKNaCl;                  use SPARKNaCl;
 with SPARKNaCl.Core;             use SPARKNaCl.Core;
 with SPARKNaCl.Debug;            use SPARKNaCl.Debug;
-with SPARKNaCl.Hashing;          use SPARKNaCl.Hashing;
+with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Stream;
 with SPARKNaCl.Cryptobox;        use SPARKNaCl.Cryptobox;
 with SPARKNaCl.Secretbox;
@@ -57,27 +57,32 @@ is
    Server_Raw_PK    : Bytes_32;
    Shared_Secret    : Bytes_32;
 
-   Hello_Hash       : Digest_256;
-   Empty_Hash       : Digest_256;
+   Hello_Hash       : Digest;
+   Empty_Hash       : Digest;
 
    All_Zeroes       : Bytes_32 := (others => 0);
    One_Zero         : Byte_Seq (0 .. 0) := (others => 0);
    Empty            : Byte_Seq (1 .. 0) := (others => 0);
-   Early_Secret     : Digest_256;
-   Derived_Secret   : OKM_256 (0 .. 31);
-   Handshake_Secret : Digest_256;
+   Early_Secret     : Digest;
+   Derived_Secret   : OKM_Seq (0 .. 31);
+   Handshake_Secret : Digest;
 
-   Client_Handshake_Traffic_Secret : OKM_256 (0 .. 31);
-   Server_Handshake_Traffic_Secret : OKM_256 (0 .. 31);
+   Client_Handshake_Traffic_Secret : OKM_Seq (0 .. 31);
+   Server_Handshake_Traffic_Secret : OKM_Seq (0 .. 31);
    
-   Client_Handshake_Key : OKM_256 (0 .. 31);
-   Server_Handshake_Key : OKM_256 (0 .. 31);
-   Client_Handshake_IV  : OKM_256 (0 .. 11);
-   Server_Handshake_IV  : OKM_256 (0 .. 11);
+   Client_Handshake_Key : OKM_Seq (0 .. 31);
+   Server_Handshake_Key : OKM_Seq (0 .. 31);
+   Client_Handshake_IV  : OKM_Seq (0 .. 11);
+   Server_Handshake_IV  : OKM_Seq (0 .. 11);
 
    Counter              : U32  := 1;
    Client_IV_Counter    : Byte := 0;
    Server_IV_Counter    : Byte := 0;
+
+   Server_Application_Key : OKM_Seq (0 .. 31);
+   Server_Application_IV  : OKM_Seq (0 .. 11);
+   Client_Application_Key : OKM_Seq (0 .. 31);
+   Client_Application_IV  : OKM_Seq (0 .. 11);
 
    --------------------------------------------------------
    --  Conversion of TLS 1.3 2-byte size fields
@@ -126,8 +131,8 @@ is
    --------------------------------------------------------
    --  HKDF-Expand-Label as defined in RFC 8446
    --------------------------------------------------------
-   procedure Expand_Label (OKM     : out OKM_256;
-                           PRK     : in Digest_256;
+   procedure Expand_Label (OKM     : out OKM_Seq;
+                           PRK     : in Digest;
                            Label   : in String;
                            Context : in Byte_Seq)
    is
@@ -344,7 +349,6 @@ is
    -- Encrypt_Key   : ChaCha20_Key;
    -- Encrypt_Nonce : ChaCha20_IETF_Nonce;
 begin
-
    SPARKNaCl.Cryptobox.Keypair (Raw_SK, PK, SK);
 
    declare
@@ -403,11 +407,11 @@ begin
 
       --  Determine hash of ClientHello and ServerHello (not including
       --  5-byte record headers)
-      Hash_256 (Hello_Hash, CH (5 .. CH'Last) &
-                Server_Hello_Buffer (5 .. 5 + Integer_32 (Read_Len) - 1));
+      Hash (Hello_Hash, CH (5 .. CH'Last) &
+            Server_Hello_Buffer (5 .. 5 + Integer_32 (Read_Len) - 1));
    
       DH ("Shared Secret:", Shared_Secret);
-      Hash_256 (Empty_Hash, Empty);
+      Hash (Empty_Hash, Empty);
       DH ("Hello Hash", Hello_Hash);
 
       --  Calculate early secrets and IVs
@@ -516,8 +520,7 @@ begin
                             C       => Encrypted_Msg,
                             N       => Update_Server_Nonce (Decrypt_Nonce),
                             K       => Decrypt_Key,
-                            AAD     => Server_Wrapper_Header,
-                            Counter => 1);
+                            AAD     => Server_Wrapper_Header);
             
             -- Counter := Counter + 1;
 
@@ -550,6 +553,9 @@ begin
          end;
 
       end loop Get_Server_Handshake;
+
+      --  Now calculate application keys
+
    end;
 
 exception

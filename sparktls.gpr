@@ -1,13 +1,14 @@
 with "config/sparktls_config.gpr";
 project Sparktls is
 
-   for Library_Name use "Sparktls";
-   for Library_Version use Project'Library_Name & ".so." & Sparktls_Config.Crate_Version;
+   -- for Library_Name use "Sparktls";
+   -- for Library_Version use Project'Library_Name & ".so." & Sparktls_Config.Crate_Version;
 
    for Source_Dirs use ("src");
    for Object_Dir use "obj";
    for Create_Missing_Dirs use "True";
    for Library_Dir use "lib";
+   for Main use ("src/tls.adb");
 
    type Library_Type_Type is ("relocatable", "static", "static-pic");
    Library_Type : Library_Type_Type :=
