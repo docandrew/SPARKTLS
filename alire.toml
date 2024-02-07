@@ -11,3 +11,7 @@ gnatprove = "^12.1.1"
 gnat = "^13.1.0"
 [[depends-on]]
 sparknacl = "^4.0.0"
+[[depends-on]]
+sparkx509 = "~0.0.1"
+[[pins]]
+sparkx509 = { path='../sparkx509' }

@@ -17,12 +17,16 @@ with SPARKNaCl.Scalar;           use SPARKNaCl.Scalar;
 with SPARKNaCl.MAC;              use SPARKNaCl.MAC;
 with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
 
+with X509;                       use X509;
+with X509.Certificates;          use X509.Certificates;
+
 with GNAT.Sockets;               use GNAT.Sockets;
 with GNAT.Traceback.Symbolic;
 
 procedure TLS
 is
    subtype Bytes_2 is Byte_Seq (0 .. 1);
+   subtype Bytes_3 is Byte_Seq (0 .. 2);
 
    --  Not CSPRNG, just for demonstration purposes.
    package Random_Byte is new
@@ -101,6 +105,16 @@ is
    begin
       return U16 (I (0)) * 256 + U16 (I (1));
    end DL16;
+
+   --------------------------------------------------------
+   --  Conversion of 3-byte size fields
+   --------------------------------------------------------
+   function DL24 (I : in Bytes_3) return U32
+   is
+   begin
+      return U32 (I (0)) * 65536 + U32 (I (1)) * 256 + U32 (I (2));
+   end DL24;
+
 
    --------------------------------------------------------
    --  Update Nonce - every time we use an IV, we xor it
@@ -335,11 +349,36 @@ is
       end loop;
    end Parse_Server_Hello;
 
+   --------------------------------------------------------
+   --  Parse the server certificate
+   --------------------------------------------------------
+   procedure Parse_Server_Certificate (Cert : Byte_Seq) is
+      Idx           : N32 := Cert'First;
+      Request_Ctx   : Byte := Cert (Idx);
+      Certs_Len     : U32 := DL24 (Cert (Idx+1 .. Idx+3));
+      Cert_Len      : U32 := DL24 (Cert (Idx+4 .. Idx+6));
+      Cert_String   : String (0 .. Integer(Cert_Len - 1));
+      
+      Server_Cert   : X509.Certificate;
+   begin
+      for i in Cert_String'Range loop
+         Cert_String (i) := Character'Val (Cert (Idx+7 + N32(i)));
+      end loop;
+      Put_Line ("Requests Context: " & Request_Ctx'Image);
+      Put_Line ("Certs Len: " & Certs_Len'Image);
+      Put_Line ("Cert Len: " & Cert_Len'Image);
+
+      --  Put_Line ("Cert Data: " & Cert_Data'Image);
+      X509.Certificates.Parse_Certificate (Cert_String, Server_Cert);
+   end Parse_Server_Certificate;
+
+
    Client_Sock : GNAT.Sockets.Socket_Type;
    Channel     : Stream_Access;
    Read_Len    : U16;
 
    Server_Hello_Buffer : Byte_Seq (0 .. 1023);
+   Server_Hello_Len : N32;
    Server_Change_Cipher_Buffer : Byte_Seq (0 .. 5);
    Server_Wrapper_Header : Byte_Seq (0 .. 4);
 
@@ -480,7 +519,7 @@ begin
          --  Read encrypted wrapper
          Byte_Seq'Read (Channel, Server_Wrapper_Header);
          Put_Line ("");
-         Put_Line ("-------------------------------");
+         Put_Line ("---------------------------------------------");
          DH ("Read Server Wrapper Header:", Server_Wrapper_Header);
          Put_Line (" Encrypted Message Size:" & DL16 (Server_Wrapper_Header (3 .. 4))'Image);
 
@@ -524,9 +563,7 @@ begin
             
             -- Counter := Counter + 1;
 
-            Put_Line ("Valid? " & Valid'Image);
-            DH (" Decrypted Msg:", Decrypted_Msg);
-
+            Put_Line ("---------------------------------------------");
             --  For the encrypted 1.3 records, the last byte is the actual record
             --  type.
             Msg_Type    := Decrypted_Msg (0);
@@ -536,6 +573,11 @@ begin
             Put_Line ("  Msg Type:    " & Msg_Type'Image);
             Put_Line ("  Msg Size:    " & Msg_Size'Image);
             Put_Line ("  Record_Type: " & Record_Type'Image);
+            Put_Line ("  Valid? " & Valid'Image);
+
+            Put_Line ("---------------------------------------------");
+            DH ("  Decrypted Msg:", Decrypted_Msg);
+            Put_Line ("---------------------------------------------");
 
             if Msg_Type = 16#08# then
                --  Skip the last byte, since it's the record type.
@@ -543,6 +585,7 @@ begin
                Put_Line ("  Encrypted Extensions");
             elsif Msg_Type = 16#0B# then
                Put_Line ("  Server Certificate");
+               Parse_Server_Certificate (Decrypted_Msg (4 .. Decrypted_Msg'Last - 1));
             elsif Msg_Type = 16#0F# then
                Put_Line ("  Server Certificate Verify");
             elsif Msg_Type = 16#14# then
@@ -550,12 +593,17 @@ begin
                Put_Line ("  Server Handshake Finished");
                exit Get_Server_Handshake;
             end if;
+
+            Put_Line ("---------------------------------------------");
          end;
 
       end loop Get_Server_Handshake;
 
       --  Now calculate application keys
-
+      Calculate_Application_Keys : declare
+      begin
+         null;
+      end Calculate_Application_Keys;
    end;
 
 exception
