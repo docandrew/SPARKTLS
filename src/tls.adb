@@ -20,14 +20,14 @@ with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
 with X509;                       use X509;
 with X509.Certificates;          use X509.Certificates;
 
+with SPARKTLS;                   use SPARKTLS;
+with SPARKTLS.Extensions;        use SPARKTLS.Extensions;
+
 with GNAT.Sockets;               use GNAT.Sockets;
 with GNAT.Traceback.Symbolic;
 
 procedure TLS
 is
-   subtype Bytes_2 is Byte_Seq (0 .. 1);
-   subtype Bytes_3 is Byte_Seq (0 .. 2);
-
    --  Not CSPRNG, just for demonstration purposes.
    package Random_Byte is new
       Ada.Numerics.Discrete_Random (SPARKNaCl.Byte);
@@ -89,34 +89,6 @@ is
    Client_Application_IV  : OKM_Seq (0 .. 11);
 
    --------------------------------------------------------
-   --  Conversion of TLS 1.3 2-byte size fields
-   --------------------------------------------------------
-   function TS16 (U : in U16) return Bytes_2
-   is
-      X : Bytes_2;
-   begin
-      X (0) := Byte (U / 256);
-      X (1) := Byte (U mod 256);
-      return X;
-   end TS16;
-
-   function DL16 (I : Bytes_2) return U16
-   is
-   begin
-      return U16 (I (0)) * 256 + U16 (I (1));
-   end DL16;
-
-   --------------------------------------------------------
-   --  Conversion of 3-byte size fields
-   --------------------------------------------------------
-   function DL24 (I : in Bytes_3) return U32
-   is
-   begin
-      return U32 (I (0)) * 65536 + U32 (I (1)) * 256 + U32 (I (2));
-   end DL24;
-
-
-   --------------------------------------------------------
    --  Update Nonce - every time we use an IV, we xor it
    --  with the number of times it has been used.
    --------------------------------------------------------
@@ -151,7 +123,7 @@ is
                            Context : in Byte_Seq)
    is
       HKDF_Label : Byte_Seq := 
-         TS16 (U16 (OKM'Length)) & 
+         To_Byte_Seq (U16 (OKM'Length)) & 
          Byte (Label'Length + 6) &
          To_Byte_Seq ("tls13 " & Label) &
          Byte (Context'Length) &
@@ -161,45 +133,12 @@ is
    end Expand_Label;
 
    --------------------------------------------------------
-   --  Generate extension header w/ type and size
-   --------------------------------------------------------
-   function Extension (ID : U16; Contents : Byte_Seq) return Byte_Seq is
-   begin
-      return TS16 (ID) & TS16 (U16 (Contents'Length)) & Contents;
-   end Extension;
-
-   --------------------------------------------------------
-   --  Generate SNI extension
-   --------------------------------------------------------
-   function Server_Name (Host : String) return Byte_Seq is
-   begin
-      return TS16 (U16 (Host'Length + 3)) &  -- 2 bytes for hostname len + 1
-                                             -- byte for type of name
-             (16#00#) &                      -- DNS record
-             TS16 (U16 (Host'Length)) &      -- length of hostname
-             To_Byte_Seq (Host);             -- hostname itself
-   end Server_Name;
-
-   --------------------------------------------------------
-   --  Generate Key_Share extension
-   --------------------------------------------------------
-   function Key_Share (PK : Byte_Seq) return Byte_Seq is
-   begin
-      return TS16 (U16 (PK'Length + 4)) &    -- 2 bytes for key size + 2
-                                             --  bytes for key type
-             (16#00#, 16#1D#) &              -- x25519 always
-             TS16 (U16 (PK'Length)) &        -- length of key
-             PK;
-   end Key_Share;
-
-   --------------------------------------------------------
    --  Generate Client Hello TLS Record
    --------------------------------------------------------
    function Client_Hello (Host : String; PK : Public_Key) return Byte_Seq is
       Extensions : Byte_Seq :=
-         --  00 00 = server name
-         Extension (16#00_00#, Server_Name (Host)) &
-         
+         Server_Name_Extension (Host) &
+
          --  00 0A = supported groups
          Extension (16#00_0A#, (16#00#, 16#02#,    -- 2 bytes of curves
                                 16#00#, 16#1d#)) & -- x25519 only.
@@ -209,7 +148,7 @@ is
                                 16#08#, 16#07#)) & -- ed25519 only
 
          --  00 33 = key share
-         Extension (16#00_33#, Key_Share (Serialize (PK))) &
+         Key_Share_Extension (ECDH_X25519, To_Byte_Seq (PK)) &
          
          --  00 2D = pre-shared keys (not used)
          Extension (16#00_2D#, (16#01#, 16#01#)) &
@@ -224,18 +163,18 @@ is
          16#00# & 16#02# &      -- 2 bytes of cipher suite data
          16#13# & 16#03# &      -- cipher suite (CHACHA20_POLY1305_SHA256)
          16#01# & 16#00# &      -- compression methods (null)
-         TS16 (U16 (Extensions'Length)) &
+         To_Byte_Seq (U16 (Extensions'Length)) &
          Extensions;
 
       TLS_Record : Byte_Seq :=
          (16#16#,                -- record type = handshake
           16#03#,                -- version = TLS 1.0
           16#01#) &              -- size of message
-          TS16 (U16 (Handshake'Length + 4)) & -- 1 byte for handshake type +
+          To_Byte_Seq (U16 (Handshake'Length + 4)) & -- 1 byte for handshake type +
                                               -- 3 more bytes for it's size
           16#01# &               -- handshake type (Client Hello)
           16#00# &
-          TS16 (U16 (Handshake'Length)) &
+          To_Byte_Seq (U16 (Handshake'Length)) &
           Handshake;
    begin
       return TLS_Record;
@@ -248,10 +187,10 @@ is
    procedure Parse_Server_Hello (SH : Byte_Seq) is
       Record_Type     : Byte     := SH (0);
       Legacy_Protocol : Bytes_2  := SH (1 .. 2);
-      Handshake_Size  : U16      := DL16 (SH (3 .. 4));
+      Handshake_Size  : U16      := To_U16 (SH (3 .. 4));
       Handshake_Type  : Byte     := SH (5);
       --  ignore SH (6)
-      SH_Size         : U16      := DL16 (SH (7 .. 8));
+      SH_Size         : U16      := To_U16 (SH (7 .. 8));
       Server_Version  : Bytes_2  := SH (9 .. 10);
       Server_Random   : Bytes_32 := SH (11 .. 42);
       Session_Size    : N32      := N32 (SH (43));
@@ -262,7 +201,7 @@ is
          SH (Session_ID_End + 1 .. Session_ID_End + 2);
       Compression     : Byte     := SH (Session_ID_End + 3);
       Extensions_Len  : U16      := 
-         DL16 (SH (Session_ID_End + 4 .. Session_ID_End + 5));
+         To_U16 (SH (Session_ID_End + 4 .. Session_ID_End + 5));
 
       Extension_Start : N32     := Session_ID_End + 6;
       Extension_Len   : U16;
@@ -309,9 +248,9 @@ is
             Put_Line ("---------------------");
 
             Extension_Len :=
-               DL16 (SH (Extension_Start + 2 .. Extension_Start + 3));
+               To_U16 (SH (Extension_Start + 2 .. Extension_Start + 3));
             Key_Type  := SH (Extension_Start + 4 .. Extension_Start + 5);
-            Key_Len   := DL16 (SH (Extension_Start + 6 .. Extension_Start + 7));
+            Key_Len   := To_U16 (SH (Extension_Start + 6 .. Extension_Start + 7));
 
             -- should make Key_Bytes size according to len, but this is just
             -- a proof of concept.
@@ -331,7 +270,7 @@ is
             Put_Line ("------------------------------");
 
             Extension_Len :=
-               DL16 (SH (Extension_Start + 2 .. Extension_Start + 3));
+               To_U16 (SH (Extension_Start + 2 .. Extension_Start + 3));
 
             Supported_Len := Extension_Len;
             Put_Line ("Supported Versions Size: " & Supported_Len'Image);
@@ -341,7 +280,7 @@ is
          else
             Put_Line ("Extension - Unknown");
             Extension_Len :=
-               DL16 (SH (Extension_Start + 2 .. Extension_Start + 3));
+               To_U16 (SH (Extension_Start + 2 .. Extension_Start + 3));
             
          end if;
 
@@ -355,8 +294,8 @@ is
    procedure Parse_Server_Certificate (Cert : Byte_Seq) is
       Idx           : N32 := Cert'First;
       Request_Ctx   : Byte := Cert (Idx);
-      Certs_Len     : U32 := DL24 (Cert (Idx+1 .. Idx+3));
-      Cert_Len      : U32 := DL24 (Cert (Idx+4 .. Idx+6));
+      Certs_Len     : U32 := To_U32 (Cert (Idx+1 .. Idx+3));
+      Cert_Len      : U32 := To_U32 (Cert (Idx+4 .. Idx+6));
       Cert_String   : String (0 .. Integer(Cert_Len - 1));
       
       Server_Cert   : X509.Certificate;
@@ -427,7 +366,7 @@ begin
       Put_Line ("Version:     " & 
          Server_Hello_Buffer (1)'Image & Server_Hello_Buffer (2)'Image);
 
-      Read_Len := DL16 (Server_Hello_Buffer (3 .. 4));
+      Read_Len := To_U16 (Server_Hello_Buffer (3 .. 4));
       Put_Line ("Size:        " & Read_Len'Image);
 
       --  Read rest of message
@@ -521,7 +460,7 @@ begin
          Put_Line ("");
          Put_Line ("---------------------------------------------");
          DH ("Read Server Wrapper Header:", Server_Wrapper_Header);
-         Put_Line (" Encrypted Message Size:" & DL16 (Server_Wrapper_Header (3 .. 4))'Image);
+         Put_Line (" Encrypted Message Size:" & To_U16 (Server_Wrapper_Header (3 .. 4))'Image);
 
          declare
             Decrypt_Key   : ChaCha20_Key        
@@ -534,7 +473,7 @@ begin
             Encrypt_Nonce : ChaCha20_IETF_Nonce 
                := ChaCha20_IETF_Nonce (Client_Handshake_IV);
 
-            Encrypted_Size  : N32 := N32 (DL16 (Server_Wrapper_Header (3 .. 4)));
+            Encrypted_Size  : N32 := N32 (To_U16 (Server_Wrapper_Header (3 .. 4)));
 
             --  Subtract 16 bytes from message size for the tag.
             Encrypted_Msg   : Byte_Seq (0 .. Encrypted_Size - 16 - 1);
@@ -567,7 +506,7 @@ begin
             --  For the encrypted 1.3 records, the last byte is the actual record
             --  type.
             Msg_Type    := Decrypted_Msg (0);
-            Msg_Size    := DL16 (Decrypted_Msg (2 .. 3));
+            Msg_Size    := To_U16 (Decrypted_Msg (2 .. 3));
             Record_Type := Decrypted_Msg (Decrypted_Msg'Last);
 
             Put_Line ("  Msg Type:    " & Msg_Type'Image);
