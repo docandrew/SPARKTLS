@@ -22,6 +22,7 @@ is
       Salt : in     Byte_Seq)
    with Pre => IKM'First = 0 and
                IKM'Length > 0 and
+               IKM'Last <= N32'Last - 128 and
                (if Salt'Length > 0 then Salt'First = 0);
 
    procedure Expand
@@ -31,6 +32,7 @@ is
    with Pre => OKM'First = 0 and
                OKM'Length > 0 and
                OKM'Length <= 255 * Hash_Len and
-               (if Info'Length > 0 then Info'First = 0);
+               (if Info'Length > 0 then Info'First = 0) and
+               Info'Last < N32'Last - 256;
 
 end SPARKTLS.HKDF384;

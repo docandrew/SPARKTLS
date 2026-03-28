@@ -15,7 +15,8 @@ is
 
    --  Convert SPARKNaCl Byte_Seq to RFLX Bytes (changes index base)
    function To_RFLX (Data : Byte_Seq) return RBT.Bytes
-   with Pre  => Data'Length > 0,
+   with Pre  => Data'Length > 0
+                and Data'Last < N32 (Natural'Last),
         Post => To_RFLX'Result'First = 1
                 and To_RFLX'Result'Length = Data'Length;
 

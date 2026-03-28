@@ -36,10 +36,11 @@ is
       return CT_Mux (M1 and 1, -Y, 0);
    end Ninv32;
 
-   function Sub
-     (A   : in out Big_Int;
-      B   : in     Big_Int;
-      Ctl : in     Unsigned_32) return Unsigned_32
+   procedure Sub
+     (A      : in out Big_Int;
+      B      : in     Big_Int;
+      Ctl    : in     Unsigned_32;
+      Result :    out Unsigned_32)
    is
       Len : constant Natural := Natural ((A (0) + 31) / 32);
       CC  : Unsigned_64 := 0;
@@ -54,13 +55,14 @@ is
             CC := Shift_Right (CC, 63) and 1;
          end;
       end loop;
-      return Unsigned_32 (CC);
+      Result := Unsigned_32 (CC);
    end Sub;
 
-   function Add
-     (A   : in out Big_Int;
-      B   : in     Big_Int;
-      Ctl : in     Unsigned_32) return Unsigned_32
+   procedure Add
+     (A      : in out Big_Int;
+      B      : in     Big_Int;
+      Ctl    : in     Unsigned_32;
+      Result :    out Unsigned_32)
    is
       Len : constant Natural := Natural ((A (0) + 31) / 32);
       CC  : Unsigned_64 := 0;
@@ -75,7 +77,7 @@ is
             CC := Shift_Right (CC, 32);
          end;
       end loop;
-      return Unsigned_32 (CC);
+      Result := Unsigned_32 (CC);
    end Add;
 
    procedure To_Monty (X : in out Big_Int; M : Big_Int) is
@@ -84,6 +86,7 @@ is
       for Bit in 1 .. Len * 32 loop
          declare
             Carry   : Unsigned_32 := 0;
+            Trial   : Unsigned_32;
             Discard : Unsigned_32;
          begin
             for J in 1 .. Len loop
@@ -95,8 +98,8 @@ is
                   Carry := NC;
                end;
             end loop;
-            Discard := Sub (X, M,
-               CT_Neq (Carry, 0) or CT_Not (Sub (X, M, 0)));
+            Sub (X, M, 0, Trial);
+            Sub (X, M, CT_Neq (Carry, 0) or CT_Not (Trial), Discard);
          end;
       end loop;
    end To_Monty;
@@ -145,10 +148,11 @@ is
          end;
       end loop;
       declare
+         Trial   : Unsigned_32;
          Discard : Unsigned_32;
       begin
-         Discard := Sub (D, M,
-            CT_Neq (Unsigned_32 (DH), 0) or CT_Not (Sub (D, M, 0)));
+         Sub (D, M, 0, Trial);
+         Sub (D, M, CT_Neq (Unsigned_32 (DH), 0) or CT_Not (Trial), Discard);
       end;
    end Monty_Mul;
 
@@ -262,12 +266,12 @@ is
 
    procedure FE_Add (D : out Big_Int; A, B : Big_Int) is
       Tmp : Big_Int;
-      Carry, Discard : Unsigned_32;
+      Carry, Trial, Discard : Unsigned_32;
    begin
       Tmp := A;
-      Carry := Add (Tmp, B, 1);
-      Discard := Sub (Tmp, P,
-         CT_Neq (Carry, 0) or CT_Not (Sub (Tmp, P, 0)));
+      Add (Tmp, B, 1, Carry);
+      Sub (Tmp, P, 0, Trial);
+      Sub (Tmp, P, CT_Neq (Carry, 0) or CT_Not (Trial), Discard);
       D := Tmp;
    end FE_Add;
 
@@ -276,8 +280,8 @@ is
       Borrow : Unsigned_32;
    begin
       Tmp := A;
-      Borrow := Sub (Tmp, B, 1);
-      Borrow := Add (Tmp, P, Borrow);
+      Sub (Tmp, B, 1, Borrow);
+      Add (Tmp, P, Borrow, Borrow);
       D := Tmp;
    end FE_Sub;
 

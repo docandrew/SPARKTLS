@@ -24,9 +24,10 @@ is
       PRK     : in     Digest;
       Label   : in     String;
       Context : in     Byte_Seq)
-   with Pre => Label'Length <= 245
+   with Pre => Label'Length > 0 and Label'Length <= 245
                and Context'Length <= 255
-               and OKM'First = 0;
+               and OKM'First = 0 and OKM'Length > 0
+               and (if Context'Length > 0 then Context'First = 0);
 
    --  Derive Early Secret from PSK (or all-zeroes for no PSK)
    procedure Derive_Early_Secret
@@ -37,7 +38,9 @@ is
    procedure Derive_Handshake_Secret
      (HS_Secret    :    out Digest;
       Shared       : in     Byte_Seq;
-      Early_Secret : in     Digest);
+      Early_Secret : in     Digest)
+   with Pre => Shared'First = 0 and Shared'Length > 0
+               and Shared'Length <= 48;  --  Max: P-384 shared secret
 
    --  Derive handshake traffic secrets from handshake secret + hello hash
    procedure Derive_HS_Traffic_Secrets
@@ -104,9 +107,10 @@ is
       PRK     : in     Digest_384;
       Label   : in     String;
       Context : in     Byte_Seq)
-   with Pre => Label'Length <= 245
+   with Pre => Label'Length > 0 and Label'Length <= 245
                and Context'Length <= 255
-               and OKM'First = 0;
+               and OKM'First = 0 and OKM'Length > 0
+               and (if Context'Length > 0 then Context'First = 0);
 
    procedure Derive_Early_Secret_384
      (Early : out Digest_384;
@@ -115,7 +119,9 @@ is
    procedure Derive_Handshake_Secret_384
      (HS_Secret    :    out Digest_384;
       Shared       : in     Byte_Seq;
-      Early_Secret : in     Digest_384);
+      Early_Secret : in     Digest_384)
+   with Pre => Shared'First = 0 and Shared'Length > 0
+               and Shared'Length <= 48;  --  Max: P-384 shared secret
 
    procedure Derive_HS_Traffic_Secrets_384
      (Client_HS_Secret :    out HKDF384.OKM384_Seq;

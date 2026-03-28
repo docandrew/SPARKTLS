@@ -2,7 +2,7 @@ with SPARKNaCl.Hashing;
 with SPARKNaCl.Hashing.SHA384; use SPARKNaCl.Hashing.SHA384;
 
 package body SPARKTLS.HMAC384 with
-   SPARK_Mode => Off  --  TODO: enable incrementally
+   SPARK_Mode => On
 is
    --  SHA-384 block size is 128 bytes
    Block_Size : constant := 128;

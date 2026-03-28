@@ -127,7 +127,8 @@ is
                      := (others => 0);
       Read_Pos   : Buffer_Size := 0;  --  next byte to consume
       Write_Pos  : Buffer_Size := 0;  --  next byte to write
-   end record;
+   end record
+     with Predicate => IO_Buffer.Write_Pos >= IO_Buffer.Read_Pos;
 
    function Available (Buf : IO_Buffer) return N32 is
       (Buf.Write_Pos - Buf.Read_Pos);
@@ -295,7 +296,8 @@ is
      (S         : in out Session;
       Data      : in     Byte_Seq;
       Bytes_Fed :    out N32)
-   with Pre  => Data'First = 0,
+   with Pre  => Data'First = 0
+                and Data'Last < N32'Last,
         Post => Bytes_Fed <= N32 (Data'Length);
 
    --  Pull bytes from the session's output buffer to send.
@@ -304,7 +306,8 @@ is
      (S              : in out Session;
       Dest           :    out Byte_Seq;
       Bytes_Drained  :    out N32)
-   with Pre  => Dest'First = 0,
+   with Pre  => Dest'First = 0
+                and Dest'Last < N32'Last,
         Post => Bytes_Drained <= N32 (Dest'Length);
 
    --  How many bytes are waiting to be sent?
@@ -324,7 +327,9 @@ is
      (S          : in out Session;
       Dest       :    out Byte_Seq;
       Bytes_Read :    out N32)
-   with Pre  => Dest'First = 0,
+   with Pre  => Dest'First = 0
+                and Dest'Last < N32'Last
+                and S.App_Data_Len <= Max_Record_Plaintext,
         Post => Bytes_Read <= N32 (Dest'Length);
 
 end SPARKTLS;

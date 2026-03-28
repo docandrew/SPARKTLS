@@ -6,7 +6,10 @@ is
    --  Compact
    --  Shift unread data to the front of the buffer to reclaim space
    --================================================================
-   procedure Compact (Buf : in out IO_Buffer) is
+   procedure Compact (Buf : in out IO_Buffer)
+   with Post => Buf.Read_Pos = 0
+                and Available (Buf) = Available (Buf'Old)
+   is
       Len : constant N32 := Available (Buf);
    begin
       if Buf.Read_Pos > 0 and Len > 0 then
@@ -38,12 +41,15 @@ is
 
       Space := Free_Space (S.Input);
 
-      if Space = 0 then
+      if Space = 0 or Data'Length = 0 then
          Bytes_Fed := 0;
          return;
       end if;
 
       Count := N32'Min (Space, N32 (Data'Length));
+      pragma Assert (Count >= 1);
+      pragma Assert (Count <= Space);
+      pragma Assert (S.Input.Write_Pos + Count <= IO_Buffer_Capacity);
 
       S.Input.Data (S.Input.Write_Pos .. S.Input.Write_Pos + Count - 1) :=
          Data (0 .. Count - 1);
@@ -65,12 +71,15 @@ is
    begin
       Dest := (others => 0);
 
-      if Avail = 0 then
+      if Avail = 0 or Dest'Length = 0 then
          Bytes_Drained := 0;
          return;
       end if;
 
       Count := N32'Min (Avail, N32 (Dest'Length));
+      pragma Assert (Count >= 1);
+      pragma Assert (Count <= Avail);
+      pragma Assert (S.Output.Read_Pos + Count <= S.Output.Write_Pos);
 
       Dest (0 .. Count - 1) :=
          S.Output.Data (S.Output.Read_Pos ..
@@ -99,17 +108,22 @@ is
    begin
       Dest := (others => 0);
 
-      if S.App_Data_Len = 0 then
+      if S.App_Data_Len = 0 or Dest'Length = 0 then
          Bytes_Read := 0;
          return;
       end if;
 
+      pragma Assert (S.App_Data_Len <= Max_Record_Plaintext);
       Count := N32'Min (S.App_Data_Len, N32 (Dest'Length));
+      pragma Assert (Count >= 1);
+      pragma Assert (Count <= S.App_Data_Len);
+      pragma Assert (Count <= Max_Record_Plaintext);
 
       Dest (0 .. Count - 1) := S.App_Data (0 .. Count - 1);
 
       --  Shift remaining data forward
       if Count < S.App_Data_Len then
+         pragma Assert (S.App_Data_Len - Count >= 1);
          S.App_Data (0 .. S.App_Data_Len - Count - 1) :=
             S.App_Data (Count .. S.App_Data_Len - 1);
       end if;

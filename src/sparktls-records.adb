@@ -8,11 +8,13 @@ with RFLX.TLS_Record;
 with RFLX.TLS_Common;
 
 package body SPARKTLS.Records with
-   SPARK_Mode => Off  --  TODO: enable incrementally
+   SPARK_Mode => On
 is
-   --  Helper: 2-byte big-endian encoding (still used by Build_Encrypted_Record)
-   function TS16 (U : Unsigned_16) return Byte_Seq is
-      X : Byte_Seq (0 .. 1);
+   --  Helper: 2-byte big-endian encoding
+   function TS16 (U : Unsigned_16) return Byte_Seq
+   with Post => TS16'Result'First = 0 and TS16'Result'Length = 2
+   is
+      X : Byte_Seq (0 .. 1) := (others => 0);
    begin
       X (0) := Byte (U / 256);
       X (1) := Byte (U mod 256);
@@ -20,14 +22,12 @@ is
    end TS16;
 
    --  Helper: compute nonce by XOR-ing IV with 64-bit sequence number
-   --  (RFC 8446 Section 5.3)
    function Make_Nonce
      (IV      : Bytes_12;
       Counter : Unsigned_64) return Bytes_12
    is
       Nonce : Bytes_12 := IV;
    begin
-      --  XOR the 64-bit counter into the last 8 bytes of the 12-byte nonce
       for I in 0 .. 7 loop
          Nonce (N32 (4 + I)) := Nonce (N32 (4 + I)) xor
             Byte (Shift_Right (Counter, (7 - I) * 8) and 16#FF#);
@@ -40,23 +40,33 @@ is
      (Output : in out IO_Buffer;
       Data   : in     Byte_Seq;
       OK     :    out Boolean)
+   with Pre => Data'First = 0 and Data'Last < N32'Last
    is
-      Len : constant N32 := N32 (Data'Length);
    begin
-      if Free_Space (Output) >= Len then
-         Output.Data (Output.Write_Pos .. Output.Write_Pos + Len - 1) :=
-            Data;
-         Output.Write_Pos := Output.Write_Pos + Len;
+      if Data'Length = 0 then
          OK := True;
-      else
-         OK := False;
+         return;
       end if;
+
+      declare
+         Len : constant N32 := N32 (Data'Length);
+      begin
+         if Free_Space (Output) >= Len then
+            Output.Data (Output.Write_Pos .. Output.Write_Pos + Len - 1) :=
+               Data;
+            Output.Write_Pos := Output.Write_Pos + Len;
+            OK := True;
+         else
+            OK := False;
+         end if;
+      end;
    end Write_To_Output;
 
    procedure Parse_Record_Header
      (Data   : in     Byte_Seq;
       Avail  : in     N32;
       Result :    out Parse_Result)
+   with SPARK_Mode => Off  --  Uses RFLX contexts + 'Unrestricted_Access
    is
       use RFLX.TLS_Record.TLS_Plaintext;
       use RFLX.TLS_Record;
@@ -82,7 +92,6 @@ is
          if Well_Formed_Message (Ctx) then
             Frag_Len := N32 (Get_Length (Ctx));
 
-            --  Sanity: fragment must not exceed max record size
             if Frag_Len <= Max_Fragment + 256 and then
                Avail >= Record_Header_Size + Frag_Len
             then
@@ -109,6 +118,7 @@ is
      (Fragment   : in     Byte_Seq;
       Output     : in out IO_Buffer;
       Bytes_Out  :    out N32)
+   with SPARK_Mode => Off  --  Uses RFLX contexts + 'Unrestricted_Access
    is
       use RFLX.TLS_Record.TLS_Plaintext;
       use RFLX.TLS_Record;
@@ -144,32 +154,31 @@ is
       Output       : in out IO_Buffer;
       Bytes_Out    :    out N32)
    is
-      --  Build inner plaintext: payload + content type byte
       Inner_Len  : constant N32 := N32 (Plaintext'Length) + 1;
-      Inner      : Byte_Seq (0 .. Inner_Len - 1);
-      Ciphertext : Byte_Seq (0 .. Inner_Len - 1);
+      Inner      : Byte_Seq (0 .. Inner_Len - 1) := (others => 0);
+      Ciphertext : Byte_Seq (0 .. Inner_Len - 1) := (others => 0);
       Tag        : Bytes_16;
       Nonce      : Bytes_12;
 
-      --  Record header (AAD for AEAD)
-      --  Total encrypted record = ciphertext + 16-byte tag
       Enc_Len    : constant N32 := Inner_Len + Tag_Size;
-      Hdr        : Byte_Seq (0 .. 4);
+      Hdr        : Byte_Seq (0 .. 4) := (others => 0);
       OK         : Boolean;
    begin
       Bytes_Out := 0;
 
       --  Assemble inner plaintext
-      Inner (0 .. N32 (Plaintext'Length) - 1) := Plaintext;
+      if Plaintext'Length > 0 then
+         Inner (0 .. N32 (Plaintext'Length) - 1) := Plaintext;
+      end if;
       Inner (Inner'Last) := Inner_Type;
 
       --  Build record header
-      Hdr (0) := 16#17#;  --  application_data
+      Hdr (0) := 16#17#;
       Hdr (1) := 16#03#;
-      Hdr (2) := 16#03#;  --  TLS 1.2 for compatibility
+      Hdr (2) := 16#03#;
       Hdr (3 .. 4) := TS16 (Unsigned_16 (Enc_Len));
 
-      --  Compute nonce (same construction for all TLS 1.3 cipher suites)
+      --  Compute nonce
       Nonce := Make_Nonce (Keys.IV, Keys.Counter);
       Keys.Counter := Keys.Counter + 1;
 
@@ -204,7 +213,6 @@ is
             end;
 
          when others =>
-            --  ChaCha20-Poly1305 (default, 0x1303)
             declare
                Key : constant ChaCha20_Key :=
                   SPARKNaCl.Core.Construct (Keys.Key);
@@ -241,11 +249,10 @@ is
       Inner_Type  :    out Byte;
       Valid       :    out Boolean)
    is
-      --  Last 16 bytes are the AEAD tag
       Cipher_Len : constant N32 := N32 (Encrypted'Length) - Tag_Size;
       Tag        : Bytes_16;
       Nonce      : Bytes_12;
-      Decrypted  : Byte_Seq (0 .. Cipher_Len - 1);
+      Decrypted  : Byte_Seq (0 .. Cipher_Len - 1) := (others => 0);
    begin
       Plaintext  := (others => 0);
       Plain_Len  := 0;
@@ -292,7 +299,6 @@ is
             end;
 
          when others =>
-            --  ChaCha20-Poly1305 (default, 0x1303)
             declare
                Key : constant ChaCha20_Key :=
                   SPARKNaCl.Core.Construct (Keys.Key);
@@ -312,12 +318,13 @@ is
          return;
       end if;
 
-      --  Last byte of decrypted content is the inner content type
-      --  (RFC 8446 Section 5.2)
       Inner_Type := Decrypted (Decrypted'Last);
       Plain_Len  := Cipher_Len - 1;
+      pragma Assert (Plain_Len < Max_Fragment + 256);
 
-      Plaintext (0 .. Plain_Len - 1) := Decrypted (0 .. Plain_Len - 1);
+      if Plain_Len > 0 and then Plain_Len - 1 <= Plaintext'Last then
+         Plaintext (0 .. Plain_Len - 1) := Decrypted (0 .. Plain_Len - 1);
+      end if;
    end Decrypt_Record;
 
    procedure Build_CCS_Record
@@ -345,7 +352,6 @@ is
    is
       Alert_Plaintext : Byte_Seq (0 .. 1) := (Level, Desc);
    begin
-      --  Encrypt alert as application_data record with inner type = alert (21)
       Build_Encrypted_Record
         (Plaintext  => Alert_Plaintext,
          Inner_Type => 16#15#,

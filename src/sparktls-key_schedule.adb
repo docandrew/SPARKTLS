@@ -3,11 +3,15 @@ with SPARKNaCl.Hashing.SHA384;
 with SPARKTLS.HMAC384;
 
 package body SPARKTLS.Key_Schedule with
-   SPARK_Mode => Off  --  TODO: enable incrementally
+   SPARK_Mode => On
 is
    --  Helper: convert string to byte sequence
-   function To_Byte_Seq (S : String) return Byte_Seq is
-      Result : Byte_Seq (0 .. N32 (S'Length) - 1);
+   function To_Byte_Seq (S : String) return Byte_Seq
+   with Pre  => S'Length > 0 and S'Length <= 255,
+        Post => To_Byte_Seq'Result'First = 0
+                and To_Byte_Seq'Result'Length = S'Length
+   is
+      Result : Byte_Seq (0 .. N32 (S'Length) - 1) := (others => 0);
    begin
       for I in S'Range loop
          Result (N32 (I - S'First)) := Byte (Character'Pos (S (I)));
@@ -16,9 +20,11 @@ is
    end To_Byte_Seq;
 
    --  Helper: 2-byte big-endian encoding
-   function TS16 (U : Interfaces.Unsigned_16) return Byte_Seq is
+   function TS16 (U : Interfaces.Unsigned_16) return Byte_Seq
+   with Post => TS16'Result'First = 0 and TS16'Result'Length = 2
+   is
       use Interfaces;
-      X : Byte_Seq (0 .. 1);
+      X : Byte_Seq (0 .. 1) := (others => 0);
    begin
       X (0) := Byte (U / 256);
       X (1) := Byte (U mod 256);
@@ -32,13 +38,40 @@ is
       Context : in     Byte_Seq)
    is
       use Interfaces;
-      HKDF_Label : Byte_Seq :=
-         TS16 (Unsigned_16 (OKM'Length)) &
-         Byte (Label'Length + 6) &
-         To_Byte_Seq ("tls13 " & Label) &
-         Byte (Context'Length) &
-         Context;
+      Full_Label : constant String := "tls13 " & Label;
+      HKDF_Label : Byte_Seq (0 .. N32 (3 + Full_Label'Length + 1 +
+                                        Context'Length) - 1) := (others => 0);
+      Pos : N32 := 0;
    begin
+      --  Build HKDF label manually to help the prover with bounds
+      --  Length (2 bytes, big-endian)
+      HKDF_Label (0) := Byte (Unsigned_16 (OKM'Length) / 256);
+      HKDF_Label (1) := Byte (Unsigned_16 (OKM'Length) mod 256);
+      Pos := 2;
+      --  Label length (1 byte) + label
+      HKDF_Label (Pos) := Byte (Full_Label'Length);
+      Pos := Pos + 1;
+      for I in Full_Label'Range loop
+         pragma Loop_Invariant
+           (Pos = 3 + N32 (I - Full_Label'First) and
+            Pos <= HKDF_Label'Last);
+         HKDF_Label (Pos) := Byte (Character'Pos (Full_Label (I)));
+         Pos := Pos + 1;
+      end loop;
+      --  Context length (1 byte) + context
+      HKDF_Label (Pos) := Byte (Context'Length);
+      Pos := Pos + 1;
+      pragma Assert (Pos = 4 + N32 (Full_Label'Length));
+      if Context'Length > 0 then
+         for I in Context'Range loop
+            pragma Loop_Invariant
+              (Pos = 4 + N32 (Full_Label'Length) + N32 (I - Context'First) and
+               Pos <= HKDF_Label'Last);
+            HKDF_Label (Pos) := Context (I);
+            Pos := Pos + 1;
+         end loop;
+      end if;
+
       SPARKNaCl.HKDF.Expand (OKM, PRK, HKDF_Label);
    end Expand_Label;
 
@@ -185,13 +218,36 @@ is
       Context : in     Byte_Seq)
    is
       use Interfaces;
-      HKDF_Label : Byte_Seq :=
-         TS16 (Unsigned_16 (OKM'Length)) &
-         Byte (Label'Length + 6) &
-         To_Byte_Seq ("tls13 " & Label) &
-         Byte (Context'Length) &
-         Context;
+      Full_Label : constant String := "tls13 " & Label;
+      HKDF_Label : Byte_Seq (0 .. N32 (3 + Full_Label'Length + 1 +
+                                        Context'Length) - 1) := (others => 0);
+      Pos : N32 := 0;
    begin
+      HKDF_Label (0) := Byte (Unsigned_16 (OKM'Length) / 256);
+      HKDF_Label (1) := Byte (Unsigned_16 (OKM'Length) mod 256);
+      Pos := 2;
+      HKDF_Label (Pos) := Byte (Full_Label'Length);
+      Pos := Pos + 1;
+      for I in Full_Label'Range loop
+         pragma Loop_Invariant
+           (Pos = 3 + N32 (I - Full_Label'First) and
+            Pos <= HKDF_Label'Last);
+         HKDF_Label (Pos) := Byte (Character'Pos (Full_Label (I)));
+         Pos := Pos + 1;
+      end loop;
+      HKDF_Label (Pos) := Byte (Context'Length);
+      Pos := Pos + 1;
+      pragma Assert (Pos = 4 + N32 (Full_Label'Length));
+      if Context'Length > 0 then
+         for I in Context'Range loop
+            pragma Loop_Invariant
+              (Pos = 4 + N32 (Full_Label'Length) + N32 (I - Context'First) and
+               Pos <= HKDF_Label'Last);
+            HKDF_Label (Pos) := Context (I);
+            Pos := Pos + 1;
+         end loop;
+      end if;
+
       HKDF384.Expand (OKM, PRK, HKDF_Label);
    end Expand_Label_384;
 

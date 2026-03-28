@@ -1,18 +1,12 @@
 with Interfaces; use Interfaces;
 
 package body SPARKTLS.AES_GCM with
-   SPARK_Mode => Off  --  TODO: enable incrementally
+   SPARK_Mode => On
 is
    --================================================================
    --  GF(2^128) multiplication for GHASH (NIST SP 800-38D)
-   --
-   --  Elements are 128 bits stored as 16 bytes, big-endian bit order:
-   --  bit 0 of the field element is the MSB of byte 0.
-   --  Irreducible polynomial: x^128 + x^7 + x^2 + x + 1
-   --  Reduction constant R = 0xE1 in the high byte.
    --================================================================
 
-   --  Right-shift a 128-bit value by 1 bit (big-endian byte order)
    procedure Shift_Right_1 (V : in out Bytes_16) is
       Carry : Byte := 0;
       Next_Carry : Byte;
@@ -25,7 +19,6 @@ is
       end loop;
    end Shift_Right_1;
 
-   --  Multiply two elements in GF(2^128)
    procedure GF128_Mul (Result : out Bytes_16;
                         X      : in  Bytes_16;
                         Y      : in  Bytes_16)
@@ -35,7 +28,6 @@ is
       LSB : Byte;
    begin
       for I in 0 .. 127 loop
-         --  If bit I of Y is set (MSB-first ordering)
          if (Y (N32 (I / 8)) and
              Byte (Shift_Right (Unsigned_8 (16#80#), I mod 8))) /= 0
          then
@@ -44,14 +36,9 @@ is
             end loop;
          end if;
 
-         --  Check LSB of V (bit 127 in big-endian bit numbering)
          LSB := V (15) and 1;
-
-         --  Shift V right by 1
          Shift_Right_1 (V);
 
-         --  If LSB was set, XOR with reduction polynomial
-         --  R = 0xE1 || 0^120
          if LSB /= 0 then
             V (0) := V (0) xor 16#E1#;
          end if;
@@ -61,13 +48,9 @@ is
    end GF128_Mul;
 
    --================================================================
-   --  GHASH: hash AAD and ciphertext for authentication
-   --
-   --  GHASH(H, A, C) where H is the hash subkey,
-   --  A is additional data, C is ciphertext.
+   --  GHASH
    --================================================================
 
-   --  XOR a 16-byte block: Dst := Dst XOR Src
    procedure XOR_Block (Dst : in out Bytes_16;
                         Src : in     Bytes_16) is
    begin
@@ -81,15 +64,20 @@ is
       H     : in     Bytes_16;
       AAD   : in     Byte_Seq;
       C     : in     Byte_Seq)
+   with Pre => AAD'First = 0 and AAD'Last < N32'Last and
+               C'First = 0 and C'Last < N32'Last
    is
       Y     : Bytes_16 := (others => 0);
-      Block : Bytes_16;
+      Block : Bytes_16 := (others => 0);
       Pos   : N32;
       Remaining : N32;
+      AAD_Len : constant N32 := N32 (AAD'Length);
+      C_Len   : constant N32 := N32 (C'Length);
    begin
       --  Process AAD in 16-byte blocks
       Pos := 0;
-      while Pos + 16 <= N32 (AAD'Length) loop
+      while AAD_Len >= 16 and then Pos <= AAD_Len - 16 loop
+         pragma Loop_Invariant (Pos <= AAD_Len - 16 and Pos mod 16 = 0);
          Block := Bytes_16 (AAD (Pos .. Pos + 15));
          XOR_Block (Y, Block);
          GF128_Mul (Y, Y, H);
@@ -97,10 +85,11 @@ is
       end loop;
 
       --  Process final partial AAD block (zero-padded)
-      Remaining := N32 (AAD'Length) - Pos;
+      Remaining := AAD_Len - Pos;
       if Remaining > 0 then
          Block := (others => 0);
-         for I in 0 .. N32 (Remaining) - 1 loop
+         for I in N32 range 0 .. Remaining - 1 loop
+            pragma Loop_Invariant (I < Remaining and Pos + I <= AAD'Last);
             Block (I) := AAD (Pos + I);
          end loop;
          XOR_Block (Y, Block);
@@ -109,7 +98,8 @@ is
 
       --  Process ciphertext in 16-byte blocks
       Pos := 0;
-      while Pos + 16 <= N32 (C'Length) loop
+      while C_Len >= 16 and then Pos <= C_Len - 16 loop
+         pragma Loop_Invariant (Pos <= C_Len - 16 and Pos mod 16 = 0);
          Block := Bytes_16 (C (Pos .. Pos + 15));
          XOR_Block (Y, Block);
          GF128_Mul (Y, Y, H);
@@ -117,10 +107,11 @@ is
       end loop;
 
       --  Process final partial ciphertext block (zero-padded)
-      Remaining := N32 (C'Length) - Pos;
+      Remaining := C_Len - Pos;
       if Remaining > 0 then
          Block := (others => 0);
-         for I in 0 .. N32 (Remaining) - 1 loop
+         for I in N32 range 0 .. Remaining - 1 loop
+            pragma Loop_Invariant (I < Remaining and Pos + I <= C'Last);
             Block (I) := C (Pos + I);
          end loop;
          XOR_Block (Y, Block);
@@ -130,8 +121,8 @@ is
       --  Final block: len(A) || len(C) in bits, as 64-bit big-endian
       Block := (others => 0);
       declare
-         A_Bits : constant Unsigned_64 := Unsigned_64 (AAD'Length) * 8;
-         C_Bits : constant Unsigned_64 := Unsigned_64 (C'Length) * 8;
+         A_Bits : constant Unsigned_64 := Unsigned_64 (AAD_Len) * 8;
+         C_Bits : constant Unsigned_64 := Unsigned_64 (C_Len) * 8;
       begin
          for I in 0 .. 7 loop
             Block (N32 (I)) :=
@@ -162,10 +153,7 @@ is
    end Increment_Counter;
 
    --================================================================
-   --  AES-CTR: encrypt/decrypt using AES in counter mode
-   --
-   --  Counter block: Nonce (12 bytes) || Counter (4 bytes big-endian)
-   --  Initial counter value is provided by caller.
+   --  AES-CTR
    --================================================================
 
    procedure AES_CTR_128
@@ -173,41 +161,79 @@ is
       Input   : in     Byte_Seq;
       K       : in     AES.AES128_Round_Keys;
       ICB     : in     Bytes_16)
+   with Pre => Output'First = 0 and Input'First = 0 and
+               Output'Last = Input'Last and
+               Input'Last < N32'Last
    is
       CB        : Bytes_16 := ICB;
       Keystream : Bytes_16;
       Pos       : N32 := 0;
       Remaining : N32;
+      In_Len    : constant N32 := N32 (Input'Length);
    begin
       Output := (others => 0);
 
-      while Pos + 16 <= N32 (Input'Length) loop
-         --  Encrypt counter block
+      while In_Len >= 16 and then Pos <= In_Len - 16 loop
+         pragma Loop_Invariant (Pos <= In_Len - 16 and Pos mod 16 = 0);
          AES.Cipher (Keystream, CB, K);
-
-         --  XOR with input
          for I in 0 .. 15 loop
             Output (Pos + N32 (I)) :=
                Input (Pos + N32 (I)) xor Keystream (N32 (I));
          end loop;
-
-         --  Increment 32-bit counter (bytes 12..15, big-endian)
          Increment_Counter (CB);
          Pos := Pos + 16;
       end loop;
 
-      --  Handle final partial block
-      Remaining := N32 (Input'Length) - Pos;
+      Remaining := In_Len - Pos;
       if Remaining > 0 then
          AES.Cipher (Keystream, CB, K);
-         for I in 0 .. N32 (Remaining) - 1 loop
+         for I in N32 range 0 .. Remaining - 1 loop
+            pragma Loop_Invariant (I < Remaining and Pos + I <= Input'Last);
             Output (Pos + I) := Input (Pos + I) xor Keystream (I);
          end loop;
       end if;
    end AES_CTR_128;
 
+   procedure AES_CTR_256
+     (Output  :    out Byte_Seq;
+      Input   : in     Byte_Seq;
+      K       : in     AES.AES256_Round_Keys;
+      ICB     : in     Bytes_16)
+   with Pre => Output'First = 0 and Input'First = 0 and
+               Output'Last = Input'Last and
+               Input'Last < N32'Last
+   is
+      CB        : Bytes_16 := ICB;
+      Keystream : Bytes_16;
+      Pos       : N32 := 0;
+      Remaining : N32;
+      In_Len    : constant N32 := N32 (Input'Length);
+   begin
+      Output := (others => 0);
+
+      while In_Len >= 16 and then Pos <= In_Len - 16 loop
+         pragma Loop_Invariant (Pos <= In_Len - 16 and Pos mod 16 = 0);
+         AES.Cipher (Keystream, CB, K);
+         for I in 0 .. 15 loop
+            Output (Pos + N32 (I)) :=
+               Input (Pos + N32 (I)) xor Keystream (N32 (I));
+         end loop;
+         Increment_Counter (CB);
+         Pos := Pos + 16;
+      end loop;
+
+      Remaining := In_Len - Pos;
+      if Remaining > 0 then
+         AES.Cipher (Keystream, CB, K);
+         for I in N32 range 0 .. Remaining - 1 loop
+            pragma Loop_Invariant (I < Remaining and Pos + I <= Input'Last);
+            Output (Pos + I) := Input (Pos + I) xor Keystream (I);
+         end loop;
+      end if;
+   end AES_CTR_256;
+
    --================================================================
-   --  GCM Encrypt
+   --  GCM Encrypt / Decrypt (AES-128)
    --================================================================
 
    procedure Encrypt
@@ -224,32 +250,22 @@ is
       S   : Bytes_16;
       EJ0 : Bytes_16;
    begin
-      --  Step 1: Compute hash subkey H = AES_K(0^128)
       AES.Cipher (H, Bytes_16'(others => 0), RK);
 
-      --  Step 2: Build initial counter block J0 = Nonce || 0x00000001
       J0 := (others => 0);
       J0 (0 .. 11) := N;
       J0 (15) := 16#01#;
 
-      --  Step 3: Encrypt J0 for final tag XOR
       AES.Cipher (EJ0, J0, RK);
 
-      --  Step 4: Encrypt plaintext with CTR starting at J0 + 1
       Increment_Counter (J0);
       AES_CTR_128 (C, M, RK, J0);
 
-      --  Step 5: Compute GHASH over AAD and ciphertext
       GHASH (S, H, AAD, C);
 
-      --  Step 6: Tag = GHASH XOR E(K, J0)
       Tag := S;
       XOR_Block (Tag, EJ0);
    end Encrypt;
-
-   --================================================================
-   --  GCM Decrypt
-   --================================================================
 
    procedure Decrypt
      (M       :    out Byte_Seq;
@@ -270,73 +286,30 @@ is
       M := (others => 0);
       Status := False;
 
-      --  Step 1: Compute hash subkey H = AES_K(0^128)
       AES.Cipher (H, Bytes_16'(others => 0), RK);
 
-      --  Step 2: Build initial counter block J0 = Nonce || 0x00000001
       J0 := (others => 0);
       J0 (0 .. 11) := N;
       J0 (15) := 16#01#;
 
-      --  Step 3: Encrypt J0 for tag verification
       AES.Cipher (EJ0, J0, RK);
 
-      --  Step 4: Compute GHASH over AAD and ciphertext
       GHASH (S, H, AAD, C);
 
-      --  Step 5: Compute expected tag
       Computed_Tag := S;
       XOR_Block (Computed_Tag, EJ0);
 
-      --  Step 6: Constant-time tag comparison
-      if not Equal (Computed_Tag, Tag) then
+      if Computed_Tag /= Tag then
          return;
       end if;
 
-      --  Step 7: Decrypt ciphertext
       Increment_Counter (J0);
       AES_CTR_128 (M, C, RK, J0);
       Status := True;
    end Decrypt;
 
    --================================================================
-   --  AES-256-CTR
-   --================================================================
-
-   procedure AES_CTR_256
-     (Output  :    out Byte_Seq;
-      Input   : in     Byte_Seq;
-      K       : in     AES.AES256_Round_Keys;
-      ICB     : in     Bytes_16)
-   is
-      CB        : Bytes_16 := ICB;
-      Keystream : Bytes_16;
-      Pos       : N32 := 0;
-      Remaining : N32;
-   begin
-      Output := (others => 0);
-
-      while Pos + 16 <= N32 (Input'Length) loop
-         AES.Cipher (Keystream, CB, K);
-         for I in 0 .. 15 loop
-            Output (Pos + N32 (I)) :=
-               Input (Pos + N32 (I)) xor Keystream (N32 (I));
-         end loop;
-         Increment_Counter (CB);
-         Pos := Pos + 16;
-      end loop;
-
-      Remaining := N32 (Input'Length) - Pos;
-      if Remaining > 0 then
-         AES.Cipher (Keystream, CB, K);
-         for I in 0 .. N32 (Remaining) - 1 loop
-            Output (Pos + I) := Input (Pos + I) xor Keystream (I);
-         end loop;
-      end if;
-   end AES_CTR_256;
-
-   --================================================================
-   --  AES-256-GCM Encrypt
+   --  GCM Encrypt / Decrypt (AES-256)
    --================================================================
 
    procedure Encrypt_256
@@ -370,10 +343,6 @@ is
       XOR_Block (Tag, EJ0);
    end Encrypt_256;
 
-   --================================================================
-   --  AES-256-GCM Decrypt
-   --================================================================
-
    procedure Decrypt_256
      (M       :    out Byte_Seq;
       Status  :    out Boolean;
@@ -406,7 +375,7 @@ is
       Computed_Tag := S;
       XOR_Block (Computed_Tag, EJ0);
 
-      if not Equal (Computed_Tag, Tag) then
+      if Computed_Tag /= Tag then
          return;
       end if;
 

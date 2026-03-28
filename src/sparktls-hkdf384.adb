@@ -1,7 +1,7 @@
 with SPARKTLS.HMAC384;
 
 package body SPARKTLS.HKDF384 with
-   SPARK_Mode => Off  --  TODO: enable incrementally
+   SPARK_Mode => On
 is
 
    procedure Extract
@@ -21,6 +21,7 @@ is
       Ti : Bytes_48;
       B  : Byte := 1;
    begin
+      OKM := (others => 0);
       HMAC384.HMAC_SHA_384 (Ti, Info & B, PRK);
 
       if OKM'Last < Hash_Len then
