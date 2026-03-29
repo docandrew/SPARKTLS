@@ -11,9 +11,9 @@ package SPARKTLS.RSA with
    SPARK_Mode => On
 is
    --  Maximum RSA key size in bits and words
-   Max_RSA_Bits  : constant := 4096;
-   Max_RSA_Words : constant := Max_RSA_Bits / 32;  --  128
-   Max_RSA_Bytes : constant := Max_RSA_Bits / 8;   --  512
+   Max_RSA_Bits  : constant := 8192;
+   Max_RSA_Words : constant := Max_RSA_Bits / 32;  --  256
+   Max_RSA_Bytes : constant := Max_RSA_Bits / 8;   --  1024
 
    --  Big integer: element 0 = bit length, elements 1..N = value words
    --  (little-endian word order, each word is full 32 bits)
@@ -51,8 +51,10 @@ is
                and then M_Hash'Last >= N32 (Hash_Len) - 1
                and then Modulus'First = 0
                and then Modulus'Last >= N32 (Mod_Len) - 1
+               and then Modulus'Last < N32'Last
                and then Signature'First = 0
-               and then Signature'Last >= N32 (Sig_Len) - 1;
+               and then Signature'Last >= N32 (Sig_Len) - 1
+               and then Signature'Last < N32'Last;
 
    --  Convenience wrappers
 
@@ -67,8 +69,10 @@ is
                and then Sig_Len = Mod_Len
                and then Modulus'First = 0
                and then Modulus'Last >= N32 (Mod_Len) - 1
+               and then Modulus'Last < N32'Last
                and then Signature'First = 0
-               and then Signature'Last >= N32 (Sig_Len) - 1;
+               and then Signature'Last >= N32 (Sig_Len) - 1
+               and then Signature'Last < N32'Last;
 
    function Verify_PSS_SHA384
      (Hash      : in Bytes_48;
@@ -81,8 +85,10 @@ is
                and then Sig_Len = Mod_Len
                and then Modulus'First = 0
                and then Modulus'Last >= N32 (Mod_Len) - 1
+               and then Modulus'Last < N32'Last
                and then Signature'First = 0
-               and then Signature'Last >= N32 (Sig_Len) - 1;
+               and then Signature'Last >= N32 (Sig_Len) - 1
+               and then Signature'Last < N32'Last;
 
    function Verify_PSS_SHA512
      (Hash      : in Bytes_64;
@@ -95,7 +101,9 @@ is
                and then Sig_Len = Mod_Len
                and then Modulus'First = 0
                and then Modulus'Last >= N32 (Mod_Len) - 1
+               and then Modulus'Last < N32'Last
                and then Signature'First = 0
-               and then Signature'Last >= N32 (Sig_Len) - 1;
+               and then Signature'Last >= N32 (Sig_Len) - 1
+               and then Signature'Last < N32'Last;
 
 end SPARKTLS.RSA;

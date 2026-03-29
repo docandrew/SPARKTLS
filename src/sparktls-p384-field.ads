@@ -1,15 +1,15 @@
 --  SPARKTLS P-384 Field Arithmetic (internal)
 --
---  Montgomery-based arithmetic mod p384 using RSA Big_Int.
+--  Montgomery-based arithmetic mod p384 using SPARK-proven BigNat.
 --  Shared by P384.ECDSA and P384.Point.
 
-with SPARKNaCl;    use SPARKNaCl;
-with SPARKTLS.RSA; use SPARKTLS.RSA;
+with SPARKNaCl;        use SPARKNaCl;
+with SPARKTLS.BigNat;  use SPARKTLS.BigNat;
 
 private package SPARKTLS.P384.Field with
-   SPARK_Mode => Off
+   SPARK_Mode => On
 is
-   W384 : constant := 12;
+   W384 : constant := 12;  --  384 bits = 12 x 32-bit words
 
    --  P-384 constants (big-endian byte arrays)
    P384_P : constant Byte_Seq (0 .. 47) :=
@@ -44,32 +44,37 @@ is
       16#0A#, 16#60#, 16#B1#, 16#CE#, 16#1D#, 16#7E#, 16#81#, 16#9D#,
       16#7A#, 16#43#, 16#1D#, 16#7C#, 16#90#, 16#EA#, 16#0E#, 16#5F#);
 
-   --  Jacobian point type
+   --  Jacobian point type using BigNat
    type Jacobian is record
-      X, Y, Z : Big_Int;
+      X, Y, Z : Big_Nat;
    end record;
 
    --  Module state (initialized lazily)
-   P       : Big_Int;
-   P_M0I   : Unsigned_32;
+   P       : Big_Nat;
+   P_M0I   : Word;
 
    --  Initialization (idempotent)
-   procedure Init_Field;
+   procedure Init_Field
+   with Post => P.Len = W384;
 
-   --  Big_Int encode/decode
-   procedure Decode (X : out Big_Int; Src : Byte_Seq; Len : Natural);
-   procedure Encode (Dst : out Byte_Seq; Len : Natural; X : Big_Int);
-   procedure Zero (X : out Big_Int; BL : Unsigned_32);
-
-   --  Field arithmetic mod p (all alias-safe, Montgomery form)
-   procedure FE_Add (D : out Big_Int; A, B : Big_Int);
-   procedure FE_Sub (D : out Big_Int; A, B : Big_Int);
-   procedure FE_Mul (D : out Big_Int; A, B : Big_Int);
-   procedure FE_Sqr (D : out Big_Int; A : Big_Int);
-   procedure FE_To_Monty (X : in out Big_Int);
-   procedure FE_From_Monty (D : out Big_Int; A : Big_Int);
-   procedure FE_Inv (D : out Big_Int; A : Big_Int);
-   function  FE_Is_Zero (A : Big_Int) return Boolean;
+   --  Field arithmetic mod p (Montgomery form)
+   --  All field elements must have Len = W384
+   procedure FE_Add (D : out Big_Nat; A, B : Big_Nat)
+   with Pre => A.Len = W384 and B.Len = W384 and P.Len = W384;
+   procedure FE_Sub (D : out Big_Nat; A, B : Big_Nat)
+   with Pre => A.Len = W384 and B.Len = W384 and P.Len = W384;
+   procedure FE_Mul (D : out Big_Nat; A, B : Big_Nat)
+   with Pre => A.Len = W384 and B.Len = W384 and P.Len = W384;
+   procedure FE_Sqr (D : out Big_Nat; A : Big_Nat)
+   with Pre => A.Len = W384 and P.Len = W384;
+   procedure FE_To_Monty (X : in out Big_Nat)
+   with Pre => X.Len = W384 and P.Len = W384;
+   procedure FE_From_Monty (D : out Big_Nat; A : Big_Nat)
+   with Pre  => A.Len = W384 and P.Len = W384,
+        Post => D.Len = W384;
+   procedure FE_Inv (D : out Big_Nat; A : Big_Nat)
+   with Pre => A.Len = W384 and P.Len = W384;
+   function  FE_Is_Zero (A : Big_Nat) return Boolean;
 
    --  Point operations
    procedure Point_Double (Q : in out Jacobian);
