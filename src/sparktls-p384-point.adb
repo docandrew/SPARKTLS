@@ -13,7 +13,7 @@ is
    procedure P384_Mulgen
      (PK_Out : out Byte_Seq;
       SK     : in  Byte_Seq)
-   with SPARK_Mode => Off is
+   is
       G      : Jacobian;
       T1     : Big_Nat;
       Coords : Byte_Seq (0 .. 47);
@@ -38,7 +38,7 @@ is
       OK      :    out Boolean;
       SK      : in     Byte_Seq;
       Peer_PK : in     Byte_Seq)
-   with SPARK_Mode => Off is
+   is
       Q      : Jacobian;
       T1     : Big_Nat;
       Coords : Byte_Seq (0 .. 47);

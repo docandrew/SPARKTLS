@@ -103,9 +103,7 @@ is
    --  Point operations
    --================================================================
 
-   procedure Point_Double (Q : in out Jacobian) with
-      SPARK_Mode => Off
-   is
+   procedure Point_Double (Q : in out Jacobian) is
       Delta_V, Gamma, Beta, Alpha, T1, T2, Tmp : Big_Nat;
    begin
       FE_Sqr (Delta_V, Q.Z);
@@ -115,12 +113,12 @@ is
       FE_Add (T2, Q.X, Delta_V);
       FE_Mul (Alpha, T1, T2);
       FE_Add (T1, Alpha, Alpha);
-      FE_Add (Alpha, T1, Alpha);
+      FE_Add (Tmp, T1, Alpha); Alpha := Tmp;
       --  Q.X = Alpha^2 - 8*Beta
       FE_Sqr (Tmp, Alpha);
       Q.X := Tmp;
       FE_Add (T1, Beta, Beta);
-      FE_Add (T1, T1, T1);
+      FE_Add (Tmp, T1, T1); T1 := Tmp;
       FE_Add (T2, T1, T1);
       FE_Sub (Tmp, Q.X, T2);
       Q.X := Tmp;
@@ -138,15 +136,13 @@ is
       Q.Y := Tmp;
       FE_Sqr (T1, Gamma);
       FE_Add (T2, T1, T1);
-      FE_Add (T2, T2, T2);
-      FE_Add (T2, T2, T2);
+      FE_Add (Tmp, T2, T2); T2 := Tmp;
+      FE_Add (Tmp, T2, T2); T2 := Tmp;
       FE_Sub (Tmp, Q.Y, T2);
       Q.Y := Tmp;
    end Point_Double;
 
-   procedure Point_Add (P1 : in out Jacobian; P2 : Jacobian) with
-      SPARK_Mode => Off
-   is
+   procedure Point_Add (P1 : in out Jacobian; P2 : Jacobian) is
       Z1SQ, Z2SQ, U1, U2, S1, S2, H, I_V, J, R_V, V, T1, Tmp : Big_Nat;
    begin
       if FE_Is_Zero (P2.Z) then
@@ -186,7 +182,7 @@ is
       I_V := Tmp;
       FE_Mul (J, H, I_V);
       FE_Mul (V, U1, I_V);
-      FE_Add (R_V, R_V, R_V);
+      FE_Add (Tmp, R_V, R_V); R_V := Tmp;
       --  P1.X = R_V^2 - J - 2*V
       FE_Sqr (Tmp, R_V);
       P1.X := Tmp;
@@ -201,22 +197,20 @@ is
       FE_Mul (Tmp, R_V, T1);
       P1.Y := Tmp;
       FE_Mul (T1, S1, J);
-      FE_Add (T1, T1, T1);
+      FE_Add (Tmp, T1, T1); T1 := Tmp;
       FE_Sub (Tmp, P1.Y, T1);
       P1.Y := Tmp;
       --  P1.Z = ((Z1 + Z2)^2 - Z1SQ - Z2SQ) * H
       FE_Add (T1, P1.Z, P2.Z);
       FE_Sqr (Tmp, T1);
       T1 := Tmp;
-      FE_Sub (T1, T1, Z1SQ);
-      FE_Sub (T1, T1, Z2SQ);
+      FE_Sub (Tmp, T1, Z1SQ); T1 := Tmp;
+      FE_Sub (Tmp, T1, Z2SQ); T1 := Tmp;
       FE_Mul (Tmp, T1, H);
       P1.Z := Tmp;
    end Point_Add;
 
-   procedure Scalar_Mul (P_Pt : in out Jacobian; K : Byte_Seq) with
-      SPARK_Mode => Off
-   is
+   procedure Scalar_Mul (P_Pt : in out Jacobian; K : Byte_Seq) is
       R0, R1 : Jacobian;
    begin
       Zero (R0.X, W384);
@@ -227,7 +221,13 @@ is
       R1 := P_Pt;
 
       for Byte_Idx in K'Range loop
+         pragma Loop_Invariant
+           (R0.X.Len = W384 and R0.Y.Len = W384 and R0.Z.Len = W384
+            and R1.X.Len = W384 and R1.Y.Len = W384 and R1.Z.Len = W384);
          for Bit in reverse 0 .. 7 loop
+            pragma Loop_Invariant
+              (R0.X.Len = W384 and R0.Y.Len = W384 and R0.Z.Len = W384
+               and R1.X.Len = W384 and R1.Y.Len = W384 and R1.Z.Len = W384);
             declare
                B : constant Natural :=
                   Natural (Shift_Right (Word (K (Byte_Idx)), Bit) and 1);
@@ -246,9 +246,7 @@ is
       P_Pt := R0;
    end Scalar_Mul;
 
-   procedure To_Affine (Pt : in out Jacobian) with
-      SPARK_Mode => Off
-   is
+   procedure To_Affine (Pt : in out Jacobian) is
       Z_Inv, Z_Inv2, Z_Inv3, Tmp : Big_Nat;
    begin
       if FE_Is_Zero (Pt.Z) then

@@ -15,6 +15,6 @@ is
       Qy   : in Byte_Seq;
       R    : in Byte_Seq;
       S    : in Byte_Seq) return Boolean
-   with SPARK_Mode => Off;
+   ;
 
 end SPARKTLS.P384.ECDSA;

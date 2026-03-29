@@ -39,8 +39,8 @@ is
       Output     : in out IO_Buffer;
       Bytes_Out  :    out N32)
    with Pre => Fragment'First = 0
-               and Fragment'Last < N32'Last - Record_Header_Size
-               and Fragment'Length > 0;
+               and Fragment'Length > 0
+               and Fragment'Length <= Max_Fragment;
 
    procedure Build_Encrypted_Record
      (Plaintext    : in     Byte_Seq;

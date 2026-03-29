@@ -60,33 +60,56 @@ is
    --  Field arithmetic mod p (Montgomery form)
    --  All field elements must have Len = W384
    procedure FE_Add (D : out Big_Nat; A, B : Big_Nat)
-   with Pre => A.Len = W384 and B.Len = W384 and P.Len = W384;
+   with Pre  => A.Len = W384 and B.Len = W384 and P.Len = W384,
+        Post => D.Len = W384;
    procedure FE_Sub (D : out Big_Nat; A, B : Big_Nat)
-   with Pre => A.Len = W384 and B.Len = W384 and P.Len = W384;
+   with Pre  => A.Len = W384 and B.Len = W384 and P.Len = W384,
+        Post => D.Len = W384;
    procedure FE_Mul (D : out Big_Nat; A, B : Big_Nat)
-   with Pre => A.Len = W384 and B.Len = W384 and P.Len = W384;
+   with Pre  => A.Len = W384 and B.Len = W384 and P.Len = W384,
+        Post => D.Len = W384;
    procedure FE_Sqr (D : out Big_Nat; A : Big_Nat)
-   with Pre => A.Len = W384 and P.Len = W384;
+   with Pre  => A.Len = W384 and P.Len = W384,
+        Post => D.Len = W384;
    procedure FE_To_Monty (X : in out Big_Nat)
-   with Pre => X.Len = W384 and P.Len = W384;
+   with Pre  => X.Len = W384 and P.Len = W384,
+        Post => X.Len = W384;
    procedure FE_From_Monty (D : out Big_Nat; A : Big_Nat)
    with Pre  => A.Len = W384 and P.Len = W384,
         Post => D.Len = W384;
    procedure FE_Inv (D : out Big_Nat; A : Big_Nat)
-   with Pre => A.Len = W384 and P.Len = W384;
+   with Pre  => A.Len = W384 and P.Len = W384,
+        Post => D.Len = W384;
    function  FE_Is_Zero (A : Big_Nat) return Boolean;
 
-   --  Point operations
-   procedure Point_Double (Q : in out Jacobian);
-   procedure Point_Add (P1 : in out Jacobian; P2 : Jacobian);
-   procedure Scalar_Mul (P_Pt : in out Jacobian; K : Byte_Seq);
-   procedure To_Affine (Pt : in out Jacobian);
+   --  Point operations (all require/preserve Len = W384)
+   procedure Point_Double (Q : in out Jacobian)
+   with Pre  => Q.X.Len = W384 and Q.Y.Len = W384 and Q.Z.Len = W384
+                and P.Len = W384,
+        Post => Q.X.Len = W384 and Q.Y.Len = W384 and Q.Z.Len = W384;
+   procedure Point_Add (P1 : in out Jacobian; P2 : Jacobian)
+   with Pre  => P1.X.Len = W384 and P1.Y.Len = W384 and P1.Z.Len = W384
+                and P2.X.Len = W384 and P2.Y.Len = W384 and P2.Z.Len = W384
+                and P.Len = W384,
+        Post => P1.X.Len = W384 and P1.Y.Len = W384 and P1.Z.Len = W384;
+   procedure Scalar_Mul (P_Pt : in out Jacobian; K : Byte_Seq)
+   with Pre  => P_Pt.X.Len = W384 and P_Pt.Y.Len = W384 and P_Pt.Z.Len = W384
+                and P.Len = W384,
+        Post => P_Pt.X.Len = W384 and P_Pt.Y.Len = W384 and P_Pt.Z.Len = W384;
+   procedure To_Affine (Pt : in out Jacobian)
+   with Pre  => Pt.X.Len = W384 and Pt.Y.Len = W384 and Pt.Z.Len = W384
+                and P.Len = W384,
+        Post => Pt.X.Len = W384 and Pt.Y.Len = W384 and Pt.Z.Len = W384;
 
    --  Build generator point in Montgomery/Jacobian form
-   procedure Make_Generator (G : out Jacobian);
+   procedure Make_Generator (G : out Jacobian)
+   with Post => G.X.Len = W384 and G.Y.Len = W384 and G.Z.Len = W384
+                and P.Len = W384;
 
    --  Build a point from 48-byte big-endian X, Y coordinates
    procedure Make_Point (Pt : out Jacobian; Qx, Qy : Byte_Seq)
-   with Pre => Qx'Length = 48 and Qy'Length = 48;
+   with Pre  => Qx'Length = 48 and Qy'Length = 48,
+        Post => Pt.X.Len = W384 and Pt.Y.Len = W384 and Pt.Z.Len = W384
+                and P.Len = W384;
 
 end SPARKTLS.P384.Field;

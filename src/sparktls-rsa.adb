@@ -36,7 +36,14 @@ is
       Hash_Alg : in     PSS_Hash;
       N_Bitlen : in     Natural;
       Valid    :    out Boolean)
-   with Always_Terminates;
+   with Always_Terminates,
+        Pre => N_Bitlen >= 2 and N_Bitlen <= Max_RSA_Bits
+               and Hash_Len in 32 | 48 | 64
+               and EM'First = 0
+               and EM'Last < Max_RSA_Bytes
+               and EM_Len > 0 and N32 (EM_Len) - 1 <= EM'Last
+               and M_Hash'First = 0
+               and N32 (Hash_Len) - 1 <= M_Hash'Last;
 
    --================================================================
    --  Constant-time primitives
@@ -212,13 +219,15 @@ is
                and Seed'First = 0
                and Seed'Last < 1000
                and (Seed_Len = 0 or else N32 (Seed_Len) - 1 <= Seed'Last)
-               and Seed_Len <= 500
+               and Seed_Len <= 500,
+        Always_Terminates
    is
       Counter : Unsigned_32 := 0;
       Pos     : Natural := 0;
    begin
       while Pos < Data_Len loop
          pragma Loop_Invariant (Pos <= Data_Len and Pos <= Max_RSA_Bytes);
+         pragma Loop_Variant (Increases => Pos);
          declare
             Input_Len : constant N32 := N32 (Seed_Len) + 4;
             Input     : Byte_Seq (0 .. Input_Len - 1) := (others => 0);
@@ -261,75 +270,116 @@ is
       Hash_Alg : in     PSS_Hash;
       N_Bitlen : in     Natural;
       Valid    :    out Boolean)
-   with SPARK_Mode => Off  --  Data/Seed aliasing in MGF1_XOR call
    is
       Salt_Len  : constant Natural := Hash_Len;
       R         : Unsigned_32 := 0;
+      --  N_Bitlen >= 2 from Pre, so EM_Bits >= 1
       EM_Bits   : constant Natural := N_Bitlen - 1;
+      --  EM_Bits >= 1 so (1 + 7)/8 = 1 min; no overflow since
+      --  N_Bitlen <= 8 * Max_RSA_Bytes which fits in Natural.
       XLen      : constant Natural := (EM_Bits + 7) / 8;
       DB_Len    : Natural;
-      Seed_Off  : Natural;
-      Salt_Off  : Natural;
+      Seed_Off  : N32;
+      Salt_Off  : N32;
       Pad_Len   : Natural;
    begin
       Valid := False;
 
+      --  Hash_Len in 32|48|64 and Salt_Len = Hash_Len, so
+      --  Hash_Len + Salt_Len + 2 in {66, 98, 130} -- no overflow.
       if XLen < Hash_Len + Salt_Len + 2 then
          return;
       end if;
 
+      --  XLen >= Hash_Len + Salt_Len + 2 >= 66, and XLen <= EM_Len
+      --  since XLen = ceil((N_Bitlen-1)/8) <= ceil(N_Bitlen/8) <= EM_Len.
+      --  Guard that XLen fits within EM bounds.
+      if XLen > EM_Len or else N32 (XLen) > EM'Last + 1 then
+         return;
+      end if;
+
+      pragma Assert (XLen >= 66);
+      pragma Assert (N32 (XLen) - 1 <= EM'Last);
+
       if (EM_Bits mod 8) /= 0 then
-         R := R or (Unsigned_32 (EM (EM'First)) and
+         R := R or (Unsigned_32 (EM (0)) and
                     Unsigned_32 (Shift_Left (Unsigned_8 (16#FF#),
                                              Natural (EM_Bits mod 8))));
       end if;
 
-      R := R or (Unsigned_32 (EM (EM'First + N32 (XLen) - 1)) xor 16#BC#);
+      --  XLen >= 66 so N32(XLen) - 1 >= 65, and <= EM'Last
+      R := R or (Unsigned_32 (EM (N32 (XLen) - 1)) xor 16#BC#);
 
+      --  XLen >= Hash_Len + Salt_Len + 2 = 2*Hash_Len + 2
+      --  DB_Len = XLen - Hash_Len - 1 >= Hash_Len + 1 >= 33
       DB_Len   := XLen - Hash_Len - 1;
-      Seed_Off := DB_Len;
+      Seed_Off := N32 (DB_Len);
 
-      MGF1_XOR
-        (Alg      => Hash_Alg,
-         Hash_Len => Hash_Len,
-         Data     => EM (EM'First .. EM'First + N32 (DB_Len) - 1),
-         Data_Len => DB_Len,
-         Seed     => EM (EM'First + N32 (Seed_Off) ..
-                         EM'First + N32 (Seed_Off) + N32 (Hash_Len) - 1),
-         Seed_Len => Hash_Len);
+      pragma Assert (DB_Len >= 33);
+      pragma Assert (DB_Len < XLen);
+      pragma Assert (N32 (DB_Len) - 1 <= EM'Last);
+      pragma Assert (Seed_Off + N32 (Hash_Len) - 1 <= EM'Last);
+      pragma Assert (DB_Len <= Max_RSA_Bytes);
+
+      --  Fix aliasing: copy seed to local buffer before MGF1_XOR
+      declare
+         Seed_Copy : Byte_Seq (0 .. N32 (Hash_Len) - 1);
+      begin
+         Seed_Copy := EM (Seed_Off .. Seed_Off + N32 (Hash_Len) - 1);
+         MGF1_XOR
+           (Alg      => Hash_Alg,
+            Hash_Len => Hash_Len,
+            Data     => EM (0 .. N32 (DB_Len) - 1),
+            Data_Len => DB_Len,
+            Seed     => Seed_Copy,
+            Seed_Len => Hash_Len);
+      end;
 
       if (EM_Bits mod 8) /= 0 then
-         EM (EM'First) := EM (EM'First) and
+         EM (0) := EM (0) and
             Byte (Shift_Right (Unsigned_8 (16#FF#),
                                8 - Natural (EM_Bits mod 8)));
       end if;
 
+      --  Pad_Len = DB_Len - Salt_Len - 1 >= 0
+      --  DB_Len >= Hash_Len + 1 = Salt_Len + 1, so Pad_Len >= 0.
       Pad_Len := DB_Len - Salt_Len - 1;
-      for I in 0 .. Pad_Len - 1 loop
-         R := R or Unsigned_32 (EM (EM'First + N32 (I)));
-      end loop;
-      R := R or (Unsigned_32 (EM (EM'First + N32 (Pad_Len))) xor 16#01#);
 
-      Salt_Off := Pad_Len + 1;
+      pragma Assert (Pad_Len < DB_Len);
+      pragma Assert (N32 (Pad_Len) <= EM'Last);
+
+      for I in 0 .. Pad_Len - 1 loop
+         pragma Loop_Invariant (I <= Pad_Len - 1);
+         R := R or Unsigned_32 (EM (N32 (I)));
+      end loop;
+      R := R or (Unsigned_32 (EM (N32 (Pad_Len))) xor 16#01#);
+
+      Salt_Off := N32 (Pad_Len) + 1;
+
+      --  Salt_Off + Salt_Len - 1 = Pad_Len + 1 + Salt_Len - 1
+      --    = Pad_Len + Salt_Len = DB_Len - 1 < XLen <= EM'Last + 1
+      pragma Assert (Salt_Off + N32 (Salt_Len) - 1 <= EM'Last);
 
       declare
          M_Buf_Len : constant N32 := 8 + N32 (Hash_Len) + N32 (Salt_Len);
          M_Buf     : Byte_Seq (0 .. M_Buf_Len - 1);
          H_Out     : Byte_Seq (0 .. N32 (Hash_Len) - 1);
       begin
-         M_Buf (0 .. 7) := (others => 0);
+         M_Buf := (others => 0);
          M_Buf (8 .. 8 + N32 (Hash_Len) - 1) :=
             M_Hash (M_Hash'First .. M_Hash'First + N32 (Hash_Len) - 1);
          for I in 0 .. Salt_Len - 1 loop
+            pragma Loop_Invariant (I <= Salt_Len - 1);
             M_Buf (8 + N32 (Hash_Len) + N32 (I)) :=
-               EM (EM'First + N32 (Salt_Off) + N32 (I));
+               EM (Salt_Off + N32 (I));
          end loop;
 
          Compute_Hash (Hash_Alg, M_Buf, H_Out, Hash_Len);
 
          for I in 0 .. Hash_Len - 1 loop
+            pragma Loop_Invariant (I <= Hash_Len - 1);
             R := R or (Unsigned_32 (H_Out (N32 (I))) xor
-                       Unsigned_32 (EM (EM'First + N32 (Seed_Off) + N32 (I))));
+                       Unsigned_32 (EM (Seed_Off + N32 (I))));
          end loop;
       end;
 
@@ -383,6 +433,10 @@ is
             N_Bitlen := (Natural (Mod_Len) - Skip - 1) * 8 +
                Natural (Bit_Length_Word (
                   Unsigned_32 (Modulus (Modulus'First + N32 (Skip)))));
+         end if;
+
+         if N_Bitlen < 2 then
+            return False;
          end if;
 
          PSS_Verify

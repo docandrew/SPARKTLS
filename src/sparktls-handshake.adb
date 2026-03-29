@@ -30,7 +30,7 @@ with SPARKTLS.P256.Point;
 with SPARKTLS.P384.Point;
 
 package body SPARKTLS.Handshake with
-   SPARK_Mode => Off  --  TODO: enable incrementally
+   SPARK_Mode => On
 is
    use type RBT.Length;
    use type RBT.Index;

@@ -22,7 +22,7 @@ with X509.Validation;
 with OID;               use OID;
 
 package body SPARKTLS.Client with
-   SPARK_Mode => Off  --  TODO: enable incrementally
+   SPARK_Mode => On
 is
    --  Forward declarations for internal procedures
    procedure Derive_Handshake_Keys (S : in out Session);

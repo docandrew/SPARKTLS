@@ -66,12 +66,11 @@ is
      (Data   : in     Byte_Seq;
       Avail  : in     N32;
       Result :    out Parse_Result)
-   with SPARK_Mode => Off  --  Uses RFLX contexts + 'Unrestricted_Access
    is
-      use RFLX.TLS_Record.TLS_Plaintext;
-      use RFLX.TLS_Record;
-      use type RBT.Length;
+      --  TLS record header: content_type(1) + version(2) + length(2) = 5 bytes
+      --  Manual parsing replaces RFLX to eliminate 'Unrestricted_Access.
       Frag_Len : N32;
+      B        : N32;
    begin
       Result := (OK => False, others => <>);
 
@@ -79,72 +78,58 @@ is
          return;
       end if;
 
-      declare
-         Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Avail));
-         Buf     : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
-         Ctx     : Context;
-      begin
-         Buf_Arr := To_RFLX (Data (Data'First .. Data'First + N32 (Avail) - 1));
-         Initialize (Ctx, Buf,
-                     Written_Last => RBT.Bit_Length (RBT.Length (Avail) * 8));
-         Verify_Message (Ctx);
+      B := Data'First;
 
-         if Well_Formed_Message (Ctx) then
-            Frag_Len := N32 (Get_Length (Ctx));
+      --  Parse 2-byte fragment length (big-endian) from bytes 3..4
+      Frag_Len := N32 (Data (B + 3)) * 256 + N32 (Data (B + 4));
 
-            if Frag_Len <= Max_Fragment + 256 and then
-               Avail >= Record_Header_Size + Frag_Len
-            then
-               Result.OK           := True;
-               Result.Fragment_Pos := Record_Header_Size;
-               Result.Fragment_Len := Frag_Len;
-               Result.Record_Len   := Record_Header_Size + Frag_Len;
+      if Frag_Len > Max_Fragment + 256 or else
+         Avail < Record_Header_Size + Frag_Len
+      then
+         return;
+      end if;
 
-               case Get_Tag (Ctx) is
-                  when Handshake          => Result.Content := Content_Handshake;
-                  when Alert              => Result.Content := Content_Alert;
-                  when Application_Data   => Result.Content := Content_Application_Data;
-                  when Change_Cipher_Spec => Result.Content := Content_Change_Cipher_Spec;
-                  when others             => Result.Content := Content_Unknown;
-               end case;
-            end if;
-         end if;
+      Result.OK           := True;
+      Result.Fragment_Pos := Record_Header_Size;
+      Result.Fragment_Len := Frag_Len;
+      Result.Record_Len   := Record_Header_Size + Frag_Len;
 
-         Take_Buffer (Ctx, Buf);
-      end;
+      case Data (B) is
+         when 16#16# => Result.Content := Content_Handshake;
+         when 16#15# => Result.Content := Content_Alert;
+         when 16#17# => Result.Content := Content_Application_Data;
+         when 16#14# => Result.Content := Content_Change_Cipher_Spec;
+         when others  => Result.Content := Content_Unknown;
+      end case;
    end Parse_Record_Header;
 
    procedure Build_Handshake_Record
      (Fragment   : in     Byte_Seq;
       Output     : in out IO_Buffer;
       Bytes_Out  :    out N32)
-   with SPARK_Mode => Off  --  Uses RFLX contexts + 'Unrestricted_Access
    is
-      use RFLX.TLS_Record.TLS_Plaintext;
-      use RFLX.TLS_Record;
-      use RFLX.TLS_Common;
-      Total   : constant N32 := Record_Header_Size + N32 (Fragment'Length);
-      Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Total)) := (others => 0);
-      Buf     : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
-      Ctx     : Context;
-      OK      : Boolean;
+      --  TLS record: type(1) + version(2) + length(2) + fragment
+      --  Manual construction replaces RFLX to eliminate 'Unrestricted_Access.
+      Frag_Len : constant N32 := N32 (Fragment'Length);
+      Hdr      : Byte_Seq (0 .. 4) := (others => 0);
+      OK       : Boolean;
    begin
       Bytes_Out := 0;
 
-      Initialize (Ctx, Buf);
+      --  Build 5-byte header: Handshake (0x16) + TLS 1.0 (0x0301) + length
+      Hdr (0) := 16#16#;  --  handshake
+      Hdr (1) := 16#03#;
+      Hdr (2) := 16#01#;  --  TLS 1.0 for compatibility
+      Hdr (3) := Byte (Frag_Len / 256);
+      Hdr (4) := Byte (Frag_Len mod 256);
 
-      Set_Prefix (Ctx, 0);
-      Set_Tag (Ctx, Handshake);
-      Set_Legacy_Record_Version (Ctx, TLS_1_0);
-      Set_Length (Ctx, Plaintext_Length (Fragment'Length));
-      Set_Fragment (Ctx, To_RFLX (Fragment));
+      Write_To_Output (Output, Hdr, OK);
+      if not OK then return; end if;
 
-      Take_Buffer (Ctx, Buf);
-      Write_To_Output (Output, To_NaCl (Buf.all (1 .. RBT.Index (Total))), OK);
+      Write_To_Output (Output, Fragment, OK);
+      if not OK then return; end if;
 
-      if OK then
-         Bytes_Out := Total;
-      end if;
+      Bytes_Out := Record_Header_Size + Frag_Len;
    end Build_Handshake_Record;
 
    procedure Build_Encrypted_Record

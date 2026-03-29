@@ -12,7 +12,7 @@ with SPARKTLS.HMAC384;
 with SPARKTLS.HKDF384;
 
 package body SPARKTLS.Server with
-   SPARK_Mode => Off  --  TODO: enable incrementally
+   SPARK_Mode => On
 is
    --  Forward declarations
    procedure Build_Server_Flight (S : in out Session; Result : out Action);
