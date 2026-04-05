@@ -17,9 +17,7 @@ with SPARKTLS.P384.ECDSA;
 with SPARKTLS.RSA;
 
 with X509;
-with X509.Certificates;
-with X509.Validation;
-with OID;               use OID;
+use type X509.Algorithm_ID;
 
 package body SPARKTLS.Client with
    SPARK_Mode => On
@@ -171,17 +169,20 @@ is
                         S.Peer_Cert_DER (0 .. Cert_Len - 1) :=
                            Cert_Data (B + 7 .. B + 6 + Cert_Len);
 
-                        --  Parse certificate
+                        --  Parse certificate using new X509 parser
                         declare
-                           Cert_Str : String (1 .. Integer (Cert_Len));
+                           Cert_DER_0 : X509.Byte_Seq
+                              (0 .. X509.N32 (Cert_Len) - 1);
+                           Parse_OK : Boolean;
                         begin
-                           for I in Cert_Str'Range loop
-                              Cert_Str (I) := Character'Val (
-                                 Cert_Data (B + 7 + N32 (I - 1)));
+                           for I in N32 range 0 .. Cert_Len - 1 loop
+                              Cert_DER_0 (X509.N32 (I)) :=
+                                 X509.Byte (Cert_Data (B + 7 + I));
                            end loop;
-                           X509.Certificates.Parse_Certificate
-                             (Cert_Str, S.Peer_Cert);
-                           S.Peer_Cert_Valid := S.Peer_Cert.Valid;
+                           X509.Parse
+                             (Cert_DER_0, S.Peer_Cert, Parse_OK);
+                           S.Peer_Cert_Valid := Parse_OK and then
+                              X509.Is_Valid (S.Peer_Cert);
                         end;
                      end if;
                      end;
@@ -246,8 +247,8 @@ is
                   Content (64 + N32 (Context_Str'Length) + 1 ..
                            64 + N32 (Context_Str'Length) + H_Len) := CV_Hash;
 
-                  if S.Peer_Cert.Subject_Public_Key.Key_Type =
-                        OID.ID_EDDSA25519 and then
+                  if X509.PK_Algorithm (S.Peer_Cert) =
+                        X509.Algo_Ed25519 and then
                      Msg_Len >= 68  --  algo(2) + sig_len(2) + sig(64)
                   then
                      --  Ed25519 verification
@@ -264,10 +265,15 @@ is
                         SM (0 .. 63) := Data (8 .. 71);
                         SM (64 .. SM_Len - 1) := Content;
 
-                        for I in 0 .. 31 loop
-                           PK_Bytes (N32 (I)) :=
-                              Byte (S.Peer_Cert.Subject_Public_Key.Key (I));
-                        end loop;
+                        declare
+                           PK : constant X509.Byte_Seq :=
+                              X509.PK_Data (S.Peer_Cert);
+                        begin
+                           for I in 0 .. 31 loop
+                              PK_Bytes (N32 (I)) :=
+                                 SPARKNaCl.Byte (PK (X509.N32 (I)));
+                           end loop;
+                        end;
                         SPARKNaCl.Sign.PK_From_Bytes (PK_Bytes, CV_PK);
 
                         SPARKNaCl.Sign.Open
@@ -285,8 +291,9 @@ is
                         end if;
                      end;
 
-                  elsif S.Peer_Cert.Subject_Public_Key.Key_Type =
-                           OID.EC_PUBLIC_KEY and then
+                  elsif X509.PK_Algorithm (S.Peer_Cert) in
+                           X509.Algo_EC_P256 |
+                           X509.Algo_EC_P384 and then
                         Msg_Len >= 12  --  algo(2) + sig_len(2) + min DER(8)
                   then
                      --  ECDSA verification (P-256 or P-384 based on key size)
@@ -298,8 +305,8 @@ is
                            N32 (Unsigned_16 (Data (6)) * 256 +
                                 Unsigned_16 (Data (7)));
                         Sig_Start : constant N32 := 8;
-                        EC_Size : constant Natural :=
-                           S.Peer_Cert.Subject_Public_Key.EC_Key_Size;
+                        EC_Size : constant N32 :=
+                           N32 (X509.PK_Length (S.Peer_Cert));
                         Verify_OK : Boolean := False;
                      begin
                         --  Validate signature length
@@ -381,14 +388,17 @@ is
                               end;
 
                               --  Extract EC public key (skip 0x04 prefix)
-                              for I in 0 .. 47 loop
-                                 Qx (N32 (I)) := Byte (
-                                    S.Peer_Cert.Subject_Public_Key
-                                       .EC_Key (1 + I));
-                                 Qy (N32 (I)) := Byte (
-                                    S.Peer_Cert.Subject_Public_Key
-                                       .EC_Key (49 + I));
-                              end loop;
+                              declare
+                                 PK : constant X509.Byte_Seq :=
+                                    X509.PK_Data (S.Peer_Cert);
+                              begin
+                                 for I in 0 .. 47 loop
+                                    Qx (N32 (I)) :=
+                                       Byte (PK (X509.N32 (1 + I)));
+                                    Qy (N32 (I)) :=
+                                       Byte (PK (X509.N32 (49 + I)));
+                                 end loop;
+                              end;
 
                               --  Hash the signed content with SHA-384
                               declare
@@ -475,14 +485,17 @@ is
                               end;
 
                               --  Extract EC public key (skip 0x04 prefix)
-                              for I in 0 .. 31 loop
-                                 Qx (N32 (I)) := Byte (
-                                    S.Peer_Cert.Subject_Public_Key
-                                       .EC_Key (1 + I));
-                                 Qy (N32 (I)) := Byte (
-                                    S.Peer_Cert.Subject_Public_Key
-                                       .EC_Key (33 + I));
-                              end loop;
+                              declare
+                                 PK : constant X509.Byte_Seq :=
+                                    X509.PK_Data (S.Peer_Cert);
+                              begin
+                                 for I in 0 .. 31 loop
+                                    Qx (N32 (I)) :=
+                                       Byte (PK (X509.N32 (1 + I)));
+                                    Qy (N32 (I)) :=
+                                       Byte (PK (X509.N32 (33 + I)));
+                                 end loop;
+                              end;
 
                               --  Hash the signed content with SHA-256
                               declare
@@ -515,8 +528,8 @@ is
                         end if;
                      end;
 
-                  elsif S.Peer_Cert.Subject_Public_Key.Key_Type =
-                           OID.RSA_ENCRYPTION and then
+                  elsif X509.PK_Algorithm (S.Peer_Cert) =
+                           X509.Algo_RSA and then
                         Msg_Len >= 8  --  algo(2) + sig_len(2) + min sig
                   then
                      --  RSA-PSS-RSAE verification (SHA-256/384/512)
@@ -528,11 +541,15 @@ is
                            N32 (Unsigned_16 (Data (6)) * 256 +
                                 Unsigned_16 (Data (7)));
                         Raw_Mod_Len : constant Natural :=
-                           S.Peer_Cert.Subject_Public_Key.Modulus_Length;
+                           Natural (X509.PK_Length (S.Peer_Cert));
                         --  Strip leading zero byte from ASN.1 INTEGER
+                        PK_Tmp : constant X509.Byte_Seq :=
+                           (if Raw_Mod_Len > 0
+                            then X509.PK_Data (S.Peer_Cert)
+                            else X509.Byte_Seq'(0 => 0));
                         Mod_Skip : constant Natural :=
                            (if Raw_Mod_Len > 0 and then
-                               S.Peer_Cert.Subject_Public_Key.Modulus (0) = 0
+                               PK_Tmp (0) = 0
                             then 1 else 0);
                         Mod_Len : constant Natural :=
                            Raw_Mod_Len - Mod_Skip;
@@ -608,9 +625,9 @@ is
                               Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
                            begin
                               for I in 0 .. Mod_Len - 1 loop
-                                 Mod_Bytes (N32 (I)) := Byte (
-                                    S.Peer_Cert.Subject_Public_Key
-                                       .Modulus (Mod_Skip + I));
+                                 Mod_Bytes (N32 (I)) :=
+                                    Byte (PK_Tmp (X509.N32
+                                       (Mod_Skip + I)));
                               end loop;
                               Sig_Bytes :=
                                  Data (8 .. 8 + Sig_Len - 1);
@@ -623,8 +640,8 @@ is
                                     Modulus   => Mod_Bytes,
                                     Mod_Len   => N32 (Mod_Len),
                                     Exponent  =>
-                                       S.Peer_Cert.Subject_Public_Key
-                                          .Exponent,
+                                       X509.RSA_Exponent
+                                          (S.Peer_Cert),
                                     Signature => Sig_Bytes,
                                     Sig_Len   => Sig_Len);
                            end;
