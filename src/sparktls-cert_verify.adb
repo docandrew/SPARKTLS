@@ -341,12 +341,12 @@ is
 
    function Validate_Root
      (Root : X509.Certificate;
-      Now  : X509.Date_Time) return Validation_Result
+      Now  : X509.Date_Time;
+      Mode : Validation_Mode := Mode_WebPKI) return Validation_Result
    is
    begin
       --  RFC 5280 §6.1: Full structural validation of trust anchor
       if not X509.Is_Structurally_Valid (Root, Now) then
-         --  Return a specific error for the most common cases
          if not X509.Is_Valid (Root) then
             return Err_Parse_Failed;
          elsif not X509.Is_Date_Valid (Root, Now) then
@@ -363,66 +363,337 @@ is
          return Err_Not_CA;
       end if;
 
+      --  RFC 5280 §4.2.1.9: CA certs MUST mark BC as critical
+      if not X509.Is_Basic_Constraints_Critical (Root) then
+         return Err_Not_CA;
+      end if;
+
+      if Mode = Mode_WebPKI then
+         --  CABF: roots must not have EKU extension
+         if X509.Has_EKU (Root) then
+            return Err_Forbidden_EKU;
+         end if;
+
+         --  CABF 7.1.2.1.3: root AKI must not have
+         --  authorityCertIssuer or authorityCertSerialNumber
+         if X509.AKID_Serial (Root).Present then
+            return Err_Missing_AKI;
+         end if;
+
+         --  CABF 6.1.5: RSA keys must be >= 2048 bits and divisible by 8
+         if X509.PK_Algorithm (Root) = X509.Algo_RSA then
+            if X509.PK_Length (Root) < 256
+               or else (X509.PK_Length (Root) mod 8) /= 0
+            then
+               return Err_Weak_Key;
+            end if;
+         end if;
+      end if;
+
       return Valid;
    end Validate_Root;
 
    --================================================================
-   --  Validate a certificate against its issuer
+   --  Verify Certificate Signature (X509.Byte_Seq overload)
+   --  Copies DER to SPARKNaCl.Byte_Seq and delegates.
    --================================================================
 
-   function Validate_Cert
-     (Cert_DER    : Byte_Seq;
-      Cert        : X509.Certificate;
-      Issuer      : X509.Certificate;
-      Now         : X509.Date_Time;
-      Must_Be_CA  : Boolean;
-      Chain_Depth : Natural := 0) return Validation_Result
+   function Verify_Cert_Signature
+     (Cert_DER : X509.Byte_Seq;
+      Cert     : X509.Certificate;
+      Issuer   : X509.Certificate) return Boolean
+   is
+      NaCl_DER : Byte_Seq (0 .. N32 (Cert_DER'Last));
+   begin
+      for I in Cert_DER'Range loop
+         NaCl_DER (N32 (I)) := Byte (Cert_DER (I));
+      end loop;
+      return Verify_Cert_Signature (NaCl_DER, Cert, Issuer);
+   end Verify_Cert_Signature;
+
+   --================================================================
+   --  Validate one link in the chain
+   --================================================================
+
+   function Validate_Link
+     (Cert_DER         : X509.Byte_Seq;
+      Cert             : X509.Certificate;
+      Issuer_DER       : X509.Byte_Seq;
+      Issuer           : X509.Certificate;
+      Now              : X509.Date_Time;
+      Must_Be_CA       : Boolean;
+      CAs_Below_Issuer : Natural;
+      Mode             : Validation_Mode := Mode_WebPKI) return Validation_Result
    is
    begin
-      --  1. Must have parsed OK
-      if not X509.Is_Valid (Cert) then
-         return Err_Parse_Failed;
+      --  1. Full structural validation (parse, dates, extensions, encoding)
+      if not X509.Is_Structurally_Valid (Cert, Now) then
+         if not X509.Is_Valid (Cert) then
+            return Err_Parse_Failed;
+         elsif not X509.Is_Date_Valid (Cert, Now) then
+            return Err_Expired;
+         elsif X509.Has_Unknown_Critical_Extension (Cert) then
+            return Err_Unknown_Critical;
+         else
+            return Err_Structural;
+         end if;
       end if;
 
-      --  2. Must not have unknown critical extensions
-      if X509.Has_Unknown_Critical_Extension (Cert) then
-         return Err_Unknown_Critical;
-      end if;
-
-      --  3. Must be within validity period
-      if not X509.Is_Date_Valid (Cert, Now) then
-         return Err_Expired;
-      end if;
-
-      --  4. Must have known algorithms
-      if X509.Sig_Algorithm (Cert) = X509.Algo_Unknown or else
-         X509.PK_Algorithm (Cert) = X509.Algo_Unknown
-      then
-         return Err_Unknown_Algorithm;
-      end if;
-
-      --  5. If this cert is an intermediate (not end-entity),
-      --     it must have Basic Constraints CA=True
+      --  2. CA constraint
       if Must_Be_CA and then not X509.Is_CA (Cert) then
          return Err_Not_CA;
       end if;
 
-      --  6. Check path length constraint on the ISSUER
-      --     If the issuer has pathLenConstraint = N, then
-      --     Chain_Depth (certs below the issuer) must be <= N.
-      if X509.Is_CA (Issuer) and then
-         X509.Has_Path_Len_Constraint (Issuer) and then
-         Chain_Depth > X509.Path_Len_Constraint (Issuer)
+      --  3. RFC 5280 §4.2.1.1: non-root certs MUST have AKI
+      if not X509.Authority_Key_ID (Cert).Present then
+         return Err_Missing_AKI;
+      end if;
+
+      --  4. Issuer DN must match
+      if not X509.Issuer_Matches (Cert, Cert_DER, Issuer, Issuer_DER) then
+         return Err_Issuer_Mismatch;
+      end if;
+
+      --  5. Issuer Key Usage must allow cert signing
+      if not X509.Issuer_May_Sign (Issuer) then
+         return Err_Signature_Invalid;
+      end if;
+
+      --  6. Issuer EKU must allow signing (if present)
+      if not X509.Issuer_EKU_Allows_Signing (Issuer) then
+         return Err_Forbidden_EKU;
+      end if;
+
+      --  7. Name constraints
+      if not X509.Satisfies_Name_Constraints
+        (Cert, Cert_DER, Issuer, Issuer_DER)
+      then
+         return Err_Name_Constraint;
+      end if;
+
+      --  8. Path length constraint on the issuer
+      if X509.Has_Path_Len_Constraint (Issuer)
+         and then CAs_Below_Issuer > X509.Path_Len_Constraint (Issuer)
       then
          return Err_Path_Length_Exceeded;
       end if;
 
-      --  7. Verify signature against issuer's public key
+      --  9. Cryptographic signature verification
       if not Verify_Cert_Signature (Cert_DER, Cert, Issuer) then
          return Err_Signature_Invalid;
       end if;
 
+      --  10. WebPKI: RSA key must be >= 2048 bits and divisible by 8
+      if Mode = Mode_WebPKI
+         and then X509.PK_Algorithm (Cert) = X509.Algo_RSA
+      then
+         if X509.PK_Length (Cert) < 256
+            or else (X509.PK_Length (Cert) mod 8) /= 0
+         then
+            return Err_Weak_Key;
+         end if;
+      end if;
+
       return Valid;
-   end Validate_Cert;
+   end Validate_Link;
+
+   --================================================================
+   --  Validate leaf-specific policy
+   --================================================================
+
+   function Validate_Leaf_Policy
+     (Leaf     : X509.Certificate;
+      Leaf_DER : X509.Byte_Seq;
+      Hostname : String;
+      Purpose  : Validation_Purpose := Purpose_Server;
+      Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
+   is
+   begin
+      --  1. EKU check: if present, must match purpose (RFC 5280)
+      if X509.Has_EKU (Leaf) then
+         case Purpose is
+            when Purpose_Server =>
+               if not X509.Has_EKU_Server_Auth (Leaf) then
+                  return Err_Wrong_EKU;
+               end if;
+            when Purpose_Client | Purpose_Any =>
+               null;  --  TODO: client auth EKU check
+         end case;
+      end if;
+
+      --  2. WebPKI mode (CABF Baseline Requirements)
+      if Mode = Mode_WebPKI then
+         --  Leaf must have EKU with serverAuth
+         if Purpose = Purpose_Server and then not X509.Has_EKU (Leaf) then
+            return Err_Wrong_EKU;
+         end if;
+
+         --  CABF 7.1.2.7.10: anyExtendedKeyUsage forbidden on leaf
+         if X509.Has_EKU_Any_Purpose (Leaf) then
+            return Err_Wrong_EKU;
+         end if;
+
+         --  EKU must not be critical on leaf
+         if X509.Is_EKU_Critical (Leaf) then
+            return Err_Wrong_EKU;
+         end if;
+
+         --  Leaf must have SAN (DNS or IP)
+         if X509.SAN_Count (Leaf) = 0
+            and then X509.IP_SAN_Count (Leaf) = 0
+         then
+            return Err_Missing_SAN;
+         end if;
+
+         --  Leaf must not be a CA
+         if X509.Is_CA (Leaf) then
+            return Err_Not_CA;
+         end if;
+
+         --  CABF 6.1.5: RSA keys must be >= 2048 bits and divisible by 8
+         if X509.PK_Algorithm (Leaf) = X509.Algo_RSA then
+            if X509.PK_Length (Leaf) < 256
+               or else (X509.PK_Length (Leaf) mod 8) /= 0
+            then
+               return Err_Weak_Key;
+            end if;
+         end if;
+
+      end if;
+
+      --  3. Hostname matching
+      if Hostname'Length > 0 then
+         if not X509.Matches_Hostname (Leaf, Leaf_DER, Hostname) then
+            return Err_Hostname_Mismatch;
+         end if;
+      end if;
+
+      return Valid;
+   end Validate_Leaf_Policy;
+
+   --================================================================
+   --  Chain building and validation
+   --================================================================
+
+   function Validate_Chain
+     (Leaf_DER   : X509.Byte_Seq;
+      Leaf       : X509.Certificate;
+      Ints       : Cert_Pool;
+      Int_Count  : Natural;
+      Roots      : Cert_Pool;
+      Root_Count : Natural;
+      Now        : X509.Date_Time;
+      Hostname   : String;
+      Purpose    : Validation_Purpose := Purpose_Server;
+      Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
+   is
+      Budget : Natural := Max_Build_Calls;
+
+      --  Recursive DFS: try to chain Cert to a trust anchor.
+      --  Depth = number of intermediates between this cert and the leaf.
+      --  Used tracks which intermediates are already in the chain.
+      --  Returns Valid if a chain to a root was found and all links valid.
+      function Try_Build
+        (Cert_DER : X509.Byte_Seq;
+         Cert     : X509.Certificate;
+         Used     : Used_Set;
+         Depth    : Natural) return Validation_Result
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
+      is
+         R : Validation_Result;
+      begin
+         if Budget = 0 then
+            return Err_No_Trust_Anchor;
+         end if;
+         Budget := Budget - 1;
+
+         if Depth > Max_Chain_Depth then
+            return Err_Path_Length_Exceeded;
+         end if;
+
+         --  1. Try each root as the issuer of Cert
+         for Ri in 0 .. Root_Count - 1 loop
+            if Roots (Ri).Present and then Roots (Ri).DER_Len > 0 then
+               declare
+                  VR : constant Validation_Result :=
+                     Validate_Root (Roots (Ri).Cert, Now, Mode);
+               begin
+                  if VR = Valid then
+                     R := Validate_Link
+                       (Cert_DER         => Cert_DER,
+                        Cert             => Cert,
+                        Issuer_DER       =>
+                           Roots (Ri).DER (0 .. Roots (Ri).DER_Len - 1),
+                        Issuer           => Roots (Ri).Cert,
+                        Now              => Now,
+                        Must_Be_CA       => Depth > 0,
+                        CAs_Below_Issuer => Depth,
+                        Mode             => Mode);
+                     if R = Valid then
+                        return Valid;
+                     end if;
+                  end if;
+               end;
+            end if;
+         end loop;
+
+         --  2. Try each unused intermediate as the issuer of Cert
+         for Ii in 0 .. Int_Count - 1 loop
+            if not Used (Ii)
+               and then Ints (Ii).Present
+               and then Ints (Ii).DER_Len > 0
+            then
+               R := Validate_Link
+                 (Cert_DER         => Cert_DER,
+                  Cert             => Cert,
+                  Issuer_DER       =>
+                     Ints (Ii).DER (0 .. Ints (Ii).DER_Len - 1),
+                  Issuer           => Ints (Ii).Cert,
+                  Now              => Now,
+                  Must_Be_CA       => Depth > 0,
+                  CAs_Below_Issuer => Depth,
+                  Mode             => Mode);
+               if R = Valid then
+                  --  This intermediate is a valid issuer; recurse
+                  declare
+                     Next_Used : Used_Set := Used;
+                  begin
+                     Next_Used (Ii) := True;
+                     R := Try_Build
+                       (Ints (Ii).DER (0 .. Ints (Ii).DER_Len - 1),
+                        Ints (Ii).Cert,
+                        Next_Used, Depth + 1);
+                     if R = Valid then
+                        return Valid;
+                     end if;
+                     --  Backtrack: try next intermediate
+                  end;
+               end if;
+            end if;
+         end loop;
+
+         return Err_No_Trust_Anchor;
+      end Try_Build;
+
+      R : Validation_Result;
+   begin
+      --  Build chain from leaf upward
+      R := Try_Build
+        (Leaf_DER, Leaf,
+         Used  => (others => False),
+         Depth => 0);
+
+      if R /= Valid then
+         return R;
+      end if;
+
+      --  Chain is valid; check leaf policy
+      return Validate_Leaf_Policy
+        (Leaf     => Leaf,
+         Leaf_DER => Leaf_DER,
+         Hostname => Hostname,
+         Purpose  => Purpose,
+         Mode     => Mode);
+   end Validate_Chain;
 
 end SPARKTLS.Cert_Verify;
