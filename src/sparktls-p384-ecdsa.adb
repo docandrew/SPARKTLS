@@ -7,7 +7,8 @@ with SPARKTLS.BigNat;      use SPARKTLS.BigNat;
 with SPARKTLS.P384.Field;  use SPARKTLS.P384.Field;
 
 package body SPARKTLS.P384.ECDSA with
-   SPARK_Mode => On
+   SPARK_Mode => On,
+   Refined_State => (Order_State => (N, N_M0I, N_Inited))
 is
    --================================================================
    --  Group order state
