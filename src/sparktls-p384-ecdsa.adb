@@ -30,6 +30,7 @@ is
       N.Len := W384;
    end Init_Order;
 
+
    --  Group order field operations (using BigNat directly)
    procedure Mul_Mod_N (D : out Big_Nat; A, B : Big_Nat) is
    begin
@@ -88,7 +89,6 @@ is
       One : Big_Nat;
    begin
       Init_Field;
-      Init_Order;
 
       --  Decode r, s and check they're in [1, n-1]
       Decode (R_Int, R);
@@ -172,4 +172,7 @@ is
       end;
    end Verify;
 
+begin
+   --  Initialize group order at elaboration so Verify only reads N.
+   Init_Order;
 end SPARKTLS.P384.ECDSA;

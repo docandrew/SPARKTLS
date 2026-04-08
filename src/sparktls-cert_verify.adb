@@ -37,8 +37,9 @@ is
    with Pre => R_Out'First = 0 and S_Out'First = 0
                and R_Out'Length = S_Out'Length
                and R_Out'Length > 0
+               and R_Out'Last < N32'Last
    is
-      Coord_Len : constant N32 := N32 (R_Out'Length);
+      Coord_Len : constant N32 := R_Out'Last + 1;
       Idx       : X509.N32 := Sig'First;
       R_Len     : X509.N32;
       S_Len     : X509.N32;
@@ -49,8 +50,9 @@ is
       S_Out := (others => 0);
       OK := False;
 
-      --  SEQUENCE tag
-      if Sig'Length < 8 or else Sig (Idx) /= 16#30# then
+      --  SEQUENCE tag.  DER ECDSA sigs are always < 200 bytes;
+      --  bound Sig'Last to prevent overflow in index arithmetic.
+      if Sig'Length < 8 or else Sig'Last > 512 or else Sig (Idx) /= 16#30# then
          return;
       end if;
       Idx := Idx + 2;  --  skip tag + length
@@ -73,6 +75,7 @@ is
 
       --  Copy r, right-aligned
       if R_Len > 0 and then R_Len <= X509.N32 (Coord_Len)
+         and then R_Len <= X509.N32 (N32'Last)
          and then Idx + R_Off + R_Len - 1 <= Sig'Last
       then
          for I in X509.N32 range 0 .. R_Len - 1 loop
@@ -82,6 +85,7 @@ is
       else
          return;
       end if;
+      if Idx > Sig'Last - R_Off - R_Len then return; end if;
       Idx := Idx + R_Off + R_Len;
 
       --  Second INTEGER (s)
@@ -100,6 +104,7 @@ is
       end if;
 
       if S_Len > 0 and then S_Len <= X509.N32 (Coord_Len)
+         and then S_Len <= X509.N32 (N32'Last)
          and then Idx + S_Off + S_Len - 1 <= Sig'Last
       then
          for I in X509.N32 range 0 .. S_Len - 1 loop
@@ -133,7 +138,25 @@ is
          return False;
       end if;
 
+      --  Guard TBS span fits in SPARKNaCl N32 range and in Cert_DER
+      if TBS_Span.Last > X509.N32 (N32'Last)
+         or else TBS_Span.First > X509.N32 (N32'Last)
+      then
+         return False;
+      end if;
       if N32 (TBS_Span.Last) > Cert_DER'Last then
+         return False;
+      end if;
+
+      --  Guard PK/Sig lengths fit preconditions and N32 range
+      if X509.Sig_Length (Cert) > X509.Max_Sig_Bytes
+         or else X509.PK_Length (Issuer) > X509.Max_PK_Bytes
+      then
+         return False;
+      end if;
+      if X509.Sig_Length (Cert) > X509.N32 (N32'Last)
+         or else X509.PK_Length (Issuer) > X509.N32 (N32'Last)
+      then
          return False;
       end if;
 
@@ -149,13 +172,15 @@ is
 
             --  RSA-PSS / RSA PKCS#1 with SHA-256
             when X509.Algo_RSA_PKCS1_SHA256 | X509.Algo_RSA_PSS =>
-               if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA then
+               if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
+                  or else PK_Len < 64 or else PK_Len /= Sig_Len
+               then
                   return False;
                end if;
                declare
                   H : SPARKNaCl.Hashing.SHA256.Digest;
-                  Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1);
-                  Sig_Bytes : Byte_Seq (0 .. N32 (Sig_Len) - 1);
+                  Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
+                  Sig_Bytes : Byte_Seq (0 .. N32 (Sig_Len) - 1) := (others => 0);
                begin
                   SPARKNaCl.Hashing.SHA256.Hash (H, TBS_Bytes);
                   for I in N32 range 0 .. N32 (PK_Len) - 1 loop
@@ -175,13 +200,15 @@ is
 
             --  RSA PKCS#1 with SHA-384
             when X509.Algo_RSA_PKCS1_SHA384 =>
-               if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA then
+               if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
+                  or else PK_Len < 64 or else PK_Len /= Sig_Len
+               then
                   return False;
                end if;
                declare
                   H : SPARKNaCl.Hashing.SHA384.Digest;
-                  Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1);
-                  Sig_Bytes : Byte_Seq (0 .. N32 (Sig_Len) - 1);
+                  Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
+                  Sig_Bytes : Byte_Seq (0 .. N32 (Sig_Len) - 1) := (others => 0);
                begin
                   SPARKNaCl.Hashing.SHA384.Hash (H, TBS_Bytes);
                   for I in N32 range 0 .. N32 (PK_Len) - 1 loop
@@ -201,13 +228,15 @@ is
 
             --  RSA PKCS#1 with SHA-512
             when X509.Algo_RSA_PKCS1_SHA512 =>
-               if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA then
+               if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
+                  or else PK_Len < 64 or else PK_Len /= Sig_Len
+               then
                   return False;
                end if;
                declare
                   H : SPARKNaCl.Hashing.SHA512.Digest;
-                  Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1);
-                  Sig_Bytes : Byte_Seq (0 .. N32 (Sig_Len) - 1);
+                  Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
+                  Sig_Bytes : Byte_Seq (0 .. N32 (Sig_Len) - 1) := (others => 0);
                begin
                   SPARKNaCl.Hashing.SHA512.Hash (H, TBS_Bytes);
                   for I in N32 range 0 .. N32 (PK_Len) - 1 loop
@@ -234,8 +263,8 @@ is
                end if;
                declare
                   H     : Bytes_48;
-                  Qx    : Byte_Seq (0 .. 47);
-                  Qy    : Byte_Seq (0 .. 47);
+                  Qx    : Byte_Seq (0 .. 47) := (others => 0);
+                  Qy    : Byte_Seq (0 .. 47) := (others => 0);
                   R_Val : Byte_Seq (0 .. 47) := (others => 0);
                   S_Val : Byte_Seq (0 .. 47) := (others => 0);
                   Sig_OK : Boolean;
@@ -263,8 +292,8 @@ is
                end if;
                declare
                   H     : Bytes_32;
-                  Qx    : Byte_Seq (0 .. 31);
-                  Qy    : Byte_Seq (0 .. 31);
+                  Qx    : Byte_Seq (0 .. 31) := (others => 0);
+                  Qy    : Byte_Seq (0 .. 31) := (others => 0);
                   R_Val : Byte_Seq (0 .. 31) := (others => 0);
                   S_Val : Byte_Seq (0 .. 31) := (others => 0);
                   Sig_OK : Boolean;
@@ -290,12 +319,15 @@ is
                then
                   return False;
                end if;
+               if TBS_Bytes'Length > N32'Last - 64 then
+                  return False;
+               end if;
                declare
                   --  Ed25519 sig = 64 bytes, verify via Sign.Open
                   SM_Len : constant N32 := 64 + N32 (TBS_Bytes'Length);
-                  SM     : Byte_Seq (0 .. SM_Len - 1);
-                  M      : Byte_Seq (0 .. SM_Len - 1);
-                  PK_B   : Bytes_32;
+                  SM     : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
+                  M      : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
+                  PK_B   : Bytes_32 := (others => 0);
                   CV_PK  : SPARKNaCl.Sign.Signing_PK;
                   Verify_OK : Boolean;
                   Verify_Len : I32;
@@ -403,12 +435,20 @@ is
       Cert     : X509.Certificate;
       Issuer   : X509.Certificate) return Boolean
    is
-      NaCl_DER : Byte_Seq (0 .. N32 (Cert_DER'Last));
    begin
-      for I in Cert_DER'Range loop
-         NaCl_DER (N32 (I)) := Byte (Cert_DER (I));
-      end loop;
-      return Verify_Cert_Signature (NaCl_DER, Cert, Issuer);
+      --  Guard: X509 uses Unsigned_32 indices, SPARKNaCl uses Integer_32.
+      --  Reject DER that exceeds SPARKNaCl's index range.
+      if Cert_DER'Last >= X509.N32 (N32'Last) then
+         return False;
+      end if;
+      declare
+         NaCl_DER : Byte_Seq (0 .. N32 (Cert_DER'Last)) := (others => 0);
+      begin
+         for I in Cert_DER'Range loop
+            NaCl_DER (N32 (I)) := Byte (Cert_DER (I));
+         end loop;
+         return Verify_Cert_Signature (NaCl_DER, Cert, Issuer);
+      end;
    end Verify_Cert_Signature;
 
    --================================================================
@@ -587,33 +627,42 @@ is
       Purpose    : Validation_Purpose := Purpose_Server;
       Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
    is
-      Budget : Natural := Max_Build_Calls;
-
       --  Recursive DFS: try to chain Cert to a trust anchor.
       --  Depth = number of intermediates between this cert and the leaf.
       --  Used tracks which intermediates are already in the chain.
       --  Returns Valid if a chain to a root was found and all links valid.
-      function Try_Build
+      --  Budget is passed in-out to satisfy SPARK (no mutable globals).
+      procedure Try_Build
         (Cert_DER : X509.Byte_Seq;
          Cert     : X509.Certificate;
          Used     : Used_Set;
-         Depth    : Natural) return Validation_Result
-      with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
+         Depth    : Natural;
+         Budget   : in out Natural;
+         Result   : out Validation_Result)
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last,
+           Subprogram_Variant => (Decreases => Budget)
       is
          R : Validation_Result;
       begin
+         Result := Err_No_Trust_Anchor;
+
          if Budget = 0 then
-            return Err_No_Trust_Anchor;
+            return;
          end if;
          Budget := Budget - 1;
 
          if Depth > Max_Chain_Depth then
-            return Err_Path_Length_Exceeded;
+            Result := Err_Path_Length_Exceeded;
+            return;
          end if;
 
          --  1. Try each root as the issuer of Cert
          for Ri in 0 .. Root_Count - 1 loop
-            if Roots (Ri).Present and then Roots (Ri).DER_Len > 0 then
+            if Ri <= Roots'Last
+               and then Roots (Ri).Present
+               and then Roots (Ri).DER_Len > 0
+               and then Roots (Ri).DER_Len <= X509.N32 (Max_Cert_DER)
+            then
                declare
                   VR : constant Validation_Result :=
                      Validate_Root (Roots (Ri).Cert, Now, Mode);
@@ -630,7 +679,8 @@ is
                         CAs_Below_Issuer => Depth,
                         Mode             => Mode);
                      if R = Valid then
-                        return Valid;
+                        Result := Valid;
+                        return;
                      end if;
                   end if;
                end;
@@ -639,9 +689,11 @@ is
 
          --  2. Try each unused intermediate as the issuer of Cert
          for Ii in 0 .. Int_Count - 1 loop
-            if not Used (Ii)
+            if Ii <= Ints'Last
+               and then not Used (Ii)
                and then Ints (Ii).Present
                and then Ints (Ii).DER_Len > 0
+               and then Ints (Ii).DER_Len <= X509.N32 (Max_Cert_DER)
             then
                R := Validate_Link
                  (Cert_DER         => Cert_DER,
@@ -659,29 +711,31 @@ is
                      Next_Used : Used_Set := Used;
                   begin
                      Next_Used (Ii) := True;
-                     R := Try_Build
+                     Try_Build
                        (Ints (Ii).DER (0 .. Ints (Ii).DER_Len - 1),
                         Ints (Ii).Cert,
-                        Next_Used, Depth + 1);
+                        Next_Used, Depth + 1, Budget, R);
                      if R = Valid then
-                        return Valid;
+                        Result := Valid;
+                        return;
                      end if;
                      --  Backtrack: try next intermediate
                   end;
                end if;
             end if;
          end loop;
-
-         return Err_No_Trust_Anchor;
       end Try_Build;
 
-      R : Validation_Result;
+      R      : Validation_Result;
+      Budget : Natural := Max_Build_Calls;
    begin
       --  Build chain from leaf upward
-      R := Try_Build
+      Try_Build
         (Leaf_DER, Leaf,
-         Used  => (others => False),
-         Depth => 0);
+         Used   => (others => False),
+         Depth  => 0,
+         Budget => Budget,
+         Result => R);
 
       if R /= Valid then
          return R;

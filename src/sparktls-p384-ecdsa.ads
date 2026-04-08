@@ -16,7 +16,6 @@ is
       Qy   : in Byte_Seq;
       R    : in Byte_Seq;
       S    : in Byte_Seq) return Boolean
-   with Side_Effects,
-        Global => (In_Out => Order_State);
+   with Global => (Input => Order_State);
 
 end SPARKTLS.P384.ECDSA;
