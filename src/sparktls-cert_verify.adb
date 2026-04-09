@@ -640,16 +640,20 @@ is
          Budget   : in out Natural;
          Result   : out Validation_Result)
       with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last,
-           Subprogram_Variant => (Decreases => Budget)
+           Subprogram_Variant => (Decreases => Budget),
+           Post => Budget <= Budget'Old
       is
          R : Validation_Result;
+         Saved_Budget : Natural with Ghost;
       begin
          Result := Err_No_Trust_Anchor;
 
          if Budget = 0 then
+            Saved_Budget := 0;
             return;
          end if;
          Budget := Budget - 1;
+         Saved_Budget := Budget;
 
          if Depth > Max_Chain_Depth then
             Result := Err_Path_Length_Exceeded;
@@ -658,6 +662,7 @@ is
 
          --  1. Try each root as the issuer of Cert
          for Ri in 0 .. Root_Count - 1 loop
+            pragma Loop_Invariant (Budget = Saved_Budget);
             if Ri <= Roots'Last
                and then Roots (Ri).Present
                and then Roots (Ri).DER_Len > 0
@@ -689,6 +694,7 @@ is
 
          --  2. Try each unused intermediate as the issuer of Cert
          for Ii in 0 .. Int_Count - 1 loop
+            pragma Loop_Invariant (Budget <= Saved_Budget);
             if Ii <= Ints'Last
                and then not Used (Ii)
                and then Ints (Ii).Present
