@@ -36,25 +36,6 @@ is
       Err_Hostname_Mismatch,
       Err_No_Trust_Anchor);
 
-   --  Validation mode controls which rules are enforced.
-   --
-   --  Mode_RFC5280: RFC 5280 rules only.  Structural validity, signature
-   --    verification, issuer DN match, name constraints, path length,
-   --    AKI, hostname matching.  No key size or EKU requirements beyond
-   --    what RFC 5280 specifies (EKU checked only if present).
-   --
-   --  Mode_WebPKI: RFC 5280 + CA/Browser Forum Baseline Requirements.
-   --    All RFC 5280 checks plus:
-   --    - Leaf must have EKU with serverAuth (for server validation)
-   --    - Leaf EKU must not be critical
-   --    - Leaf must have SAN extension (DNS or IP)
-   --    - Leaf must not be a CA
-   --    - Leaf CN must be a byte-for-byte copy of a SAN entry (BR 7.1.4.3)
-   --    - anyExtendedKeyUsage forbidden on leaf (BR 7.1.2.7.10)
-   --    - Root must not have EKU extension
-   --    - RSA keys must be >= 2048 bits and divisible by 8 (BR 6.1.5)
-   type Validation_Mode is (Mode_RFC5280, Mode_WebPKI);
-
    --  Validate a trust anchor (root CA).
    --  Checks: structural validity, CA flag, known algorithms, date validity.
    --  Does NOT verify the root's self-signature (trust anchors are trusted
@@ -91,9 +72,6 @@ is
    --  X509 functions (Issuer_Matches, Satisfies_Name_Constraints,
    --  Matches_Hostname) can be called directly.
    --================================================================
-
-   --  Validation purpose (controls EKU requirements on the leaf)
-   type Validation_Purpose is (Purpose_Server, Purpose_Client, Purpose_Any);
 
    --  Verify a certificate's signature using X509.Byte_Seq DER.
    --  Copies TBS bytes to SPARKNaCl.Byte_Seq internally for crypto.
@@ -157,35 +135,62 @@ is
    with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last;
 
    --================================================================
+   --  Credential loading helpers
+   --
+   --  Types (Trust_Store, Identity, Cert_Pool, etc.) are in the
+   --  parent package SPARKTLS.  These procedures load data into them.
+   --================================================================
+
+   --  Parse a DER certificate and add it to the trust store.
+   --  Fails if the store is full or the cert doesn't parse.
+   procedure Add_Root
+     (Store : in out Trust_Store;
+      DER   : X509.Byte_Seq;
+      OK    : out Boolean)
+   with Pre => DER'First = 0 and DER'Last < X509.N32'Last
+               and X509.N32 (DER'Length) <= X509.N32 (Max_Cert_DER);
+
+   --  Load all DER certificates from a concatenated blob.
+   --  Each cert is a complete DER SEQUENCE (tag 0x30 + length + value).
+   --  Stops when the blob is exhausted or the store is full.
+   procedure Load_Roots
+     (Store  : out Trust_Store;
+      DER    : X509.Byte_Seq;
+      Loaded : out Natural;
+      OK     : out Boolean)
+   with Pre => DER'First = 0 and DER'Last < X509.N32'Last;
+
+   function Root_Count (Store : Trust_Store) return Natural is
+     (Store.Root_Count);
+
+   --  Load a leaf certificate and private key into an Identity.
+   --  The signing algorithm is inferred from the certificate:
+   --    Algo_EC_Ed25519 → Ed25519 (Key: 64 bytes, secret || public)
+   --    Algo_EC_P256    → ECDSA P-256 (Key: 32 bytes, scalar)
+   --    Algo_EC_P384    → ECDSA P-384 (Key: 48 bytes, scalar)
+   procedure Set_Identity
+     (Id       : out Identity;
+      Cert_DER : X509.Byte_Seq;
+      Key      : Byte_Seq;
+      OK       : out Boolean)
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
+               and X509.N32 (Cert_DER'Length) <= X509.N32 (Max_Cert_DER)
+               and Key'First = 0;
+
+   --  Add an intermediate certificate to the identity's chain.
+   procedure Add_Intermediate
+     (Id  : in out Identity;
+      DER : X509.Byte_Seq;
+      OK  : out Boolean)
+   with Pre => DER'First = 0 and DER'Last < X509.N32'Last
+               and X509.N32 (DER'Length) <= X509.N32 (Max_Cert_DER);
+
+   --================================================================
    --  Chain building and validation
-   --
-   --  Builds a chain from the leaf to a trust anchor by searching
-   --  a pool of candidate intermediates.  Uses recursive DFS with
-   --  backtracking, bounded by a call budget and max chain depth.
-   --
-   --  The caller packs all intermediate and root DER into flat
-   --  buffers and provides offset/length for each entry.
-   --  No heap allocation; all state is stack or parameter-based.
    --================================================================
 
    Max_Chain_Depth : constant := 8;   --  EE + 6 sub-CAs + root
-   Max_Pool_Size   : constant := 40;
    Max_Build_Calls : constant := 1000;  --  budget to prevent DoS
-   Max_Cert_DER    : constant := 8192;  --  max DER bytes per cert
-
-   --  Each pool entry holds a parsed cert and its own DER buffer
-   --  starting at index 0 (required by X509 span offsets).
-   subtype Cert_DER_Buf is X509.Byte_Seq (0 .. X509.N32 (Max_Cert_DER) - 1);
-
-   type Pool_Entry is record
-      Cert    : X509.Certificate;
-      DER     : Cert_DER_Buf;
-      DER_Len : X509.N32;
-      Present : Boolean;
-   end record;
-
-   type Cert_Pool is array (0 .. Max_Pool_Size - 1) of Pool_Entry;
-   type Used_Set  is array (0 .. Max_Pool_Size - 1) of Boolean;
 
    --  Build and validate a complete certificate chain.
    --

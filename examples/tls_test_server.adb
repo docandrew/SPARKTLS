@@ -19,7 +19,9 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
 
-with SPARKTLS;         use SPARKTLS;
+with X509;
+with SPARKTLS;             use SPARKTLS;
+with SPARKTLS.Cert_Verify;
 with SPARKTLS.Server;
 
 with PEM;
@@ -69,9 +71,8 @@ procedure TLS_Test_Server is
          return "";
    end Read_Text_File;
 
-   --  Session and config
+   --  Session
    S   : SPARKTLS.Session;
-   Cfg : SPARKTLS.Config;
    Res : SPARKTLS.Action;
 
    --  Network I/O buffers
@@ -82,6 +83,9 @@ procedure TLS_Test_Server is
    Cert_Buf : Byte_Seq (0 .. Max_Cert_DER_Len - 1) := (others => 0);
    Cert_Len : N32 := 0;
    Key_64   : Bytes_64 := (others => 0);
+
+   --  Identity (loaded from cert + key files)
+   Server_Id : aliased SPARKTLS.Identity;
 
    --  Socket
    Server_Sock : GNAT.Sockets.Socket_Type;
@@ -173,8 +177,23 @@ begin
    end;
    Put_Line ("Key: loaded");
 
-   --  Configure
-   Cfg.Random := My_Random'Unrestricted_Access;
+   --  Load identity from cert + key
+   declare
+      --  Convert Cert_Buf to X509.Byte_Seq for Set_Identity
+      X_Cert : X509.Byte_Seq (0 .. X509.N32 (Cert_Len) - 1);
+      Id_OK  : Boolean;
+   begin
+      for I in X_Cert'Range loop
+         X_Cert (I) := X509.Byte (Cert_Buf (N32 (I)));
+      end loop;
+      SPARKTLS.Cert_Verify.Set_Identity
+        (Server_Id, X_Cert, Key_64, Id_OK);
+      if not Id_OK then
+         Put_Line ("Failed to load identity");
+         return;
+      end if;
+   end;
+   Put_Line ("Identity: loaded");
 
    Put_Line ("=== SPARKTLS Test Server ===");
    Put_Line ("Listening on 0.0.0.0:8443...");
@@ -212,11 +231,10 @@ begin
       GNAT.Sockets.Image (Client_Addr));
 
    --  Initialize TLS server session
-   SPARKTLS.Server.Init
-     (S        => S,
-      Cfg      => Cfg,
-      Cert_DER => Cert_Buf (0 .. Cert_Len - 1),
-      Key      => Key_64);
+   SPARKTLS.Server.Configure
+     (S      => S,
+      Local  => Server_Id'Unchecked_Access,
+      Random => My_Random'Unrestricted_Access);
 
    Put_Line ("Server initialized, waiting for ClientHello...");
 
@@ -227,7 +245,7 @@ begin
       case Res is
          when SPARKTLS.Has_Output =>
             --  Drain output and send over socket
-            SPARKTLS.Drain_Output (S, Net_Buf, N);
+            SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
             if N > 0 then
                Put_Line (">> Sending" & N'Image & " bytes");
                Byte_Seq'Write (Channel, Net_Buf (0 .. N - 1));
@@ -251,7 +269,7 @@ begin
                      Put_Line ("<< Received" & N'Image &
                         " bytes (type:" & Net_Buf (0)'Image & ")");
 
-                     SPARKTLS.Feed_Input (S, Net_Buf (0 .. N - 1), N);
+                     SPARKTLS.Feed_Ciphertext (S, Net_Buf (0 .. N - 1), N);
                   end if;
                end;
             exception
@@ -290,7 +308,7 @@ begin
          when SPARKTLS.OK =>
             null;
 
-         when SPARKTLS.App_Data_Ready =>
+         when SPARKTLS.Plaintext_Ready =>
             null;
       end case;
    end loop Handshake_Loop;
@@ -313,16 +331,16 @@ begin
 
                   Put_Line ("<< Received" & N'Image &
                      " bytes (type:" & Net_Buf (0)'Image & ")");
-                  SPARKTLS.Feed_Input (S, Net_Buf (0 .. N - 1), N);
+                  SPARKTLS.Feed_Ciphertext (S, Net_Buf (0 .. N - 1), N);
 
                   SPARKTLS.Server.Advance (S, Res);
 
-                  if Res = SPARKTLS.App_Data_Ready then
+                  if Res = SPARKTLS.Plaintext_Ready then
                      declare
                         App_Buf : Byte_Seq (0 .. 4095);
                         App_N   : N32;
                      begin
-                        SPARKTLS.Read_App_Data (S, App_Buf, App_N);
+                        SPARKTLS.Read_Plaintext (S, App_Buf, App_N);
                         Put_Line ("Client data (" & App_N'Image & " bytes):");
                         declare
                            Msg : String (1 .. Integer (App_N));
@@ -337,11 +355,11 @@ begin
                         declare
                            Written : N32;
                         begin
-                           SPARKTLS.Server.Write_App_Data
+                           SPARKTLS.Server.Write_Plaintext
                              (S, App_Buf (0 .. App_N - 1), Written);
                            Put_Line ("Echoing" & Written'Image & " bytes back");
 
-                           SPARKTLS.Drain_Output (S, Net_Buf, N);
+                           SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
                            if N > 0 then
                               Put_Line (">> Sending" & N'Image & " bytes");
                               Byte_Seq'Write (Channel, Net_Buf (0 .. N - 1));
@@ -368,7 +386,7 @@ begin
 
       --  Send close_notify
       SPARKTLS.Server.Close_Notify (S);
-      SPARKTLS.Drain_Output (S, Net_Buf, N);
+      SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
       if N > 0 then
          begin
             Put_Line (">> Sending close_notify (" & N'Image & " bytes)");

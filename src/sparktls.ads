@@ -35,6 +35,8 @@ is
    --  Cipher suite
    --================================================================
 
+   type TLS_Role is (Role_Client, Role_Server);
+
    type Cipher_Suite is
      (TLS_AES_128_GCM_SHA256,
       TLS_CHACHA20_POLY1305_SHA256,
@@ -60,14 +62,20 @@ is
       Client_Hello_Sent,
       Wait_Server_Hello,
       Wait_Encrypted_Extensions,
+      Wait_Certificate_Request,   --  mTLS: optional CertificateRequest
       Wait_Certificate,
       Wait_Certificate_Verify,
       Wait_Server_Finished,
+      Client_Certificate_Sent,    --  mTLS: sent our Certificate
+      Client_Cert_Verify_Sent,    --  mTLS: sent our CertificateVerify
       Client_Finished_Sent,
 
       --  Server-side handshake
       Wait_Client_Hello,
       Server_Hello_Sent,
+      Sent_Certificate_Request,   --  mTLS: sent CertificateRequest
+      Wait_Client_Certificate,    --  mTLS: waiting for client cert
+      Wait_Client_Cert_Verify,    --  mTLS: waiting for client CertVerify
       Wait_Client_Finished,
 
       --  Post-handshake (both roles)
@@ -84,7 +92,7 @@ is
      (OK,             --  Progress made, call Advance again
       Need_Input,     --  Feed more bytes from the transport
       Has_Output,     --  Drain output and send over transport
-      App_Data_Ready, --  Decrypted app data available
+      Plaintext_Ready, --  Decrypted app data available
       Handshake_Done, --  Handshake complete, now Connected
       Shutdown,       --  Clean close complete
       Error_Alert);   --  Fatal error, see Last_Error
@@ -112,7 +120,7 @@ is
    --  I/O Buffer
    --
    --  Linear buffer with read/write cursors. The caller fills it
-   --  via Feed_Input and drains it via Drain_Output. Compacted
+   --  via Feed_Ciphertext and drains it via Drain_Ciphertext. Compacted
    --  when the read cursor advances past the midpoint.
    --
    --  This is the BIO equivalent: the TLS engine never touches
@@ -167,6 +175,95 @@ is
       procedure (Output : out Byte_Seq);
 
    --================================================================
+   --  Certificate pool types
+   --
+   --  Used by Trust_Store, Identity, and Validate_Chain.
+   --  Each pool entry holds a parsed cert and its own DER buffer
+   --  starting at index 0 (required by X509 span offsets).
+   --================================================================
+
+   Max_Pool_Size : constant := 40;
+   Max_Cert_DER  : constant := 8192;   --  max DER bytes per cert
+
+   subtype Cert_DER_Buf is X509.Byte_Seq (0 .. X509.N32 (Max_Cert_DER) - 1);
+
+   type Pool_Entry is record
+      Cert    : X509.Certificate;
+      DER     : Cert_DER_Buf;
+      DER_Len : X509.N32;
+      Present : Boolean;
+   end record;
+
+   type Cert_Pool is array (0 .. Max_Pool_Size - 1) of Pool_Entry;
+   type Used_Set  is array (0 .. Max_Pool_Size - 1) of Boolean;
+
+   --================================================================
+   --  Trust Store
+   --
+   --  Holds root CA certificates for chain validation.
+   --  Allocated once at application startup, shared across sessions
+   --  via Trust_Store_Access (access-to-constant, read-only).
+   --================================================================
+
+   type Trust_Store is record
+      Roots      : Cert_Pool;
+      Root_Count : Natural := 0;
+   end record;
+
+   type Trust_Store_Access is access constant Trust_Store;
+
+   --================================================================
+   --  Identity
+   --
+   --  Local certificate chain and signing key.  The signing algorithm
+   --  is inferred from the leaf certificate's public key algorithm.
+   --  Required for servers; optional for clients (mTLS only).
+   --  Allocated once, shared across sessions via Identity_Access.
+   --================================================================
+
+   type Signing_Algorithm is
+     (Sign_Ed25519, Sign_ECDSA_P256, Sign_ECDSA_P384, Sign_None);
+
+   type Identity is record
+      --  Leaf cert in X509 format (for chain validation)
+      Cert_DER     : X509.Byte_Seq (0 .. X509.N32 (Max_Cert_DER) - 1)
+                       := (others => 0);
+      Cert_DER_Len : X509.N32 := 0;
+      Cert         : X509.Certificate;
+      Cert_Valid   : Boolean := False;
+
+      --  Leaf cert in SPARKNaCl format (for handshake message building)
+      NaCl_Cert_DER : Byte_Seq (0 .. N32 (Max_Cert_DER) - 1)
+                        := (others => 0);
+      NaCl_Cert_Len : N32 := 0;
+
+      --  Intermediate certificates (sent to peer in Certificate message)
+      Ints         : Cert_Pool;
+      Int_Count    : Natural := 0;
+
+      --  Signing key (algorithm inferred from cert's PK_Algorithm)
+      Sign_Algo    : Signing_Algorithm := Sign_None;
+      Ed25519_Key  : Bytes_64 := (others => 0);
+      ECDSA_P256_Key : Bytes_32 := (others => 0);
+      ECDSA_P384_Key : Bytes_48 := (others => 0);
+
+      Has_Identity : Boolean := False;
+   end record;
+
+   type Identity_Access is access constant Identity;
+
+   --================================================================
+   --  Validation modes (used by Config and Cert_Verify)
+   --================================================================
+
+   --  Mode_RFC5280: RFC 5280 rules only.
+   --  Mode_WebPKI: RFC 5280 + CA/Browser Forum Baseline Requirements.
+   type Validation_Mode is (Mode_RFC5280, Mode_WebPKI);
+
+   --  Validation purpose (controls EKU requirements on the leaf)
+   type Validation_Purpose is (Purpose_Server, Purpose_Client, Purpose_Any);
+
+   --================================================================
    --  Configuration (set once before Init)
    --================================================================
 
@@ -174,7 +271,24 @@ is
       Suite        : Cipher_Suite    := TLS_CHACHA20_POLY1305_SHA256;
       Random       : Random_Bytes_Fn := null;
       Server_Name  : Hostname_Buf;
-      Skip_Verify  : Boolean         := False;  --  -k: accept any cert
+      Skip_Verify  : Boolean         := False;  --  accept any cert
+
+      --  Validation settings
+      Verify_Mode     : Validation_Mode := Mode_WebPKI;
+      Verify_Purpose  : Validation_Purpose := Purpose_Server;
+      Validation_Time : X509.Date_Time := (2025, 6, 15, 12, 0, 0);
+
+      --  Trust store for verifying the peer's certificate chain.
+      --  Required for client (unless Skip_Verify).
+      --  Optional for server (only needed for mTLS).
+      Trust : Trust_Store_Access := null;
+
+      --  Local identity (certificate + signing key).
+      --  Required for server.  Optional for client (mTLS only).
+      Local : Identity_Access := null;
+
+      --  Server: request a client certificate (mTLS).
+      Request_Client_Cert : Boolean := False;
    end record;
 
    --================================================================
@@ -184,11 +298,11 @@ is
    --  allocations. Intended for stack or caller-managed heap.
    --
    --  The caller interacts with a Session exclusively through:
-   --    Feed_Input   - push received bytes into Input buffer
-   --    Drain_Output - pull bytes to send from Output buffer
+   --    Feed_Ciphertext   - push received bytes into Input buffer
+   --    Drain_Ciphertext - pull bytes to send from Output buffer
    --    Advance      - step the state machine (in Client/Server)
-   --    Write_App_Data  - encrypt and queue application data
-   --    Read_App_Data   - read decrypted application data
+   --    Write_Plaintext  - encrypt and queue application data
+   --    Read_Plaintext   - read decrypted application data
    --    Close_Notify    - initiate clean shutdown
    --================================================================
 
@@ -197,7 +311,7 @@ is
       Cfg          : Config;
       State        : Connection_State := Idle;
       Last_Error   : Error_Code       := No_Error;
-      Is_Client    : Boolean          := True;
+      Role         : TLS_Role         := Role_Client;
 
       --  I/O buffers
       Input        : IO_Buffer;
@@ -253,14 +367,9 @@ is
       Peer_Cert         : X509.Certificate;
       Peer_Cert_Valid   : Boolean := False;
 
-      --  Local certificate (server mode)
-      Local_Cert_DER     : Byte_Seq (0 .. Max_Cert_DER_Len - 1)
-                             := (others => 0);
-      Local_Cert_DER_Len : N32 := 0;
-
-      --  Server signing key (server mode, Ed25519)
-      Signing_Key        : Bytes_64 := (others => 0);
-      Signing_Key_Valid  : Boolean  := False;
+      --  Peer intermediate certificates (from Certificate message)
+      Peer_Ints     : Cert_Pool;
+      Peer_Int_Count : Natural := 0;
 
       --  Decrypted application data staging area
       App_Data     : Byte_Seq (0 .. Max_Record_Plaintext - 1)
@@ -274,7 +383,8 @@ is
       Legacy_Session_ID : Bytes_32 := (others => 0);
 
       --  Handshake tracking
-      CCS_Received : Boolean := False;
+      CCS_Received          : Boolean := False;
+      Cert_Request_Received : Boolean := False;  --  mTLS: server asked for cert
 
       --  RFLX scratch buffers (reused for each serialize/parse operation)
       RFLX_Main : aliased RFLX.RFLX_Builtin_Types.Bytes
@@ -292,7 +402,7 @@ is
    --  Push received bytes into the session's input buffer.
    --  Returns the number of bytes actually consumed (may be less
    --  than Data'Length if the buffer is nearly full).
-   procedure Feed_Input
+   procedure Feed_Ciphertext
      (S         : in out Session;
       Data      : in     Byte_Seq;
       Bytes_Fed :    out N32)
@@ -302,7 +412,7 @@ is
 
    --  Pull bytes from the session's output buffer to send.
    --  Returns the number of bytes written into Dest.
-   procedure Drain_Output
+   procedure Drain_Ciphertext
      (S              : in out Session;
       Dest           :    out Byte_Seq;
       Bytes_Drained  :    out N32)
@@ -319,11 +429,11 @@ is
       (Available (S.Input));
 
    --  Is decrypted application data waiting to be read?
-   function Has_App_Data (S : Session) return Boolean is
+   function Has_Plaintext (S : Session) return Boolean is
       (S.App_Data_Len > 0);
 
    --  Read decrypted application data.
-   procedure Read_App_Data
+   procedure Read_Plaintext
      (S          : in out Session;
       Dest       :    out Byte_Seq;
       Bytes_Read :    out N32)

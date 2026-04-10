@@ -7,7 +7,8 @@ with SPARKNaCl.MAC;              use SPARKNaCl.MAC;
 with SPARKNaCl.Sign;
 with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
 
-with SPARKTLS.Records;  use SPARKTLS.Records;
+with SPARKTLS.Records;      use SPARKTLS.Records;
+with SPARKTLS.Cert_Verify;  use SPARKTLS.Cert_Verify;
 with SPARKTLS.Handshake;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.HMAC384;
@@ -24,6 +25,9 @@ package body SPARKTLS.Client with
 is
    --  Forward declarations for internal procedures
    procedure Derive_Handshake_Keys (S : in out Session);
+   procedure Send_Client_Certificate
+     (S      : in out Session;
+      Result :    out Action);
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
       Result :    out Action);
@@ -73,6 +77,28 @@ is
       return H;
    end Transcript_Hash_384;
 
+   procedure Configure
+     (S        : out Session;
+      Hostname : String;
+      Trust    : Trust_Store_Access;
+      Random   : Random_Bytes_Fn;
+      Local    : Identity_Access := null)
+   is
+      Cfg : Config;
+   begin
+      Cfg.Random      := Random;
+      Cfg.Trust       := Trust;
+      Cfg.Local       := Local;
+      Cfg.Skip_Verify := Trust = null;
+      if Hostname'Length > 0
+         and then Hostname'Length <= Max_Hostname_Len
+      then
+         Cfg.Server_Name.Data (1 .. Hostname'Length) := Hostname;
+         Cfg.Server_Name.Len := Hostname'Length;
+      end if;
+      Init (S, Cfg);
+   end Configure;
+
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
@@ -83,7 +109,7 @@ is
    begin
       S := (Cfg       => Cfg,
             State     => Client_Hello_Sent,
-            Is_Client => True,
+            Role => Role_Client,
             others    => <>);
 
       --  Build ClientHello handshake message
@@ -137,55 +163,157 @@ is
             Append_Transcript (S, Data);
             S.State := Wait_Certificate;
 
+         when Handshake.HT_Certificate_Request =>
+            --  mTLS: server requests a client certificate.
+            --  Record in transcript and set flag; we'll send our cert
+            --  after the server's Finished message.
+            Append_Transcript (S, Data);
+            S.Cert_Request_Received := True;
+            --  Stay in Wait_Certificate (server Certificate comes next)
+
          when Handshake.HT_Certificate =>
-            --  Compute transcript hash BEFORE adding cert to transcript
-            --  (needed later for CertificateVerify)
             Append_Transcript (S, Data);
 
-            --  Parse certificate from payload (offset 4 past HS header)
+            --  Parse Certificate message: extract leaf + intermediates.
+            --  Format (past HS header at offset 4):
+            --    request_context_len(1) + context +
+            --    cert_list_len(3) + entries...
+            --  Each entry: cert_len(3) + cert_DER + ext_len(2) + exts
+            S.Peer_Cert_Valid := False;
+            S.Peer_Int_Count := 0;
             if Msg_Len > 4 and then N32 (Data'Length) >= 4 + Msg_Len then
                declare
-                  Cert_Data : Byte_Seq renames
-                     Data (4 .. 3 + Msg_Len);
-                  --  Certificate message: request_context(1) +
-                  --  cert_list_len(3) + cert_len(3) + cert + extensions
-                  Cert_Len  : N32;
+                  B   : constant N32 := 4;  --  past HS header
+                  --  Skip request_context (1-byte len + content)
+                  Ctx_Len : constant N32 := N32 (Data (B));
+                  List_Start : constant N32 := B + 1 + Ctx_Len;
+                  Pos : N32;
+                  Cert_Idx : Natural := 0;  --  0 = leaf, 1+ = intermediates
                begin
-                  if Cert_Data'Length >= 7 then
-                     declare
-                        B : constant N32 := Cert_Data'First;
-                     begin
-                     --  Skip Certs_Len (B+1..B+3), get individual cert length
-                     Cert_Len  := N32 (Cert_Data (B + 4)) * 65536 +
-                                  N32 (Cert_Data (B + 5)) * 256 +
-                                  N32 (Cert_Data (B + 6));
+                  if List_Start + 3 <= N32 (Data'Length) then
+                     --  cert_list length (3 bytes)
+                     Pos := List_Start + 3;
 
-                     if Cert_Len > 0 and then
-                        Cert_Len <= Max_Cert_DER_Len and then
-                        7 + Cert_Len <= N32 (Cert_Data'Length)
-                     then
-                        --  Save raw DER
-                        S.Peer_Cert_DER_Len := Cert_Len;
-                        S.Peer_Cert_DER (0 .. Cert_Len - 1) :=
-                           Cert_Data (B + 7 .. B + 6 + Cert_Len);
-
-                        --  Parse certificate using new X509 parser
+                     --  Walk each certificate entry
+                     while Pos + 3 <= N32 (Data'Length)
+                        and then Cert_Idx <= Max_Pool_Size
+                     loop
                         declare
-                           Cert_DER_0 : X509.Byte_Seq
-                              (0 .. X509.N32 (Cert_Len) - 1);
-                           Parse_OK : Boolean;
+                           C_Len : constant N32 :=
+                              N32 (Data (Pos)) * 65536 +
+                              N32 (Data (Pos + 1)) * 256 +
+                              N32 (Data (Pos + 2));
                         begin
-                           for I in N32 range 0 .. Cert_Len - 1 loop
-                              Cert_DER_0 (X509.N32 (I)) :=
-                                 X509.Byte (Cert_Data (B + 7 + I));
-                           end loop;
-                           X509.Parse
-                             (Cert_DER_0, S.Peer_Cert, Parse_OK);
-                           S.Peer_Cert_Valid := Parse_OK and then
-                              X509.Is_Valid (S.Peer_Cert);
+                           Pos := Pos + 3;
+                           exit when C_Len = 0
+                              or else C_Len > N32 (Max_Cert_DER)
+                              or else Pos + C_Len > N32 (Data'Length);
+
+                           if Cert_Idx = 0 then
+                              --  First entry is the leaf
+                              S.Peer_Cert_DER_Len := C_Len;
+                              S.Peer_Cert_DER (0 .. C_Len - 1) :=
+                                 Data (Pos .. Pos + C_Len - 1);
+
+                              declare
+                                 Cert_X : X509.Byte_Seq
+                                    (0 .. X509.N32 (C_Len) - 1);
+                                 P_OK : Boolean;
+                              begin
+                                 for I in N32 range 0 .. C_Len - 1 loop
+                                    Cert_X (X509.N32 (I)) :=
+                                       X509.Byte (Data (Pos + I));
+                                 end loop;
+                                 X509.Parse (Cert_X, S.Peer_Cert, P_OK);
+                                 S.Peer_Cert_Valid := P_OK
+                                    and then X509.Is_Valid (S.Peer_Cert);
+                              end;
+                           else
+                              --  Subsequent entries are intermediates
+                              if S.Peer_Int_Count < Max_Pool_Size then
+                                 declare
+                                    Idx : constant Natural :=
+                                       S.Peer_Int_Count;
+                                    Int_X : X509.Byte_Seq
+                                       (0 .. X509.N32 (C_Len) - 1);
+                                    C   : X509.Certificate;
+                                    P_OK : Boolean;
+                                 begin
+                                    for I in N32 range 0 .. C_Len - 1 loop
+                                       Int_X (X509.N32 (I)) :=
+                                          X509.Byte (Data (Pos + I));
+                                    end loop;
+                                    X509.Parse (Int_X, C, P_OK);
+                                    if P_OK and then X509.Is_Valid (C) then
+                                       S.Peer_Ints (Idx).Cert := C;
+                                       for I in X509.N32 range
+                                          0 .. X509.N32 (C_Len) - 1
+                                       loop
+                                          S.Peer_Ints (Idx).DER (I) :=
+                                             X509.Byte (Data (Pos + N32 (I)));
+                                       end loop;
+                                       S.Peer_Ints (Idx).DER_Len :=
+                                          X509.N32 (C_Len);
+                                       S.Peer_Ints (Idx).Present := True;
+                                       S.Peer_Int_Count :=
+                                          S.Peer_Int_Count + 1;
+                                    end if;
+                                 end;
+                              end if;
+                           end if;
+
+                           Pos := Pos + C_Len;
+                           Cert_Idx := Cert_Idx + 1;
+
+                           --  Skip per-cert extensions (2-byte length)
+                           exit when Pos + 2 > N32 (Data'Length);
+                           declare
+                              Ext_Len : constant N32 :=
+                                 N32 (Data (Pos)) * 256 +
+                                 N32 (Data (Pos + 1));
+                           begin
+                              Pos := Pos + 2 + Ext_Len;
+                           end;
                         end;
-                     end if;
-                     end;
+                     end loop;
+                  end if;
+               end;
+            end if;
+
+            --  Chain validation (if trust store is configured)
+            if not S.Cfg.Skip_Verify
+               and then S.Cfg.Trust /= null
+               and then S.Peer_Cert_Valid
+            then
+               declare
+                  Cert_X : X509.Byte_Seq
+                     (0 .. X509.N32 (S.Peer_Cert_DER_Len) - 1);
+                  VR : Validation_Result;
+               begin
+                  --  Copy peer DER to X509.Byte_Seq for Validate_Chain
+                  for I in N32 range 0 .. S.Peer_Cert_DER_Len - 1 loop
+                     Cert_X (X509.N32 (I)) :=
+                        X509.Byte (S.Peer_Cert_DER (I));
+                  end loop;
+
+                  VR := Validate_Chain
+                    (Leaf_DER   => Cert_X,
+                     Leaf       => S.Peer_Cert,
+                     Ints       => S.Peer_Ints,
+                     Int_Count  => S.Peer_Int_Count,
+                     Roots      => S.Cfg.Trust.Roots,
+                     Root_Count => S.Cfg.Trust.Root_Count,
+                     Now        => S.Cfg.Validation_Time,
+                     Hostname   =>
+                        S.Cfg.Server_Name.Data (1 .. S.Cfg.Server_Name.Len),
+                     Purpose    => S.Cfg.Verify_Purpose,
+                     Mode       => S.Cfg.Verify_Mode);
+
+                  if VR /= Valid then
+                     S.Last_Error := Bad_Certificate;
+                     S.State := Error_State;
+                     Result := Error_Alert;
+                     return;
                   end if;
                end;
             end if;
@@ -743,6 +871,112 @@ is
       end case;
    end Process_Handshake_Message;
 
+   --  mTLS: send client Certificate + CertificateVerify if requested.
+   --  Called before sending Client Finished.
+   procedure Send_Client_Certificate
+     (S      : in out Session;
+      Result :    out Action)
+   is
+      Enc_Out : N32;
+   begin
+      Result := OK;
+
+      if not S.Cert_Request_Received then
+         return;
+      end if;
+
+      if S.Cfg.Local = null or else not S.Cfg.Local.Has_Identity then
+         --  Server requested cert but we have none.
+         --  Send empty Certificate message (allowed by RFC 8446 §4.4.2).
+         declare
+            Empty_Cert : Byte_Seq (0 .. 7);
+         begin
+            --  HS header: type=Certificate(0x0B), length=4
+            Empty_Cert (0) := Handshake.HT_Certificate;
+            Empty_Cert (1) := 0;
+            Empty_Cert (2) := 0;
+            Empty_Cert (3) := 4;
+            --  Body: context_len=0, cert_list_len=0
+            Empty_Cert (4) := 0;  --  context length
+            Empty_Cert (5) := 0;  --  list length (3 bytes)
+            Empty_Cert (6) := 0;
+            Empty_Cert (7) := 0;
+
+            Append_Transcript (S, Empty_Cert);
+            Records.Build_Encrypted_Record
+              (Plaintext  => Empty_Cert,
+               Inner_Type => 16#16#,
+               Keys       => S.Client_HS,
+               Output     => S.Output,
+               Bytes_Out  => Enc_Out);
+         end;
+         return;
+      end if;
+
+      --  Send our Certificate
+      declare
+         Cert_Buf : Byte_Seq (0 .. S.Cfg.Local.NaCl_Cert_Len + 15);
+         Cert_Len : N32;
+      begin
+         Handshake.Build_Certificate
+           (Cert_DER => S.Cfg.Local.NaCl_Cert_DER,
+            Cert_Len => S.Cfg.Local.NaCl_Cert_Len,
+            Result   => Cert_Buf,
+            Len      => Cert_Len);
+
+         if Cert_Len > 0 then
+            Append_Transcript (S, Cert_Buf (0 .. Cert_Len - 1));
+            Records.Build_Encrypted_Record
+              (Plaintext  => Cert_Buf (0 .. Cert_Len - 1),
+               Inner_Type => 16#16#,
+               Keys       => S.Client_HS,
+               Output     => S.Output,
+               Bytes_Out  => Enc_Out);
+         end if;
+      end;
+
+      --  Send CertificateVerify
+      if S.Cfg.Local.Sign_Algo = Sign_Ed25519 then
+         declare
+            H_Len : constant N32 := S.Hash_Len;
+            CV_Hash : Byte_Seq (0 .. H_Len - 1);
+         begin
+            case S.Negotiated_Suite is
+               when Suite_AES_256_GCM_SHA384 =>
+                  CV_Hash := Transcript_Hash_384 (S);
+               when others =>
+                  declare
+                     H : constant Digest := Transcript_Hash_256 (S);
+                  begin
+                     CV_Hash := H;
+                  end;
+            end case;
+
+            declare
+               CV_Buf : Byte_Seq (0 .. 199);
+               CV_Len : N32;
+            begin
+               Handshake.Build_Certificate_Verify
+                 (Transcript_Hash => CV_Hash,
+                  Signing_Key     => S.Cfg.Local.Ed25519_Key,
+                  Role            => Role_Client,
+                  Result          => CV_Buf,
+                  Len             => CV_Len);
+
+               if CV_Len > 0 then
+                  Append_Transcript (S, CV_Buf (0 .. CV_Len - 1));
+                  Records.Build_Encrypted_Record
+                    (Plaintext  => CV_Buf (0 .. CV_Len - 1),
+                     Inner_Type => 16#16#,
+                     Keys       => S.Client_HS,
+                     Output     => S.Output,
+                     Bytes_Out  => Enc_Out);
+               end if;
+            end;
+         end;
+      end if;
+   end Send_Client_Certificate;
+
    --  After verifying server Finished, derive app keys and send client Finished
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
@@ -753,8 +987,16 @@ is
       CCS_Out      : N32;
       Enc_Out      : N32;
       Verify_32    : Bytes_32;
+      Cert_Result  : Action;
    begin
       Result := OK;
+
+      --  mTLS: send client certificate before Finished if requested
+      Send_Client_Certificate (S, Cert_Result);
+      if Cert_Result = Error_Alert then
+         Result := Error_Alert;
+         return;
+      end if;
 
       case S.Negotiated_Suite is
       when Suite_AES_256_GCM_SHA384 =>
@@ -1334,7 +1576,7 @@ is
                                S.App_Data_Len + Plain_Len - 1) :=
                      Plaintext (0 .. Plain_Len - 1);
                   S.App_Data_Len := S.App_Data_Len + Plain_Len;
-                  Result := App_Data_Ready;
+                  Result := Plaintext_Ready;
                else
                   Result := OK;
                end if;
@@ -1362,7 +1604,7 @@ is
       end;
    end Process_Connected;
 
-   procedure Write_App_Data
+   procedure Write_Plaintext
      (S              : in out Session;
       Plaintext      : in     Byte_Seq;
       Bytes_Written  :    out N32)
@@ -1381,7 +1623,7 @@ is
       else
          Bytes_Written := 0;
       end if;
-   end Write_App_Data;
+   end Write_Plaintext;
 
    procedure Close_Notify (S : in out Session) is
       Alert_Out : N32;

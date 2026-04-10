@@ -154,7 +154,7 @@ procedure TLS_Fetch is
          if Rec_Len > 0 and Rec_Len <= 16640 then
             Byte_Seq'Read (Channel, Net_Buf (5 .. 4 + Rec_Len));
             N := 5 + Rec_Len;
-            SPARKTLS.Feed_Input (S, Net_Buf (0 .. N - 1), N);
+            SPARKTLS.Feed_Ciphertext (S, Net_Buf (0 .. N - 1), N);
          else
             Done := True;
          end if;
@@ -166,7 +166,6 @@ procedure TLS_Fetch is
 
    --  Session and config
    S   : SPARKTLS.Session;
-   Cfg : SPARKTLS.Config;
    Res : SPARKTLS.Action;
 
    --  Network I/O buffer
@@ -237,13 +236,7 @@ begin
          Put_Line ("* Path: " & Pathstr);
       end if;
 
-      --  Configure TLS
-      Cfg.Random := My_Random'Unrestricted_Access;
-      Cfg.Skip_Verify := Insecure;
-      for I in Hostname'Range loop
-         Cfg.Server_Name.Data (I) := Hostname (I);
-      end loop;
-      Cfg.Server_Name.Len := Hostname'Length;
+      null;  --  TLS configured below after TCP connect
 
       --  DNS resolve
       if Verbose then
@@ -282,14 +275,20 @@ begin
       end if;
 
       --  TLS handshake
-      SPARKTLS.Client.Init (S, Cfg);
+      --  TODO: when not Insecure, load system roots into Roots
+      --  and pass Roots'Unchecked_Access as Trust.
+      SPARKTLS.Client.Configure
+        (S        => S,
+         Hostname => Hostname,
+         Trust    => (if Insecure then null else null),  --  TODO: load roots
+         Random   => My_Random'Unrestricted_Access);
 
       Handshake : loop
          SPARKTLS.Client.Advance (S, Res);
 
          case Res is
             when SPARKTLS.Has_Output =>
-               SPARKTLS.Drain_Output (S, Net_Buf, N);
+               SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
                if N > 0 then
                   Byte_Seq'Write (Channel, Net_Buf (0 .. N - 1));
                end if;
@@ -323,9 +322,9 @@ begin
                end if;
                exit Handshake;
 
-            when SPARKTLS.App_Data_Ready =>
+            when SPARKTLS.Plaintext_Ready =>
                --  Discard early data during handshake
-               SPARKTLS.Read_App_Data (S, Net_Buf, N);
+               SPARKTLS.Read_Plaintext (S, Net_Buf, N);
 
             when SPARKTLS.Error_Alert =>
                Put_Line ("TLS error: " & S.Last_Error'Image);
@@ -358,8 +357,8 @@ begin
                Read_Record (Channel, S, Net_Buf, Done);
                exit Post_HS when Done;
                SPARKTLS.Client.Advance (S, Res);
-               if Res = SPARKTLS.App_Data_Ready then
-                  SPARKTLS.Read_App_Data (S, Net_Buf, N);
+               if Res = SPARKTLS.Plaintext_Ready then
+                  SPARKTLS.Read_Plaintext (S, Net_Buf, N);
                end if;
             end;
          end loop Post_HS;
@@ -402,8 +401,8 @@ begin
                end;
             end if;
 
-            SPARKTLS.Client.Write_App_Data (S, Req_Bytes, Written);
-            SPARKTLS.Drain_Output (S, Net_Buf, N);
+            SPARKTLS.Client.Write_Plaintext (S, Req_Bytes, Written);
+            SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
             if N > 0 then
                Byte_Seq'Write (Channel, Net_Buf (0 .. N - 1));
             end if;
@@ -428,8 +427,8 @@ begin
                   SPARKTLS.Client.Advance (S, Res);
 
                   case Res is
-                     when SPARKTLS.App_Data_Ready =>
-                        SPARKTLS.Read_App_Data (S, App_Buf, App_N);
+                     when SPARKTLS.Plaintext_Ready =>
+                        SPARKTLS.Read_Plaintext (S, App_Buf, App_N);
                         if App_N > 0 then
                            --  Print response bytes
                            for I in N32 range 0 .. App_N - 1 loop
@@ -469,7 +468,7 @@ begin
                         end if;
 
                      when SPARKTLS.Has_Output =>
-                        SPARKTLS.Drain_Output (S, Net_Buf, N);
+                        SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
                         if N > 0 then
                            Byte_Seq'Write (Channel, Net_Buf (0 .. N - 1));
                         end if;
@@ -499,7 +498,7 @@ begin
          --  Clean shutdown
          if S.State = SPARKTLS.Connected then
             SPARKTLS.Client.Close_Notify (S);
-            SPARKTLS.Drain_Output (S, Net_Buf, N);
+            SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
             if N > 0 then
                begin
                   Byte_Seq'Write (Channel, Net_Buf (0 .. N - 1));

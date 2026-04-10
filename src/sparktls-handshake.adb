@@ -24,6 +24,9 @@ with RFLX.TLS_Handshake.Certificate;
 with RFLX.TLS_Handshake.Certificate_Entries;
 with RFLX.TLS_Handshake.Certificate_Entry;
 with RFLX.TLS_Handshake.Certificate_Verify;
+with RFLX.TLS_Handshake.Certificate_Request;
+with RFLX.TLS_Handshake.CR_Extensions;
+with RFLX.TLS_Handshake.CR_Extension;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
 with SPARKTLS.P256.Point;
@@ -1284,13 +1287,17 @@ is
    procedure Build_Certificate_Verify
      (Transcript_Hash : in     Byte_Seq;
       Signing_Key     : in     Bytes_64;
+      Role            : in     TLS_Role;
       Result          :    out Byte_Seq;
       Len             :    out N32)
    is
       use RFLX.TLS_Handshake.Certificate_Verify;
 
+      --  RFC 8446 §4.4.3: context strings (both 34 chars)
       Context_Str : constant String :=
-         "TLS 1.3, server CertificateVerify";
+         (if Role = Role_Server
+          then "TLS 1.3, server CertificateVerify"
+          else "TLS 1.3, client CertificateVerify");
       H_Len       : constant N32 := N32 (Transcript_Hash'Length);
       Content_Len : constant N32 := 64 + N32 (Context_Str'Length) + 1 + H_Len;
       SM_Len      : constant N32 := 64 + Content_Len;
@@ -1347,5 +1354,97 @@ is
 
       Len := Msg_Len;
    end Build_Certificate_Verify;
+
+   --================================================================
+   --  Build_Certificate_Request (mTLS)
+   --  Uses RFLX Certificate_Request serializer.
+   --================================================================
+   procedure Build_Certificate_Request
+     (Result :    out Byte_Seq;
+      Len    :    out N32)
+   is
+      use RFLX.TLS_Handshake.Certificate_Request;
+      use RFLX.Tls_Extensiontype_Values;
+
+      --  signature_algorithms extension data:
+      --    algo_list_length(2) + Ed25519(2) + P256-SHA256(2) + P384-SHA384(2) = 8
+      Sig_Algo_Data : constant RBT.Bytes (1 .. 8) :=
+        (1 => 0, 2 => 6,           --  algo list length = 6
+         3 => 16#08#, 4 => 16#07#,  --  Ed25519
+         5 => 16#04#, 6 => 16#03#,  --  ECDSA-P256-SHA256
+         7 => 16#05#, 8 => 16#03#); --  ECDSA-P384-SHA384
+
+      --  Extension: type(2) + data_len(2) + data(8) = 12
+      Ext_Len   : constant N32 := 12;
+      --  Body: context_len(1) + ext_list_len(2) + extension(12) = 15
+      Body_Len  : constant N32 := 1 + 2 + Ext_Len;
+      Msg_Len   : constant N32 := 4 + Body_Len;
+      Ctx : Context;
+   begin
+      Result := (others => 0);
+      Len := 0;
+
+      if Msg_Len > N32 (Result'Length) then
+         return;
+      end if;
+
+      declare
+         Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Body_Len));
+         Buf : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
+      begin
+         Buf_Arr := (others => 0);
+         Initialize (Ctx, Buf);
+
+         --  Empty certificate_request_context
+         Set_Certificate_Request_Context_Length (Ctx, 0);
+         Set_Certificate_Request_Context_Empty (Ctx);
+
+         --  Extensions
+         Set_Extensions_Length
+           (Ctx, RFLX.TLS_Handshake.Certificate_Request_Extensions_Length
+                    (Ext_Len));
+
+         declare
+            Ext_Seq_Ctx : RFLX.TLS_Handshake.CR_Extensions.Context;
+         begin
+            Switch_To_Extensions (Ctx, Ext_Seq_Ctx);
+
+            --  Build signature_algorithms extension
+            declare
+               E_Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Ext_Len));
+               E_Buf : RBT.Bytes_Ptr := E_Buf_Arr'Unrestricted_Access;
+               E_Ctx : RFLX.TLS_Handshake.CR_Extension.Context;
+            begin
+               E_Buf_Arr := (others => 0);
+               RFLX.TLS_Handshake.CR_Extension.Initialize (E_Ctx, E_Buf);
+               RFLX.TLS_Handshake.CR_Extension.Set_Tag
+                 (E_Ctx, Signature_Algorithms);
+               RFLX.TLS_Handshake.CR_Extension.Set_Data_Length
+                 (E_Ctx, RFLX.TLS_Handshake.Data_Length
+                            (Sig_Algo_Data'Length));
+               RFLX.TLS_Handshake.CR_Extension.Set_Data
+                 (E_Ctx, Sig_Algo_Data);
+               RFLX.TLS_Handshake.CR_Extensions.Append_Element
+                 (Ext_Seq_Ctx, E_Ctx);
+               RFLX.TLS_Handshake.CR_Extension.Take_Buffer
+                 (E_Ctx, E_Buf);
+            end;
+
+            Update_Extensions (Ctx, Ext_Seq_Ctx);
+         end;
+
+         Take_Buffer (Ctx, Buf);
+
+         --  Prepend handshake header
+         Result (0) := HT_Certificate_Request;
+         Result (1) := Byte (Body_Len / 65536);
+         Result (2) := Byte ((Body_Len / 256) mod 256);
+         Result (3) := Byte (Body_Len mod 256);
+         Result (4 .. 4 + Body_Len - 1) :=
+            To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+      end;
+
+      Len := Msg_Len;
+   end Build_Certificate_Request;
 
 end SPARKTLS.Handshake;

@@ -14,6 +14,7 @@ is
    HT_Server_Hello        : constant Byte := 16#02#;
    HT_Encrypted_Extensions : constant Byte := 16#08#;
    HT_Certificate         : constant Byte := 16#0B#;
+   HT_Certificate_Request : constant Byte := 16#0D#;
    HT_Certificate_Verify  : constant Byte := 16#0F#;
    HT_Finished            : constant Byte := 16#14#;
 
@@ -117,9 +118,12 @@ is
    --  Build a CertificateVerify message using Ed25519.
    --  Transcript_Hash is the hash of transcript up to (but not including)
    --  CertificateVerify.
+   --  Build a CertificateVerify message using Ed25519.
+   --  Role controls the context string used in the signature.
    procedure Build_Certificate_Verify
      (Transcript_Hash : in     Byte_Seq;
       Signing_Key     : in     Bytes_64;
+      Role            : in     TLS_Role;
       Result          :    out Byte_Seq;
       Len             :    out N32)
    with Pre => Result'First = 0
@@ -127,5 +131,17 @@ is
                and Transcript_Hash'First = 0
                and (Transcript_Hash'Length = 32
                     or Transcript_Hash'Length = 48);
+
+   --================================================================
+   --  mTLS support
+   --================================================================
+
+   --  Build a CertificateRequest handshake message (server → client).
+   --  Minimal: empty certificate_request_context, signature_algorithms
+   --  extension listing Ed25519, ECDSA-P256-SHA256, ECDSA-P384-SHA384.
+   procedure Build_Certificate_Request
+     (Result :    out Byte_Seq;
+      Len    :    out N32)
+   with Pre => Result'First = 0 and N32 (Result'Length) >= 32;
 
 end SPARKTLS.Handshake;

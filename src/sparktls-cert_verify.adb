@@ -612,6 +612,230 @@ is
    end Validate_Leaf_Policy;
 
    --================================================================
+   --  Trust Store helpers
+   --================================================================
+
+   --  Internal: parse DER and add to a pool at a given index.
+   procedure Add_To_Pool
+     (Pool  : in out Cert_Pool;
+      Index : Natural;
+      DER   : X509.Byte_Seq;
+      OK    : out Boolean)
+   is
+      C    : X509.Certificate;
+      P_OK : Boolean;
+   begin
+      OK := False;
+      if DER'Length = 0
+         or else X509.N32 (DER'Length) > X509.N32 (Max_Cert_DER)
+         or else Index > Pool'Last
+      then
+         return;
+      end if;
+
+      X509.Parse (DER, C, P_OK);
+      if not P_OK or else not X509.Is_Valid (C) then
+         return;
+      end if;
+
+      Pool (Index).Cert := C;
+      Pool (Index).DER (0 .. X509.N32 (DER'Length) - 1) := DER;
+      Pool (Index).DER_Len := X509.N32 (DER'Length);
+      Pool (Index).Present := True;
+      OK := True;
+   end Add_To_Pool;
+
+   procedure Add_Root
+     (Store : in out Trust_Store;
+      DER   : X509.Byte_Seq;
+      OK    : out Boolean)
+   is
+   begin
+      OK := False;
+      if Store.Root_Count >= Max_Pool_Size then
+         return;
+      end if;
+      Add_To_Pool (Store.Roots, Store.Root_Count, DER, OK);
+      if OK then
+         Store.Root_Count := Store.Root_Count + 1;
+      end if;
+   end Add_Root;
+
+   procedure Load_Roots
+     (Store  : out Trust_Store;
+      DER    : X509.Byte_Seq;
+      Loaded : out Natural;
+      OK     : out Boolean)
+   is
+      use type X509.N32;
+      Pos : X509.N32 := DER'First;
+   begin
+      Store := (Roots => <>, Root_Count => 0);
+      Loaded := 0;
+      OK := True;
+
+      while Pos <= DER'Last and Store.Root_Count < Max_Pool_Size loop
+         --  Each cert starts with SEQUENCE tag (0x30)
+         if DER (Pos) /= 16#30# then
+            OK := Loaded > 0;
+            return;
+         end if;
+
+         --  Parse DER length to find the end of this certificate
+         declare
+            Len_Pos : X509.N32 := Pos + 1;
+            Cert_Len : X509.N32;
+            Hdr_Len  : X509.N32;
+         begin
+            if Len_Pos > DER'Last then
+               OK := Loaded > 0;
+               return;
+            end if;
+
+            if DER (Len_Pos) < 16#80# then
+               --  Short form length
+               Cert_Len := X509.N32 (DER (Len_Pos));
+               Hdr_Len := 2;
+            elsif DER (Len_Pos) = 16#81# then
+               --  Long form, 1 byte
+               if Len_Pos + 1 > DER'Last then
+                  OK := Loaded > 0; return;
+               end if;
+               Cert_Len := X509.N32 (DER (Len_Pos + 1));
+               Hdr_Len := 3;
+            elsif DER (Len_Pos) = 16#82# then
+               --  Long form, 2 bytes
+               if Len_Pos + 2 > DER'Last then
+                  OK := Loaded > 0; return;
+               end if;
+               Cert_Len := X509.N32 (DER (Len_Pos + 1)) * 256
+                         + X509.N32 (DER (Len_Pos + 2));
+               Hdr_Len := 4;
+            elsif DER (Len_Pos) = 16#83# then
+               --  Long form, 3 bytes
+               if Len_Pos + 3 > DER'Last then
+                  OK := Loaded > 0; return;
+               end if;
+               Cert_Len := X509.N32 (DER (Len_Pos + 1)) * 65536
+                         + X509.N32 (DER (Len_Pos + 2)) * 256
+                         + X509.N32 (DER (Len_Pos + 3));
+               Hdr_Len := 5;
+            else
+               OK := Loaded > 0;
+               return;
+            end if;
+
+            declare
+               Total : constant X509.N32 := Hdr_Len + Cert_Len;
+            begin
+               if Total > X509.N32 (Max_Cert_DER)
+                  or else Pos + Total - 1 > DER'Last
+               then
+                  OK := Loaded > 0;
+                  return;
+               end if;
+
+               declare
+                  One_OK : Boolean;
+               begin
+                  Add_Root (Store, DER (Pos .. Pos + Total - 1), One_OK);
+                  if One_OK then
+                     Loaded := Loaded + 1;
+                  end if;
+               end;
+
+               Pos := Pos + Total;
+            end;
+         end;
+      end loop;
+   end Load_Roots;
+
+   --================================================================
+   --  Identity helpers
+   --================================================================
+
+   procedure Set_Identity
+     (Id       : out Identity;
+      Cert_DER : X509.Byte_Seq;
+      Key      : Byte_Seq;
+      OK       : out Boolean)
+   is
+      C    : X509.Certificate;
+      P_OK : Boolean;
+   begin
+      Id := (others => <>);
+      OK := False;
+
+      if Cert_DER'Length = 0 then
+         return;
+      end if;
+
+      X509.Parse (Cert_DER, C, P_OK);
+      if not P_OK or else not X509.Is_Valid (C) then
+         return;
+      end if;
+
+      --  Infer signing algorithm from certificate's public key
+      case X509.PK_Algorithm (C) is
+         when X509.Algo_EC_Ed25519 =>
+            if Key'Length /= 64 then return; end if;
+            Id.Sign_Algo := Sign_Ed25519;
+            for I in N32 range 0 .. 63 loop
+               Id.Ed25519_Key (I) := Key (Key'First + I);
+            end loop;
+
+         when X509.Algo_EC_P256 =>
+            if Key'Length /= 32 then return; end if;
+            Id.Sign_Algo := Sign_ECDSA_P256;
+            for I in N32 range 0 .. 31 loop
+               Id.ECDSA_P256_Key (I) := Key (Key'First + I);
+            end loop;
+
+         when X509.Algo_EC_P384 =>
+            if Key'Length /= 48 then return; end if;
+            Id.Sign_Algo := Sign_ECDSA_P384;
+            for I in N32 range 0 .. 47 loop
+               Id.ECDSA_P384_Key (I) := Key (Key'First + I);
+            end loop;
+
+         when others =>
+            return;
+      end case;
+
+      Id.Cert := C;
+      Id.Cert_DER (0 .. X509.N32 (Cert_DER'Length) - 1) := Cert_DER;
+      Id.Cert_DER_Len := X509.N32 (Cert_DER'Length);
+
+      --  Also store SPARKNaCl copy for handshake message building
+      if Cert_DER'Length <= N32'Last then
+         Id.NaCl_Cert_Len := N32 (Cert_DER'Length);
+         for I in X509.N32 range 0 .. X509.N32 (Cert_DER'Length) - 1 loop
+            Id.NaCl_Cert_DER (N32 (I)) := Byte (Cert_DER (I));
+         end loop;
+      end if;
+
+      Id.Cert_Valid := True;
+      Id.Has_Identity := True;
+      OK := True;
+   end Set_Identity;
+
+   procedure Add_Intermediate
+     (Id  : in out Identity;
+      DER : X509.Byte_Seq;
+      OK  : out Boolean)
+   is
+   begin
+      OK := False;
+      if Id.Int_Count >= Max_Pool_Size then
+         return;
+      end if;
+      Add_To_Pool (Id.Ints, Id.Int_Count, DER, OK);
+      if OK then
+         Id.Int_Count := Id.Int_Count + 1;
+      end if;
+   end Add_Intermediate;
+
+   --================================================================
    --  Chain building and validation
    --================================================================
 

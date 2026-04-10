@@ -24,9 +24,9 @@ is
    end Compact;
 
    --================================================================
-   --  Feed_Input
+   --  Feed_Ciphertext
    --================================================================
-   procedure Feed_Input
+   procedure Feed_Ciphertext
      (S         : in out Session;
       Data      : in     Byte_Seq;
       Bytes_Fed :    out N32)
@@ -56,12 +56,12 @@ is
       S.Input.Write_Pos := S.Input.Write_Pos + Count;
 
       Bytes_Fed := Count;
-   end Feed_Input;
+   end Feed_Ciphertext;
 
    --================================================================
-   --  Drain_Output
+   --  Drain_Ciphertext
    --================================================================
-   procedure Drain_Output
+   procedure Drain_Ciphertext
      (S              : in out Session;
       Dest           :    out Byte_Seq;
       Bytes_Drained  :    out N32)
@@ -69,9 +69,8 @@ is
       Avail : constant N32 := Available (S.Output);
       Count : N32;
    begin
-      Dest := (others => 0);
-
       if Avail = 0 or Dest'Length = 0 then
+         Dest := (others => 0);
          Bytes_Drained := 0;
          return;
       end if;
@@ -81,9 +80,13 @@ is
       pragma Assert (Count <= Avail);
       pragma Assert (S.Output.Read_Pos + Count <= S.Output.Write_Pos);
 
+      --  Copy data, then zero only the unused tail
       Dest (0 .. Count - 1) :=
          S.Output.Data (S.Output.Read_Pos ..
                         S.Output.Read_Pos + Count - 1);
+      if Count < N32 (Dest'Length) then
+         Dest (Count .. Dest'Last) := (others => 0);
+      end if;
 
       S.Output.Read_Pos := S.Output.Read_Pos + Count;
 
@@ -94,21 +97,20 @@ is
       end if;
 
       Bytes_Drained := Count;
-   end Drain_Output;
+   end Drain_Ciphertext;
 
    --================================================================
-   --  Read_App_Data
+   --  Read_Plaintext
    --================================================================
-   procedure Read_App_Data
+   procedure Read_Plaintext
      (S          : in out Session;
       Dest       :    out Byte_Seq;
       Bytes_Read :    out N32)
    is
       Count : N32;
    begin
-      Dest := (others => 0);
-
       if S.App_Data_Len = 0 or Dest'Length = 0 then
+         Dest := (others => 0);
          Bytes_Read := 0;
          return;
       end if;
@@ -120,6 +122,9 @@ is
       pragma Assert (Count <= Max_Record_Plaintext);
 
       Dest (0 .. Count - 1) := S.App_Data (0 .. Count - 1);
+      if Count < N32 (Dest'Length) then
+         Dest (Count .. Dest'Last) := (others => 0);
+      end if;
 
       --  Shift remaining data forward
       if Count < S.App_Data_Len then
@@ -130,6 +135,6 @@ is
 
       S.App_Data_Len := S.App_Data_Len - Count;
       Bytes_Read := Count;
-   end Read_App_Data;
+   end Read_Plaintext;
 
 end SPARKTLS;
