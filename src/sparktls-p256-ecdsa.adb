@@ -313,6 +313,97 @@ is
    end Scalar_To_Bytes;
 
    ---------------------------------------------------------------
+   --  Modular addition: D := (A + B) mod n
+   ---------------------------------------------------------------
+
+   procedure Add_Mod_N
+     (D : out P256_Limbs;
+      A : in  P256_Limbs;
+      B : in  P256_Limbs)
+   is
+      CC : U32 := 0;
+      W  : U32;
+      Tmp    : P256_Limbs;
+      Borrow : U32;
+   begin
+      for I in Limb_Index loop
+         W := A (I) + B (I) + CC;
+         D (I) := W and Limb_Mask;
+         CC := Shift_Right (W, 30);
+      end loop;
+      Sub_Order (Tmp, D, N_Order, Borrow);
+      if Borrow = 0 then
+         D := Tmp;
+      end if;
+   end Add_Mod_N;
+
+   ---------------------------------------------------------------
+   --  ECDSA Sign
+   ---------------------------------------------------------------
+
+   procedure Sign
+     (Hash  : in     Bytes_32;
+      D     : in     ECDSA_Sig_Half;
+      K     : in     ECDSA_Sig_Half;
+      R_Out :    out ECDSA_Sig_Half;
+      S_Out :    out ECDSA_Sig_Half;
+      OK    :    out Boolean)
+   is
+      K_Limbs, D_Limbs, H_Limbs : P256_Limbs;
+      R_Limbs, S_Limbs          : P256_Limbs;
+      RD, Sum, K_Inv            : P256_Limbs;
+      Tmp    : P256_Limbs;
+      Borrow : U32;
+
+      Pt     : P256_Jacobian;
+      RX     : Byte_Seq (0 .. 31);
+   begin
+      R_Out := (others => 0);
+      S_Out := (others => 0);
+      OK := False;
+
+      Scalar_From_Bytes (K_Limbs, K);
+      Scalar_From_Bytes (D_Limbs, D);
+      Scalar_From_Bytes (H_Limbs, ECDSA_Sig_Half (Hash));
+
+      if Is_Zero_Limbs (K_Limbs) or not Less_Than_Order (K_Limbs) then
+         return;
+      end if;
+
+      if not Less_Than_Order (H_Limbs) then
+         Sub_Order (Tmp, H_Limbs, N_Order, Borrow);
+         H_Limbs := Tmp;
+      end if;
+
+      P256_Mulgen (Pt, Byte_Seq (K), 32);
+      P256_To_Affine (Pt);
+
+      LE30_To_BE8 (RX, Pt.X);
+      Scalar_From_Bytes (R_Limbs, ECDSA_Sig_Half (RX));
+      if not Less_Than_Order (R_Limbs) then
+         Sub_Order (Tmp, R_Limbs, N_Order, Borrow);
+         R_Limbs := Tmp;
+      end if;
+
+      if Is_Zero_Limbs (R_Limbs) then
+         return;
+      end if;
+
+      Mul_Mod_N (RD, R_Limbs, D_Limbs);
+      Add_Mod_N (Sum, H_Limbs, RD);
+      Inv_Mod_N (K_Inv, K_Limbs);
+      Mul_Mod_N (S_Limbs, K_Inv, Sum);
+
+      if Is_Zero_Limbs (S_Limbs) then
+         return;
+      end if;
+
+      Scalar_To_Bytes (R_Out, R_Limbs);
+      Scalar_To_Bytes (S_Out, S_Limbs);
+      OK := True;
+   end Sign;
+
+   ---------------------------------------------------------------
    --  ECDSA Verify
    ---------------------------------------------------------------
 

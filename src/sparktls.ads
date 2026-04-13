@@ -27,9 +27,13 @@ is
    Max_Hostname_Len     : constant := 255;
    Max_Cert_DER_Len     : constant N32 := 8192;
 
+   --  Signature algorithm negotiation
+   Max_Sig_Algos : constant := 16;
+   subtype Sig_Algo_Index is Natural range 0 .. Max_Sig_Algos - 1;
+   type Sig_Algo_List is array (Sig_Algo_Index) of Unsigned_16;
+
    --  RFLX scratch buffer sizes (stack-allocated, no heap)
    RFLX_Main_Size : constant := 17000;  --  Holds largest message (incoming record)
-   RFLX_Sub_Size  : constant := 300;    --  Holds one extension/entry element
 
    --================================================================
    --  Cipher suite
@@ -174,6 +178,11 @@ is
    type Random_Bytes_Fn is access
       procedure (Output : out Byte_Seq);
 
+   --  Time callback for certificate validation.
+   --  Called at validation time, not at configuration time.
+   type Get_Time_Fn is access
+      function return X509.Date_Time;
+
    --================================================================
    --  Certificate pool types
    --
@@ -182,7 +191,13 @@ is
    --  starting at index 0 (required by X509 span offsets).
    --================================================================
 
-   Max_Pool_Size : constant := 40;
+   --  Max entries in an intermediate cert pool (Peer_Ints, Identity.Ints).
+   --  Real cert chains have ≤ 6 intermediates; 8 is comfortably above that.
+   --  Previously 40, which cost ~400 KB per Session (Cert_Pool dominates
+   --  Session size) and made it impractical to hold many sessions in BSS
+   --  or on the stack. The trust store uses a separate larger pool
+   --  (Max_Root_Pool_Size = 200) since OS CA bundles have 130+ roots.
+   Max_Pool_Size : constant := 8;
    Max_Cert_DER  : constant := 8192;   --  max DER bytes per cert
 
    subtype Cert_DER_Buf is X509.Byte_Seq (0 .. X509.N32 (Max_Cert_DER) - 1);
@@ -203,10 +218,18 @@ is
    --  Holds root CA certificates for chain validation.
    --  Allocated once at application startup, shared across sessions
    --  via Trust_Store_Access (access-to-constant, read-only).
+   --
+   --  Uses a larger pool than Cert_Pool (200 vs 40) because OS
+   --  certificate bundles typically contain 130+ root CAs.
+   --  Not embedded in Session — referenced by pointer, so the
+   --  larger size doesn't affect per-connection memory.
    --================================================================
 
+   Max_Root_Pool_Size : constant := 200;
+   type Root_Pool is array (0 .. Max_Root_Pool_Size - 1) of Pool_Entry;
+
    type Trust_Store is record
-      Roots      : Cert_Pool;
+      Roots      : Root_Pool;
       Root_Count : Natural := 0;
    end record;
 
@@ -276,7 +299,7 @@ is
       --  Validation settings
       Verify_Mode     : Validation_Mode := Mode_WebPKI;
       Verify_Purpose  : Validation_Purpose := Purpose_Server;
-      Validation_Time : X509.Date_Time := (2025, 6, 15, 12, 0, 0);
+      Get_Time : Get_Time_Fn := null;
 
       --  Trust store for verifying the peer's certificate chain.
       --  Required for client (unless Skip_Verify).
@@ -382,6 +405,11 @@ is
       --  Legacy session ID (middlebox compatibility)
       Legacy_Session_ID : Bytes_32 := (others => 0);
 
+      --  Signature algorithm negotiation
+      Peer_Sig_Algos      : Sig_Algo_List := (others => 0);
+      Peer_Sig_Algo_Count : Natural := 0;
+      Negotiated_Sig_Algo : Unsigned_16 := 0;
+
       --  Handshake tracking
       CCS_Received          : Boolean := False;
       Cert_Request_Received : Boolean := False;  --  mTLS: server asked for cert
@@ -389,9 +417,6 @@ is
       --  RFLX scratch buffers (reused for each serialize/parse operation)
       RFLX_Main : aliased RFLX.RFLX_Builtin_Types.Bytes
                     (1 .. RFLX.RFLX_Builtin_Types.Index (RFLX_Main_Size))
-                    := (others => 0);
-      RFLX_Sub  : aliased RFLX.RFLX_Builtin_Types.Bytes
-                    (1 .. RFLX.RFLX_Builtin_Types.Index (RFLX_Sub_Size))
                     := (others => 0);
    end record;
 

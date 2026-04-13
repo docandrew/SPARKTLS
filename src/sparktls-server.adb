@@ -1,3 +1,4 @@
+with Ada.Text_IO;
 with Interfaces;                 use Interfaces;
 with SPARKNaCl.Hashing;
 with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
@@ -309,6 +310,43 @@ is
          end if;
       end;
 
+      --  Negotiate signature algorithm
+      declare
+         Algo_OK : Boolean := False;
+      begin
+         for I in 0 .. S.Peer_Sig_Algo_Count - 1 loop
+            case S.Cfg.Local.Sign_Algo is
+               when Sign_Ed25519 =>
+                  if S.Peer_Sig_Algos (I) = 16#0807# then
+                     S.Negotiated_Sig_Algo := 16#0807#;
+                     Algo_OK := True;
+                     exit;
+                  end if;
+               when Sign_ECDSA_P256 =>
+                  if S.Peer_Sig_Algos (I) = 16#0403# then
+                     S.Negotiated_Sig_Algo := 16#0403#;
+                     Algo_OK := True;
+                     exit;
+                  end if;
+               when Sign_ECDSA_P384 =>
+                  if S.Peer_Sig_Algos (I) = 16#0503# then
+                     S.Negotiated_Sig_Algo := 16#0503#;
+                     Algo_OK := True;
+                     exit;
+                  end if;
+               when Sign_None =>
+                  null;
+            end case;
+         end loop;
+
+         if not Algo_OK then
+            S.Last_Error := Handshake_Failure;
+            S.State := Error_State;
+            Result := Error_Alert;
+            return;
+         end if;
+      end;
+
       --  Build CertificateVerify (encrypted)
       declare
          H_Len   : constant N32 := S.Hash_Len;
@@ -330,8 +368,10 @@ is
 
          Handshake.Build_Certificate_Verify
            (Transcript_Hash => CV_Hash,
-            Signing_Key     => S.Cfg.Local.Ed25519_Key,
+            Id              => S.Cfg.Local.all,
+            Sig_Algo_Wire   => S.Negotiated_Sig_Algo,
             Role            => Role_Server,
+            Random          => S.Cfg.Random,
             Result          => CV_Buf,
             Len             => CV_Len);
 
@@ -876,7 +916,10 @@ is
                         end;
 
                         --  Validate client cert chain if trust store
-                        if S.Cfg.Trust /= null and S.Peer_Cert_Valid then
+                        if S.Cfg.Trust /= null
+                           and then S.Cfg.Get_Time /= null
+                           and then S.Peer_Cert_Valid
+                        then
                            declare
                               Cert_X : X509.Byte_Seq
                                  (0 .. X509.N32 (S.Peer_Cert_DER_Len) - 1);
@@ -896,7 +939,7 @@ is
                                  Int_Count  => S.Peer_Int_Count,
                                  Roots      => S.Cfg.Trust.Roots,
                                  Root_Count => S.Cfg.Trust.Root_Count,
-                                 Now        => S.Cfg.Validation_Time,
+                                 Now        => S.Cfg.Get_Time.all,
                                  Hostname   => "",
                                  Purpose    => Purpose_Client,
                                  Mode       => S.Cfg.Verify_Mode);
@@ -998,8 +1041,18 @@ is
                   return;
                end if;
 
-               if Inner_Type /= 16#16# then
-                  --  Not a handshake message
+               if Inner_Type = 16#15# and then Plain_Len >= 2 then
+                  Ada.Text_IO.Put_Line
+                    ("  Peer alert: level="
+                     & Plaintext (0)'Image
+                     & " desc=" & Plaintext (1)'Image);
+                  S.Last_Error := Error_Code'Val
+                    (Natural'Min (Natural (Plaintext (1)),
+                                  Error_Code'Pos (Error_Code'Last)));
+                  S.State := Error_State;
+                  Result := Error_Alert;
+                  return;
+               elsif Inner_Type /= 16#16# then
                   Result := OK;
                   return;
                end if;

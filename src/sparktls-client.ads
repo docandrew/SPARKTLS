@@ -60,9 +60,9 @@ is
       Hostname : String;
       Trust    : Trust_Store_Access;
       Random   : Random_Bytes_Fn;
+      Clock    : Get_Time_Fn;
       Local    : Identity_Access := null)
-   with Pre  => Random /= null
-                and (Trust /= null or else Local = null),
+   with Pre  => Random /= null and Clock /= null,
         Post => S.State = Client_Hello_Sent and
                 S.Role = Role_Client and
                 Output_Pending (S) > 0;

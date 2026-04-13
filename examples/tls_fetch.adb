@@ -19,10 +19,38 @@ with SPARKNaCl;                  use SPARKNaCl;
 
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Client;
+with SPARKTLS.System_Roots;
 
+with X509;
+with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with GNAT.Sockets;               use GNAT.Sockets;
 
 procedure TLS_Fetch is
+
+   --  Clock callback for certificate validation
+   function Current_Time return X509.Date_Time is
+      use Ada.Calendar;
+      Now : constant Time := Clock;
+      Y   : Year_Number;
+      Mo  : Month_Number;
+      D   : Day_Number;
+      S   : Day_Duration;
+      Hr  : Natural;
+      Mn  : Natural;
+      Sc  : Natural;
+   begin
+      Split (Now, Y, Mo, D, S);
+      Hr := Natural (S) / 3600;
+      Mn := (Natural (S) mod 3600) / 60;
+      Sc := Natural (S) mod 60;
+      return (Year   => Y,
+              Month  => Mo,
+              Day    => D,
+              Hour   => Hr,
+              Minute => Mn,
+              Second => Sc);
+   end Current_Time;
 
    --  Simple PRNG (NOT CSPRNG - demo only)
    package Random_Byte is new
@@ -185,6 +213,11 @@ procedure TLS_Fetch is
    Channel : Stream_Access;
    Addr    : GNAT.Sockets.Sock_Addr_Type;
 
+   --  Trust store (loaded from OS)
+   Roots      : aliased SPARKTLS.Trust_Store;
+   Root_Count : Natural := 0;
+   Roots_OK   : Boolean := False;
+
    --  Output control
    Verbose      : Boolean := False;
    Headers_Only : Boolean := False;
@@ -274,14 +307,23 @@ begin
          Put_Line ("* Connected.");
       end if;
 
+      --  Load system roots (unless -k)
+      if not Insecure then
+         SPARKTLS.System_Roots.Load (Roots, Root_Count, Roots_OK);
+         if Verbose then
+            Put_Line ("* Loaded" & Root_Count'Image & " root CAs");
+         end if;
+      end if;
+
       --  TLS handshake
-      --  TODO: when not Insecure, load system roots into Roots
-      --  and pass Roots'Unchecked_Access as Trust.
       SPARKTLS.Client.Configure
         (S        => S,
          Hostname => Hostname,
-         Trust    => (if Insecure then null else null),  --  TODO: load roots
-         Random   => My_Random'Unrestricted_Access);
+         Trust    => (if Insecure or not Roots_OK
+                      then null
+                      else Roots'Unchecked_Access),
+         Random   => My_Random'Unrestricted_Access,
+         Clock    => Current_Time'Unrestricted_Access);
 
       Handshake : loop
          SPARKTLS.Client.Advance (S, Res);

@@ -82,6 +82,7 @@ is
       Hostname : String;
       Trust    : Trust_Store_Access;
       Random   : Random_Bytes_Fn;
+      Clock    : Get_Time_Fn;
       Local    : Identity_Access := null)
    is
       Cfg : Config;
@@ -90,6 +91,7 @@ is
       Cfg.Trust       := Trust;
       Cfg.Local       := Local;
       Cfg.Skip_Verify := Trust = null;
+      Cfg.Get_Time    := Clock;
       if Hostname'Length > 0
          and then Hostname'Length <= Max_Hostname_Len
       then
@@ -283,6 +285,7 @@ is
             --  Chain validation (if trust store is configured)
             if not S.Cfg.Skip_Verify
                and then S.Cfg.Trust /= null
+               and then S.Cfg.Get_Time /= null
                and then S.Peer_Cert_Valid
             then
                declare
@@ -303,7 +306,7 @@ is
                      Int_Count  => S.Peer_Int_Count,
                      Roots      => S.Cfg.Trust.Roots,
                      Root_Count => S.Cfg.Trust.Root_Count,
-                     Now        => S.Cfg.Validation_Time,
+                     Now        => S.Cfg.Get_Time.all,
                      Hostname   =>
                         S.Cfg.Server_Name.Data (1 .. S.Cfg.Server_Name.Len),
                      Purpose    => S.Cfg.Verify_Purpose,
@@ -958,8 +961,10 @@ is
             begin
                Handshake.Build_Certificate_Verify
                  (Transcript_Hash => CV_Hash,
-                  Signing_Key     => S.Cfg.Local.Ed25519_Key,
+                  Id              => S.Cfg.Local.all,
+                  Sig_Algo_Wire   => S.Negotiated_Sig_Algo,
                   Role            => Role_Client,
+                  Random          => S.Cfg.Random,
                   Result          => CV_Buf,
                   Len             => CV_Len);
 

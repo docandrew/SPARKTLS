@@ -208,7 +208,7 @@ is
       Leaf       : X509.Certificate;
       Ints       : Cert_Pool;
       Int_Count  : Natural;
-      Roots      : Cert_Pool;
+      Roots      : Root_Pool;
       Root_Count : Natural;
       Now        : X509.Date_Time;
       Hostname   : String;
@@ -216,6 +216,6 @@ is
       Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
    with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last
                and Int_Count <= Max_Pool_Size
-               and Root_Count <= Max_Pool_Size;
+               and Root_Count <= Max_Root_Pool_Size;
 
 end SPARKTLS.Cert_Verify;

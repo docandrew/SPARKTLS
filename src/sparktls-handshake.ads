@@ -115,15 +115,12 @@ is
                and Cert_DER'First = 0
                and Cert_Len > 0;
 
-   --  Build a CertificateVerify message using Ed25519.
-   --  Transcript_Hash is the hash of transcript up to (but not including)
-   --  CertificateVerify.
-   --  Build a CertificateVerify message using Ed25519.
-   --  Role controls the context string used in the signature.
    procedure Build_Certificate_Verify
      (Transcript_Hash : in     Byte_Seq;
-      Signing_Key     : in     Bytes_64;
+      Id              : in     Identity;
+      Sig_Algo_Wire   : in     Unsigned_16;
       Role            : in     TLS_Role;
+      Random          : in     Random_Bytes_Fn;
       Result          :    out Byte_Seq;
       Len             :    out N32)
    with Pre => Result'First = 0

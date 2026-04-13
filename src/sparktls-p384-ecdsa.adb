@@ -172,7 +172,107 @@ is
       end;
    end Verify;
 
+   --================================================================
+   --  ECDSA Sign
+   --================================================================
+
+   procedure Sign
+     (Hash  : in     Bytes_48;
+      D     : in     Byte_Seq;
+      K     : in     Byte_Seq;
+      R_Out :    out Byte_Seq;
+      S_Out :    out Byte_Seq;
+      OK    :    out Boolean)
+   is
+      K_Int, D_Int, H_Int : Big_Nat;
+      R_Int, S_Int        : Big_Nat;
+      RD, Sum, K_Inv      : Big_Nat;
+      T1, T2              : Big_Nat;
+      One                 : Big_Nat;
+      G_Pt                : Jacobian;
+      RX_Bytes            : Byte_Seq (0 .. 47);
+   begin
+      R_Out := (others => 0);
+      S_Out := (others => 0);
+      OK := False;
+
+      Init_Order;
+      Init_Field;
+
+      Decode (K_Int, K);
+      Decode (D_Int, D);
+      Decode (H_Int, Byte_Seq (Hash));
+      K_Int.Len := N.Len;
+      D_Int.Len := N.Len;
+      H_Int.Len := N.Len;
+
+      if not In_Range (K_Int) then
+         return;
+      end if;
+
+      Make_Generator (G_Pt);
+      Scalar_Mul (G_Pt, K);
+      To_Affine (G_Pt);
+
+      FE_From_Monty (T1, G_Pt.X);
+      Encode (RX_Bytes, T1);
+      Decode (R_Int, RX_Bytes);
+      R_Int.Len := N.Len;
+
+      declare
+         Trial : constant Arith_Result := CT_Sub (R_Int, N, 0);
+      begin
+         if Trial.Carry = 0 then
+            R_Int := Trial.Value;
+         end if;
+      end;
+
+      if Is_Zero_384 (R_Int) then
+         return;
+      end if;
+
+      Zero (One, N.Len);
+      One.W (0) := 1;
+
+      T1 := R_Int;
+      To_Monty (T1, N, N_M0I);
+      T2 := D_Int;
+      To_Monty (T2, N, N_M0I);
+      Mul_Mod_N (RD, T1, T2);
+      Mul_Mod_N (T1, RD, One);
+      RD := T1;
+
+      declare
+         Add_Res : constant Arith_Result := CT_Add (RD, H_Int, 0);
+         Sub_Res : Arith_Result;
+      begin
+         Sum := Add_Res.Value;
+         Sum.Len := N.Len;
+         Sub_Res := CT_Sub (Sum, N, 0);
+         if Sub_Res.Carry = 0 then
+            Sum := Sub_Res.Value;
+         end if;
+      end;
+
+      Inv_Mod_N (K_Inv, K_Int);
+
+      T1 := K_Inv;
+      To_Monty (T1, N, N_M0I);
+      T2 := Sum;
+      To_Monty (T2, N, N_M0I);
+      Mul_Mod_N (S_Int, T1, T2);
+      Mul_Mod_N (T1, S_Int, One);
+      S_Int := T1;
+
+      if Is_Zero_384 (S_Int) then
+         return;
+      end if;
+
+      Encode (R_Out, R_Int);
+      Encode (S_Out, S_Int);
+      OK := True;
+   end Sign;
+
 begin
-   --  Initialize group order at elaboration so Verify only reads N.
    Init_Order;
 end SPARKTLS.P384.ECDSA;

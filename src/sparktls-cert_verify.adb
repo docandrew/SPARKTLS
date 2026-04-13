@@ -650,15 +650,32 @@ is
       DER   : X509.Byte_Seq;
       OK    : out Boolean)
    is
+      C    : X509.Certificate;
+      P_OK : Boolean;
+      Idx  : Natural;
    begin
       OK := False;
-      if Store.Root_Count >= Max_Pool_Size then
+      if Store.Root_Count >= Max_Root_Pool_Size then
          return;
       end if;
-      Add_To_Pool (Store.Roots, Store.Root_Count, DER, OK);
-      if OK then
-         Store.Root_Count := Store.Root_Count + 1;
+      if DER'Length = 0
+         or else X509.N32 (DER'Length) > X509.N32 (Max_Cert_DER)
+      then
+         return;
       end if;
+
+      X509.Parse (DER, C, P_OK);
+      if not P_OK or else not X509.Is_Valid (C) then
+         return;
+      end if;
+
+      Idx := Store.Root_Count;
+      Store.Roots (Idx).Cert := C;
+      Store.Roots (Idx).DER (0 .. X509.N32 (DER'Length) - 1) := DER;
+      Store.Roots (Idx).DER_Len := X509.N32 (DER'Length);
+      Store.Roots (Idx).Present := True;
+      Store.Root_Count := Store.Root_Count + 1;
+      OK := True;
    end Add_Root;
 
    procedure Load_Roots
@@ -674,7 +691,7 @@ is
       Loaded := 0;
       OK := True;
 
-      while Pos <= DER'Last and Store.Root_Count < Max_Pool_Size loop
+      while Pos <= DER'Last and Store.Root_Count < Max_Root_Pool_Size loop
          --  Each cert starts with SEQUENCE tag (0x30)
          if DER (Pos) /= 16#30# then
             OK := Loaded > 0;
@@ -777,7 +794,7 @@ is
 
       --  Infer signing algorithm from certificate's public key
       case X509.PK_Algorithm (C) is
-         when X509.Algo_EC_Ed25519 =>
+         when X509.Algo_EC_Ed25519 | X509.Algo_Ed25519 =>
             if Key'Length /= 64 then return; end if;
             Id.Sign_Algo := Sign_Ed25519;
             for I in N32 range 0 .. 63 loop
@@ -844,7 +861,7 @@ is
       Leaf       : X509.Certificate;
       Ints       : Cert_Pool;
       Int_Count  : Natural;
-      Roots      : Cert_Pool;
+      Roots      : Root_Pool;
       Root_Count : Natural;
       Now        : X509.Date_Time;
       Hostname   : String;
