@@ -1,4 +1,3 @@
-with Ada.Text_IO;
 with Interfaces;                 use Interfaces;
 with SPARKNaCl.Hashing;
 with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
@@ -1042,10 +1041,6 @@ is
                end if;
 
                if Inner_Type = 16#15# and then Plain_Len >= 2 then
-                  Ada.Text_IO.Put_Line
-                    ("  Peer alert: level="
-                     & Plaintext (0)'Image
-                     & " desc=" & Plaintext (1)'Image);
                   S.Last_Error := Error_Code'Val
                     (Natural'Min (Natural (Plaintext (1)),
                                   Error_Code'Pos (Error_Code'Last)));

@@ -1,4 +1,3 @@
-with Ada.Text_IO;
 with Interfaces; use Interfaces;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Hashing.SHA256;
@@ -916,10 +915,6 @@ is
                               RFLX.TLS_Handshake.Key_Share_CH
                                 .Verify_Message (KS_Ctx);
 
-                              Ada.Text_IO.Put_Line
-                                ("      KS well_formed="
-                                 & RFLX.TLS_Handshake.Key_Share_CH
-                                     .Well_Formed_Message (KS_Ctx)'Image);
                               if RFLX.TLS_Handshake.Key_Share_CH
                                    .Well_Formed_Message (KS_Ctx)
                               then
@@ -962,14 +957,6 @@ is
                                                      .Key_Share_Entry
                                                      .Get_Group (E_Ctx);
                                              begin
-                                                Ada.Text_IO.Put_Line
-                                                  ("      KS entry: known="
-                                                   & Grp.Known'Image
-                                                   & (if Grp.Known
-                                                      then " enum="
-                                                         & Grp.Enum'Image
-                                                      else " raw="
-                                                         & Grp.Raw'Image));
                                                 if Grp.Known and then
                                                    Grp.Enum =
                                                       RFLX.Tls_Parameters
@@ -1053,15 +1040,6 @@ is
       Take_Buffer (Ctx, Buf);
 
       --  Compute shared secret
-      declare
-         All_Zero : Boolean := True;
-      begin
-         for I in S.Peer_PK'Range loop
-            if S.Peer_PK (I) /= 0 then All_Zero := False; exit; end if;
-         end loop;
-         Ada.Text_IO.Put_Line
-           ("      Peer_PK all-zero=" & All_Zero'Image);
-      end;
       S.Shared_Secret := (others => 0);
       S.Shared_Secret (0 .. 31) :=
          SPARKNaCl.Scalar.Mult (S.Local_SK, S.Peer_PK);
