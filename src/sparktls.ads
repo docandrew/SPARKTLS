@@ -245,7 +245,9 @@ is
    --================================================================
 
    type Signing_Algorithm is
-     (Sign_Ed25519, Sign_ECDSA_P256, Sign_ECDSA_P384, Sign_None);
+     (Sign_Ed25519, Sign_ECDSA_P256, Sign_ECDSA_P384, Sign_RSA_PSS, Sign_None);
+
+   Max_RSA_Key_Bytes : constant := 512;  --  RSA-4096
 
    type Identity is record
       --  Leaf cert in X509 format (for chain validation)
@@ -265,10 +267,14 @@ is
       Int_Count    : Natural := 0;
 
       --  Signing key (algorithm inferred from cert's PK_Algorithm)
-      Sign_Algo    : Signing_Algorithm := Sign_None;
-      Ed25519_Key  : Bytes_64 := (others => 0);
+      Sign_Algo      : Signing_Algorithm := Sign_None;
+      Ed25519_Key    : Bytes_64 := (others => 0);
       ECDSA_P256_Key : Bytes_32 := (others => 0);
       ECDSA_P384_Key : Bytes_48 := (others => 0);
+      RSA_Modulus    : Byte_Seq (0 .. Max_RSA_Key_Bytes - 1) := (others => 0);
+      RSA_Mod_Len    : N32 := 0;
+      RSA_Priv_Exp   : Byte_Seq (0 .. Max_RSA_Key_Bytes - 1) := (others => 0);
+      RSA_Pub_Exp    : Unsigned_32 := 0;
 
       Has_Identity : Boolean := False;
    end record;
@@ -329,56 +335,52 @@ is
    --    Close_Notify    - initiate clean shutdown
    --================================================================
 
-   type Session is record
-      --  Configuration and state
-      Cfg          : Config;
-      State        : Connection_State := Idle;
-      Last_Error   : Error_Code       := No_Error;
-      Role         : TLS_Role         := Role_Client;
+   --================================================================
+   --  Handshake Context
+   --
+   --  Contains all state needed only during the TLS handshake.
+   --  Heap-allocated at Init, freed when handshake completes.
+   --  Handshake procedures receive this as `in out` — they never
+   --  see the pointer, only the record.
+   --================================================================
 
-      --  I/O buffers
-      Input        : IO_Buffer;
-      Output       : IO_Buffer;
+   type Handshake_Context is record
+      --  Configuration (callbacks, trust store, identity)
+      Cfg : Config;
 
       --  Ephemeral key exchange (X25519, P-256, or P-384 ECDHE)
       Local_SK      : Bytes_32 := (others => 0);
       Client_Random : Bytes_32 := (others => 0);
       Server_Random : Bytes_32 := (others => 0);
-      Peer_PK       : Bytes_32 := (others => 0);  --  X25519 peer key
-      Shared_Secret : Bytes_48 := (others => 0);  --  up to 48 bytes for P-384
+      Peer_PK       : Bytes_32 := (others => 0);
+      Shared_Secret : Bytes_48 := (others => 0);
 
       --  P-256 ECDHE key exchange state
-      P256_Local_SK : Bytes_32 := (others => 0);  --  P-256 private scalar
-      P256_Peer_PK  : Byte_Seq (0 .. 64) := (others => 0);  --  65-byte uncompressed
-      Use_P256_KE   : Boolean := False;  --  True if server selected secp256r1
+      P256_Local_SK : Bytes_32 := (others => 0);
+      P256_Peer_PK  : Byte_Seq (0 .. 64) := (others => 0);
+      Use_P256_KE   : Boolean := False;
 
       --  P-384 ECDHE key exchange state
-      P384_Local_SK : Bytes_48 := (others => 0);  --  P-384 private scalar
-      P384_Peer_PK  : Byte_Seq (0 .. 96) := (others => 0);  --  97-byte uncompressed
-      Use_P384_KE   : Boolean := False;  --  True if server selected secp384r1
+      P384_Local_SK : Bytes_48 := (others => 0);
+      P384_Peer_PK  : Byte_Seq (0 .. 96) := (others => 0);
+      Use_P384_KE   : Boolean := False;
 
       --  Handshake traffic keys
       Client_HS     : Traffic_Keys;
       Server_HS     : Traffic_Keys;
 
-      --  Application traffic keys
-      Client_App    : Traffic_Keys;
-      Server_App    : Traffic_Keys;
-
-      --  Traffic secrets (needed for finished key derivation)
-      --  48 bytes to accommodate both SHA-256 (32) and SHA-384 (48)
+      --  Traffic secrets (for finished key derivation)
       Client_HS_Secret : Bytes_48 := (others => 0);
       Server_HS_Secret : Bytes_48 := (others => 0);
 
       --  Key schedule intermediates
-      --  48 bytes to accommodate both SHA-256 (32) and SHA-384 (48)
       Handshake_Secret : Bytes_48 := (others => 0);
       Master_Secret    : Bytes_48 := (others => 0);
 
-      --  Hash length for the negotiated cipher suite (32 or 48)
+      --  Hash length for negotiated cipher suite (32 or 48)
       Hash_Len : N32 := 32;
 
-      --  Transcript accumulator (all handshake messages for hashing)
+      --  Transcript accumulator
       Transcript     : Byte_Seq (0 .. Transcript_Capacity - 1)
                          := (others => 0);
       Transcript_Len : N32 := 0;
@@ -390,17 +392,9 @@ is
       Peer_Cert         : X509.Certificate;
       Peer_Cert_Valid   : Boolean := False;
 
-      --  Peer intermediate certificates (from Certificate message)
-      Peer_Ints     : Cert_Pool;
+      --  Peer intermediate certificates
+      Peer_Ints      : Cert_Pool;
       Peer_Int_Count : Natural := 0;
-
-      --  Decrypted application data staging area
-      App_Data     : Byte_Seq (0 .. Max_Record_Plaintext - 1)
-                       := (others => 0);
-      App_Data_Len : N32 := 0;
-
-      --  Negotiated cipher suite (wire value from ServerHello)
-      Negotiated_Suite : Unsigned_16 := 0;
 
       --  Legacy session ID (middlebox compatibility)
       Legacy_Session_ID : Bytes_32 := (others => 0);
@@ -412,12 +406,43 @@ is
 
       --  Handshake tracking
       CCS_Received          : Boolean := False;
-      Cert_Request_Received : Boolean := False;  --  mTLS: server asked for cert
+      Cert_Request_Received : Boolean := False;
 
-      --  RFLX scratch buffers (reused for each serialize/parse operation)
+      --  RFLX scratch buffer
       RFLX_Main : aliased RFLX.RFLX_Builtin_Types.Bytes
                     (1 .. RFLX.RFLX_Builtin_Types.Index (RFLX_Main_Size))
                     := (others => 0);
+   end record;
+
+   type Handshake_Context_Access is access Handshake_Context;
+
+   type Session is record
+      --  State
+      State        : Connection_State := Idle;
+      Last_Error   : Error_Code       := No_Error;
+      Role         : TLS_Role         := Role_Client;
+
+      --  I/O buffers
+      Input        : IO_Buffer;
+      Output       : IO_Buffer;
+
+      --  Application traffic keys (set during handshake, used after)
+      Client_App    : Traffic_Keys;
+      Server_App    : Traffic_Keys;
+
+      --  Decrypted application data staging area
+      App_Data     : Byte_Seq (0 .. Max_Record_Plaintext - 1)
+                       := (others => 0);
+      App_Data_Len : N32 := 0;
+
+      --  Negotiated cipher suite (wire value from ServerHello)
+      Negotiated_Suite : Unsigned_16 := 0;
+
+      --  Peer certificate valid (copied from HC before free)
+      Peer_Cert_Valid : Boolean := False;
+
+      --  Handshake context (heap-allocated, freed after handshake)
+      HC_Ptr : Handshake_Context_Access := null;
    end record;
 
    --================================================================

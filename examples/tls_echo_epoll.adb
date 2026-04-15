@@ -23,7 +23,6 @@ with Ada.Directories;
 with Ada.Streams;           use Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Calendar;
-with Ada.Numerics.Discrete_Random;
 with Interfaces;            use Interfaces;
 with Interfaces.C;          use Interfaces.C;
 with System;
@@ -33,21 +32,11 @@ with X509;
 with SPARKTLS;              use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Credentials;
+with Entropy_Random;
 with POSIX_Thin;            use POSIX_Thin;
 with TLS_Echo_Pool;         use TLS_Echo_Pool;
 
 procedure TLS_Echo_Epoll is
-
-   package Random_Byte is new
-      Ada.Numerics.Discrete_Random (SPARKNaCl.Byte);
-   Gen : Random_Byte.Generator;
-
-   procedure My_Random (Output : out Byte_Seq) is
-   begin
-      for I in Output'Range loop
-         Output (I) := Random_Byte.Random (Gen);
-      end loop;
-   end My_Random;
 
    function Current_Time return X509.Date_Time is
       use Ada.Calendar;
@@ -382,6 +371,23 @@ procedure TLS_Echo_Epoll is
                                                 size_t (Snd_N));
                                           end;
                                        end loop;
+                                       --  Send close_notify (Connection: close)
+                                       SPARKTLS.Server.Close_Notify (Conn.S);
+                                       loop
+                                          declare
+                                             Snd_N : N32;
+                                          begin
+                                             SPARKTLS.Drain_Ciphertext
+                                               (Conn.S, Snd_Buf, Snd_N);
+                                             exit when Snd_N = 0;
+                                             To_C_Buf
+                                               (Snd_Buf, C_Buf'Address, Snd_N);
+                                             Wr := C_Write
+                                               (Conn.FD, C_Buf'Address,
+                                                size_t (Snd_N));
+                                          end;
+                                       end loop;
+                                       Conn.State := Closed;
                                     end;
                                  end;
                               end if;
@@ -392,6 +398,23 @@ procedure TLS_Echo_Epoll is
                      end loop;
                   end if;
                end;
+
+            when SPARKTLS.Shutdown =>
+               Put_Line ("  Peer sent close_notify");
+               --  Send our close_notify back
+               SPARKTLS.Server.Close_Notify (Conn.S);
+               declare
+                  Snd_N : N32;
+                  Wr    : long;
+               begin
+                  SPARKTLS.Drain_Ciphertext (Conn.S, Snd_Buf, Snd_N);
+                  if Snd_N > 0 then
+                     To_C_Buf (Snd_Buf, C_Buf'Address, Snd_N);
+                     Wr := C_Write (Conn.FD, C_Buf'Address, size_t (Snd_N));
+                  end if;
+               end;
+               Conn.State := Closed;
+               exit;
 
             when SPARKTLS.Error_Alert =>
                Put_Line ("  TLS error: " &
@@ -411,7 +434,7 @@ procedure TLS_Echo_Epoll is
    Dummy : int;
 
 begin
-   Random_Byte.Reset (Gen);
+   Entropy_Random.Init;
 
    --  Parse arguments
    if Ada.Command_Line.Argument_Count < 2 then
@@ -524,7 +547,7 @@ begin
                         SPARKTLS.Server.Configure
                           (S      => Conns (Conn_Index (Slot)).S,
                            Local  => Id'Unchecked_Access,
-                           Random => My_Random'Unrestricted_Access);
+                           Random => Entropy_Random.Random'Access);
 
                         Ev.Events := unsigned (EPOLLIN);
                         Ev.Data.FD := Client_FD;

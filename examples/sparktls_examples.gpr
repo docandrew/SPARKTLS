@@ -1,10 +1,12 @@
 with "../sparktls.gpr";
+with "../../sparkentropy/sparkentropy.gpr";
 
-project TLS_Example is
+project SPARKTLS_Examples is
    for Source_Dirs use (".");
    for Object_Dir use "../obj/examples";
    for Create_Missing_Dirs use "True";
-   for Main use ("tls_fetch.adb", "tls_test_client.adb", "tls_test_server.adb");
+   for Main use ("tls_fetch.adb", "tls_echo_epoll.adb");
+   --  TODO: update tls_test_client.adb, tls_test_server.adb for new API
 
    package Compiler is
       for Default_Switches ("Ada") use
@@ -14,4 +16,4 @@ project TLS_Example is
    package Binder is
       for Switches ("Ada") use ("-Es");
    end Binder;
-end TLS_Example;
+end SPARKTLS_Examples;

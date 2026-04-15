@@ -106,4 +106,42 @@ is
                and then Signature'Last >= N32 (Sig_Len) - 1
                and then Signature'Last < N32'Last;
 
+   --  Sign a message hash using RSA-PSS-RSAE.
+   --
+   --  M_Hash    : the hash of the content to sign
+   --  Hash_Len  : length of hash (32, 48, or 64)
+   --  Hash_Alg  : which hash algorithm
+   --  Modulus   : RSA modulus n (big-endian)
+   --  Mod_Len   : length of modulus in bytes
+   --  Priv_Exp  : RSA private exponent d (big-endian, same length as modulus)
+   --  Salt      : random salt (hash_len bytes)
+   --  Signature : output buffer (at least Mod_Len bytes)
+   --  OK        : True if signing succeeded
+   procedure Sign_PSS
+     (M_Hash    : in     Byte_Seq;
+      Hash_Len  : in     N32;
+      Hash_Alg  : in     PSS_Hash;
+      Modulus   : in     Byte_Seq;
+      Mod_Len   : in     N32;
+      Priv_Exp  : in     Byte_Seq;
+      Salt      : in     Byte_Seq;
+      Signature :    out Byte_Seq;
+      Sig_Len   :    out N32;
+      OK        :    out Boolean)
+   with Pre => Mod_Len >= 64 and then Mod_Len <= Max_RSA_Bytes
+               and then Hash_Len in 32 | 48 | 64
+               and then M_Hash'First = 0
+               and then M_Hash'Last >= N32 (Hash_Len) - 1
+               and then Modulus'First = 0
+               and then Modulus'Last >= N32 (Mod_Len) - 1
+               and then Modulus'Last < N32'Last
+               and then Priv_Exp'First = 0
+               and then Priv_Exp'Last >= N32 (Mod_Len) - 1
+               and then Priv_Exp'Last < N32'Last
+               and then Salt'First = 0
+               and then Salt'Last >= N32 (Hash_Len) - 1
+               and then Signature'First = 0
+               and then Signature'Last >= N32 (Mod_Len) - 1
+               and then Signature'Last < N32'Last;
+
 end SPARKTLS.RSA;

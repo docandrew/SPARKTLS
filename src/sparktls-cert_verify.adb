@@ -815,6 +815,47 @@ is
                Id.ECDSA_P384_Key (I) := Key (Key'First + I);
             end loop;
 
+         when X509.Algo_RSA =>
+            --  Key is packed: n_len(2) || n || d_len(2) || d || e(4)
+            if Key'Length < 8 then return; end if;
+            declare
+               KF : constant N32 := Key'First;
+               N_Len : constant N32 :=
+                  N32 (Key (KF)) * 256 + N32 (Key (KF + 1));
+               D_Off : N32;
+               D_Len : N32;
+               E_Off : N32;
+            begin
+               if N_Len < 64 or N_Len > Max_RSA_Key_Bytes then return; end if;
+               if KF + 2 + N_Len + 5 > Key'Last then return; end if;
+
+               D_Off := KF + 2 + N_Len;
+               D_Len := N32 (Key (D_Off)) * 256 + N32 (Key (D_Off + 1));
+               if D_Len < 64 or D_Len > Max_RSA_Key_Bytes then return; end if;
+               if D_Off + 2 + D_Len + 3 > Key'Last then return; end if;
+
+               E_Off := D_Off + 2 + D_Len;
+
+               Id.Sign_Algo := Sign_RSA_PSS;
+               Id.RSA_Mod_Len := N_Len;
+
+               Id.RSA_Modulus := (others => 0);
+               for I in N32 range 0 .. N_Len - 1 loop
+                  Id.RSA_Modulus (I) := Key (KF + 2 + I);
+               end loop;
+
+               Id.RSA_Priv_Exp := (others => 0);
+               for I in N32 range 0 .. D_Len - 1 loop
+                  Id.RSA_Priv_Exp (I) := Key (D_Off + 2 + I);
+               end loop;
+
+               Id.RSA_Pub_Exp :=
+                  Unsigned_32 (Key (E_Off)) * 2**24 +
+                  Unsigned_32 (Key (E_Off + 1)) * 2**16 +
+                  Unsigned_32 (Key (E_Off + 2)) * 2**8 +
+                  Unsigned_32 (Key (E_Off + 3));
+            end;
+
          when others =>
             return;
       end case;

@@ -2,6 +2,8 @@ with Ada.Command_Line;
 with Ada.Text_IO;    use Ada.Text_IO;
 with Cmd_Show;
 with Cmd_Verify;
+with Cmd_Generate;
+with Cmd_Create;
 
 procedure SPARKTLS_CLI is
 
@@ -12,12 +14,15 @@ procedure SPARKTLS_CLI is
       Put_Line ("Usage: sparktls <command> [options]");
       New_Line;
       Put_Line ("Commands:");
-      Put_Line ("  show <cert.der> [--brief]        Display certificate fields");
-      Put_Line ("  verify <cert.der> --ca <ca.der>  Validate certificate chain");
-      Put_Line ("         [--ca <int.der>]           (multiple --ca for chain)");
-      Put_Line ("         [--host hostname]           Check hostname match");
+      Put_Line ("  show <cert.pem>                     Display certificate fields");
+      Put_Line ("  verify <cert.pem> --ca <ca.pem>     Validate certificate chain");
       New_Line;
-      Put_Line ("All certificates must be DER-encoded.");
+      Put_Line ("  generate <algo> key to <file>        Generate a keypair");
+      Put_Line ("    algo: ed25519, p256, p384");
+      New_Line;
+      Put_Line ("Examples:");
+      Put_Line ("  sparktls generate p256 key to server.key");
+      Put_Line ("  sparktls show server.crt");
    end Print_Usage;
 
 begin
@@ -34,6 +39,10 @@ begin
          Cmd_Show.Run;
       elsif Cmd = "verify" then
          Cmd_Verify.Run;
+      elsif Cmd = "generate" then
+         Cmd_Generate.Run;
+      elsif Cmd = "create" then
+         Cmd_Create.Run;
       elsif Cmd = "help" or Cmd = "--help" or Cmd = "-h" then
          Print_Usage;
       else

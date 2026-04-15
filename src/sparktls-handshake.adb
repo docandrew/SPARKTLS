@@ -2,6 +2,7 @@ with Interfaces; use Interfaces;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
+with SPARKNaCl.Hashing.SHA512;
 with SPARKNaCl.Scalar;
 with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
@@ -35,6 +36,7 @@ with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
 with SPARKTLS.P256.Point;
 with SPARKTLS.P384.Point;
+with SPARKTLS.RSA;
 
 package body SPARKTLS.Handshake with
    SPARK_Mode => On
@@ -50,6 +52,7 @@ is
 
    procedure Build_Client_Hello
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
@@ -59,10 +62,10 @@ is
       SK : SPARKNaCl.Cryptobox.Secret_Key;
       PK : SPARKNaCl.Cryptobox.Public_Key;
 
-      procedure Gen_Random (Output : out Byte_Seq) renames S.Cfg.Random.all;
+      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Extension data sizes
-      Host_Len : constant N32 := N32 (S.Cfg.Server_Name.Len);
+      Host_Len : constant N32 := N32 (HC.Cfg.Server_Name.Len);
       --  SNI data: sni_list_len(2) + host_type(1) + host_len(2) + host
       SNI_Data_Len : constant N32 := 5 + Host_Len;
       --  supported_groups data: list_len(2) + group(2) * 3
@@ -97,48 +100,48 @@ is
       Len    := 0;
 
       --  Generate ephemeral X25519 keypair
-      Gen_Random (S.Local_SK);
-      SPARKNaCl.Cryptobox.Keypair (S.Local_SK, PK, SK);
+      Gen_Random (HC.Local_SK);
+      SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK, SK);
 
       --  Generate ephemeral P-256 keypair
       declare
          P256_Pt : SPARKTLS.P256.Point.P256_Jacobian;
       begin
-         Gen_Random (S.P256_Local_SK);
+         Gen_Random (HC.P256_Local_SK);
          --  Compute public key = [private_key] * G
          SPARKTLS.P256.Point.P256_Mulgen
-           (P256_Pt, S.P256_Local_SK, 32);
+           (P256_Pt, HC.P256_Local_SK, 32);
          SPARKTLS.P256.Point.P256_To_Affine (P256_Pt);
          SPARKTLS.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
       end;
 
       --  Generate ephemeral P-384 keypair
-      Gen_Random (S.P384_Local_SK);
-      SPARKTLS.P384.Point.P384_Mulgen (P384_PK_Enc, S.P384_Local_SK);
+      Gen_Random (HC.P384_Local_SK);
+      SPARKTLS.P384.Point.P384_Mulgen (P384_PK_Enc, HC.P384_Local_SK);
 
       --  Generate client random
-      Gen_Random (S.Client_Random);
+      Gen_Random (HC.Client_Random);
 
       --  Generate 32-byte legacy session ID for middlebox compatibility
       declare
          Legacy_Session_ID : Byte_Seq (0 .. 31);
       begin
          Gen_Random (Legacy_Session_ID);
-         S.Legacy_Session_ID := Legacy_Session_ID;
+         HC.Legacy_Session_ID := Legacy_Session_ID;
       end;
 
       PK_Bytes := SPARKNaCl.Cryptobox.Serialize (PK);
 
       --  Allocate buffer for ClientHello body
-      S.RFLX_Main := (others => 0);
-      Buf := S.RFLX_Main'Unrestricted_Access;
+      HC.RFLX_Main := (others => 0);
+      Buf := HC.RFLX_Main'Unrestricted_Access;
       Initialize (Ctx, Buf);
 
       --  Set ClientHello fields via RFLX
       Set_Legacy_Version (Ctx, TLS_1_2);  --  0x0303 per RFC 8446
-      Set_Random (Ctx, To_RFLX (S.Client_Random));
+      Set_Random (Ctx, To_RFLX (HC.Client_Random));
       Set_Legacy_Session_ID_Length (Ctx, 32);
-      Set_Legacy_Session_ID (Ctx, To_RFLX (S.Legacy_Session_ID));
+      Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       --  TLS version routes past cookie fields to cipher_suites_length
       Set_Cipher_Suites_Length
         (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (6));
@@ -223,9 +226,9 @@ is
             SNI_Raw (2) := 16#00#;  --  host_name type
             SNI_Raw (3) := Byte (Host_Len / 256);
             SNI_Raw (4) := Byte (Host_Len mod 256);
-            for I in 1 .. S.Cfg.Server_Name.Len loop
+            for I in 1 .. HC.Cfg.Server_Name.Len loop
                SNI_Raw (4 + N32 (I)) :=
-                  Byte (Character'Pos (S.Cfg.Server_Name.Data (I)));
+                  Byte (Character'Pos (HC.Cfg.Server_Name.Data (I)));
             end loop;
 
             Ext_Buf := Sub'Unrestricted_Access;
@@ -416,6 +419,7 @@ is
 
    procedure Parse_Server_Hello
      (S    : in out Session;
+      HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
@@ -439,8 +443,8 @@ is
       --  Skip 4-byte handshake header, pass body to Server_Hello context
       Body_Len := N32 (Data'Length) - 4;
 
-      S.RFLX_Main := (others => 0);
-      Buf := S.RFLX_Main'Unrestricted_Access;
+      HC.RFLX_Main := (others => 0);
+      Buf := HC.RFLX_Main'Unrestricted_Access;
       Buf.all := To_RFLX (Data (B + 4 .. Data'Last));
       Initialize (Ctx, Buf,
                   Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
@@ -456,7 +460,7 @@ is
          Random_Bytes : RBT.Bytes (1 .. 32);
       begin
          Get_Random (Ctx, Random_Bytes);
-         S.Server_Random := To_NaCl (Random_Bytes);
+         HC.Server_Random := To_NaCl (Random_Bytes);
       end;
 
       --  Extract and validate cipher suite
@@ -555,8 +559,8 @@ is
                                           RFLX.TLS_Handshake.Key_Share_SH
                                             .Get_Key_Exchange
                                               (KS_Ctx, KB);
-                                          S.Peer_PK := To_NaCl (KB);
-                                          S.Use_P256_KE := False;
+                                          HC.Peer_PK := To_NaCl (KB);
+                                          HC.Use_P256_KE := False;
                                        end;
                                     elsif Grp.Known and then
                                        Grp.Enum =
@@ -569,11 +573,11 @@ is
                                             .Get_Key_Exchange
                                               (KS_Ctx, KB);
                                           for I in 0 .. 64 loop
-                                             S.P256_Peer_PK (N32 (I)) :=
+                                             HC.P256_Peer_PK (N32 (I)) :=
                                                 Byte (KB (RBT.Index (I + 1)));
                                           end loop;
-                                          S.Use_P256_KE := True;
-                                          S.Use_P384_KE := False;
+                                          HC.Use_P256_KE := True;
+                                          HC.Use_P384_KE := False;
                                        end;
                                     elsif Grp.Known and then
                                        Grp.Enum =
@@ -586,11 +590,11 @@ is
                                             .Get_Key_Exchange
                                               (KS_Ctx, KB);
                                           for I in 0 .. 96 loop
-                                             S.P384_Peer_PK (N32 (I)) :=
+                                             HC.P384_Peer_PK (N32 (I)) :=
                                                 Byte (KB (RBT.Index (I + 1)));
                                           end loop;
-                                          S.Use_P384_KE := True;
-                                          S.Use_P256_KE := False;
+                                          HC.Use_P384_KE := True;
+                                          HC.Use_P256_KE := False;
                                        end;
                                     end if;
                                  end;
@@ -613,7 +617,7 @@ is
       end if;
 
       --  Compute shared secret
-      if S.Use_P384_KE then
+      if HC.Use_P384_KE then
          --  P-384 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
          declare
             Secret_384 : Bytes_48;
@@ -622,16 +626,16 @@ is
             SPARKTLS.P384.Point.P384_ECDHE
               (Secret  => Secret_384,
                OK      => P384_OK,
-               SK      => S.P384_Local_SK,
-               Peer_PK => S.P384_Peer_PK);
+               SK      => HC.P384_Local_SK,
+               Peer_PK => HC.P384_Peer_PK);
             if not P384_OK then
                OK := False;
                Take_Buffer (Ctx, Buf);
                return;
             end if;
-            S.Shared_Secret := Secret_384;
+            HC.Shared_Secret := Secret_384;
          end;
-      elsif S.Use_P256_KE then
+      elsif HC.Use_P256_KE then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
          declare
             Peer_Pt : SPARKTLS.P256.Point.P256_Jacobian;
@@ -639,7 +643,7 @@ is
             X_Bytes : Byte_Seq (0 .. 31);
          begin
             SPARKTLS.P256.Point.P256_Decode
-              (Peer_Pt, S.P256_Peer_PK, Valid);
+              (Peer_Pt, HC.P256_Peer_PK, Valid);
             if Valid = 0 then
                OK := False;
                Take_Buffer (Ctx, Buf);
@@ -647,7 +651,7 @@ is
             end if;
             --  Multiply peer's public key by our private scalar
             SPARKTLS.P256.Point.P256_Mul
-              (Peer_Pt, S.P256_Local_SK, 32);
+              (Peer_Pt, HC.P256_Local_SK, 32);
             SPARKTLS.P256.Point.P256_To_Affine (Peer_Pt);
             --  Encode to get x-coordinate (bytes 1..32 of uncompressed point)
             declare
@@ -656,14 +660,14 @@ is
                SPARKTLS.P256.Point.P256_Encode (Encoded, Peer_Pt);
                X_Bytes := Encoded (1 .. 32);
             end;
-            S.Shared_Secret := (others => 0);
-            S.Shared_Secret (0 .. 31) := X_Bytes;
+            HC.Shared_Secret := (others => 0);
+            HC.Shared_Secret (0 .. 31) := X_Bytes;
          end;
       else
          --  X25519 ECDHE
-         S.Shared_Secret := (others => 0);
-         S.Shared_Secret (0 .. 31) :=
-            SPARKNaCl.Scalar.Mult (S.Local_SK, S.Peer_PK);
+         HC.Shared_Secret := (others => 0);
+         HC.Shared_Secret (0 .. 31) :=
+            SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
       end if;
 
       Take_Buffer (Ctx, Buf);
@@ -746,6 +750,7 @@ is
 
    procedure Parse_Client_Hello
      (S    : in out Session;
+      HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
@@ -768,8 +773,8 @@ is
       --  Skip 4-byte handshake header, pass body to Client_Hello context
       Body_Len := N32 (Data'Length) - 4;
 
-      S.RFLX_Main := (others => 0);
-      Buf := S.RFLX_Main'Unrestricted_Access;
+      HC.RFLX_Main := (others => 0);
+      Buf := HC.RFLX_Main'Unrestricted_Access;
       Buf.all := To_RFLX (Data (B + 4 .. Data'Last));
       Initialize (Ctx, Buf,
                   Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
@@ -785,7 +790,7 @@ is
          Random_Bytes : RBT.Bytes (1 .. 32);
       begin
          Get_Random (Ctx, Random_Bytes);
-         S.Client_Random := To_NaCl (Random_Bytes);
+         HC.Client_Random := To_NaCl (Random_Bytes);
       end;
 
       --  Extract legacy session ID
@@ -793,13 +798,13 @@ is
          SID_Len : constant N32 :=
             N32 (Get_Legacy_Session_ID_Length (Ctx));
       begin
-         S.Legacy_Session_ID := (others => 0);
+         HC.Legacy_Session_ID := (others => 0);
          if SID_Len > 0 and SID_Len <= 32 then
             declare
                SID : RBT.Bytes (1 .. RBT.Index (SID_Len));
             begin
                Get_Legacy_Session_ID (Ctx, SID);
-               S.Legacy_Session_ID (0 .. SID_Len - 1) := To_NaCl (SID);
+               HC.Legacy_Session_ID (0 .. SID_Len - 1) := To_NaCl (SID);
             end;
          end if;
       end;
@@ -970,7 +975,7 @@ is
                                                         .Key_Share_Entry
                                                         .Get_Key_Exchange
                                                           (E_Ctx, KB);
-                                                      S.Peer_PK :=
+                                                      HC.Peer_PK :=
                                                          To_NaCl (KB);
                                                    end;
                                                 end if;
@@ -1010,15 +1015,15 @@ is
                                 .Get_Data (Ext_Ctx, SA_Data);
                               if DLen >= 4 then
                                  while Pos + 1 <= RBT.Index (DLen)
-                                    and then S.Peer_Sig_Algo_Count <
+                                    and then HC.Peer_Sig_Algo_Count <
                                                 Max_Sig_Algos
                                  loop
-                                    S.Peer_Sig_Algos
-                                      (S.Peer_Sig_Algo_Count) :=
+                                    HC.Peer_Sig_Algos
+                                      (HC.Peer_Sig_Algo_Count) :=
                                        Unsigned_16 (SA_Data (Pos)) * 256 +
                                        Unsigned_16 (SA_Data (Pos + 1));
-                                    S.Peer_Sig_Algo_Count :=
-                                       S.Peer_Sig_Algo_Count + 1;
+                                    HC.Peer_Sig_Algo_Count :=
+                                       HC.Peer_Sig_Algo_Count + 1;
                                     Pos := Pos + 2;
                                  end loop;
                               end if;
@@ -1040,9 +1045,9 @@ is
       Take_Buffer (Ctx, Buf);
 
       --  Compute shared secret
-      S.Shared_Secret := (others => 0);
-      S.Shared_Secret (0 .. 31) :=
-         SPARKNaCl.Scalar.Mult (S.Local_SK, S.Peer_PK);
+      HC.Shared_Secret := (others => 0);
+      HC.Shared_Secret (0 .. 31) :=
+         SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
 
       OK := True;
    end Parse_Client_Hello;
@@ -1053,6 +1058,7 @@ is
 
    procedure Build_Server_Hello
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
@@ -1062,7 +1068,7 @@ is
       SK : SPARKNaCl.Cryptobox.Secret_Key;
       PK : SPARKNaCl.Cryptobox.Public_Key;
 
-      procedure Gen_Random (Output : out Byte_Seq) renames S.Cfg.Random.all;
+      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       function To_Suite_Enum (Val : Unsigned_16)
          return RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum
@@ -1099,29 +1105,29 @@ is
       Len    := 0;
 
       --  Generate ephemeral X25519 keypair
-      Gen_Random (S.Local_SK);
-      SPARKNaCl.Cryptobox.Keypair (S.Local_SK, PK, SK);
+      Gen_Random (HC.Local_SK);
+      SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK, SK);
 
       --  Generate server random
-      Gen_Random (S.Server_Random);
+      Gen_Random (HC.Server_Random);
 
       --  Compute shared secret
-      S.Shared_Secret := (others => 0);
-      S.Shared_Secret (0 .. 31) :=
-         SPARKNaCl.Scalar.Mult (S.Local_SK, S.Peer_PK);
+      HC.Shared_Secret := (others => 0);
+      HC.Shared_Secret (0 .. 31) :=
+         SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
 
       PK_Bytes := SPARKNaCl.Cryptobox.Serialize (PK);
 
       --  Allocate buffer for ServerHello body
-      S.RFLX_Main := (others => 0);
-      Buf := S.RFLX_Main'Unrestricted_Access;
+      HC.RFLX_Main := (others => 0);
+      Buf := HC.RFLX_Main'Unrestricted_Access;
       Initialize (Ctx, Buf);
 
       --  Set ServerHello fields via RFLX
       Set_Legacy_Version (Ctx, TLS_1_2);
-      Set_Random (Ctx, To_RFLX (S.Server_Random));
+      Set_Random (Ctx, To_RFLX (HC.Server_Random));
       Set_Legacy_Session_ID_Length (Ctx, 32);
-      Set_Legacy_Session_ID (Ctx, To_RFLX (S.Legacy_Session_ID));
+      Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       Set_Cipher_Suite_TLS_Suite (Ctx, To_Suite_Enum (S.Negotiated_Suite));
       Set_Legacy_Compression_Method (Ctx, 0);
       Set_Extensions_Length
@@ -1394,7 +1400,7 @@ is
       Content_Len : constant N32 := 64 + N32 (Context_Str'Length) + 1 + H_Len;
       Content     : Byte_Seq (0 .. Content_Len - 1);
 
-      Sig     : Byte_Seq (0 .. 95) := (others => 0);
+      Sig     : Byte_Seq (0 .. 511) := (others => 0);
       Sig_Len : N32 := 0;
       Sig_OK  : Boolean := False;
 
@@ -1471,6 +1477,69 @@ is
                if Sig_OK then
                   ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
                end if;
+            end;
+
+         when 16#0804# =>
+            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256;
+            declare
+               use SPARKNaCl.Hashing.SHA256;
+               H    : constant Digest := Hash (Content);
+               Salt : Bytes_32;
+            begin
+               Random.all (Byte_Seq (Salt));
+               SPARKTLS.RSA.Sign_PSS
+                 (M_Hash    => Byte_Seq (H),
+                  Hash_Len  => 32,
+                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA256,
+                  Modulus   => Id.RSA_Modulus,
+                  Mod_Len   => Id.RSA_Mod_Len,
+                  Priv_Exp  => Id.RSA_Priv_Exp,
+                  Salt      => Byte_Seq (Salt),
+                  Signature => Sig,
+                  Sig_Len   => Sig_Len,
+                  OK        => Sig_OK);
+            end;
+
+         when 16#0805# =>
+            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha384;
+            declare
+               use SPARKNaCl.Hashing.SHA384;
+               H    : constant Digest := Hash (Content);
+               Salt : Bytes_48;
+            begin
+               Random.all (Byte_Seq (Salt));
+               SPARKTLS.RSA.Sign_PSS
+                 (M_Hash    => Byte_Seq (H),
+                  Hash_Len  => 48,
+                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA384,
+                  Modulus   => Id.RSA_Modulus,
+                  Mod_Len   => Id.RSA_Mod_Len,
+                  Priv_Exp  => Id.RSA_Priv_Exp,
+                  Salt      => Byte_Seq (Salt),
+                  Signature => Sig,
+                  Sig_Len   => Sig_Len,
+                  OK        => Sig_OK);
+            end;
+
+         when 16#0806# =>
+            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha512;
+            declare
+               use SPARKNaCl.Hashing.SHA512;
+               H    : constant Digest := Hash (Content);
+               Salt : Bytes_64;
+            begin
+               Random.all (Byte_Seq (Salt));
+               SPARKTLS.RSA.Sign_PSS
+                 (M_Hash    => Byte_Seq (H),
+                  Hash_Len  => 64,
+                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA512,
+                  Modulus   => Id.RSA_Modulus,
+                  Mod_Len   => Id.RSA_Mod_Len,
+                  Priv_Exp  => Id.RSA_Priv_Exp,
+                  Salt      => Byte_Seq (Salt),
+                  Signature => Sig,
+                  Sig_Len   => Sig_Len,
+                  OK        => Sig_OK);
             end;
 
          when others =>

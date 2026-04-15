@@ -1,4 +1,5 @@
 with "../sparktls.gpr";
+with "../../sparkentropy/sparkentropy.gpr";
 
 project SPARKTLS_CLI is
    for Source_Dirs use (".");

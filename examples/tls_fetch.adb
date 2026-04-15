@@ -10,7 +10,6 @@
 
 with Ada.Command_Line;
 with Ada.Exceptions;
-with Ada.Numerics.Discrete_Random;
 with Ada.Streams;                use Ada.Streams;
 with Ada.Text_IO;                use Ada.Text_IO;
 with Interfaces;                 use Interfaces;
@@ -20,6 +19,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.System_Roots;
+with Entropy_Random;
 
 with X509;
 with Ada.Calendar;
@@ -51,19 +51,6 @@ procedure TLS_Fetch is
               Minute => Mn,
               Second => Sc);
    end Current_Time;
-
-   --  Simple PRNG (NOT CSPRNG - demo only)
-   package Random_Byte is new
-      Ada.Numerics.Discrete_Random (SPARKNaCl.Byte);
-
-   Gen : Random_Byte.Generator;
-
-   procedure My_Random (Output : out Byte_Seq) is
-   begin
-      for I in Output'Range loop
-         Output (I) := Random_Byte.Random (Gen);
-      end loop;
-   end My_Random;
 
    --  Simple URL parser for https://host[:port][/path]
    procedure Parse_URL
@@ -225,7 +212,7 @@ procedure TLS_Fetch is
    URL_Arg      : Natural := 0;
 
 begin
-   Random_Byte.Reset (Gen);
+   Entropy_Random.Init;
 
    --  Parse arguments
    for I in 1 .. Ada.Command_Line.Argument_Count loop
@@ -322,7 +309,7 @@ begin
          Trust    => (if Insecure or not Roots_OK
                       then null
                       else Roots'Unchecked_Access),
-         Random   => My_Random'Unrestricted_Access,
+         Random   => Entropy_Random.Random'Access,
          Clock    => Current_Time'Unrestricted_Access);
 
       Handshake : loop

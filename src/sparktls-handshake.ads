@@ -38,17 +38,19 @@ is
    --  Signature algorithm: Ed25519
    procedure Build_Client_Hello
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and N32 (Result'Length) >= Max_Client_Hello
-                and S.Cfg.Random /= null;
+                and HC.Cfg.Random /= null;
 
    --  Parse a ServerHello from raw handshake message bytes
    --  (after stripping the record header).
    --  Extracts: server random, cipher suite, key share (server public key).
    procedure Parse_Server_Hello
      (S    : in out Session;
+      HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre => Data'Length > 0;
@@ -83,6 +85,7 @@ is
    --  Selects the best cipher suite we support.
    procedure Parse_Client_Hello
      (S    : in out Session;
+      HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre => Data'Length > 0;
@@ -92,11 +95,12 @@ is
    --  Returns the complete handshake message ready for record wrapping.
    procedure Build_Server_Hello
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and N32 (Result'Length) >= Max_Server_Hello
-                and S.Cfg.Random /= null;
+                and HC.Cfg.Random /= null;
 
    --  Build a minimal EncryptedExtensions message (empty extension list).
    procedure Build_Encrypted_Extensions
@@ -124,7 +128,7 @@ is
       Result          :    out Byte_Seq;
       Len             :    out N32)
    with Pre => Result'First = 0
-               and N32 (Result'Length) >= 200
+               and N32 (Result'Length) >= 524
                and Transcript_Hash'First = 0
                and (Transcript_Hash'Length = 32
                     or Transcript_Hash'Length = 48);

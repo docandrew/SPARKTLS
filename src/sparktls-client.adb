@@ -16,6 +16,7 @@ with SPARKTLS.HKDF384;
 with SPARKTLS.P256.ECDSA;
 with SPARKTLS.P384.ECDSA;
 with SPARKTLS.RSA;
+with SPARKTLS.HC_Alloc;
 
 with X509;
 use type X509.Algorithm_ID;
@@ -24,19 +25,25 @@ package body SPARKTLS.Client with
    SPARK_Mode => On
 is
    --  Forward declarations for internal procedures
-   procedure Derive_Handshake_Keys (S : in out Session);
+   procedure Derive_Handshake_Keys
+     (S  : in out Session;
+      HC : in out Handshake_Context);
    procedure Send_Client_Certificate
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Action);
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Action);
    procedure Process_Handshake_Message
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Data   : in     Byte_Seq;
       Result :    out Action);
    procedure Process_Encrypted_Handshake
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Action);
    procedure Process_Connected
      (S      : in out Session;
@@ -46,34 +53,40 @@ is
       Secret : in     Bytes_48;
       Suite  : in     Unsigned_16);
 
+   --  Advance the handshake state machine (operates on dereferenced HC).
+   procedure Advance_Handshake
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action);
+
    --  Append handshake message bytes to the transcript
    procedure Append_Transcript
-     (S    : in out Session;
+     (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
    is
       Len : constant N32 := N32 (Data'Length);
    begin
-      if S.Transcript_Len + Len <= S.Transcript'Length then
-         S.Transcript (S.Transcript_Len ..
-                        S.Transcript_Len + Len - 1) := Data;
-         S.Transcript_Len := S.Transcript_Len + Len;
+      if HC.Transcript_Len + Len <= HC.Transcript'Length then
+         HC.Transcript (HC.Transcript_Len ..
+                         HC.Transcript_Len + Len - 1) := Data;
+         HC.Transcript_Len := HC.Transcript_Len + Len;
       end if;
    end Append_Transcript;
 
-   function Transcript_Hash_256 (S : Session) return Digest is
+   function Transcript_Hash_256 (HC : Handshake_Context) return Digest is
       H : Digest;
    begin
-      Hash (H, S.Transcript (0 .. S.Transcript_Len - 1));
+      Hash (H, HC.Transcript (0 .. HC.Transcript_Len - 1));
       return H;
    end Transcript_Hash_256;
 
-   function Transcript_Hash_384 (S : Session)
+   function Transcript_Hash_384 (HC : Handshake_Context)
       return SPARKNaCl.Hashing.SHA384.Digest
    is
       H : SPARKNaCl.Hashing.SHA384.Digest;
    begin
       SPARKNaCl.Hashing.SHA384.Hash
-        (H, S.Transcript (0 .. S.Transcript_Len - 1));
+        (H, HC.Transcript (0 .. HC.Transcript_Len - 1));
       return H;
    end Transcript_Hash_384;
 
@@ -104,29 +117,36 @@ is
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
+   with SPARK_Mode => Off
    is
       CH_Buf    : Byte_Seq (0 .. Handshake.Max_Client_Hello - 1);
       CH_Len    : N32;
       Rec_Out   : N32;
    begin
-      S := (Cfg       => Cfg,
-            State     => Client_Hello_Sent,
-            Role => Role_Client,
+      S := (State     => Client_Hello_Sent,
+            Role      => Role_Client,
             others    => <>);
 
-      --  Build ClientHello handshake message
-      Handshake.Build_Client_Hello (S, CH_Buf, CH_Len);
-
-      if CH_Len = 0 then
+      S.HC_Ptr := HC_Alloc.Allocate;
+      if S.HC_Ptr = null then
          S.State := Error_State;
          S.Last_Error := Internal_Error;
          return;
       end if;
 
-      --  Append to transcript (handshake message, no record header)
-      Append_Transcript (S, CH_Buf (0 .. CH_Len - 1));
+      S.HC_Ptr.Cfg := Cfg;
 
-      --  Wrap in TLS record and write to output buffer
+      Handshake.Build_Client_Hello (S, S.HC_Ptr.all, CH_Buf, CH_Len);
+
+      if CH_Len = 0 then
+         S.State := Error_State;
+         S.Last_Error := Internal_Error;
+         HC_Alloc.Free (S.HC_Ptr);
+         return;
+      end if;
+
+      Append_Transcript (S.HC_Ptr.all, CH_Buf (0 .. CH_Len - 1));
+
       Records.Build_Handshake_Record
         (Fragment  => CH_Buf (0 .. CH_Len - 1),
          Output    => S.Output,
@@ -135,12 +155,14 @@ is
       if Rec_Out = 0 then
          S.State := Error_State;
          S.Last_Error := Insufficient_Buffer;
+         HC_Alloc.Free (S.HC_Ptr);
       end if;
    end Init;
 
    --  Process a decrypted handshake message during the handshake
    procedure Process_Handshake_Message
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Data   : in     Byte_Seq;
       Result :    out Action)
    is
@@ -162,27 +184,27 @@ is
          when Handshake.HT_Encrypted_Extensions =>
             --  For now, just record in transcript and move on.
             --  TODO: parse and validate extensions
-            Append_Transcript (S, Data);
+            Append_Transcript (HC, Data);
             S.State := Wait_Certificate;
 
          when Handshake.HT_Certificate_Request =>
             --  mTLS: server requests a client certificate.
             --  Record in transcript and set flag; we'll send our cert
             --  after the server's Finished message.
-            Append_Transcript (S, Data);
-            S.Cert_Request_Received := True;
+            Append_Transcript (HC, Data);
+            HC.Cert_Request_Received := True;
             --  Stay in Wait_Certificate (server Certificate comes next)
 
          when Handshake.HT_Certificate =>
-            Append_Transcript (S, Data);
+            Append_Transcript (HC, Data);
 
             --  Parse Certificate message: extract leaf + intermediates.
             --  Format (past HS header at offset 4):
             --    request_context_len(1) + context +
             --    cert_list_len(3) + entries...
             --  Each entry: cert_len(3) + cert_DER + ext_len(2) + exts
-            S.Peer_Cert_Valid := False;
-            S.Peer_Int_Count := 0;
+            HC.Peer_Cert_Valid := False;
+            HC.Peer_Int_Count := 0;
             if Msg_Len > 4 and then N32 (Data'Length) >= 4 + Msg_Len then
                declare
                   B   : constant N32 := 4;  --  past HS header
@@ -213,8 +235,8 @@ is
 
                            if Cert_Idx = 0 then
                               --  First entry is the leaf
-                              S.Peer_Cert_DER_Len := C_Len;
-                              S.Peer_Cert_DER (0 .. C_Len - 1) :=
+                              HC.Peer_Cert_DER_Len := C_Len;
+                              HC.Peer_Cert_DER (0 .. C_Len - 1) :=
                                  Data (Pos .. Pos + C_Len - 1);
 
                               declare
@@ -226,16 +248,16 @@ is
                                     Cert_X (X509.N32 (I)) :=
                                        X509.Byte (Data (Pos + I));
                                  end loop;
-                                 X509.Parse (Cert_X, S.Peer_Cert, P_OK);
-                                 S.Peer_Cert_Valid := P_OK
-                                    and then X509.Is_Valid (S.Peer_Cert);
+                                 X509.Parse (Cert_X, HC.Peer_Cert, P_OK);
+                                 HC.Peer_Cert_Valid := P_OK
+                                    and then X509.Is_Valid (HC.Peer_Cert);
                               end;
                            else
                               --  Subsequent entries are intermediates
-                              if S.Peer_Int_Count < Max_Pool_Size then
+                              if HC.Peer_Int_Count < Max_Pool_Size then
                                  declare
                                     Idx : constant Natural :=
-                                       S.Peer_Int_Count;
+                                       HC.Peer_Int_Count;
                                     Int_X : X509.Byte_Seq
                                        (0 .. X509.N32 (C_Len) - 1);
                                     C   : X509.Certificate;
@@ -247,18 +269,18 @@ is
                                     end loop;
                                     X509.Parse (Int_X, C, P_OK);
                                     if P_OK and then X509.Is_Valid (C) then
-                                       S.Peer_Ints (Idx).Cert := C;
+                                       HC.Peer_Ints (Idx).Cert := C;
                                        for I in X509.N32 range
                                           0 .. X509.N32 (C_Len) - 1
                                        loop
-                                          S.Peer_Ints (Idx).DER (I) :=
+                                          HC.Peer_Ints (Idx).DER (I) :=
                                              X509.Byte (Data (Pos + N32 (I)));
                                        end loop;
-                                       S.Peer_Ints (Idx).DER_Len :=
+                                       HC.Peer_Ints (Idx).DER_Len :=
                                           X509.N32 (C_Len);
-                                       S.Peer_Ints (Idx).Present := True;
-                                       S.Peer_Int_Count :=
-                                          S.Peer_Int_Count + 1;
+                                       HC.Peer_Ints (Idx).Present := True;
+                                       HC.Peer_Int_Count :=
+                                          HC.Peer_Int_Count + 1;
                                     end if;
                                  end;
                               end if;
@@ -283,34 +305,35 @@ is
             end if;
 
             --  Chain validation (if trust store is configured)
-            if not S.Cfg.Skip_Verify
-               and then S.Cfg.Trust /= null
-               and then S.Cfg.Get_Time /= null
-               and then S.Peer_Cert_Valid
+            if not HC.Cfg.Skip_Verify
+               and then HC.Cfg.Trust /= null
+               and then HC.Cfg.Get_Time /= null
+               and then HC.Peer_Cert_Valid
             then
                declare
                   Cert_X : X509.Byte_Seq
-                     (0 .. X509.N32 (S.Peer_Cert_DER_Len) - 1);
+                     (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1);
                   VR : Validation_Result;
                begin
                   --  Copy peer DER to X509.Byte_Seq for Validate_Chain
-                  for I in N32 range 0 .. S.Peer_Cert_DER_Len - 1 loop
+                  for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
                      Cert_X (X509.N32 (I)) :=
-                        X509.Byte (S.Peer_Cert_DER (I));
+                        X509.Byte (HC.Peer_Cert_DER (I));
                   end loop;
 
                   VR := Validate_Chain
                     (Leaf_DER   => Cert_X,
-                     Leaf       => S.Peer_Cert,
-                     Ints       => S.Peer_Ints,
-                     Int_Count  => S.Peer_Int_Count,
-                     Roots      => S.Cfg.Trust.Roots,
-                     Root_Count => S.Cfg.Trust.Root_Count,
-                     Now        => S.Cfg.Get_Time.all,
+                     Leaf       => HC.Peer_Cert,
+                     Ints       => HC.Peer_Ints,
+                     Int_Count  => HC.Peer_Int_Count,
+                     Roots      => HC.Cfg.Trust.Roots,
+                     Root_Count => HC.Cfg.Trust.Root_Count,
+                     Now        => HC.Cfg.Get_Time.all,
                      Hostname   =>
-                        S.Cfg.Server_Name.Data (1 .. S.Cfg.Server_Name.Len),
-                     Purpose    => S.Cfg.Verify_Purpose,
-                     Mode       => S.Cfg.Verify_Mode);
+                        HC.Cfg.Server_Name.Data
+                          (1 .. HC.Cfg.Server_Name.Len),
+                     Purpose    => HC.Cfg.Verify_Purpose,
+                     Mode       => HC.Cfg.Verify_Mode);
 
                   if VR /= Valid then
                      S.Last_Error := Bad_Certificate;
@@ -327,29 +350,29 @@ is
             --  Verify CertificateVerify (RFC 8446 Section 4.4.3)
             declare
                --  Hash length depends on suite: 32 for SHA-256, 48 for SHA-384
-               H_Len : constant N32 := S.Hash_Len;
+               H_Len : constant N32 := HC.Hash_Len;
                CV_Hash : Byte_Seq (0 .. H_Len - 1);
             begin
                case S.Negotiated_Suite is
                   when Suite_AES_256_GCM_SHA384 =>
-                     CV_Hash := Transcript_Hash_384 (S);
+                     CV_Hash := Transcript_Hash_384 (HC);
                   when others =>
                      declare
-                        H256 : constant Digest := Transcript_Hash_256 (S);
+                        H256 : constant Digest := Transcript_Hash_256 (HC);
                      begin
                         CV_Hash := H256;
                      end;
                end case;
 
-               Append_Transcript (S, Data);
+               Append_Transcript (HC, Data);
 
-               if S.Cfg.Skip_Verify then
+               if HC.Cfg.Skip_Verify then
                   --  -k mode: skip all signature verification
                   S.State := Wait_Server_Finished;
                   return;
                end if;
 
-               if not S.Peer_Cert_Valid then
+               if not HC.Peer_Cert_Valid then
                   S.Last_Error := Certificate_Verify_Failed;
                   S.State := Error_State;
                   Result := Error_Alert;
@@ -378,7 +401,7 @@ is
                   Content (64 + N32 (Context_Str'Length) + 1 ..
                            64 + N32 (Context_Str'Length) + H_Len) := CV_Hash;
 
-                  if X509.PK_Algorithm (S.Peer_Cert) =
+                  if X509.PK_Algorithm (HC.Peer_Cert) =
                         X509.Algo_Ed25519 and then
                      Msg_Len >= 68  --  algo(2) + sig_len(2) + sig(64)
                   then
@@ -398,7 +421,7 @@ is
 
                         declare
                            PK : constant X509.Byte_Seq :=
-                              X509.PK_Data (S.Peer_Cert);
+                              X509.PK_Data (HC.Peer_Cert);
                         begin
                            for I in 0 .. 31 loop
                               PK_Bytes (N32 (I)) :=
@@ -422,7 +445,7 @@ is
                         end if;
                      end;
 
-                  elsif X509.PK_Algorithm (S.Peer_Cert) in
+                  elsif X509.PK_Algorithm (HC.Peer_Cert) in
                            X509.Algo_EC_P256 |
                            X509.Algo_EC_P384 and then
                         Msg_Len >= 12  --  algo(2) + sig_len(2) + min DER(8)
@@ -437,7 +460,7 @@ is
                                 Unsigned_16 (Data (7)));
                         Sig_Start : constant N32 := 8;
                         EC_Size : constant N32 :=
-                           N32 (X509.PK_Length (S.Peer_Cert));
+                           N32 (X509.PK_Length (HC.Peer_Cert));
                         Verify_OK : Boolean := False;
                      begin
                         --  Validate signature length
@@ -521,7 +544,7 @@ is
                               --  Extract EC public key (skip 0x04 prefix)
                               declare
                                  PK : constant X509.Byte_Seq :=
-                                    X509.PK_Data (S.Peer_Cert);
+                                    X509.PK_Data (HC.Peer_Cert);
                               begin
                                  for I in 0 .. 47 loop
                                     Qx (N32 (I)) :=
@@ -618,7 +641,7 @@ is
                               --  Extract EC public key (skip 0x04 prefix)
                               declare
                                  PK : constant X509.Byte_Seq :=
-                                    X509.PK_Data (S.Peer_Cert);
+                                    X509.PK_Data (HC.Peer_Cert);
                               begin
                                  for I in 0 .. 31 loop
                                     Qx (N32 (I)) :=
@@ -659,7 +682,7 @@ is
                         end if;
                      end;
 
-                  elsif X509.PK_Algorithm (S.Peer_Cert) =
+                  elsif X509.PK_Algorithm (HC.Peer_Cert) =
                            X509.Algo_RSA and then
                         Msg_Len >= 8  --  algo(2) + sig_len(2) + min sig
                   then
@@ -672,11 +695,11 @@ is
                            N32 (Unsigned_16 (Data (6)) * 256 +
                                 Unsigned_16 (Data (7)));
                         Raw_Mod_Len : constant Natural :=
-                           Natural (X509.PK_Length (S.Peer_Cert));
+                           Natural (X509.PK_Length (HC.Peer_Cert));
                         --  Strip leading zero byte from ASN.1 INTEGER
                         PK_Tmp : constant X509.Byte_Seq :=
                            (if Raw_Mod_Len > 0
-                            then X509.PK_Data (S.Peer_Cert)
+                            then X509.PK_Data (HC.Peer_Cert)
                             else X509.Byte_Seq'(0 => 0));
                         Mod_Skip : constant Natural :=
                            (if Raw_Mod_Len > 0 and then
@@ -772,7 +795,7 @@ is
                                     Mod_Len   => N32 (Mod_Len),
                                     Exponent  =>
                                        X509.RSA_Exponent
-                                          (S.Peer_Cert),
+                                          (HC.Peer_Cert),
                                     Signature => Sig_Bytes,
                                     Sig_Len   => Sig_Len);
                            end;
@@ -802,7 +825,7 @@ is
             --  Verify server Finished (RFC 8446 Section 4.4.4)
             --  verify_data length = Hash.length (32 for SHA-256, 48 for SHA-384)
             declare
-               H_Len : constant N32 := S.Hash_Len;
+               H_Len : constant N32 := HC.Hash_Len;
                Verified : Boolean := False;
             begin
                case S.Negotiated_Suite is
@@ -810,13 +833,13 @@ is
                   declare
                      use HKDF384;
                      Pre_Hash : constant Key_Schedule.Digest_384 :=
-                        Transcript_Hash_384 (S);
+                        Transcript_Hash_384 (HC);
                      Fin_Key  : OKM384_Seq (0 .. 47);
                      Expected : Bytes_48;
                   begin
-                     Append_Transcript (S, Data);
+                     Append_Transcript (HC, Data);
                      Key_Schedule.Derive_Finished_Key_384
-                       (Fin_Key, S.Server_HS_Secret);
+                       (Fin_Key, HC.Server_HS_Secret);
                      HMAC384.HMAC_SHA_384
                        (Output => Expected,
                         M      => Pre_Hash,
@@ -833,13 +856,13 @@ is
                   end;
                when others =>
                   declare
-                     Pre_Hash : constant Digest := Transcript_Hash_256 (S);
+                     Pre_Hash : constant Digest := Transcript_Hash_256 (HC);
                      Fin_Key  : OKM_Seq (0 .. 31);
                      Expected : Digest;
                   begin
-                     Append_Transcript (S, Data);
+                     Append_Transcript (HC, Data);
                      Key_Schedule.Derive_Finished_Key
-                       (Fin_Key, S.Server_HS_Secret (0 .. 31));
+                       (Fin_Key, HC.Server_HS_Secret (0 .. 31));
                      HMAC_SHA_256
                        (Output => Expected,
                         M      => Pre_Hash,
@@ -866,11 +889,11 @@ is
 
             --  Server Finished verified. Now derive application keys
             --  and send Client Finished.
-            Derive_App_Keys_And_Send_Finished (S, Result);
+            Derive_App_Keys_And_Send_Finished (S, HC, Result);
 
          when others =>
             --  Unknown handshake message, skip
-            Append_Transcript (S, Data);
+            Append_Transcript (HC, Data);
       end case;
    end Process_Handshake_Message;
 
@@ -878,19 +901,20 @@ is
    --  Called before sending Client Finished.
    procedure Send_Client_Certificate
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Action)
    is
       Enc_Out : N32;
    begin
       Result := OK;
 
-      if not S.Cert_Request_Received then
+      if not HC.Cert_Request_Received then
          return;
       end if;
 
-      if S.Cfg.Local = null or else not S.Cfg.Local.Has_Identity then
+      if HC.Cfg.Local = null or else not HC.Cfg.Local.Has_Identity then
          --  Server requested cert but we have none.
-         --  Send empty Certificate message (allowed by RFC 8446 §4.4.2).
+         --  Send empty Certificate message (allowed by RFC 8446 S.4.4.2).
          declare
             Empty_Cert : Byte_Seq (0 .. 7);
          begin
@@ -905,11 +929,11 @@ is
             Empty_Cert (6) := 0;
             Empty_Cert (7) := 0;
 
-            Append_Transcript (S, Empty_Cert);
+            Append_Transcript (HC, Empty_Cert);
             Records.Build_Encrypted_Record
               (Plaintext  => Empty_Cert,
                Inner_Type => 16#16#,
-               Keys       => S.Client_HS,
+               Keys       => HC.Client_HS,
                Output     => S.Output,
                Bytes_Out  => Enc_Out);
          end;
@@ -918,62 +942,62 @@ is
 
       --  Send our Certificate
       declare
-         Cert_Buf : Byte_Seq (0 .. S.Cfg.Local.NaCl_Cert_Len + 15);
+         Cert_Buf : Byte_Seq (0 .. HC.Cfg.Local.NaCl_Cert_Len + 15);
          Cert_Len : N32;
       begin
          Handshake.Build_Certificate
-           (Cert_DER => S.Cfg.Local.NaCl_Cert_DER,
-            Cert_Len => S.Cfg.Local.NaCl_Cert_Len,
+           (Cert_DER => HC.Cfg.Local.NaCl_Cert_DER,
+            Cert_Len => HC.Cfg.Local.NaCl_Cert_Len,
             Result   => Cert_Buf,
             Len      => Cert_Len);
 
          if Cert_Len > 0 then
-            Append_Transcript (S, Cert_Buf (0 .. Cert_Len - 1));
+            Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
             Records.Build_Encrypted_Record
               (Plaintext  => Cert_Buf (0 .. Cert_Len - 1),
                Inner_Type => 16#16#,
-               Keys       => S.Client_HS,
+               Keys       => HC.Client_HS,
                Output     => S.Output,
                Bytes_Out  => Enc_Out);
          end if;
       end;
 
       --  Send CertificateVerify
-      if S.Cfg.Local.Sign_Algo = Sign_Ed25519 then
+      if HC.Cfg.Local.Sign_Algo = Sign_Ed25519 then
          declare
-            H_Len : constant N32 := S.Hash_Len;
+            H_Len : constant N32 := HC.Hash_Len;
             CV_Hash : Byte_Seq (0 .. H_Len - 1);
          begin
             case S.Negotiated_Suite is
                when Suite_AES_256_GCM_SHA384 =>
-                  CV_Hash := Transcript_Hash_384 (S);
+                  CV_Hash := Transcript_Hash_384 (HC);
                when others =>
                   declare
-                     H : constant Digest := Transcript_Hash_256 (S);
+                     H : constant Digest := Transcript_Hash_256 (HC);
                   begin
                      CV_Hash := H;
                   end;
             end case;
 
             declare
-               CV_Buf : Byte_Seq (0 .. 199);
+               CV_Buf : Byte_Seq (0 .. 523);
                CV_Len : N32;
             begin
                Handshake.Build_Certificate_Verify
                  (Transcript_Hash => CV_Hash,
-                  Id              => S.Cfg.Local.all,
-                  Sig_Algo_Wire   => S.Negotiated_Sig_Algo,
+                  Id              => HC.Cfg.Local.all,
+                  Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
                   Role            => Role_Client,
-                  Random          => S.Cfg.Random,
+                  Random          => HC.Cfg.Random,
                   Result          => CV_Buf,
                   Len             => CV_Len);
 
                if CV_Len > 0 then
-                  Append_Transcript (S, CV_Buf (0 .. CV_Len - 1));
+                  Append_Transcript (HC, CV_Buf (0 .. CV_Len - 1));
                   Records.Build_Encrypted_Record
                     (Plaintext  => CV_Buf (0 .. CV_Len - 1),
                      Inner_Type => 16#16#,
-                     Keys       => S.Client_HS,
+                     Keys       => HC.Client_HS,
                      Output     => S.Output,
                      Bytes_Out  => Enc_Out);
                end if;
@@ -985,6 +1009,7 @@ is
    --  After verifying server Finished, derive app keys and send client Finished
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Action)
    is
       Finished_Buf : Byte_Seq (0 .. 35);
@@ -997,7 +1022,7 @@ is
       Result := OK;
 
       --  mTLS: send client certificate before Finished if requested
-      Send_Client_Certificate (S, Cert_Result);
+      Send_Client_Certificate (S, HC, Cert_Result);
       if Cert_Result = Error_Alert then
          Result := Error_Alert;
          return;
@@ -1008,7 +1033,7 @@ is
          declare
             use HKDF384;
             TS_Hash : constant Key_Schedule.Digest_384 :=
-               Transcript_Hash_384 (S);
+               Transcript_Hash_384 (HC);
             Finished_Key_384 : OKM384_Seq (0 .. 47);
             Verify_48        : Bytes_48;
             Master           : Key_Schedule.Digest_384;
@@ -1016,7 +1041,7 @@ is
             Server_App_Sec   : OKM384_Seq (0 .. 47);
          begin
             Key_Schedule.Derive_Finished_Key_384
-              (Finished_Key_384, S.Client_HS_Secret);
+              (Finished_Key_384, HC.Client_HS_Secret);
 
             HMAC384.HMAC_SHA_384
               (Output => Verify_48,
@@ -1047,7 +1072,7 @@ is
                Records.Build_Encrypted_Record
                  (Plaintext  => Big_Finished,
                   Inner_Type => 16#16#,
-                  Keys       => S.Client_HS,
+                  Keys       => HC.Client_HS,
                   Output     => S.Output,
                   Bytes_Out  => Enc_Out);
             end;
@@ -1060,15 +1085,15 @@ is
             end if;
 
             Key_Schedule.Derive_Master_Secret_384
-              (Master, Key_Schedule.Digest_384 (S.Handshake_Secret));
+              (Master, Key_Schedule.Digest_384 (HC.Handshake_Secret));
 
             Key_Schedule.Derive_App_Traffic_Secrets_384
               (Client_App_Sec, Server_App_Sec, Master, TS_Hash);
 
-            S.Master_Secret := Bytes_48 (Master);
+            HC.Master_Secret := Bytes_48 (Master);
 
             --  Set app traffic keys
-            S.Client_HS_Secret := Bytes_48 (Byte_Seq (Client_App_Sec));
+            HC.Client_HS_Secret := Bytes_48 (Byte_Seq (Client_App_Sec));
             Set_Traffic_Keys (S.Client_App,
                               Bytes_48 (Byte_Seq (Client_App_Sec)),
                               S.Negotiated_Suite);
@@ -1079,7 +1104,7 @@ is
       when others =>
          --  SHA-256 suites
          declare
-            TS_Hash : constant Digest := Transcript_Hash_256 (S);
+            TS_Hash : constant Digest := Transcript_Hash_256 (HC);
             Client_Finished_Key : OKM_Seq (0 .. 31);
             Client_Verify       : Digest;
             Master              : Digest;
@@ -1087,7 +1112,7 @@ is
             Server_App_Sec      : OKM_Seq (0 .. 31);
          begin
             Key_Schedule.Derive_Finished_Key
-              (Client_Finished_Key, S.Client_HS_Secret (0 .. 31));
+              (Client_Finished_Key, HC.Client_HS_Secret (0 .. 31));
 
             HMAC_SHA_256
               (Output => Client_Verify,
@@ -1101,7 +1126,7 @@ is
             Records.Build_Encrypted_Record
               (Plaintext  => Finished_Buf (0 .. Finished_Len - 1),
                Inner_Type => 16#16#,
-               Keys       => S.Client_HS,
+               Keys       => HC.Client_HS,
                Output     => S.Output,
                Bytes_Out  => Enc_Out);
 
@@ -1113,14 +1138,14 @@ is
             end if;
 
             Key_Schedule.Derive_Master_Secret
-              (Master, Digest (S.Handshake_Secret (0 .. 31)));
+              (Master, Digest (HC.Handshake_Secret (0 .. 31)));
 
             Key_Schedule.Derive_App_Traffic_Secrets
               (Client_App_Sec, Server_App_Sec,
                Master, TS_Hash);
 
-            S.Master_Secret := (others => 0);
-            S.Master_Secret (0 .. 31) := Bytes_32 (Digest (Master));
+            HC.Master_Secret := (others => 0);
+            HC.Master_Secret (0 .. 31) := Bytes_32 (Digest (Master));
 
             declare
                CS48 : Bytes_48 := (others => 0);
@@ -1138,8 +1163,10 @@ is
       Result := Has_Output;
    end Derive_App_Keys_And_Send_Finished;
 
-   procedure Advance
+   --  Advance handshake states (called with dereferenced HC_Ptr)
+   procedure Advance_Handshake
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Action)
    is
    begin
@@ -1183,7 +1210,7 @@ is
                                           Frag_Start + Rec.Fragment_Len - 1);
                         Parse_OK : Boolean;
                      begin
-                        Handshake.Parse_Server_Hello (S, Frag, Parse_OK);
+                        Handshake.Parse_Server_Hello (S, HC, Frag, Parse_OK);
 
                         if not Parse_OK then
                            S.Last_Error := Handshake_Failure;
@@ -1195,10 +1222,10 @@ is
                         end if;
 
                         --  Add ServerHello to transcript
-                        Append_Transcript (S, Frag);
+                        Append_Transcript (HC, Frag);
 
                         --  Derive handshake secrets
-                        Derive_Handshake_Keys (S);
+                        Derive_Handshake_Keys (S, HC);
 
                         S.Input.Read_Pos :=
                            S.Input.Read_Pos + Rec.Record_Len;
@@ -1219,7 +1246,7 @@ is
             | Wait_Certificate_Verify
             | Wait_Server_Finished =>
             --  All these states expect encrypted handshake records
-            Process_Encrypted_Handshake (S, Result);
+            Process_Encrypted_Handshake (S, HC, Result);
 
          when Client_Finished_Sent =>
             if Output_Pending (S) > 0 then
@@ -1229,6 +1256,20 @@ is
                Result := Handshake_Done;
             end if;
 
+         when others =>
+            S.Last_Error := Internal_Error;
+            S.State := Error_State;
+            Result := Error_Alert;
+      end case;
+   end Advance_Handshake;
+
+   procedure Advance
+     (S      : in out Session;
+      Result :    out Action)
+   with SPARK_Mode => Off
+   is
+   begin
+      case S.State is
          when Connected =>
             Process_Connected (S, Result);
 
@@ -1241,9 +1282,19 @@ is
             end if;
 
          when others =>
-            S.Last_Error := Internal_Error;
-            S.State := Error_State;
-            Result := Error_Alert;
+            if S.HC_Ptr = null then
+               S.Last_Error := Internal_Error;
+               S.State := Error_State;
+               Result := Error_Alert;
+               return;
+            end if;
+
+            Advance_Handshake (S, S.HC_Ptr.all, Result);
+
+            if S.State = Connected or S.State = Error_State then
+               S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+               HC_Alloc.Free (S.HC_Ptr);
+            end if;
       end case;
    end Advance;
 
@@ -1293,14 +1344,17 @@ is
    end Set_Traffic_Keys;
 
    --  Derive handshake traffic keys from shared secret
-   procedure Derive_Handshake_Keys (S : in out Session) is
+   procedure Derive_Handshake_Keys
+     (S  : in out Session;
+      HC : in out Handshake_Context)
+   is
    begin
       case S.Negotiated_Suite is
       when Suite_AES_256_GCM_SHA384 =>
          declare
             use HKDF384;
             Hello_Hash : Key_Schedule.Digest_384 :=
-               Transcript_Hash_384 (S);
+               Transcript_Hash_384 (HC);
             Early      : Key_Schedule.Digest_384;
             HS_Secret  : Key_Schedule.Digest_384;
             No_PSK     : Bytes_48 := (others => 0);
@@ -1309,32 +1363,32 @@ is
          begin
             Key_Schedule.Derive_Early_Secret_384 (Early, No_PSK);
             --  Use full 48 bytes if P-384 ECDHE, else first 32
-            if S.Use_P384_KE then
+            if HC.Use_P384_KE then
                Key_Schedule.Derive_Handshake_Secret_384
-                 (HS_Secret, Byte_Seq (S.Shared_Secret), Early);
+                 (HS_Secret, Byte_Seq (HC.Shared_Secret), Early);
             else
                Key_Schedule.Derive_Handshake_Secret_384
-                 (HS_Secret, S.Shared_Secret (0 .. 31), Early);
+                 (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
             end if;
 
-            S.Handshake_Secret := Bytes_48 (HS_Secret);
-            S.Hash_Len := 48;
+            HC.Handshake_Secret := Bytes_48 (HS_Secret);
+            HC.Hash_Len := 48;
 
             Key_Schedule.Derive_HS_Traffic_Secrets_384
               (Client_Sec, Server_Sec, HS_Secret, Hello_Hash);
 
-            S.Client_HS_Secret := Bytes_48 (Byte_Seq (Client_Sec));
-            S.Server_HS_Secret := Bytes_48 (Byte_Seq (Server_Sec));
+            HC.Client_HS_Secret := Bytes_48 (Byte_Seq (Client_Sec));
+            HC.Server_HS_Secret := Bytes_48 (Byte_Seq (Server_Sec));
 
-            Set_Traffic_Keys (S.Client_HS, S.Client_HS_Secret,
+            Set_Traffic_Keys (HC.Client_HS, HC.Client_HS_Secret,
                               S.Negotiated_Suite);
-            Set_Traffic_Keys (S.Server_HS, S.Server_HS_Secret,
+            Set_Traffic_Keys (HC.Server_HS, HC.Server_HS_Secret,
                               S.Negotiated_Suite);
          end;
       when others =>
          --  SHA-256 suites (0x1301, 0x1303)
          declare
-            Hello_Hash : Digest := Transcript_Hash_256 (S);
+            Hello_Hash : Digest := Transcript_Hash_256 (HC);
             Early      : Digest;
             HS_Secret  : Digest;
             No_PSK     : Bytes_32 := (others => 0);
@@ -1343,31 +1397,31 @@ is
          begin
             Key_Schedule.Derive_Early_Secret (Early, No_PSK);
             --  Pass full shared secret: 48 bytes for P-384, 32 for others
-            if S.Use_P384_KE then
+            if HC.Use_P384_KE then
                Key_Schedule.Derive_Handshake_Secret
-                 (HS_Secret, Byte_Seq (S.Shared_Secret), Early);
+                 (HS_Secret, Byte_Seq (HC.Shared_Secret), Early);
             else
                Key_Schedule.Derive_Handshake_Secret
-                 (HS_Secret, S.Shared_Secret (0 .. 31), Early);
+                 (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
             end if;
 
-            S.Handshake_Secret := (others => 0);
-            S.Handshake_Secret (0 .. 31) := Bytes_32 (Digest (HS_Secret));
-            S.Hash_Len := 32;
+            HC.Handshake_Secret := (others => 0);
+            HC.Handshake_Secret (0 .. 31) := Bytes_32 (Digest (HS_Secret));
+            HC.Hash_Len := 32;
 
             Key_Schedule.Derive_HS_Traffic_Secrets
               (Client_Sec, Server_Sec, HS_Secret, Hello_Hash);
 
-            S.Client_HS_Secret := (others => 0);
-            S.Client_HS_Secret (0 .. 31) :=
+            HC.Client_HS_Secret := (others => 0);
+            HC.Client_HS_Secret (0 .. 31) :=
                Bytes_32 (Byte_Seq (Client_Sec));
-            S.Server_HS_Secret := (others => 0);
-            S.Server_HS_Secret (0 .. 31) :=
+            HC.Server_HS_Secret := (others => 0);
+            HC.Server_HS_Secret (0 .. 31) :=
                Bytes_32 (Byte_Seq (Server_Sec));
 
-            Set_Traffic_Keys (S.Client_HS, S.Client_HS_Secret,
+            Set_Traffic_Keys (HC.Client_HS, HC.Client_HS_Secret,
                               S.Negotiated_Suite);
-            Set_Traffic_Keys (S.Server_HS, S.Server_HS_Secret,
+            Set_Traffic_Keys (HC.Server_HS, HC.Server_HS_Secret,
                               S.Negotiated_Suite);
          end;
       end case;
@@ -1376,6 +1430,7 @@ is
    --  Process encrypted handshake records (post-ServerHello)
    procedure Process_Encrypted_Handshake
      (S      : in out Session;
+      HC     : in out Handshake_Context;
       Result :    out Action)
    is
       Rec : Records.Parse_Result;
@@ -1399,7 +1454,7 @@ is
       case Rec.Content is
          when Records.Content_Change_Cipher_Spec =>
             --  CCS for middlebox compatibility, ignore
-            S.CCS_Received := True;
+            HC.CCS_Received := True;
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Result := OK;
 
@@ -1432,7 +1487,7 @@ is
                Records.Decrypt_Record
                  (Encrypted  => Encrypted,
                   Record_Hdr => Hdr,
-                  Keys       => S.Server_HS,
+                  Keys       => HC.Server_HS,
                   Plaintext  => Plaintext,
                   Plain_Len  => Plain_Len,
                   Inner_Type => Inner_Type,
@@ -1476,7 +1531,7 @@ is
                            begin
                               Msg_Copy := Plaintext (Pos .. Msg_End - 1);
                               Process_Handshake_Message
-                                (S, Msg_Copy, Result);
+                                (S, HC, Msg_Copy, Result);
                            end;
                            if Result = Error_Alert then
                               exit;
