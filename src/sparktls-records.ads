@@ -78,4 +78,13 @@ is
       Output     : in out IO_Buffer;
       Bytes_Out  :    out N32);
 
+   --  Build a plaintext alert record (no encryption).
+   --  Uses RFLX-generated alert serializer for the payload.
+   --  Used during handshake before keys are established.
+   procedure Build_Plaintext_Alert
+     (Level     : in     Byte;   --  1=warning, 2=fatal
+      Desc      : in     Byte;   --  TLS alert description
+      Output    : in out IO_Buffer;
+      Bytes_Out :    out N32);
+
 end SPARKTLS.Records;

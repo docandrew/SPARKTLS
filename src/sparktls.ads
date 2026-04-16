@@ -398,6 +398,12 @@ is
       P384_Peer_PK  : Byte_Seq (0 .. 96) := (others => 0);
       Use_P384_KE   : Boolean := False;
 
+      --  Server-side: which key share groups did the client offer?
+      Client_Has_X25519 : Boolean := False;
+      Client_Has_P256   : Boolean := False;
+      Client_Has_P384   : Boolean := False;
+      Selected_Group    : Unsigned_16 := 0;
+
       --  Handshake traffic keys
       Client_HS     : Traffic_Keys;
       Server_HS     : Traffic_Keys;

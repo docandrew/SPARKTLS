@@ -3,6 +3,10 @@ with SPARKNaCl.AES;
 with SPARKTLS.AES_GCM;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with RFLX.RFLX_Builtin_Types;
+with RFLX.RFLX_Types;
+with RFLX.TLS_Alert;
+with RFLX.TLS_Alert.Alert;
+with RFLX.Tls_Parameters;
 with RFLX.TLS_Record.TLS_Plaintext;
 with RFLX.TLS_Record;
 with RFLX.TLS_Common;
@@ -344,5 +348,77 @@ is
          Output     => Output,
          Bytes_Out  => Bytes_Out);
    end Build_Alert_Record;
+
+   procedure Build_Plaintext_Alert
+     (Level     : in     Byte;
+      Desc      : in     Byte;
+      Output    : in out IO_Buffer;
+      Bytes_Out :    out N32)
+   is
+      use RFLX.TLS_Alert;
+      use RFLX.TLS_Alert.Alert;
+      use RFLX.Tls_Parameters;
+      use type RFLX.RFLX_Types.Bytes_Ptr;
+      use type RFLX.RFLX_Types.Bit_Length;
+
+      Alert_Buf : aliased RFLX.RFLX_Builtin_Types.Bytes (1 .. 2)
+                    := (others => 0);
+      Buf_Ptr   : RFLX.RFLX_Builtin_Types.Bytes_Ptr :=
+                    Alert_Buf'Unrestricted_Access;
+      Ctx       : RFLX.TLS_Alert.Alert.Context;
+      Alert_Lvl : RFLX.TLS_Alert.Alert_Level;
+      Alert_Desc : RFLX.Tls_Parameters.TLS_Alerts_Enum;
+   begin
+      Bytes_Out := 0;
+
+      --  Map level byte to RFLX enum
+      if Level = 1 then
+         Alert_Lvl := Warning;
+      else
+         Alert_Lvl := Fatal;
+      end if;
+
+      --  Map description byte to RFLX enum
+      declare
+         Base_Val : constant RFLX.RFLX_Types.Base_Integer :=
+            RFLX.RFLX_Types.Base_Integer (Desc);
+      begin
+         if RFLX.Tls_Parameters.Valid_TLS_Alerts (Base_Val) then
+            declare
+               A : constant RFLX.Tls_Parameters.TLS_Alerts :=
+                  RFLX.Tls_Parameters.To_Actual (Base_Val);
+            begin
+               if A.Known then
+                  Alert_Desc := A.Enum;
+               else
+                  Alert_Desc := RFLX.Tls_Parameters.Internal_Error;
+               end if;
+            end;
+         else
+            Alert_Desc := RFLX.Tls_Parameters.Internal_Error;
+         end if;
+      end;
+
+      --  Build alert payload via RFLX
+      Initialize (Ctx, Buf_Ptr);
+      Set_Level (Ctx, Alert_Lvl);
+      Set_Description (Ctx, Alert_Desc);
+      Take_Buffer (Ctx, Buf_Ptr);
+
+      --  Wrap in plaintext TLS record: type(1) + version(2) + length(2) + alert(2)
+      if Free_Space (Output) >= 7 then
+         Output.Data (Output.Write_Pos)     := 16#15#;        --  alert
+         Output.Data (Output.Write_Pos + 1) := 16#03#;        --  TLS 1.2
+         Output.Data (Output.Write_Pos + 2) := 16#03#;
+         Output.Data (Output.Write_Pos + 3) := 16#00#;        --  length=2
+         Output.Data (Output.Write_Pos + 4) := 16#02#;
+         Output.Data (Output.Write_Pos + 5) :=
+            Byte (Alert_Buf (1));  --  level
+         Output.Data (Output.Write_Pos + 6) :=
+            Byte (Alert_Buf (2));  --  description
+         Output.Write_Pos := Output.Write_Pos + 7;
+         Bytes_Out := 7;
+      end if;
+   end Build_Plaintext_Alert;
 
 end SPARKTLS.Records;

@@ -1089,22 +1089,77 @@ is
                                                      .Key_Share_Entry
                                                      .Get_Group (E_Ctx);
                                              begin
-                                                if Grp.Known and then
-                                                   Grp.Enum =
+                                                if Grp.Known then
+                                                   if Grp.Enum =
                                                       RFLX.Tls_Parameters
                                                          .X25519
-                                                then
-                                                   declare
-                                                      KB : RBT.Bytes
-                                                             (1 .. 32);
-                                                   begin
-                                                      RFLX.TLS_Handshake
-                                                        .Key_Share_Entry
-                                                        .Get_Key_Exchange
-                                                          (E_Ctx, KB);
-                                                      HC.Peer_PK :=
-                                                         To_NaCl (KB);
-                                                   end;
+                                                   then
+                                                      declare
+                                                         KB : RBT.Bytes
+                                                                (1 .. 32);
+                                                      begin
+                                                         RFLX.TLS_Handshake
+                                                           .Key_Share_Entry
+                                                           .Get_Key_Exchange
+                                                             (E_Ctx, KB);
+                                                         HC.Peer_PK :=
+                                                            To_NaCl (KB);
+                                                         HC.Client_Has_X25519
+                                                            := True;
+                                                      end;
+                                                   elsif Grp.Enum =
+                                                      RFLX.Tls_Parameters
+                                                         .Secp256r1
+                                                   then
+                                                      declare
+                                                         KLen : constant N32 :=
+                                                            N32 (RFLX.TLS_Handshake
+                                                               .Key_Share_Entry
+                                                               .Get_Length
+                                                                  (E_Ctx));
+                                                         KB : RBT.Bytes
+                                                                (1 .. RBT.Index (KLen));
+                                                      begin
+                                                         if KLen = 65 then
+                                                            RFLX.TLS_Handshake
+                                                              .Key_Share_Entry
+                                                              .Get_Key_Exchange
+                                                                (E_Ctx, KB);
+                                                            for I in N32 range 0 .. 64 loop
+                                                               HC.P256_Peer_PK (I) :=
+                                                                  Byte (KB (RBT.Index (I + 1)));
+                                                            end loop;
+                                                            HC.Client_Has_P256
+                                                               := True;
+                                                         end if;
+                                                      end;
+                                                   elsif Grp.Enum =
+                                                      RFLX.Tls_Parameters
+                                                         .Secp384r1
+                                                   then
+                                                      declare
+                                                         KLen : constant N32 :=
+                                                            N32 (RFLX.TLS_Handshake
+                                                               .Key_Share_Entry
+                                                               .Get_Length
+                                                                  (E_Ctx));
+                                                         KB : RBT.Bytes
+                                                                (1 .. RBT.Index (KLen));
+                                                      begin
+                                                         if KLen = 97 then
+                                                            RFLX.TLS_Handshake
+                                                              .Key_Share_Entry
+                                                              .Get_Key_Exchange
+                                                                (E_Ctx, KB);
+                                                            for I in N32 range 0 .. 96 loop
+                                                               HC.P384_Peer_PK (I) :=
+                                                                  Byte (KB (RBT.Index (I + 1)));
+                                                            end loop;
+                                                            HC.Client_Has_P384
+                                                               := True;
+                                                         end if;
+                                                      end;
+                                                   end if;
                                                 end if;
                                              end;
                                           end if;
@@ -1259,10 +1314,8 @@ is
 
       Take_Buffer (Ctx, Buf);
 
-      --  Compute shared secret
-      HC.Shared_Secret := (others => 0);
-      HC.Shared_Secret (0 .. 31) :=
-         SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+      --  Shared secret computation deferred to Build_Server_Hello
+      --  where we know which group to select.
 
       OK := True;
    end Parse_Client_Hello;
@@ -1299,39 +1352,120 @@ is
          end case;
       end To_Suite_Enum;
 
-      --  Extension data sizes (fixed for ServerHello)
-      --  key_share: group(2) + key_len(2) + key(32) = 36
-      KS_Data_Len : constant := 36;
-      --  supported_versions: version(2)
       SV_Data_Len : constant := 2;
-      --  Total extensions: (4+36) + (4+2) = 46
-      Ext_Total   : constant := (4 + KS_Data_Len) + (4 + SV_Data_Len);
 
-      --  ServerHello body: version(2) + random(32) + sid_len(1) + sid(32)
-      --  + suite(2) + comp(1) + ext_len(2) + extensions(46) = 118
-      SH_Body_Len : constant N32 := 118;
-      SH_Msg_Len  : constant N32 := 4 + SH_Body_Len;
+      --  Key share data: varies by selected group
+      KS_Raw     : Byte_Seq (0 .. 103) := (others => 0);  --  max P-384: 4+97
+      KS_Raw_Len : N32 := 0;
+
+      KS_Data_Len : N32;
+      Ext_Total   : N32;
+      SH_Body_Len : N32;
+      SH_Msg_Len  : N32;
 
       Buf      : RBT.Bytes_Ptr;
       Ctx      : Context;
-      PK_Bytes : Byte_Seq (0 .. 31);
    begin
       Result := (others => 0);
       Len    := 0;
 
-      --  Generate ephemeral X25519 keypair
-      Gen_Random (HC.Local_SK);
-      SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK, SK);
-
       --  Generate server random
       Gen_Random (HC.Server_Random);
 
-      --  Compute shared secret
+      --  Select key exchange group (prefer x25519 > P-256 > P-384)
       HC.Shared_Secret := (others => 0);
-      HC.Shared_Secret (0 .. 31) :=
-         SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+      if HC.Client_Has_X25519 then
+         HC.Selected_Group := 16#001D#;
+         declare
+            PK_X : SPARKNaCl.Cryptobox.Public_Key;
+         begin
+            Gen_Random (HC.Local_SK);
+            SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK_X, SK);
+            HC.Shared_Secret (0 .. 31) :=
+               SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+            declare
+               PK_Bytes : constant Bytes_32 :=
+                  SPARKNaCl.Cryptobox.Serialize (PK_X);
+            begin
+               --  group(2) + key_len(2) + key(32) = 36
+               KS_Raw (0) := 0; KS_Raw (1) := 16#1D#;  --  x25519
+               KS_Raw (2) := 0; KS_Raw (3) := 32;
+               for I in N32 range 0 .. 31 loop
+                  KS_Raw (4 + I) := PK_Bytes (I);
+               end loop;
+               KS_Raw_Len := 36;
+            end;
+         end;
 
-      PK_Bytes := SPARKNaCl.Cryptobox.Serialize (PK);
+      elsif HC.Client_Has_P256 then
+         HC.Selected_Group := 16#0017#;
+         declare
+            use SPARKTLS.P256.Point;
+            PK_Jac  : P256_Jacobian;
+            PK_Enc  : Byte_Seq (0 .. 64);
+            Peer_Pt : P256_Jacobian;
+            Valid   : SPARKNaCl.U32;
+         begin
+            Gen_Random (HC.P256_Local_SK);
+            --  Our public key
+            P256_Mulgen (PK_Jac, HC.P256_Local_SK, 32);
+            P256_To_Affine (PK_Jac);
+            P256_Encode (PK_Enc, PK_Jac);
+            --  Shared secret: x-coord of [our_sk] * peer_pk
+            P256_Decode (Peer_Pt, HC.P256_Peer_PK, Valid);
+            if Valid = 0 then return; end if;
+            P256_Mul (Peer_Pt, HC.P256_Local_SK, 32);
+            P256_To_Affine (Peer_Pt);
+            declare
+               Enc : Byte_Seq (0 .. 64);
+            begin
+               P256_Encode (Enc, Peer_Pt);
+               HC.Shared_Secret := (others => 0);
+               HC.Shared_Secret (0 .. 31) := Enc (1 .. 32);
+            end;
+            --  group(2) + key_len(2) + key(65) = 69
+            KS_Raw (0) := 0; KS_Raw (1) := 16#17#;
+            KS_Raw (2) := 0; KS_Raw (3) := 65;
+            for I in N32 range 0 .. 64 loop
+               KS_Raw (4 + I) := PK_Enc (I);
+            end loop;
+            KS_Raw_Len := 69;
+         end;
+
+      elsif HC.Client_Has_P384 then
+         HC.Selected_Group := 16#0018#;
+         declare
+            PK_Enc : Byte_Seq (0 .. 96);
+            SS     : Bytes_48;
+            SS_OK  : Boolean;
+         begin
+            Gen_Random (Byte_Seq (HC.P384_Local_SK));
+            SPARKTLS.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
+            SPARKTLS.P384.Point.P384_ECDHE
+              (Secret  => SS,
+               OK      => SS_OK,
+               SK      => HC.P384_Local_SK,
+               Peer_PK => HC.P384_Peer_PK);
+            if not SS_OK then return; end if;
+            HC.Shared_Secret := SS;
+            --  group(2) + key_len(2) + key(97) = 101
+            KS_Raw (0) := 0; KS_Raw (1) := 16#18#;
+            KS_Raw (2) := 0; KS_Raw (3) := 97;
+            for I in N32 range 0 .. 96 loop
+               KS_Raw (4 + I) := PK_Enc (I);
+            end loop;
+            KS_Raw_Len := 101;
+         end;
+
+      else
+         --  No common key exchange group
+         return;
+      end if;
+
+      KS_Data_Len := KS_Raw_Len;
+      Ext_Total := (4 + KS_Data_Len) + (4 + SV_Data_Len);
+      SH_Body_Len := 72 + Ext_Total;  --  version(2)+random(32)+sid_len(1)+sid(32)+suite(2)+comp(1)+ext_len(2)
+      SH_Msg_Len := 4 + SH_Body_Len;
 
       --  Allocate buffer for ServerHello body
       HC.RFLX_Main := (others => 0);
@@ -1360,23 +1494,17 @@ is
                         (1 .. RBT.Index (4 + KS_Data_Len)) := (others => 0);
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-            KS_Raw  : Byte_Seq (0 .. KS_Data_Len - 1);
          begin
-            --  Build key_share data: group(2) + key_len(2) + key(32)
-            KS_Raw (0) := 16#00#;
-            KS_Raw (1) := 16#1D#;  --  X25519
-            KS_Raw (2) := 16#00#;
-            KS_Raw (3) := 16#20#;  --  32 bytes
-            KS_Raw (4 .. 35) := PK_Bytes;
+            --  KS_Raw already populated with the selected group's key share
 
             Ext_Buf := Sub'Unrestricted_Access;
             RFLX.TLS_Handshake.SH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Key_Share);
             RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, KS_Data_Len);
+              (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (KS_Data_Len));
             RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (KS_Raw));
+              (Ext_Ctx, To_RFLX (KS_Raw (0 .. KS_Raw_Len - 1)));
 
             RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
               (Exts_Ctx, Ext_Ctx);

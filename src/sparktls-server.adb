@@ -56,6 +56,41 @@ is
       Secret : in     Bytes_48;
       Suite  : in     Unsigned_16);
 
+   --  Map Error_Code to TLS alert description byte
+   function Alert_Desc (E : Error_Code) return Byte is
+     (case E is
+         when Unexpected_Message    => 10,
+         when Bad_Record_MAC        => 20,
+         when Record_Overflow       => 22,
+         when Handshake_Failure     => 40,
+         when Bad_Certificate       => 42,
+         when Certificate_Expired   => 45,
+         when Certificate_Verify_Failed => 51,
+         when Decode_Error          => 50,
+         when Illegal_Parameter     => 47,
+         when Internal_Error        => 80,
+         when Insufficient_Buffer   => 80,
+         when Unsupported_Cipher_Suite => 40,
+         when No_Error              => 80);
+
+   --  Send a fatal alert and set error state
+   procedure Send_Alert_And_Error
+     (S      : in out Session;
+      Err    : Error_Code;
+      Result : out Action)
+   is
+      Dummy : N32;
+   begin
+      S.Last_Error := Err;
+      S.State := Error_State;
+      Result := Error_Alert;
+      Records.Build_Plaintext_Alert
+        (Level     => 2,  --  fatal
+         Desc      => Alert_Desc (Err),
+         Output    => S.Output,
+         Bytes_Out => Dummy);
+   end Send_Alert_And_Error;
+
    --  Append handshake message bytes to the transcript
    procedure Append_Transcript
      (HC   : in out Handshake_Context;
@@ -132,7 +167,12 @@ is
    begin
       case S.State is
          when Connected =>
-            Process_Connected (S, Result);
+            --  Drain pending output first (e.g., NewSessionTicket)
+            if Output_Pending (S) > 0 then
+               Result := Has_Output;
+            else
+               Process_Connected (S, Result);
+            end if;
 
          when Closing =>
             if Output_Pending (S) > 0 then
@@ -142,7 +182,15 @@ is
                Result := Shutdown;
             end if;
 
-         when Closed | Error_State | Idle =>
+         when Error_State =>
+            --  Drain any pending alert before reporting error
+            if Output_Pending (S) > 0 then
+               Result := Has_Output;
+            else
+               Result := Error_Alert;
+            end if;
+
+         when Closed | Idle =>
             S.Last_Error := Internal_Error;
             S.State := Error_State;
             Result := Error_Alert;
@@ -210,9 +258,7 @@ is
                   Handshake.Parse_Client_Hello (S, HC, Frag, Parse_OK);
 
                   if not Parse_OK then
-                     S.Last_Error := Handshake_Failure;
-                     S.State := Error_State;
-                     Result := Error_Alert;
+                     Send_Alert_And_Error (S, Handshake_Failure, Result);
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                      return;
                   end if;
@@ -1476,8 +1522,10 @@ is
       end if;
 
       if Rec.Content /= Records.Content_Application_Data then
+         --  In Connected state, only application_data records are valid.
+         --  CCS after Finished and other unexpected types get rejected.
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Result := OK;
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
          return;
       end if;
 
