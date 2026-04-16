@@ -5,8 +5,8 @@ project SPARKTLS_Examples is
    for Source_Dirs use (".");
    for Object_Dir use "../obj/examples";
    for Create_Missing_Dirs use "True";
-   for Main use ("tls_fetch.adb", "tls_echo_epoll.adb");
-   --  TODO: update tls_test_client.adb, tls_test_server.adb for new API
+   for Main use ("tls_fetch.adb", "tls_web_epoll.adb",
+                  "tls_test_client.adb", "tls_test_server.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use

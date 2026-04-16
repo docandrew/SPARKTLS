@@ -1332,6 +1332,108 @@ is
       Len := Msg_Len;
    end Build_Certificate;
 
+   procedure Build_Certificate_Chain
+     (Id     : in     Identity;
+      Result :    out Byte_Seq;
+      Len    :    out N32)
+   is
+      --  Build the Certificate message manually (simpler than RFLX
+      --  for variable-count entries).
+      --
+      --  Format:
+      --    handshake_header(4)
+      --    certificate_request_context_length(1) = 0
+      --    certificate_list_length(3)
+      --    for each cert:
+      --      cert_data_length(3) + cert_data + extensions_length(2) = 0
+
+      Pos : N32 := 0;
+
+      procedure Put_U8 (V : Byte) is
+      begin
+         if Pos <= Result'Last then
+            Result (Pos) := V;
+            Pos := Pos + 1;
+         end if;
+      end Put_U8;
+
+      procedure Put_U24 (V : N32) is
+      begin
+         Put_U8 (Byte (V / 65536));
+         Put_U8 (Byte ((V / 256) mod 256));
+         Put_U8 (Byte (V mod 256));
+      end Put_U24;
+
+      procedure Put_Cert_Entry (DER : Byte_Seq; DER_Len : N32) is
+      begin
+         Put_U24 (DER_Len);              --  cert_data_length
+         if Pos + DER_Len - 1 <= Result'Last then
+            Result (Pos .. Pos + DER_Len - 1) := DER (0 .. DER_Len - 1);
+            Pos := Pos + DER_Len;
+         end if;
+         Put_U8 (0); Put_U8 (0);         --  extensions_length = 0
+      end Put_Cert_Entry;
+
+      --  Compute total list length
+      List_Len : N32 := 0;
+   begin
+      Result := (others => 0);
+      Len := 0;
+
+      if not Id.Has_Identity or Id.NaCl_Cert_Len = 0 then
+         return;
+      end if;
+
+      --  Leaf entry: 3 + cert_len + 2
+      List_Len := 3 + Id.NaCl_Cert_Len + 2;
+
+      --  Intermediate entries
+      for I in 0 .. Id.Int_Count - 1 loop
+         if Id.Ints (I).Present then
+            List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len) + 2;
+         end if;
+      end loop;
+
+      declare
+         Body_Len : constant N32 := 1 + 3 + List_Len;
+         Msg_Len  : constant N32 := 4 + Body_Len;
+      begin
+         if Msg_Len > N32 (Result'Length) then
+            return;
+         end if;
+
+         --  Handshake header
+         Put_U8 (HT_Certificate);
+         Put_U24 (Body_Len);
+
+         --  certificate_request_context (empty)
+         Put_U8 (0);
+
+         --  certificate_list_length
+         Put_U24 (List_Len);
+
+         --  Leaf certificate entry
+         Put_Cert_Entry (Id.NaCl_Cert_DER, Id.NaCl_Cert_Len);
+
+         --  Intermediate certificate entries
+         for I in 0 .. Id.Int_Count - 1 loop
+            if Id.Ints (I).Present then
+               declare
+                  Int_DER : Byte_Seq (0 .. N32 (Id.Ints (I).DER_Len) - 1);
+               begin
+                  --  Convert X509.Byte_Seq to SPARKNaCl.Byte_Seq
+                  for J in Int_DER'Range loop
+                     Int_DER (J) := Byte (Id.Ints (I).DER (X509.N32 (J)));
+                  end loop;
+                  Put_Cert_Entry (Int_DER, N32 (Id.Ints (I).DER_Len));
+               end;
+            end if;
+         end loop;
+
+         Len := Pos;
+      end;
+   end Build_Certificate_Chain;
+
    procedure ECDSA_To_DER
      (R_Raw, S_Raw : in     Byte_Seq;
       Half_Len     : in     N32;

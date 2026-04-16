@@ -4,6 +4,9 @@ with Cmd_Show;
 with Cmd_Verify;
 with Cmd_Generate;
 with Cmd_Create;
+with Cmd_Sign;
+with Cmd_CSR;
+with Cmd_Devcert;
 
 procedure SPARKTLS_CLI is
 
@@ -42,7 +45,19 @@ begin
       elsif Cmd = "generate" then
          Cmd_Generate.Run;
       elsif Cmd = "create" then
-         Cmd_Create.Run;
+         if Ada.Command_Line.Argument_Count >= 2
+            and then Ada.Command_Line.Argument (2) = "csr"
+         then
+            Cmd_CSR.Run_Create;
+         else
+            Cmd_Create.Run;
+         end if;
+      elsif Cmd = "sign" then
+         Cmd_Sign.Run;
+      elsif Cmd = "sign-csr" then
+         Cmd_CSR.Run_Sign;
+      elsif Cmd = "devcert" then
+         Cmd_Devcert.Run;
       elsif Cmd = "help" or Cmd = "--help" or Cmd = "-h" then
          Print_Usage;
       else

@@ -11,33 +11,36 @@
 --    TLS_CHACHA20_POLY1305_SHA256 (0x1303)
 
 with Ada.Exceptions;
-with Ada.Numerics.Discrete_Random;
+with Ada.Calendar;
 with Ada.Streams;                use Ada.Streams;
 with Ada.Text_IO;                use Ada.Text_IO;
 with Interfaces;                 use Interfaces;
 
 with SPARKNaCl;                  use SPARKNaCl;
-with SPARKNaCl.Debug;            use SPARKNaCl.Debug;
 
 with SPARKTLS;         use SPARKTLS;
 with SPARKTLS.Client;
+with Entropy_Random;
+with X509;
 
 with GNAT.Sockets;               use GNAT.Sockets;
 
 procedure TLS_Test_Client is
 
-   --  Simple PRNG (NOT CSPRNG - demo only)
-   package Random_Byte is new
-      Ada.Numerics.Discrete_Random (SPARKNaCl.Byte);
-
-   Gen : Random_Byte.Generator;
-
-   procedure My_Random (Output : out Byte_Seq) is
+   function Current_Time return X509.Date_Time is
+      use Ada.Calendar;
+      Now : constant Time := Clock;
+      Y   : Year_Number;
+      Mo  : Month_Number;
+      D   : Day_Number;
+      S   : Day_Duration;
    begin
-      for I in Output'Range loop
-         Output (I) := Random_Byte.Random (Gen);
-      end loop;
-   end My_Random;
+      Split (Now, Y, Mo, D, S);
+      return (Year   => Y, Month => Mo, Day => D,
+              Hour   => Natural (S) / 3600,
+              Minute => (Natural (S) mod 3600) / 60,
+              Second => Natural (S) mod 60);
+   end Current_Time;
 
    --  Session
    S   : SPARKTLS.Session;
@@ -55,7 +58,7 @@ procedure TLS_Test_Client is
    Host : constant String := "localhost";
 
 begin
-   Random_Byte.Reset (Gen);
+   Entropy_Random.Init;
 
    Put_Line ("=== SPARKTLS Test Client ===");
    Put_Line ("Connecting to 127.0.0.1:8443...");
@@ -86,8 +89,9 @@ begin
    SPARKTLS.Client.Configure
      (S        => S,
       Hostname => Host,
-      Trust    => null,      --  no trust store = skip verify
-      Random   => My_Random'Unrestricted_Access);
+      Trust    => null,
+      Random   => Entropy_Random.Random'Access,
+      Clock    => Current_Time'Unrestricted_Access);
    Put_Line ("ClientHello built, output pending:" &
       SPARKTLS.Output_Pending (S)'Image & " bytes");
 

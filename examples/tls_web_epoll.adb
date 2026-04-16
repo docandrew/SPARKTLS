@@ -36,7 +36,7 @@ with Entropy_Random;
 with POSIX_Thin;            use POSIX_Thin;
 with TLS_Echo_Pool;         use TLS_Echo_Pool;
 
-procedure TLS_Echo_Epoll is
+procedure TLS_Web_Epoll is
 
    function Current_Time return X509.Date_Time is
       use Ada.Calendar;
@@ -186,13 +186,9 @@ procedure TLS_Echo_Epoll is
       Fed : N32;
       Res : SPARKTLS.Action;
    begin
-      Put_Line ("  [Handle_Readable fd=" & Conn.FD'Image & " slot="
-                & Idx'Image & "]");
       --  Read from socket
       Rd := C_Read (Conn.FD, C_Buf'Address, C_Buf'Length);
-      Put_Line ("    read -> " & Rd'Image);
       if Rd <= 0 then
-         Put_Line ("  Connection closed by peer");
          Conn.State := Closed;
          return;
       end if;
@@ -200,12 +196,10 @@ procedure TLS_Echo_Epoll is
       --  Convert and feed to TLS
       From_C_Buf (C_Buf'Address, Raw_Buf, Natural (Rd));
       SPARKTLS.Feed_Ciphertext (Conn.S, Raw_Buf (0 .. N32 (Rd) - 1), Fed);
-      Put_Line ("    fed " & Fed'Image & " / " & Rd'Image);
 
       --  Process TLS state machine
       loop
          SPARKTLS.Server.Advance (Conn.S, Res);
-         Put_Line ("    advance -> " & Res'Image);
 
          case Res is
             when SPARKTLS.Has_Output =>
@@ -214,15 +208,9 @@ procedure TLS_Echo_Epoll is
                   Wr : long;
                begin
                   SPARKTLS.Drain_Ciphertext (Conn.S, Snd_Buf, N);
-                  Put_Line ("      drained " & N'Image & " bytes");
                   if N > 0 then
                      To_C_Buf (Snd_Buf, C_Buf'Address, N);
-                     Put_Line ("      pre-write Conn.FD=" & Conn.FD'Image);
                      Wr := C_Write (Conn.FD, C_Buf'Address, size_t (N));
-                     Put_Line ("      wrote   " & Wr'Image
-                               & (if Wr < 0
-                                  then "  errno=" & Errno_Location.all'Image
-                                  else ""));
                   end if;
                end;
 
@@ -230,7 +218,6 @@ procedure TLS_Echo_Epoll is
                exit;  --  wait for more data from epoll
 
             when SPARKTLS.Handshake_Done =>
-               Put_Line ("  TLS handshake complete");
                Conn.State := Ready;
 
             when SPARKTLS.Plaintext_Ready =>
@@ -400,7 +387,6 @@ procedure TLS_Echo_Epoll is
                end;
 
             when SPARKTLS.Shutdown =>
-               Put_Line ("  Peer sent close_notify");
                --  Send our close_notify back
                SPARKTLS.Server.Close_Notify (Conn.S);
                declare
@@ -438,7 +424,7 @@ begin
 
    --  Parse arguments
    if Ada.Command_Line.Argument_Count < 2 then
-      Put_Line ("Usage: tls_echo_epoll <cert.pem> <key.pem> [docroot]");
+      Put_Line ("Usage: tls_web_epoll <cert.pem> <key.pem> [docroot]");
       return;
    end if;
 
@@ -464,12 +450,7 @@ begin
       Doc_Len := 1;
    end if;
 
-   Put_Line ("Epoll_Event'Size      =" & Integer'Image (Epoll_Event'Size / 8)
-             & " bytes (expect 12)");
-   Put_Line ("Array component size  ="
-             & Integer'Image (Epoll_Event_Array'Component_Size / 8)
-             & " bytes (expect 12)");
-   Put_Line ("=== SPARKTLS Static File Server (epoll) ===");
+   Put_Line ("=== SPARKTLS Web Server (epoll) ===");
    Put_Line ("Docroot: " & Docroot (1 .. Doc_Len));
    Put_Line ("Listening on 0.0.0.0:" & Port'Image);
 
@@ -518,10 +499,7 @@ begin
          exit;
       end if;
 
-      Put_Line ("[epoll_wait: nfds=" & Nfds'Image & "]");
       for I in 0 .. Natural (Nfds) - 1 loop
-         Put_Line ("  [event" & I'Image & " fd=" & Events (I).Data.FD'Image
-                   & " events=0x" & Events (I).Events'Image & "]");
          if Events (I).Data.FD = Sock_FD then
             --  New connection
             declare
@@ -536,11 +514,8 @@ begin
                      Slot : constant Integer := Find_Free;
                   begin
                      if Slot < 0 then
-                        Put_Line ("  No free slots — dropping connection");
                         Dummy := C_Close (Client_FD);
                      else
-                        Put_Line ("New connection (fd=" & Client_FD'Image
-                                  & ", slot=" & Slot'Image & ")");
                         Conns (Conn_Index (Slot)).FD := Client_FD;
                         Conns (Conn_Index (Slot)).State := Handshaking;
                         Conns (Conn_Index (Slot)).Req_Len := 0;
@@ -569,7 +544,6 @@ begin
                        (Epfd, EPOLL_CTL_DEL,
                         Conns (Conn_Index (Hit)).FD, null);
                      Dummy := C_Close (Conns (Conn_Index (Hit)).FD);
-                     Put_Line ("Connection closed (slot=" & Hit'Image & ")");
                      Conns (Conn_Index (Hit)).FD := -1;
                   end if;
                end if;
@@ -578,4 +552,4 @@ begin
       end loop;
    end loop;
 
-end TLS_Echo_Epoll;
+end TLS_Web_Epoll;

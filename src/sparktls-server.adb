@@ -339,17 +339,17 @@ is
          end;
       end if;
 
-      --  Build Certificate (encrypted)
+      --  Build Certificate chain (leaf + intermediates, encrypted)
       declare
-         Cert_Buf : Byte_Seq (0 .. HC.Cfg.Local.NaCl_Cert_Len + 15);
+         --  Max: leaf + 8 intermediates, each up to 8 KB + 5 bytes overhead
+         Cert_Buf : Byte_Seq (0 .. 9 * (Max_Cert_DER_Len + 5) + 10);
          Cert_Len : N32;
          Enc_Out  : N32;
       begin
-         Handshake.Build_Certificate
-           (Cert_DER => HC.Cfg.Local.NaCl_Cert_DER,
-            Cert_Len => HC.Cfg.Local.NaCl_Cert_Len,
-            Result   => Cert_Buf,
-            Len      => Cert_Len);
+         Handshake.Build_Certificate_Chain
+           (Id     => HC.Cfg.Local.all,
+            Result => Cert_Buf,
+            Len    => Cert_Len);
 
          if Cert_Len = 0 then
             S.Last_Error := Internal_Error;

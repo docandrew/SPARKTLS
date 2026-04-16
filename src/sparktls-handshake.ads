@@ -119,6 +119,13 @@ is
                and Cert_DER'First = 0
                and Cert_Len > 0;
 
+   --  Build a Certificate message with leaf + intermediates from an Identity.
+   procedure Build_Certificate_Chain
+     (Id     : in     Identity;
+      Result :    out Byte_Seq;
+      Len    :    out N32)
+   with Pre => Result'First = 0 and N32 (Result'Length) >= 16;
+
    procedure Build_Certificate_Verify
      (Transcript_Hash : in     Byte_Seq;
       Id              : in     Identity;
