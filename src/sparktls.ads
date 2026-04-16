@@ -282,6 +282,35 @@ is
    type Identity_Access is access constant Identity;
 
    --================================================================
+   --  Ticket Store (for session resumption)
+   --  Defined here so Config can reference it. Implementation in
+   --  SPARKTLS.Ticket_Cache child package.
+   --================================================================
+
+   Max_Cached_Tickets : constant := 1024;
+   Ticket_ID_Len      : constant := 16;
+   subtype Ticket_ID is Byte_Seq (0 .. Ticket_ID_Len - 1);
+
+   type Ticket_Entry is record
+      ID      : Ticket_ID := (others => 0);
+      PSK     : Bytes_48 := (others => 0);
+      PSK_Len : N32 := 0;
+      Suite   : Unsigned_16 := 0;
+      Age_Add : Unsigned_32 := 0;
+      Valid   : Boolean := False;
+   end record;
+
+   type Ticket_Array is array (Natural range 0 .. Max_Cached_Tickets - 1)
+      of Ticket_Entry;
+
+   type Ticket_Store is record
+      Entries : Ticket_Array;
+      Next    : Natural := 0;
+   end record;
+
+   type Ticket_Store_Access is access all Ticket_Store;
+
+   --================================================================
    --  Validation modes (used by Config and Cert_Verify)
    --================================================================
 
@@ -318,6 +347,10 @@ is
 
       --  Server: request a client certificate (mTLS).
       Request_Client_Cert : Boolean := False;
+
+      --  Server: ticket cache for session resumption.
+      --  If non-null, server sends NewSessionTicket after handshake.
+      Ticket_Store : Ticket_Store_Access := null;
    end record;
 
    --================================================================
@@ -408,6 +441,16 @@ is
       CCS_Received          : Boolean := False;
       Cert_Request_Received : Boolean := False;
 
+      --  Resumption
+      Using_PSK     : Boolean := False;
+      PSK_Offered   : Boolean := False;
+      PSK_Ticket_ID : Ticket_ID := (others => 0);
+      PSK_Value     : Bytes_48 := (others => 0);  --  zeros if no PSK
+      PSK_Value_Len : N32 := 0;                   --  0 = no PSK
+      PSK_Binder    : Bytes_48 := (others => 0);  --  received binder
+      PSK_Binder_Len : N32 := 0;
+      PSK_Binders_Offset : N32 := 0;              --  offset of binders in ClientHello
+
       --  RFLX scratch buffer
       RFLX_Main : aliased RFLX.RFLX_Builtin_Types.Bytes
                     (1 .. RFLX.RFLX_Builtin_Types.Index (RFLX_Main_Size))
@@ -415,6 +458,23 @@ is
    end record;
 
    type Handshake_Context_Access is access Handshake_Context;
+
+   --================================================================
+   --  Session Ticket (for resumption)
+   --================================================================
+
+   Max_Ticket_Len : constant := 256;
+
+   type Session_Ticket is record
+      Ticket       : Byte_Seq (0 .. Max_Ticket_Len - 1) := (others => 0);
+      Ticket_Len   : N32 := 0;
+      Lifetime     : Unsigned_32 := 0;       --  seconds
+      Age_Add      : Unsigned_32 := 0;       --  obfuscation value
+      PSK          : Bytes_48 := (others => 0);  --  derived PSK
+      PSK_Len      : N32 := 0;              --  32 (SHA-256) or 48 (SHA-384)
+      Suite        : Unsigned_16 := 0;       --  cipher suite
+      Valid        : Boolean := False;
+   end record;
 
    type Session is record
       --  State
@@ -440,6 +500,14 @@ is
 
       --  Peer certificate valid (copied from HC before free)
       Peer_Cert_Valid : Boolean := False;
+
+      --  Resumption: cached session ticket (client side)
+      Ticket : Session_Ticket;
+
+      --  Resumption master secret (copied from HC before free,
+      --  needed to derive PSK when NewSessionTicket arrives post-handshake)
+      Res_Master     : Bytes_48 := (others => 0);
+      Res_Master_Len : N32 := 0;  --  32 or 48
 
       --  Handshake context (heap-allocated, freed after handshake)
       HC_Ptr : Handshake_Context_Access := null;

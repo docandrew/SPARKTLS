@@ -8,6 +8,9 @@ with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
 with SPARKTLS.P256.ECDSA;
 with SPARKTLS.P384.ECDSA;
+with SPARKTLS.Key_Schedule;
+with SPARKNaCl.HKDF;   use SPARKNaCl.HKDF;
+with SPARKNaCl.MAC;    use SPARKNaCl.MAC;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with RFLX.TLS_Handshake.TLS_Handshake;
 with RFLX.TLS_Handshake.Server_Hello;
@@ -411,6 +414,130 @@ is
          To_NaCl (Buf.all (1 .. RBT.Index (CH_Body_Len)));
 
       Len := CH_Msg_Len;
+
+      --  If we have a cached session ticket, append pre_shared_key extension.
+      --  This MUST be the last extension per RFC 8446 Section 4.2.11.
+      --  We patch the extensions list length and handshake length after.
+      if S.Ticket.Valid and then Len > 0 then
+         declare
+            use SPARKNaCl.Hashing.SHA256;
+            Tick_Len : constant N32 := S.Ticket.Ticket_Len;
+            --  PSK identity: identity_len(2) + ticket + age(4)
+            ID_Entry_Len : constant N32 := 2 + Tick_Len + 4;
+            --  identities: len(2) + entry
+            IDs_Len : constant N32 := 2 + ID_Entry_Len;
+            --  binder: binder_len(1) + binder(32 or 48)
+            Binder_Size : constant N32 :=
+               (if S.Ticket.PSK_Len = 48 then 48 else 32);
+            Binder_Entry_Len : constant N32 := 1 + Binder_Size;
+            --  binders: len(2) + entry
+            Binders_Len : constant N32 := 2 + Binder_Entry_Len;
+            --  pre_shared_key extension: tag(2) + data_len(2) + identities + binders
+            PSK_Ext_Len : constant N32 := 4 + IDs_Len + Binders_Len;
+            --  New total message length
+            New_Len     : constant N32 := Len + PSK_Ext_Len;
+            P : N32;
+
+            --  Location of the extensions_length field in the ClientHello
+            --  After handshake header(4) + version(2) + random(32) + sid_len(1)
+            --  + sid(32) + suites_len(2) + suites(6) + comp_len(1) + comp(1)
+            Ext_Len_Offset : constant N32 := 4 + 2 + 32 + 1 + 32 + 2 + 6 + 1 + 1;
+            Old_Ext_Len : N32;
+            New_Ext_Len : N32;
+         begin
+            if New_Len <= N32 (Result'Length) then
+               --  Read current extensions length
+               Old_Ext_Len := N32 (Result (Ext_Len_Offset)) * 256 +
+                               N32 (Result (Ext_Len_Offset + 1));
+               New_Ext_Len := Old_Ext_Len + PSK_Ext_Len;
+
+               P := Len;
+
+               --  pre_shared_key extension tag (0x0029)
+               Result (P) := 0; Result (P + 1) := 16#29#;
+               P := P + 2;
+               --  data length
+               Result (P) := Byte ((IDs_Len + Binders_Len) / 256);
+               Result (P + 1) := Byte ((IDs_Len + Binders_Len) mod 256);
+               P := P + 2;
+               --  identities length
+               Result (P) := Byte (ID_Entry_Len / 256);
+               Result (P + 1) := Byte (ID_Entry_Len mod 256);
+               P := P + 2;
+               --  identity: ticket length + ticket
+               Result (P) := Byte (Tick_Len / 256);
+               Result (P + 1) := Byte (Tick_Len mod 256);
+               P := P + 2;
+               Result (P .. P + Tick_Len - 1) :=
+                  S.Ticket.Ticket (0 .. Tick_Len - 1);
+               P := P + Tick_Len;
+               --  obfuscated_ticket_age (simplified: 0)
+               Result (P) := 0; Result (P + 1) := 0;
+               Result (P + 2) := 0; Result (P + 3) := 0;
+               P := P + 4;
+               --  binders length
+               Result (P) := Byte (Binder_Entry_Len / 256);
+               Result (P + 1) := Byte (Binder_Entry_Len mod 256);
+               P := P + 2;
+               --  binder: length byte + placeholder (zeroed, patched below)
+               Result (P) := Byte (Binder_Size);
+               P := P + 1;
+               declare
+                  Binder_Offset : constant N32 := P;
+               begin
+                  Result (P .. P + Binder_Size - 1) := (others => 0);
+                  P := P + Binder_Size;
+
+                  --  Patch handshake length
+                  declare
+                     New_Body_Len : constant N32 := P - 4;
+                  begin
+                     Result (1) := Byte (New_Body_Len / 65536);
+                     Result (2) := Byte ((New_Body_Len / 256) mod 256);
+                     Result (3) := Byte (New_Body_Len mod 256);
+                  end;
+
+                  --  Patch extensions length
+                  Result (Ext_Len_Offset) := Byte (New_Ext_Len / 256);
+                  Result (Ext_Len_Offset + 1) := Byte (New_Ext_Len mod 256);
+
+                  --  Compute binder:
+                  --  1. Hash the partial ClientHello up to (not including) binders
+                  --  2. HMAC with binder_key derived from PSK
+                  declare
+                     --  The transcript for binder is just this (first) ClientHello
+                     --  truncated: everything up to but not including the binders list
+                     Trunc_Len    : constant N32 := Binder_Offset - Binders_Len;
+                     Trunc_Hash   : Digest;
+                     Binder_Key   : OKM_Seq (0 .. 31);
+                     Finished_Key : OKM_Seq (0 .. 31);
+                     Binder_Val   : Digest;
+                  begin
+                     Hash (Trunc_Hash,
+                           Result (0 .. Trunc_Len - 1));
+
+                     Key_Schedule.Derive_Binder_Key
+                       (Binder_Key,
+                        Bytes_32 (S.Ticket.PSK (0 .. 31)));
+
+                     Key_Schedule.Derive_Finished_Key
+                       (Finished_Key, Byte_Seq (Binder_Key));
+
+                     HMAC_SHA_256
+                       (Output => Binder_Val,
+                        M      => Trunc_Hash,
+                        K      => Byte_Seq (Finished_Key));
+
+                     --  Write the real binder
+                     Result (Binder_Offset .. Binder_Offset + 31) :=
+                        Binder_Val;
+                  end;
+               end;
+
+               Len := P;
+            end if;
+         end;
+      end if;
    end Build_Client_Hello;
 
    --================================================================
@@ -1029,6 +1156,94 @@ is
                               end if;
                            end;
 
+                        --  pre_shared_key extension (0x0029)
+                        elsif Tag.Known and then
+                           Tag.Enum =
+                              RFLX.Tls_Extensiontype_Values.Pre_Shared_Key
+                        then
+                           --  Parse PSK identities to find a ticket we recognize
+                           declare
+                              DLen : constant N32 := N32
+                                 (RFLX.TLS_Handshake.CH_Extension_TLS
+                                    .Get_Data_Length (Ext_Ctx));
+                              Ext_Data : Byte_Seq (0 .. DLen - 1);
+                           begin
+                              if DLen >= 6 then
+                                 declare
+                                    ED : aliased RBT.Bytes
+                                       (1 .. RBT.Index (DLen));
+                                 begin
+                                    RFLX.TLS_Handshake.CH_Extension_TLS
+                                       .Get_Data (Ext_Ctx, ED);
+                                    Ext_Data := To_NaCl (ED);
+                                 end;
+
+                                 --  identities_len(2) + first identity
+                                 declare
+                                    IDs_Len : constant N32 :=
+                                       N32 (Ext_Data (0)) * 256 +
+                                       N32 (Ext_Data (1));
+                                    P : N32 := 2;
+                                 begin
+                                    if P + 2 <= DLen and then
+                                       IDs_Len > 0
+                                    then
+                                       --  First identity: len(2) + ticket + age(4)
+                                       declare
+                                          Tick_Len : constant N32 :=
+                                             N32 (Ext_Data (P)) * 256 +
+                                             N32 (Ext_Data (P + 1));
+                                       begin
+                                          P := P + 2;
+                                          if P + Tick_Len + 4 <= DLen
+                                             and then Tick_Len = Ticket_ID_Len
+                                          then
+                                             HC.PSK_Ticket_ID :=
+                                                Ext_Data (P .. P + Tick_Len - 1);
+                                             HC.PSK_Offered := True;
+
+                                             --  Skip to binders list
+                                             --  (past all identities: 2 + IDs_Len)
+                                             declare
+                                                Binders_Start : constant N32 :=
+                                                   2 + IDs_Len;
+                                             begin
+                                                if Binders_Start + 2 < DLen then
+                                                   declare
+                                                      Binders_Len : constant N32 :=
+                                                         N32 (Ext_Data (Binders_Start)) * 256 +
+                                                         N32 (Ext_Data (Binders_Start + 1));
+                                                      B_Pos : constant N32 := Binders_Start + 2;
+                                                   begin
+                                                      if B_Pos < DLen then
+                                                         declare
+                                                            B_Len : constant N32 :=
+                                                               N32 (Ext_Data (B_Pos));
+                                                         begin
+                                                            if B_Len in 32 | 48
+                                                               and then B_Pos + 1 + B_Len <= DLen
+                                                            then
+                                                               for I in N32 range 0 .. B_Len - 1 loop
+                                                                  HC.PSK_Binder (I) :=
+                                                                     Ext_Data (B_Pos + 1 + I);
+                                                               end loop;
+                                                               HC.PSK_Binder_Len := B_Len;
+                                                               --  Record binders offset relative
+                                                               --  to the extension data start
+                                                               HC.PSK_Binders_Offset := Binders_Start;
+                                                            end if;
+                                                         end;
+                                                      end if;
+                                                   end;
+                                                end if;
+                                             end;
+                                          end if;
+                                       end;
+                                    end if;
+                                 end;
+                              end if;
+                           end;
+
                         end if;
                      end;
                   end if;
@@ -1215,6 +1430,54 @@ is
          To_NaCl (Buf.all (1 .. RBT.Index (SH_Body_Len)));
 
       Len := SH_Msg_Len;
+
+      --  If using PSK, append pre_shared_key extension to ServerHello.
+      --  Format: tag(2) + data_len(2) + selected_identity(2) = 6 bytes.
+      if HC.Using_PSK and then Len > 0 then
+         declare
+            PSK_Ext_Len : constant N32 := 6;
+            New_Len     : constant N32 := Len + PSK_Ext_Len;
+            --  Extension list length offset: after handshake header(4) +
+            --  version(2) + random(32) + sid_len(1) + sid(32) + suite(2) +
+            --  comp(1) = 74
+            Ext_Len_Offset : constant N32 := 4 + 2 + 32 + 1 + 32 + 2 + 1;
+            Old_Ext_Len : N32;
+            P : N32;
+         begin
+            if New_Len <= N32 (Result'Length) then
+               Old_Ext_Len := N32 (Result (Ext_Len_Offset)) * 256 +
+                               N32 (Result (Ext_Len_Offset + 1));
+
+               P := Len;
+               --  pre_shared_key tag (0x0029)
+               Result (P) := 0; Result (P + 1) := 16#29#;
+               --  data_len (2)
+               Result (P + 2) := 0; Result (P + 3) := 2;
+               --  selected_identity (0 = first PSK)
+               Result (P + 4) := 0; Result (P + 5) := 0;
+               P := P + PSK_Ext_Len;
+
+               --  Patch extensions length
+               declare
+                  New_Ext_Len : constant N32 := Old_Ext_Len + PSK_Ext_Len;
+               begin
+                  Result (Ext_Len_Offset) := Byte (New_Ext_Len / 256);
+                  Result (Ext_Len_Offset + 1) := Byte (New_Ext_Len mod 256);
+               end;
+
+               --  Patch handshake body length
+               declare
+                  New_Body_Len : constant N32 := P - 4;
+               begin
+                  Result (1) := Byte (New_Body_Len / 65536);
+                  Result (2) := Byte ((New_Body_Len / 256) mod 256);
+                  Result (3) := Byte (New_Body_Len mod 256);
+               end;
+
+               Len := P;
+            end if;
+         end;
+      end if;
    end Build_Server_Hello;
 
    procedure Build_Encrypted_Extensions

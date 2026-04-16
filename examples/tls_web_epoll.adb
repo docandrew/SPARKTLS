@@ -144,6 +144,9 @@ procedure TLS_Web_Epoll is
    Doc_Len : Natural := 0;
    Port    : constant := 8443;
 
+   --  Session ticket cache (shared across connections)
+   Tickets : aliased SPARKTLS.Ticket_Store;
+
    --  Per-connection state, Conns array, etc. live at library level
    --  in TLS_Echo_Pool (BSS, not main stack).
 
@@ -520,9 +523,10 @@ begin
                         Conns (Conn_Index (Slot)).State := Handshaking;
                         Conns (Conn_Index (Slot)).Req_Len := 0;
                         SPARKTLS.Server.Configure
-                          (S      => Conns (Conn_Index (Slot)).S,
-                           Local  => Id'Unchecked_Access,
-                           Random => Entropy_Random.Random'Access);
+                          (S       => Conns (Conn_Index (Slot)).S,
+                           Local   => Id'Unchecked_Access,
+                           Random  => Entropy_Random.Random'Access,
+                           Tickets => Tickets'Unchecked_Access);
 
                         Ev.Events := unsigned (EPOLLIN);
                         Ev.Data.FD := Client_FD;

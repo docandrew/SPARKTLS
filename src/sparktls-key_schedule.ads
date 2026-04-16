@@ -96,6 +96,32 @@ is
    with Pre => Finished_Key'First = 0 and Finished_Key'Last = 31
                and Base_Secret'First = 0 and Base_Secret'Last = 31;
 
+   --  Derive resumption master secret from master secret + full transcript
+   --  (RFC 8446 Section 7.5: includes client Finished)
+   procedure Derive_Resumption_Master_Secret
+     (Res_Master      :    out OKM_Seq;
+      Master          : in     Digest;
+      Transcript_Hash : in     Digest)
+   with Pre => Res_Master'First = 0 and Res_Master'Last = 31;
+
+   --  Derive PSK from resumption master secret + ticket nonce
+   --  PSK = HKDF-Expand-Label(res_master, "resumption", nonce, 32)
+   procedure Derive_PSK
+     (PSK         :    out OKM_Seq;
+      Res_Master  : in     Byte_Seq;
+      Nonce       : in     Byte_Seq)
+   with Pre => PSK'First = 0 and PSK'Last = 31
+               and Res_Master'First = 0 and Res_Master'Last = 31
+               and Nonce'First = 0 and Nonce'Length > 0
+               and Nonce'Length <= 255;
+
+   --  Derive binder key from PSK (for PSK binder in ClientHello)
+   --  binder_key = Derive-Secret(early_secret, "res binder", "")
+   procedure Derive_Binder_Key
+     (Binder_Key :    out OKM_Seq;
+      PSK        : in     Bytes_32)
+   with Pre => Binder_Key'First = 0 and Binder_Key'Last = 31;
+
    --================================================================
    --  SHA-384 variants (for TLS_AES_256_GCM_SHA384)
    --================================================================
@@ -160,5 +186,25 @@ is
       Base_Secret  : in     Byte_Seq)
    with Pre => Finished_Key'First = 0 and Finished_Key'Last = 47
                and Base_Secret'First = 0 and Base_Secret'Last = 47;
+
+   procedure Derive_Resumption_Master_Secret_384
+     (Res_Master      :    out HKDF384.OKM384_Seq;
+      Master          : in     Digest_384;
+      Transcript_Hash : in     Digest_384)
+   with Pre => Res_Master'First = 0 and Res_Master'Last = 47;
+
+   procedure Derive_PSK_384
+     (PSK         :    out HKDF384.OKM384_Seq;
+      Res_Master  : in     Byte_Seq;
+      Nonce       : in     Byte_Seq)
+   with Pre => PSK'First = 0 and PSK'Last = 47
+               and Res_Master'First = 0 and Res_Master'Last = 47
+               and Nonce'First = 0 and Nonce'Length > 0
+               and Nonce'Length <= 255;
+
+   procedure Derive_Binder_Key_384
+     (Binder_Key :    out HKDF384.OKM384_Seq;
+      PSK        : in     Bytes_48)
+   with Pre => Binder_Key'First = 0 and Binder_Key'Last = 47;
 
 end SPARKTLS.Key_Schedule;

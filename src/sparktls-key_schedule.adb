@@ -207,6 +207,46 @@ is
                     Context => Empty);
    end Derive_Finished_Key;
 
+   procedure Derive_Resumption_Master_Secret
+     (Res_Master      :    out OKM_Seq;
+      Master          : in     Digest;
+      Transcript_Hash : in     Digest)
+   is
+   begin
+      Expand_Label (OKM     => Res_Master,
+                    PRK     => Master,
+                    Label   => "res master",
+                    Context => Transcript_Hash);
+   end Derive_Resumption_Master_Secret;
+
+   procedure Derive_PSK
+     (PSK         :    out OKM_Seq;
+      Res_Master  : in     Byte_Seq;
+      Nonce       : in     Byte_Seq)
+   is
+   begin
+      Expand_Label (OKM     => PSK,
+                    PRK     => Digest (Res_Master),
+                    Label   => "resumption",
+                    Context => Nonce);
+   end Derive_PSK;
+
+   procedure Derive_Binder_Key
+     (Binder_Key :    out OKM_Seq;
+      PSK        : in     Bytes_32)
+   is
+      Early      : Digest;
+      Empty      : Byte_Seq (1 .. 0) := (others => 0);
+      Empty_Hash : Digest;
+   begin
+      Derive_Early_Secret (Early, PSK);
+      SPARKNaCl.Hashing.SHA256.Hash (Empty_Hash, Empty);
+      Expand_Label (OKM     => Binder_Key,
+                    PRK     => Early,
+                    Label   => "res binder",
+                    Context => Empty_Hash);
+   end Derive_Binder_Key;
+
    --================================================================
    --  SHA-384 variants
    --================================================================
@@ -365,5 +405,48 @@ is
          Label   => "finished",
          Context => Empty);
    end Derive_Finished_Key_384;
+
+   procedure Derive_Resumption_Master_Secret_384
+     (Res_Master      :    out HKDF384.OKM384_Seq;
+      Master          : in     Digest_384;
+      Transcript_Hash : in     Digest_384)
+   is
+   begin
+      Expand_Label_384
+        (OKM     => Res_Master,
+         PRK     => Master,
+         Label   => "res master",
+         Context => Transcript_Hash);
+   end Derive_Resumption_Master_Secret_384;
+
+   procedure Derive_PSK_384
+     (PSK         :    out HKDF384.OKM384_Seq;
+      Res_Master  : in     Byte_Seq;
+      Nonce       : in     Byte_Seq)
+   is
+   begin
+      Expand_Label_384
+        (OKM     => PSK,
+         PRK     => Digest_384 (Res_Master),
+         Label   => "resumption",
+         Context => Nonce);
+   end Derive_PSK_384;
+
+   procedure Derive_Binder_Key_384
+     (Binder_Key :    out HKDF384.OKM384_Seq;
+      PSK        : in     Bytes_48)
+   is
+      Early      : Digest_384;
+      Empty      : Byte_Seq (1 .. 0) := (others => 0);
+      Empty_Hash : Digest_384;
+   begin
+      Derive_Early_Secret_384 (Early, PSK);
+      SPARKNaCl.Hashing.SHA384.Hash (Empty_Hash, Empty);
+      Expand_Label_384
+        (OKM     => Binder_Key,
+         PRK     => Early,
+         Label   => "res binder",
+         Context => Empty_Hash);
+   end Derive_Binder_Key_384;
 
 end SPARKTLS.Key_Schedule;

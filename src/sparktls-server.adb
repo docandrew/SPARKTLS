@@ -15,6 +15,7 @@ with X509;
 use type X509.Algorithm_ID;
 with SPARKTLS.HMAC384;
 with SPARKTLS.HKDF384;
+with SPARKTLS.Ticket_Cache;
 
 package body SPARKTLS.Server with
    SPARK_Mode => On
@@ -91,7 +92,8 @@ is
       Local               : Identity_Access;
       Random              : Random_Bytes_Fn;
       Trust               : Trust_Store_Access := null;
-      Request_Client_Cert : Boolean := False)
+      Request_Client_Cert : Boolean := False;
+      Tickets             : Ticket_Store_Access := null)
    is
       Cfg : Config;
    begin
@@ -99,6 +101,7 @@ is
       Cfg.Local               := Local;
       Cfg.Trust               := Trust;
       Cfg.Request_Client_Cert := Request_Client_Cert;
+      Cfg.Ticket_Store        := Tickets;
       Init (S, Cfg);
    end Configure;
 
@@ -228,7 +231,7 @@ is
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
-               if HC.Cfg.Request_Client_Cert then
+               if HC.Cfg.Request_Client_Cert and not HC.Using_PSK then
                   S.State := Wait_Client_Certificate;
                else
                   S.State := Wait_Client_Finished;
@@ -263,6 +266,110 @@ is
       CCS_Out : N32;
    begin
       Result := OK;
+
+      --  Check for PSK resumption (must happen before Build_Server_Hello
+      --  so the ServerHello includes the pre_shared_key extension)
+      if HC.PSK_Offered and then HC.Cfg.Ticket_Store /= null then
+         declare
+            PSK     : Bytes_48;
+            PSK_Len : N32;
+            Suite   : Unsigned_16;
+            Found   : Boolean;
+         begin
+            Ticket_Cache.Lookup
+              (HC.Cfg.Ticket_Store.all,
+               HC.PSK_Ticket_ID,
+               PSK, PSK_Len, Suite, Found);
+            if Found and then HC.PSK_Binder_Len > 0 then
+               --  Verify the PSK binder before accepting
+               --  The binder covers the truncated ClientHello:
+               --  everything up to the binders list in pre_shared_key.
+               --  The ClientHello is in HC.Transcript at this point.
+               --  Binders offset within pre_shared_key extension data
+               --  is HC.PSK_Binders_Offset. We need to find the absolute
+               --  offset in the ClientHello message.
+               --
+               --  The pre_shared_key ext is the last extension.
+               --  Its data starts at: CH_len - ext_data_len
+               --  Binders start at: that + PSK_Binders_Offset
+               --  Truncation point: 2 bytes before binders (binders_len field)
+               --
+               --  For simplicity, accept if binder length is valid.
+               --  Full binder verification requires knowing the exact
+               --  byte offset, which we'll compute from the transcript.
+
+               declare
+                  Binder_OK : Boolean := False;
+               begin
+                  --  Compute truncated ClientHello hash.
+                  --  The binders list is at the end of the transcript.
+                  --  binders_list = binders_len(2) + binder_entry(1 + binder)
+                  declare
+                     Binders_Size : constant N32 :=
+                        2 + 1 + HC.PSK_Binder_Len;
+                     Trunc_Len    : N32;
+                  begin
+                     if HC.Transcript_Len > Binders_Size then
+                        Trunc_Len := HC.Transcript_Len - Binders_Size;
+
+                        if PSK_Len = 48 then
+                           declare
+                              use SPARKTLS.HKDF384;
+                              Trunc_Hash  : Key_Schedule.Digest_384;
+                              Binder_Key  : OKM384_Seq (0 .. 47);
+                              Finished_Key : OKM384_Seq (0 .. 47);
+                              Expected    : Bytes_48;
+                           begin
+                              SPARKNaCl.Hashing.SHA384.Hash
+                                (Trunc_Hash,
+                                 HC.Transcript (0 .. Trunc_Len - 1));
+                              Key_Schedule.Derive_Binder_Key_384
+                                (Binder_Key, PSK);
+                              Key_Schedule.Derive_Finished_Key_384
+                                (Finished_Key, Byte_Seq (Binder_Key));
+                              HMAC384.HMAC_SHA_384
+                                (Output => Expected,
+                                 M      => Trunc_Hash,
+                                 K      => Byte_Seq (Finished_Key));
+                              Binder_OK := Equal
+                                (Expected, Bytes_48 (HC.PSK_Binder));
+                           end;
+                        else
+                           declare
+                              Trunc_Hash   : Digest;
+                              Binder_Key   : OKM_Seq (0 .. 31);
+                              Finished_Key : OKM_Seq (0 .. 31);
+                              Expected     : Digest;
+                           begin
+                              SPARKNaCl.Hashing.SHA256.Hash
+                                (Trunc_Hash,
+                                 HC.Transcript (0 .. Trunc_Len - 1));
+                              Key_Schedule.Derive_Binder_Key
+                                (Binder_Key,
+                                 Bytes_32 (PSK (0 .. 31)));
+                              Key_Schedule.Derive_Finished_Key
+                                (Finished_Key, Byte_Seq (Binder_Key));
+                              HMAC_SHA_256
+                                (Output => Expected,
+                                 M      => Trunc_Hash,
+                                 K      => Byte_Seq (Finished_Key));
+                              Binder_OK := Equal
+                                (Expected,
+                                 Bytes_32 (HC.PSK_Binder (0 .. 31)));
+                           end;
+                        end if;
+                     end if;
+                  end;
+
+                  if Binder_OK then
+                     HC.Using_PSK := True;
+                     HC.PSK_Value := PSK;
+                     HC.PSK_Value_Len := PSK_Len;
+                  end if;
+               end;
+            end if;
+         end;
+      end if;
 
       --  Build ServerHello
       Handshake.Build_Server_Hello (S, HC, SH_Buf, SH_Len);
@@ -318,6 +425,9 @@ is
             return;
          end if;
       end;
+
+      --  Skip Certificate/CertificateVerify for PSK resumption
+      if not HC.Using_PSK then
 
       --  Build CertificateRequest if mTLS is configured
       if HC.Cfg.Request_Client_Cert then
@@ -472,6 +582,8 @@ is
          end if;
       end;
 
+      end if;  --  not Using_PSK (skip cert/cert_verify for resumption)
+
       --  Build Finished (encrypted)
       declare
          Enc_Out : N32;
@@ -569,7 +681,7 @@ is
             Client_Sec : OKM384_Seq (0 .. 47);
             Server_Sec : OKM384_Seq (0 .. 47);
          begin
-            Key_Schedule.Derive_Early_Secret_384 (Early, No_PSK);
+            Key_Schedule.Derive_Early_Secret_384 (Early, HC.PSK_Value);
             Key_Schedule.Derive_Handshake_Secret_384
               (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
 
@@ -596,7 +708,8 @@ is
             Client_Sec : OKM_Seq (0 .. 31);
             Server_Sec : OKM_Seq (0 .. 31);
          begin
-            Key_Schedule.Derive_Early_Secret (Early, No_PSK);
+            Key_Schedule.Derive_Early_Secret
+              (Early, Bytes_32 (HC.PSK_Value (0 .. 31)));
             Key_Schedule.Derive_Handshake_Secret
               (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
 
@@ -1213,7 +1326,116 @@ is
                         return;
                      end if;
 
-                     --  Client Finished verified. Transition to Connected.
+                     --  Client Finished verified.
+                     --  Append client Finished to transcript for res_master derivation
+                     Append_Transcript (HC, Data);
+
+                     --  Derive resumption master secret and send NewSessionTicket
+                     declare
+                        use SPARKTLS.Ticket_Cache;
+                        Nonce    : Byte_Seq (0 .. 1) := (0, 0);
+                        TID : Ticket_ID;
+                        Enc_Out  : N32;
+                     begin
+                        case S.Negotiated_Suite is
+                           when Suite_AES_256_GCM_SHA384 =>
+                              declare
+                                 use HKDF384;
+                                 Full_Hash : constant Key_Schedule.Digest_384 :=
+                                    Transcript_Hash_384 (HC);
+                                 Res_Master : OKM384_Seq (0 .. 47);
+                                 PSK_Out    : OKM384_Seq (0 .. 47);
+                              begin
+                                 Key_Schedule.Derive_Resumption_Master_Secret_384
+                                   (Res_Master, HC.Master_Secret (0 .. 47), Full_Hash);
+                                 Key_Schedule.Derive_PSK_384
+                                   (PSK_Out, Byte_Seq (Res_Master), Nonce);
+                                 --  Store in cache
+                                 if HC.Cfg.Ticket_Store /= null then
+                                    Ticket_Cache.Store
+                                      (HC.Cfg.Ticket_Store.all,
+                                       Bytes_48 (PSK_Out), 48,
+                                       S.Negotiated_Suite, 0, TID);
+                                 end if;
+                                 S.Res_Master := Bytes_48 (Res_Master);
+                                 S.Res_Master_Len := 48;
+                              end;
+                           when others =>
+                              declare
+                                 Full_Hash : constant Digest :=
+                                    Transcript_Hash_256 (HC);
+                                 Res_Master : OKM_Seq (0 .. 31);
+                                 PSK_Out    : OKM_Seq (0 .. 31);
+                              begin
+                                 Key_Schedule.Derive_Resumption_Master_Secret
+                                   (Res_Master,
+                                    Digest (HC.Master_Secret (0 .. 31)),
+                                    Full_Hash);
+                                 Key_Schedule.Derive_PSK
+                                   (PSK_Out, Byte_Seq (Res_Master), Nonce);
+                                 if HC.Cfg.Ticket_Store /= null then
+                                    declare
+                                       PSK_48 : Bytes_48 := (others => 0);
+                                    begin
+                                       for I in N32 range 0 .. 31 loop
+                                          PSK_48 (I) := PSK_Out (I);
+                                       end loop;
+                                       Ticket_Cache.Store
+                                         (HC.Cfg.Ticket_Store.all,
+                                          PSK_48, 32,
+                                          S.Negotiated_Suite, 0, TID);
+                                    end;
+                                 end if;
+                                 S.Res_Master := (others => 0);
+                                 for I in N32 range 0 .. 31 loop
+                                    S.Res_Master (I) := Res_Master (I);
+                                 end loop;
+                                 S.Res_Master_Len := 32;
+                              end;
+                        end case;
+
+                        --  Build and send NewSessionTicket if we have a cache
+                        if HC.Cfg.Ticket_Store /= null then
+                           declare
+                              --  NST format: type(1) + len(3) + lifetime(4) +
+                              --  age_add(4) + nonce_len(1) + nonce(2) +
+                              --  ticket_len(2) + ticket(16) + ext_len(2) = 35
+                              NST : Byte_Seq (0 .. 34) := (others => 0);
+                              P   : N32 := 0;
+                           begin
+                              --  Handshake type: NewSessionTicket (0x04)
+                              NST (0) := 16#04#;
+                              --  Length: 31 bytes
+                              NST (1) := 0; NST (2) := 0; NST (3) := 31;
+                              --  ticket_lifetime: 3600 seconds (1 hour)
+                              NST (4) := 0; NST (5) := 0;
+                              NST (6) := 16#0E#; NST (7) := 16#10#;
+                              --  ticket_age_add: 0 (simplified)
+                              NST (8) := 0; NST (9) := 0;
+                              NST (10) := 0; NST (11) := 0;
+                              --  ticket_nonce_length: 2
+                              NST (12) := 2;
+                              --  ticket_nonce
+                              NST (13) := Nonce (0);
+                              NST (14) := Nonce (1);
+                              --  ticket_length: 16
+                              NST (15) := 0; NST (16) := 16;
+                              --  ticket (the cache ID)
+                              NST (17 .. 32) := TID;
+                              --  extensions_length: 0
+                              NST (33) := 0; NST (34) := 0;
+
+                              --  Encrypt and queue as post-handshake record
+                              Records.Build_Encrypted_Record
+                                (Plaintext  => NST,
+                                 Inner_Type => 16#16#,  --  handshake
+                                 Keys       => S.Server_App,
+                                 Output     => S.Output,
+                                 Bytes_Out  => Enc_Out);
+                           end;
+                        end if;
+                     end;
+
                      S.State := Connected;
                      Result := Handshake_Done;
                   end;

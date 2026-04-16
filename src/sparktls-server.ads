@@ -43,7 +43,8 @@ is
       Local               : Identity_Access;
       Random              : Random_Bytes_Fn;
       Trust               : Trust_Store_Access := null;
-      Request_Client_Cert : Boolean := False)
+      Request_Client_Cert : Boolean := False;
+      Tickets             : Ticket_Store_Access := null)
    with Pre  => Random /= null and
                 Local /= null and
                 Local.Has_Identity,

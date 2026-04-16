@@ -1252,6 +1252,38 @@ is
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
+               --  Derive resumption master secret before HC is freed
+               case S.Negotiated_Suite is
+                  when Suite_AES_256_GCM_SHA384 =>
+                     declare
+                        use SPARKTLS.HKDF384;
+                        Full_Hash : constant Key_Schedule.Digest_384 :=
+                           Transcript_Hash_384 (HC);
+                        Res : OKM384_Seq (0 .. 47);
+                     begin
+                        Key_Schedule.Derive_Resumption_Master_Secret_384
+                          (Res, HC.Master_Secret (0 .. 47), Full_Hash);
+                        S.Res_Master := Bytes_48 (Res);
+                        S.Res_Master_Len := 48;
+                     end;
+                  when others =>
+                     declare
+                        Full_Hash : constant Digest :=
+                           Transcript_Hash_256 (HC);
+                        Res : OKM_Seq (0 .. 31);
+                     begin
+                        Key_Schedule.Derive_Resumption_Master_Secret
+                          (Res,
+                           Digest (HC.Master_Secret (0 .. 31)),
+                           Full_Hash);
+                        S.Res_Master := (others => 0);
+                        for I in N32 range 0 .. 31 loop
+                           S.Res_Master (I) := Res (I);
+                        end loop;
+                        S.Res_Master_Len := 32;
+                     end;
+               end case;
+
                S.State := Connected;
                Result := Handshake_Done;
             end if;
@@ -1642,8 +1674,93 @@ is
                end if;
 
             when 16#16# =>
-               --  Post-handshake message (NewSessionTicket, etc.)
-               --  For now, just skip
+               --  Post-handshake message
+               if Plain_Len >= 4
+                  and then Plaintext (0) = 16#04#  --  NewSessionTicket
+               then
+                  --  Parse NewSessionTicket:
+                  --    type(1) + len(3) + lifetime(4) + age_add(4) +
+                  --    nonce_len(1) + nonce(var) + ticket_len(2) + ticket(var)
+                  declare
+                     P : N32 := 4;  --  skip handshake header
+                  begin
+                     if Plain_Len >= 15 then
+                        declare
+                           Lifetime : constant Unsigned_32 :=
+                              Unsigned_32 (Plaintext (P)) * 2**24 +
+                              Unsigned_32 (Plaintext (P + 1)) * 2**16 +
+                              Unsigned_32 (Plaintext (P + 2)) * 2**8 +
+                              Unsigned_32 (Plaintext (P + 3));
+                           Age_Add  : constant Unsigned_32 :=
+                              Unsigned_32 (Plaintext (P + 4)) * 2**24 +
+                              Unsigned_32 (Plaintext (P + 5)) * 2**16 +
+                              Unsigned_32 (Plaintext (P + 6)) * 2**8 +
+                              Unsigned_32 (Plaintext (P + 7));
+                           Nonce_Len : constant N32 :=
+                              N32 (Plaintext (P + 8));
+                        begin
+                           P := P + 9;
+                           if P + Nonce_Len + 2 <= Plain_Len then
+                              declare
+                                 Nonce : Byte_Seq (0 .. Nonce_Len - 1);
+                                 Tick_Len : N32;
+                              begin
+                                 Nonce := Plaintext (P .. P + Nonce_Len - 1);
+                                 P := P + Nonce_Len;
+                                 Tick_Len :=
+                                    N32 (Plaintext (P)) * 256 +
+                                    N32 (Plaintext (P + 1));
+                                 P := P + 2;
+                                 if P + Tick_Len <= Plain_Len
+                                    and then Tick_Len <= Max_Ticket_Len
+                                 then
+                                    --  Derive PSK from res_master + nonce
+                                    S.Ticket.Ticket (0 .. Tick_Len - 1) :=
+                                       Plaintext (P .. P + Tick_Len - 1);
+                                    S.Ticket.Ticket_Len := Tick_Len;
+                                    S.Ticket.Lifetime := Lifetime;
+                                    S.Ticket.Age_Add := Age_Add;
+                                    S.Ticket.Suite := S.Negotiated_Suite;
+
+                                    case S.Negotiated_Suite is
+                                       when Suite_AES_256_GCM_SHA384 =>
+                                          declare
+                                             use SPARKTLS.HKDF384;
+                                             PSK_Out : OKM384_Seq (0 .. 47);
+                                          begin
+                                             Key_Schedule.Derive_PSK_384
+                                               (PSK_Out,
+                                                S.Res_Master,
+                                                Nonce);
+                                             S.Ticket.PSK :=
+                                                Bytes_48 (PSK_Out);
+                                             S.Ticket.PSK_Len := 48;
+                                          end;
+                                       when others =>
+                                          declare
+                                             PSK_Out : OKM_Seq (0 .. 31);
+                                          begin
+                                             Key_Schedule.Derive_PSK
+                                               (PSK_Out,
+                                                S.Res_Master (0 .. 31),
+                                                Nonce);
+                                             S.Ticket.PSK := (others => 0);
+                                             for I in N32 range 0 .. 31 loop
+                                                S.Ticket.PSK (I) :=
+                                                   PSK_Out (I);
+                                             end loop;
+                                             S.Ticket.PSK_Len := 32;
+                                          end;
+                                    end case;
+
+                                    S.Ticket.Valid := True;
+                                 end if;
+                              end;
+                           end if;
+                        end;
+                     end if;
+                  end;
+               end if;
                Result := OK;
 
             when 16#15# =>
