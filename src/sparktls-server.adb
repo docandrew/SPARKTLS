@@ -83,12 +83,17 @@ is
    begin
       S.Last_Error := Err;
       S.State := Error_State;
-      Result := Error_Alert;
       Records.Build_Plaintext_Alert
         (Level     => 2,  --  fatal
          Desc      => Alert_Desc (Err),
          Output    => S.Output,
          Bytes_Out => Dummy);
+      --  Let caller drain the alert before seeing Error_Alert
+      if Output_Pending (S) > 0 then
+         Result := Has_Output;
+      else
+         Result := Error_Alert;
+      end if;
    end Send_Alert_And_Error;
 
    --  Append handshake message bytes to the transcript
@@ -167,9 +172,15 @@ is
    begin
       case S.State is
          when Connected =>
-            --  Drain pending output first (e.g., NewSessionTicket)
             if Output_Pending (S) > 0 then
                Result := Has_Output;
+            elsif S.Handshake_Just_Done then
+               --  Deliver Handshake_Done after output is drained.
+               --  This ensures the caller knows the handshake completed
+               --  and has drained all pending output (NSTs) before
+               --  we process any queued input records.
+               S.Handshake_Just_Done := False;
+               Result := Handshake_Done;
             else
                Process_Connected (S, Result);
             end if;
@@ -183,10 +194,14 @@ is
             end if;
 
          when Error_State =>
-            --  Drain any pending alert before reporting error
+            --  Drain any pending alert, then signal Error_Alert.
+            --  The caller should do a graceful TCP shutdown after
+            --  receiving Error_Alert (shutdown write side, wait
+            --  for peer to close, then close socket).
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
+               S.State := Closed;
                Result := Error_Alert;
             end if;
 
@@ -916,9 +931,26 @@ is
 
       case Rec.Content is
          when Records.Content_Change_Cipher_Spec =>
-            HC.CCS_Received := True;
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
+            if Rec.Fragment_Len = 1 then
+               HC.CCS_Received := True;
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Result := OK;
+            else
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               declare
+                  A : N32;
+               begin
+                  Records.Build_Alert_Record
+                    (2, 10, S.Server_App, S.Output, A);
+               end;
+               S.Last_Error := Unexpected_Message;
+               S.State := Error_State;
+               if Output_Pending (S) > 0 then
+                  Result := Has_Output;
+               else
+                  Result := Error_Alert;
+               end if;
+            end if;
 
          when Records.Content_Application_Data =>
             declare
@@ -935,11 +967,21 @@ is
                Inner_Type : Byte;
                Dec_Valid  : Boolean;
             begin
-               if Rec.Fragment_Len <= Records.Tag_Size then
+               if Rec.Fragment_Len < Records.Tag_Size + 2 then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 10, S.Server_App, S.Output, A);
+                  end;
                   S.Last_Error := Decode_Error;
                   S.State := Error_State;
-                  Result := Error_Alert;
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
                   return;
                end if;
 
@@ -955,14 +997,36 @@ is
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
                if not Dec_Valid then
-                  S.Last_Error := Bad_Record_MAC;
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 10, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Unexpected_Message;
                   S.State := Error_State;
-                  Result := Error_Alert;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
                   return;
                end if;
 
                if Inner_Type /= 16#16# then
-                  Result := OK;
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 10, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Unexpected_Message;
+                  S.State := Error_State;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
                   return;
                end if;
 
@@ -1234,10 +1298,29 @@ is
 
       case Rec.Content is
          when Records.Content_Change_Cipher_Spec =>
-            --  CCS for middlebox compatibility, ignore
-            HC.CCS_Received := True;
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
+            --  CCS for middlebox compatibility.
+            --  RFC 8446 Section 5: MUST be a single byte 0x01.
+            if Rec.Fragment_Len = 1 then
+               HC.CCS_Received := True;
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Result := OK;
+            else
+               --  Invalid CCS payload length
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               declare
+                  A : N32;
+               begin
+                  Records.Build_Alert_Record
+                    (2, 10, S.Server_App, S.Output, A);
+               end;
+               S.Last_Error := Unexpected_Message;
+               S.State := Error_State;
+               if Output_Pending (S) > 0 then
+                  Result := Has_Output;
+               else
+                  Result := Error_Alert;
+               end if;
+            end if;
 
          when Records.Content_Application_Data =>
             --  Encrypted handshake record (client Finished)
@@ -1255,11 +1338,21 @@ is
                Inner_Type : Byte;
                Dec_Valid  : Boolean;
             begin
-               if Rec.Fragment_Len <= Records.Tag_Size then
+               if Rec.Fragment_Len < Records.Tag_Size + 2 then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 10, S.Server_App, S.Output, A);
+                  end;
                   S.Last_Error := Decode_Error;
                   S.State := Error_State;
-                  Result := Error_Alert;
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
                   return;
                end if;
 
@@ -1275,13 +1368,27 @@ is
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
                if not Dec_Valid then
-                  S.Last_Error := Bad_Record_MAC;
+                  --  MAC failure or empty inner plaintext.
+                  --  Send alert with app keys (client switched to app
+                  --  keys after receiving our Finished).
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 10, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Unexpected_Message;
                   S.State := Error_State;
-                  Result := Error_Alert;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
                   return;
                end if;
 
                if Inner_Type = 16#15# and then Plain_Len >= 2 then
+                  --  Peer sent alert
                   S.Last_Error := Error_Code'Val
                     (Natural'Min (Natural (Plaintext (1)),
                                   Error_Code'Pos (Error_Code'Last)));
@@ -1289,7 +1396,20 @@ is
                   Result := Error_Alert;
                   return;
                elsif Inner_Type /= 16#16# then
-                  Result := OK;
+                  --  Unexpected inner type during handshake
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 10, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Unexpected_Message;
+                  S.State := Error_State;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
                   return;
                end if;
 
@@ -1483,7 +1603,16 @@ is
                      end;
 
                      S.State := Connected;
-                     Result := Handshake_Done;
+                     S.Handshake_Just_Done := True;
+                     --  If there's pending output (e.g., NewSessionTicket),
+                     --  return Has_Output first so the caller drains it
+                     --  BEFORE we process any queued input records.
+                     if Output_Pending (S) > 0 then
+                        Result := Has_Output;
+                     else
+                        S.Handshake_Just_Done := False;
+                        Result := Handshake_Done;
+                     end if;
                   end;
                end;
             end;
@@ -1524,8 +1653,25 @@ is
       if Rec.Content /= Records.Content_Application_Data then
          --  In Connected state, only application_data records are valid.
          --  CCS after Finished and other unexpected types get rejected.
+         --  Send ENCRYPTED alert (we have application keys).
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         declare
+            Alert_Out : N32;
+         begin
+            Records.Build_Alert_Record
+              (Level     => 2,       --  fatal
+               Desc      => 10,      --  unexpected_message
+               Keys      => S.Server_App,
+               Output    => S.Output,
+               Bytes_Out => Alert_Out);
+         end;
+         S.Last_Error := Unexpected_Message;
+         S.State := Error_State;
+         if Output_Pending (S) > 0 then
+            Result := Has_Output;
+         else
+            Result := Error_Alert;
+         end if;
          return;
       end if;
 
@@ -1541,9 +1687,27 @@ is
          Inner_Type : Byte;
          Dec_Valid  : Boolean;
       begin
-         if Rec.Fragment_Len <= Records.Tag_Size then
+         if Rec.Fragment_Len < Records.Tag_Size + 2 then
+            --  Too short for AEAD tag + at least 1 byte of ciphertext
+            --  (content type byte). Send encrypted unexpected_message.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
+            declare
+               Alert_Out : N32;
+            begin
+               Records.Build_Alert_Record
+                 (Level     => 2,
+                  Desc      => 10,  --  unexpected_message
+                  Keys      => S.Server_App,
+                  Output    => S.Output,
+                  Bytes_Out => Alert_Out);
+            end;
+            S.Last_Error := Unexpected_Message;
+            S.State := Error_State;
+            if Output_Pending (S) > 0 then
+               Result := Has_Output;
+            else
+               Result := Error_Alert;
+            end if;
             return;
          end if;
 
@@ -1559,9 +1723,27 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not Dec_Valid then
-            S.Last_Error := Bad_Record_MAC;
+            --  Could be MAC failure or empty inner plaintext (RFC 8446 §5.4)
+            --  Send encrypted alert since we have application keys
+            declare
+               Alert_Out : N32;
+            begin
+               Records.Build_Alert_Record
+                 (Level     => 2,       --  fatal
+                  Desc      => 10,      --  unexpected_message
+                  Keys      => S.Server_App,
+                  Output    => S.Output,
+                  Bytes_Out => Alert_Out);
+               null;
+            end;
+            S.Last_Error := Unexpected_Message;
             S.State := Error_State;
-            Result := Error_Alert;
+            --  Return Has_Output to drain the alert before Error_Alert
+            if Output_Pending (S) > 0 then
+               Result := Has_Output;
+            else
+               Result := Error_Alert;
+            end if;
             return;
          end if;
 
@@ -1587,12 +1769,24 @@ is
             when 16#15# =>
                --  Alert
                if Plain_Len >= 2 and then Plaintext (1) = 0 then
+                  --  close_notify
                   S.State := Closing;
                   Result := Shutdown;
                else
+                  --  Invalid/empty alert — send unexpected_message
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 10, S.Server_App, S.Output, A);
+                  end;
                   S.Last_Error := Unexpected_Message;
                   S.State := Error_State;
-                  Result := Error_Alert;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
                end if;
 
             when others =>

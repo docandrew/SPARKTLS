@@ -51,6 +51,10 @@ is
    with Pre => Plaintext'First = 0
                and Plaintext'Last < Max_Fragment;
 
+   --  Decrypt a TLS 1.3 encrypted record.
+   --  RFC 8446 Section 5.4: After decryption, the inner plaintext
+   --  MUST be non-empty (at least the content type byte), and
+   --  Inner_Type MUST NOT be zero (content type of zero is invalid).
    procedure Decrypt_Record
      (Encrypted   : in     Byte_Seq;
       Record_Hdr  : in     Byte_Seq;
@@ -65,7 +69,8 @@ is
                and Record_Hdr'First = 0
                and Record_Hdr'Length = Record_Header_Size
                and Plaintext'First = 0
-               and Plaintext'Last < Max_Fragment + 256;
+               and Plaintext'Last < Max_Fragment + 256,
+        Post => (if Valid then Plain_Len > 0 and Inner_Type /= 0);
 
    procedure Build_CCS_Record
      (Output    : in out IO_Buffer;

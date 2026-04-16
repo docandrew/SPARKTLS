@@ -89,6 +89,22 @@ is
       Error_State);
 
    --================================================================
+   --  Protocol requirements as ghost functions (RFC 8446)
+   --================================================================
+
+   --  RFC 8446 Section 5: CCS is only valid during the handshake,
+   --  between the first ClientHello and the server's Finished.
+   function CCS_Allowed (State : Connection_State) return Boolean is
+     (State not in Connected | Closing | Closed | Error_State | Idle)
+   with Ghost;
+
+   --  RFC 8446 Section 5.1: The handshake must be in a state where
+   --  the given record content type is expected.
+   function Handshake_Complete (State : Connection_State) return Boolean is
+     (State in Connected | Closing | Closed)
+   with Ghost;
+
+   --================================================================
    --  Action result - tells the caller what to do next
    --================================================================
 
@@ -514,6 +530,9 @@ is
       --  needed to derive PSK when NewSessionTicket arrives post-handshake)
       Res_Master     : Bytes_48 := (others => 0);
       Res_Master_Len : N32 := 0;  --  32 or 48
+
+      --  True on first Advance in Connected state (to deliver Handshake_Done)
+      Handshake_Just_Done : Boolean := False;
 
       --  Handshake context (heap-allocated, freed after handshake)
       HC_Ptr : Handshake_Context_Access := null;

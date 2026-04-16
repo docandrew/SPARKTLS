@@ -307,13 +307,42 @@ is
          return;
       end if;
 
-      Inner_Type := Decrypted (Decrypted'Last);
-      Plain_Len  := Cipher_Len - 1;
-      pragma Assert (Plain_Len < Max_Fragment + 256);
+      --  RFC 8446 Section 5.4: Strip trailing zero padding, then
+      --  extract the content type byte. The remaining bytes are the
+      --  actual plaintext. If no non-zero byte is found, the record
+      --  is invalid (zero-length inner plaintext).
+      declare
+         Last_Nonzero : N32 := 0;
+         Found        : Boolean := False;
+      begin
+         for I in reverse 0 .. Cipher_Len - 1 loop
+            if Decrypted (I) /= 0 then
+               Last_Nonzero := I;
+               Found := True;
+               exit;
+            end if;
+         end loop;
 
-      if Plain_Len > 0 and then Plain_Len - 1 <= Plaintext'Last then
-         Plaintext (0 .. Plain_Len - 1) := Decrypted (0 .. Plain_Len - 1);
-      end if;
+         if not Found then
+            --  All zeros — no content type byte at all
+            Valid := False;
+            return;
+         end if;
+
+         Inner_Type := Decrypted (Last_Nonzero);
+         Plain_Len  := Last_Nonzero;
+
+         --  RFC 8446 Section 5.4: content type must not be zero
+         if Inner_Type = 0 then
+            Valid := False;
+            return;
+         end if;
+
+         if Plain_Len > 0 and then Plain_Len - 1 <= Plaintext'Last then
+            Plaintext (0 .. Plain_Len - 1) :=
+               Decrypted (0 .. Plain_Len - 1);
+         end if;
+      end;
    end Decrypt_Record;
 
    procedure Build_CCS_Record
