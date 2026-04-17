@@ -960,7 +960,10 @@ is
       end;
 
       --  Iterate cipher suites to find one we support
+      --  Store best TLS 1.3 suite and best TLS 1.2 suite separately.
+      --  Version negotiation later picks the right one.
       S.Negotiated_Suite := 0;
+      S.Negotiated_Suite_12 := 0;
 
       if Well_Formed (Ctx, F_Cipher_Suites_TLS) then
          declare
@@ -992,20 +995,25 @@ is
                         Val := Unsigned_16
                                  (RFLX.Tls_Parameters.To_Base_Integer
                                     (Suite));
-                        --  Accept both TLS 1.3 and TLS 1.2 suites.
-                        --  Version negotiation determines which to use.
+                        --  TLS 1.3 suites (0x13xx)
                         if S.Negotiated_Suite = 0 and then
-                           (Val in Suite_AES_256_GCM_SHA384
-                                 | Suite_AES_128_GCM_SHA256
-                                 | Suite_CHACHA20_POLY1305_SHA256
-                                 | Suite_ECDHE_RSA_AES128_GCM_SHA256
-                                 | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                 | Suite_ECDHE_RSA_CHACHA20_SHA256
-                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256)
+                           Val in Suite_AES_256_GCM_SHA384
+                                | Suite_AES_128_GCM_SHA256
+                                | Suite_CHACHA20_POLY1305_SHA256
                         then
                            S.Negotiated_Suite := Val;
+                        end if;
+
+                        --  TLS 1.2 suites (0xC0xx/0xCCxx)
+                        if S.Negotiated_Suite_12 = 0 and then
+                           Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                        then
+                           S.Negotiated_Suite_12 := Val;
                         end if;
                      end;
                   end if;
@@ -1019,7 +1027,8 @@ is
          end;
       end if;
 
-      if S.Negotiated_Suite = 0 then
+      --  Need at least one matching suite (either TLS 1.3 or 1.2)
+      if S.Negotiated_Suite = 0 and S.Negotiated_Suite_12 = 0 then
          Take_Buffer (Ctx, Buf);
          RFLX_Free (Buf);
          return;
@@ -1577,7 +1586,9 @@ is
          end;
 
       else
-         --  No common key exchange group
+         --  No common key exchange group.
+         --  Set Len = 0; caller will send handshake_failure alert.
+         Len := 0;
          return;
       end if;
 

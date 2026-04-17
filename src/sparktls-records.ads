@@ -91,7 +91,7 @@ is
       Valid       :    out Boolean)
    with Pre => Encrypted'First = 0
                and Encrypted'Last < Max_Fragment + 256
-               and Encrypted'Last >= Tag_Size + 1
+               and Encrypted'Last >= Tag_Size
                and Record_Hdr'First = 0
                and Record_Hdr'Length = Record_Header_Size
                and Plaintext'First = 0

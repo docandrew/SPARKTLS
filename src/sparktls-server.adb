@@ -83,6 +83,7 @@ is
    is
       Dummy : N32;
    begin
+      null; -- debug removed
       S.Last_Error := Err;
       S.State := Error_State;
       Records.Build_Plaintext_Alert
@@ -107,6 +108,7 @@ is
    is
       Dummy : N32;
    begin
+      null; -- debug removed
       S.Last_Error := Err;
       S.State := Error_State;
       Records.Build_Alert_Record
@@ -353,10 +355,25 @@ is
                   --  Version negotiation: dispatch based on HC.Version
                   --  (set by Parse_Client_Hello from supported_versions)
                   if HC.Version = TLS_1_3 then
+                     --  TLS 1.3 requires a TLS 1.3 cipher suite
+                     --  and at least one supported ECDHE group
+                     if S.Negotiated_Suite = 0 or else
+                        not (HC.Client_Has_X25519 or
+                             HC.Client_Has_P256 or
+                             HC.Client_Has_P384)
+                     then
+                        Send_Alert_And_Error
+                          (S, Handshake_Failure, Result);
+                        return;
+                     end if;
                      Build_Server_Flight (S, HC, Result);
-                  else
+                  elsif S.Negotiated_Suite_12 /= 0 then
                      SPARKTLS.Server.TLS12.Build_Server_Flight_12
                        (S, HC, Result);
+                  else
+                     --  No matching suite for either version
+                     Send_Alert_And_Error
+                       (S, Handshake_Failure, Result);
                   end if;
                end;
             end;
@@ -534,9 +551,7 @@ is
       --  Build ServerHello
       Handshake.Build_Server_Hello (S, HC, SH_Buf, SH_Len);
       if SH_Len = 0 then
-         S.Last_Error := Internal_Error;
-         S.State := Error_State;
-         Result := Error_Alert;
+         Send_Alert_And_Error (S, Handshake_Failure, Result);
          return;
       end if;
 
@@ -1076,7 +1091,7 @@ is
                Inner_Type : Byte;
                Dec_Valid  : Boolean;
             begin
-               if Rec.Fragment_Len < Records.Tag_Size + 2 then
+               if Rec.Fragment_Len < Records.Tag_Size + 1 then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   declare
                      A : N32;
@@ -1457,7 +1472,7 @@ is
                Inner_Type : Byte;
                Dec_Valid  : Boolean;
             begin
-               if Rec.Fragment_Len < Records.Tag_Size + 2 then
+               if Rec.Fragment_Len < Records.Tag_Size + 1 then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   declare
                      A : N32;
@@ -1821,11 +1836,9 @@ is
             --  Plaintext handshake/alert records are not allowed here.
             --  RFC 8446 §5.1: after ServerHello, all records MUST be
             --  encrypted (content type application_data or CCS).
-            --  Don't send an alert back — the peer likely can't decrypt it.
+            --  Send encrypted alert — the peer still has our keys.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            S.Last_Error := Unexpected_Message;
-            S.State := Error_State;
-            Result := Error_Alert;
+            Send_Encrypted_Alert (S, Unexpected_Message, Result);
       end case;
    end Process_Client_Finished;
 
@@ -1905,9 +1918,9 @@ is
          Inner_Type : Byte;
          Dec_Valid  : Boolean;
       begin
-         if Rec.Fragment_Len < Records.Tag_Size + 2 then
+         if Rec.Fragment_Len < Records.Tag_Size + 1 then
             --  Too short for AEAD tag + at least 1 byte of ciphertext
-            --  (content type byte). Send encrypted unexpected_message.
+            --  (the inner content type byte). RFC 8446 §5.4.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             declare
                Alert_Out : N32;

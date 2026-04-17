@@ -69,18 +69,14 @@ is
          return;
       end if;
 
-      --  Negotiate TLS 1.2 cipher suite
-      case S.Negotiated_Suite is
-         when Suite_ECDHE_RSA_AES128_GCM_SHA256
-            | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-            | Suite_ECDHE_RSA_AES256_GCM_SHA384
-            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-            | Suite_ECDHE_RSA_CHACHA20_SHA256
-            | Suite_ECDHE_ECDSA_CHACHA20_SHA256 =>
-            null;
-         when others =>
-            S.Negotiated_Suite := Suite_ECDHE_RSA_AES128_GCM_SHA256;
-      end case;
+      --  Use the TLS 1.2 suite that the client actually offered
+      if S.Negotiated_Suite_12 /= 0 then
+         S.Negotiated_Suite := S.Negotiated_Suite_12;
+      else
+         --  No matching TLS 1.2 ECDHE+AEAD suite
+         Send_Alert_And_Error (S, Handshake_Failure, Result);
+         return;
+      end if;
 
       HC.Negotiated_Sig_Algo := 16#0804#;  -- RSA-PSS-SHA256
 

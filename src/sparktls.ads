@@ -737,7 +737,8 @@ is
       App_Data_Len : N32 := 0;
 
       --  Negotiated cipher suite (wire value from ServerHello)
-      Negotiated_Suite : Unsigned_16 := 0;
+      Negotiated_Suite    : Unsigned_16 := 0;  --  TLS 1.3 suite (0x13xx)
+      Negotiated_Suite_12 : Unsigned_16 := 0;  --  TLS 1.2 suite (0xC0xx/0xCCxx)
 
       --  Peer certificate valid (copied from HC before free)
       Peer_Cert_Valid : Boolean := False;
