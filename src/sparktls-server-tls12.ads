@@ -84,4 +84,11 @@ is
      (S  : in out Session;
       HC : in out Handshake_Context);
 
+   --  Process records in Connected state for TLS 1.2.
+   --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).
+   --  Dispatches on inner content type (0x17=app data, 0x15=alert).
+   procedure Process_Connected_12
+     (S      : in out Session;
+      Result :    out Action);
+
 end SPARKTLS.Server.TLS12;

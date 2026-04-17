@@ -851,9 +851,10 @@ is
                                 (Get_Tag (Ctx)));
             Msg_Len  := N32 (RFLX.TLS_Handshake.To_Base_Integer
                                (Get_Length (Ctx)));
-            --  RFC 8446 §4: Validate known handshake type
+            --  Validate known handshake type (TLS 1.2 + 1.3)
             if Msg_Type in 16#01# | 16#02# | 16#04# | 16#08# |
-                           16#0B# | 16#0D# | 16#0F# | 16#14#
+                           16#0B# | 16#0C# | 16#0D# | 16#0E# |
+                           16#0F# | 16#10# | 16#14#
             then
                OK := True;
             end if;
@@ -991,10 +992,18 @@ is
                         Val := Unsigned_16
                                  (RFLX.Tls_Parameters.To_Base_Integer
                                     (Suite));
-                        if (Val = Suite_AES_256_GCM_SHA384 or
-                            Val = Suite_AES_128_GCM_SHA256 or
-                            Val = Suite_CHACHA20_POLY1305_SHA256) and then
-                           S.Negotiated_Suite = 0
+                        --  Accept both TLS 1.3 and TLS 1.2 suites.
+                        --  Version negotiation determines which to use.
+                        if S.Negotiated_Suite = 0 and then
+                           (Val in Suite_AES_256_GCM_SHA384
+                                 | Suite_AES_128_GCM_SHA256
+                                 | Suite_CHACHA20_POLY1305_SHA256
+                                 | Suite_ECDHE_RSA_AES128_GCM_SHA256
+                                 | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                                 | Suite_ECDHE_RSA_CHACHA20_SHA256
+                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256)
                         then
                            S.Negotiated_Suite := Val;
                         end if;
@@ -1228,6 +1237,50 @@ is
                                        Unsigned_16 (SA_Data (Pos + 1));
                                     HC.Peer_Sig_Algo_Count :=
                                        HC.Peer_Sig_Algo_Count + 1;
+                                    Pos := Pos + 2;
+                                 end loop;
+                              end if;
+                           end;
+
+                        --  supported_groups extension (0x000A)
+                        --  Used by TLS 1.2 to signal supported ECDHE curves
+                        --  (TLS 1.3 also uses this alongside key_share)
+                        elsif Tag.Known and then
+                           Tag.Enum =
+                              RFLX.Tls_Extensiontype_Values.Supported_Groups
+                        then
+                           declare
+                              DLen : constant N32 := N32
+                                 (RFLX.TLS_Handshake.CH_Extension_TLS
+                                    .Get_Data_Length (Ext_Ctx));
+                              SG_Data : RBT.Bytes
+                                          (1 .. RBT.Index (DLen));
+                              List_Len : N32;
+                              Pos : N32;
+                           begin
+                              if DLen >= 4 then
+                                 RFLX.TLS_Handshake.CH_Extension_TLS
+                                   .Get_Data (Ext_Ctx, SG_Data);
+                                 --  Format: list_len(2) || group(2) || ...
+                                 List_Len := N32 (SG_Data (1)) * 256 +
+                                             N32 (SG_Data (2));
+                                 Pos := 3;
+                                 while Pos + 1 <= N32 (DLen)
+                                    and then Pos < 3 + List_Len
+                                 loop
+                                    declare
+                                       Grp : constant Unsigned_16 :=
+                                          Unsigned_16 (SG_Data (RBT.Index (Pos))) * 256 +
+                                          Unsigned_16 (SG_Data (RBT.Index (Pos + 1)));
+                                    begin
+                                       if Grp = 16#001D# then
+                                          HC.Client_Has_X25519 := True;
+                                       elsif Grp = 16#0017# then
+                                          HC.Client_Has_P256 := True;
+                                       elsif Grp = 16#0018# then
+                                          HC.Client_Has_P384 := True;
+                                       end if;
+                                    end;
                                     Pos := Pos + 2;
                                  end loop;
                               end if;

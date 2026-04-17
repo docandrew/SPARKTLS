@@ -16,6 +16,7 @@ use type X509.Algorithm_ID;
 with SPARKTLS.HMAC384;
 with SPARKTLS.HKDF384;
 with SPARKTLS.Ticket_Cache;
+with SPARKTLS.Records.TLS12;
 with SPARKTLS.Server.TLS12;
 
 package body SPARKTLS.Server with
@@ -207,7 +208,11 @@ is
                S.Handshake_Just_Done := False;
                Result := Handshake_Done;
             else
-               Process_Connected (S, Result);
+               if S.Negotiated_Version = TLS_1_2 then
+                  SPARKTLS.Server.TLS12.Process_Connected_12 (S, Result);
+               else
+                  Process_Connected (S, Result);
+               end if;
             end if;
 
          when Closing =>
@@ -379,7 +384,27 @@ is
             Process_Client_Auth (S, HC, Result);
 
          when Wait_Client_Finished =>
-            Process_Client_Finished (S, HC, Result);
+            if HC.Version = TLS_1_3 then
+               Process_Client_Finished (S, HC, Result);
+            else
+               --  TLS 1.2 handshake after ServerHelloDone:
+               --    1. ClientKeyExchange (plaintext)
+               --    2. ChangeCipherSpec
+               --    3. Finished (encrypted)
+               if not HC.CKE_Received_12 then
+                  SPARKTLS.Server.TLS12.Process_Client_Key_Exchange_12
+                    (S, HC, Result);
+               elsif not HC.CCS_Received then
+                  --  CKE done, waiting for CCS
+                  SPARKTLS.Server.TLS12.Process_Client_Key_Exchange_12
+                    (S, HC, Result);
+                  --  CKE handler also accepts CCS records
+               else
+                  --  CCS received, next must be encrypted Finished
+                  SPARKTLS.Server.TLS12.Process_Client_Finished_12
+                    (S, HC, Result);
+               end if;
+            end if;
 
          when others =>
             S.Last_Error := Internal_Error;
@@ -2022,12 +2047,23 @@ is
    is
       Enc_Out : N32;
    begin
-      Records.Build_Encrypted_Record
-        (Plaintext  => Plaintext,
-         Inner_Type => 16#17#,
-         Keys       => S.Server_App,
-         Output     => S.Output,
-         Bytes_Out  => Enc_Out);
+      if S.Negotiated_Version = TLS_1_2 then
+         Records.TLS12.Build_Encrypted_Record_12
+           (Plaintext    => Plaintext,
+            Content_Type => 16#17#,  --  application_data
+            Keys         => S.Server_App,
+            Implicit_IV  => S.Server_IV_12,
+            Seq_Num      => S.Server_Seq_12,
+            Output       => S.Output,
+            Bytes_Out    => Enc_Out);
+      else
+         Records.Build_Encrypted_Record
+           (Plaintext  => Plaintext,
+            Inner_Type => 16#17#,
+            Keys       => S.Server_App,
+            Output     => S.Output,
+            Bytes_Out  => Enc_Out);
+      end if;
 
       if Enc_Out > 0 then
          Bytes_Written := N32 (Plaintext'Length);
@@ -2039,12 +2075,23 @@ is
    procedure Close_Notify (S : in out Session) is
       Alert_Out : N32;
    begin
-      Records.Build_Alert_Record
-        (Level     => 1,
-         Desc      => 0,
-         Keys      => S.Server_App,
-         Output    => S.Output,
-         Bytes_Out => Alert_Out);
+      if S.Negotiated_Version = TLS_1_2 then
+         Records.TLS12.Build_Alert_Record_12
+           (Level       => 1,
+            Desc        => 0,
+            Keys        => S.Server_App,
+            Implicit_IV => S.Server_IV_12,
+            Seq_Num     => S.Server_Seq_12,
+            Output      => S.Output,
+            Bytes_Out   => Alert_Out);
+      else
+         Records.Build_Alert_Record
+           (Level     => 1,
+            Desc      => 0,
+            Keys      => S.Server_App,
+            Output    => S.Output,
+            Bytes_Out => Alert_Out);
+      end if;
       S.State := Closing;
    end Close_Notify;
 

@@ -66,7 +66,8 @@ is
    with Pre  => Data'First = 0 and Data'Last < N32'Last,
         Post => (if OK then
                    Msg_Type in 16#01# | 16#02# | 16#04# | 16#08# |
-                              16#0B# | 16#0D# | 16#0F# | 16#14#);
+                              16#0B# | 16#0C# | 16#0D# | 16#0E# |
+                              16#0F# | 16#10# | 16#14#);
    --  RFC 8446 §4: Valid handshake types:
    --    0x01 ClientHello, 0x02 ServerHello, 0x04 NewSessionTicket,
    --    0x08 EncryptedExtensions, 0x0B Certificate,

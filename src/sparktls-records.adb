@@ -136,10 +136,12 @@ is
    begin
       Bytes_Out := 0;
 
-      --  Build 5-byte header: Handshake (0x16) + TLS 1.0 (0x0301) + length
+      --  Build 5-byte header: Handshake (0x16) + TLS 1.2 (0x0303) + length
+      --  RFC 8446 §5.1: SHOULD be 0x0303 for all records after ClientHello.
+      --  RFC 5246 §6.2.1: record version = negotiated version (0x0303).
       Hdr (0) := 16#16#;  --  handshake
       Hdr (1) := 16#03#;
-      Hdr (2) := 16#01#;  --  TLS 1.0 for compatibility
+      Hdr (2) := 16#03#;  --  TLS 1.2 / 1.3 record layer version
       Hdr (3) := Byte (Frag_Len / 256);
       Hdr (4) := Byte (Frag_Len mod 256);
 

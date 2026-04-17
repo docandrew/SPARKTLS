@@ -672,6 +672,9 @@ is
       --  If False, we negotiate TLS 1.2 (if legacy_version = 0x0303).
       Has_TLS_1_3 : Boolean := False;
 
+      --  TLS 1.2: ClientKeyExchange already received
+      CKE_Received_12 : Boolean := False;
+
       --  TLS 1.2 key material (set during Derive_Keys_12)
       Master_Secret_12   : Bytes_48 := (others => 0);
       Client_Write_IV_12 : Byte_Seq (0 .. 3) := (others => 0);
@@ -749,6 +752,14 @@ is
 
       --  True on first Advance in Connected state (to deliver Handshake_Done)
       Handshake_Just_Done : Boolean := False;
+
+      --  TLS 1.2: GCM implicit nonces and sequence numbers
+      --  (persist past handshake for Connected-state encrypt/decrypt)
+      Negotiated_Version  : TLS_Version := TLS_1_3;
+      Client_IV_12        : Byte_Seq (0 .. 3) := (others => 0);
+      Server_IV_12        : Byte_Seq (0 .. 3) := (others => 0);
+      Client_Seq_12       : Unsigned_64 := 0;
+      Server_Seq_12       : Unsigned_64 := 0;
 
       --  Handshake context (heap-allocated, freed after handshake)
       HC_Ptr : Handshake_Context_Access := null;

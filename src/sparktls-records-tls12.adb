@@ -274,16 +274,7 @@ is
       Plain_Len := 0;
       Valid     := False;
 
-      --  Build nonce: implicit_IV[4] || explicit_nonce[8]
-      Nonce (0) := Implicit_IV (Implicit_IV'First);
-      Nonce (1) := Implicit_IV (Implicit_IV'First + 1);
-      Nonce (2) := Implicit_IV (Implicit_IV'First + 2);
-      Nonce (3) := Implicit_IV (Implicit_IV'First + 3);
-      for I in N32 range 0 .. 7 loop
-         Nonce (4 + I) := Exp_Nonce (I);
-      end loop;
-
-      --  Copy explicit nonce, ciphertext, and tag into 0-based buffers
+      --  Extract explicit nonce, ciphertext, and tag into 0-based buffers
       for I in N32 range 0 .. 7 loop
          Exp_Nonce (I) := Encrypted (I);
       end loop;
@@ -292,6 +283,16 @@ is
       end loop;
       for I in N32 range 0 .. 15 loop
          Tag (I) := Encrypted (Explicit_Nonce_Len + CT_Len + I);
+      end loop;
+
+      --  Build nonce: implicit_IV[4] || explicit_nonce[8]
+      --  MUST be after Exp_Nonce extraction above!
+      Nonce (0) := Implicit_IV (Implicit_IV'First);
+      Nonce (1) := Implicit_IV (Implicit_IV'First + 1);
+      Nonce (2) := Implicit_IV (Implicit_IV'First + 2);
+      Nonce (3) := Implicit_IV (Implicit_IV'First + 3);
+      for I in N32 range 0 .. 7 loop
+         Nonce (4 + I) := Exp_Nonce (I);
       end loop;
 
       --  Build AAD: seq_num || content_type || version || plaintext_length

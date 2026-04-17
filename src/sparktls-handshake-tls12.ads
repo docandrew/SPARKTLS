@@ -386,4 +386,19 @@ is
                 and HC.Cfg.Random /= null
                 and HC.Version = TLS_1_2;
 
+   --  RFC 5246 §7.4.2: Build TLS 1.2 Certificate message.
+   --
+   --  TLS 1.2 format (no certificate_request_context, no per-cert extensions):
+   --    type[1]=0x0B || length[3] ||
+   --    certificate_list_length[3] ||
+   --    { certificate_length[3] || certificate_data[N] }*
+   --
+   --  Difference from TLS 1.3: no context byte, no per-cert extensions.
+   procedure Build_Certificate_Chain_12
+     (Id     : in     Identity;
+      Result :    out Byte_Seq;
+      Len    :    out N32)
+   with Pre => Result'First = 0 and Result'Last >= 15
+               and Id.Has_Identity;
+
 end SPARKTLS.Handshake.TLS12;
