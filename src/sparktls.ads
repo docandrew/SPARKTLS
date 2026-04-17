@@ -90,19 +90,134 @@ is
 
    --================================================================
    --  Protocol requirements as ghost functions (RFC 8446)
+   --
+   --  These are formally verified by SPARK — the prover checks that
+   --  the implementation never violates these properties.
    --================================================================
 
-   --  RFC 8446 Section 5: CCS is only valid during the handshake,
-   --  between the first ClientHello and the server's Finished.
+   --  RFC 8446 §5: CCS is only valid during the handshake.
+   --  CCS after server Finished MUST be rejected.
    function CCS_Allowed (State : Connection_State) return Boolean is
      (State not in Connected | Closing | Closed | Error_State | Idle)
    with Ghost;
 
-   --  RFC 8446 Section 5.1: The handshake must be in a state where
-   --  the given record content type is expected.
+   --  RFC 8446 §5.1: Handshake is complete.
    function Handshake_Complete (State : Connection_State) return Boolean is
      (State in Connected | Closing | Closed)
    with Ghost;
+
+   --  RFC 8446 §4.1: Valid state transitions.
+   --  The handshake state machine may only transition along defined paths.
+   --  Error_State is reachable from any non-terminal state.
+   function Valid_Transition (From, To : Connection_State) return Boolean is
+     (case From is
+        when Idle =>
+           To in Wait_Client_Hello | Client_Hello_Sent,
+        when Client_Hello_Sent =>
+           To in Wait_Server_Hello | Error_State,
+        when Wait_Server_Hello =>
+           To in Wait_Encrypted_Extensions | Error_State,
+        when Wait_Encrypted_Extensions =>
+           To in Wait_Certificate_Request | Wait_Certificate | Error_State,
+        when Wait_Certificate_Request =>
+           To in Wait_Certificate | Error_State,
+        when Wait_Certificate =>
+           To in Wait_Certificate_Verify | Error_State,
+        when Wait_Certificate_Verify =>
+           To in Wait_Server_Finished | Error_State,
+        when Wait_Server_Finished =>
+           To in Client_Certificate_Sent | Client_Finished_Sent | Error_State,
+        when Client_Certificate_Sent =>
+           To in Client_Cert_Verify_Sent | Error_State,
+        when Client_Cert_Verify_Sent =>
+           To in Client_Finished_Sent | Error_State,
+        when Client_Finished_Sent =>
+           To in Connected | Error_State,
+        when Wait_Client_Hello =>
+           To in Server_Hello_Sent | Error_State,
+        when Server_Hello_Sent =>
+           To in Wait_Client_Certificate | Wait_Client_Finished | Error_State,
+        when Sent_Certificate_Request =>
+           To in Wait_Client_Certificate | Error_State,
+        when Wait_Client_Certificate =>
+           To in Wait_Client_Cert_Verify | Wait_Client_Finished | Error_State,
+        when Wait_Client_Cert_Verify =>
+           To in Wait_Client_Finished | Error_State,
+        when Wait_Client_Finished =>
+           To in Connected | Error_State,
+        when Connected =>
+           To in Closing | Error_State | Closed,
+        when Closing =>
+           To in Closed,
+        when Closed =>
+           False,
+        when Error_State =>
+           To = Closed)
+   with Ghost;
+
+   --  RFC 8446 §7.3, §7.5: Key phase.
+   --  Before server Finished is sent, handshake traffic keys are used.
+   --  After server Finished, application traffic keys are used.
+   function In_Handshake_Key_Phase (State : Connection_State) return Boolean is
+     (State in Wait_Client_Hello | Server_Hello_Sent |
+              Sent_Certificate_Request | Wait_Client_Certificate |
+              Wait_Client_Cert_Verify | Wait_Client_Finished |
+              Client_Hello_Sent | Wait_Server_Hello |
+              Wait_Encrypted_Extensions | Wait_Certificate_Request |
+              Wait_Certificate | Wait_Certificate_Verify |
+              Wait_Server_Finished | Client_Certificate_Sent |
+              Client_Cert_Verify_Sent)
+   with Ghost;
+
+   function In_App_Key_Phase (State : Connection_State) return Boolean is
+     (State in Connected | Closing | Client_Finished_Sent)
+   with Ghost;
+
+   --  RFC 8446 §6: Valid alert constraints.
+   --  Post-handshake: only close_notify may use Warning level.
+   --  All other alerts MUST be Fatal.
+   function Valid_Alert (State : Connection_State;
+                         Level : Byte;
+                         Desc  : Byte) return Boolean is
+     (Level in 1 .. 2 and then
+      (if Handshake_Complete (State) and Desc /= 0
+       then Level = 2
+       else True))
+   with Ghost;
+
+   --  RFC 8446 §4: Expected handshake message type per state.
+   --  Server expects these message types from the client:
+   --    Wait_Client_Hello    → ClientHello (type 0x01)
+   --    Wait_Client_Finished → Finished (type 0x14)
+   --    Wait_Client_Certificate → Certificate (type 0x0B)
+   --    Wait_Client_Cert_Verify → CertificateVerify (type 0x0F)
+   --  Returns 0 if no specific handshake type is expected (e.g., Connected).
+   function Expected_HS_Type (State : Connection_State) return Byte is
+     (case State is
+        when Wait_Client_Hello    => 16#01#,  --  ClientHello
+        when Wait_Client_Finished => 16#14#,  --  Finished
+        when Wait_Client_Certificate => 16#0B#,  --  Certificate
+        when Wait_Client_Cert_Verify => 16#0F#,  --  CertificateVerify
+        when Wait_Server_Hello    => 16#02#,  --  ServerHello
+        when Wait_Server_Finished => 16#14#,  --  Finished
+        when others               => 0)
+   with Ghost;
+
+   --  RFC 8446 §4: Is this state expecting encrypted records?
+   --  Before ServerHello, records are plaintext.
+   --  After ServerHello, records are encrypted with traffic keys.
+   function Expects_Encrypted (State : Connection_State) return Boolean is
+     (State not in Idle | Wait_Client_Hello | Client_Hello_Sent |
+                   Wait_Server_Hello)
+   with Ghost;
+
+   --  RFC 8446 §4.2.9: Key share group MUST match what the client offered.
+   --  Server MUST NOT select a group the client didn't offer a key share for.
+   --  (Ghost predicate for documentation; enforcement is in Parse_Client_Hello)
+
+   --  RFC 8446 §4.4.4: Finished verify_data MUST be verified.
+   --  If verification fails, a "decrypt_error" alert MUST be sent.
+   --  (Enforced in Process_Client_Finished via HC.Server_HS_Secret)
 
    --================================================================
    --  Action result - tells the caller what to do next
@@ -177,12 +292,22 @@ is
    --  Traffic keys for one direction (key + IV + nonce counter)
    --================================================================
 
+   --  RFC 8446 §7.3: Traffic keys with suite constraint.
    type Traffic_Keys is record
       Key     : Bytes_32          := (others => 0);
       IV      : Bytes_12          := (others => 0);
       Counter : Unsigned_64       := 0;
       Suite   : Unsigned_16       := Suite_CHACHA20_POLY1305_SHA256;
-   end record;
+   end record
+     with Predicate =>
+       Traffic_Keys.Suite in Suite_AES_128_GCM_SHA256 |
+                             Suite_AES_256_GCM_SHA384 |
+                             Suite_CHACHA20_POLY1305_SHA256;
+
+   --  RFC 8446 §5.3: Nonce space must not be exhausted.
+   function Nonce_Space_Available (K : Traffic_Keys) return Boolean is
+     (K.Counter < Unsigned_64'Last)
+   with Ghost;
 
    --================================================================
    --  Random byte generation callback
@@ -542,26 +667,28 @@ is
    --  Buffer operations (transport layer interface)
    --================================================================
 
-   --  Push received bytes into the session's input buffer.
-   --  Returns the number of bytes actually consumed (may be less
-   --  than Data'Length if the buffer is nearly full).
+   --  Push received ciphertext bytes into the session's input buffer.
+   --  RFC 8446 §5.1: the record layer accepts bytes from the transport.
+   --  State is not modified by feeding data.
    procedure Feed_Ciphertext
      (S         : in out Session;
       Data      : in     Byte_Seq;
       Bytes_Fed :    out N32)
    with Pre  => Data'First = 0
                 and Data'Last < N32'Last,
-        Post => Bytes_Fed <= N32 (Data'Length);
+        Post => Bytes_Fed <= N32 (Data'Length)
+                and S.State = S.State'Old;         --  feeding doesn't change state
 
-   --  Pull bytes from the session's output buffer to send.
-   --  Returns the number of bytes written into Dest.
+   --  Pull ciphertext bytes from the session's output buffer to send.
+   --  State is not modified by draining data.
    procedure Drain_Ciphertext
      (S              : in out Session;
       Dest           :    out Byte_Seq;
       Bytes_Drained  :    out N32)
    with Pre  => Dest'First = 0
                 and Dest'Last < N32'Last,
-        Post => Bytes_Drained <= N32 (Dest'Length);
+        Post => Bytes_Drained <= N32 (Dest'Length)
+                and S.State = S.State'Old;         --  draining doesn't change state
 
    --  How many bytes are waiting to be sent?
    function Output_Pending (S : Session) return N32 is

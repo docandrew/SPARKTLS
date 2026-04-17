@@ -87,33 +87,39 @@ is
    --    Plaintext_Ready => call Read_Plaintext
    --    Handshake_Done => connection is ready for app data
    --    Error_Alert    => check S.Last_Error
+   --  RFC 8446 §4.1: Step the client handshake / record processing
+   --  state machine. State transitions follow the valid transition graph.
    procedure Advance
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State /= Idle and S.Role = Role_Client;
+   with Pre  => S.State /= Idle and S.Role = Role_Client,
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and (if Result = Handshake_Done then
+                       S.State = Connected)
+                and (if Result = Shutdown then
+                       S.State = Closed)
+                and (if Result = Error_Alert then
+                       S.State = Closed);
 
-   --  Encrypt and queue application data for sending.
-   --
-   --  Returns the number of plaintext bytes accepted. May be less
-   --  than Plaintext'Length if the output buffer is nearly full;
-   --  drain and retry in that case.
+   --  RFC 8446 §7.5: Encrypt and queue application data.
    procedure Write_Plaintext
      (S              : in out Session;
       Plaintext      : in     Byte_Seq;
       Bytes_Written  :    out N32)
    with Pre  => S.State = Connected and
                 S.Role = Role_Client and
+                In_App_Key_Phase (S.State) and     --  RFC 8446 §7.5
                 Plaintext'First = 0 and
                 Plaintext'Length > 0,
-        Post => Bytes_Written <= N32 (Plaintext'Length);
+        Post => Bytes_Written <= N32 (Plaintext'Length) and
+                S.State = Connected;
 
-   --  Send a close_notify alert to initiate clean shutdown.
-   --
-   --  After calling, drain the output buffer and continue calling
-   --  Advance until Shutdown is returned.
+   --  RFC 8446 §6.1: Send a close_notify alert.
    procedure Close_Notify (S : in out Session)
-   with Pre => (S.State = Connected or S.State = Closing) and
-               S.Role = Role_Client;
+   with Pre  => (S.State = Connected or S.State = Closing) and
+                S.Role = Role_Client,
+        Post => S.State = Closing;
 
    --  True if a peer certificate has been received and parsed.
    function Has_Peer_Certificate (S : Session) return Boolean is

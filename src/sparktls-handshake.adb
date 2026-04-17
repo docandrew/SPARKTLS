@@ -1,3 +1,4 @@
+with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Hashing.SHA256;
@@ -48,6 +49,23 @@ is
    use type RBT.Index;
    use type RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values_Enum;
    use type RFLX.Tls_Parameters.TLS_Supported_Groups_Enum;
+
+   --  Deallocate an RFLX buffer.
+   --  Body is SPARK_Mode Off (Unchecked_Deallocation of 'access all').
+   --  Spec is On so SPARK can verify call sites.
+   use type RBT.Bytes_Ptr;
+
+   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
+   with Post => Buf = null;
+
+   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
+   with SPARK_Mode => Off
+   is
+      procedure Dealloc is new Ada.Unchecked_Deallocation
+        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+   begin
+      Dealloc (Buf);
+   end RFLX_Free;
 
    --================================================================
    --  Build procedures (keep manual serialization for simple output)
@@ -136,8 +154,7 @@ is
       PK_Bytes := SPARKNaCl.Cryptobox.Serialize (PK);
 
       --  Allocate buffer for ClientHello body
-      HC.RFLX_Main := (others => 0);
-      Buf := HC.RFLX_Main'Unrestricted_Access;
+      Buf := new RBT.Bytes'(1 .. RBT.Index (RFLX_Main_Size) => 0);
       Initialize (Ctx, Buf);
 
       --  Set ClientHello fields via RFLX
@@ -157,47 +174,47 @@ is
 
          --  Suite 1: TLS_AES_128_GCM_SHA256 (0x1301)
          declare
-            Sub   : aliased RBT.Bytes (1 .. 4) := (others => 0);
             S_Buf : RBT.Bytes_Ptr;
             S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
          begin
-            S_Buf := Sub'Unrestricted_Access;
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
               (S_Ctx, RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256);
             RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
               (Suites_Ctx, S_Ctx);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
          end;
 
          --  Suite 2: TLS_CHACHA20_POLY1305_SHA256 (0x1303)
          declare
-            Sub   : aliased RBT.Bytes (1 .. 4) := (others => 0);
             S_Buf : RBT.Bytes_Ptr;
             S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
          begin
-            S_Buf := Sub'Unrestricted_Access;
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
               (S_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256);
             RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
               (Suites_Ctx, S_Ctx);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
          end;
 
          --  Suite 3: TLS_AES_256_GCM_SHA384 (0x1302)
          declare
-            Sub   : aliased RBT.Bytes (1 .. 4) := (others => 0);
             S_Buf : RBT.Bytes_Ptr;
             S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
          begin
-            S_Buf := Sub'Unrestricted_Access;
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
               (S_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384);
             RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
               (Suites_Ctx, S_Ctx);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
          end;
 
          Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
@@ -217,8 +234,6 @@ is
 
          --  Extension 1: server_name (0x0000)
          declare
-            Sub      : aliased RBT.Bytes
-                         (1 .. RBT.Index (4 + SNI_Data_Len)) := (others => 0);
             Ext_Buf  : RBT.Bytes_Ptr;
             Ext_Ctx  : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             SNI_Raw  : Byte_Seq (0 .. SNI_Data_Len - 1);
@@ -234,7 +249,7 @@ is
                   Byte (Character'Pos (HC.Cfg.Server_Name.Data (I)));
             end loop;
 
-            Ext_Buf := Sub'Unrestricted_Access;
+            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SNI_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Server_Name);
@@ -246,12 +261,11 @@ is
               (Exts_Ctx, Ext_Ctx);
             RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
          end;
 
          --  Extension 2: supported_groups (0x000A)
          declare
-            Sub     : aliased RBT.Bytes
-                        (1 .. RBT.Index (4 + SG_Data_Len)) := (others => 0);
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             SG_Raw  : constant Byte_Seq (0 .. SG_Data_Len - 1) :=
@@ -260,7 +274,7 @@ is
                 16#00#, 16#17#,          --  secp256r1
                 16#00#, 16#18#);         --  secp384r1
          begin
-            Ext_Buf := Sub'Unrestricted_Access;
+            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SG_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Groups);
@@ -272,12 +286,11 @@ is
               (Exts_Ctx, Ext_Ctx);
             RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
          end;
 
          --  Extension 3: signature_algorithms (0x000D)
          declare
-            Sub     : aliased RBT.Bytes
-                        (1 .. RBT.Index (4 + SA_Data_Len)) := (others => 0);
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             SA_Raw  : constant Byte_Seq (0 .. SA_Data_Len - 1) :=
@@ -289,7 +302,7 @@ is
                 16#08#, 16#06#,          --  rsa_pss_rsae_sha512
                 16#08#, 16#07#);         --  ed25519
          begin
-            Ext_Buf := Sub'Unrestricted_Access;
+            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SA_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Signature_Algorithms);
@@ -301,13 +314,12 @@ is
               (Exts_Ctx, Ext_Ctx);
             RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
          end;
 
          --  Extension 4: key_share (0x0033)
          --  Contains two key shares: X25519 (36 bytes) + secp256r1 (69 bytes)
          declare
-            Sub     : aliased RBT.Bytes
-                        (1 .. RBT.Index (4 + KS_Data_Len)) := (others => 0);
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             KS_Raw  : Byte_Seq (0 .. KS_Data_Len - 1);
@@ -336,7 +348,7 @@ is
             KS_Raw (110) := 16#61#;  --  97 bytes
             KS_Raw (111 .. 207) := P384_PK_Enc;
 
-            Ext_Buf := Sub'Unrestricted_Access;
+            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + KS_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Key_Share);
@@ -348,18 +360,17 @@ is
               (Exts_Ctx, Ext_Ctx);
             RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
          end;
 
          --  Extension 5: psk_key_exchange_modes (0x002D)
          declare
-            Sub     : aliased RBT.Bytes
-                        (1 .. RBT.Index (4 + PSK_Data_Len)) := (others => 0);
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             PSK_Raw : constant Byte_Seq (0 .. PSK_Data_Len - 1) :=
                (16#01#, 16#01#);  --  list_len=1, psk_dhe_ke
          begin
-            Ext_Buf := Sub'Unrestricted_Access;
+            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + PSK_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes);
@@ -371,18 +382,17 @@ is
               (Exts_Ctx, Ext_Ctx);
             RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
          end;
 
          --  Extension 6: supported_versions (0x002B)
          declare
-            Sub     : aliased RBT.Bytes
-                        (1 .. RBT.Index (4 + SV_Data_Len)) := (others => 0);
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             SV_Raw  : constant Byte_Seq (0 .. SV_Data_Len - 1) :=
                (16#02#, 16#03#, 16#04#);  --  list_len=2, TLS 1.3
          begin
-            Ext_Buf := Sub'Unrestricted_Access;
+            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SV_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Versions);
@@ -394,6 +404,7 @@ is
               (Exts_Ctx, Ext_Ctx);
             RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
          end;
 
          Update_Extensions_TLS (Ctx, Exts_Ctx);
@@ -403,6 +414,7 @@ is
       Take_Buffer (Ctx, Buf);
 
       if CH_Msg_Len > N32 (Result'Length) then
+         RFLX_Free (Buf);
          return;
       end if;
 
@@ -413,6 +425,7 @@ is
       Result (4 .. 4 + CH_Body_Len - 1) :=
          To_NaCl (Buf.all (1 .. RBT.Index (CH_Body_Len)));
 
+      RFLX_Free (Buf);
       Len := CH_Msg_Len;
 
       --  If we have a cached session ticket, append pre_shared_key extension.
@@ -570,8 +583,7 @@ is
       --  Skip 4-byte handshake header, pass body to Server_Hello context
       Body_Len := N32 (Data'Length) - 4;
 
-      HC.RFLX_Main := (others => 0);
-      Buf := HC.RFLX_Main'Unrestricted_Access;
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (Data (B + 4 .. Data'Last));
       Initialize (Ctx, Buf,
                   Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
@@ -579,6 +591,7 @@ is
 
       if not Well_Formed_Message (Ctx) then
          Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
          return;
       end if;
 
@@ -593,6 +606,7 @@ is
       --  Extract and validate cipher suite
       if not Well_Formed (Ctx, F_Cipher_Suite_TLS_Suite) then
          Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
          return;
       end if;
 
@@ -607,6 +621,7 @@ is
             Suite_Val /= Suite_AES_256_GCM_SHA384
          then
             Take_Buffer (Ctx, Buf);
+            RFLX_Free (Buf);
             return;
          end if;
          S.Negotiated_Suite := Suite_Val;
@@ -649,15 +664,13 @@ is
                               DLen    : constant N32 := N32
                                  (RFLX.TLS_Handshake.SH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
-                              KS_Data : aliased RBT.Bytes
-                                          (1 .. RBT.Index (DLen));
                               KS_Buf  : RBT.Bytes_Ptr;
                               KS_Ctx  : RFLX.TLS_Handshake
                                            .Key_Share_SH.Context;
                            begin
+                              KS_Buf := new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
                               RFLX.TLS_Handshake.SH_Extension_TLS
-                                .Get_Data (Ext_Ctx, KS_Data);
-                              KS_Buf := KS_Data'Unrestricted_Access;
+                                .Get_Data (Ext_Ctx, KS_Buf.all);
                               RFLX.TLS_Handshake.Key_Share_SH.Initialize
                                 (KS_Ctx, KS_Buf,
                                  Written_Last =>
@@ -729,6 +742,7 @@ is
 
                               RFLX.TLS_Handshake.Key_Share_SH
                                 .Take_Buffer (KS_Ctx, KS_Buf);
+                              RFLX_Free (KS_Buf);
                            end;
                         end if;
                      end;
@@ -758,6 +772,7 @@ is
             if not P384_OK then
                OK := False;
                Take_Buffer (Ctx, Buf);
+               RFLX_Free (Buf);
                return;
             end if;
             HC.Shared_Secret := Secret_384;
@@ -774,6 +789,7 @@ is
             if Valid = 0 then
                OK := False;
                Take_Buffer (Ctx, Buf);
+               RFLX_Free (Buf);
                return;
             end if;
             --  Multiply peer's public key by our private scalar
@@ -798,6 +814,7 @@ is
       end if;
 
       Take_Buffer (Ctx, Buf);
+      RFLX_Free (Buf);
 
       OK := True;
    end Parse_Server_Hello;
@@ -815,13 +832,13 @@ is
       Msg_Len  := 0;
       OK       := False;
 
-      if Data'Length < 4 then
+      if Data'Length < 4 or Data'Length > Max_Record_Plaintext then
          return;
       end if;
 
       declare
-         Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Data'Length));
-         Buf : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
+         Buf : RBT.Bytes_Ptr :=
+            new RBT.Bytes'(1 .. RBT.Index (Data'Length) => 0);
       begin
          Buf.all := To_RFLX (Data);
          Initialize (Ctx, Buf,
@@ -834,10 +851,16 @@ is
                                 (Get_Tag (Ctx)));
             Msg_Len  := N32 (RFLX.TLS_Handshake.To_Base_Integer
                                (Get_Length (Ctx)));
-            OK := True;
+            --  RFC 8446 §4: Validate known handshake type
+            if Msg_Type in 16#01# | 16#02# | 16#04# | 16#08# |
+                           16#0B# | 16#0D# | 16#0F# | 16#14#
+            then
+               OK := True;
+            end if;
          end if;
 
          Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
       end;
    end Parse_Handshake_Header;
 
@@ -855,10 +878,8 @@ is
       Len := 0;
 
       declare
-         Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Body_Len));
-         Buf : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
+         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       begin
-         Buf_Arr := (others => 0);
          Initialize (Ctx, Buf);
          Set_Verify_Data (Ctx, To_RFLX (Verify_Data));
          Take_Buffer (Ctx, Buf);
@@ -870,6 +891,7 @@ is
          Result (3) := Byte (Body_Len);
          Result (4 .. 4 + Body_Len - 1) :=
             To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         RFLX_Free (Buf);
       end;
 
       Len := Msg_Len;
@@ -900,8 +922,7 @@ is
       --  Skip 4-byte handshake header, pass body to Client_Hello context
       Body_Len := N32 (Data'Length) - 4;
 
-      HC.RFLX_Main := (others => 0);
-      Buf := HC.RFLX_Main'Unrestricted_Access;
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (Data (B + 4 .. Data'Last));
       Initialize (Ctx, Buf,
                   Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
@@ -909,6 +930,7 @@ is
 
       if not Well_Formed_Message (Ctx) then
          Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
          return;
       end if;
 
@@ -990,6 +1012,7 @@ is
 
       if S.Negotiated_Suite = 0 then
          Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
          return;
       end if;
 
@@ -1030,15 +1053,13 @@ is
                               DLen    : constant N32 := N32
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
-                              KS_Data : aliased RBT.Bytes
-                                          (1 .. RBT.Index (DLen));
                               KS_Buf  : RBT.Bytes_Ptr;
                               KS_Ctx  : RFLX.TLS_Handshake
                                            .Key_Share_CH.Context;
                            begin
+                              KS_Buf := new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
                               RFLX.TLS_Handshake.CH_Extension_TLS
-                                .Get_Data (Ext_Ctx, KS_Data);
-                              KS_Buf := KS_Data'Unrestricted_Access;
+                                .Get_Data (Ext_Ctx, KS_Buf.all);
                               RFLX.TLS_Handshake.Key_Share_CH.Initialize
                                 (KS_Ctx, KS_Buf,
                                  Written_Last =>
@@ -1178,6 +1199,7 @@ is
 
                               RFLX.TLS_Handshake.Key_Share_CH
                                 .Take_Buffer (KS_Ctx, KS_Buf);
+                              RFLX_Free (KS_Buf);
                            end;
 
                         elsif Tag.Known and then
@@ -1313,6 +1335,7 @@ is
       end if;
 
       Take_Buffer (Ctx, Buf);
+      RFLX_Free (Buf);
 
       --  Shared secret computation deferred to Build_Server_Hello
       --  where we know which group to select.
@@ -1468,8 +1491,7 @@ is
       SH_Msg_Len := 4 + SH_Body_Len;
 
       --  Allocate buffer for ServerHello body
-      HC.RFLX_Main := (others => 0);
-      Buf := HC.RFLX_Main'Unrestricted_Access;
+      Buf := new RBT.Bytes'(1 .. RBT.Index (RFLX_Main_Size) => 0);
       Initialize (Ctx, Buf);
 
       --  Set ServerHello fields via RFLX
@@ -1490,14 +1512,12 @@ is
 
          --  Extension 1: key_share (0x0033)
          declare
-            Sub     : aliased RBT.Bytes
-                        (1 .. RBT.Index (4 + KS_Data_Len)) := (others => 0);
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
          begin
             --  KS_Raw already populated with the selected group's key share
 
-            Ext_Buf := Sub'Unrestricted_Access;
+            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + KS_Data_Len) => 0);
             RFLX.TLS_Handshake.SH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Key_Share);
@@ -1511,12 +1531,11 @@ is
 
             RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
          end;
 
          --  Extension 2: supported_versions (0x002B)
          declare
-            Sub     : aliased RBT.Bytes
-                        (1 .. RBT.Index (4 + SV_Data_Len)) := (others => 0);
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
             SV_Raw  : Byte_Seq (0 .. SV_Data_Len - 1);
@@ -1524,7 +1543,7 @@ is
             SV_Raw (0) := 16#03#;
             SV_Raw (1) := 16#04#;  --  TLS 1.3
 
-            Ext_Buf := Sub'Unrestricted_Access;
+            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SV_Data_Len) => 0);
             RFLX.TLS_Handshake.SH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
             RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Versions);
@@ -1538,6 +1557,7 @@ is
 
             RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
          end;
 
          Update_Extensions_TLS (Ctx, Exts_Ctx);
@@ -1547,6 +1567,7 @@ is
       Take_Buffer (Ctx, Buf);
 
       if SH_Msg_Len > N32 (Result'Length) then
+         RFLX_Free (Buf);
          return;
       end if;
 
@@ -1557,6 +1578,7 @@ is
       Result (4 .. 4 + SH_Body_Len - 1) :=
          To_NaCl (Buf.all (1 .. RBT.Index (SH_Body_Len)));
 
+      RFLX_Free (Buf);
       Len := SH_Msg_Len;
 
       --  If using PSK, append pre_shared_key extension to ServerHello.
@@ -1621,10 +1643,8 @@ is
       Len := 0;
 
       declare
-         Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Body_Len));
-         Buf : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
+         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       begin
-         Buf_Arr := (others => 0);
          Initialize (Ctx, Buf);
          Set_Length (Ctx, 0);
          Set_Extensions_Empty (Ctx);
@@ -1637,6 +1657,7 @@ is
          Result (3) := Byte (Body_Len);
          Result (4 .. 4 + Body_Len - 1) :=
             To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         RFLX_Free (Buf);
       end;
 
       Len := Msg_Len;
@@ -1665,10 +1686,8 @@ is
       end if;
 
       declare
-         Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Body_Len));
-         Buf : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
+         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       begin
-         Buf_Arr := (others => 0);
          Initialize (Ctx, Buf);
 
          --  Empty certificate_request_context
@@ -1686,11 +1705,10 @@ is
 
             --  Build one certificate entry
             declare
-               E_Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Entry_Len));
-               E_Buf : RBT.Bytes_Ptr := E_Buf_Arr'Unrestricted_Access;
+               E_Buf : RBT.Bytes_Ptr :=
+                  new RBT.Bytes'(1 .. RBT.Index (Entry_Len) => 0);
                E_Ctx : RFLX.TLS_Handshake.Certificate_Entry.Context;
             begin
-               E_Buf_Arr := (others => 0);
                RFLX.TLS_Handshake.Certificate_Entry.Initialize (E_Ctx, E_Buf);
                RFLX.TLS_Handshake.Certificate_Entry.Set_Cert_Data_Length
                  (E_Ctx, RFLX.TLS_Handshake.Cert_Data_Length (Cert_Len));
@@ -1704,6 +1722,7 @@ is
                  (Entries_Ctx, E_Ctx);
                RFLX.TLS_Handshake.Certificate_Entry.Take_Buffer
                  (E_Ctx, E_Buf);
+               RFLX_Free (E_Buf);
             end;
 
             Update_Certificate_List (Ctx, Entries_Ctx);
@@ -1718,6 +1737,7 @@ is
          Result (3) := Byte (Body_Len mod 256);
          Result (4 .. 4 + Body_Len - 1) :=
             To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         RFLX_Free (Buf);
       end;
 
       Len := Msg_Len;
@@ -2046,15 +2066,14 @@ is
       declare
          Body_Len : constant N32 := 4 + Sig_Len;
          Msg_Len  : constant N32 := 4 + Body_Len;
-         Buf_Arr  : aliased RBT.Bytes (1 .. RBT.Index (Body_Len));
-         Buf      : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
+         Buf      : RBT.Bytes_Ptr;
          Ctx      : Context;
       begin
          if Msg_Len > N32 (Result'Length) then
             return;
          end if;
 
-         Buf_Arr := (others => 0);
+         Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
          Initialize (Ctx, Buf);
          Set_Algorithm (Ctx, Algo_Enum);
          Set_Signature_Length
@@ -2069,6 +2088,7 @@ is
          Result (4 .. 4 + Body_Len - 1) :=
             To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
 
+         RFLX_Free (Buf);
          Len := Msg_Len;
       end;
    end Build_Certificate_Verify;
@@ -2107,10 +2127,8 @@ is
       end if;
 
       declare
-         Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Body_Len));
-         Buf : RBT.Bytes_Ptr := Buf_Arr'Unrestricted_Access;
+         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       begin
-         Buf_Arr := (others => 0);
          Initialize (Ctx, Buf);
 
          --  Empty certificate_request_context
@@ -2129,11 +2147,10 @@ is
 
             --  Build signature_algorithms extension
             declare
-               E_Buf_Arr : aliased RBT.Bytes (1 .. RBT.Index (Ext_Len));
-               E_Buf : RBT.Bytes_Ptr := E_Buf_Arr'Unrestricted_Access;
+               E_Buf : RBT.Bytes_Ptr :=
+                  new RBT.Bytes'(1 .. RBT.Index (Ext_Len) => 0);
                E_Ctx : RFLX.TLS_Handshake.CR_Extension.Context;
             begin
-               E_Buf_Arr := (others => 0);
                RFLX.TLS_Handshake.CR_Extension.Initialize (E_Ctx, E_Buf);
                RFLX.TLS_Handshake.CR_Extension.Set_Tag
                  (E_Ctx, Signature_Algorithms);
@@ -2146,6 +2163,7 @@ is
                  (Ext_Seq_Ctx, E_Ctx);
                RFLX.TLS_Handshake.CR_Extension.Take_Buffer
                  (E_Ctx, E_Buf);
+               RFLX_Free (E_Buf);
             end;
 
             Update_Extensions (Ctx, Ext_Seq_Ctx);
@@ -2160,6 +2178,7 @@ is
          Result (3) := Byte (Body_Len mod 256);
          Result (4 .. 4 + Body_Len - 1) :=
             To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         RFLX_Free (Buf);
       end;
 
       Len := Msg_Len;

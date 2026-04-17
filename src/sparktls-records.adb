@@ -2,6 +2,7 @@ with Interfaces; use Interfaces;
 with SPARKNaCl.AES;
 with SPARKTLS.AES_GCM;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
+with Ada.Unchecked_Deallocation;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.RFLX_Types;
 with RFLX.TLS_Alert;
@@ -316,6 +317,8 @@ is
          Found        : Boolean := False;
       begin
          for I in reverse 0 .. Cipher_Len - 1 loop
+            pragma Loop_Invariant
+              (not Found and then Last_Nonzero = 0);
             if Decrypted (I) /= 0 then
                Last_Nonzero := I;
                Found := True;
@@ -331,9 +334,13 @@ is
 
          Inner_Type := Decrypted (Last_Nonzero);
          Plain_Len  := Last_Nonzero;
+         --  Last_Nonzero < Cipher_Len <= Encrypted'Length - Tag_Size
+         --  Plaintext has same bounds as Encrypted
+         pragma Assert (Plain_Len < Cipher_Len);
 
-         --  RFC 8446 Section 5.4: content type must not be zero
-         if Inner_Type = 0 then
+         --  RFC 8446 Section 5.4: content type must be valid.
+         --  Only alert (0x15), handshake (0x16), and application_data (0x17).
+         if Inner_Type not in 16#15# | 16#16# | 16#17# then
             Valid := False;
             return;
          end if;
@@ -390,10 +397,18 @@ is
       use type RFLX.RFLX_Types.Bytes_Ptr;
       use type RFLX.RFLX_Types.Bit_Length;
 
-      Alert_Buf : aliased RFLX.RFLX_Builtin_Types.Bytes (1 .. 2)
-                    := (others => 0);
+      procedure RFLX_Free_Alert (Buf : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      with SPARK_Mode => Off
+      is
+         procedure Dealloc is new Ada.Unchecked_Deallocation
+           (Object => RFLX.RFLX_Builtin_Types.Bytes,
+            Name   => RFLX.RFLX_Builtin_Types.Bytes_Ptr);
+      begin
+         Dealloc (Buf);
+      end RFLX_Free_Alert;
+
       Buf_Ptr   : RFLX.RFLX_Builtin_Types.Bytes_Ptr :=
-                    Alert_Buf'Unrestricted_Access;
+                    new RFLX.RFLX_Builtin_Types.Bytes'(1 .. 2 => 0);
       Ctx       : RFLX.TLS_Alert.Alert.Context;
       Alert_Lvl : RFLX.TLS_Alert.Alert_Level;
       Alert_Desc : RFLX.Tls_Parameters.TLS_Alerts_Enum;
@@ -435,19 +450,21 @@ is
       Take_Buffer (Ctx, Buf_Ptr);
 
       --  Wrap in plaintext TLS record: type(1) + version(2) + length(2) + alert(2)
-      if Free_Space (Output) >= 7 then
+      if Free_Space (Output) >= 7 and then Buf_Ptr /= null then
          Output.Data (Output.Write_Pos)     := 16#15#;        --  alert
          Output.Data (Output.Write_Pos + 1) := 16#03#;        --  TLS 1.2
          Output.Data (Output.Write_Pos + 2) := 16#03#;
          Output.Data (Output.Write_Pos + 3) := 16#00#;        --  length=2
          Output.Data (Output.Write_Pos + 4) := 16#02#;
          Output.Data (Output.Write_Pos + 5) :=
-            Byte (Alert_Buf (1));  --  level
+            Byte (Buf_Ptr.all (1));  --  level
          Output.Data (Output.Write_Pos + 6) :=
-            Byte (Alert_Buf (2));  --  description
+            Byte (Buf_Ptr.all (2));  --  description
          Output.Write_Pos := Output.Write_Pos + 7;
          Bytes_Out := 7;
       end if;
+
+      RFLX_Free_Alert (Buf_Ptr);
    end Build_Plaintext_Alert;
 
 end SPARKTLS.Records;

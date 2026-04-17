@@ -55,22 +55,32 @@ is
       OK   :    out Boolean)
    with Pre => Data'Length > 0;
 
-   --  Parse an encrypted handshake message.
-   --  msg_type is set to the handshake type (0x08, 0x0B, 0x0F, 0x14, etc.)
-   --  payload starts at offset 4 (after type + 3-byte length).
+   --  RFC 8446 §4: Parse handshake message header.
+   --  Every handshake message starts with type(1) + length(3).
+   --  Returns the type and body length.
    procedure Parse_Handshake_Header
      (Data     : in     Byte_Seq;
       Msg_Type :    out Byte;
       Msg_Len  :    out N32;
-      OK       :    out Boolean);
+      OK       :    out Boolean)
+   with Pre  => Data'First = 0 and Data'Last < N32'Last,
+        Post => (if OK then
+                   Msg_Type in 16#01# | 16#02# | 16#04# | 16#08# |
+                              16#0B# | 16#0D# | 16#0F# | 16#14#);
+   --  RFC 8446 §4: Valid handshake types:
+   --    0x01 ClientHello, 0x02 ServerHello, 0x04 NewSessionTicket,
+   --    0x08 EncryptedExtensions, 0x0B Certificate,
+   --    0x0D CertificateRequest, 0x0F CertificateVerify, 0x14 Finished
 
-   --  Build a Finished handshake message.
-   --  verify_data is a 32-byte HMAC.
+   --  RFC 8446 §4.4.4: Build a Finished handshake message.
+   --  Contains HMAC verify_data (32 bytes for SHA-256).
+   --  Result is type(1) + length(3) + verify_data(32) = 36 bytes.
    procedure Build_Finished
      (Verify_Data : in     Bytes_32;
       Result      :    out Byte_Seq;
       Len         :    out N32)
-   with Pre => Result'First = 0 and N32 (Result'Length) >= 36;
+   with Pre  => Result'First = 0 and N32 (Result'Length) >= 36,
+        Post => Len = 36;  --  RFC 8446 §4.4.4: always 36 bytes
 
    --================================================================
    --  Server-side handshake procedures
@@ -102,11 +112,14 @@ is
                 and N32 (Result'Length) >= Max_Server_Hello
                 and HC.Cfg.Random /= null;
 
-   --  Build a minimal EncryptedExtensions message (empty extension list).
+   --  RFC 8446 §4.3.1: EncryptedExtensions.
+   --  Sent immediately after ServerHello (encrypted with HS keys).
+   --  Currently minimal: empty extension list.
    procedure Build_Encrypted_Extensions
      (Result :    out Byte_Seq;
       Len    :    out N32)
-   with Pre => Result'First = 0 and N32 (Result'Length) >= 6;
+   with Pre  => Result'First = 0 and N32 (Result'Length) >= 6,
+        Post => Len = 6;  --  type(1) + length(3) + ext_len(2) = 6
 
    --  Build a Certificate handshake message wrapping a DER certificate.
    procedure Build_Certificate

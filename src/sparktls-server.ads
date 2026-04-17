@@ -62,28 +62,50 @@ is
         Post => S.State = Wait_Client_Hello and
                 S.Role = Role_Server;
 
-   --  Step the server handshake / record processing state machine.
-   --  Same semantics as SPARKTLS.Client.Advance.
+   --  RFC 8446 §4.1: Step the server handshake / record processing
+   --  state machine. State transitions follow the valid transition graph.
+   --
+   --  Result semantics (RFC 8446 §4, §5, §6):
+   --    OK           → progress made, state may or may not change
+   --    Need_Input   → caller must feed more ciphertext
+   --    Has_Output   → caller must drain and send ciphertext
+   --    Handshake_Done → handshake complete, state = Connected
+   --    Plaintext_Ready → decrypted app data available
+   --    Shutdown     → clean close complete, state = Closed
+   --    Error_Alert  → fatal error, alert was sent, state = Closed
    procedure Advance
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State /= Idle and S.Role = Role_Server;
+   with Pre  => S.State /= Idle and S.Role = Role_Server,
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and (if Result = Handshake_Done then
+                       S.State = Connected)
+                and (if Result = Shutdown then
+                       S.State = Closed)
+                and (if Result = Error_Alert then
+                       S.State = Closed);
 
-   --  Encrypt and queue application data for sending.
+   --  RFC 8446 §7.5: Encrypt and queue application data.
+   --  Only valid in the application key phase (Connected state).
    procedure Write_Plaintext
      (S              : in out Session;
       Plaintext      : in     Byte_Seq;
       Bytes_Written  :    out N32)
    with Pre  => S.State = Connected and
                 S.Role = Role_Server and
+                In_App_Key_Phase (S.State) and     --  RFC 8446 §7.5
                 Plaintext'First = 0 and
                 Plaintext'Length > 0,
-        Post => Bytes_Written <= N32 (Plaintext'Length);
+        Post => Bytes_Written <= N32 (Plaintext'Length) and
+                S.State = Connected;               --  doesn't change state
 
-   --  Send a close_notify alert to initiate clean shutdown.
+   --  RFC 8446 §6.1: Send a close_notify alert.
+   --  Transitions to Closing state.
    procedure Close_Notify (S : in out Session)
-   with Pre => (S.State = Connected or S.State = Closing) and
-               S.Role = Role_Server;
+   with Pre  => (S.State = Connected or S.State = Closing) and
+                S.Role = Role_Server,
+        Post => S.State = Closing;                 --  RFC 8446 §6.1
 
    --  True if a client certificate was received (mutual TLS).
    function Has_Peer_Certificate (S : Session) return Boolean is
