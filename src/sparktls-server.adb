@@ -16,6 +16,7 @@ use type X509.Algorithm_ID;
 with SPARKTLS.HMAC384;
 with SPARKTLS.HKDF384;
 with SPARKTLS.Ticket_Cache;
+with SPARKTLS.Server.TLS12;
 
 package body SPARKTLS.Server with
    SPARK_Mode => On
@@ -95,6 +96,30 @@ is
          Result := Error_Alert;
       end if;
    end Send_Alert_And_Error;
+
+   --  Send an encrypted fatal alert and set error state.
+   --  Used when application/handshake keys are established.
+   procedure Send_Encrypted_Alert
+     (S      : in out Session;
+      Err    : Error_Code;
+      Result : out Action)
+   is
+      Dummy : N32;
+   begin
+      S.Last_Error := Err;
+      S.State := Error_State;
+      Records.Build_Alert_Record
+        (Level     => 2,
+         Desc      => Alert_Desc (Err),
+         Keys      => S.Server_App,
+         Output    => S.Output,
+         Bytes_Out => Dummy);
+      if Output_Pending (S) > 0 then
+         Result := Has_Output;
+      else
+         Result := Error_Alert;
+      end if;
+   end Send_Encrypted_Alert;
 
    --  Append handshake message bytes to the transcript
    procedure Append_Transcript
@@ -251,14 +276,51 @@ is
                   Avail  => Available (S.Input),
                   Result => Rec);
 
+               if Rec.Overflow then
+                  Send_Alert_And_Error (S, Record_Overflow, Result);
+                  return;
+               end if;
+
                if not Rec.OK then
-                  Result := Need_Input;
+                  if Rec.Record_Len > 0 then
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  else
+                     Result := Need_Input;
+                  end if;
+                  return;
+               end if;
+
+               if Rec.Content = Records.Content_Change_Cipher_Spec then
+                  --  CCS for middlebox compatibility.
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  if Rec.Fragment_Len /= 1 then
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+                  if HC.CCS_Received then
+                     --  RFC 8446: only one CCS allowed
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+                  HC.CCS_Received := True;
+                  Result := OK;
+                  return;
+               end if;
+
+               if Rec.Content = Records.Content_Alert then
+                  --  Plaintext alert before handshake — just close
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  S.Last_Error := Unexpected_Message;
+                  S.State := Error_State;
+                  Result := Error_Alert;
                   return;
                end if;
 
                if Rec.Content /= Records.Content_Handshake then
+                  --  Application_data or unknown type before handshake
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Result := OK;
+                  Send_Alert_And_Error (S, Unexpected_Message, Result);
                   return;
                end if;
 
@@ -283,8 +345,14 @@ is
 
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
-                  --  Build entire server flight
-                  Build_Server_Flight (S, HC, Result);
+                  --  Version negotiation: dispatch based on HC.Version
+                  --  (set by Parse_Client_Hello from supported_versions)
+                  if HC.Version = TLS_1_3 then
+                     Build_Server_Flight (S, HC, Result);
+                  else
+                     SPARKTLS.Server.TLS12.Build_Server_Flight_12
+                       (S, HC, Result);
+                  end if;
                end;
             end;
 
@@ -297,7 +365,13 @@ is
                else
                   S.State := Wait_Client_Finished;
                end if;
-               Result := Need_Input;
+               --  Don't return Need_Input if there's already data buffered
+               --  (e.g., CCS records in the same TCP packet as ClientHello)
+               if Input_Available (S) > 0 then
+                  Result := OK;
+               else
+                  Result := Need_Input;
+               end if;
             end if;
 
          when Wait_Client_Certificate
@@ -924,16 +998,26 @@ is
          Avail  => Available (S.Input),
          Result => Rec);
 
+      if Rec.Overflow then
+         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         return;
+      end if;
+
       if not Rec.OK then
-         Result := Need_Input;
+         if Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Encrypted_Alert (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
       case Rec.Content is
          when Records.Content_Change_Cipher_Spec =>
-            if Rec.Fragment_Len = 1 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if Rec.Fragment_Len = 1 and then not HC.CCS_Received then
                HC.CCS_Received := True;
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;
             else
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1291,8 +1375,18 @@ is
          Avail  => Available (S.Input),
          Result => Rec);
 
+      if Rec.Overflow then
+         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         return;
+      end if;
+
       if not Rec.OK then
-         Result := Need_Input;
+         if Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Encrypted_Alert (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -1300,13 +1394,13 @@ is
          when Records.Content_Change_Cipher_Spec =>
             --  CCS for middlebox compatibility.
             --  RFC 8446 Section 5: MUST be a single byte 0x01.
-            if Rec.Fragment_Len = 1 then
+            --  Only one CCS is allowed per direction.
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if Rec.Fragment_Len = 1 and then not HC.CCS_Received then
                HC.CCS_Received := True;
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;
             else
-               --  Invalid CCS payload length
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               --  Invalid CCS (wrong length or duplicate)
                declare
                   A : N32;
                begin
@@ -1356,6 +1450,28 @@ is
                   return;
                end if;
 
+               --  RFC 8446 §5.4: TLSInnerPlaintext MUST NOT exceed
+               --  2^14 + 1 octets. Check before decrypting.
+               if Rec.Fragment_Len - Records.Tag_Size >
+                  Records.Max_Fragment + 1
+               then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 22, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Record_Overflow;
+                  S.State := Error_State;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
+                  return;
+               end if;
+
                Records.Decrypt_Record
                  (Encrypted  => Encrypted,
                   Record_Hdr => Hdr,
@@ -1371,13 +1487,14 @@ is
                   --  MAC failure or empty inner plaintext.
                   --  Send alert with app keys (client switched to app
                   --  keys after receiving our Finished).
+                  --  RFC 8446 §5.2: bad_record_mac (20)
                   declare
                      A : N32;
                   begin
                      Records.Build_Alert_Record
-                       (2, 10, S.Server_App, S.Output, A);
+                       (2, 20, S.Server_App, S.Output, A);
                   end;
-                  S.Last_Error := Unexpected_Message;
+                  S.Last_Error := Bad_Record_MAC;
                   S.State := Error_State;
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
@@ -1423,74 +1540,132 @@ is
                     (Plaintext (0 .. Plain_Len - 1),
                      Msg_Type, Msg_Len, Parse_OK);
 
-                  if not Parse_OK or Msg_Type /= Handshake.HT_Finished then
+                  if not Parse_OK then
+                     --  Malformed handshake header: decode_error (50)
+                     declare
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (2, 50, S.Server_App, S.Output, A);
+                     end;
+                     S.Last_Error := Decode_Error;
+                     S.State := Error_State;
+                     if Output_Pending (S) > 0 then
+                        Result := Has_Output;
+                     else
+                        Result := Error_Alert;
+                     end if;
+                     return;
+                  end if;
+
+                  if Msg_Type /= Handshake.HT_Finished then
+                     --  Wrong handshake type: unexpected_message (10)
+                     declare
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (2, 10, S.Server_App, S.Output, A);
+                     end;
                      S.Last_Error := Unexpected_Message;
                      S.State := Error_State;
-                     Result := Error_Alert;
+                     if Output_Pending (S) > 0 then
+                        Result := Has_Output;
+                     else
+                        Result := Error_Alert;
+                     end if;
                      return;
                   end if;
 
                   --  Verify client Finished
                   declare
                      Data     : Byte_Seq renames Plaintext (0 .. Plain_Len - 1);
-                     Verified : Boolean := False;
+                     Expected_Len : constant N32 :=
+                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+                         then 48 else 32);
                   begin
-                     case S.Negotiated_Suite is
-                        when Suite_AES_256_GCM_SHA384 =>
-                           declare
-                              use HKDF384;
-                              Pre_Hash : constant Key_Schedule.Digest_384 :=
-                                 Transcript_Hash_384 (HC);
-                              Fin_Key  : OKM384_Seq (0 .. 47);
-                              Expected : Bytes_48;
-                           begin
-                              Key_Schedule.Derive_Finished_Key_384
-                                (Fin_Key, HC.Client_HS_Secret);
-                              HMAC384.HMAC_SHA_384
-                                (Output => Expected,
-                                 M      => Pre_Hash,
-                                 K      => Byte_Seq (Fin_Key));
+                     --  Check Finished length first: wrong length = decode_error
+                     if Msg_Len /= Expected_Len or else
+                        N32 (Data'Length) < 4 + Expected_Len
+                     then
+                        declare
+                           A : N32;
+                        begin
+                           Records.Build_Alert_Record
+                             (2, 50, S.Server_App, S.Output, A);
+                        end;
+                        S.Last_Error := Decode_Error;
+                        S.State := Error_State;
+                        if Output_Pending (S) > 0 then
+                           Result := Has_Output;
+                        else
+                           Result := Error_Alert;
+                        end if;
+                        return;
+                     end if;
 
-                              if Msg_Len = 48 and then
-                                 N32 (Data'Length) >= 52
-                              then
+                     --  Length is correct — verify HMAC
+                     declare
+                        Verified : Boolean := False;
+                     begin
+                        case S.Negotiated_Suite is
+                           when Suite_AES_256_GCM_SHA384 =>
+                              declare
+                                 use HKDF384;
+                                 Pre_Hash : constant Key_Schedule.Digest_384 :=
+                                    Transcript_Hash_384 (HC);
+                                 Fin_Key  : OKM384_Seq (0 .. 47);
+                                 Expected : Bytes_48;
+                              begin
+                                 Key_Schedule.Derive_Finished_Key_384
+                                   (Fin_Key, HC.Client_HS_Secret);
+                                 HMAC384.HMAC_SHA_384
+                                   (Output => Expected,
+                                    M      => Pre_Hash,
+                                    K      => Byte_Seq (Fin_Key));
+
                                  if Equal (Expected,
                                            Bytes_48 (Data (4 .. 51))) then
                                     Verified := True;
                                  end if;
-                              end if;
-                           end;
-                        when others =>
-                           declare
-                              Pre_Hash : constant Digest :=
-                                 Transcript_Hash_256 (HC);
-                              Fin_Key  : OKM_Seq (0 .. 31);
-                              Expected : Digest;
-                           begin
-                              Key_Schedule.Derive_Finished_Key
-                                (Fin_Key, HC.Client_HS_Secret (0 .. 31));
-                              HMAC_SHA_256
-                                (Output => Expected,
-                                 M      => Pre_Hash,
-                                 K      => Byte_Seq (Fin_Key));
+                              end;
+                           when others =>
+                              declare
+                                 Pre_Hash : constant Digest :=
+                                    Transcript_Hash_256 (HC);
+                                 Fin_Key  : OKM_Seq (0 .. 31);
+                                 Expected : Digest;
+                              begin
+                                 Key_Schedule.Derive_Finished_Key
+                                   (Fin_Key, HC.Client_HS_Secret (0 .. 31));
+                                 HMAC_SHA_256
+                                   (Output => Expected,
+                                    M      => Pre_Hash,
+                                    K      => Byte_Seq (Fin_Key));
 
-                              if Msg_Len = 32 and then
-                                 N32 (Data'Length) >= 36
-                              then
                                  if Equal (Expected,
                                            Bytes_32 (Data (4 .. 35))) then
                                     Verified := True;
                                  end if;
-                              end if;
-                           end;
-                     end case;
+                              end;
+                        end case;
 
-                     if not Verified then
-                        S.Last_Error := Handshake_Failure;
-                        S.State := Error_State;
-                        Result := Error_Alert;
-                        return;
-                     end if;
+                        if not Verified then
+                           declare
+                              A : N32;
+                           begin
+                              Records.Build_Alert_Record
+                                (2, 51, S.Server_App, S.Output, A);
+                           end;
+                           S.Last_Error := Handshake_Failure;
+                           S.State := Error_State;
+                           if Output_Pending (S) > 0 then
+                              Result := Has_Output;
+                           else
+                              Result := Error_Alert;
+                           end if;
+                           return;
+                        end if;
+                     end;
 
                      --  Client Finished verified.
                      --  Append client Finished to transcript for res_master derivation
@@ -1618,8 +1793,14 @@ is
             end;
 
          when others =>
+            --  Plaintext handshake/alert records are not allowed here.
+            --  RFC 8446 §5.1: after ServerHello, all records MUST be
+            --  encrypted (content type application_data or CCS).
+            --  Don't send an alert back — the peer likely can't decrypt it.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
+            S.Last_Error := Unexpected_Message;
+            S.State := Error_State;
+            Result := Error_Alert;
       end case;
    end Process_Client_Finished;
 
@@ -1645,8 +1826,20 @@ is
          Avail  => Available (S.Input),
          Result => Rec);
 
+      if Rec.Overflow then
+         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         return;
+      end if;
+
       if not Rec.OK then
-         Result := Need_Input;
+         if Rec.Record_Len > 0 then
+            --  Parsed successfully but unknown content type.
+            --  RFC 8446 §5: unexpected_message
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Encrypted_Alert (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -1711,6 +1904,32 @@ is
             return;
          end if;
 
+         --  RFC 8446 §5.4: TLSInnerPlaintext MUST NOT exceed
+         --  2^14 + 1 octets. Check before decrypting.
+         if Rec.Fragment_Len - Records.Tag_Size >
+            Records.Max_Fragment + 1
+         then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            declare
+               Alert_Out : N32;
+            begin
+               Records.Build_Alert_Record
+                 (Level     => 2,
+                  Desc      => 22,  --  record_overflow
+                  Keys      => S.Server_App,
+                  Output    => S.Output,
+                  Bytes_Out => Alert_Out);
+            end;
+            S.Last_Error := Record_Overflow;
+            S.State := Error_State;
+            if Output_Pending (S) > 0 then
+               Result := Has_Output;
+            else
+               Result := Error_Alert;
+            end if;
+            return;
+         end if;
+
          Records.Decrypt_Record
            (Encrypted  => Encrypted,
             Record_Hdr => Hdr,
@@ -1723,20 +1942,19 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not Dec_Valid then
-            --  Could be MAC failure or empty inner plaintext (RFC 8446 §5.4)
-            --  Send encrypted alert since we have application keys
+            --  MAC failure or empty inner plaintext (RFC 8446 §5.2/§5.4)
+            --  Send encrypted bad_record_mac alert
             declare
                Alert_Out : N32;
             begin
                Records.Build_Alert_Record
                  (Level     => 2,       --  fatal
-                  Desc      => 10,      --  unexpected_message
+                  Desc      => 20,      --  bad_record_mac
                   Keys      => S.Server_App,
                   Output    => S.Output,
                   Bytes_Out => Alert_Out);
-               null;
             end;
-            S.Last_Error := Unexpected_Message;
+            S.Last_Error := Bad_Record_MAC;
             S.State := Error_State;
             --  Return Has_Output to drain the alert before Error_Alert
             if Output_Pending (S) > 0 then
@@ -1790,7 +2008,9 @@ is
                end if;
 
             when others =>
-               Result := OK;
+               --  Invalid inner content type (including zero).
+               --  RFC 8446 §5.4: unexpected_message
+               Send_Encrypted_Alert (S, Unexpected_Message, Result);
          end case;
       end;
    end Process_Connected;

@@ -88,23 +88,38 @@ is
       --  Parse 2-byte fragment length (big-endian) from bytes 3..4
       Frag_Len := N32 (Data (B + 3)) * 256 + N32 (Data (B + 4));
 
-      if Frag_Len > Max_Fragment + 256 or else
-         Avail < Record_Header_Size + Frag_Len
-      then
-         return;
+      --  Determine content type and per-type length limit.
+      --  RFC 8446 §5.1: plaintext fragment ≤ 2^14
+      --  RFC 8446 §5.2: encrypted fragment ≤ 2^14 + 256
+      declare
+         Max_Len : constant N32 :=
+           (if Data (B) = 16#17# then Max_Fragment + 256
+            else Max_Fragment);
+      begin
+         if Frag_Len > Max_Len then
+            Result.Overflow := True;
+            return;
+         end if;
+      end;
+
+      if Avail < Record_Header_Size + Frag_Len then
+         return;  --  need more data
       end if;
 
-      Result.OK           := True;
       Result.Fragment_Pos := Record_Header_Size;
       Result.Fragment_Len := Frag_Len;
       Result.Record_Len   := Record_Header_Size + Frag_Len;
 
       case Data (B) is
          when 16#16# => Result.Content := Content_Handshake;
+                         Result.OK := True;
          when 16#15# => Result.Content := Content_Alert;
+                         Result.OK := True;
          when 16#17# => Result.Content := Content_Application_Data;
+                         Result.OK := True;
          when 16#14# => Result.Content := Content_Change_Cipher_Spec;
-         when others  => Result.Content := Content_Unknown;
+                         Result.OK := True;
+         when others  => null;  --  unknown content type, OK stays False
       end case;
    end Parse_Record_Header;
 
@@ -327,8 +342,13 @@ is
          end loop;
 
          if not Found then
-            --  All zeros — no content type byte at all
-            Valid := False;
+            --  All zeros — content type is zero (invalid per RFC 8446 §5.4).
+            --  AEAD succeeded but inner plaintext is all zeros.
+            --  Return Valid = True, Inner_Type = 0, Plain_Len = 0.
+            --  Caller checks Inner_Type and sends unexpected_message.
+            Inner_Type := 0;
+            Plain_Len := 0;
+            --  Copy nothing to Plaintext (Plain_Len = 0)
             return;
          end if;
 
@@ -396,6 +416,11 @@ is
       use RFLX.Tls_Parameters;
       use type RFLX.RFLX_Types.Bytes_Ptr;
       use type RFLX.RFLX_Types.Bit_Length;
+
+      use type RFLX.RFLX_Builtin_Types.Bytes_Ptr;
+
+      procedure RFLX_Free_Alert (Buf : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      with Post => Buf = null;
 
       procedure RFLX_Free_Alert (Buf : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
       with SPARK_Mode => Off

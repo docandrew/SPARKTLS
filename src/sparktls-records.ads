@@ -17,24 +17,39 @@ is
       Content_Change_Cipher_Spec,
       Content_Unknown);
 
+   --  RFC 8446 §5.1: Parsed TLS record header.
    type Parse_Result is record
       OK           : Boolean := False;
+      Overflow     : Boolean := False;  --  fragment exceeds RFC limit
       Content      : Record_Content := Content_Unknown;
-      Fragment_Pos : N32 := 0;
-      Fragment_Len : N32 := 0;
-      Record_Len   : N32 := 0;
-   end record;
+      Fragment_Pos : N32 := 0;  --  offset of fragment in Data
+      Fragment_Len : N32 := 0;  --  fragment byte count
+      Record_Len   : N32 := 0;  --  total record length (header + fragment)
+   end record
+     with Predicate =>
+       (if Parse_Result.OK then
+          Parse_Result.Content /= Content_Unknown
+          and Parse_Result.Fragment_Pos = Record_Header_Size
+          and not Parse_Result.Overflow);
 
    --  RFC 8446 §5.1: Parse a TLS record header (5 bytes).
-   --  Does NOT modify any state — pure parsing.
+   --  Validates content type and fragment length bounds.
    procedure Parse_Record_Header
      (Data   : in     Byte_Seq;
       Avail  : in     N32;
       Result :    out Parse_Result)
-   with Pre => Data'First = 0
-               and Data'Last < N32'Last - 1
-               and Avail > 0
-               and Avail - 1 <= Data'Last;
+   with Pre  => Data'First = 0
+                and Data'Last < N32'Last - 1
+                and Avail > 0
+                and Avail - 1 <= Data'Last,
+        Post => (if Result.OK then
+                   Result.Content /= Content_Unknown       --  known type
+                   and Result.Fragment_Len <= Max_Fragment + Max_Record_Overhead
+                                                            --  RFC 8446 §5.1
+                   and Result.Record_Len <= Avail           --  fits in buffer
+                   and Result.Fragment_Pos = Record_Header_Size
+                   and not Result.Overflow)                  --  type predicate
+               and (if Result.Overflow then not Result.OK);  --  overflow → !OK
 
    --  RFC 8446 §5.1: Build a plaintext handshake record.
    --  Used for ClientHello and ServerHello (before encryption).
@@ -49,15 +64,18 @@ is
    --  RFC 8446 §5.2: Build an encrypted TLS record.
    --  Inner_Type: 0x15 (alert), 0x16 (handshake), 0x17 (application_data).
    --  The nonce counter is incremented for each record.
+   --  RFC 8446 §5.2: Build an encrypted TLS record.
+   --  Nonce counter increments by 1 for each record (§5.3).
    procedure Build_Encrypted_Record
      (Plaintext    : in     Byte_Seq;
       Inner_Type   : in     Byte;
       Keys         : in out Traffic_Keys;
       Output       : in out IO_Buffer;
       Bytes_Out    :    out N32)
-   with Pre => Plaintext'First = 0
-               and Plaintext'Last < Max_Fragment
-               and Inner_Type in 16#15# | 16#16# | 16#17#;  --  RFC 8446 §5.4
+   with Pre  => Plaintext'First = 0
+                and Plaintext'Last < Max_Fragment
+                and Inner_Type in 16#15# | 16#16# | 16#17#,  --  RFC 8446 §5.4
+        Post => Keys.Counter = Keys.Counter'Old + 1;          --  RFC 8446 §5.3
 
    --  Decrypt a TLS 1.3 encrypted record.
    --  RFC 8446 Section 5.4: After decryption, the inner plaintext
@@ -78,10 +96,10 @@ is
                and Record_Hdr'Length = Record_Header_Size
                and Plaintext'First = 0
                and Plaintext'Last >= Encrypted'Last,  --  plaintext buffer >= encrypted
-        Post => (if Valid then
-                   Inner_Type in 16#15# | 16#16# | 16#17#    --  RFC 8446 §5.4
-                   and (Plain_Len = 0
-                        or else Plain_Len - 1 <= Plaintext'Last));  --  bounds
+        Post => Keys.Counter = Keys.Counter'Old + 1              --  RFC 8446 §5.3
+                and (if Valid then
+                   (Plain_Len = 0
+                    or else Plain_Len - 1 <= Plaintext'Last));     --  bounds
 
    --  RFC 8446 §5: Build a Change Cipher Spec record.
    --  Always exactly 6 bytes: header(5) + payload(1 byte = 0x01).

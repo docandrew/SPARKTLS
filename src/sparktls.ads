@@ -46,10 +46,18 @@ is
       TLS_CHACHA20_POLY1305_SHA256,
       TLS_AES_256_GCM_SHA384);
 
-   --  TLS cipher suite code values
+   --  TLS 1.3 cipher suite code values
    Suite_AES_128_GCM_SHA256        : constant Unsigned_16 := 16#1301#;
    Suite_CHACHA20_POLY1305_SHA256  : constant Unsigned_16 := 16#1303#;
    Suite_AES_256_GCM_SHA384        : constant Unsigned_16 := 16#1302#;
+
+   --  TLS 1.2 cipher suite code values (ECDHE + AEAD only)
+   Suite_ECDHE_RSA_AES128_GCM_SHA256   : constant Unsigned_16 := 16#C02F#;
+   Suite_ECDHE_RSA_AES256_GCM_SHA384   : constant Unsigned_16 := 16#C030#;
+   Suite_ECDHE_ECDSA_AES128_GCM_SHA256 : constant Unsigned_16 := 16#C02B#;
+   Suite_ECDHE_ECDSA_AES256_GCM_SHA384 : constant Unsigned_16 := 16#C02C#;
+   Suite_ECDHE_RSA_CHACHA20_SHA256     : constant Unsigned_16 := 16#CCA8#;
+   Suite_ECDHE_ECDSA_CHACHA20_SHA256   : constant Unsigned_16 := 16#CCA9#;
 
    --================================================================
    --  Connection state
@@ -58,6 +66,9 @@ is
    --  Client and server share the same enum; unused states for
    --  a given role are simply never entered.
    --================================================================
+
+   --  Protocol version discriminant
+   type TLS_Version is (TLS_1_3, TLS_1_2);
 
    type Connection_State is
      (Idle,
@@ -219,6 +230,38 @@ is
    --  If verification fails, a "decrypt_error" alert MUST be sent.
    --  (Enforced in Process_Client_Finished via HC.Server_HS_Secret)
 
+   --  RFC 8446 §5.1: Record fragment size limits.
+   --  Plaintext: max 2^14 = 16384 bytes.
+   --  Ciphertext: max 2^14 + 256 = 16640 bytes.
+   function Valid_Fragment_Len (Len : N32) return Boolean is
+     (Len <= Max_Record_Plaintext)
+   with Ghost;
+
+   function Valid_Record_Len (Len : N32) return Boolean is
+     (Len <= Max_Record_Size)
+   with Ghost;
+
+   --  RFC 8446 §5.1: Content type MUST be valid.
+   function Valid_Content_Type (CT : Byte) return Boolean is
+     (CT in 16#14# | 16#15# | 16#16# | 16#17#)  --  CCS/alert/hs/appdata
+   with Ghost;
+
+   --  RFC 8446 §4.6.1: Session ticket constraints.
+   function Valid_Ticket_Lifetime (Secs : Unsigned_32) return Boolean is
+     (Secs <= 604800)  --  max 7 days per RFC 8446 §4.6.1
+   with Ghost;
+
+   --  RFC 8446 §7.1: Key derivation chain ordering.
+   --  The key schedule proceeds: Early → Handshake → Master → App.
+   --  Each secret depends on the previous one.
+   type Key_Phase is (Phase_None, Phase_Early, Phase_Handshake,
+                      Phase_Master, Phase_Application)
+   with Ghost;
+
+   function Key_Phase_Order (A, B : Key_Phase) return Boolean is
+     (Key_Phase'Pos (A) < Key_Phase'Pos (B))
+   with Ghost;
+
    --================================================================
    --  Action result - tells the caller what to do next
    --================================================================
@@ -250,6 +293,39 @@ is
       Internal_Error,
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
+
+   --  RFC 8446 §6: Error handling invariant.
+   --  When entering Error_State, the implementation MUST have queued
+   --  an alert record in the output buffer (unless the error is from
+   --  a plaintext record where the peer can't decrypt our response).
+   --
+   --  This property would have caught the missing-alert bugs found by
+   --  tlsfuzzer (Finished verify failure, decryption failure, wrong
+   --  handshake type, record overflow — all silently closed without alert).
+   function Error_Has_Alert (S_State : Connection_State;
+                             Pending : N32;
+                             Err     : Error_Code) return Boolean is
+     (if S_State = Error_State then
+        Pending > 0 or else Err = Unexpected_Message)
+   with Ghost;
+
+   --  RFC 8446 §6.2: Alert description MUST match the error condition.
+   function Expected_Alert_Desc (E : Error_Code) return Byte is
+     (case E is
+         when Unexpected_Message       => 10,
+         when Bad_Record_MAC           => 20,
+         when Record_Overflow          => 22,
+         when Handshake_Failure        => 40,
+         when Bad_Certificate          => 42,
+         when Certificate_Expired      => 45,
+         when Illegal_Parameter        => 47,
+         when Decode_Error             => 50,
+         when Certificate_Verify_Failed => 51,
+         when Internal_Error
+            | Insufficient_Buffer
+            | No_Error                 => 80,
+         when Unsupported_Cipher_Suite => 40)
+   with Ghost;
 
    --================================================================
    --  I/O Buffer
@@ -519,6 +595,9 @@ is
    --================================================================
 
    type Handshake_Context is record
+      --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
+      Version : TLS_Version := TLS_1_3;
+
       --  Configuration (callbacks, trust store, identity)
       Cfg : Config;
 
@@ -587,6 +666,18 @@ is
       --  Handshake tracking
       CCS_Received          : Boolean := False;
       Cert_Request_Received : Boolean := False;
+
+      --  Version negotiation (set during Parse_Client_Hello)
+      --  True if the client's supported_versions extension contains 0x0304.
+      --  If False, we negotiate TLS 1.2 (if legacy_version = 0x0303).
+      Has_TLS_1_3 : Boolean := False;
+
+      --  TLS 1.2 key material (set during Derive_Keys_12)
+      Master_Secret_12   : Bytes_48 := (others => 0);
+      Client_Write_IV_12 : Byte_Seq (0 .. 3) := (others => 0);
+      Server_Write_IV_12 : Byte_Seq (0 .. 3) := (others => 0);
+      Client_Seq_12      : Unsigned_64 := 0;
+      Server_Seq_12      : Unsigned_64 := 0;
 
       --  Resumption
       Using_PSK     : Boolean := False;

@@ -165,4 +165,19 @@ is
       Len    :    out N32)
    with Pre => Result'First = 0 and N32 (Result'Length) >= 32;
 
+   --  Encode ECDSA (r, s) values as DER SEQUENCE of two INTEGERs.
+   --  Used by both TLS 1.3 CertificateVerify and TLS 1.2 ServerKeyExchange.
+   procedure ECDSA_To_DER
+     (R_Raw, S_Raw : in     Byte_Seq;
+      Half_Len     : in     N32;
+      DER_Out      :    out Byte_Seq;
+      DER_Len      :    out N32)
+   with Pre => R_Raw'First = 0
+               and R_Raw'Last >= Half_Len - 1
+               and S_Raw'First = 0
+               and S_Raw'Last >= Half_Len - 1
+               and Half_Len in 32 | 48
+               and DER_Out'First = 0
+               and DER_Out'Last >= 139;  --  max DER for P-384
+
 end SPARKTLS.Handshake;

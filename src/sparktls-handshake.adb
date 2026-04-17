@@ -1321,6 +1321,40 @@ is
                               end if;
                            end;
 
+                        --  supported_versions extension (0x002B)
+                        --  RFC 8446 §4.2.1: list_len(1) || version(2)...
+                        elsif Tag.Known and then
+                           Tag.Enum =
+                              RFLX.Tls_Extensiontype_Values.Supported_Versions
+                        then
+                           declare
+                              DLen : constant N32 := N32
+                                 (RFLX.TLS_Handshake.CH_Extension_TLS
+                                    .Get_Data_Length (Ext_Ctx));
+                              SV_Data : RBT.Bytes
+                                          (1 .. RBT.Index (DLen));
+                              List_Len : N32;
+                              Pos : N32;
+                           begin
+                              if DLen >= 3 then
+                                 RFLX.TLS_Handshake.CH_Extension_TLS
+                                   .Get_Data (Ext_Ctx, SV_Data);
+                                 List_Len := N32 (SV_Data (1));
+                                 Pos := 2;
+                                 while Pos + 1 <= N32 (DLen)
+                                    and then Pos < 2 + List_Len
+                                 loop
+                                    if N32 (SV_Data (RBT.Index (Pos))) = 3
+                                       and then N32 (SV_Data (RBT.Index (Pos + 1))) = 4
+                                    then
+                                       --  Found 0x0304 = TLS 1.3
+                                       HC.Has_TLS_1_3 := True;
+                                    end if;
+                                    Pos := Pos + 2;
+                                 end loop;
+                              end if;
+                           end;
+
                         end if;
                      end;
                   end if;
@@ -1336,6 +1370,15 @@ is
 
       Take_Buffer (Ctx, Buf);
       RFLX_Free (Buf);
+
+      --  Set version based on supported_versions parsing.
+      --  If the client offered TLS 1.3 (0x0304), use it.
+      --  Otherwise fall back to TLS 1.2.
+      if HC.Has_TLS_1_3 then
+         HC.Version := TLS_1_3;
+      else
+         HC.Version := TLS_1_2;
+      end if;
 
       --  Shared secret computation deferred to Build_Server_Hello
       --  where we know which group to select.
