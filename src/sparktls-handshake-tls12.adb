@@ -26,9 +26,14 @@ package body SPARKTLS.Handshake.TLS12 with
 is
    package RBT renames RFLX.RFLX_Builtin_Types;
    use type RBT.Bytes_Ptr;
+
+   Max_Sig : constant := 512;  --  max RSA-4096 signature
    --  Helper: write a 3-byte big-endian length
    procedure Put24 (Buf : in out Byte_Seq; Pos : N32; Val : N32)
-   with Pre => Pos + 2 <= Buf'Last and Val < 2**24
+   with Pre => Pos <= N32'Last - 2
+               and then Pos >= Buf'First
+               and then Pos + 2 <= Buf'Last
+               and then Val < 2**24
    is
    begin
       Buf (Pos)     := Byte (Val / 65536);
@@ -38,7 +43,9 @@ is
 
    --  Helper: write a 2-byte big-endian value
    procedure Put16 (Buf : in out Byte_Seq; Pos : N32; Val : Unsigned_16)
-   with Pre => Pos + 1 <= Buf'Last
+   with Pre => Pos <= N32'Last - 1
+               and then Pos >= Buf'First
+               and then Pos + 1 <= Buf'Last
    is
    begin
       Buf (Pos)     := Byte (Val / 256);
@@ -96,7 +103,7 @@ is
       Sig_Input_Len : N32;
 
       --  Signature output
-      Sig     : Byte_Seq (0 .. 511) := (others => 0);
+      Sig     : Byte_Seq (0 .. Max_Sig - 1) := (others => 0);
       Sig_Len : N32 := 0;
       Sig_OK  : Boolean := False;
 
@@ -178,6 +185,12 @@ is
          case HC.Negotiated_Sig_Algo is
             when 16#0804# =>  --  rsa_pss_rsae_sha256
                Hash_Algo := 8; Sig_Algo := 4;
+               --  RSA key size must satisfy Sign_PSS preconditions
+               if Id.RSA_Mod_Len < 64
+                  or Id.RSA_Mod_Len > SPARKTLS.RSA.Max_RSA_Bytes
+                  or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+                  or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+               then return; end if;
                declare
                   H    : constant Digest := Hash
                     (Sig_Input (0 .. Sig_Input_Len - 1));
@@ -248,7 +261,7 @@ is
                return;
          end case;
 
-         if not Sig_OK or Sig_Len = 0 then
+         if not Sig_OK or Sig_Len = 0 or Sig_Len > Max_Sig then
             return;
          end if;
 
@@ -392,16 +405,16 @@ is
    begin
       OK := False;
 
-      if Data'Length < 2 then return; end if;
+      if Data'Last < 1 then return; end if;  --  need at least 2 bytes
 
-      Pt_Len := N32 (Data (Data'First));
+      Pt_Len := N32 (Data (0));
 
       --  Validate point length matches the negotiated group
       if Pt_Len /= Point_Len_For_Group (HC.Selected_Group) then
          return;
       end if;
 
-      if N32 (Data'Length) < 1 + Pt_Len then return; end if;
+      if Data'Last < Pt_Len then return; end if;  --  need 1 + Pt_Len bytes
 
       --  Store the peer's public key
       case HC.Selected_Group is
@@ -474,7 +487,7 @@ is
       Result          :    out Byte_Seq;
       Len             :    out N32)
    is
-      Sig     : Byte_Seq (0 .. 511) := (others => 0);
+      Sig     : Byte_Seq (0 .. Max_Sig - 1) := (others => 0);
       Sig_Len : N32 := 0;
       Sig_OK  : Boolean := False;
       Hash_Algo, Sig_Algo : Byte;
@@ -486,6 +499,11 @@ is
       case Sig_Algo_Wire is
          when 16#0804# =>  --  rsa_pss_rsae_sha256
             Hash_Algo := 8; Sig_Algo := 4;
+            if Id.RSA_Mod_Len not in 64 .. SPARKTLS.RSA.Max_RSA_Bytes
+               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+            then return; end if;
             declare
                Salt : Bytes_32;
             begin
@@ -537,7 +555,11 @@ is
          Body_Len : constant N32 := 2 + 2 + Sig_Len;
          Total    : constant N32 := 4 + Body_Len;
       begin
-         if Total > N32 (Result'Length) then return; end if;
+         if Total - 1 > Result'Last then return; end if;
+
+         pragma Assert (Sig_Len <= Max_Sig);
+         pragma Assert (Body_Len <= 4 + Max_Sig);
+         pragma Assert (Total <= 8 + Max_Sig);
 
          Result (0) := 16#0F#;  --  CertificateVerify type
          Put24 (Result, 1, Body_Len);
@@ -795,8 +817,10 @@ is
       P := P + 3;
 
       --  Leaf certificate (use NaCl_Cert which is SPARKNaCl.Byte_Seq)
-      if Id.NaCl_Cert_Len > 0 and then
-         P + 3 + Id.NaCl_Cert_Len <= N32 (Result'Length)
+      --  Need space for: cert_len(3) + cert_data(NaCl_Cert_Len)
+      if Id.NaCl_Cert_Len > 0
+         and then Id.NaCl_Cert_Len <= Max_Cert_DER_Len
+         and then P <= Result'Last - 3 - Id.NaCl_Cert_Len + 1
       then
          Put24 (Result, P, Id.NaCl_Cert_Len);
          P := P + 3;

@@ -17,6 +17,8 @@ with SPARKTLS.P256.ECDSA;
 with SPARKTLS.P384.ECDSA;
 with SPARKTLS.RSA;
 with SPARKTLS.HC_Alloc;
+with SPARKTLS.Records.TLS12;
+with SPARKTLS.Client.TLS12;
 
 with X509;
 use type X509.Algorithm_ID;
@@ -1224,12 +1226,20 @@ is
                         --  Add ServerHello to transcript
                         Append_Transcript (HC, Frag);
 
-                        --  Derive handshake secrets
-                        Derive_Handshake_Keys (S, HC);
-
                         S.Input.Read_Pos :=
                            S.Input.Read_Pos + Rec.Record_Len;
-                        S.State := Wait_Encrypted_Extensions;
+
+                        if HC.Version = TLS_1_3 then
+                           --  TLS 1.3: derive handshake keys
+                           Derive_Handshake_Keys (S, HC);
+                           S.State := Wait_Encrypted_Extensions;
+                        else
+                           --  TLS 1.2: move to Wait_Server_Finished
+                           --  which will be dispatched to
+                           --  Client.TLS12.Advance_Handshake_12
+                           --  on the next Advance call.
+                           S.State := Wait_Server_Finished;
+                        end if;
                         Result := OK;
                      end;
 
@@ -1303,7 +1313,11 @@ is
    begin
       case S.State is
          when Connected =>
-            Process_Connected (S, Result);
+            if S.Negotiated_Version = TLS_1_2 then
+               SPARKTLS.Client.TLS12.Process_Connected_12 (S, Result);
+            else
+               Process_Connected (S, Result);
+            end if;
 
          when Closing =>
             if Output_Pending (S) > 0 then
@@ -1321,7 +1335,19 @@ is
                return;
             end if;
 
-            Advance_Handshake (S, S.HC_Ptr.all, Result);
+            --  Version dispatch for handshake states.
+            --  HC.Version is set after Parse_Server_Hello.
+            --  Before ServerHello, Version defaults to TLS_1_3
+            --  (ClientHello is version-agnostic).
+            if S.HC_Ptr.Version = TLS_1_2
+               and S.State /= Client_Hello_Sent
+               and S.State /= Wait_Server_Hello
+            then
+               SPARKTLS.Client.TLS12.Advance_Handshake_12
+                 (S, S.HC_Ptr.all, Result);
+            else
+               Advance_Handshake (S, S.HC_Ptr.all, Result);
+            end if;
 
             if S.State = Connected or S.State = Error_State then
                S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
@@ -1788,12 +1814,23 @@ is
    is
       Enc_Out : N32;
    begin
-      Records.Build_Encrypted_Record
-        (Plaintext  => Plaintext,
-         Inner_Type => 16#17#,  --  application_data
-         Keys       => S.Client_App,
-         Output     => S.Output,
-         Bytes_Out  => Enc_Out);
+      if S.Negotiated_Version = TLS_1_2 then
+         Records.TLS12.Build_Encrypted_Record_12
+           (Plaintext    => Plaintext,
+            Content_Type => 16#17#,
+            Keys         => S.Client_App,
+            Implicit_IV  => S.Client_IV_12,
+            Seq_Num      => S.Client_Seq_12,
+            Output       => S.Output,
+            Bytes_Out    => Enc_Out);
+      else
+         Records.Build_Encrypted_Record
+           (Plaintext  => Plaintext,
+            Inner_Type => 16#17#,
+            Keys       => S.Client_App,
+            Output     => S.Output,
+            Bytes_Out  => Enc_Out);
+      end if;
 
       if Enc_Out > 0 then
          Bytes_Written := N32 (Plaintext'Length);
@@ -1805,12 +1842,23 @@ is
    procedure Close_Notify (S : in out Session) is
       Alert_Out : N32;
    begin
-      Records.Build_Alert_Record
-        (Level     => 1,      --  warning
-         Desc      => 0,      --  close_notify
-         Keys      => S.Client_App,
-         Output    => S.Output,
-         Bytes_Out => Alert_Out);
+      if S.Negotiated_Version = TLS_1_2 then
+         Records.TLS12.Build_Alert_Record_12
+           (Level       => 1,
+            Desc        => 0,
+            Keys        => S.Client_App,
+            Implicit_IV => S.Client_IV_12,
+            Seq_Num     => S.Client_Seq_12,
+            Output      => S.Output,
+            Bytes_Out   => Alert_Out);
+      else
+         Records.Build_Alert_Record
+           (Level     => 1,
+            Desc      => 0,
+            Keys      => S.Client_App,
+            Output    => S.Output,
+            Bytes_Out => Alert_Out);
+      end if;
       S.State := Closing;
    end Close_Notify;
 

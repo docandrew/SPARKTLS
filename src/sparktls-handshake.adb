@@ -97,8 +97,8 @@ is
       KS_Data_Len  : constant N32 := 208;
       --  psk_key_exchange_modes data: list_len(1) + mode(1)
       PSK_Data_Len : constant N32 := 2;
-      --  supported_versions data: list_len(1) + version(2)
-      SV_Data_Len  : constant N32 := 3;
+      --  supported_versions data: list_len(1) + version(2) * 2
+      SV_Data_Len  : constant N32 := 5;
 
       --  Each extension: tag(2) + data_length(2) + data
       Ext_Total : constant N32 :=
@@ -390,7 +390,9 @@ is
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             SV_Raw  : constant Byte_Seq (0 .. SV_Data_Len - 1) :=
-               (16#02#, 16#03#, 16#04#);  --  list_len=2, TLS 1.3
+               (16#04#,                  --  list_len=4 (2 versions)
+                16#03#, 16#04#,          --  TLS 1.3 (preferred)
+                16#03#, 16#03#);         --  TLS 1.2 (fallback)
          begin
             Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SV_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
@@ -616,9 +618,16 @@ is
          Suite_Val : constant Unsigned_16 :=
             Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (Suite));
       begin
-         if Suite_Val /= Suite_CHACHA20_POLY1305_SHA256 and
-            Suite_Val /= Suite_AES_128_GCM_SHA256 and
-            Suite_Val /= Suite_AES_256_GCM_SHA384
+         --  Accept TLS 1.3 and TLS 1.2 AEAD suites
+         if Suite_Val not in Suite_CHACHA20_POLY1305_SHA256
+                           | Suite_AES_128_GCM_SHA256
+                           | Suite_AES_256_GCM_SHA384
+                           | Suite_ECDHE_RSA_AES128_GCM_SHA256
+                           | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                           | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                           | Suite_ECDHE_RSA_CHACHA20_SHA256
+                           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
          then
             Take_Buffer (Ctx, Buf);
             RFLX_Free (Buf);
@@ -655,7 +664,15 @@ is
                            RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
                              (Ext_Ctx);
                      begin
+                        --  Check for supported_versions extension
                         if Tag.Known and then
+                           Tag.Enum =
+                              RFLX.Tls_Extensiontype_Values.Supported_Versions
+                        then
+                           --  ServerHello has supported_versions → TLS 1.3
+                           HC.Has_TLS_1_3 := True;
+
+                        elsif Tag.Known and then
                            Tag.Enum =
                               RFLX.Tls_Extensiontype_Values.Key_Share
                         then
@@ -757,7 +774,23 @@ is
          end;
       end if;
 
-      --  Compute shared secret
+      --  Set version based on supported_versions extension
+      if HC.Has_TLS_1_3 then
+         HC.Version := TLS_1_3;
+      else
+         HC.Version := TLS_1_2;
+      end if;
+
+      --  For TLS 1.2, skip ECDHE shared secret here
+      --  (it's computed after ServerKeyExchange)
+      if HC.Version = TLS_1_2 then
+         Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
+         OK := True;
+         return;
+      end if;
+
+      --  Compute shared secret (TLS 1.3 only — key_share in ServerHello)
       if HC.Use_P384_KE then
          --  P-384 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
          declare
@@ -1998,7 +2031,9 @@ is
 
       DER_Out (0) := 16#30#;
       DER_Out (1) := Byte (Pos - 2);
-      DER_Len := Pos;
+      --  Max: 2 + 2*(2 + 1 + 48) = 104 <= Max_ECDSA_DER_Len
+      DER_Len := (if Pos <= Max_ECDSA_DER_Len then Pos
+                  else Max_ECDSA_DER_Len);
    end ECDSA_To_DER;
 
    procedure Build_Certificate_Verify

@@ -168,6 +168,10 @@ is
 
    --  Encode ECDSA (r, s) values as DER SEQUENCE of two INTEGERs.
    --  Used by both TLS 1.3 CertificateVerify and TLS 1.2 ServerKeyExchange.
+   --  Max DER output: SEQUENCE(2) + 2 * (TAG(1) + LEN(1) + PAD(1) + DATA(48))
+   --  = 2 + 2*51 = 104 for P-384. Use 140 with margin.
+   Max_ECDSA_DER_Len : constant := 140;
+
    procedure ECDSA_To_DER
      (R_Raw, S_Raw : in     Byte_Seq;
       Half_Len     : in     N32;
@@ -179,6 +183,7 @@ is
                and S_Raw'Last >= Half_Len - 1
                and Half_Len in 32 | 48
                and DER_Out'First = 0
-               and DER_Out'Last >= 139;  --  max DER for P-384
+               and DER_Out'Last >= Max_ECDSA_DER_Len - 1,
+        Post => DER_Len <= Max_ECDSA_DER_Len;    --  bounded output
 
 end SPARKTLS.Handshake;

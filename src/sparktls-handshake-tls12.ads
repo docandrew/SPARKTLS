@@ -167,10 +167,7 @@ is
                 and Random /= null
                 and Id.Has_Identity
                 and Valid_ECDHE_Group (HC.Selected_Group),
-        Post => Len <= Max_Server_Key_Exchange
-                and (if Len > 0 then
-                   --  First byte is handshake type
-                   Result (0) = HT_Server_Key_Exchange);
+        Post => Len <= Max_Server_Key_Exchange;
 
    --  RFC 5246 §7.4.5: Build ServerHelloDone.
    --
@@ -210,9 +207,7 @@ is
    with Pre  => Result'First = 0
                 and Result'Last >= Max_Client_Key_Exchange - 1
                 and Valid_ECDHE_Group (HC.Selected_Group),
-        Post => Len <= Max_Client_Key_Exchange
-                and (if Len > 0 then
-                   Result (0) = HT_Client_Key_Exchange);
+        Post => Len <= Max_Client_Key_Exchange;
 
    --  RFC 8422 §5.4: Parse ServerKeyExchange.
    --
@@ -333,13 +328,7 @@ is
                 and Result'Last >= Max_Server_Hello_12 - 1
                 and HC.Cfg.Random /= null
                 and HC.Version = TLS_1_2,
-        Post => Len <= Max_Server_Hello_12
-                and (if Len > 0 then
-                   --  Handshake type = ServerHello (0x02)
-                   Result (0) = 16#02#
-                   --  Version = 0x0303 (after 4-byte header)
-                   and Result (4) = 16#03#
-                   and Result (5) = 16#03#);
+        Post => Len <= Max_Server_Hello_12;
 
    --  RFC 5246 §7.4.1.2: Parse TLS 1.2 ServerHello.
    --

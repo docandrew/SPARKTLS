@@ -142,6 +142,8 @@ is
                and then Salt'Last >= N32 (Hash_Len) - 1
                and then Signature'First = 0
                and then Signature'Last >= N32 (Mod_Len) - 1
-               and then Signature'Last < N32'Last;
+               and then Signature'Last < N32'Last,
+        Post => Sig_Len <= Mod_Len               --  signature <= modulus size
+                and Sig_Len <= Max_RSA_Bytes;     --  absolute bound
 
 end SPARKTLS.RSA;

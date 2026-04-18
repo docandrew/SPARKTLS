@@ -1,0 +1,569 @@
+with Interfaces;                 use Interfaces;
+with SPARKNaCl;                  use SPARKNaCl;
+with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
+with SPARKNaCl.Hashing.SHA384;
+with SPARKNaCl.Cryptobox;
+with SPARKNaCl.Scalar;
+with SPARKTLS.Records;           use SPARKTLS.Records;
+with SPARKTLS.Records.TLS12;
+with SPARKTLS.Handshake;
+with SPARKTLS.Handshake.TLS12;
+with SPARKTLS.Key_Schedule_12;
+with SPARKTLS.Cert_Verify;       use SPARKTLS.Cert_Verify;
+with SPARKTLS.P256.Point;
+with SPARKTLS.P384.Point;
+with X509;
+use type X509.Algorithm_ID;
+
+package body SPARKTLS.Client.TLS12 with
+   SPARK_Mode => Off
+is
+   use Handshake.TLS12;
+
+   function Alert_Desc (E : Error_Code) return Byte is
+     (case E is
+         when Unexpected_Message    => 10, when Bad_Record_MAC   => 20,
+         when Record_Overflow       => 22, when Handshake_Failure => 40,
+         when Bad_Certificate       => 42, when Certificate_Expired => 45,
+         when Certificate_Verify_Failed => 51, when Decode_Error  => 50,
+         when Illegal_Parameter     => 47, when Internal_Error    => 80,
+         when Insufficient_Buffer   => 80, when Unsupported_Cipher_Suite => 40,
+         when No_Error              => 80);
+
+   procedure Send_Alert_And_Error
+     (S : in out Session; Err : Error_Code; Result : out Action)
+   is
+      Dummy : N32;
+   begin
+      S.Last_Error := Err;
+      S.State := Error_State;
+      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
+      Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
+   end Send_Alert_And_Error;
+
+   procedure Append_Transcript (HC : in out Handshake_Context; Data : Byte_Seq)
+   is
+      Len : constant N32 := N32 (Data'Length);
+   begin
+      if HC.Transcript_Len + Len <= HC.Transcript'Length then
+         HC.Transcript (HC.Transcript_Len ..
+                          HC.Transcript_Len + Len - 1) := Data;
+         HC.Transcript_Len := HC.Transcript_Len + Len;
+      end if;
+   end Append_Transcript;
+
+   --  Derive TLS 1.2 keys (same as server, shared secret → master → expand)
+   procedure Derive_Keys_12 (S : in out Session; HC : in out Handshake_Context)
+   is
+      use Key_Schedule_12;
+      Use_384 : constant Boolean :=
+         S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
+                             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+      Key_Len : constant N32 :=
+         (if S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+          then 16 else 32);
+      CK : Byte_Seq (0 .. Key_Len - 1) := (others => 0);
+      SK : Byte_Seq (0 .. Key_Len - 1) := (others => 0);
+      CI : Byte_Seq (0 .. 3) := (others => 0);
+      SI : Byte_Seq (0 .. 3) := (others => 0);
+      Shared_Len : constant N32 :=
+         (if HC.Selected_Group = Group_Secp384r1 then 48 else 32);
+   begin
+      --  RFC 7627: Extended Master Secret
+      declare
+         TH     : Digest;
+         TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
+      begin
+         if Use_384 then
+            SPARKNaCl.Hashing.SHA384.Hash
+              (TH_384, HC.Transcript (0 .. HC.Transcript_Len - 1));
+            PRF_SHA384 (Byte_Seq (HC.Master_Secret_12),
+                        HC.Shared_Secret (0 .. Shared_Len - 1),
+                        "extended master secret", Byte_Seq (TH_384));
+         else
+            Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+            PRF_SHA256 (Byte_Seq (HC.Master_Secret_12),
+                        HC.Shared_Secret (0 .. Shared_Len - 1),
+                        "extended master secret", Byte_Seq (TH));
+         end if;
+      end;
+
+      Expand_Keys_12 (CK, SK, CI, SI, HC.Master_Secret_12,
+                       HC.Server_Random, HC.Client_Random, Key_Len, Use_384);
+
+      declare
+         Int_Suite : constant Unsigned_16 :=
+           (case S.Negotiated_Suite is
+               when Suite_ECDHE_RSA_AES128_GCM_SHA256
+                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
+                     Suite_AES_128_GCM_SHA256,
+               when Suite_ECDHE_RSA_AES256_GCM_SHA384
+                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384 =>
+                     Suite_AES_256_GCM_SHA384,
+               when others => Suite_CHACHA20_POLY1305_SHA256);
+      begin
+         S.Client_App := (Key => (others => 0), IV => (others => 0),
+                          Counter => 0, Suite => Int_Suite);
+         S.Client_App.Key (0 .. Key_Len - 1) := CK;
+         S.Server_App := (Key => (others => 0), IV => (others => 0),
+                          Counter => 0, Suite => Int_Suite);
+         S.Server_App.Key (0 .. Key_Len - 1) := SK;
+      end;
+
+      HC.Client_Write_IV_12 := CI;
+      HC.Server_Write_IV_12 := SI;
+      HC.Client_Seq_12 := 0;
+      HC.Server_Seq_12 := 0;
+   end Derive_Keys_12;
+
+   ------------------------------------------------------------------
+   --  Process_Server_Flight: parse Cert + SKE + SHD, then send CKE+CCS+Fin
+   ------------------------------------------------------------------
+
+   procedure Process_Server_Flight
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   is
+      Rec : Records.Parse_Result;
+   begin
+      if Input_Available (S) = 0 then
+         Result := Need_Input; return;
+      end if;
+
+      Records.Parse_Record_Header
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+         Available (S.Input), Rec);
+
+      if not Rec.OK then
+         Result := Need_Input; return;
+      end if;
+
+      if Rec.Content /= Records.Content_Handshake then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Result := OK; return;
+      end if;
+
+      declare
+         FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+         Frag : Byte_Seq renames
+            S.Input.Data (FS .. FS + Rec.Fragment_Len - 1);
+         MT : Byte; ML : N32; POK : Boolean;
+      begin
+         Handshake.Parse_Handshake_Header (Frag, MT, ML, POK);
+         if not POK then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Decode_Error, Result); return;
+         end if;
+
+         case MT is
+            when 16#0B# =>
+               --  Certificate: store for later verification
+               --  (simplified: just add to transcript)
+               Append_Transcript (HC, Frag);
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Result := OK;
+
+            when HT_Server_Key_Exchange =>
+               --  Parse SKE: extract ECDHE params + verify signature
+               declare
+                  Body_Start : constant N32 := Frag'First + 4;
+                  Body_Data : Byte_Seq (0 .. ML - 1);
+                  SKE_OK : Boolean;
+               begin
+                  if ML > 0 and then 4 + ML <= Rec.Fragment_Len then
+                     Body_Data := Frag (Body_Start .. Body_Start + ML - 1);
+                     Parse_Server_Key_Exchange (HC, Body_Data, SKE_OK);
+                     if not SKE_OK then
+                        S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                        Send_Alert_And_Error (S, Handshake_Failure, Result);
+                        return;
+                     end if;
+                  end if;
+               end;
+               Append_Transcript (HC, Frag);
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Result := OK;
+
+            when HT_Server_Hello_Done =>
+               --  End of server flight. Now:
+               --  1. Compute ECDHE shared secret
+               --  2. Derive keys
+               --  3. Send CKE + CCS + Finished
+               Append_Transcript (HC, Frag);
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+               --  Generate ECDHE keypair + compute shared secret
+               declare
+                  Gen : constant Random_Bytes_Fn := HC.Cfg.Random;
+                  SS_OK : Boolean := False;
+               begin
+                  case HC.Selected_Group is
+                     when Group_X25519 =>
+                        Gen (Byte_Seq (HC.Local_SK));
+                        HC.Shared_Secret (0 .. 31) :=
+                           SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+                        SS_OK := True;
+                     when Group_Secp256r1 =>
+                        Gen (Byte_Seq (HC.P256_Local_SK));
+                        declare
+                           use SPARKTLS.P256.Point;
+                           Pt : P256_Jacobian; V : SPARKNaCl.U32;
+                        begin
+                           P256_Decode (Pt, HC.P256_Peer_PK, V);
+                           if V /= 0 then
+                              P256_Mul (Pt, HC.P256_Local_SK, 32);
+                              P256_To_Affine (Pt);
+                              declare E : Byte_Seq (0 .. 64);
+                              begin
+                                 P256_Encode (E, Pt);
+                                 HC.Shared_Secret := (others => 0);
+                                 HC.Shared_Secret (0 .. 31) := E (1 .. 32);
+                              end;
+                              SS_OK := True;
+                           end if;
+                        end;
+                     when Group_Secp384r1 =>
+                        Gen (Byte_Seq (HC.P384_Local_SK));
+                        declare SS : Bytes_48; OK384 : Boolean;
+                        begin
+                           SPARKTLS.P384.Point.P384_ECDHE
+                             (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
+                           if OK384 then
+                              HC.Shared_Secret := SS; SS_OK := True;
+                           end if;
+                        end;
+                     when others => null;
+                  end case;
+
+                  if not SS_OK then
+                     Send_Alert_And_Error (S, Handshake_Failure, Result);
+                     return;
+                  end if;
+               end;
+
+               --  Build and send ClientKeyExchange
+               declare
+                  CKE : Byte_Seq (0 .. Max_Client_Key_Exchange - 1);
+                  CKE_Len : N32;
+                  Rec_Out : N32;
+               begin
+                  Build_Client_Key_Exchange (HC, CKE, CKE_Len);
+                  if CKE_Len > 0 then
+                     Append_Transcript (HC, CKE (0 .. CKE_Len - 1));
+                     Records.Build_Handshake_Record
+                       (CKE (0 .. CKE_Len - 1), S.Output, Rec_Out);
+                  end if;
+               end;
+
+               --  Derive keys (uses transcript up to CKE)
+               Derive_Keys_12 (S, HC);
+
+               --  Send CCS
+               declare CCS_Out : N32;
+               begin Records.Build_CCS_Record (S.Output, CCS_Out); end;
+
+               --  Build and send encrypted Finished
+               declare
+                  use Key_Schedule_12;
+                  use Records.TLS12;
+                  FB : Byte_Seq (0 .. Finished_12_Total_Len - 1);
+                  FL : N32; EO : N32;
+                  TH : Digest;
+                  TH4 : SPARKNaCl.Hashing.SHA384.Digest;
+                  Use_384 : constant Boolean :=
+                     S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
+                                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+               begin
+                  if Use_384 then
+                     SPARKNaCl.Hashing.SHA384.Hash
+                       (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                     Build_Finished_12 (HC.Master_Secret_12,
+                                        Label_Client_Finished,
+                                        Byte_Seq (TH4), True, FB, FL);
+                  else
+                     Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                     Build_Finished_12 (HC.Master_Secret_12,
+                                        Label_Client_Finished,
+                                        Byte_Seq (TH), False, FB, FL);
+                  end if;
+
+                  --  Add client Finished to transcript
+                  Append_Transcript (HC, FB (0 .. FL - 1));
+
+                  Build_Encrypted_Record_12
+                    (FB (0 .. FL - 1), 16#16#, S.Client_App,
+                     HC.Client_Write_IV_12, HC.Client_Seq_12,
+                     S.Output, EO);
+               end;
+
+               HC.CKE_Received_12 := True;
+               Result := (if Output_Pending (S) > 0
+                          then Has_Output else Need_Input);
+
+            when others =>
+               --  Unknown message type — skip
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Result := OK;
+         end case;
+      end;
+   end Process_Server_Flight;
+
+   ------------------------------------------------------------------
+   --  Process_Server_CCS: receive CCS, activate server read keys
+   ------------------------------------------------------------------
+
+   procedure Process_Server_CCS
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   is
+      Rec : Records.Parse_Result;
+   begin
+      if Input_Available (S) = 0 then Result := Need_Input; return; end if;
+
+      Records.Parse_Record_Header
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+         Available (S.Input), Rec);
+
+      if not Rec.OK then Result := Need_Input; return; end if;
+
+      if Rec.Content = Records.Content_Change_Cipher_Spec then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         if Rec.Fragment_Len = 1 then
+            HC.CCS_Received := True;
+            Result := OK;
+         else
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
+         end if;
+      else
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+      end if;
+   end Process_Server_CCS;
+
+   ------------------------------------------------------------------
+   --  Process_Server_Finished: decrypt + verify server Finished
+   ------------------------------------------------------------------
+
+   procedure Process_Server_Finished
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   is
+      use Records.TLS12;
+      use Key_Schedule_12;
+      Rec : Records.Parse_Result;
+      Use_384 : constant Boolean :=
+         S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
+                             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+   begin
+      if Input_Available (S) = 0 then Result := Need_Input; return; end if;
+
+      Records.Parse_Record_Header
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+         Available (S.Input), Rec);
+
+      if not Rec.OK then Result := Need_Input; return; end if;
+
+      if Rec.Content /= Records.Content_Handshake then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Send_Alert_And_Error (S, Unexpected_Message, Result); return;
+      end if;
+
+      declare
+         FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+         Encrypted : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Hdr : Byte_Seq (0 .. 4);
+         Plaintext : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         PL : N32; DV : Boolean;
+      begin
+         for I in N32 range 0 .. Rec.Fragment_Len - 1 loop
+            Encrypted (I) := S.Input.Data (FS + I);
+         end loop;
+         for I in N32 range 0 .. 4 loop
+            Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
+         end loop;
+
+         if Rec.Fragment_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Decode_Error, Result); return;
+         end if;
+
+         Decrypt_Record_12 (Encrypted, Hdr, S.Server_App,
+                            HC.Server_Write_IV_12, HC.Server_Seq_12,
+                            Plaintext, PL, DV);
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+         if not DV then
+            Send_Alert_And_Error (S, Bad_Record_MAC, Result); return;
+         end if;
+         if PL < 4 then
+            Send_Alert_And_Error (S, Decode_Error, Result); return;
+         end if;
+
+         declare
+            MT : constant Byte := Plaintext (0);
+            ML : constant N32 := N32 (Plaintext (1)) * 65536 +
+                                 N32 (Plaintext (2)) * 256 +
+                                 N32 (Plaintext (3));
+         begin
+            if MT /= HT_Finished or ML /= Finished_Verify_Len
+               or PL < 4 + Finished_Verify_Len
+            then
+               Send_Alert_And_Error (S, Decode_Error, Result); return;
+            end if;
+
+            --  Verify server Finished
+            declare
+               Exp : Verify_Data_12;
+               TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
+               Match : Boolean := True;
+            begin
+               if Use_384 then
+                  SPARKNaCl.Hashing.SHA384.Hash
+                    (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                  Compute_Finished_12 (Exp, HC.Master_Secret_12,
+                                       Label_Server_Finished,
+                                       Byte_Seq (TH4), True);
+               else
+                  Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                  Compute_Finished_12 (Exp, HC.Master_Secret_12,
+                                       Label_Server_Finished,
+                                       Byte_Seq (TH), False);
+               end if;
+
+               for I in N32 range 0 .. Finished_Verify_Len - 1 loop
+                  if Plaintext (4 + I) /= Exp (I) then Match := False; end if;
+               end loop;
+
+               if not Match then
+                  Send_Alert_And_Error (S, Handshake_Failure, Result);
+                  return;
+               end if;
+            end;
+         end;
+      end;
+
+      --  Copy TLS 1.2 state to Session
+      S.Negotiated_Version := TLS_1_2;
+      S.Client_IV_12 := HC.Client_Write_IV_12;
+      S.Server_IV_12 := HC.Server_Write_IV_12;
+      S.Client_Seq_12 := HC.Client_Seq_12;
+      S.Server_Seq_12 := HC.Server_Seq_12;
+
+      S.State := Connected;
+      S.Handshake_Just_Done := True;
+      Result := (if Output_Pending (S) > 0 then Has_Output else Handshake_Done);
+      if Result = Handshake_Done then S.Handshake_Just_Done := False; end if;
+   end Process_Server_Finished;
+
+   ------------------------------------------------------------------
+   --  Advance_Handshake_12: dispatch based on internal state
+   ------------------------------------------------------------------
+
+   procedure Advance_Handshake_12
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   is
+   begin
+      if Output_Pending (S) > 0 then
+         Result := Has_Output;
+         return;
+      end if;
+
+      if not HC.CKE_Received_12 then
+         --  Still processing server flight / sending client flight
+         Process_Server_Flight (S, HC, Result);
+      elsif not HC.CCS_Received then
+         --  Waiting for server CCS
+         Process_Server_CCS (S, HC, Result);
+      else
+         --  Waiting for server Finished
+         Process_Server_Finished (S, HC, Result);
+      end if;
+   end Advance_Handshake_12;
+
+   ------------------------------------------------------------------
+   --  Process_Connected_12: identical to Server.TLS12.Process_Connected_12
+   ------------------------------------------------------------------
+
+   procedure Process_Connected_12 (S : in out Session; Result : out Action)
+   is
+      use Records.TLS12;
+      Rec : Records.Parse_Result;
+   begin
+      if Input_Available (S) = 0 then
+         Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
+         return;
+      end if;
+
+      Records.Parse_Record_Header
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+         Available (S.Input), Rec);
+
+      if not Rec.OK then
+         Result := Need_Input; return;
+      end if;
+
+      if Rec.Content = Records.Content_Change_Cipher_Spec then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Result := OK; return;
+      end if;
+
+      if Rec.Content not in Records.Content_Application_Data
+                          | Records.Content_Alert
+      then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Result := OK; return;
+      end if;
+
+      declare
+         FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+         Encrypted : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Hdr : Byte_Seq (0 .. 4);
+         Plaintext : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         PL : N32; DV : Boolean;
+      begin
+         for I in N32 range 0 .. Rec.Fragment_Len - 1 loop
+            Encrypted (I) := S.Input.Data (FS + I);
+         end loop;
+         for I in N32 range 0 .. 4 loop
+            Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
+         end loop;
+
+         if Rec.Fragment_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Result := OK; return;
+         end if;
+
+         Decrypt_Record_12 (Encrypted, Hdr, S.Server_App,
+                            S.Server_IV_12, S.Server_Seq_12,
+                            Plaintext, PL, DV);
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+         if not DV then
+            S.Last_Error := Bad_Record_MAC;
+            S.State := Error_State;
+            Result := Error_Alert;
+            return;
+         end if;
+
+         case Rec.Content is
+            when Records.Content_Application_Data =>
+               if PL > 0 and then S.App_Data_Len + PL <= S.App_Data'Length then
+                  S.App_Data (S.App_Data_Len .. S.App_Data_Len + PL - 1) :=
+                     Plaintext (0 .. PL - 1);
+                  S.App_Data_Len := S.App_Data_Len + PL;
+                  Result := Plaintext_Ready;
+               else
+                  Result := OK;
+               end if;
+            when Records.Content_Alert =>
+               if PL >= 2 and then Plaintext (1) = 0 then
+                  S.State := Closing; Result := Shutdown;
+               else
+                  S.Last_Error := Unexpected_Message;
+                  S.State := Error_State; Result := Error_Alert;
+               end if;
+            when others =>
+               Result := OK;
+         end case;
+      end;
+   end Process_Connected_12;
+
+end SPARKTLS.Client.TLS12;
