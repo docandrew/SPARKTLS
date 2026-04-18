@@ -68,8 +68,7 @@ is
 
    --  RFC 8422: Valid ECDHE group for our implementation.
    function Valid_ECDHE_Group (G : Unsigned_16) return Boolean is
-     (G in Group_Secp256r1 | Group_Secp384r1 | Group_X25519)
-   with Ghost;
+     (G in Group_Secp256r1 | Group_Secp384r1 | Group_X25519);
 
    --  RFC 8422 §5.4: ECPoint byte length for a given group.
    function Point_Len_For_Group (G : Unsigned_16) return N32 is
@@ -129,6 +128,47 @@ is
    function Suite_Uses_SHA384 (S : Unsigned_16) return Boolean is
      (S in Suite_ECDHE_RSA_AES256_GCM_SHA384
         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384)
+   with Ghost;
+
+   --  RFC 5246 §8.1 / RFC 7627: Master secret derivation label
+   --  MUST match the negotiated extensions.
+   --  Using EMS label without EMS extension (or vice versa) produces
+   --  a valid-looking but incompatible master secret.
+   function Correct_Master_Label
+     (Use_EMS : Boolean;
+      Label   : String) return Boolean is
+     (if Use_EMS then Label = "extended master secret"
+      else Label = "master secret")
+   with Ghost;
+
+   --  TLS 1.2 wire suite → internal AEAD suite mapping.
+   --  This is the normative mapping; using the wrong internal suite
+   --  causes silent key derivation failure (Bug 1 pattern).
+   function Internal_Suite_For (S : Unsigned_16) return Unsigned_16 is
+     (case S is
+         when Suite_ECDHE_RSA_AES128_GCM_SHA256
+            | Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
+               Suite_AES_128_GCM_SHA256,
+         when Suite_ECDHE_RSA_AES256_GCM_SHA384
+            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384 =>
+               Suite_AES_256_GCM_SHA384,
+         when Suite_ECDHE_RSA_CHACHA20_SHA256
+            | Suite_ECDHE_ECDSA_CHACHA20_SHA256 =>
+               Suite_CHACHA20_POLY1305_SHA256,
+         when others => 0)
+   with Ghost;
+
+   --  ClientHello cipher suite list covers the version policy.
+   --  A ClientHello that only offers TLS 1.3 suites will be rejected
+   --  by TLS 1.2-only servers.
+   function Suites_Cover_Policy
+     (Has_TLS13_Suite : Boolean;
+      Has_TLS12_Suite : Boolean;
+      Policy          : Version_Policy) return Boolean is
+     (case Policy is
+         when Allow_Both    => Has_TLS13_Suite and Has_TLS12_Suite,
+         when TLS_1_3_Only  => Has_TLS13_Suite,
+         when TLS_1_2_Only  => Has_TLS12_Suite)
    with Ghost;
 
    --================================================================

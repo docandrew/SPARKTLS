@@ -67,8 +67,15 @@ is
    --  a given role are simply never entered.
    --================================================================
 
-   --  Protocol version discriminant
+   --  Protocol version
    type TLS_Version is (TLS_1_3, TLS_1_2);
+
+   --  Version policy — controls which protocol versions are offered/accepted.
+   --  Default: offer both, prefer 1.3.
+   type Version_Policy is
+     (Allow_Both,     --  Offer TLS 1.3 and 1.2; prefer 1.3 (default)
+      TLS_1_3_Only,   --  Only accept TLS 1.3; reject 1.2 clients
+      TLS_1_2_Only);  --  Only accept TLS 1.2; do not offer 1.3
 
    type Connection_State is
      (Idle,
@@ -293,6 +300,19 @@ is
       Internal_Error,
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
+
+   --  RFC 5246 §8.1 / RFC 7627: Master secret derivation invariant.
+   --  The derivation label MUST match the EMS negotiation.
+   --  Using "extended master secret" without EMS extension, or
+   --  "master secret" when EMS was negotiated, produces a
+   --  valid-looking but incompatible master secret that causes
+   --  Finished verification failure on the peer.
+   function EMS_Label_Consistent
+     (Use_EMS : Boolean;
+      Label   : String) return Boolean is
+     (if Use_EMS then Label = "extended master secret"
+      else Label = "master secret")
+   with Ghost;
 
    --  RFC 8446 §6: Error handling invariant.
    --  When entering Error_State, the implementation MUST have queued
@@ -547,6 +567,7 @@ is
       Random       : Random_Bytes_Fn := null;
       Server_Name  : Hostname_Buf;
       Skip_Verify  : Boolean         := False;  --  accept any cert
+      Versions     : Version_Policy  := Allow_Both;  --  TLS version control
 
       --  Validation settings
       Verify_Mode     : Validation_Mode := Mode_WebPKI;
@@ -674,6 +695,9 @@ is
 
       --  TLS 1.2: ClientKeyExchange already received
       CKE_Received_12 : Boolean := False;
+
+      --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
+      Use_EMS : Boolean := False;
 
       --  TLS 1.2 key material (set during Derive_Keys_12)
       Master_Secret_12   : Bytes_48 := (others => 0);
@@ -804,6 +828,27 @@ is
    --  Is decrypted application data waiting to be read?
    function Has_Plaintext (S : Session) return Boolean is
       (S.App_Data_Len > 0);
+
+   --  Which TLS version was negotiated?
+   --  Only meaningful after Handshake_Done.
+   function Get_Version (S : Session) return TLS_Version is
+      (S.Negotiated_Version);
+
+   --  Which cipher suite was negotiated? (wire value)
+   --  Only meaningful after Handshake_Done.
+   function Get_Cipher_Suite (S : Session) return Unsigned_16 is
+      (S.Negotiated_Suite);
+
+   --  Zero all key material in a Session.
+   --  Call after Close_Notify or on error to prevent key leakage.
+   --  Uses volatile writes to prevent compiler from optimizing
+   --  the zeroing away.
+   procedure Sanitize_Keys (S : in out Session)
+   with Post => S.Client_App.Key = Bytes_32'(others => 0)
+                and S.Server_App.Key = Bytes_32'(others => 0)
+                and S.Client_App.IV = Bytes_12'(others => 0)
+                and S.Server_App.IV = Bytes_12'(others => 0)
+                and S.Res_Master = Bytes_48'(others => 0);
 
    --  Read decrypted application data.
    procedure Read_Plaintext

@@ -10,6 +10,7 @@ with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
 with SPARKTLS.Records;      use SPARKTLS.Records;
 with SPARKTLS.Cert_Verify;  use SPARKTLS.Cert_Verify;
 with SPARKTLS.Handshake;
+with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.HMAC384;
 with SPARKTLS.HKDF384;
@@ -1215,6 +1216,13 @@ is
                         Handshake.Parse_Server_Hello (S, HC, Frag, Parse_OK);
 
                         if not Parse_OK then
+                           --  RFLX parser may fail on TLS 1.2 ServerHello
+                           --  (empty session_id). Try manual parse.
+                           Handshake.TLS12.Parse_Server_Hello_12
+                             (S, HC, Frag, Parse_OK);
+                        end if;
+
+                        if not Parse_OK then
                            S.Last_Error := Handshake_Failure;
                            S.State := Error_State;
                            Result := Error_Alert;
@@ -1351,6 +1359,13 @@ is
 
             if S.State = Connected or S.State = Error_State then
                S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+               --  Zero key material before freeing HC
+               S.HC_Ptr.Shared_Secret := (others => 0);
+               S.HC_Ptr.Client_HS_Secret := (others => 0);
+               S.HC_Ptr.Server_HS_Secret := (others => 0);
+               S.HC_Ptr.Handshake_Secret := (others => 0);
+               S.HC_Ptr.Master_Secret := (others => 0);
+               S.HC_Ptr.Master_Secret_12 := (others => 0);
                HC_Alloc.Free (S.HC_Ptr);
             end if;
       end case;

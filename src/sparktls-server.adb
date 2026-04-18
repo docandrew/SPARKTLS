@@ -254,6 +254,13 @@ is
 
             if S.State in Connected | Error_State | Closed then
                S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+               --  Zero key material before freeing HC
+               S.HC_Ptr.Shared_Secret := (others => 0);
+               S.HC_Ptr.Client_HS_Secret := (others => 0);
+               S.HC_Ptr.Server_HS_Secret := (others => 0);
+               S.HC_Ptr.Handshake_Secret := (others => 0);
+               S.HC_Ptr.Master_Secret := (others => 0);
+               S.HC_Ptr.Master_Secret_12 := (others => 0);
                HC_Alloc.Free (S.HC_Ptr);
             end if;
       end case;
@@ -354,27 +361,48 @@ is
 
                   --  Version negotiation: dispatch based on HC.Version
                   --  (set by Parse_Client_Hello from supported_versions)
-                  if HC.Version = TLS_1_3 then
-                     --  TLS 1.3 requires a TLS 1.3 cipher suite
-                     --  and at least one supported ECDHE group
-                     if S.Negotiated_Suite = 0 or else
-                        not (HC.Client_Has_X25519 or
-                             HC.Client_Has_P256 or
-                             HC.Client_Has_P384)
-                     then
+                  --  and the configured Version_Policy.
+                  declare
+                     Policy : constant Version_Policy := HC.Cfg.Versions;
+                     Want_13 : constant Boolean :=
+                        HC.Version = TLS_1_3
+                        and Policy /= TLS_1_2_Only;
+                     Want_12 : constant Boolean :=
+                        (HC.Version = TLS_1_2
+                         or (HC.Version = TLS_1_3
+                             and Policy = TLS_1_2_Only))
+                        and Policy /= TLS_1_3_Only;
+                  begin
+                     if Want_13 then
+                        --  TLS 1.3 requires a TLS 1.3 cipher suite
+                        --  and at least one supported ECDHE group
+                        if S.Negotiated_Suite = 0 or else
+                           not (HC.Client_Has_X25519 or
+                                HC.Client_Has_P256 or
+                                HC.Client_Has_P384)
+                        then
+                           if Want_12 and S.Negotiated_Suite_12 /= 0 then
+                              --  Fall back to TLS 1.2
+                              HC.Version := TLS_1_2;
+                              SPARKTLS.Server.TLS12.Build_Server_Flight_12
+                                (S, HC, Result);
+                           else
+                              Send_Alert_And_Error
+                                (S, Handshake_Failure, Result);
+                           end if;
+                        else
+                           Build_Server_Flight (S, HC, Result);
+                        end if;
+                     elsif Want_12 and S.Negotiated_Suite_12 /= 0 then
+                        HC.Version := TLS_1_2;
+                        SPARKTLS.Server.TLS12.Build_Server_Flight_12
+                          (S, HC, Result);
+                     else
+                        --  No matching version/suite
                         Send_Alert_And_Error
                           (S, Handshake_Failure, Result);
-                        return;
                      end if;
-                     Build_Server_Flight (S, HC, Result);
-                  elsif S.Negotiated_Suite_12 /= 0 then
-                     SPARKTLS.Server.TLS12.Build_Server_Flight_12
-                       (S, HC, Result);
-                  else
-                     --  No matching suite for either version
-                     Send_Alert_And_Error
-                       (S, Handshake_Failure, Result);
-                  end if;
+                  end;
                end;
             end;
 

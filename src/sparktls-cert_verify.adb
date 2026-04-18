@@ -1038,4 +1038,178 @@ is
          Mode     => Mode);
    end Validate_Chain;
 
+   ------------------------------------------------------------------
+   --  Verify_Signature: verify a raw signature against a cert's pubkey.
+   --
+   --  1. Hash the Data with the algorithm implied by Sig_Scheme
+   --  2. Extract the public key from Cert
+   --  3. Verify using RSA-PSS, ECDSA, or Ed25519
+   ------------------------------------------------------------------
+
+   function Verify_Signature
+     (Data       : Byte_Seq;
+      Sig        : Byte_Seq;
+      Cert       : X509.Certificate;
+      Sig_Scheme : Unsigned_16) return Boolean
+   is
+      PK_Algo : constant X509.Algorithm_ID := X509.PK_Algorithm (Cert);
+      PK_Data : constant X509.Byte_Seq := X509.PK_Data (Cert);
+      PK_Len  : constant X509.N32 := X509.PK_Length (Cert);
+      Sig_Len : constant N32 := N32 (Sig'Length);
+   begin
+      if PK_Len = 0 then return False; end if;
+
+      case Sig_Scheme is
+
+         --  RSA-PSS-SHA256 (0x0804) or RSA-PKCS1-SHA256 (0x0401)
+         when 16#0804# | 16#0401# =>
+            if PK_Algo /= X509.Algo_RSA then return False; end if;
+            if PK_Len < 64 or PK_Len > X509.N32 (RSA.Max_RSA_Bytes) then
+               return False;
+            end if;
+            declare
+               H : SPARKNaCl.Hashing.SHA256.Digest;
+               Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
+               Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1) := (others => 0);
+            begin
+               SPARKNaCl.Hashing.SHA256.Hash (H, Data);
+               for I in N32 range 0 .. N32 (PK_Len) - 1 loop
+                  Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
+               end loop;
+               Sig_Bytes := Sig;
+               return RSA.Verify_PSS_SHA256
+                 (Hash      => Bytes_32 (Byte_Seq (H)),
+                  Modulus   => Mod_Bytes,
+                  Mod_Len   => N32 (PK_Len),
+                  Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
+                  Signature => Sig_Bytes,
+                  Sig_Len   => Sig_Len);
+            end;
+
+         --  RSA-PSS-SHA384 (0x0805) or RSA-PKCS1-SHA384 (0x0501)
+         when 16#0805# | 16#0501# =>
+            if PK_Algo /= X509.Algo_RSA then return False; end if;
+            if PK_Len < 64 or PK_Len > X509.N32 (RSA.Max_RSA_Bytes) then
+               return False;
+            end if;
+            declare
+               H : SPARKNaCl.Hashing.SHA384.Digest;
+               Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
+               Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1) := (others => 0);
+            begin
+               SPARKNaCl.Hashing.SHA384.Hash (H, Data);
+               for I in N32 range 0 .. N32 (PK_Len) - 1 loop
+                  Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
+               end loop;
+               Sig_Bytes := Sig;
+               return RSA.Verify_PSS_SHA384
+                 (Hash      => Bytes_48 (Byte_Seq (H)),
+                  Modulus   => Mod_Bytes,
+                  Mod_Len   => N32 (PK_Len),
+                  Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
+                  Signature => Sig_Bytes,
+                  Sig_Len   => Sig_Len);
+            end;
+
+         --  ECDSA-P256-SHA256 (0x0403)
+         when 16#0403# =>
+            if PK_Algo /= X509.Algo_EC_P256 then return False; end if;
+            if PK_Len /= 65 then return False; end if;
+            declare
+               H     : SPARKNaCl.Hashing.SHA256.Digest;
+               Qx    : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
+               Qy    : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
+               R_Val : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
+               S_Val : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
+               DER_OK : Boolean;
+            begin
+               SPARKNaCl.Hashing.SHA256.Hash (H, Data);
+               --  Extract public key (skip 0x04 uncompressed prefix)
+               for I in 0 .. 31 loop
+                  Qx (N32 (I)) := Byte (PK_Data (X509.N32 (I + 1)));
+                  Qy (N32 (I)) := Byte (PK_Data (X509.N32 (I + 33)));
+               end loop;
+               --  Parse DER signature into r, s
+               declare
+                  X_Sig : X509.Byte_Seq (0 .. X509.N32 (Sig_Len) - 1);
+               begin
+                  for I in N32 range 0 .. Sig_Len - 1 loop
+                     X_Sig (X509.N32 (I)) := X509.Byte (Sig (I));
+                  end loop;
+                  Parse_DER_ECDSA_Sig (X_Sig,
+                                       Byte_Seq (R_Val), Byte_Seq (S_Val),
+                                       DER_OK);
+               end;
+               if not DER_OK then return False; end if;
+               return P256.ECDSA.Verify
+                 (Hash => H,
+                  Qx   => P256.ECDSA.ECDSA_Sig_Half (Qx),
+                  Qy   => P256.ECDSA.ECDSA_Sig_Half (Qy),
+                  R    => R_Val,
+                  S    => S_Val);
+            end;
+
+         --  ECDSA-P384-SHA384 (0x0503)
+         when 16#0503# =>
+            if PK_Algo /= X509.Algo_EC_P384 then return False; end if;
+            if PK_Len /= 97 then return False; end if;
+            declare
+               H     : SPARKNaCl.Hashing.SHA384.Digest;
+               Qx    : Byte_Seq (0 .. 47) := (others => 0);
+               Qy    : Byte_Seq (0 .. 47) := (others => 0);
+               R_Val : Byte_Seq (0 .. 47) := (others => 0);
+               S_Val : Byte_Seq (0 .. 47) := (others => 0);
+               DER_OK : Boolean;
+            begin
+               SPARKNaCl.Hashing.SHA384.Hash (H, Data);
+               for I in 0 .. 47 loop
+                  Qx (N32 (I)) := Byte (PK_Data (X509.N32 (I + 1)));
+                  Qy (N32 (I)) := Byte (PK_Data (X509.N32 (I + 49)));
+               end loop;
+               declare
+                  X_Sig : X509.Byte_Seq (0 .. X509.N32 (Sig_Len) - 1);
+               begin
+                  for I in N32 range 0 .. Sig_Len - 1 loop
+                     X_Sig (X509.N32 (I)) := X509.Byte (Sig (I));
+                  end loop;
+                  Parse_DER_ECDSA_Sig (X_Sig, R_Val, S_Val, DER_OK);
+               end;
+               if not DER_OK then return False; end if;
+               return P384.ECDSA.Verify
+                 (Hash => Bytes_48 (Byte_Seq (H)),
+                  Qx   => Qx,
+                  Qy   => Qy,
+                  R    => R_Val,
+                  S    => S_Val);
+            end;
+
+         --  Ed25519 (0x0807)
+         when 16#0807# =>
+            if PK_Algo /= X509.Algo_Ed25519 then return False; end if;
+            if PK_Len /= 32 or Sig_Len /= 64 then return False; end if;
+            declare
+               SM_Len    : constant N32 := 64 + N32 (Data'Length);
+               SM        : Byte_Seq (0 .. SM_Len - 1);
+               M         : Byte_Seq (0 .. SM_Len - 1);
+               PK_Bytes  : Bytes_32;
+               CV_PK     : SPARKNaCl.Sign.Signing_PK;
+               OK        : Boolean;
+               Len       : I32;
+            begin
+               SM (0 .. 63) := Sig;
+               SM (64 .. SM_Len - 1) := Data;
+               for I in 0 .. 31 loop
+                  PK_Bytes (N32 (I)) := Byte (PK_Data (X509.N32 (I)));
+               end loop;
+               SPARKNaCl.Sign.PK_From_Bytes (PK_Bytes, CV_PK);
+               SPARKNaCl.Sign.Open (M, OK, Len, SM, CV_PK);
+               return OK;
+            end;
+
+         when others =>
+            return False;
+
+      end case;
+   end Verify_Signature;
+
 end SPARKTLS.Cert_Verify;

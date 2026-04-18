@@ -106,9 +106,9 @@ is
          (4 + KS_Data_Len) + (4 + PSK_Data_Len) + (4 + SV_Data_Len);
 
       --  ClientHello body: version(2) + random(32) + sid_len(1) + sid(32)
-      --  + suites_len(2) + suites(6) + comp_len(1) + comp(1)
+      --  + suites_len(2) + suites(12) + comp_len(1) + comp(1)
       --  + ext_len(2) + extensions
-      CH_Body_Len : constant N32 := 79 + Ext_Total;
+      CH_Body_Len : constant N32 := 85 + Ext_Total;
       CH_Msg_Len  : constant N32 := 4 + CH_Body_Len;
 
       Buf      : RBT.Bytes_Ptr;
@@ -163,10 +163,11 @@ is
       Set_Legacy_Session_ID_Length (Ctx, 32);
       Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       --  TLS version routes past cookie fields to cipher_suites_length
+      --  6 suites: 3 TLS 1.3 + 3 TLS 1.2 ECDHE-AEAD = 12 bytes
       Set_Cipher_Suites_Length
-        (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (6));
+        (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (12));
 
-      --  Build cipher suite sequence (3 suites)
+      --  Build cipher suite sequence
       declare
          Suites_Ctx : RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
       begin
@@ -211,6 +212,51 @@ is
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
               (S_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384);
+            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
+              (Suites_Ctx, S_Ctx);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
+         end;
+
+         --  Suite 4: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (0xC02F)
+         declare
+            S_Buf : RBT.Bytes_Ptr;
+            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+         begin
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
+              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
+              (Suites_Ctx, S_Ctx);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
+         end;
+
+         --  Suite 5: TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 (0xC030)
+         declare
+            S_Buf : RBT.Bytes_Ptr;
+            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+         begin
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
+              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
+            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
+              (Suites_Ctx, S_Ctx);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
+         end;
+
+         --  Suite 6: TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 (0xCCA8)
+         declare
+            S_Buf : RBT.Bytes_Ptr;
+            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+         begin
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
+              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
             RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
               (Suites_Ctx, S_Ctx);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);

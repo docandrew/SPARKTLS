@@ -98,6 +98,9 @@ begin
    --  Main handshake + data loop
    Handshake_Loop : loop
       SPARKTLS.Client.Advance (S, Res);
+      Put_Line ("  Advance: state=" & S.State'Image &
+         " res=" & SPARKTLS.Action'Image (Res) &
+         " ver=" & SPARKTLS.TLS_Version'Image (SPARKTLS.Get_Version (S)));
 
       case Res is
          when SPARKTLS.Has_Output =>

@@ -70,24 +70,41 @@ is
       Shared_Len : constant N32 :=
          (if HC.Selected_Group = Group_Secp384r1 then 48 else 32);
    begin
-      --  RFC 7627: Extended Master Secret
-      declare
-         TH     : Digest;
-         TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
-      begin
-         if Use_384 then
-            SPARKNaCl.Hashing.SHA384.Hash
-              (TH_384, HC.Transcript (0 .. HC.Transcript_Len - 1));
-            PRF_SHA384 (Byte_Seq (HC.Master_Secret_12),
-                        HC.Shared_Secret (0 .. Shared_Len - 1),
-                        "extended master secret", Byte_Seq (TH_384));
-         else
-            Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
-            PRF_SHA256 (Byte_Seq (HC.Master_Secret_12),
-                        HC.Shared_Secret (0 .. Shared_Len - 1),
-                        "extended master secret", Byte_Seq (TH));
-         end if;
-      end;
+      --  Master secret derivation
+      --  Verify EMS label consistency at compile/prove time
+      pragma Assert
+        (EMS_Label_Consistent (True, "extended master secret"));
+      pragma Assert
+        (EMS_Label_Consistent (False, "master secret"));
+
+      if HC.Use_EMS then
+         --  RFC 7627: Extended Master Secret
+         --  master_secret = PRF(pms, "extended master secret", Hash(hs_msgs))
+         declare
+            TH     : Digest;
+            TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
+         begin
+            if Use_384 then
+               SPARKNaCl.Hashing.SHA384.Hash
+                 (TH_384, HC.Transcript (0 .. HC.Transcript_Len - 1));
+               PRF_SHA384 (Byte_Seq (HC.Master_Secret_12),
+                           HC.Shared_Secret (0 .. Shared_Len - 1),
+                           "extended master secret", Byte_Seq (TH_384));
+            else
+               Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+               PRF_SHA256 (Byte_Seq (HC.Master_Secret_12),
+                           HC.Shared_Secret (0 .. Shared_Len - 1),
+                           "extended master secret", Byte_Seq (TH));
+            end if;
+         end;
+      else
+         --  RFC 5246 §8.1: Standard master secret
+         --  master_secret = PRF(pms, "master secret", CR || SR)
+         Key_Schedule_12.Derive_Master_Secret_12
+           (HC.Master_Secret_12,
+            HC.Shared_Secret (0 .. Shared_Len - 1),
+            HC.Client_Random, HC.Server_Random, Use_384);
+      end if;
 
       Expand_Keys_12 (CK, SK, CI, SI, HC.Master_Secret_12,
                        HC.Server_Random, HC.Client_Random, Key_Len, Use_384);
@@ -102,6 +119,9 @@ is
                   | Suite_ECDHE_ECDSA_AES256_GCM_SHA384 =>
                      Suite_AES_256_GCM_SHA384,
                when others => Suite_CHACHA20_POLY1305_SHA256);
+         pragma Assert
+           (Int_Suite = Handshake.TLS12.Internal_Suite_For
+                          (S.Negotiated_Suite));
       begin
          S.Client_App := (Key => (others => 0), IV => (others => 0),
                           Counter => 0, Suite => Int_Suite);
@@ -413,7 +433,6 @@ is
             declare
                Exp : Verify_Data_12;
                TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
-               Match : Boolean := True;
             begin
                if Use_384 then
                   SPARKNaCl.Hashing.SHA384.Hash
@@ -428,14 +447,19 @@ is
                                        Byte_Seq (TH), False);
                end if;
 
-               for I in N32 range 0 .. Finished_Verify_Len - 1 loop
-                  if Plaintext (4 + I) /= Exp (I) then Match := False; end if;
-               end loop;
-
-               if not Match then
-                  Send_Alert_And_Error (S, Handshake_Failure, Result);
-                  return;
-               end if;
+               --  Constant-time comparison (prevents timing attacks)
+               declare
+                  Received : constant Verify_Data_12 :=
+                     Verify_Data_12
+                       (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
+               begin
+                  if not Equal (Byte_Seq (Received),
+                                Byte_Seq (Exp))
+                  then
+                     Send_Alert_And_Error (S, Handshake_Failure, Result);
+                     return;
+                  end if;
+               end;
             end;
          end;
       end;

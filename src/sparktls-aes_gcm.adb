@@ -299,7 +299,9 @@ is
       Computed_Tag := S;
       XOR_Block (Computed_Tag, EJ0);
 
-      if Computed_Tag /= Tag then
+      --  Constant-time tag comparison (prevents timing oracle
+      --  that would allow tag forgery detection)
+      if not Equal (Byte_Seq (Computed_Tag), Byte_Seq (Tag)) then
          return;
       end if;
 
@@ -375,7 +377,8 @@ is
       Computed_Tag := S;
       XOR_Block (Computed_Tag, EJ0);
 
-      if Computed_Tag /= Tag then
+      --  Constant-time tag comparison
+      if not Equal (Byte_Seq (Computed_Tag), Byte_Seq (Tag)) then
          return;
       end if;
 

@@ -137,4 +137,25 @@ is
       Bytes_Read := Count;
    end Read_Plaintext;
 
+   procedure Sanitize_Keys (S : in out Session) is
+   begin
+      --  Zero traffic keys (both directions)
+      S.Client_App.Key := (others => 0);
+      S.Client_App.IV  := (others => 0);
+      S.Client_App.Counter := 0;
+      S.Server_App.Key := (others => 0);
+      S.Server_App.IV  := (others => 0);
+      S.Server_App.Counter := 0;
+
+      --  Zero resumption master secret
+      S.Res_Master     := (others => 0);
+      S.Res_Master_Len := 0;
+
+      --  Zero TLS 1.2 implicit IVs
+      S.Client_IV_12 := (others => 0);
+      S.Server_IV_12 := (others => 0);
+      S.Client_Seq_12 := 0;
+      S.Server_Seq_12 := 0;
+   end Sanitize_Keys;
+
 end SPARKTLS;

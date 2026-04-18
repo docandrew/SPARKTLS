@@ -152,6 +152,9 @@ is
       Shared_Len : constant N32 :=
          (if HC.Selected_Group = Group_Secp384r1 then 48 else 32);
    begin
+      --  Server always uses EMS (we signal it in ServerHello)
+      pragma Assert (EMS_Label_Consistent (True, "extended master secret"));
+
       --  RFC 7627: Extended Master Secret
       declare
          TH     : Digest;
@@ -185,6 +188,11 @@ is
                      Suite_AES_256_GCM_SHA384,
                when others => Suite_CHACHA20_POLY1305_SHA256);
       begin
+         --  Verify the mapping matches the ghost function
+         pragma Assert
+           (Int_Suite = Handshake.TLS12.Internal_Suite_For
+                          (S.Negotiated_Suite));
+
          S.Client_App := (Key => (others => 0), IV => (others => 0),
                           Counter => 0, Suite => Int_Suite);
          S.Client_App.Key (0 .. Key_Len - 1) := CK;
@@ -406,12 +414,15 @@ is
                                        Byte_Seq (TH), False);
                end if;
 
-               declare OK : Boolean := True;
+               --  Constant-time comparison (prevents timing attacks
+               --  on the verify_data). SPARKNaCl.Equal uses XOR
+               --  accumulation — no early exit on mismatch.
+               declare
+                  Received : constant Key_Schedule_12.Verify_Data_12 :=
+                     Key_Schedule_12.Verify_Data_12
+                       (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
                begin
-                  for I in N32 range 0 .. Finished_Verify_Len - 1 loop
-                     if Plaintext (4 + I) /= Exp (I) then OK := False; end if;
-                  end loop;
-                  if not OK then
+                  if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
                      Send_Alert_And_Error (S, Handshake_Failure, Result);
                      return;
                   end if;

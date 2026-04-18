@@ -10,6 +10,7 @@ with SPARKTLS.P256.ECDSA;
 with SPARKTLS.P384.Point;
 with SPARKTLS.P384.ECDSA;
 with SPARKTLS.RSA;
+with SPARKTLS.Cert_Verify;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.RFLX_Bridge;      use SPARKTLS.RFLX_Bridge;
 with RFLX.RFLX_Builtin_Types;
@@ -378,14 +379,154 @@ is
    --  Parse_Server_Key_Exchange (RFC 8422 §5.4)
    ------------------------------------------------------------------
 
+   ------------------------------------------------------------------
+   --  Parse_Server_Key_Exchange (RFC 8422 §5.4)
+   --
+   --  Data is the handshake body (after 4-byte HS header).
+   --  Wire format:
+   --    curve_type[1] = 0x03 (named_curve)
+   --    named_curve[2]
+   --    point_len[1]
+   --    point[point_len]
+   --    sig_hash_alg[1] || sig_alg[1] || sig_len[2] || sig[sig_len]
+   --
+   --  Extracts: group, server's ephemeral ECDHE pubkey.
+   --  TODO: verify signature over client_random || server_random || params
+   ------------------------------------------------------------------
+
    procedure Parse_Server_Key_Exchange
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
+      B   : constant N32 := Data'First;
+      Pos : N32 := B;
+      Curve : Unsigned_16;
+      Pt_Len : N32;
    begin
       OK := False;
-      raise Program_Error with "Parse_Server_Key_Exchange not yet implemented";
+
+      --  Minimum: curve_type(1) + curve(2) + pt_len(1) + pt(1) +
+      --           sig_hash(1) + sig_alg(1) + sig_len(2) = 9
+      if N32 (Data'Length) < 9 then return; end if;
+
+      --  curve_type must be 0x03 (named_curve)
+      if Data (Pos) /= EC_Curve_Type_Named then return; end if;
+      Pos := Pos + 1;
+
+      --  named_curve (2 bytes)
+      Curve := Unsigned_16 (Data (Pos)) * 256 +
+               Unsigned_16 (Data (Pos + 1));
+      Pos := Pos + 2;
+
+      --  Validate curve is one we support
+      if not Valid_ECDHE_Group (Curve) then return; end if;
+      HC.Selected_Group := Curve;
+
+      --  point_len
+      Pt_Len := N32 (Data (Pos));
+      Pos := Pos + 1;
+
+      --  Validate point_len matches expected for this curve
+      if Pt_Len /= Point_Len_For_Group (Curve) then return; end if;
+
+      --  Check we have enough data for point + signature header
+      if Pos + Pt_Len + 4 > B + N32 (Data'Length) then return; end if;
+
+      --  Extract server's ephemeral public key
+      case Curve is
+         when Group_X25519 =>
+            for I in N32 range 0 .. 31 loop
+               HC.Peer_PK (I) := Data (Pos + I);
+            end loop;
+
+         when Group_Secp256r1 =>
+            for I in N32 range 0 .. 64 loop
+               HC.P256_Peer_PK (I) := Data (Pos + I);
+            end loop;
+            HC.Use_P256_KE := True;
+
+         when Group_Secp384r1 =>
+            for I in N32 range 0 .. 96 loop
+               HC.P384_Peer_PK (I) := Data (Pos + I);
+            end loop;
+            HC.Use_P384_KE := True;
+
+         when others =>
+            return;
+      end case;
+
+      Pos := Pos + Pt_Len;
+
+      --  Parse signature: hash_alg[1] || sig_alg[1] || sig_len[2] || sig[N]
+      --  We store the sig algo for reference but skip full verification
+      --  for now (TODO: verify signature over client_random || server_random || params)
+      --  Verify signature over client_random || server_random || params
+      --  RFC 5246 §7.4.3: This prevents MITM substitution of the ECDHE pubkey.
+      declare
+         Sig_Hash_Alg : constant Byte := Data (Pos);
+         Sig_Sig_Alg  : constant Byte := Data (Pos + 1);
+         Sig_Len      : constant N32 :=
+            N32 (Data (Pos + 2)) * 256 + N32 (Data (Pos + 3));
+
+         --  params = curve_type(1) + named_curve(2) + point_len(1) + point(N)
+         Params_Len : constant N32 := 4 + Pt_Len;
+
+         --  signed_data = client_random[32] || server_random[32] || params
+         Sig_Input_Len : constant N32 := 64 + Params_Len;
+         Sig_Input : Byte_Seq (0 .. Sig_Input_Len - 1) := (others => 0);
+
+         Sig_OK : Boolean := False;
+      begin
+         Pos := Pos + 4;
+
+         --  Verify we have enough data for the signature
+         if Pos + Sig_Len > B + N32 (Data'Length) then return; end if;
+
+         --  Build signed data: client_random || server_random || params
+         Sig_Input (0 .. 31)  := Byte_Seq (HC.Client_Random);
+         Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
+         --  params starts at Data(B) = curve_type
+         Sig_Input (64 .. 64 + Params_Len - 1) :=
+            Data (B .. B + Params_Len - 1);
+
+         --  Verify the signature using the server's certificate public key.
+         --  RFC 5246 §7.4.3: The signature covers
+         --    client_random || server_random || params
+         --  Not verifying allows MITM to substitute the ECDHE pubkey.
+         --
+         --  Map TLS 1.2 split hash/sig algorithm to SignatureScheme:
+         --    hash=4(SHA256), sig=1(RSA) → 0x0401 (rsa_pkcs1_sha256)
+         --    hash=4(SHA256), sig=3(ECDSA) → 0x0403 (ecdsa_secp256r1_sha256)
+         --    hash=8, sig=4 → 0x0804 (rsa_pss_rsae_sha256)
+         --    hash=5(SHA384), sig=3(ECDSA) → 0x0503 (ecdsa_secp384r1_sha384)
+         declare
+            Scheme : constant Unsigned_16 :=
+               Unsigned_16 (Sig_Hash_Alg) * 256 +
+               Unsigned_16 (Sig_Sig_Alg);
+            Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1) := (others => 0);
+         begin
+            for I in N32 range 0 .. Sig_Len - 1 loop
+               Sig_Bytes (I) := Data (Pos + I);
+            end loop;
+
+            if HC.Peer_Cert_Valid then
+               Sig_OK := Cert_Verify.Verify_Signature
+                 (Data       => Sig_Input,
+                  Sig        => Sig_Bytes,
+                  Cert       => HC.Peer_Cert,
+                  Sig_Scheme => Scheme);
+            else
+               Sig_OK := HC.Cfg.Skip_Verify;
+            end if;
+         end;
+
+         if not Sig_OK and not HC.Cfg.Skip_Verify then
+            return;
+         end if;
+      end;
+
+      OK := True;
    end Parse_Server_Key_Exchange;
 
    ------------------------------------------------------------------
@@ -774,15 +915,117 @@ is
       Len := SH_Msg_Len;
    end Build_Server_Hello_12;
 
+   ------------------------------------------------------------------
+   --  Parse_Server_Hello_12: Manual TLS 1.2 ServerHello parser.
+   --
+   --  Wire format (after 4-byte HS header):
+   --    version[2] + random[32] + session_id_len[1] +
+   --    session_id[0..32] + cipher_suite[2] + compression[1] +
+   --    extensions_length[2] + extensions[...]
+   --
+   --  Handles empty session_id (length=0), which RFLX parser rejects.
+   ------------------------------------------------------------------
+
    procedure Parse_Server_Hello_12
      (S    : in out Session;
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
+      B   : constant N32 := Data'First;
+      Pos : N32;
+      SID_Len : N32;
    begin
       OK := False;
-      raise Program_Error with "Parse_Server_Hello_12 not yet implemented";
+
+      --  Minimum: type(1) + len(3) + version(2) + random(32) +
+      --  sid_len(1) + suite(2) + comp(1) = 42
+      if N32 (Data'Length) < 42 then return; end if;
+
+      --  Check handshake type
+      if Data (B) /= 16#02# then return; end if;
+
+      --  Skip 4-byte header
+      Pos := B + 4;
+
+      --  Version: must be 0x0303
+      if Data (Pos) /= 3 or Data (Pos + 1) /= 3 then return; end if;
+      Pos := Pos + 2;
+
+      --  Random (32 bytes)
+      for I in N32 range 0 .. 31 loop
+         HC.Server_Random (I) := Data (Pos + I);
+      end loop;
+      Pos := Pos + 32;
+
+      --  Session ID length
+      SID_Len := N32 (Data (Pos));
+      Pos := Pos + 1;
+      if SID_Len > 32 or Pos + SID_Len + 3 > N32 (Data'Length) + B then
+         return;
+      end if;
+
+      --  Session ID (may be empty)
+      HC.Legacy_Session_ID := (others => 0);
+      for I in N32 range 0 .. SID_Len - 1 loop
+         HC.Legacy_Session_ID (I) := Data (Pos + I);
+      end loop;
+      Pos := Pos + SID_Len;
+
+      --  Cipher suite (2 bytes)
+      declare
+         Suite_Val : constant Unsigned_16 :=
+            Unsigned_16 (Data (Pos)) * 256 + Unsigned_16 (Data (Pos + 1));
+      begin
+         if Suite_Val not in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                           | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                           | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                           | Suite_ECDHE_RSA_CHACHA20_SHA256
+                           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+         then
+            return;
+         end if;
+         S.Negotiated_Suite := Suite_Val;
+      end;
+      Pos := Pos + 2;
+
+      --  Compression method (must be 0)
+      if Data (Pos) /= 0 then return; end if;
+      Pos := Pos + 1;
+
+      --  Parse extensions (look for extended_master_secret = 0x0017)
+      HC.Use_EMS := False;
+      if Pos + 2 <= B + N32 (Data'Length) then
+         declare
+            Ext_Len : constant N32 :=
+               N32 (Data (Pos)) * 256 + N32 (Data (Pos + 1));
+            Ext_End : constant N32 := Pos + 2 + Ext_Len;
+            EP : N32 := Pos + 2;
+         begin
+            while EP + 4 <= Ext_End loop
+               declare
+                  Ext_Type : constant Unsigned_16 :=
+                     Unsigned_16 (Data (EP)) * 256 +
+                     Unsigned_16 (Data (EP + 1));
+                  Ext_DLen : constant N32 :=
+                     N32 (Data (EP + 2)) * 256 + N32 (Data (EP + 3));
+               begin
+                  if Ext_Type = 16#0017# then
+                     --  extended_master_secret (RFC 7627)
+                     HC.Use_EMS := True;
+                  end if;
+                  EP := EP + 4 + Ext_DLen;
+               end;
+            end loop;
+         end;
+      end if;
+
+      --  No supported_versions → TLS 1.2
+      HC.Has_TLS_1_3 := False;
+      HC.Version := TLS_1_2;
+
+      OK := True;
    end Parse_Server_Hello_12;
 
    ------------------------------------------------------------------

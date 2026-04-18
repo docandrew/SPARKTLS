@@ -329,17 +329,17 @@ is
       --  extract the content type byte. The remaining bytes are the
       --  actual plaintext. If no non-zero byte is found, the record
       --  is invalid (zero-length inner plaintext).
+      --  Constant-time padding removal: scan ALL bytes to find
+      --  the last non-zero byte (content type). No early exit —
+      --  prevents timing leaks of the padding length.
       declare
          Last_Nonzero : N32 := 0;
          Found        : Boolean := False;
       begin
-         for I in reverse 0 .. Cipher_Len - 1 loop
-            pragma Loop_Invariant
-              (not Found and then Last_Nonzero = 0);
+         for I in N32 range 0 .. Cipher_Len - 1 loop
             if Decrypted (I) /= 0 then
                Last_Nonzero := I;
                Found := True;
-               exit;
             end if;
          end loop;
 

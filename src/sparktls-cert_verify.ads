@@ -134,6 +134,33 @@ is
       Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
    with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last;
 
+   --  Verify a raw signature against a certificate's public key.
+   --
+   --  Used for:
+   --    TLS 1.2 ServerKeyExchange: Data = client_random || server_random || params
+   --    TLS 1.3 CertificateVerify: Data = 64*0x20 || context || 0x00 || hash
+   --
+   --  Sig_Scheme: the TLS 1.3 SignatureScheme (2-byte wire value), e.g.:
+   --    0x0804 = rsa_pss_rsae_sha256
+   --    0x0403 = ecdsa_secp256r1_sha256
+   --    0x0503 = ecdsa_secp384r1_sha384
+   --    0x0807 = ed25519
+   --
+   --  For TLS 1.2 split format (hash_alg || sig_alg), the caller
+   --  maps to the equivalent SignatureScheme before calling.
+   --
+   --  Returns True if the signature is valid.
+   function Verify_Signature
+     (Data       : Byte_Seq;
+      Sig        : Byte_Seq;
+      Cert       : X509.Certificate;
+      Sig_Scheme : Unsigned_16) return Boolean
+   with Pre => Data'First = 0
+               and Data'Last < N32'Last
+               and Sig'First = 0
+               and Sig'Length > 0
+               and Sig'Last < N32'Last;
+
    --================================================================
    --  Credential loading helpers
    --
