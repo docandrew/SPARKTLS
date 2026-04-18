@@ -785,15 +785,23 @@ is
       RI_Data_Len : constant := 1;
 
       --  Extended master secret (0x0017): no data (empty extension)
-      --  RFC 7627: prevents triple handshake MITM
       EMS_Data_Len : constant := 0;
 
-      --  Extensions total:
-      --  reneg_info:  tag(2) + len(2) + data(1) = 5
-      --  ext_master:  tag(2) + len(2) + data(0) = 4
-      --  Total = 9
+      --  ALPN (0x0010): if client offered and server configured
+      --  Data: list_len(2) + proto_len(1) + proto(N)
+      ALPN_Match : constant Boolean :=
+         HC.Client_ALPN.Len > 0
+         and then HC.Cfg.ALPN.Len > 0
+         and then HC.Client_ALPN.Data (1 .. HC.Client_ALPN.Len) =
+                  HC.Cfg.ALPN.Data (1 .. HC.Cfg.ALPN.Len);
+      ALPN_Data_Len : constant N32 :=
+         (if ALPN_Match then N32 (3 + HC.Cfg.ALPN.Len) else 0);
+      ALPN_Ext_Len : constant N32 :=
+         (if ALPN_Match then 4 + ALPN_Data_Len else 0);
+
+      --  Extensions total
       Ext_Total   : constant N32 :=
-         (4 + RI_Data_Len) + (4 + EMS_Data_Len);
+         (4 + RI_Data_Len) + (4 + EMS_Data_Len) + ALPN_Ext_Len;
 
       --  ServerHello body size:
       --  version(2) + random(32) + sid_len(1) + sid(32) + suite(2) + comp(1) + ext_len(2)
@@ -889,6 +897,48 @@ is
               (Ext_Ctx, Ext_Buf);
             RFLX_Free_SH (Ext_Buf);
          end;
+
+         --  ALPN (0x0010) — if client offered and server matches
+         if ALPN_Match then
+            declare
+               Ext_Buf : RBT.Bytes_Ptr;
+               Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+               ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
+                             := (others => 0);
+               PL : constant Natural := HC.Cfg.ALPN.Len;
+            begin
+               --  list_len(2) + proto_len(1) + proto(N)
+               ALPN_Raw (0) := Byte ((PL + 1) / 256);
+               ALPN_Raw (1) := Byte ((PL + 1) mod 256);
+               ALPN_Raw (2) := Byte (PL);
+               for I in 1 .. PL loop
+                  ALPN_Raw (N32 (2 + I)) :=
+                     Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
+               end loop;
+
+               Ext_Buf := new RBT.Bytes'
+                  (1 .. RBT.Index (4 + ALPN_Data_Len) => 0);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
+                  (Ext_Ctx, Ext_Buf);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
+                  (Ext_Ctx,
+                   RFLX.Tls_Extensiontype_Values
+                     .Application_Layer_Protocol_Negotiation);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
+                  (Ext_Ctx,
+                   RFLX.TLS_Handshake.Data_Length (ALPN_Data_Len));
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
+                  (Ext_Ctx, To_RFLX (ALPN_Raw));
+               RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
+                  (Exts_Ctx, Ext_Ctx);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
+                  (Ext_Ctx, Ext_Buf);
+               RFLX_Free_SH (Ext_Buf);
+
+               --  Store negotiated ALPN in session
+               S.Negotiated_ALPN := HC.Cfg.ALPN;
+            end;
+         end if;
 
          Update_Extensions_TLS (Ctx, Exts_Ctx);
       end;
@@ -1014,6 +1064,24 @@ is
                   if Ext_Type = 16#0017# then
                      --  extended_master_secret (RFC 7627)
                      HC.Use_EMS := True;
+
+                  elsif Ext_Type = 16#0010# and then Ext_DLen >= 4 then
+                     --  ALPN (RFC 7301)
+                     --  Format: list_len(2) + proto_len(1) + proto(N)
+                     declare
+                        PL : constant Natural :=
+                           Natural (Data (EP + 6));
+                     begin
+                        if PL > 0 and then PL <= Max_Hostname_Len
+                           and then N32 (PL + 3) <= Ext_DLen
+                        then
+                           S.Negotiated_ALPN.Len := PL;
+                           for I in 1 .. PL loop
+                              S.Negotiated_ALPN.Data (I) :=
+                                 Character'Val (Data (EP + N32 (6 + I)));
+                           end loop;
+                        end if;
+                     end;
                   end if;
                   EP := EP + 4 + Ext_DLen;
                end;

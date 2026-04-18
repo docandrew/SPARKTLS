@@ -30,4 +30,12 @@ is
       Key_PEM  : String;
       OK       : out Boolean);
 
+   --  Load trust store from a PEM file containing one or more
+   --  CA certificates (for server-side client cert validation,
+   --  or client-side server cert validation).
+   procedure Load_Trust_Store
+     (Store : out Trust_Store;
+      Path  : String;
+      OK    : out Boolean);
+
 end SPARKTLS.Credentials;

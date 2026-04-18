@@ -466,4 +466,93 @@ is
       Load_Identity_PEM (Id, Cert_Text, Key_Text, OK);
    end Load_Identity;
 
+   procedure Load_Trust_Store
+     (Store : out Trust_Store;
+      Path  : String;
+      OK    : out Boolean)
+   is
+      use type X509.N32;
+      Text : constant String := Read_File (Path);
+      --  Buffer for concatenated DER certs
+      DER_Buf  : X509.Byte_Seq (0 .. 65535) := (others => 0);
+      DER_Pos  : X509.N32 := 0;
+      Pos      : Positive;
+   begin
+      Store := (others => <>);
+      OK := False;
+
+      if Text'Length = 0 then return; end if;
+
+      --  Decode all PEM certificates and concatenate DER
+      Pos := Text'First;
+      while Pos <= Text'Last loop
+         declare
+            Begin_Marker : constant String := "-----BEGIN ";
+            End_Marker   : constant String := "-----END ";
+            Found : Boolean := False;
+         begin
+            while Pos + Begin_Marker'Length - 1 <= Text'Last loop
+               if Text (Pos .. Pos + Begin_Marker'Length - 1) =
+                  Begin_Marker
+               then
+                  Found := True;
+                  exit;
+               end if;
+               Pos := Pos + 1;
+            end loop;
+            if not Found then exit; end if;
+         end;
+
+         declare
+            R : PEM.Decode_Result;
+         begin
+            PEM.Decode (Text (Pos .. Text'Last), R);
+
+            if R.OK and then R.Label = PEM.Label_Certificate then
+               if DER_Pos + R.DER_Len <= X509.N32 (DER_Buf'Last) + 1 then
+                  for I in X509.N32 range 0 .. R.DER_Len - 1 loop
+                     DER_Buf (DER_Pos + I) := R.DER (I);
+                  end loop;
+                  DER_Pos := DER_Pos + R.DER_Len;
+               end if;
+            end if;
+         end;
+
+         --  Skip past the END marker to find next PEM block
+         declare
+            End_Marker : constant String := "-----END ";
+            Found : Boolean := False;
+         begin
+            while Pos + End_Marker'Length - 1 <= Text'Last loop
+               if Text (Pos .. Pos + End_Marker'Length - 1) =
+                  End_Marker
+               then
+                  Found := True;
+                  --  Skip to next line
+                  while Pos <= Text'Last
+                     and then Text (Pos) /= ASCII.LF
+                  loop
+                     Pos := Pos + 1;
+                  end loop;
+                  if Pos <= Text'Last then
+                     Pos := Pos + 1;
+                  end if;
+                  exit;
+               end if;
+               Pos := Pos + 1;
+            end loop;
+            if not Found then exit; end if;
+         end;
+      end loop;
+
+      if DER_Pos > 0 then
+         declare
+            Loaded : Natural;
+         begin
+            Cert_Verify.Load_Roots (Store, DER_Buf (0 .. DER_Pos - 1),
+                                    Loaded, OK);
+         end;
+      end if;
+   end Load_Trust_Store;
+
 end SPARKTLS.Credentials;

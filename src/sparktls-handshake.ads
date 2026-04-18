@@ -114,13 +114,15 @@ is
                 and HC.Cfg.Random /= null;
 
    --  RFC 8446 §4.3.1: EncryptedExtensions.
+   --  RFC 8446 §4.3.1: Build EncryptedExtensions.
    --  Sent immediately after ServerHello (encrypted with HS keys).
-   --  Currently minimal: empty extension list.
+   --  May include ALPN extension if client offered and server matches.
    procedure Build_Encrypted_Extensions
-     (Result :    out Byte_Seq;
+     (HC     : in     Handshake_Context;
+      S      : in out Session;
+      Result :    out Byte_Seq;
       Len    :    out N32)
-   with Pre  => Result'First = 0 and N32 (Result'Length) >= 6,
-        Post => Len = 6;  --  type(1) + length(3) + ext_len(2) = 6
+   with Pre  => Result'First = 0 and Result'Last >= 255;
 
    --  Build a Certificate handshake message wrapping a DER certificate.
    procedure Build_Certificate

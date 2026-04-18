@@ -2,9 +2,7 @@ with Interfaces;                 use Interfaces;
 with SPARKNaCl.Hashing;
 with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
-with SPARKNaCl.Hashing.SHA512;
 with SPARKNaCl.MAC;              use SPARKNaCl.MAC;
-with SPARKNaCl.Sign;
 with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
 
 with SPARKTLS.Records;      use SPARKTLS.Records;
@@ -14,15 +12,11 @@ with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.HMAC384;
 with SPARKTLS.HKDF384;
-with SPARKTLS.P256.ECDSA;
-with SPARKTLS.P384.ECDSA;
-with SPARKTLS.RSA;
 with SPARKTLS.HC_Alloc;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Client.TLS12;
 
 with X509;
-use type X509.Algorithm_ID;
 
 package body SPARKTLS.Client with
    SPARK_Mode => On
@@ -404,407 +398,41 @@ is
                   Content (64 + N32 (Context_Str'Length) + 1 ..
                            64 + N32 (Context_Str'Length) + H_Len) := CV_Hash;
 
-                  if X509.PK_Algorithm (HC.Peer_Cert) =
-                        X509.Algo_Ed25519 and then
-                     Msg_Len >= 68  --  algo(2) + sig_len(2) + sig(64)
-                  then
-                     --  Ed25519 verification
+                  --  Extract signature scheme and signature from CV message
+                  --  Format: sig_scheme(2) + sig_len(2) + sig(N)
+                  --  (past the 4-byte HS header)
+                  if Msg_Len >= 8 then
                      declare
-                        SM_Len     : constant N32 := 64 + Content_Len;
-                        SM         : Byte_Seq (0 .. SM_Len - 1);
-                        M          : Byte_Seq (0 .. SM_Len - 1);
-                        CV_PK      : SPARKNaCl.Sign.Signing_PK;
-                        PK_Bytes   : Bytes_32;
-                        Verify_OK  : Boolean;
-                        Verify_Len : I32;
-                     begin
-                        --  Signature at Data(8..71)
-                        SM (0 .. 63) := Data (8 .. 71);
-                        SM (64 .. SM_Len - 1) := Content;
-
-                        declare
-                           PK : constant X509.Byte_Seq :=
-                              X509.PK_Data (HC.Peer_Cert);
-                        begin
-                           for I in 0 .. 31 loop
-                              PK_Bytes (N32 (I)) :=
-                                 SPARKNaCl.Byte (PK (X509.N32 (I)));
-                           end loop;
-                        end;
-                        SPARKNaCl.Sign.PK_From_Bytes (PK_Bytes, CV_PK);
-
-                        SPARKNaCl.Sign.Open
-                          (M      => M,
-                           Status => Verify_OK,
-                           MLen   => Verify_Len,
-                           SM     => SM,
-                           PK     => CV_PK);
-
-                        if not Verify_OK then
-                           S.Last_Error := Certificate_Verify_Failed;
-                           S.State := Error_State;
-                           Result := Error_Alert;
-                           return;
-                        end if;
-                     end;
-
-                  elsif X509.PK_Algorithm (HC.Peer_Cert) in
-                           X509.Algo_EC_P256 |
-                           X509.Algo_EC_P384 and then
-                        Msg_Len >= 12  --  algo(2) + sig_len(2) + min DER(8)
-                  then
-                     --  ECDSA verification (P-256 or P-384 based on key size)
-                     declare
-                        Sig_Algo : constant Unsigned_16 :=
+                        Sig_Scheme : constant Unsigned_16 :=
                            Unsigned_16 (Data (4)) * 256 +
                            Unsigned_16 (Data (5));
                         Sig_Len : constant N32 :=
-                           N32 (Unsigned_16 (Data (6)) * 256 +
-                                Unsigned_16 (Data (7)));
+                           N32 (Data (6)) * 256 + N32 (Data (7));
                         Sig_Start : constant N32 := 8;
-                        EC_Size : constant N32 :=
-                           N32 (X509.PK_Length (HC.Peer_Cert));
-                        Verify_OK : Boolean := False;
                      begin
-                        --  Validate signature length
-                        if Sig_Len < 8 or else
-                           Sig_Start + Sig_Len > N32 (Msg_Len) + 4
+                        if Sig_Len > 0
+                           and then Sig_Start + Sig_Len <=
+                                       N32 (Data'Length)
                         then
-                           S.Last_Error := Certificate_Verify_Failed;
-                           S.State := Error_State;
-                           Result := Error_Alert;
-                           return;
-                        end if;
-
-                        if EC_Size = 97 and then Sig_Algo = 16#0503# then
-                           --  P-384 ECDSA with SHA-384
                            declare
-                              Qx    : Byte_Seq (0 .. 47);
-                              Qy    : Byte_Seq (0 .. 47);
-                              R_Val : Byte_Seq (0 .. 47) := (others => 0);
-                              S_Val : Byte_Seq (0 .. 47) := (others => 0);
-                              Hash_In : Bytes_48;
-                              Coord_Len : constant N32 := 48;
+                              Sig : Byte_Seq (0 .. Sig_Len - 1);
                            begin
-                              --  Parse DER signature
-                              declare
-                                 Idx : N32 := Sig_Start;
-                                 R_Len, S_Len : N32;
-                                 R_Off, S_Off : N32;
-                              begin
-                                 if Data (Idx) /= 16#30# then
-                                    S.Last_Error := Certificate_Verify_Failed;
-                                    S.State := Error_State;
-                                    Result := Error_Alert;
-                                    return;
-                                 end if;
-                                 Idx := Idx + 2;
+                              Sig := Data (Sig_Start ..
+                                           Sig_Start + Sig_Len - 1);
 
-                                 if Data (Idx) /= 16#02# then
-                                    S.Last_Error := Certificate_Verify_Failed;
-                                    S.State := Error_State;
-                                    Result := Error_Alert;
-                                    return;
-                                 end if;
-                                 Idx := Idx + 1;
-                                 R_Len := N32 (Data (Idx));
-                                 Idx := Idx + 1;
-                                 R_Off := 0;
-                                 if R_Len = 49 and then Data (Idx) = 0 then
-                                    R_Off := 1;
-                                    R_Len := 48;
-                                 end if;
-                                 if R_Len <= Coord_Len then
-                                    for I in N32 range 0 .. R_Len - 1 loop
-                                       R_Val (Coord_Len - R_Len + I) :=
-                                          Data (Idx + R_Off + I);
-                                    end loop;
-                                 end if;
-                                 Idx := Idx + R_Off + R_Len;
-
-                                 if Data (Idx) /= 16#02# then
-                                    S.Last_Error := Certificate_Verify_Failed;
-                                    S.State := Error_State;
-                                    Result := Error_Alert;
-                                    return;
-                                 end if;
-                                 Idx := Idx + 1;
-                                 S_Len := N32 (Data (Idx));
-                                 Idx := Idx + 1;
-                                 S_Off := 0;
-                                 if S_Len = 49 and then Data (Idx) = 0 then
-                                    S_Off := 1;
-                                    S_Len := 48;
-                                 end if;
-                                 if S_Len <= Coord_Len then
-                                    for I in N32 range 0 .. S_Len - 1 loop
-                                       S_Val (Coord_Len - S_Len + I) :=
-                                          Data (Idx + S_Off + I);
-                                    end loop;
-                                 end if;
-                              end;
-
-                              --  Extract EC public key (skip 0x04 prefix)
-                              declare
-                                 PK : constant X509.Byte_Seq :=
-                                    X509.PK_Data (HC.Peer_Cert);
-                              begin
-                                 for I in 0 .. 47 loop
-                                    Qx (N32 (I)) :=
-                                       Byte (PK (X509.N32 (1 + I)));
-                                    Qy (N32 (I)) :=
-                                       Byte (PK (X509.N32 (49 + I)));
-                                 end loop;
-                              end;
-
-                              --  Hash the signed content with SHA-384
-                              declare
-                                 D : SPARKNaCl.Hashing.SHA384.Digest;
-                              begin
-                                 SPARKNaCl.Hashing.SHA384.Hash (D, Content);
-                                 Hash_In := Bytes_48 (D);
-                              end;
-
-                              Verify_OK := SPARKTLS.P384.ECDSA.Verify
-                                (Hash => Hash_In,
-                                 Qx   => Qx,
-                                 Qy   => Qy,
-                                 R    => R_Val,
-                                 S    => S_Val);
+                              if not Cert_Verify.Verify_Signature
+                                (Data       => Content,
+                                 Sig        => Sig,
+                                 Cert       => HC.Peer_Cert,
+                                 Sig_Scheme => Sig_Scheme)
+                              then
+                                 S.Last_Error := Certificate_Verify_Failed;
+                                 S.State := Error_State;
+                                 Result := Error_Alert;
+                                 return;
+                              end if;
                            end;
-
-                        elsif EC_Size = 65 then
-                           --  P-256 ECDSA with SHA-256
-                           declare
-                              use SPARKTLS.P256.ECDSA;
-                              Qx      : ECDSA_Sig_Half;
-                              Qy      : ECDSA_Sig_Half;
-                              R_Val   : ECDSA_Sig_Half := (others => 0);
-                              S_Val   : ECDSA_Sig_Half := (others => 0);
-                              Hash_In : Bytes_32;
-                           begin
-                              --  Parse DER signature
-                              declare
-                                 Idx : N32 := Sig_Start;
-                                 R_Len, S_Len : N32;
-                                 R_Off, S_Off : N32;
-                              begin
-                                 if Data (Idx) /= 16#30# then
-                                    S.Last_Error := Certificate_Verify_Failed;
-                                    S.State := Error_State;
-                                    Result := Error_Alert;
-                                    return;
-                                 end if;
-                                 Idx := Idx + 2;
-
-                                 if Data (Idx) /= 16#02# then
-                                    S.Last_Error := Certificate_Verify_Failed;
-                                    S.State := Error_State;
-                                    Result := Error_Alert;
-                                    return;
-                                 end if;
-                                 Idx := Idx + 1;
-                                 R_Len := N32 (Data (Idx));
-                                 Idx := Idx + 1;
-                                 R_Off := 0;
-                                 if R_Len = 33 and then Data (Idx) = 0 then
-                                    R_Off := 1;
-                                    R_Len := 32;
-                                 end if;
-                                 if R_Len <= 32 then
-                                    for I in N32 range 0 .. R_Len - 1 loop
-                                       R_Val (32 - R_Len + I) :=
-                                          Data (Idx + R_Off + I);
-                                    end loop;
-                                 end if;
-                                 Idx := Idx + R_Off + R_Len;
-
-                                 if Data (Idx) /= 16#02# then
-                                    S.Last_Error := Certificate_Verify_Failed;
-                                    S.State := Error_State;
-                                    Result := Error_Alert;
-                                    return;
-                                 end if;
-                                 Idx := Idx + 1;
-                                 S_Len := N32 (Data (Idx));
-                                 Idx := Idx + 1;
-                                 S_Off := 0;
-                                 if S_Len = 33 and then Data (Idx) = 0 then
-                                    S_Off := 1;
-                                    S_Len := 32;
-                                 end if;
-                                 if S_Len <= 32 then
-                                    for I in N32 range 0 .. S_Len - 1 loop
-                                       S_Val (32 - S_Len + I) :=
-                                          Data (Idx + S_Off + I);
-                                    end loop;
-                                 end if;
-                              end;
-
-                              --  Extract EC public key (skip 0x04 prefix)
-                              declare
-                                 PK : constant X509.Byte_Seq :=
-                                    X509.PK_Data (HC.Peer_Cert);
-                              begin
-                                 for I in 0 .. 31 loop
-                                    Qx (N32 (I)) :=
-                                       Byte (PK (X509.N32 (1 + I)));
-                                    Qy (N32 (I)) :=
-                                       Byte (PK (X509.N32 (33 + I)));
-                                 end loop;
-                              end;
-
-                              --  Hash the signed content with SHA-256
-                              declare
-                                 D : Digest;
-                              begin
-                                 Hash (D, Content);
-                                 Hash_In := Bytes_32 (D);
-                              end;
-
-                              Verify_OK := SPARKTLS.P256.ECDSA.Verify
-                                (Hash => Hash_In,
-                                 Qx   => Qx,
-                                 Qy   => Qy,
-                                 R    => R_Val,
-                                 S    => S_Val);
-                           end;
-
                         else
-                           S.Last_Error := Certificate_Verify_Failed;
-                           S.State := Error_State;
-                           Result := Error_Alert;
-                           return;
-                        end if;
-
-                        if not Verify_OK then
-                           S.Last_Error := Certificate_Verify_Failed;
-                           S.State := Error_State;
-                           Result := Error_Alert;
-                           return;
-                        end if;
-                     end;
-
-                  elsif X509.PK_Algorithm (HC.Peer_Cert) =
-                           X509.Algo_RSA and then
-                        Msg_Len >= 8  --  algo(2) + sig_len(2) + min sig
-                  then
-                     --  RSA-PSS-RSAE verification (SHA-256/384/512)
-                     declare
-                        Sig_Algo : constant Unsigned_16 :=
-                           Unsigned_16 (Data (4)) * 256 +
-                           Unsigned_16 (Data (5));
-                        Sig_Len : constant N32 :=
-                           N32 (Unsigned_16 (Data (6)) * 256 +
-                                Unsigned_16 (Data (7)));
-                        Raw_Mod_Len : constant Natural :=
-                           Natural (X509.PK_Length (HC.Peer_Cert));
-                        --  Strip leading zero byte from ASN.1 INTEGER
-                        PK_Tmp : constant X509.Byte_Seq :=
-                           (if Raw_Mod_Len > 0
-                            then X509.PK_Data (HC.Peer_Cert)
-                            else X509.Byte_Seq'(0 => 0));
-                        Mod_Skip : constant Natural :=
-                           (if Raw_Mod_Len > 0 and then
-                               PK_Tmp (0) = 0
-                            then 1 else 0);
-                        Mod_Len : constant Natural :=
-                           Raw_Mod_Len - Mod_Skip;
-                        Verify_OK : Boolean := False;
-                        --  Determine hash variant from algorithm code
-                        PSS_Alg  : SPARKTLS.RSA.PSS_Hash;
-                        PSS_HLen : N32;
-                     begin
-                        case Sig_Algo is
-                           when 16#0804# =>
-                              PSS_Alg  := SPARKTLS.RSA.PSS_SHA256;
-                              PSS_HLen := 32;
-                           when 16#0805# =>
-                              PSS_Alg  := SPARKTLS.RSA.PSS_SHA384;
-                              PSS_HLen := 48;
-                           when 16#0806# =>
-                              PSS_Alg  := SPARKTLS.RSA.PSS_SHA512;
-                              PSS_HLen := 64;
-                           when others =>
-                              S.Last_Error := Certificate_Verify_Failed;
-                              S.State := Error_State;
-                              Result := Error_Alert;
-                              return;
-                        end case;
-
-                        --  Validate: sig fits in message, matches modulus
-                        if Sig_Len < 64 or else
-                           8 + Sig_Len > N32 (Msg_Len) + 4 or else
-                           Natural (Sig_Len) /= Mod_Len or else
-                           Mod_Len > SPARKTLS.RSA.Max_RSA_Bytes
-                        then
-                           S.Last_Error := Certificate_Verify_Failed;
-                           S.State := Error_State;
-                           Result := Error_Alert;
-                           return;
-                        end if;
-
-                        --  Hash the signed content with appropriate hash
-                        declare
-                           M_Hash : Byte_Seq (0 .. PSS_HLen - 1);
-                        begin
-                           case PSS_Alg is
-                              when SPARKTLS.RSA.PSS_SHA256 =>
-                                 declare
-                                    D : SPARKNaCl.Hashing.SHA256.Digest;
-                                 begin
-                                    SPARKNaCl.Hashing.SHA256.Hash
-                                      (D, Content);
-                                    M_Hash := Byte_Seq (D);
-                                 end;
-                              when SPARKTLS.RSA.PSS_SHA384 =>
-                                 declare
-                                    D : SPARKNaCl.Hashing.SHA384.Digest;
-                                 begin
-                                    SPARKNaCl.Hashing.SHA384.Hash
-                                      (D, Content);
-                                    M_Hash := Byte_Seq (D);
-                                 end;
-                              when SPARKTLS.RSA.PSS_SHA512 =>
-                                 declare
-                                    D : SPARKNaCl.Hashing.SHA512.Digest;
-                                 begin
-                                    SPARKNaCl.Hashing.SHA512.Hash
-                                      (D, Content);
-                                    M_Hash := Byte_Seq (D);
-                                 end;
-                           end case;
-
-                           --  Extract modulus and signature, verify
-                           declare
-                              Mod_Bytes : Byte_Seq
-                                 (0 .. N32 (Mod_Len) - 1);
-                              Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
-                           begin
-                              for I in 0 .. Mod_Len - 1 loop
-                                 Mod_Bytes (N32 (I)) :=
-                                    Byte (PK_Tmp (X509.N32
-                                       (Mod_Skip + I)));
-                              end loop;
-                              Sig_Bytes :=
-                                 Data (8 .. 8 + Sig_Len - 1);
-
-                              Verify_OK :=
-                                 SPARKTLS.RSA.Verify_PSS
-                                   (M_Hash    => M_Hash,
-                                    Hash_Len  => PSS_HLen,
-                                    Hash_Alg  => PSS_Alg,
-                                    Modulus   => Mod_Bytes,
-                                    Mod_Len   => N32 (Mod_Len),
-                                    Exponent  =>
-                                       X509.RSA_Exponent
-                                          (HC.Peer_Cert),
-                                    Signature => Sig_Bytes,
-                                    Sig_Len   => Sig_Len);
-                           end;
-                        end;
-
-                        if not Verify_OK then
                            S.Last_Error := Certificate_Verify_Failed;
                            S.State := Error_State;
                            Result := Error_Alert;
@@ -813,7 +441,6 @@ is
                      end;
 
                   else
-                     --  Unsupported signature algorithm
                      S.Last_Error := Certificate_Verify_Failed;
                      S.State := Error_State;
                      Result := Error_Alert;

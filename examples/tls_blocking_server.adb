@@ -24,6 +24,8 @@ procedure TLS_Blocking_Server is
    Id      : aliased SPARKTLS.Identity;
    Id_OK   : Boolean;
    Tickets : aliased SPARKTLS.Ticket_Store;
+   Roots   : aliased SPARKTLS.Trust_Store;
+   MTLS    : Boolean := False;
 
    Server_Sock : Socket_Type;
    Port        : constant := 8443;
@@ -82,10 +84,13 @@ procedure TLS_Blocking_Server is
          (Name => No_Delay, Enabled => True));
 
       Server.Configure
-        (S       => S,
-         Local   => Id'Unchecked_Access,
-         Random  => Entropy_Random.Random'Access,
-         Tickets => Tickets'Unchecked_Access);
+        (S                   => S,
+         Local               => Id'Unchecked_Access,
+         Random              => Entropy_Random.Random'Access,
+         Trust               => (if MTLS then Roots'Unchecked_Access
+                                 else null),
+         Request_Client_Cert => MTLS,
+         Tickets             => Tickets'Unchecked_Access);
 
       --  Handshake + data loop
       loop
@@ -104,31 +109,20 @@ procedure TLS_Blocking_Server is
                null;  --  Handshake complete, continue processing
 
             when Plaintext_Ready =>
-               --  Read decrypted data, send HTTP response
+               --  Read decrypted data, echo it back verbatim
                declare
-                  App   : Byte_Seq (0 .. 4095);
+                  App   : Byte_Seq (0 .. 16383);
                   App_N : N32;
                begin
                   Read_Plaintext (S, App, App_N);
                   if App_N > 0 then
-                     --  Simple HTTP response
                      declare
-                        Resp : constant String :=
-                           "HTTP/1.0 200 OK" & ASCII.CR & ASCII.LF &
-                           "Content-Length: 2" & ASCII.CR & ASCII.LF &
-                           ASCII.CR & ASCII.LF &
-                           "ok";
-                        Resp_Bytes : Byte_Seq (0 .. N32 (Resp'Length) - 1);
                         Written : N32;
                      begin
-                        for I in Resp'Range loop
-                           Resp_Bytes (N32 (I - Resp'First)) :=
-                              Byte (Character'Pos (Resp (I)));
-                        end loop;
-                        Server.Write_Plaintext (S, Resp_Bytes, Written);
+                        Server.Write_Plaintext
+                          (S, App (0 .. App_N - 1), Written);
                         Send_Output;
                      end;
-                     --  Don't close yet — let the client close first
                   end if;
                end;
 
@@ -180,7 +174,8 @@ begin
    Entropy_Random.Init;
 
    if Ada.Command_Line.Argument_Count < 2 then
-      Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>");
+      Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>" &
+                " [--mtls <ca.pem>]");
       return;
    end if;
 
@@ -192,6 +187,25 @@ begin
    if not Id_OK then
       Put_Line ("Failed to load identity");
       return;
+   end if;
+
+   --  Check for --mtls flag
+   if Ada.Command_Line.Argument_Count >= 4
+      and then Ada.Command_Line.Argument (3) = "--mtls"
+   then
+      declare
+         Roots_OK : Boolean;
+      begin
+         Credentials.Load_Trust_Store
+           (Roots, Ada.Command_Line.Argument (4), Roots_OK);
+         if Roots_OK then
+            MTLS := True;
+            Put_Line ("mTLS enabled (trust: " &
+                      Ada.Command_Line.Argument (4) & ")");
+         else
+            Put_Line ("Warning: failed to load trust store, mTLS disabled");
+         end if;
+      end;
    end if;
 
    Put_Line ("=== SPARKTLS Blocking Server ===");

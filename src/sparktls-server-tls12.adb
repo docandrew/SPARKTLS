@@ -23,7 +23,8 @@ is
          when Record_Overflow       => 22, when Handshake_Failure => 40,
          when Bad_Certificate       => 42, when Certificate_Expired => 45,
          when Certificate_Verify_Failed => 51, when Decode_Error  => 50,
-         when Illegal_Parameter     => 47, when Internal_Error    => 80,
+         when Illegal_Parameter     => 47, when Protocol_Version  => 70,
+         when Internal_Error    => 80,
          when Insufficient_Buffer   => 80, when Unsupported_Cipher_Suite => 40,
          when No_Error              => 80);
 

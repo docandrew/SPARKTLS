@@ -100,10 +100,18 @@ is
       --  supported_versions data: list_len(1) + version(2) * 2
       SV_Data_Len  : constant N32 := 5;
 
+      --  ALPN data: protocol_list_len(2) + proto_len(1) + proto(N)
+      ALPN_Len : constant Natural := HC.Cfg.ALPN.Len;
+      ALPN_Data_Len : constant N32 :=
+         (if ALPN_Len > 0 then N32 (3 + ALPN_Len) else 0);
+      ALPN_Ext_Len : constant N32 :=
+         (if ALPN_Len > 0 then 4 + ALPN_Data_Len else 0);
+
       --  Each extension: tag(2) + data_length(2) + data
       Ext_Total : constant N32 :=
          (4 + SNI_Data_Len) + (4 + SG_Data_Len) + (4 + SA_Data_Len) +
-         (4 + KS_Data_Len) + (4 + PSK_Data_Len) + (4 + SV_Data_Len);
+         (4 + KS_Data_Len) + (4 + PSK_Data_Len) + (4 + SV_Data_Len) +
+         ALPN_Ext_Len;
 
       --  ClientHello body: version(2) + random(32) + sid_len(1) + sid(32)
       --  + suites_len(2) + suites(12) + comp_len(1) + comp(1)
@@ -454,6 +462,46 @@ is
               (Ext_Ctx, Ext_Buf);
             RFLX_Free (Ext_Buf);
          end;
+
+         --  Extension 7: ALPN (0x0010) — if configured
+         if ALPN_Len > 0 then
+            declare
+               Ext_Buf : RBT.Bytes_Ptr;
+               Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
+               ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
+                             := (others => 0);
+            begin
+               --  protocol_name_list_length (2 bytes)
+               ALPN_Raw (0) := Byte ((ALPN_Len + 1) / 256);
+               ALPN_Raw (1) := Byte ((ALPN_Len + 1) mod 256);
+               --  protocol_name_length (1 byte)
+               ALPN_Raw (2) := Byte (ALPN_Len);
+               --  protocol_name
+               for I in 1 .. ALPN_Len loop
+                  ALPN_Raw (N32 (2 + I)) :=
+                     Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
+               end loop;
+
+               Ext_Buf := new RBT.Bytes'
+                  (1 .. RBT.Index (4 + ALPN_Data_Len) => 0);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
+                  (Ext_Ctx, Ext_Buf);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
+                  (Ext_Ctx,
+                   RFLX.Tls_Extensiontype_Values
+                     .Application_Layer_Protocol_Negotiation);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
+                  (Ext_Ctx,
+                   RFLX.TLS_Handshake.Data_Length (ALPN_Data_Len));
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
+                  (Ext_Ctx, To_RFLX (ALPN_Raw));
+               RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
+                  (Exts_Ctx, Ext_Ctx);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
+                  (Ext_Ctx, Ext_Buf);
+               RFLX_Free (Ext_Buf);
+            end;
+         end if;
 
          Update_Extensions_TLS (Ctx, Exts_Ctx);
       end;
@@ -807,6 +855,43 @@ is
                                 .Take_Buffer (KS_Ctx, KS_Buf);
                               RFLX_Free (KS_Buf);
                            end;
+
+                        --  ALPN extension (0x0010)
+                        elsif Tag.Known and then
+                           Tag.Enum =
+                              RFLX.Tls_Extensiontype_Values
+                                .Application_Layer_Protocol_Negotiation
+                        then
+                           declare
+                              DLen : constant N32 := N32
+                                 (RFLX.TLS_Handshake.SH_Extension_TLS
+                                    .Get_Data_Length (Ext_Ctx));
+                              ALPN_Buf : RBT.Bytes
+                                           (1 .. RBT.Index (DLen));
+                           begin
+                              if DLen >= 4 then
+                                 RFLX.TLS_Handshake.SH_Extension_TLS
+                                   .Get_Data (Ext_Ctx, ALPN_Buf);
+                                 --  Format: list_len(2) + proto_len(1) + proto
+                                 declare
+                                    PL : constant Natural :=
+                                       Natural (ALPN_Buf (3));
+                                 begin
+                                    if PL > 0 and PL <= Max_Hostname_Len
+                                       and N32 (PL + 3) <= DLen
+                                    then
+                                       S.Negotiated_ALPN.Len := PL;
+                                       for I in 1 .. PL loop
+                                          S.Negotiated_ALPN.Data (I) :=
+                                             Character'Val
+                                               (ALPN_Buf
+                                                  (RBT.Index (3 + I)));
+                                       end loop;
+                                    end if;
+                                 end;
+                              end if;
+                           end;
+
                         end if;
                      end;
                   end if;
@@ -992,10 +1077,12 @@ is
       OK := False;
 
       if Data'Length < 39 then
+         S.Last_Error := Decode_Error;
          return;
       end if;
 
       if Data (B) /= HT_Client_Hello then
+         S.Last_Error := Decode_Error;
          return;
       end if;
 
@@ -1011,6 +1098,16 @@ is
       if not Well_Formed_Message (Ctx) then
          Take_Buffer (Ctx, Buf);
          RFLX_Free (Buf);
+         --  Check if the failure is due to wrong legacy_version.
+         --  ClientHello body: legacy_version(2) at offset B+4..B+5.
+         --  RFC 8446 §4.1.2: legacy_version MUST be 0x0303.
+         if Data'Length >= 6 and then
+            (Data (B + 4) /= 16#03# or Data (B + 5) /= 16#03#)
+         then
+            S.Last_Error := Protocol_Version;
+         else
+            S.Last_Error := Decode_Error;
+         end if;
          return;
       end if;
 
@@ -1308,26 +1405,68 @@ is
                               DLen : constant N32 := N32
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
-                              SA_Data : RBT.Bytes
-                                          (1 .. RBT.Index (DLen));
-                              Pos : RBT.Index := 3;
                            begin
-                              RFLX.TLS_Handshake.CH_Extension_TLS
-                                .Get_Data (Ext_Ctx, SA_Data);
-                              if DLen >= 4 then
-                                 while Pos + 1 <= RBT.Index (DLen)
-                                    and then HC.Peer_Sig_Algo_Count <
-                                                Max_Sig_Algos
-                                 loop
-                                    HC.Peer_Sig_Algos
-                                      (HC.Peer_Sig_Algo_Count) :=
-                                       Unsigned_16 (SA_Data (Pos)) * 256 +
-                                       Unsigned_16 (SA_Data (Pos + 1));
-                                    HC.Peer_Sig_Algo_Count :=
-                                       HC.Peer_Sig_Algo_Count + 1;
+                              --  Validate internal list_length:
+                              --  Must have list_len(2) + at least one algo(2),
+                              --  list_len must equal DLen - 2 and be even.
+                              if DLen < 4 then
+                                 Take_Buffer (Ctx, Buf);
+                                 RFLX_Free (Buf);
+                                 S.Last_Error := Decode_Error;
+                                 return;
+                              end if;
+
+                              --  Heap-allocate to avoid stack overflow
+                              --  on large sig_algs lists (32K+ entries).
+                              declare
+                                 SA_Buf : RBT.Bytes_Ptr :=
+                                    new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
+                                 Pos : RBT.Index := 3;
+                                 List_Len : N32;
+                              begin
+                                 RFLX.TLS_Handshake.CH_Extension_TLS
+                                   .Get_Data (Ext_Ctx, SA_Buf.all);
+                                 List_Len :=
+                                    N32 (SA_Buf (1)) * 256 +
+                                    N32 (SA_Buf (2));
+                                 if List_Len /= DLen - 2 or else
+                                    List_Len mod 2 /= 0 or else
+                                    List_Len = 0
+                                 then
+                                    RFLX_Free (SA_Buf);
+                                    Take_Buffer (Ctx, Buf);
+                                    RFLX_Free (Buf);
+                                    S.Last_Error := Decode_Error;
+                                    return;
+                                 end if;
+                                 while Pos + 1 <= RBT.Index (DLen) loop
+                                    declare
+                                       Algo : constant Unsigned_16 :=
+                                          Unsigned_16 (SA_Buf (Pos)) * 256 +
+                                          Unsigned_16 (SA_Buf (Pos + 1));
+                                    begin
+                                       --  Only store algorithms we support,
+                                       --  so the array never overflows
+                                       --  regardless of client list size.
+                                       if Algo in 16#0807# |  --  Ed25519
+                                                  16#0403# |  --  ECDSA-P256
+                                                  16#0503# |  --  ECDSA-P384
+                                                  16#0804# |  --  RSA-PSS-256
+                                                  16#0805# |  --  RSA-PSS-384
+                                                  16#0806#    --  RSA-PSS-512
+                                          and then HC.Peer_Sig_Algo_Count <
+                                                      Max_Sig_Algos
+                                       then
+                                          HC.Peer_Sig_Algos
+                                            (HC.Peer_Sig_Algo_Count) := Algo;
+                                          HC.Peer_Sig_Algo_Count :=
+                                             HC.Peer_Sig_Algo_Count + 1;
+                                       end if;
+                                    end;
                                     Pos := Pos + 2;
                                  end loop;
-                              end if;
+                                 RFLX_Free (SA_Buf);
+                              end;
                            end;
 
                         --  supported_groups extension (0x000A)
@@ -1341,36 +1480,41 @@ is
                               DLen : constant N32 := N32
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
-                              SG_Data : RBT.Bytes
-                                          (1 .. RBT.Index (DLen));
-                              List_Len : N32;
-                              Pos : N32;
                            begin
                               if DLen >= 4 then
-                                 RFLX.TLS_Handshake.CH_Extension_TLS
-                                   .Get_Data (Ext_Ctx, SG_Data);
-                                 --  Format: list_len(2) || group(2) || ...
-                                 List_Len := N32 (SG_Data (1)) * 256 +
-                                             N32 (SG_Data (2));
-                                 Pos := 3;
-                                 while Pos + 1 <= N32 (DLen)
-                                    and then Pos < 3 + List_Len
-                                 loop
-                                    declare
-                                       Grp : constant Unsigned_16 :=
-                                          Unsigned_16 (SG_Data (RBT.Index (Pos))) * 256 +
-                                          Unsigned_16 (SG_Data (RBT.Index (Pos + 1)));
-                                    begin
-                                       if Grp = 16#001D# then
-                                          HC.Client_Has_X25519 := True;
-                                       elsif Grp = 16#0017# then
-                                          HC.Client_Has_P256 := True;
-                                       elsif Grp = 16#0018# then
-                                          HC.Client_Has_P384 := True;
-                                       end if;
-                                    end;
-                                    Pos := Pos + 2;
-                                 end loop;
+                                 declare
+                                    SG_Buf : RBT.Bytes_Ptr :=
+                                       new RBT.Bytes'
+                                         (1 .. RBT.Index (DLen) => 0);
+                                    List_Len : N32;
+                                    Pos : N32;
+                                 begin
+                                    RFLX.TLS_Handshake.CH_Extension_TLS
+                                      .Get_Data (Ext_Ctx, SG_Buf.all);
+                                    List_Len :=
+                                       N32 (SG_Buf (1)) * 256 +
+                                       N32 (SG_Buf (2));
+                                    Pos := 3;
+                                    while Pos + 1 <= N32 (DLen)
+                                       and then Pos < 3 + List_Len
+                                    loop
+                                       declare
+                                          Grp : constant Unsigned_16 :=
+                                             Unsigned_16 (SG_Buf (RBT.Index (Pos))) * 256 +
+                                             Unsigned_16 (SG_Buf (RBT.Index (Pos + 1)));
+                                       begin
+                                          if Grp = 16#001D# then
+                                             HC.Client_Has_X25519 := True;
+                                          elsif Grp = 16#0017# then
+                                             HC.Client_Has_P256 := True;
+                                          elsif Grp = 16#0018# then
+                                             HC.Client_Has_P384 := True;
+                                          end if;
+                                       end;
+                                       Pos := Pos + 2;
+                                    end loop;
+                                    RFLX_Free (SG_Buf);
+                                 end;
                               end if;
                            end;
 
@@ -1384,17 +1528,19 @@ is
                               DLen : constant N32 := N32
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
-                              Ext_Data : Byte_Seq (0 .. DLen - 1);
+                              --  Cap at 1024 to prevent stack overflow
+                              --  on pathological inputs.
+                              Max_PSK_Ext : constant N32 := 1024;
                            begin
-                              if DLen >= 6 then
+                              if DLen >= 6 and then DLen <= Max_PSK_Ext then
                                  declare
                                     ED : aliased RBT.Bytes
                                        (1 .. RBT.Index (DLen));
+                                    Ext_Data : Byte_Seq (0 .. DLen - 1);
                                  begin
                                     RFLX.TLS_Handshake.CH_Extension_TLS
                                        .Get_Data (Ext_Ctx, ED);
                                     Ext_Data := To_NaCl (ED);
-                                 end;
 
                                  --  identities_len(2) + first identity
                                  declare
@@ -1459,6 +1605,7 @@ is
                                        end;
                                     end if;
                                  end;
+                                 end;
                               end if;
                            end;
 
@@ -1472,27 +1619,71 @@ is
                               DLen : constant N32 := N32
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
-                              SV_Data : RBT.Bytes
-                                          (1 .. RBT.Index (DLen));
-                              List_Len : N32;
-                              Pos : N32;
                            begin
                               if DLen >= 3 then
-                                 RFLX.TLS_Handshake.CH_Extension_TLS
-                                   .Get_Data (Ext_Ctx, SV_Data);
-                                 List_Len := N32 (SV_Data (1));
-                                 Pos := 2;
-                                 while Pos + 1 <= N32 (DLen)
-                                    and then Pos < 2 + List_Len
-                                 loop
-                                    if N32 (SV_Data (RBT.Index (Pos))) = 3
-                                       and then N32 (SV_Data (RBT.Index (Pos + 1))) = 4
-                                    then
-                                       --  Found 0x0304 = TLS 1.3
-                                       HC.Has_TLS_1_3 := True;
-                                    end if;
-                                    Pos := Pos + 2;
-                                 end loop;
+                                 declare
+                                    SV_Buf : RBT.Bytes_Ptr :=
+                                       new RBT.Bytes'
+                                         (1 .. RBT.Index (DLen) => 0);
+                                    List_Len : N32;
+                                    Pos : N32;
+                                 begin
+                                    RFLX.TLS_Handshake.CH_Extension_TLS
+                                      .Get_Data (Ext_Ctx, SV_Buf.all);
+                                    List_Len := N32 (SV_Buf (1));
+                                    Pos := 2;
+                                    while Pos + 1 <= N32 (DLen)
+                                       and then Pos < 2 + List_Len
+                                    loop
+                                       if N32 (SV_Buf (RBT.Index (Pos))) = 3
+                                          and then N32 (SV_Buf (RBT.Index (Pos + 1))) = 4
+                                       then
+                                          HC.Has_TLS_1_3 := True;
+                                       end if;
+                                       Pos := Pos + 2;
+                                    end loop;
+                                    RFLX_Free (SV_Buf);
+                                 end;
+                              end if;
+                           end;
+
+                        --  ALPN extension (0x0010)
+                        elsif Tag.Known and then
+                           Tag.Enum =
+                              RFLX.Tls_Extensiontype_Values
+                                .Application_Layer_Protocol_Negotiation
+                        then
+                           declare
+                              DLen : constant N32 := N32
+                                 (RFLX.TLS_Handshake.CH_Extension_TLS
+                                    .Get_Data_Length (Ext_Ctx));
+                           begin
+                              if DLen >= 4 then
+                                 declare
+                                    AB : RBT.Bytes_Ptr :=
+                                       new RBT.Bytes'
+                                         (1 .. RBT.Index (DLen) => 0);
+                                 begin
+                                    RFLX.TLS_Handshake.CH_Extension_TLS
+                                      .Get_Data (Ext_Ctx, AB.all);
+                                    declare
+                                       PL : constant Natural :=
+                                          Natural (AB (3));
+                                    begin
+                                       if PL > 0
+                                          and PL <= Max_Hostname_Len
+                                          and N32 (PL + 3) <= DLen
+                                       then
+                                          HC.Client_ALPN.Len := PL;
+                                          for I in 1 .. PL loop
+                                             HC.Client_ALPN.Data (I) :=
+                                                Character'Val
+                                                  (AB (RBT.Index (3 + I)));
+                                          end loop;
+                                       end if;
+                                    end;
+                                    RFLX_Free (AB);
+                                 end;
                               end if;
                            end;
 
@@ -1817,34 +2008,69 @@ is
    end Build_Server_Hello;
 
    procedure Build_Encrypted_Extensions
-     (Result :    out Byte_Seq;
+     (HC     : in     Handshake_Context;
+      S      : in out Session;
+      Result :    out Byte_Seq;
       Len    :    out N32)
    is
-      use RFLX.TLS_Handshake.Encrypted_Extensions;
-      Body_Len : constant N32 := 2;  --  length(2) with empty extensions
+      --  Check if ALPN should be included
+      ALPN_Match : constant Boolean :=
+         HC.Client_ALPN.Len > 0
+         and then HC.Cfg.ALPN.Len > 0
+         and then HC.Client_ALPN.Data (1 .. HC.Client_ALPN.Len) =
+                  HC.Cfg.ALPN.Data (1 .. HC.Cfg.ALPN.Len);
+      ALPN_PL : constant Natural :=
+         (if ALPN_Match then HC.Cfg.ALPN.Len else 0);
+      --  ALPN ext: tag(2) + len(2) + list_len(2) + proto_len(1) + proto(N)
+      ALPN_Ext_Len : constant N32 :=
+         (if ALPN_Match then N32 (7 + ALPN_PL) else 0);
+
+      Ext_Len : constant N32 := ALPN_Ext_Len;
+      Body_Len : constant N32 := 2 + Ext_Len;  --  ext_list_len(2) + exts
       Msg_Len  : constant N32 := 4 + Body_Len;
-      Ctx : Context;
+      Pos : N32;
    begin
       Result := (others => 0);
       Len := 0;
 
-      declare
-         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      begin
-         Initialize (Ctx, Buf);
-         Set_Length (Ctx, 0);
-         Set_Extensions_Empty (Ctx);
-         Take_Buffer (Ctx, Buf);
+      --  Handshake header
+      Result (0) := HT_Encrypted_Extensions;
+      Result (1) := Byte (Body_Len / 65536);
+      Result (2) := Byte ((Body_Len / 256) mod 256);
+      Result (3) := Byte (Body_Len mod 256);
 
-         --  Prepend handshake header
-         Result (0) := HT_Encrypted_Extensions;
-         Result (1) := 16#00#;
-         Result (2) := 16#00#;
-         Result (3) := Byte (Body_Len);
-         Result (4 .. 4 + Body_Len - 1) :=
-            To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-         RFLX_Free (Buf);
-      end;
+      --  Extensions list length
+      Result (4) := Byte (Ext_Len / 256);
+      Result (5) := Byte (Ext_Len mod 256);
+
+      Pos := 6;
+
+      --  ALPN extension (if matched)
+      if ALPN_Match then
+         --  Extension type (0x0010)
+         Result (Pos) := 0;
+         Result (Pos + 1) := 16#10#;
+         --  Extension data length
+         declare
+            DL : constant N32 := N32 (3 + ALPN_PL);
+         begin
+            Result (Pos + 2) := Byte (DL / 256);
+            Result (Pos + 3) := Byte (DL mod 256);
+         end;
+         --  Protocol list length
+         Result (Pos + 4) := Byte ((ALPN_PL + 1) / 256);
+         Result (Pos + 5) := Byte ((ALPN_PL + 1) mod 256);
+         --  Protocol name length
+         Result (Pos + 6) := Byte (ALPN_PL);
+         --  Protocol name
+         for I in 1 .. ALPN_PL loop
+            Result (Pos + N32 (6 + I)) :=
+               Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
+         end loop;
+         Pos := Pos + ALPN_Ext_Len;
+
+         S.Negotiated_ALPN := HC.Cfg.ALPN;
+      end if;
 
       Len := Msg_Len;
    end Build_Encrypted_Extensions;

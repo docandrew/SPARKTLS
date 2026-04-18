@@ -26,7 +26,8 @@ is
          when Record_Overflow       => 22, when Handshake_Failure => 40,
          when Bad_Certificate       => 42, when Certificate_Expired => 45,
          when Certificate_Verify_Failed => 51, when Decode_Error  => 50,
-         when Illegal_Parameter     => 47, when Internal_Error    => 80,
+         when Illegal_Parameter     => 47, when Protocol_Version  => 70,
+         when Internal_Error    => 80,
          when Insufficient_Buffer   => 80, when Unsupported_Cipher_Suite => 40,
          when No_Error              => 80);
 
@@ -177,8 +178,134 @@ is
 
          case MT is
             when 16#0B# =>
-               --  Certificate: store for later verification
-               --  (simplified: just add to transcript)
+               --  Certificate (RFC 5246 §7.4.2)
+               --  TLS 1.2 format: cert_list_len(3) || {cert_len(3) || cert}*
+               --  No context byte, no per-cert extensions.
+               HC.Peer_Cert_Valid := False;
+               HC.Peer_Int_Count := 0;
+
+               declare
+                  B   : constant N32 := Frag'First + 4;  --  past HS header
+                  Pos : N32;
+                  Cert_Idx : Natural := 0;
+               begin
+                  if ML > 3 and then B + 3 <= Frag'Last then
+                     Pos := B + 3;  --  skip cert_list_len
+
+                     while Pos + 3 <= Frag'Last
+                        and then Cert_Idx <= Max_Pool_Size
+                     loop
+                        declare
+                           C_Len : constant N32 :=
+                              N32 (Frag (Pos)) * 65536 +
+                              N32 (Frag (Pos + 1)) * 256 +
+                              N32 (Frag (Pos + 2));
+                        begin
+                           Pos := Pos + 3;
+                           exit when C_Len = 0
+                              or else C_Len > N32 (Max_Cert_DER)
+                              or else Pos + C_Len - 1 > Frag'Last;
+
+                           if Cert_Idx = 0 then
+                              --  Leaf certificate
+                              HC.Peer_Cert_DER_Len := C_Len;
+                              for I in N32 range 0 .. C_Len - 1 loop
+                                 HC.Peer_Cert_DER (I) := Frag (Pos + I);
+                              end loop;
+                              declare
+                                 Cert_X : X509.Byte_Seq
+                                    (0 .. X509.N32 (C_Len) - 1);
+                                 P_OK : Boolean;
+                              begin
+                                 for I in N32 range 0 .. C_Len - 1 loop
+                                    Cert_X (X509.N32 (I)) :=
+                                       X509.Byte (Frag (Pos + I));
+                                 end loop;
+                                 X509.Parse (Cert_X, HC.Peer_Cert, P_OK);
+                                 HC.Peer_Cert_Valid := P_OK
+                                    and then X509.Is_Valid (HC.Peer_Cert);
+                              end;
+                           else
+                              --  Intermediate certificates
+                              if HC.Peer_Int_Count < Max_Pool_Size then
+                                 declare
+                                    Idx : constant Natural :=
+                                       HC.Peer_Int_Count;
+                                    Int_X : X509.Byte_Seq
+                                       (0 .. X509.N32 (C_Len) - 1);
+                                    C   : X509.Certificate;
+                                    P_OK : Boolean;
+                                 begin
+                                    for I in N32 range 0 .. C_Len - 1 loop
+                                       Int_X (X509.N32 (I)) :=
+                                          X509.Byte (Frag (Pos + I));
+                                    end loop;
+                                    X509.Parse (Int_X, C, P_OK);
+                                    if P_OK and then X509.Is_Valid (C) then
+                                       HC.Peer_Ints (Idx).Cert := C;
+                                       for I in X509.N32 range
+                                          0 .. X509.N32 (C_Len) - 1
+                                       loop
+                                          HC.Peer_Ints (Idx).DER (I) :=
+                                             X509.Byte (Frag (Pos + N32 (I)));
+                                       end loop;
+                                       HC.Peer_Ints (Idx).DER_Len :=
+                                          X509.N32 (C_Len);
+                                       HC.Peer_Ints (Idx).Present := True;
+                                       HC.Peer_Int_Count :=
+                                          HC.Peer_Int_Count + 1;
+                                    end if;
+                                 end;
+                              end if;
+                           end if;
+
+                           Pos := Pos + C_Len;
+                           Cert_Idx := Cert_Idx + 1;
+                           --  TLS 1.2: no per-cert extensions
+                        end;
+                     end loop;
+                  end if;
+               end;
+
+               --  Chain validation (if trust store is configured)
+               if not HC.Cfg.Skip_Verify
+                  and then HC.Cfg.Trust /= null
+                  and then HC.Cfg.Get_Time /= null
+                  and then HC.Peer_Cert_Valid
+               then
+                  declare
+                     Cert_X : X509.Byte_Seq
+                        (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+                     VR : Validation_Result;
+                  begin
+                     for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
+                        Cert_X (X509.N32 (I)) :=
+                           X509.Byte (HC.Peer_Cert_DER (I));
+                     end loop;
+
+                     VR := Validate_Chain
+                       (Leaf_DER   => Cert_X,
+                        Leaf       => HC.Peer_Cert,
+                        Ints       => HC.Peer_Ints,
+                        Int_Count  => HC.Peer_Int_Count,
+                        Roots      => HC.Cfg.Trust.Roots,
+                        Root_Count => HC.Cfg.Trust.Root_Count,
+                        Now        => HC.Cfg.Get_Time.all,
+                        Hostname   =>
+                           HC.Cfg.Server_Name.Data
+                             (1 .. HC.Cfg.Server_Name.Len),
+                        Purpose    => HC.Cfg.Verify_Purpose,
+                        Mode       => HC.Cfg.Verify_Mode);
+
+                     if VR /= Valid then
+                        S.Input.Read_Pos :=
+                           S.Input.Read_Pos + Rec.Record_Len;
+                        Send_Alert_And_Error (S, Bad_Certificate, Result);
+                        return;
+                     end if;
+                  end;
+               end if;
+
                Append_Transcript (HC, Frag);
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;

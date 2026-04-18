@@ -14,6 +14,9 @@ is
    subtype Index_48 is N32 range 0 .. 47;
    subtype Bytes_48 is Byte_Seq (Index_48);
 
+   --  Heap-allocated byte sequence (for reassembly buffers)
+   type Byte_Seq_Access is access Byte_Seq;
+
    Max_Record_Plaintext : constant := 16384;  --  RFC 8446 limit
    Max_Record_Overhead  : constant := 256;    --  tag + content type
    Max_Record_Size      : constant :=
@@ -23,7 +26,7 @@ is
    --  so the caller doesn't have to drain after every record.
    IO_Buffer_Capacity : constant N32 := 2 * Max_Record_Size;
 
-   Transcript_Capacity  : constant N32 := 16384;
+   Transcript_Capacity  : constant N32 := 131072;  --  128 KB for large CH
    Max_Hostname_Len     : constant := 255;
    Max_Cert_DER_Len     : constant N32 := 8192;
 
@@ -297,6 +300,7 @@ is
       Certificate_Verify_Failed,
       Decode_Error,
       Illegal_Parameter,
+      Protocol_Version,
       Internal_Error,
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
@@ -341,6 +345,7 @@ is
          when Illegal_Parameter        => 47,
          when Decode_Error             => 50,
          when Certificate_Verify_Failed => 51,
+         when Protocol_Version         => 70,
          when Internal_Error
             | Insufficient_Buffer
             | No_Error                 => 80,
@@ -583,6 +588,11 @@ is
       --  Required for server.  Optional for client (mTLS only).
       Local : Identity_Access := null;
 
+      --  ALPN: Application-Layer Protocol Negotiation (RFC 7301).
+      --  Set to e.g. "h2" for HTTP/2 or "http/1.1" for HTTP/1.1.
+      --  Empty (Len=0) means no ALPN extension is sent.
+      ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
+
       --  Server: request a client certificate (mTLS).
       Request_Client_Cert : Boolean := False;
 
@@ -699,6 +709,9 @@ is
       --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
       Use_EMS : Boolean := False;
 
+      --  Client's offered ALPN protocol (parsed from ClientHello)
+      Client_ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
+
       --  TLS 1.2 key material (set during Derive_Keys_12)
       Master_Secret_12   : Bytes_48 := (others => 0);
       Client_Write_IV_12 : Byte_Seq (0 .. 3) := (others => 0);
@@ -715,6 +728,14 @@ is
       PSK_Binder    : Bytes_48 := (others => 0);  --  received binder
       PSK_Binder_Len : N32 := 0;
       PSK_Binders_Offset : N32 := 0;              --  offset of binders in ClientHello
+
+      --  Handshake message reassembly (multi-record handshake messages).
+      --  When a handshake record fragment contains only part of a
+      --  handshake message (declared length > fragment), accumulate
+      --  fragments here until the full message is available.
+      Reasm_Buf  : Byte_Seq_Access := null;
+      Reasm_Len  : N32 := 0;   --  bytes accumulated so far
+      Reasm_Need : N32 := 0;   --  total bytes needed (type+length+body)
 
       --  RFLX scratch buffer
       RFLX_Main : aliased RFLX.RFLX_Builtin_Types.Bytes
@@ -781,6 +802,7 @@ is
       --  TLS 1.2: GCM implicit nonces and sequence numbers
       --  (persist past handshake for Connected-state encrypt/decrypt)
       Negotiated_Version  : TLS_Version := TLS_1_3;
+      Negotiated_ALPN     : Hostname_Buf := (Len => 0, Data => (others => ' '));
       Client_IV_12        : Byte_Seq (0 .. 3) := (others => 0);
       Server_IV_12        : Byte_Seq (0 .. 3) := (others => 0);
       Client_Seq_12       : Unsigned_64 := 0;
@@ -838,6 +860,11 @@ is
    --  Only meaningful after Handshake_Done.
    function Get_Cipher_Suite (S : Session) return Unsigned_16 is
       (S.Negotiated_Suite);
+
+   --  Which ALPN protocol was negotiated?
+   --  Empty string if no ALPN or not yet negotiated.
+   function Get_ALPN (S : Session) return String is
+      (S.Negotiated_ALPN.Data (1 .. S.Negotiated_ALPN.Len));
 
    --  Zero all key material in a Session.
    --  Call after Close_Notify or on error to prevent key leakage.

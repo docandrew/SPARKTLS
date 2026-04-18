@@ -1,3 +1,4 @@
+with Ada.Unchecked_Deallocation;
 with Interfaces;                 use Interfaces;
 with SPARKNaCl.Hashing;
 with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
@@ -70,6 +71,7 @@ is
          when Certificate_Verify_Failed => 51,
          when Decode_Error          => 50,
          when Illegal_Parameter     => 47,
+         when Protocol_Version     => 70,
          when Internal_Error        => 80,
          when Insufficient_Buffer   => 80,
          when Unsupported_Cipher_Suite => 40,
@@ -261,6 +263,15 @@ is
                S.HC_Ptr.Handshake_Secret := (others => 0);
                S.HC_Ptr.Master_Secret := (others => 0);
                S.HC_Ptr.Master_Secret_12 := (others => 0);
+               --  Free reassembly buffer if allocated
+               if S.HC_Ptr.Reasm_Buf /= null then
+                  declare
+                     procedure Free is new Ada.Unchecked_Deallocation
+                       (Object => Byte_Seq, Name => Byte_Seq_Access);
+                  begin
+                     Free (S.HC_Ptr.Reasm_Buf);
+                  end;
+               end if;
                HC_Alloc.Free (S.HC_Ptr);
             end if;
       end case;
@@ -341,23 +352,151 @@ is
                declare
                   Frag_Start : constant N32 :=
                      S.Input.Read_Pos + Rec.Fragment_Pos;
-                  Frag : Byte_Seq renames
-                     S.Input.Data (Frag_Start ..
-                                    Frag_Start + Rec.Fragment_Len - 1);
-                  Parse_OK : Boolean;
+                  Frag_Len   : constant N32 := Rec.Fragment_Len;
+                  Parse_OK   : Boolean;
+
+                  --  Maximum handshake message we'll reassemble (128 KB).
+                  --  Larger messages are rejected.
+                  Max_HS_Msg : constant N32 := 131072;
+
+                  procedure Free_Reasm is
+                     procedure Free is new Ada.Unchecked_Deallocation
+                       (Object => Byte_Seq, Name => Byte_Seq_Access);
+                  begin
+                     if HC.Reasm_Buf /= null then
+                        Free (HC.Reasm_Buf);
+                     end if;
+                     HC.Reasm_Len := 0;
+                     HC.Reasm_Need := 0;
+                  end Free_Reasm;
                begin
-                  Handshake.Parse_Client_Hello (S, HC, Frag, Parse_OK);
-
-                  if not Parse_OK then
-                     Send_Alert_And_Error (S, Handshake_Failure, Result);
+                  --  Check if we're in the middle of reassembly
+                  if HC.Reasm_Need > 0 then
+                     --  Append this fragment to the reassembly buffer
+                     declare
+                        Copy_Len : constant N32 :=
+                           N32'Min (Frag_Len,
+                                    HC.Reasm_Need - HC.Reasm_Len);
+                     begin
+                        if HC.Reasm_Buf /= null and then
+                           HC.Reasm_Len + Copy_Len <=
+                              N32 (HC.Reasm_Buf'Length)
+                        then
+                           HC.Reasm_Buf
+                             (HC.Reasm_Len ..
+                              HC.Reasm_Len + Copy_Len - 1) :=
+                              S.Input.Data (Frag_Start ..
+                                            Frag_Start + Copy_Len - 1);
+                           HC.Reasm_Len := HC.Reasm_Len + Copy_Len;
+                        end if;
+                     end;
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     return;
+
+                     if HC.Reasm_Len < HC.Reasm_Need then
+                        --  Still need more fragments
+                        Result := OK;
+                        return;
+                     end if;
+
+                     --  Full message reassembled — parse it
+                     declare
+                        Full_Msg : Byte_Seq renames
+                           HC.Reasm_Buf (0 .. HC.Reasm_Len - 1);
+                     begin
+                        Handshake.Parse_Client_Hello
+                          (S, HC, Full_Msg, Parse_OK);
+                        if Parse_OK then
+                           Append_Transcript (HC, Full_Msg);
+                        end if;
+                     end;
+                     Free_Reasm;
+
+                     if not Parse_OK then
+                        if S.Last_Error = Decode_Error then
+                           Send_Alert_And_Error (S, Decode_Error, Result);
+                        elsif S.Last_Error = Protocol_Version then
+                           Send_Alert_And_Error
+                             (S, Protocol_Version, Result);
+                        else
+                           Send_Alert_And_Error
+                             (S, Handshake_Failure, Result);
+                        end if;
+                        return;
+                     end if;
+
+                  else
+                     --  Fresh handshake record. Check if the message
+                     --  spans multiple records by reading the 3-byte
+                     --  handshake length.
+                     if Frag_Len < 4 then
+                        S.Input.Read_Pos :=
+                           S.Input.Read_Pos + Rec.Record_Len;
+                        Send_Alert_And_Error (S, Decode_Error, Result);
+                        return;
+                     end if;
+
+                     declare
+                        HS_Msg_Len : constant N32 :=
+                           N32 (S.Input.Data (Frag_Start + 1)) * 65536 +
+                           N32 (S.Input.Data (Frag_Start + 2)) * 256 +
+                           N32 (S.Input.Data (Frag_Start + 3));
+                        HS_Total   : constant N32 := HS_Msg_Len + 4;
+                     begin
+                        if HS_Total > Max_HS_Msg then
+                           S.Input.Read_Pos :=
+                              S.Input.Read_Pos + Rec.Record_Len;
+                           Send_Alert_And_Error
+                             (S, Decode_Error, Result);
+                           return;
+                        end if;
+
+                        if HS_Total > Frag_Len then
+                           --  Message spans multiple records.
+                           --  Start reassembly.
+                           HC.Reasm_Buf := new Byte_Seq'
+                              (0 .. HS_Total - 1 => 0);
+                           HC.Reasm_Need := HS_Total;
+                           HC.Reasm_Len := Frag_Len;
+                           HC.Reasm_Buf (0 .. Frag_Len - 1) :=
+                              S.Input.Data (Frag_Start ..
+                                            Frag_Start + Frag_Len - 1);
+                           S.Input.Read_Pos :=
+                              S.Input.Read_Pos + Rec.Record_Len;
+                           Result := OK;
+                           return;
+                        end if;
+                     end;
+
+                     --  Single-record message — parse directly
+                     declare
+                        Frag : Byte_Seq renames
+                           S.Input.Data (Frag_Start ..
+                                         Frag_Start + Frag_Len - 1);
+                     begin
+                        Handshake.Parse_Client_Hello
+                          (S, HC, Frag, Parse_OK);
+
+                        if not Parse_OK then
+                           if S.Last_Error = Decode_Error then
+                              Send_Alert_And_Error
+                                (S, Decode_Error, Result);
+                           elsif S.Last_Error = Protocol_Version then
+                              Send_Alert_And_Error
+                                (S, Protocol_Version, Result);
+                           else
+                              Send_Alert_And_Error
+                                (S, Handshake_Failure, Result);
+                           end if;
+                           S.Input.Read_Pos :=
+                              S.Input.Read_Pos + Rec.Record_Len;
+                           return;
+                        end if;
+
+                        Append_Transcript (HC, Frag);
+                     end;
+                     S.Input.Read_Pos :=
+                        S.Input.Read_Pos + Rec.Record_Len;
                   end if;
-
-                  --  Add ClientHello to transcript
-                  Append_Transcript (HC, Frag);
-
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
                   --  Version negotiation: dispatch based on HC.Version
                   --  (set by Parse_Client_Hello from supported_versions)
@@ -576,6 +715,52 @@ is
          end;
       end if;
 
+      --  Negotiate signature algorithm (must happen before ServerHello
+      --  so we reject before committing to any response).
+      if not HC.Using_PSK then
+         declare
+            Algo_OK : Boolean := False;
+         begin
+            for I in 0 .. HC.Peer_Sig_Algo_Count - 1 loop
+               case HC.Cfg.Local.Sign_Algo is
+                  when Sign_Ed25519 =>
+                     if HC.Peer_Sig_Algos (I) = 16#0807# then
+                        HC.Negotiated_Sig_Algo := 16#0807#;
+                        Algo_OK := True;
+                        exit;
+                     end if;
+                  when Sign_ECDSA_P256 =>
+                     if HC.Peer_Sig_Algos (I) = 16#0403# then
+                        HC.Negotiated_Sig_Algo := 16#0403#;
+                        Algo_OK := True;
+                        exit;
+                     end if;
+                  when Sign_ECDSA_P384 =>
+                     if HC.Peer_Sig_Algos (I) = 16#0503# then
+                        HC.Negotiated_Sig_Algo := 16#0503#;
+                        Algo_OK := True;
+                        exit;
+                     end if;
+                  when Sign_RSA_PSS =>
+                     if HC.Peer_Sig_Algos (I) in
+                        16#0804# | 16#0805# | 16#0806#
+                     then
+                        HC.Negotiated_Sig_Algo := HC.Peer_Sig_Algos (I);
+                        Algo_OK := True;
+                        exit;
+                     end if;
+                  when Sign_None =>
+                     null;
+               end case;
+            end loop;
+
+            if not Algo_OK then
+               Send_Alert_And_Error (S, Handshake_Failure, Result);
+               return;
+            end if;
+         end;
+      end if;
+
       --  Build ServerHello
       Handshake.Build_Server_Hello (S, HC, SH_Buf, SH_Len);
       if SH_Len = 0 then
@@ -607,11 +792,11 @@ is
 
       --  Build EncryptedExtensions (encrypted with server HS keys)
       declare
-         EE_Buf : Byte_Seq (0 .. 5);
+         EE_Buf : Byte_Seq (0 .. 255);
          EE_Len : N32;
          Enc_Out : N32;
       begin
-         Handshake.Build_Encrypted_Extensions (EE_Buf, EE_Len);
+         Handshake.Build_Encrypted_Extensions (HC, S, EE_Buf, EE_Len);
          Append_Transcript (HC, EE_Buf (0 .. EE_Len - 1));
 
          Records.Build_Encrypted_Record
@@ -682,51 +867,6 @@ is
 
          if Enc_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
-            S.State := Error_State;
-            Result := Error_Alert;
-            return;
-         end if;
-      end;
-
-      --  Negotiate signature algorithm
-      declare
-         Algo_OK : Boolean := False;
-      begin
-         for I in 0 .. HC.Peer_Sig_Algo_Count - 1 loop
-            case HC.Cfg.Local.Sign_Algo is
-               when Sign_Ed25519 =>
-                  if HC.Peer_Sig_Algos (I) = 16#0807# then
-                     HC.Negotiated_Sig_Algo := 16#0807#;
-                     Algo_OK := True;
-                     exit;
-                  end if;
-               when Sign_ECDSA_P256 =>
-                  if HC.Peer_Sig_Algos (I) = 16#0403# then
-                     HC.Negotiated_Sig_Algo := 16#0403#;
-                     Algo_OK := True;
-                     exit;
-                  end if;
-               when Sign_ECDSA_P384 =>
-                  if HC.Peer_Sig_Algos (I) = 16#0503# then
-                     HC.Negotiated_Sig_Algo := 16#0503#;
-                     Algo_OK := True;
-                     exit;
-                  end if;
-               when Sign_RSA_PSS =>
-                  if HC.Peer_Sig_Algos (I) in
-                     16#0804# | 16#0805# | 16#0806#
-                  then
-                     HC.Negotiated_Sig_Algo := HC.Peer_Sig_Algos (I);
-                     Algo_OK := True;
-                     exit;
-                  end if;
-               when Sign_None =>
-                  null;
-            end case;
-         end loop;
-
-         if not Algo_OK then
-            S.Last_Error := Handshake_Failure;
             S.State := Error_State;
             Result := Error_Alert;
             return;
@@ -1864,9 +2004,18 @@ is
             --  Plaintext handshake/alert records are not allowed here.
             --  RFC 8446 §5.1: after ServerHello, all records MUST be
             --  encrypted (content type application_data or CCS).
-            --  Send encrypted alert — the peer still has our keys.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Encrypted_Alert (S, Unexpected_Message, Result);
+
+            if Rec.Content = Records.Content_Alert then
+               --  Plaintext alert during post-ServerHello handshake.
+               --  Just close — do not respond.
+               S.Last_Error := Unexpected_Message;
+               S.State := Error_State;
+               Result := Error_Alert;
+            else
+               --  Send encrypted alert for other unexpected record types.
+               Send_Encrypted_Alert (S, Unexpected_Message, Result);
+            end if;
       end case;
    end Process_Client_Finished;
 
@@ -1911,25 +2060,18 @@ is
 
       if Rec.Content /= Records.Content_Application_Data then
          --  In Connected state, only application_data records are valid.
-         --  CCS after Finished and other unexpected types get rejected.
-         --  Send ENCRYPTED alert (we have application keys).
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         declare
-            Alert_Out : N32;
-         begin
-            Records.Build_Alert_Record
-              (Level     => 2,       --  fatal
-               Desc      => 10,      --  unexpected_message
-               Keys      => S.Server_App,
-               Output    => S.Output,
-               Bytes_Out => Alert_Out);
-         end;
-         S.Last_Error := Unexpected_Message;
-         S.State := Error_State;
-         if Output_Pending (S) > 0 then
-            Result := Has_Output;
-         else
+
+         if Rec.Content = Records.Content_Alert then
+            --  RFC 8446 §5.1: unencrypted alert after handshake.
+            --  Just close — do not respond with an alert.
+            S.Last_Error := Unexpected_Message;
+            S.State := Error_State;
             Result := Error_Alert;
+         else
+            --  CCS after Finished and other unexpected types get rejected.
+            --  Send ENCRYPTED alert (we have application keys).
+            Send_Encrypted_Alert (S, Unexpected_Message, Result);
          end if;
          return;
       end if;
