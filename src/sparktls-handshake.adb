@@ -877,10 +877,11 @@ is
                            begin
                               --  ALPN data: list_len(2)+proto_len(1)+proto.
                               --  Max useful: 2 + 1 + 255 = 258.
-                              if DLen >= 4 and then DLen <= 512 then
+                              if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
                                  declare
+                                    VLen     : constant Wire_Small_Ext_Len := DLen;
                                     ALPN_Buf : RBT.Bytes
-                                       (1 .. RBT.Index (DLen));
+                                       (1 .. RBT.Index (VLen));
                                  begin
                                     RFLX.TLS_Handshake.SH_Extension_TLS
                                       .Get_Data (Ext_Ctx, ALPN_Buf);
@@ -1267,10 +1268,13 @@ is
                               --  ClientHello key_share: max ~210 bytes
                               --  (x25519 + P-256 + P-384). Reject 0 or
                               --  unreasonably large values.
-                              if DLen = 0 or else DLen > 16384 then
-                                 null;  --  skip
+                              if DLen not in Wire_Key_Share_Len then
+                                 null;  --  skip malformed key_share
                               else
-                              KS_Buf := new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
+                              declare
+                                 VLen : constant Wire_Key_Share_Len := DLen;
+                              begin
+                              KS_Buf := new RBT.Bytes'(1 .. RBT.Index (VLen) => 0);
                               RFLX.TLS_Handshake.CH_Extension_TLS
                                 .Get_Data (Ext_Ctx, KS_Buf.all);
                               RFLX.TLS_Handshake.Key_Share_CH.Initialize
@@ -1417,6 +1421,7 @@ is
                               RFLX.TLS_Handshake.Key_Share_CH
                                 .Take_Buffer (KS_Ctx, KS_Buf);
                               RFLX_Free (KS_Buf);
+                              end;  --  VLen declare
                               end if;  --  DLen validation
                            end;
 
@@ -1433,7 +1438,7 @@ is
                               --  Validate internal list_length:
                               --  Must have list_len(2) + at least one algo(2),
                               --  list_len must equal DLen - 2 and be even.
-                              if DLen < 4 or else DLen > 16384 then
+                              if DLen not in Wire_Ext_Len or else DLen < 4 then
                                  Take_Buffer (Ctx, Buf);
                                  RFLX_Free (Buf);
                                  S.Last_Error := Decode_Error;
@@ -1443,8 +1448,9 @@ is
                               --  Heap-allocate to avoid stack overflow
                               --  on large sig_algs lists (32K+ entries).
                               declare
+                                 VLen   : constant Wire_Ext_Len := DLen;
                                  SA_Buf : RBT.Bytes_Ptr :=
-                                    new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
+                                    new RBT.Bytes'(1 .. RBT.Index (VLen) => 0);
                                  Pos : RBT.Index := 3;
                                  List_Len : N32;
                               begin
@@ -1506,11 +1512,12 @@ is
                                     .Get_Data_Length (Ext_Ctx));
                            begin
                               --  supported_groups: max ~100 groups = 202 bytes
-                              if DLen >= 4 and then DLen <= 512 then
+                              if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
                                  declare
+                                    VLen   : constant Wire_Small_Ext_Len := DLen;
                                     SG_Buf : RBT.Bytes_Ptr :=
                                        new RBT.Bytes'
-                                         (1 .. RBT.Index (DLen) => 0);
+                                         (1 .. RBT.Index (VLen) => 0);
                                     List_Len : N32;
                                     Pos : N32;
                                  begin
@@ -1646,11 +1653,12 @@ is
                                     .Get_Data_Length (Ext_Ctx));
                            begin
                               --  supported_versions: max ~50 versions = 101 bytes
-                              if DLen >= 3 and then DLen <= 256 then
+                              if DLen in Wire_Small_Ext_Len and then DLen >= 3 then
                                  declare
+                                    VLen   : constant Wire_Small_Ext_Len := DLen;
                                     SV_Buf : RBT.Bytes_Ptr :=
                                        new RBT.Bytes'
-                                         (1 .. RBT.Index (DLen) => 0);
+                                         (1 .. RBT.Index (VLen) => 0);
                                     List_Len : N32;
                                     Pos : N32;
                                  begin
@@ -1684,11 +1692,12 @@ is
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
                            begin
-                              if DLen >= 4 and then DLen <= 512 then
+                              if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
                                  declare
-                                    AB : RBT.Bytes_Ptr :=
+                                    VLen : constant Wire_Small_Ext_Len := DLen;
+                                    AB   : RBT.Bytes_Ptr :=
                                        new RBT.Bytes'
-                                         (1 .. RBT.Index (DLen) => 0);
+                                         (1 .. RBT.Index (VLen) => 0);
                                  begin
                                     RFLX.TLS_Handshake.CH_Extension_TLS
                                       .Get_Data (Ext_Ctx, AB.all);

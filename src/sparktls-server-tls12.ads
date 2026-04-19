@@ -35,7 +35,7 @@ with SPARKNaCl; use SPARKNaCl;
 --    - No EncryptedExtensions message
 --    - No CertificateVerify from server for ECDHE (signature is in SKE)
 package SPARKTLS.Server.TLS12 with
-   SPARK_Mode => Off  --  uses HC_Ptr access type
+   SPARK_Mode => On
 is
    --  Build the TLS 1.2 server flight:
    --  ServerHello + Certificate + ServerKeyExchange + ServerHelloDone

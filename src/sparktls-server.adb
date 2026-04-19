@@ -81,12 +81,13 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
+   with Pre => S.State not in Idle | Closed | Closing | Error_State
    is
       Dummy : N32;
    begin
       null; -- debug removed
       S.Last_Error := Err;
-      S.State := Error_State;
+      Set_State (S, Error_State);
       Records.Build_Plaintext_Alert
         (Level     => 2,  --  fatal
          Desc      => Alert_Desc (Err),
@@ -106,12 +107,13 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
+   with Pre => S.State not in Idle | Closed | Closing | Error_State
    is
       Dummy : N32;
    begin
       null; -- debug removed
       S.Last_Error := Err;
-      S.State := Error_State;
+      Set_State (S, Error_State);
       Records.Build_Alert_Record
         (Level     => 2,
          Desc      => Alert_Desc (Err),
@@ -163,6 +165,7 @@ is
       Trust               : Trust_Store_Access := null;
       Request_Client_Cert : Boolean := False;
       Tickets             : Ticket_Store_Access := null)
+   with SPARK_Mode => Off
    is
       Cfg : Config;
    begin
@@ -186,7 +189,7 @@ is
 
       S.HC_Ptr := HC_Alloc.Allocate;
       if S.HC_Ptr = null then
-         S.State := Error_State;
+         Set_State (S, Error_State);
          S.Last_Error := Internal_Error;
          return;
       end if;
@@ -222,7 +225,7 @@ is
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
-               S.State := Closed;
+               Set_State (S, Closed);
                Result := Shutdown;
             end if;
 
@@ -234,19 +237,19 @@ is
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
-               S.State := Closed;
+               Set_State (S, Closed);
                Result := Error_Alert;
             end if;
 
          when Closed | Idle =>
             S.Last_Error := Internal_Error;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
 
          when others =>
             if S.HC_Ptr = null then
                S.Last_Error := Internal_Error;
-               S.State := Error_State;
+               Set_State (S, Error_State);
                Result := Error_Alert;
                return;
             end if;
@@ -329,7 +332,7 @@ is
                   --  Plaintext alert before handshake — just close
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   S.Last_Error := Unexpected_Message;
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   Result := Error_Alert;
                   return;
                end if;
@@ -388,8 +391,9 @@ is
 
                      --  Full message reassembled — parse it
                      declare
-                        Full_Msg : Byte_Seq renames
-                           HC.Reasm_Buf (0 .. HC.Reasm_Len - 1);
+                        R_Len : constant N32 := HC.Reasm_Len;
+                        Full_Msg : constant Byte_Seq :=
+                           HC.Reasm_Buf (0 .. R_Len - 1);
                      begin
                         Handshake.Parse_Client_Hello
                           (S, HC, Full_Msg, Parse_OK);
@@ -538,9 +542,9 @@ is
                Result := Has_Output;
             else
                if HC.Cfg.Request_Client_Cert and not HC.Using_PSK then
-                  S.State := Wait_Client_Certificate;
+                  Set_State (S, Wait_Client_Certificate);
                else
-                  S.State := Wait_Client_Finished;
+                  Set_State (S, Wait_Client_Finished);
                end if;
                --  Don't return Need_Input if there's already data buffered
                --  (e.g., CCS records in the same TCP packet as ClientHello)
@@ -580,7 +584,7 @@ is
 
          when others =>
             S.Last_Error := Internal_Error;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
       end case;
    end Advance_Handshake;
@@ -767,7 +771,7 @@ is
 
       if Rec_Out = 0 then
          S.Last_Error := Insufficient_Buffer;
-         S.State := Error_State;
+         Set_State (S, Error_State);
          Result := Error_Alert;
          return;
       end if;
@@ -796,7 +800,7 @@ is
 
          if Enc_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
@@ -839,7 +843,7 @@ is
 
          if Cert_Len = 0 then
             S.Last_Error := Internal_Error;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
@@ -855,7 +859,7 @@ is
 
          if Enc_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
@@ -891,7 +895,7 @@ is
 
          if CV_Len = 0 then
             S.Last_Error := Internal_Error;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
@@ -907,7 +911,7 @@ is
 
          if Enc_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
@@ -981,7 +985,7 @@ is
 
          if Enc_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
@@ -990,7 +994,7 @@ is
       --  Derive application keys now (using transcript through server Finished)
       Derive_App_Keys (S, HC);
 
-      S.State := Server_Hello_Sent;
+      Set_State (S, Server_Hello_Sent);
       Result := Has_Output;
    end Build_Server_Flight;
 
@@ -1224,7 +1228,7 @@ is
                     (2, 10, S.Server_App, S.Output, A);
                end;
                S.Last_Error := Unexpected_Message;
-               S.State := Error_State;
+               Set_State (S, Error_State);
                if Output_Pending (S) > 0 then
                   Result := Has_Output;
                else
@@ -1234,20 +1238,21 @@ is
 
          when Records.Content_Application_Data =>
             declare
+               FL         : constant N32 := Rec.Fragment_Len;
                Frag_Start : constant N32 :=
                   S.Input.Read_Pos + Rec.Fragment_Pos;
-               Encrypted  : Byte_Seq (0 .. Rec.Fragment_Len - 1) :=
+               Encrypted  : Byte_Seq (0 .. FL - 1) :=
                   S.Input.Data (Frag_Start ..
-                                 Frag_Start + Rec.Fragment_Len - 1);
-               Hdr        : Byte_Seq (0 .. 4) :=
+                                 Frag_Start + FL - 1);
+               Hdr        : constant Byte_Seq (0 .. 4) :=
                   S.Input.Data (S.Input.Read_Pos ..
                                  S.Input.Read_Pos + 4);
-               Plaintext  : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+               Plaintext  : Byte_Seq (0 .. FL - 1);
                Plain_Len  : N32;
                Inner_Type : Byte;
                Dec_Valid  : Boolean;
             begin
-               if Rec.Fragment_Len < Records.Tag_Size + 1 then
+               if FL < Records.Tag_Size + 1 then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   declare
                      A : N32;
@@ -1256,7 +1261,7 @@ is
                        (2, 10, S.Server_App, S.Output, A);
                   end;
                   S.Last_Error := Decode_Error;
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -1284,7 +1289,7 @@ is
                        (2, 10, S.Server_App, S.Output, A);
                   end;
                   S.Last_Error := Unexpected_Message;
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -1301,7 +1306,7 @@ is
                        (2, 10, S.Server_App, S.Output, A);
                   end;
                   S.Last_Error := Unexpected_Message;
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -1314,14 +1319,15 @@ is
                   Msg_Type : Byte;
                   Msg_Len  : N32;
                   Parse_OK : Boolean;
-                  Data     : Byte_Seq renames Plaintext (0 .. Plain_Len - 1);
+                  PL       : constant N32 := Plain_Len;
+                  Data     : constant Byte_Seq := Plaintext (0 .. PL - 1);
                begin
                   Handshake.Parse_Handshake_Header
                     (Data, Msg_Type, Msg_Len, Parse_OK);
 
                   if not Parse_OK then
                      S.Last_Error := Decode_Error;
-                     S.State := Error_State;
+                     Set_State (S, Error_State);
                      Result := Error_Alert;
                      return;
                   end if;
@@ -1330,7 +1336,7 @@ is
                      when Wait_Client_Certificate =>
                         if Msg_Type /= Handshake.HT_Certificate then
                            S.Last_Error := Unexpected_Message;
-                           S.State := Error_State;
+                           Set_State (S, Error_State);
                            Result := Error_Alert;
                            return;
                         end if;
@@ -1397,16 +1403,16 @@ is
                         --  Empty cert list is OK (client has no cert)
                         if not HC.Peer_Cert_Valid then
                            --  No client cert — skip CertificateVerify
-                           S.State := Wait_Client_Finished;
+                           Set_State (S, Wait_Client_Finished);
                         else
-                           S.State := Wait_Client_Cert_Verify;
+                           Set_State (S, Wait_Client_Cert_Verify);
                         end if;
                         Result := OK;
 
                      when Wait_Client_Cert_Verify =>
                         if Msg_Type /= Handshake.HT_Certificate_Verify then
                            S.Last_Error := Unexpected_Message;
-                           S.State := Error_State;
+                           Set_State (S, Error_State);
                            Result := Error_Alert;
                            return;
                         end if;
@@ -1491,7 +1497,7 @@ is
 
                               if not Verified then
                                  S.Last_Error := Certificate_Verify_Failed;
-                                 S.State := Error_State;
+                                 Set_State (S, Error_State);
                                  Result := Error_Alert;
                                  return;
                               end if;
@@ -1504,8 +1510,9 @@ is
                            and then HC.Peer_Cert_Valid
                         then
                            declare
+                              CDL : constant N32 := HC.Peer_Cert_DER_Len;
                               Cert_X : X509.Byte_Seq
-                                 (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+                                 (0 .. X509.N32 (CDL) - 1);
                               VR : Validation_Result;
                            begin
                               for I in N32 range
@@ -1529,19 +1536,19 @@ is
 
                               if VR /= Valid then
                                  S.Last_Error := Bad_Certificate;
-                                 S.State := Error_State;
+                                 Set_State (S, Error_State);
                                  Result := Error_Alert;
                                  return;
                               end if;
                            end;
                         end if;
 
-                        S.State := Wait_Client_Finished;
+                        Set_State (S, Wait_Client_Finished);
                         Result := OK;
 
                      when others =>
                         S.Last_Error := Internal_Error;
-                        S.State := Error_State;
+                        Set_State (S, Error_State);
                         Result := Error_Alert;
                   end case;
                end;
@@ -1604,7 +1611,7 @@ is
                     (2, 10, S.Server_App, S.Output, A);
                end;
                S.Last_Error := Unexpected_Message;
-               S.State := Error_State;
+               Set_State (S, Error_State);
                if Output_Pending (S) > 0 then
                   Result := Has_Output;
                else
@@ -1615,20 +1622,21 @@ is
          when Records.Content_Application_Data =>
             --  Encrypted handshake record (client Finished)
             declare
+               FL         : constant N32 := Rec.Fragment_Len;
                Frag_Start : constant N32 :=
                   S.Input.Read_Pos + Rec.Fragment_Pos;
-               Encrypted  : Byte_Seq (0 .. Rec.Fragment_Len - 1) :=
+               Encrypted  : Byte_Seq (0 .. FL - 1) :=
                   S.Input.Data (Frag_Start ..
-                                 Frag_Start + Rec.Fragment_Len - 1);
-               Hdr        : Byte_Seq (0 .. 4) :=
+                                 Frag_Start + FL - 1);
+               Hdr        : constant Byte_Seq (0 .. 4) :=
                   S.Input.Data (S.Input.Read_Pos ..
                                  S.Input.Read_Pos + 4);
-               Plaintext  : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+               Plaintext  : Byte_Seq (0 .. FL - 1);
                Plain_Len  : N32;
                Inner_Type : Byte;
                Dec_Valid  : Boolean;
             begin
-               if Rec.Fragment_Len < Records.Tag_Size + 1 then
+               if FL < Records.Tag_Size + 1 then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Encrypted_Alert (S, Unexpected_Message, Result);
                   return;
@@ -1636,7 +1644,7 @@ is
 
                --  RFC 8446 §5.4: TLSInnerPlaintext MUST NOT exceed
                --  2^14 + 1 octets. Check before decrypting.
-               if Rec.Fragment_Len - Records.Tag_Size >
+               if FL - Records.Tag_Size >
                   Records.Max_Fragment + 1
                then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1667,7 +1675,7 @@ is
                        (2, 20, S.Server_App, S.Output, A);
                   end;
                   S.Last_Error := Bad_Record_MAC;
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -1681,7 +1689,7 @@ is
                   S.Last_Error := Error_Code'Val
                     (Natural'Min (Natural (Plaintext (1)),
                                   Error_Code'Pos (Error_Code'Last)));
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   Result := Error_Alert;
                   return;
                elsif Inner_Type /= 16#16# then
@@ -1693,7 +1701,7 @@ is
                        (2, 10, S.Server_App, S.Output, A);
                   end;
                   S.Last_Error := Unexpected_Message;
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -1721,7 +1729,7 @@ is
                           (2, 50, S.Server_App, S.Output, A);
                      end;
                      S.Last_Error := Decode_Error;
-                     S.State := Error_State;
+                     Set_State (S, Error_State);
                      if Output_Pending (S) > 0 then
                         Result := Has_Output;
                      else
@@ -1739,7 +1747,7 @@ is
                           (2, 10, S.Server_App, S.Output, A);
                      end;
                      S.Last_Error := Unexpected_Message;
-                     S.State := Error_State;
+                     Set_State (S, Error_State);
                      if Output_Pending (S) > 0 then
                         Result := Has_Output;
                      else
@@ -1750,7 +1758,8 @@ is
 
                   --  Verify client Finished
                   declare
-                     Data     : Byte_Seq renames Plaintext (0 .. Plain_Len - 1);
+                     PL       : constant N32 := Plain_Len;
+                     Data     : constant Byte_Seq := Plaintext (0 .. PL - 1);
                      Expected_Len : constant N32 :=
                         (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                          then 48 else 32);
@@ -1766,7 +1775,7 @@ is
                              (2, 50, S.Server_App, S.Output, A);
                         end;
                         S.Last_Error := Decode_Error;
-                        S.State := Error_State;
+                        Set_State (S, Error_State);
                         if Output_Pending (S) > 0 then
                            Result := Has_Output;
                         else
@@ -1829,7 +1838,7 @@ is
                                 (2, 51, S.Server_App, S.Output, A);
                            end;
                            S.Last_Error := Handshake_Failure;
-                           S.State := Error_State;
+                           Set_State (S, Error_State);
                            if Output_Pending (S) > 0 then
                               Result := Has_Output;
                            else
@@ -1949,7 +1958,7 @@ is
                         end if;
                      end;
 
-                     S.State := Connected;
+                     Set_State (S, Connected);
                      S.Handshake_Just_Done := True;
                      --  If there's pending output (e.g., NewSessionTicket),
                      --  return Has_Output first so the caller drains it
@@ -1974,7 +1983,7 @@ is
                --  Plaintext alert during post-ServerHello handshake.
                --  Just close — do not respond.
                S.Last_Error := Unexpected_Message;
-               S.State := Error_State;
+               Set_State (S, Error_State);
                Result := Error_Alert;
             else
                --  Send encrypted alert for other unexpected record types.
@@ -2030,7 +2039,7 @@ is
             --  RFC 8446 §5.1: unencrypted alert after handshake.
             --  Just close — do not respond with an alert.
             S.Last_Error := Unexpected_Message;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
          else
             --  CCS after Finished and other unexpected types get rejected.
@@ -2041,18 +2050,19 @@ is
       end if;
 
       declare
+         FL         : constant N32 := Rec.Fragment_Len;
          Frag_Start : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted  : Byte_Seq (0 .. Rec.Fragment_Len - 1) :=
+         Encrypted  : Byte_Seq (0 .. FL - 1) :=
             S.Input.Data (Frag_Start ..
-                           Frag_Start + Rec.Fragment_Len - 1);
-         Hdr        : Byte_Seq (0 .. 4) :=
+                           Frag_Start + FL - 1);
+         Hdr        : constant Byte_Seq (0 .. 4) :=
             S.Input.Data (S.Input.Read_Pos .. S.Input.Read_Pos + 4);
-         Plaintext  : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Plaintext  : Byte_Seq (0 .. FL - 1);
          Plain_Len  : N32;
          Inner_Type : Byte;
          Dec_Valid  : Boolean;
       begin
-         if Rec.Fragment_Len < Records.Tag_Size + 1 then
+         if FL < Records.Tag_Size + 1 then
             --  Too short for AEAD tag + at least 1 byte of ciphertext
             --  (the inner content type byte). RFC 8446 §5.4.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2067,7 +2077,7 @@ is
                   Bytes_Out => Alert_Out);
             end;
             S.Last_Error := Unexpected_Message;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -2078,7 +2088,7 @@ is
 
          --  RFC 8446 §5.4: TLSInnerPlaintext MUST NOT exceed
          --  2^14 + 1 octets. Check before decrypting.
-         if Rec.Fragment_Len - Records.Tag_Size >
+         if FL - Records.Tag_Size >
             Records.Max_Fragment + 1
          then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2093,7 +2103,7 @@ is
                   Bytes_Out => Alert_Out);
             end;
             S.Last_Error := Record_Overflow;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -2127,7 +2137,7 @@ is
                   Bytes_Out => Alert_Out);
             end;
             S.Last_Error := Bad_Record_MAC;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             --  Return Has_Output to drain the alert before Error_Alert
             if Output_Pending (S) > 0 then
                Result := Has_Output;
@@ -2160,7 +2170,7 @@ is
                --  Alert
                if Plain_Len >= 2 and then Plaintext (1) = 0 then
                   --  close_notify
-                  S.State := Closing;
+                  Set_State (S, Closing);
                   Result := Shutdown;
                else
                   --  Invalid/empty alert — send unexpected_message
@@ -2171,7 +2181,7 @@ is
                        (2, 10, S.Server_App, S.Output, A);
                   end;
                   S.Last_Error := Unexpected_Message;
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -2239,7 +2249,7 @@ is
             Output    => S.Output,
             Bytes_Out => Alert_Out);
       end if;
-      S.State := Closing;
+      Set_State (S, Closing);
    end Close_Notify;
 
 end SPARKTLS.Server;

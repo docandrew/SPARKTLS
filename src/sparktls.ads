@@ -836,6 +836,14 @@ is
    --  Buffer operations (transport layer interface)
    --================================================================
 
+   --  Transition to a new state. The precondition enforces that only
+   --  transitions permitted by the RFC 8446 state machine are allowed.
+   --  All state changes MUST go through this procedure — never assign
+   --  S.State directly.
+   procedure Set_State (S : in out Session; To : Connection_State)
+     with Pre  => Valid_Transition (S.State, To),
+          Post => S.State = To;
+
    --  Push received ciphertext bytes into the session's input buffer.
    --  RFC 8446 §5.1: the record layer accepts bytes from the transport.
    --  State is not modified by feeding data.

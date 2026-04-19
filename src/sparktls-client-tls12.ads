@@ -17,7 +17,7 @@ with SPARKNaCl; use SPARKNaCl;
 --    5. Decrypt + verify server Finished
 --    6. Transition to Connected
 package SPARKTLS.Client.TLS12 with
-   SPARK_Mode => Off  --  uses HC_Ptr access type
+   SPARK_Mode => On
 is
    --  Step the TLS 1.2 handshake state machine.
    --  Called repeatedly from Client.Advance until Connected or Error.

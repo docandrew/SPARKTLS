@@ -16,7 +16,7 @@ with X509;
 use type X509.Algorithm_ID;
 
 package body SPARKTLS.Client.TLS12 with
-   SPARK_Mode => Off
+   SPARK_Mode => On
 is
    use Handshake.TLS12;
 
@@ -37,7 +37,7 @@ is
       Dummy : N32;
    begin
       S.Last_Error := Err;
-      S.State := Error_State;
+      Set_State (S, Error_State);
       Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
@@ -244,8 +244,9 @@ is
          end if;
 
          declare
-            Frag : Byte_Seq renames
-               HC.Reasm_Buf (0 .. HC.Reasm_Need - 1);
+            RN : constant N32 := HC.Reasm_Need;
+            Frag : constant Byte_Seq :=
+               HC.Reasm_Buf (0 .. RN - 1);
          begin
 
          case MT is
@@ -346,11 +347,12 @@ is
                   and then HC.Peer_Cert_Valid
                then
                   declare
+                     PCDL : constant N32 := HC.Peer_Cert_DER_Len;
                      Cert_X : X509.Byte_Seq
-                        (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+                        (0 .. X509.N32 (PCDL) - 1);
                      VR : Validation_Result;
                   begin
-                     for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
+                     for I in N32 range 0 .. PCDL - 1 loop
                         Cert_X (X509.N32 (I)) :=
                            X509.Byte (HC.Peer_Cert_DER (I));
                      end loop;
@@ -386,11 +388,12 @@ is
                   return;
                end if;
                declare
+                  ML_C : constant N32 := ML;
                   Body_Start : constant N32 := Frag'First + 4;
-                  Body_Data : Byte_Seq (0 .. ML - 1);
+                  Body_Data : Byte_Seq (0 .. ML_C - 1);
                   SKE_OK : Boolean;
                begin
-                  Body_Data := Frag (Body_Start .. Body_Start + ML - 1);
+                  Body_Data := Frag (Body_Start .. Body_Start + ML_C - 1);
                   Parse_Server_Key_Exchange (HC, Body_Data, SKE_OK);
                   if not SKE_OK then
                      Send_Alert_And_Error (S, Handshake_Failure, Result);
@@ -587,20 +590,21 @@ is
       end if;
 
       declare
+         FL : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Encrypted : Byte_Seq (0 .. FL - 1);
          Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Plaintext : Byte_Seq (0 .. FL - 1);
          PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. Rec.Fragment_Len - 1 loop
+         for I in N32 range 0 .. FL - 1 loop
             Encrypted (I) := S.Input.Data (FS + I);
          end loop;
          for I in N32 range 0 .. 4 loop
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if Rec.Fragment_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         if FL < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Decode_Error, Result); return;
          end if;
@@ -671,7 +675,7 @@ is
       S.Client_Seq_12 := HC.Client_Seq_12;
       S.Server_Seq_12 := HC.Server_Seq_12;
 
-      S.State := Connected;
+      Set_State (S, Connected);
       S.Handshake_Just_Done := True;
       Result := (if Output_Pending (S) > 0 then Has_Output else Handshake_Done);
       if Result = Handshake_Done then S.Handshake_Just_Done := False; end if;
@@ -737,20 +741,21 @@ is
       end if;
 
       declare
+         FL : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Encrypted : Byte_Seq (0 .. FL - 1);
          Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Plaintext : Byte_Seq (0 .. FL - 1);
          PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. Rec.Fragment_Len - 1 loop
+         for I in N32 range 0 .. FL - 1 loop
             Encrypted (I) := S.Input.Data (FS + I);
          end loop;
          for I in N32 range 0 .. 4 loop
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if Rec.Fragment_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         if FL < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Result := OK; return;
          end if;
@@ -762,7 +767,7 @@ is
 
          if not DV then
             S.Last_Error := Bad_Record_MAC;
-            S.State := Error_State;
+            Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
@@ -779,10 +784,10 @@ is
                end if;
             when Records.Content_Alert =>
                if PL >= 2 and then Plaintext (1) = 0 then
-                  S.State := Closing; Result := Shutdown;
+                  Set_State (S, Closing); Result := Shutdown;
                else
                   S.Last_Error := Unexpected_Message;
-                  S.State := Error_State; Result := Error_Alert;
+                  Set_State (S, Error_State); Result := Error_Alert;
                end if;
             when others =>
                Result := OK;

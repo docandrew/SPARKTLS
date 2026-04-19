@@ -45,11 +45,10 @@ is
       Trust               : Trust_Store_Access := null;
       Request_Client_Cert : Boolean := False;
       Tickets             : Ticket_Store_Access := null)
-   with Pre  => Random /= null and
-                Local /= null and
-                Local.Has_Identity,
-        Post => S.State = Wait_Client_Hello and
-                S.Role = Role_Server;
+   with SPARK_Mode => Off;
+   --  SPARK_Mode Off: Ticket_Store_Access is access-all (shared mutable
+   --  cache). SPARK's ownership model treats it as a move, but the pointer
+   --  is intentionally shared between caller and Config.
 
    --  Initialize a server session with full control over Config.
    --  Cfg.Local must point to an Identity with a certificate and key.

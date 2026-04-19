@@ -13,7 +13,7 @@ with SPARKTLS.P256.Point;
 with SPARKTLS.P384.Point;
 
 package body SPARKTLS.Server.TLS12 with
-   SPARK_Mode => Off
+   SPARK_Mode => On
 is
    use Handshake.TLS12;
 
@@ -34,7 +34,7 @@ is
       Dummy : N32;
    begin
       S.Last_Error := Err;
-      S.State := Error_State;
+      Set_State (S, Error_State);
       Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
@@ -131,7 +131,7 @@ is
          Records.Build_Handshake_Record (SD (0 .. DL - 1), S.Output, Rec_Out);
       end;
 
-      S.State := Server_Hello_Sent;
+      Set_State (S, Server_Hello_Sent);
       Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
    end Build_Server_Flight_12;
 
@@ -241,8 +241,9 @@ is
       end if;
 
       declare
+         FL : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Frag : Byte_Seq renames S.Input.Data (FS .. FS + Rec.Fragment_Len - 1);
+         Frag : Byte_Seq renames S.Input.Data (FS .. FS + FL - 1);
          MT : Byte; ML : N32; POK : Boolean;
       begin
          Handshake.Parse_Handshake_Header (Frag, MT, ML, POK);
@@ -253,11 +254,12 @@ is
          end if;
 
          declare
-            BS : constant N32 := Frag'First + 4;
-            Body_Data : Byte_Seq (0 .. ML - 1);
+            MLC : constant N32 := ML;
+            BS  : constant N32 := Frag'First + 4;
+            Body_Data : Byte_Seq (0 .. MLC - 1);
             CKE_OK : Boolean;
          begin
-            if ML > 0 and then 4 + ML <= Rec.Fragment_Len then
+            if ML > 0 and then 4 + ML <= FL then
                Body_Data := Frag (BS .. BS + ML - 1);
                Parse_Client_Key_Exchange (HC, Body_Data, CKE_OK);
                if not CKE_OK then
@@ -355,20 +357,21 @@ is
       end if;
 
       declare
+         FL : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Encrypted : Byte_Seq (0 .. FL - 1);
          Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Plaintext : Byte_Seq (0 .. FL - 1);
          PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. Rec.Fragment_Len - 1 loop
+         for I in N32 range 0 .. FL - 1 loop
             Encrypted (I) := S.Input.Data (FS + I);
          end loop;
          for I in N32 range 0 .. 4 loop
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if Rec.Fragment_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         if FL < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Decode_Error, Result); return;
          end if;
@@ -466,7 +469,7 @@ is
       S.Client_Seq_12 := HC.Client_Seq_12;
       S.Server_Seq_12 := HC.Server_Seq_12;
 
-      S.State := Connected;
+      Set_State (S, Connected);
       S.Handshake_Just_Done := True;
       Result := (if Output_Pending (S) > 0 then Has_Output else Handshake_Done);
       if Result = Handshake_Done then S.Handshake_Just_Done := False; end if;
@@ -513,20 +516,21 @@ is
       end if;
 
       declare
+         FL : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Encrypted : Byte_Seq (0 .. FL - 1);
          Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. Rec.Fragment_Len - 1);
+         Plaintext : Byte_Seq (0 .. FL - 1);
          PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. Rec.Fragment_Len - 1 loop
+         for I in N32 range 0 .. FL - 1 loop
             Encrypted (I) := S.Input.Data (FS + I);
          end loop;
          for I in N32 range 0 .. 4 loop
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if Rec.Fragment_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         if FL < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Unexpected_Message, Result); return;
          end if;
@@ -553,11 +557,11 @@ is
 
             when Records.Content_Alert =>
                if PL >= 2 and then Plaintext (1) = 0 then
-                  S.State := Closing;
+                  Set_State (S, Closing);
                   Result := Shutdown;
                else
                   S.Last_Error := Unexpected_Message;
-                  S.State := Error_State;
+                  Set_State (S, Error_State);
                   Result := Error_Alert;
                end if;
 

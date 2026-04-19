@@ -11,6 +11,14 @@ is
    end Free_Byte_Seq;
 
    --================================================================
+   --  Set_State
+   --================================================================
+   procedure Set_State (S : in out Session; To : Connection_State) is
+   begin
+      S.State := To;
+   end Set_State;
+
+   --================================================================
    --  Compact
    --  Shift unread data to the front of the buffer to reclaim space
    --================================================================
