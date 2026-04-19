@@ -779,7 +779,13 @@ is
                               KS_Ctx  : RFLX.TLS_Handshake
                                            .Key_Share_SH.Context;
                            begin
-                              KS_Buf := new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
+                              if DLen not in Wire_Key_Share_Len then
+                                 null;  --  skip malformed key_share
+                              else
+                              declare
+                                 VLen : constant Wire_Key_Share_Len := DLen;
+                              begin
+                              KS_Buf := new RBT.Bytes'(1 .. RBT.Index (VLen) => 0);
                               RFLX.TLS_Handshake.SH_Extension_TLS
                                 .Get_Data (Ext_Ctx, KS_Buf.all);
                               RFLX.TLS_Handshake.Key_Share_SH.Initialize
@@ -854,6 +860,8 @@ is
                               RFLX.TLS_Handshake.Key_Share_SH
                                 .Take_Buffer (KS_Ctx, KS_Buf);
                               RFLX_Free (KS_Buf);
+                              end;  --  VLen declare
+                              end if;  --  DLen validation
                            end;
 
                         --  ALPN extension (0x0010)
@@ -866,28 +874,33 @@ is
                               DLen : constant N32 := N32
                                  (RFLX.TLS_Handshake.SH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
-                              ALPN_Buf : RBT.Bytes
-                                           (1 .. RBT.Index (DLen));
                            begin
-                              if DLen >= 4 then
-                                 RFLX.TLS_Handshake.SH_Extension_TLS
-                                   .Get_Data (Ext_Ctx, ALPN_Buf);
-                                 --  Format: list_len(2) + proto_len(1) + proto
+                              --  ALPN data: list_len(2)+proto_len(1)+proto.
+                              --  Max useful: 2 + 1 + 255 = 258.
+                              if DLen >= 4 and then DLen <= 512 then
                                  declare
-                                    PL : constant Natural :=
-                                       Natural (ALPN_Buf (3));
+                                    ALPN_Buf : RBT.Bytes
+                                       (1 .. RBT.Index (DLen));
                                  begin
-                                    if PL > 0 and PL <= Max_Hostname_Len
-                                       and N32 (PL + 3) <= DLen
-                                    then
-                                       S.Negotiated_ALPN.Len := PL;
-                                       for I in 1 .. PL loop
-                                          S.Negotiated_ALPN.Data (I) :=
-                                             Character'Val
-                                               (ALPN_Buf
-                                                  (RBT.Index (3 + I)));
-                                       end loop;
-                                    end if;
+                                    RFLX.TLS_Handshake.SH_Extension_TLS
+                                      .Get_Data (Ext_Ctx, ALPN_Buf);
+                                    declare
+                                       PL : constant Natural :=
+                                          Natural (ALPN_Buf (3));
+                                    begin
+                                       if PL > 0
+                                          and PL <= Max_Hostname_Len
+                                          and N32 (PL + 3) <= DLen
+                                       then
+                                          S.Negotiated_ALPN.Len := PL;
+                                          for I in 1 .. PL loop
+                                             S.Negotiated_ALPN.Data (I) :=
+                                                Character'Val
+                                                  (ALPN_Buf
+                                                     (RBT.Index (3 + I)));
+                                          end loop;
+                                       end if;
+                                    end;
                                  end;
                               end if;
                            end;
@@ -1251,6 +1264,12 @@ is
                               KS_Ctx  : RFLX.TLS_Handshake
                                            .Key_Share_CH.Context;
                            begin
+                              --  ClientHello key_share: max ~210 bytes
+                              --  (x25519 + P-256 + P-384). Reject 0 or
+                              --  unreasonably large values.
+                              if DLen = 0 or else DLen > 16384 then
+                                 null;  --  skip
+                              else
                               KS_Buf := new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
                               RFLX.TLS_Handshake.CH_Extension_TLS
                                 .Get_Data (Ext_Ctx, KS_Buf.all);
@@ -1332,20 +1351,22 @@ is
                                                                .Key_Share_Entry
                                                                .Get_Length
                                                                   (E_Ctx));
-                                                         KB : RBT.Bytes
-                                                                (1 .. RBT.Index (KLen));
                                                       begin
                                                          if KLen = 65 then
-                                                            RFLX.TLS_Handshake
-                                                              .Key_Share_Entry
-                                                              .Get_Key_Exchange
-                                                                (E_Ctx, KB);
-                                                            for I in N32 range 0 .. 64 loop
-                                                               HC.P256_Peer_PK (I) :=
-                                                                  Byte (KB (RBT.Index (I + 1)));
-                                                            end loop;
-                                                            HC.Client_Has_P256
-                                                               := True;
+                                                            declare
+                                                               KB : RBT.Bytes (1 .. 65);
+                                                            begin
+                                                               RFLX.TLS_Handshake
+                                                                 .Key_Share_Entry
+                                                                 .Get_Key_Exchange
+                                                                   (E_Ctx, KB);
+                                                               for I in N32 range 0 .. 64 loop
+                                                                  HC.P256_Peer_PK (I) :=
+                                                                     Byte (KB (RBT.Index (I + 1)));
+                                                               end loop;
+                                                               HC.Client_Has_P256
+                                                                  := True;
+                                                            end;
                                                          end if;
                                                       end;
                                                    elsif Grp.Enum =
@@ -1358,20 +1379,22 @@ is
                                                                .Key_Share_Entry
                                                                .Get_Length
                                                                   (E_Ctx));
-                                                         KB : RBT.Bytes
-                                                                (1 .. RBT.Index (KLen));
                                                       begin
                                                          if KLen = 97 then
-                                                            RFLX.TLS_Handshake
-                                                              .Key_Share_Entry
-                                                              .Get_Key_Exchange
-                                                                (E_Ctx, KB);
-                                                            for I in N32 range 0 .. 96 loop
-                                                               HC.P384_Peer_PK (I) :=
-                                                                  Byte (KB (RBT.Index (I + 1)));
-                                                            end loop;
-                                                            HC.Client_Has_P384
-                                                               := True;
+                                                            declare
+                                                               KB : RBT.Bytes (1 .. 97);
+                                                            begin
+                                                               RFLX.TLS_Handshake
+                                                                 .Key_Share_Entry
+                                                                 .Get_Key_Exchange
+                                                                   (E_Ctx, KB);
+                                                               for I in N32 range 0 .. 96 loop
+                                                                  HC.P384_Peer_PK (I) :=
+                                                                     Byte (KB (RBT.Index (I + 1)));
+                                                               end loop;
+                                                               HC.Client_Has_P384
+                                                                  := True;
+                                                            end;
                                                          end if;
                                                       end;
                                                    end if;
@@ -1394,6 +1417,7 @@ is
                               RFLX.TLS_Handshake.Key_Share_CH
                                 .Take_Buffer (KS_Ctx, KS_Buf);
                               RFLX_Free (KS_Buf);
+                              end if;  --  DLen validation
                            end;
 
                         elsif Tag.Known and then
@@ -1409,7 +1433,7 @@ is
                               --  Validate internal list_length:
                               --  Must have list_len(2) + at least one algo(2),
                               --  list_len must equal DLen - 2 and be even.
-                              if DLen < 4 then
+                              if DLen < 4 or else DLen > 16384 then
                                  Take_Buffer (Ctx, Buf);
                                  RFLX_Free (Buf);
                                  S.Last_Error := Decode_Error;
@@ -1481,7 +1505,8 @@ is
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
                            begin
-                              if DLen >= 4 then
+                              --  supported_groups: max ~100 groups = 202 bytes
+                              if DLen >= 4 and then DLen <= 512 then
                                  declare
                                     SG_Buf : RBT.Bytes_Ptr :=
                                        new RBT.Bytes'
@@ -1620,7 +1645,8 @@ is
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
                            begin
-                              if DLen >= 3 then
+                              --  supported_versions: max ~50 versions = 101 bytes
+                              if DLen >= 3 and then DLen <= 256 then
                                  declare
                                     SV_Buf : RBT.Bytes_Ptr :=
                                        new RBT.Bytes'
@@ -1658,7 +1684,7 @@ is
                                  (RFLX.TLS_Handshake.CH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
                            begin
-                              if DLen >= 4 then
+                              if DLen >= 4 and then DLen <= 512 then
                                  declare
                                     AB : RBT.Bytes_Ptr :=
                                        new RBT.Bytes'

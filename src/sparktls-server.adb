@@ -1630,19 +1630,7 @@ is
             begin
                if Rec.Fragment_Len < Records.Tag_Size + 1 then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  declare
-                     A : N32;
-                  begin
-                     Records.Build_Alert_Record
-                       (2, 10, S.Server_App, S.Output, A);
-                  end;
-                  S.Last_Error := Decode_Error;
-                  S.State := Error_State;
-                  if Output_Pending (S) > 0 then
-                     Result := Has_Output;
-                  else
-                     Result := Error_Alert;
-                  end if;
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
                   return;
                end if;
 
@@ -1652,19 +1640,7 @@ is
                   Records.Max_Fragment + 1
                then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  declare
-                     A : N32;
-                  begin
-                     Records.Build_Alert_Record
-                       (2, 22, S.Server_App, S.Output, A);
-                  end;
-                  S.Last_Error := Record_Overflow;
-                  S.State := Error_State;
-                  if Output_Pending (S) > 0 then
-                     Result := Has_Output;
-                  else
-                     Result := Error_Alert;
-                  end if;
+                  Send_Encrypted_Alert (S, Record_Overflow, Result);
                   return;
                end if;
 

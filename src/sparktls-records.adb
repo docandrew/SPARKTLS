@@ -96,7 +96,7 @@ is
            (if Data (B) = 16#17# then Max_Fragment + 256
             else Max_Fragment);
       begin
-         if Frag_Len > Max_Len then
+         if Frag_Len = 0 or else Frag_Len > Max_Len then
             Result.Overflow := True;
             return;
          end if;

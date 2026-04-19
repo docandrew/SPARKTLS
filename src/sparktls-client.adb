@@ -1434,7 +1434,9 @@ is
                               N32 (Plaintext (P + 8));
                         begin
                            P := P + 9;
-                           if P + Nonce_Len + 2 <= Plain_Len then
+                           if Nonce_Len > 0
+                              and then P + Nonce_Len + 2 <= Plain_Len
+                           then
                               declare
                                  Nonce : Byte_Seq (0 .. Nonce_Len - 1);
                                  Tick_Len : N32;

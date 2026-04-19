@@ -18,6 +18,24 @@ is
    type Byte_Seq_Access is access Byte_Seq;
    procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access);
 
+   --  Validated wire-length subtypes.
+   --  Any value parsed from the network that will be used as an array
+   --  bound MUST be converted to one of these subtypes first. SPARK
+   --  then requires a proof that the value is in range, enforcing
+   --  "validate before allocate" at the type level.
+   --
+   --  Using a raw N32 as an array bound when the source is the network
+   --  is a Heartbleed-class vulnerability. These subtypes make it
+   --  impossible to forget the validation.
+   subtype Wire_Ext_Len is N32 range 1 .. 16384;
+   --  Extension data length (sig_algs, key_share body, etc.)
+
+   subtype Wire_Small_Ext_Len is N32 range 1 .. 512;
+   --  Small extensions (ALPN, supported_groups, supported_versions)
+
+   subtype Wire_Key_Share_Len is N32 range 1 .. 256;
+   --  Single key share entry (max P-384 = 101 bytes)
+
    Max_Record_Plaintext : constant := 16384;  --  RFC 8446 limit
    Max_Record_Overhead  : constant := 256;    --  tag + content type
    Max_Record_Size      : constant :=
