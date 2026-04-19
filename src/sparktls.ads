@@ -16,6 +16,7 @@ is
 
    --  Heap-allocated byte sequence (for reassembly buffers)
    type Byte_Seq_Access is access Byte_Seq;
+   procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access);
 
    Max_Record_Plaintext : constant := 16384;  --  RFC 8446 limit
    Max_Record_Overhead  : constant := 256;    --  tag + content type
@@ -387,7 +388,8 @@ is
    type Hostname_Buf is record
       Data : String (1 .. Max_Hostname_Len) := (others => ASCII.NUL);
       Len  : Natural := 0;
-   end record;
+   end record
+     with Predicate => Hostname_Buf.Len <= Max_Hostname_Len;
 
    --================================================================
    --  Traffic keys for one direction (key + IV + nonce counter)

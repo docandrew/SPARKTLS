@@ -993,6 +993,7 @@ is
                S.HC_Ptr.Handshake_Secret := (others => 0);
                S.HC_Ptr.Master_Secret := (others => 0);
                S.HC_Ptr.Master_Secret_12 := (others => 0);
+               Free_Byte_Seq (S.HC_Ptr.Reasm_Buf);
                HC_Alloc.Free (S.HC_Ptr);
             end if;
       end case;
@@ -1204,32 +1205,97 @@ is
 
                --  Inner type should be handshake (0x16)
                --  A single encrypted record may contain multiple
-               --  handshake messages; process them all.
+               --  handshake messages, or a single message may span
+               --  multiple records. Use Reasm_Buf for cross-record
+               --  reassembly.
                if Inner_Type = 16#16# then
                   declare
                      Pos : N32 := 0;
+                     Max_HS_Msg : constant N32 := 131072;
                   begin
+                     --  If we have a partial message from a previous
+                     --  record, continue filling the reassembly buffer.
+                     if HC.Reasm_Need > 0 and HC.Reasm_Buf /= null then
+                        declare
+                           Remaining : constant N32 :=
+                              HC.Reasm_Need - HC.Reasm_Len;
+                           Copy_Len  : constant N32 :=
+                              N32'Min (Plain_Len, Remaining);
+                        begin
+                           if HC.Reasm_Len + Copy_Len <=
+                                 N32 (HC.Reasm_Buf'Length)
+                           then
+                              HC.Reasm_Buf
+                                (HC.Reasm_Len ..
+                                 HC.Reasm_Len + Copy_Len - 1) :=
+                                 Plaintext (0 .. Copy_Len - 1);
+                              HC.Reasm_Len := HC.Reasm_Len + Copy_Len;
+                           end if;
+                           Pos := Copy_Len;
+                        end;
+
+                        if HC.Reasm_Len >= HC.Reasm_Need then
+                           --  Full message reassembled
+                           declare
+                              Full : Byte_Seq renames
+                                 HC.Reasm_Buf (0 .. HC.Reasm_Need - 1);
+                           begin
+                              Process_Handshake_Message
+                                (S, HC, Full, Result);
+                           end;
+                           Free_Byte_Seq (HC.Reasm_Buf);
+                           HC.Reasm_Len := 0;
+                           HC.Reasm_Need := 0;
+                           if Result = Error_Alert then
+                              Pos := Plain_Len;  --  skip rest
+                           end if;
+                        else
+                           --  Still need more data
+                           Pos := Plain_Len;  --  consumed all
+                        end if;
+                     end if;
+
+                     --  Process complete messages in this record
                      while Pos + 4 <= Plain_Len loop
-                        --  Each handshake message: type(1) + length(3)
                         declare
                            HS_Len : constant N32 :=
                               N32 (Plaintext (Pos + 1)) * 65536 +
                               N32 (Plaintext (Pos + 2)) * 256 +
                               N32 (Plaintext (Pos + 3));
-                           Msg_End : constant N32 := Pos + 4 + HS_Len;
+                           Msg_Total : constant N32 := 4 + HS_Len;
+                           Msg_End   : constant N32 := Pos + Msg_Total;
                         begin
-                           if Msg_End > Plain_Len then
-                              exit;  --  incomplete message
+                           if Msg_Total > Max_HS_Msg then
+                              S.Last_Error := Decode_Error;
+                              S.State := Error_State;
+                              Result := Error_Alert;
+                              exit;
                            end if;
-                           --  Rebase to 0-indexed since
-                           --  Process_Handshake_Message assumes
-                           --  Data'First = 0.
+
+                           if Msg_End > Plain_Len then
+                              --  Message spans into next record.
+                              --  Start reassembly.
+                              HC.Reasm_Buf := new Byte_Seq'
+                                 (0 .. Msg_Total - 1 => 0);
+                              HC.Reasm_Need := Msg_Total;
+                              declare
+                                 Avail : constant N32 :=
+                                    Plain_Len - Pos;
+                              begin
+                                 HC.Reasm_Buf (0 .. Avail - 1) :=
+                                    Plaintext (Pos .. Plain_Len - 1);
+                                 HC.Reasm_Len := Avail;
+                              end;
+                              exit;  --  wait for next record
+                           end if;
+
+                           --  Complete message — process it
                            declare
-                              Msg_Len_Loc : constant N32 :=
-                                 Msg_End - Pos;
-                              Msg_Copy : Byte_Seq (0 .. Msg_Len_Loc - 1);
+                              Msg_Copy : Byte_Seq
+                                 (0 .. Msg_Total - 1);
                            begin
-                              Msg_Copy := Plaintext (Pos .. Msg_End - 1);
+                              Msg_Copy :=
+                                 Plaintext (Pos .. Msg_End - 1);
                               Process_Handshake_Message
                                 (S, HC, Msg_Copy, Result);
                            end;

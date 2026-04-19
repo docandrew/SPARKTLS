@@ -1,4 +1,3 @@
-with Ada.Unchecked_Deallocation;
 with Interfaces;                 use Interfaces;
 with SPARKNaCl.Hashing;
 with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
@@ -264,14 +263,7 @@ is
                S.HC_Ptr.Master_Secret := (others => 0);
                S.HC_Ptr.Master_Secret_12 := (others => 0);
                --  Free reassembly buffer if allocated
-               if S.HC_Ptr.Reasm_Buf /= null then
-                  declare
-                     procedure Free is new Ada.Unchecked_Deallocation
-                       (Object => Byte_Seq, Name => Byte_Seq_Access);
-                  begin
-                     Free (S.HC_Ptr.Reasm_Buf);
-                  end;
-               end if;
+               Free_Byte_Seq (S.HC_Ptr.Reasm_Buf);
                HC_Alloc.Free (S.HC_Ptr);
             end if;
       end case;
@@ -360,12 +352,8 @@ is
                   Max_HS_Msg : constant N32 := 131072;
 
                   procedure Free_Reasm is
-                     procedure Free is new Ada.Unchecked_Deallocation
-                       (Object => Byte_Seq, Name => Byte_Seq_Access);
                   begin
-                     if HC.Reasm_Buf /= null then
-                        Free (HC.Reasm_Buf);
-                     end if;
+                     Free_Byte_Seq (HC.Reasm_Buf);
                      HC.Reasm_Len := 0;
                      HC.Reasm_Need := 0;
                   end Free_Reasm;

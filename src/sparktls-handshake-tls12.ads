@@ -54,7 +54,7 @@ is
    --  Maximum buffer sizes
    Max_Server_Key_Exchange : constant := 512;
    Max_Client_Key_Exchange : constant := 128;
-   Max_Server_Hello_12     : constant := 256;
+   Max_Server_Hello_12     : constant := 512;
 
    --  Finished message: 4-byte header + 12-byte verify_data
    Finished_12_Total_Len : constant := 16;

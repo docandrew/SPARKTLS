@@ -408,7 +408,7 @@ is
 
       --  Minimum: curve_type(1) + curve(2) + pt_len(1) + pt(1) +
       --           sig_hash(1) + sig_alg(1) + sig_len(2) = 9
-      if N32 (Data'Length) < 9 then return; end if;
+      if Data'Length < 9 then return; end if;
 
       --  curve_type must be 0x03 (named_curve)
       if Data (Pos) /= EC_Curve_Type_Named then return; end if;
@@ -431,7 +431,7 @@ is
       if Pt_Len /= Point_Len_For_Group (Curve) then return; end if;
 
       --  Check we have enough data for point + signature header
-      if Pos + Pt_Len + 4 > B + N32 (Data'Length) then return; end if;
+      if Pos + Pt_Len + 3 > Data'Last then return; end if;
 
       --  Extract server's ephemeral public key
       case Curve is
@@ -481,7 +481,11 @@ is
          Pos := Pos + 4;
 
          --  Verify we have enough data for the signature
-         if Pos + Sig_Len > B + N32 (Data'Length) then return; end if;
+         if Sig_Len = 0
+            or else Pos + Sig_Len - 1 > Data'Last
+         then
+            return;
+         end if;
 
          --  Build signed data: client_random || server_random || params
          Sig_Input (0 .. 31)  := Byte_Seq (HC.Client_Random);
@@ -825,6 +829,9 @@ is
       Buf := new RBT.Bytes'(1 .. RBT.Index (RFLX_Main_Size) => 0);
       Initialize (Ctx, Buf);
 
+      --  Help the prover: buffer is 17000 bytes, ServerHello is << 256.
+      pragma Assert (Has_Buffer (Ctx));
+
       --  Set ServerHello fields via RFLX
       --  RFC 5246: version = 0x0303 (actual TLS 1.2)
       Set_Legacy_Version (Ctx, TLS_1_2);
@@ -946,7 +953,7 @@ is
       --  Extract serialized body and prepend handshake header
       Take_Buffer (Ctx, Buf);
 
-      if SH_Msg_Len > N32 (Result'Length) then
+      if SH_Msg_Len - 1 > Result'Last then
          RFLX_Free_SH (Buf);
          return;
       end if;
@@ -958,6 +965,8 @@ is
       Result (3) := Byte (SH_Body_Len mod 256);
 
       --  Copy RFLX-serialized body after header
+      pragma Assert (SH_Body_Len >= 1);
+      pragma Assert (SH_Body_Len <= RFLX_Main_Size);
       Result (4 .. 4 + SH_Body_Len - 1) :=
          To_NaCl (Buf.all (1 .. RBT.Index (SH_Body_Len)));
 
@@ -990,7 +999,7 @@ is
 
       --  Minimum: type(1) + len(3) + version(2) + random(32) +
       --  sid_len(1) + suite(2) + comp(1) = 42
-      if N32 (Data'Length) < 42 then return; end if;
+      if Data'Length < 42 then return; end if;
 
       --  Check handshake type
       if Data (B) /= 16#02# then return; end if;
@@ -1011,7 +1020,7 @@ is
       --  Session ID length
       SID_Len := N32 (Data (Pos));
       Pos := Pos + 1;
-      if SID_Len > 32 or Pos + SID_Len + 3 > N32 (Data'Length) + B then
+      if SID_Len > 32 or else Pos + SID_Len + 2 > Data'Last then
          return;
       end if;
 
@@ -1046,14 +1055,16 @@ is
 
       --  Parse extensions (look for extended_master_secret = 0x0017)
       HC.Use_EMS := False;
-      if Pos + 2 <= B + N32 (Data'Length) then
+      if Pos + 1 <= Data'Last then
          declare
             Ext_Len : constant N32 :=
                N32 (Data (Pos)) * 256 + N32 (Data (Pos + 1));
-            Ext_End : constant N32 := Pos + 2 + Ext_Len;
+            --  Bound Ext_End to Data'Last to prevent out-of-bounds
+            Ext_End : constant N32 :=
+               N32'Min (Pos + 2 + Ext_Len, Data'Last + 1);
             EP : N32 := Pos + 2;
          begin
-            while EP + 4 <= Ext_End loop
+            while EP + 3 <= Data'Last and then EP + 4 <= Ext_End loop
                declare
                   Ext_Type : constant Unsigned_16 :=
                      Unsigned_16 (Data (EP)) * 256 +
@@ -1065,7 +1076,9 @@ is
                      --  extended_master_secret (RFC 7627)
                      HC.Use_EMS := True;
 
-                  elsif Ext_Type = 16#0010# and then Ext_DLen >= 4 then
+                  elsif Ext_Type = 16#0010# and then Ext_DLen >= 4
+                     and then EP + 6 <= Data'Last
+                  then
                      --  ALPN (RFC 7301)
                      --  Format: list_len(2) + proto_len(1) + proto(N)
                      declare
@@ -1074,6 +1087,7 @@ is
                      begin
                         if PL > 0 and then PL <= Max_Hostname_Len
                            and then N32 (PL + 3) <= Ext_DLen
+                           and then EP + N32 (7 + PL) - 1 <= Data'Last
                         then
                            S.Negotiated_ALPN.Len := PL;
                            for I in 1 .. PL loop

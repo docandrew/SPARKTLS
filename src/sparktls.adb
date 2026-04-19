@@ -1,6 +1,14 @@
+with Ada.Unchecked_Deallocation;
+
 package body SPARKTLS with
    SPARK_Mode => On
 is
+   procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access) is
+      procedure Dealloc is new Ada.Unchecked_Deallocation
+        (Object => Byte_Seq, Name => Byte_Seq_Access);
+   begin
+      Dealloc (Ptr);
+   end Free_Byte_Seq;
 
    --================================================================
    --  Compact

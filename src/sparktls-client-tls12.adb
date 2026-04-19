@@ -165,16 +165,88 @@ is
       end if;
 
       declare
-         FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Frag : Byte_Seq renames
-            S.Input.Data (FS .. FS + Rec.Fragment_Len - 1);
+         FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+         Frag_Len : constant N32 := Rec.Fragment_Len;
          MT : Byte; ML : N32; POK : Boolean;
+         Max_HS_Msg : constant N32 := 131072;
       begin
-         Handshake.Parse_Handshake_Header (Frag, MT, ML, POK);
-         if not POK then
+         --  If reassembly in progress, append this fragment
+         if HC.Reasm_Need > 0 and then HC.Reasm_Buf /= null then
+            declare
+               Remaining : constant N32 := HC.Reasm_Need - HC.Reasm_Len;
+               Copy_Len  : constant N32 := N32'Min (Frag_Len, Remaining);
+            begin
+               if HC.Reasm_Len + Copy_Len <=
+                     N32 (HC.Reasm_Buf'Length)
+               then
+                  HC.Reasm_Buf (HC.Reasm_Len ..
+                                HC.Reasm_Len + Copy_Len - 1) :=
+                     S.Input.Data (FS .. FS + Copy_Len - 1);
+                  HC.Reasm_Len := HC.Reasm_Len + Copy_Len;
+               end if;
+            end;
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Decode_Error, Result); return;
+
+            if HC.Reasm_Len < HC.Reasm_Need then
+               Result := OK; return;  --  need more fragments
+            end if;
+
+            --  Full message reassembled — parse the handshake header
+            --  from the reassembled buffer and fall through to
+            --  the normal message dispatch below.
+            Handshake.Parse_Handshake_Header
+              (HC.Reasm_Buf (0 .. HC.Reasm_Need - 1), MT, ML, POK);
+            if not POK then
+               Free_Byte_Seq (HC.Reasm_Buf);
+               HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+               Send_Alert_And_Error (S, Decode_Error, Result); return;
+            end if;
+         else
+            --  Fresh record — parse handshake header
+            declare
+               Frag : Byte_Seq renames
+                  S.Input.Data (FS .. FS + Frag_Len - 1);
+            begin
+               Handshake.Parse_Handshake_Header (Frag, MT, ML, POK);
+            end;
+            if not POK then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Decode_Error, Result); return;
+            end if;
+
+            --  Check if message spans multiple records
+            if ML + 4 > Frag_Len then
+               if ML + 4 > Max_HS_Msg then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error (S, Decode_Error, Result); return;
+               end if;
+               --  Start reassembly
+               HC.Reasm_Buf := new Byte_Seq'(0 .. ML + 3 => 0);
+               HC.Reasm_Need := ML + 4;
+               HC.Reasm_Len := Frag_Len;
+               HC.Reasm_Buf (0 .. Frag_Len - 1) :=
+                  S.Input.Data (FS .. FS + Frag_Len - 1);
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Result := OK; return;  --  need more fragments
+            end if;
          end if;
+
+         --  At this point we have a complete handshake message.
+         --  Ensure we have a uniform Reasm_Buf reference:
+         --  for single-record messages, move data into Reasm_Buf too.
+         if HC.Reasm_Buf = null or HC.Reasm_Need = 0 then
+            HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
+            HC.Reasm_Buf.all :=
+               S.Input.Data (FS .. FS + Frag_Len - 1);
+            HC.Reasm_Need := Frag_Len;
+            HC.Reasm_Len := Frag_Len;
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         end if;
+
+         declare
+            Frag : Byte_Seq renames
+               HC.Reasm_Buf (0 .. HC.Reasm_Need - 1);
+         begin
 
          case MT is
             when 16#0B# =>
@@ -298,8 +370,6 @@ is
                         Mode       => HC.Cfg.Verify_Mode);
 
                      if VR /= Valid then
-                        S.Input.Read_Pos :=
-                           S.Input.Read_Pos + Rec.Record_Len;
                         Send_Alert_And_Error (S, Bad_Certificate, Result);
                         return;
                      end if;
@@ -307,28 +377,27 @@ is
                end if;
 
                Append_Transcript (HC, Frag);
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;
 
             when HT_Server_Key_Exchange =>
-               --  Parse SKE: extract ECDHE params + verify signature
+               --  Parse SKE: extract ECDHE params + verify signature.
+               if ML = 0 then
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+                  return;
+               end if;
                declare
                   Body_Start : constant N32 := Frag'First + 4;
                   Body_Data : Byte_Seq (0 .. ML - 1);
                   SKE_OK : Boolean;
                begin
-                  if ML > 0 and then 4 + ML <= Rec.Fragment_Len then
-                     Body_Data := Frag (Body_Start .. Body_Start + ML - 1);
-                     Parse_Server_Key_Exchange (HC, Body_Data, SKE_OK);
-                     if not SKE_OK then
-                        S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                        Send_Alert_And_Error (S, Handshake_Failure, Result);
-                        return;
-                     end if;
+                  Body_Data := Frag (Body_Start .. Body_Start + ML - 1);
+                  Parse_Server_Key_Exchange (HC, Body_Data, SKE_OK);
+                  if not SKE_OK then
+                     Send_Alert_And_Error (S, Handshake_Failure, Result);
+                     return;
                   end if;
                end;
                Append_Transcript (HC, Frag);
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;
 
             when HT_Server_Hello_Done =>
@@ -337,7 +406,6 @@ is
                --  2. Derive keys
                --  3. Send CKE + CCS + Finished
                Append_Transcript (HC, Frag);
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
                --  Generate ECDHE keypair + compute shared secret
                declare
@@ -449,9 +517,14 @@ is
 
             when others =>
                --  Unknown message type — skip
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;
          end case;
+
+         --  Free the reassembly buffer
+         Free_Byte_Seq (HC.Reasm_Buf);
+         HC.Reasm_Len := 0;
+         HC.Reasm_Need := 0;
+         end;
       end;
    end Process_Server_Flight;
 
