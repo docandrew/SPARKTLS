@@ -510,11 +510,11 @@ is
                                              Unsigned_16 (SG_Buf (RBT.Index (Pos + 1)));
                                        begin
                                           if Grp = 16#001D# then
-                                             HC.Client_Has_X25519 := True;
+                                             HC.Client_Supports_X25519 := True;
                                           elsif Grp = 16#0017# then
-                                             HC.Client_Has_P256 := True;
+                                             HC.Client_Supports_P256 := True;
                                           elsif Grp = 16#0018# then
-                                             HC.Client_Has_P384 := True;
+                                             HC.Client_Supports_P384 := True;
                                           end if;
                                        end;
                                        Pos := Pos + 2;

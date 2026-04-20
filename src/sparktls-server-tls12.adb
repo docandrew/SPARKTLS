@@ -59,11 +59,12 @@ is
    begin
       Result := OK;
 
-      if HC.Client_Has_X25519 then
+      --  TLS 1.2 uses supported_groups (no key_share extension)
+      if HC.Client_Has_X25519 or HC.Client_Supports_X25519 then
          HC.Selected_Group := Group_X25519;
-      elsif HC.Client_Has_P256 then
+      elsif HC.Client_Has_P256 or HC.Client_Supports_P256 then
          HC.Selected_Group := Group_Secp256r1;
-      elsif HC.Client_Has_P384 then
+      elsif HC.Client_Has_P384 or HC.Client_Supports_P384 then
          HC.Selected_Group := Group_Secp384r1;
       else
          Send_Alert_And_Error (S, Handshake_Failure, Result);

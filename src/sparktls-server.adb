@@ -35,6 +35,14 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action);
 
+   procedure Build_Hello_Retry_Request
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Group     : in     Unsigned_16;
+      HRR_Buf   :    out Byte_Seq;
+      HRR_Len   :    out N32;
+      Rec_Out   :    out N32);
+
    procedure Process_Client_Auth
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -512,10 +520,14 @@ is
                      if Want_13 then
                         --  TLS 1.3 requires a TLS 1.3 cipher suite
                         --  and at least one supported ECDHE group
+                        --  (from supported_groups OR key_share)
                         if S.Negotiated_Suite = 0 or else
                            not (HC.Client_Has_X25519 or
                                 HC.Client_Has_P256 or
-                                HC.Client_Has_P384)
+                                HC.Client_Has_P384 or
+                                HC.Client_Supports_X25519 or
+                                HC.Client_Supports_P256 or
+                                HC.Client_Supports_P384)
                         then
                            if Want_12 and S.Negotiated_Suite_12 /= 0 then
                               --  Fall back to TLS 1.2
@@ -560,6 +572,94 @@ is
                end if;
             end if;
 
+         when Wait_Client_Hello_Retry =>
+            --  After HRR, wait for the client's second ClientHello.
+            --  Same parsing as Wait_Client_Hello but we expect the
+            --  client to include key_share for our requested group.
+            if Input_Available (S) = 0 then
+               Result := Need_Input;
+               return;
+            end if;
+
+            declare
+               Rec : Records.Parse_Result;
+            begin
+               Records.Parse_Record_Header
+                 (Data   => S.Input.Data (S.Input.Read_Pos ..
+                                           S.Input.Write_Pos - 1),
+                  Avail  => Available (S.Input),
+                  Result => Rec);
+
+               if Rec.Overflow then
+                  Send_Alert_And_Error (S, Record_Overflow, Result);
+                  return;
+               end if;
+
+               if not Rec.OK then
+                  if Rec.Record_Len > 0 then
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  else
+                     Result := Need_Input;
+                  end if;
+                  return;
+               end if;
+
+               if Rec.Content = Records.Content_Change_Cipher_Spec then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  if Rec.Fragment_Len = 1 then
+                     Result := OK;
+                  else
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  end if;
+                  return;
+               end if;
+
+               if Rec.Content /= Records.Content_Handshake then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  return;
+               end if;
+
+               --  Parse second ClientHello
+               declare
+                  Frag_Start : constant N32 :=
+                     S.Input.Read_Pos + Rec.Fragment_Pos;
+                  Frag_Len   : constant N32 := Rec.Fragment_Len;
+                  Frag : constant Byte_Seq :=
+                     S.Input.Data (Frag_Start ..
+                                    Frag_Start + Frag_Len - 1);
+                  Parse_OK : Boolean;
+               begin
+                  --  Reset key_share flags (client sends new key_share)
+                  HC.Client_Has_X25519 := False;
+                  HC.Client_Has_P256 := False;
+                  HC.Client_Has_P384 := False;
+
+                  Handshake.Server_Msgs.Parse_Client_Hello
+                    (S, HC, Frag, Parse_OK);
+
+                  if not Parse_OK then
+                     if S.Last_Error = Decode_Error then
+                        Send_Alert_And_Error (S, Decode_Error, Result);
+                     elsif S.Last_Error = Protocol_Version then
+                        Send_Alert_And_Error (S, Protocol_Version, Result);
+                     else
+                        Send_Alert_And_Error (S, Handshake_Failure, Result);
+                     end if;
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     return;
+                  end if;
+
+                  --  Append CH2 to transcript
+                  Append_Transcript (HC, Frag);
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+                  --  Now proceed to build the real ServerHello flight
+                  Build_Server_Flight (S, HC, Result);
+               end;
+            end;
+
          when Wait_Client_Certificate
             | Wait_Client_Cert_Verify =>
             Process_Client_Auth (S, HC, Result);
@@ -593,6 +693,152 @@ is
             Result := Error_Alert;
       end case;
    end Advance_Handshake;
+
+   --  RFC 8446 §4.1.4: Build and send a HelloRetryRequest.
+   --  HRR is structurally identical to ServerHello but with:
+   --    - random = SHA-256("HelloRetryRequest") (magic constant)
+   --    - key_share extension contains only the selected group (no key data)
+   --    - supported_versions extension with TLS 1.3
+   --  After sending HRR, the transcript is replaced with:
+   --    Hash(message_hash(254) || length(Hash.length) || Hash(CH1))
+   procedure Build_Hello_Retry_Request
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Group     : in     Unsigned_16;
+      HRR_Buf   :    out Byte_Seq;
+      HRR_Len   :    out N32;
+      Rec_Out   :    out N32)
+   is
+      use SPARKNaCl.Hashing.SHA256;
+
+      --  RFC 8446 §4.1.3: SHA-256("HelloRetryRequest")
+      HRR_Random : constant Bytes_32 :=
+        (16#CF#, 16#21#, 16#AD#, 16#74#, 16#E5#, 16#9A#, 16#61#, 16#11#,
+         16#BE#, 16#1D#, 16#8C#, 16#02#, 16#1E#, 16#65#, 16#B8#, 16#91#,
+         16#C2#, 16#A2#, 16#11#, 16#16#, 16#7A#, 16#BB#, 16#8C#, 16#5E#,
+         16#07#, 16#9E#, 16#09#, 16#E2#, 16#C8#, 16#A8#, 16#33#, 16#9C#);
+
+      --  Build a minimal ServerHello-shaped message manually.
+      --  Format: type(1) + length(3) + body
+      --  Body: version(2) + random(32) + session_id_len(1) + session_id(32)
+      --        + cipher_suite(2) + compression(1) + extensions_len(2)
+      --        + key_share_ext(6) + supported_versions_ext(5)
+      --  Total body: 2+32+1+32+2+1+2+6+5 = 83
+      --  Total message: 4 + 83 = 87
+
+      Ext_Len  : constant N32 := 12;  --  key_share(6) + supported_versions(6)
+      Body_Len : constant N32 := 2 + 32 + 1 + 32 + 2 + 1 + 2 + Ext_Len;
+      --  version(2) + random(32) + sid_len(1) + sid(32) + suite(2)
+      --  + compression(1) + ext_len(2) + extensions(12) = 84
+      Msg_Len  : constant N32 := 4 + Body_Len;
+
+      P : N32 := 0;
+   begin
+      HRR_Buf := (others => 0);
+      HRR_Len := 0;
+      Rec_Out := 0;
+
+      if HRR_Buf'Length < Msg_Len then
+         return;
+      end if;
+
+      --  Handshake header: type=ServerHello(0x02) + length(3)
+      HRR_Buf (0) := 16#02#;
+      HRR_Buf (1) := 0;
+      HRR_Buf (2) := 0;
+      HRR_Buf (3) := Byte (Body_Len);
+      P := 4;
+
+      --  legacy_version = 0x0303
+      HRR_Buf (P)     := 16#03#;
+      HRR_Buf (P + 1) := 16#03#;
+      P := P + 2;
+
+      --  random = HRR magic constant
+      HRR_Buf (P .. P + 31) := HRR_Random;
+      P := P + 32;
+
+      --  legacy_session_id echo (must match CH1)
+      HRR_Buf (P) := 32;
+      P := P + 1;
+      HRR_Buf (P .. P + 31) := HC.Legacy_Session_ID;
+      P := P + 32;
+
+      --  cipher_suite (use negotiated suite)
+      HRR_Buf (P)     := Byte (S.Negotiated_Suite / 256);
+      HRR_Buf (P + 1) := Byte (S.Negotiated_Suite mod 256);
+      P := P + 2;
+
+      --  legacy_compression_method = 0
+      HRR_Buf (P) := 0;
+      P := P + 1;
+
+      --  extensions_length
+      HRR_Buf (P)     := Byte (Ext_Len / 256);
+      HRR_Buf (P + 1) := Byte (Ext_Len mod 256);
+      P := P + 2;
+
+      --  key_share extension: type(2) + length(2) + group(2)
+      HRR_Buf (P)     := 16#00#;
+      HRR_Buf (P + 1) := 16#33#;  --  key_share
+      HRR_Buf (P + 2) := 16#00#;
+      HRR_Buf (P + 3) := 16#02#;  --  2 bytes data
+      HRR_Buf (P + 4) := Byte (Group / 256);
+      HRR_Buf (P + 5) := Byte (Group mod 256);
+      P := P + 6;
+
+      --  supported_versions extension: type(2) + length(2) + version(2)
+      --  but ServerHello format uses 2-byte version (not list)
+      HRR_Buf (P)     := 16#00#;
+      HRR_Buf (P + 1) := 16#2B#;  --  supported_versions
+      HRR_Buf (P + 2) := 16#00#;
+      HRR_Buf (P + 3) := 16#02#;  --  2 bytes data
+      HRR_Buf (P + 4) := 16#03#;
+      HRR_Buf (P + 5) := 16#04#;  --  TLS 1.3
+      P := P + 6;
+
+      pragma Assert (P = Msg_Len);
+
+      --  RFC 8446 §4.4.1: Replace transcript with synthetic message_hash.
+      --  transcript = Hash(message_hash(254) || length(hash_len) || Hash(CH1))
+      --  For SHA-256: message_hash type=254, length=32, then 32-byte hash.
+      declare
+         CH1_Hash : Digest;
+         Synthetic : Byte_Seq (0 .. 35);  --  type(1) + len(3) + hash(32) = 36
+      begin
+         --  Hash the current transcript (which contains CH1)
+         Hash (CH1_Hash, HC.Transcript (0 .. HC.Transcript_Len - 1));
+
+         --  Build synthetic message_hash handshake message
+         Synthetic (0) := 254;  --  message_hash type
+         Synthetic (1) := 0;
+         Synthetic (2) := 0;
+         Synthetic (3) := 32;   --  hash length
+         Synthetic (4 .. 35) := Byte_Seq (CH1_Hash);
+
+         --  Replace transcript
+         HC.Transcript (0 .. 35) := Synthetic;
+         HC.Transcript_Len := 36;
+      end;
+
+      --  Append HRR to transcript
+      Append_Transcript (HC, HRR_Buf (0 .. Msg_Len - 1));
+
+      HRR_Len := Msg_Len;
+
+      --  Write HRR as a plaintext handshake record
+      Records.Build_Handshake_Record
+        (Fragment  => HRR_Buf (0 .. Msg_Len - 1),
+         Output    => S.Output,
+         Bytes_Out => Rec_Out);
+
+      --  Send CCS for middlebox compatibility
+      declare
+         CCS_Out : N32;
+      begin
+         Records.Build_CCS_Record (S.Output, CCS_Out);
+      end;
+   end Build_Hello_Retry_Request;
 
    --  Build the entire server handshake flight:
    --  ServerHello (plaintext record) + CCS + encrypted(EE + Cert + CV + Finished)
@@ -753,6 +999,59 @@ is
 
             if not Algo_OK then
                Send_Alert_And_Error (S, Handshake_Failure, Result);
+               return;
+            end if;
+         end;
+      end if;
+
+      --  Check if HelloRetryRequest is needed.
+      --  Our group preference is x25519 > P-256 > P-384.
+      --  If the client supports our preferred group (via supported_groups)
+      --  but didn't include it in key_share, send HRR.
+      if not HC.HRR_Sent then
+         declare
+            Need_HRR    : Boolean := False;
+            HRR_Group   : Unsigned_16 := 0;
+         begin
+            --  Check if we have key_share data for ANY group.
+            --  If not, we MUST send HRR for a group the client
+            --  listed in supported_groups.
+            --  If we have key_share data but prefer a different
+            --  group that the client supports, send HRR for that.
+            if not (HC.Client_Has_X25519 or HC.Client_Has_P256
+                    or HC.Client_Has_P384)
+            then
+               --  No key_share data at all — request our preferred
+               --  group from supported_groups
+               if HC.Client_Supports_X25519 then
+                  Need_HRR := True;
+                  HRR_Group := 16#001D#;
+               elsif HC.Client_Supports_P256 then
+                  Need_HRR := True;
+                  HRR_Group := 16#0017#;
+               elsif HC.Client_Supports_P384 then
+                  Need_HRR := True;
+                  HRR_Group := 16#0018#;
+               end if;
+            elsif HC.Client_Supports_X25519
+               and then not HC.Client_Has_X25519
+            then
+               --  We prefer x25519 and client supports it but
+               --  sent a different group in key_share
+               Need_HRR := True;
+               HRR_Group := 16#001D#;
+            end if;
+
+            if Need_HRR then
+               Build_Hello_Retry_Request
+                 (S, HC, HRR_Group, SH_Buf, SH_Len, Rec_Out);
+               if SH_Len = 0 then
+                  Send_Alert_And_Error (S, Internal_Error, Result);
+                  return;
+               end if;
+               Set_State (S, Wait_Client_Hello_Retry);
+               HC.HRR_Sent := True;
+               Result := Has_Output;
                return;
             end if;
          end;

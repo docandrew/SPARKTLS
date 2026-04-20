@@ -138,6 +138,7 @@ is
 
       --  Server-side handshake
       Wait_Client_Hello,
+      Wait_Client_Hello_Retry,    --  HRR sent, waiting for second CH
       Server_Hello_Sent,
       Sent_Certificate_Request,   --  mTLS: sent CertificateRequest
       Wait_Client_Certificate,    --  mTLS: waiting for client cert
@@ -196,6 +197,8 @@ is
         when Client_Finished_Sent =>
            To in Connected | Error_State,
         when Wait_Client_Hello =>
+           To in Server_Hello_Sent | Wait_Client_Hello_Retry | Error_State,
+        when Wait_Client_Hello_Retry =>
            To in Server_Hello_Sent | Error_State,
         when Server_Hello_Sent =>
            To in Wait_Client_Certificate | Wait_Client_Finished | Error_State,
@@ -221,7 +224,8 @@ is
    --  Before server Finished is sent, handshake traffic keys are used.
    --  After server Finished, application traffic keys are used.
    function In_Handshake_Key_Phase (State : Connection_State) return Boolean is
-     (State in Wait_Client_Hello | Server_Hello_Sent |
+     (State in Wait_Client_Hello | Wait_Client_Hello_Retry |
+              Server_Hello_Sent |
               Sent_Certificate_Request | Wait_Client_Certificate |
               Wait_Client_Cert_Verify | Wait_Client_Finished |
               Client_Hello_Sent | Wait_Server_Hello |
@@ -256,8 +260,9 @@ is
    --  Returns 0 if no specific handshake type is expected (e.g., Connected).
    function Expected_HS_Type (State : Connection_State) return Byte is
      (case State is
-        when Wait_Client_Hello    => 16#01#,  --  ClientHello
-        when Wait_Client_Finished => 16#14#,  --  Finished
+        when Wait_Client_Hello         => 16#01#,  --  ClientHello
+        when Wait_Client_Hello_Retry  => 16#01#,  --  ClientHello (retry)
+        when Wait_Client_Finished     => 16#14#,  --  Finished
         when Wait_Client_Certificate => 16#0B#,  --  Certificate
         when Wait_Client_Cert_Verify => 16#0F#,  --  CertificateVerify
         when Wait_Server_Hello    => 16#02#,  --  ServerHello
@@ -269,7 +274,8 @@ is
    --  Before ServerHello, records are plaintext.
    --  After ServerHello, records are encrypted with traffic keys.
    function Expects_Encrypted (State : Connection_State) return Boolean is
-     (State not in Idle | Wait_Client_Hello | Client_Hello_Sent |
+     (State not in Idle | Wait_Client_Hello | Wait_Client_Hello_Retry |
+                   Client_Hello_Sent |
                    Wait_Server_Hello)
    with Ghost;
 
@@ -691,11 +697,19 @@ is
       P384_Peer_PK  : Byte_Seq (0 .. 96) := (others => 0);
       Use_P384_KE   : Boolean := False;
 
-      --  Server-side: which key share groups did the client offer?
+      --  Server-side: which groups did the client offer in key_share?
+      --  (actual key exchange data present)
       Client_Has_X25519 : Boolean := False;
       Client_Has_P256   : Boolean := False;
       Client_Has_P384   : Boolean := False;
+      --  Which groups did the client offer in supported_groups?
+      --  (may not have key_share data — triggers HRR if preferred)
+      Client_Supports_X25519 : Boolean := False;
+      Client_Supports_P256   : Boolean := False;
+      Client_Supports_P384   : Boolean := False;
       Selected_Group    : Unsigned_16 := 0;
+      --  HelloRetryRequest state
+      HRR_Sent          : Boolean := False;
 
       --  Handshake traffic keys
       Client_HS     : Traffic_Keys;
