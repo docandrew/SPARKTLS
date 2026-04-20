@@ -167,7 +167,7 @@ is
       declare
          FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
          Frag_Len : constant N32 := Rec.Fragment_Len;
-         MT : Byte; ML : N32; POK : Boolean;
+         Msg_Type : Byte; Msg_Len : N32; Parse_OK : Boolean;
          Max_HS_Msg : constant N32 := 131072;
       begin
          --  If reassembly in progress, append this fragment
@@ -195,8 +195,8 @@ is
             --  from the reassembled buffer and fall through to
             --  the normal message dispatch below.
             Handshake.Parse_Handshake_Header
-              (HC.Reasm_Buf (0 .. HC.Reasm_Need - 1), MT, ML, POK);
-            if not POK then
+              (HC.Reasm_Buf (0 .. HC.Reasm_Need - 1), Msg_Type, Msg_Len, Parse_OK);
+            if not Parse_OK then
                Free_Byte_Seq (HC.Reasm_Buf);
                HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                Send_Alert_And_Error (S, Decode_Error, Result); return;
@@ -207,22 +207,22 @@ is
                Frag : Byte_Seq renames
                   S.Input.Data (FS .. FS + Frag_Len - 1);
             begin
-               Handshake.Parse_Handshake_Header (Frag, MT, ML, POK);
+               Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
             end;
-            if not POK then
+            if not Parse_OK then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Send_Alert_And_Error (S, Decode_Error, Result); return;
             end if;
 
             --  Check if message spans multiple records
-            if ML + 4 > Frag_Len then
-               if ML + 4 > Max_HS_Msg then
+            if Msg_Len + 4 > Frag_Len then
+               if Msg_Len + 4 > Max_HS_Msg then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error (S, Decode_Error, Result); return;
                end if;
                --  Start reassembly
-               HC.Reasm_Buf := new Byte_Seq'(0 .. ML + 3 => 0);
-               HC.Reasm_Need := ML + 4;
+               HC.Reasm_Buf := new Byte_Seq'(0 .. Msg_Len + 3 => 0);
+               HC.Reasm_Need := Msg_Len + 4;
                HC.Reasm_Len := Frag_Len;
                HC.Reasm_Buf (0 .. Frag_Len - 1) :=
                   S.Input.Data (FS .. FS + Frag_Len - 1);
@@ -249,7 +249,7 @@ is
                HC.Reasm_Buf (0 .. RN - 1);
          begin
 
-         case MT is
+         case Msg_Type is
             when 16#0B# =>
                --  Certificate (RFC 5246 §7.4.2)
                --  TLS 1.2 format: cert_list_len(3) || {cert_len(3) || cert}*
@@ -262,7 +262,7 @@ is
                   Pos : N32;
                   Cert_Idx : Natural := 0;
                begin
-                  if ML > 3 and then B + 3 <= Frag'Last then
+                  if Msg_Len > 3 and then B + 3 <= Frag'Last then
                      Pos := B + 3;  --  skip cert_list_len
 
                      while Pos + 3 <= Frag'Last
@@ -372,6 +372,8 @@ is
                         Mode       => HC.Cfg.Verify_Mode);
 
                      if VR /= Valid then
+                        Free_Byte_Seq (HC.Reasm_Buf);
+                        HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                         Send_Alert_And_Error (S, Bad_Certificate, Result);
                         return;
                      end if;
@@ -383,19 +385,23 @@ is
 
             when HT_Server_Key_Exchange =>
                --  Parse SKE: extract ECDHE params + verify signature.
-               if ML = 0 then
+               if Msg_Len = 0 then
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                   Send_Alert_And_Error (S, Decode_Error, Result);
                   return;
                end if;
                declare
-                  ML_C : constant N32 := ML;
+                  Msg_Len_C : constant N32 := Msg_Len;
                   Body_Start : constant N32 := Frag'First + 4;
-                  Body_Data : Byte_Seq (0 .. ML_C - 1);
+                  Body_Data : Byte_Seq (0 .. Msg_Len_C - 1);
                   SKE_OK : Boolean;
                begin
-                  Body_Data := Frag (Body_Start .. Body_Start + ML_C - 1);
+                  Body_Data := Frag (Body_Start .. Body_Start + Msg_Len_C - 1);
                   Parse_Server_Key_Exchange (HC, Body_Data, SKE_OK);
                   if not SKE_OK then
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                      Send_Alert_And_Error (S, Handshake_Failure, Result);
                      return;
                   end if;
@@ -454,6 +460,8 @@ is
                   end case;
 
                   if not SS_OK then
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                      Send_Alert_And_Error (S, Handshake_Failure, Result);
                      return;
                   end if;
@@ -590,21 +598,21 @@ is
       end if;
 
       declare
-         FL : constant N32 := Rec.Fragment_Len;
+         Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. FL - 1);
+         Encrypted : Byte_Seq (0 .. Frag_Len - 1);
          Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. FL - 1);
+         Plaintext : Byte_Seq (0 .. Frag_Len - 1);
          PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. FL - 1 loop
+         for I in N32 range 0 .. Frag_Len - 1 loop
             Encrypted (I) := S.Input.Data (FS + I);
          end loop;
          for I in N32 range 0 .. 4 loop
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if FL < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Decode_Error, Result); return;
          end if;
@@ -622,12 +630,12 @@ is
          end if;
 
          declare
-            MT : constant Byte := Plaintext (0);
-            ML : constant N32 := N32 (Plaintext (1)) * 65536 +
+            Msg_Type : constant Byte := Plaintext (0);
+            Msg_Len : constant N32 := N32 (Plaintext (1)) * 65536 +
                                  N32 (Plaintext (2)) * 256 +
                                  N32 (Plaintext (3));
          begin
-            if MT /= HT_Finished or ML /= Finished_Verify_Len
+            if Msg_Type /= HT_Finished or Msg_Len /= Finished_Verify_Len
                or PL < 4 + Finished_Verify_Len
             then
                Send_Alert_And_Error (S, Decode_Error, Result); return;
@@ -741,21 +749,21 @@ is
       end if;
 
       declare
-         FL : constant N32 := Rec.Fragment_Len;
+         Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. FL - 1);
+         Encrypted : Byte_Seq (0 .. Frag_Len - 1);
          Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. FL - 1);
+         Plaintext : Byte_Seq (0 .. Frag_Len - 1);
          PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. FL - 1 loop
+         for I in N32 range 0 .. Frag_Len - 1 loop
             Encrypted (I) := S.Input.Data (FS + I);
          end loop;
          for I in N32 range 0 .. 4 loop
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if FL < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Result := OK; return;
          end if;

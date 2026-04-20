@@ -27,14 +27,28 @@ is
    --  Using a raw N32 as an array bound when the source is the network
    --  is a Heartbleed-class vulnerability. These subtypes make it
    --  impossible to forget the validation.
-   subtype Wire_Ext_Len is N32 range 1 .. 16384;
+   subtype Wire_Ext_Len is N32 range 1 .. 131072;
    --  Extension data length (sig_algs, key_share body, etc.)
+   --  Upper bound matches Max_HS_Msg (128 KB) for reassembled messages.
 
    subtype Wire_Small_Ext_Len is N32 range 1 .. 512;
    --  Small extensions (ALPN, supported_groups, supported_versions)
 
    subtype Wire_Key_Share_Len is N32 range 1 .. 256;
    --  Single key share entry (max P-384 = 101 bytes)
+
+   --  Handshake message length (3 bytes on wire, max 2^24 - 1).
+   --  Bounded to Max_HS_Msg (128 KB) for reassembled messages.
+   Max_HS_Msg : constant := 131072;
+   subtype HS_Msg_Len is N32 range 0 .. Max_HS_Msg;
+
+   --  Handshake message type code (1 byte on wire).
+   --  RFC 8446 Section 4 defines the valid values.
+   subtype HS_Msg_Type is Byte;
+
+   --  TLS record fragment length after Parse_Record_Header.
+   --  Always 1 .. Max_Fragment + 256 (encrypted records).
+   subtype Record_Frag_Len is N32 range 1 .. 16384 + 256;
 
    Max_Record_Plaintext : constant := 16384;  --  RFC 8446 limit
    Max_Record_Overhead  : constant := 256;    --  tag + content type
@@ -45,7 +59,15 @@ is
    --  so the caller doesn't have to drain after every record.
    IO_Buffer_Capacity : constant N32 := 2 * Max_Record_Size;
 
-   Transcript_Capacity  : constant N32 := 131072;  --  128 KB for large CH
+   Transcript_Capacity  : constant N32 := 32768;  --  32 KB
+   --  Sufficient for all real-world handshakes. Typical transcript is
+   --  ~2 KB. Pathological inputs (32K sig_algs) require reassembly
+   --  but the transcript only includes the final parsed result.
+   --
+   --  TODO: Replace with streaming SHA-256/384 hash (Init/Update/Final
+   --  in SPARKNaCl) to eliminate this buffer entirely. The building
+   --  blocks exist (Hashblocks_256/512) but SPARKNaCl needs a public
+   --  streaming API with proper test coverage before we use it here.
    Max_Hostname_Len     : constant := 255;
    Max_Cert_DER_Len     : constant N32 := 8192;
 

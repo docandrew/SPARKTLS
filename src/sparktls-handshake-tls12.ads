@@ -1,6 +1,7 @@
 with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
 with SPARKTLS.Key_Schedule_12;
+with SPARKTLS.Handshake.Client_Msgs;
 
 --  TLS 1.2 Handshake Messages (RFC 5246 §7.4, RFC 8422)
 --
@@ -411,7 +412,7 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
-                and Result'Last >= Max_Client_Hello - 1
+                and Result'Last >= Client_Msgs.Max_Client_Hello - 1
                 and HC.Cfg.Random /= null
                 and HC.Version = TLS_1_2;
 

@@ -8,6 +8,8 @@ with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
 with SPARKTLS.Records;      use SPARKTLS.Records;
 with SPARKTLS.Cert_Verify;  use SPARKTLS.Cert_Verify;
 with SPARKTLS.Handshake;
+with SPARKTLS.Handshake.Client_Msgs;
+with SPARKTLS.Handshake.Certs;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.HMAC384;
@@ -65,12 +67,14 @@ is
    begin
       if HC.Transcript_Len + Len <= HC.Transcript'Length then
          HC.Transcript (HC.Transcript_Len ..
-                         HC.Transcript_Len + Len - 1) := Data;
+                          HC.Transcript_Len + Len - 1) := Data;
          HC.Transcript_Len := HC.Transcript_Len + Len;
       end if;
    end Append_Transcript;
 
-   function Transcript_Hash_256 (HC : Handshake_Context) return Digest is
+   function Transcript_Hash_256 (HC : Handshake_Context) return Digest
+   with Pre => HC.Transcript_Len > 0
+   is
       H : Digest;
    begin
       Hash (H, HC.Transcript (0 .. HC.Transcript_Len - 1));
@@ -79,6 +83,7 @@ is
 
    function Transcript_Hash_384 (HC : Handshake_Context)
       return SPARKNaCl.Hashing.SHA384.Digest
+   with Pre => HC.Transcript_Len > 0
    is
       H : SPARKNaCl.Hashing.SHA384.Digest;
    begin
@@ -116,7 +121,7 @@ is
       Cfg : in     Config)
    with SPARK_Mode => Off
    is
-      CH_Buf    : Byte_Seq (0 .. Handshake.Max_Client_Hello - 1);
+      CH_Buf    : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
       CH_Len    : N32;
       Rec_Out   : N32;
    begin
@@ -133,7 +138,7 @@ is
 
       S.HC_Ptr.Cfg := Cfg;
 
-      Handshake.Build_Client_Hello (S, S.HC_Ptr.all, CH_Buf, CH_Len);
+      Handshake.Client_Msgs.Build_Client_Hello (S, S.HC_Ptr.all, CH_Buf, CH_Len);
 
       if CH_Len = 0 then
          Set_State (S, Error_State);
@@ -308,13 +313,13 @@ is
                and then HC.Peer_Cert_Valid
             then
                declare
-                  PCDL : constant N32 := HC.Peer_Cert_DER_Len;
+                  Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
                   Cert_X : X509.Byte_Seq
-                     (0 .. X509.N32 (PCDL) - 1);
+                     (0 .. X509.N32 (Cert_DER_Len_Const) - 1);
                   VR : Validation_Result;
                begin
                   --  Copy peer DER to X509.Byte_Seq for Validate_Chain
-                  for I in N32 range 0 .. PCDL - 1 loop
+                  for I in N32 range 0 .. Cert_DER_Len_Const - 1 loop
                      Cert_X (X509.N32 (I)) :=
                         X509.Byte (HC.Peer_Cert_DER (I));
                   end loop;
@@ -573,11 +578,11 @@ is
 
       --  Send our Certificate
       declare
-         NCL      : constant N32 := HC.Cfg.Local.NaCl_Cert_Len;
-         Cert_Buf : Byte_Seq (0 .. NCL + 15);
+         Nacl_Cert_Len : constant N32 := HC.Cfg.Local.NaCl_Cert_Len;
+         Cert_Buf : Byte_Seq (0 .. Nacl_Cert_Len + 15);
          Cert_Len : N32;
       begin
-         Handshake.Build_Certificate
+         Handshake.Certs.Build_Certificate
            (Cert_DER => HC.Cfg.Local.NaCl_Cert_DER,
             Cert_Len => HC.Cfg.Local.NaCl_Cert_Len,
             Result   => Cert_Buf,
@@ -615,7 +620,7 @@ is
                CV_Buf : Byte_Seq (0 .. 523);
                CV_Len : N32;
             begin
-               Handshake.Build_Certificate_Verify
+               Handshake.Certs.Build_Certificate_Verify
                  (Transcript_Hash => CV_Hash,
                   Id              => HC.Cfg.Local.all,
                   Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
@@ -835,15 +840,15 @@ is
                case Rec.Content is
                   when Records.Content_Handshake =>
                      declare
-                        FL : constant N32 := Rec.Fragment_Len;
+                        Frag_Len : constant N32 := Rec.Fragment_Len;
                         Frag_Start : constant N32 :=
                            S.Input.Read_Pos + Rec.Fragment_Pos;
                         Frag : constant Byte_Seq :=
                            S.Input.Data (Frag_Start ..
-                                          Frag_Start + FL - 1);
+                                          Frag_Start + Frag_Len - 1);
                         Parse_OK : Boolean;
                      begin
-                        Handshake.Parse_Server_Hello (S, HC, Frag, Parse_OK);
+                        Handshake.Client_Msgs.Parse_Server_Hello (S, HC, Frag, Parse_OK);
 
                         if not Parse_OK then
                            --  RFLX parser may fail on TLS 1.2 ServerHello
@@ -1165,23 +1170,23 @@ is
          when Records.Content_Application_Data =>
             --  This is an encrypted handshake record
             declare
-               FL : constant N32 := Rec.Fragment_Len;
+               Frag_Len : constant N32 := Rec.Fragment_Len;
                Frag_Start : constant N32 :=
                   S.Input.Read_Pos + Rec.Fragment_Pos;
                --  Copy to 0-indexed locals (Decrypt_Record requires
                --  0-indexed inputs)
-               Encrypted  : Byte_Seq (0 .. FL - 1) :=
+               Encrypted  : Byte_Seq (0 .. Frag_Len - 1) :=
                   S.Input.Data (Frag_Start ..
-                                 Frag_Start + FL - 1);
+                                 Frag_Start + Frag_Len - 1);
                Hdr        : Byte_Seq (0 .. 4) :=
                   S.Input.Data (S.Input.Read_Pos ..
                                  S.Input.Read_Pos + 4);
-               Plaintext  : Byte_Seq (0 .. FL - 1);
+               Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
                Plain_Len  : N32;
                Inner_Type : Byte;
                Dec_Valid  : Boolean;
             begin
-               if FL <= Records.Tag_Size then
+               if Frag_Len <= Records.Tag_Size then
                   S.Last_Error := Decode_Error;
                   Set_State (S, Error_State);
                   Result := Error_Alert;
@@ -1241,9 +1246,9 @@ is
                         if HC.Reasm_Len >= HC.Reasm_Need then
                            --  Full message reassembled
                            declare
-                              RN : constant N32 := HC.Reasm_Need;
+                              Reasm_Need_Const : constant N32 := HC.Reasm_Need;
                               Full : constant Byte_Seq :=
-                                 HC.Reasm_Buf (0 .. RN - 1);
+                                 HC.Reasm_Buf (0 .. Reasm_Need_Const - 1);
                            begin
                               Process_Handshake_Message
                                 (S, HC, Full, Result);
@@ -1362,19 +1367,19 @@ is
       end if;
 
       declare
-         FL : constant N32 := Rec.Fragment_Len;
+         Frag_Len : constant N32 := Rec.Fragment_Len;
          Frag_Start : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted  : Byte_Seq (0 .. FL - 1) :=
+         Encrypted  : Byte_Seq (0 .. Frag_Len - 1) :=
             S.Input.Data (Frag_Start ..
-                           Frag_Start + FL - 1);
+                           Frag_Start + Frag_Len - 1);
          Hdr        : Byte_Seq (0 .. 4) :=
             S.Input.Data (S.Input.Read_Pos .. S.Input.Read_Pos + 4);
-         Plaintext  : Byte_Seq (0 .. FL - 1);
+         Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
          Plain_Len  : N32;
          Inner_Type : Byte;
          Dec_Valid  : Boolean;
       begin
-         if FL <= Records.Tag_Size then
+         if Frag_Len <= Records.Tag_Size then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Result := OK;
             return;

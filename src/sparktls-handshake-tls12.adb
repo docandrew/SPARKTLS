@@ -109,7 +109,7 @@ is
       Sig_OK  : Boolean := False;
 
       Pt_Len : N32;
-      P      : N32;
+      Pos    : N32;
    begin
       Result := (others => 0);
       Len := 0;
@@ -284,20 +284,20 @@ is
             Put24 (Result, 1, Body_Len);
 
             --  EC params + point
-            P := 4;
-            Result (P .. P + Params_Len - 1) :=
+            Pos := 4;
+            Result (Pos .. Pos + Params_Len - 1) :=
                Params (0 .. Params_Len - 1);
-            P := P + Params_Len;
+            Pos := Pos + Params_Len;
 
             --  Signature algorithm (TLS 1.2 split format)
-            Result (P)     := Hash_Algo;
-            Result (P + 1) := Sig_Algo;
-            P := P + 2;
+            Result (Pos)     := Hash_Algo;
+            Result (Pos + 1) := Sig_Algo;
+            Pos := Pos + 2;
 
             --  Signature length + signature
-            Put16 (Result, P, Unsigned_16 (Sig_Len));
-            P := P + 2;
-            Result (P .. P + Sig_Len - 1) := Sig (0 .. Sig_Len - 1);
+            Put16 (Result, Pos, Unsigned_16 (Sig_Len));
+            Pos := Pos + 2;
+            Result (Pos .. Pos + Sig_Len - 1) := Sig (0 .. Sig_Len - 1);
 
             Len := Total;
          end;
@@ -912,13 +912,13 @@ is
                Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
                              := (others => 0);
-               PL : constant Natural := HC.Cfg.ALPN.Len;
+               Proto_Len : constant Natural := HC.Cfg.ALPN.Len;
             begin
                --  list_len(2) + proto_len(1) + proto(N)
-               ALPN_Raw (0) := Byte ((PL + 1) / 256);
-               ALPN_Raw (1) := Byte ((PL + 1) mod 256);
-               ALPN_Raw (2) := Byte (PL);
-               for I in 1 .. PL loop
+               ALPN_Raw (0) := Byte ((Proto_Len + 1) / 256);
+               ALPN_Raw (1) := Byte ((Proto_Len + 1) mod 256);
+               ALPN_Raw (2) := Byte (Proto_Len);
+               for I in 1 .. Proto_Len loop
                   ALPN_Raw (N32 (2 + I)) :=
                      Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
                end loop;
@@ -1062,42 +1062,42 @@ is
             --  Bound Ext_End to Data'Last to prevent out-of-bounds
             Ext_End : constant N32 :=
                N32'Min (Pos + 2 + Ext_Len, Data'Last + 1);
-            EP : N32 := Pos + 2;
+            Ext_Pos : N32 := Pos + 2;
          begin
-            while EP + 3 <= Data'Last and then EP + 4 <= Ext_End loop
+            while Ext_Pos + 3 <= Data'Last and then Ext_Pos + 4 <= Ext_End loop
                declare
                   Ext_Type : constant Unsigned_16 :=
-                     Unsigned_16 (Data (EP)) * 256 +
-                     Unsigned_16 (Data (EP + 1));
+                     Unsigned_16 (Data (Ext_Pos)) * 256 +
+                     Unsigned_16 (Data (Ext_Pos + 1));
                   Ext_DLen : constant N32 :=
-                     N32 (Data (EP + 2)) * 256 + N32 (Data (EP + 3));
+                     N32 (Data (Ext_Pos + 2)) * 256 + N32 (Data (Ext_Pos + 3));
                begin
                   if Ext_Type = 16#0017# then
                      --  extended_master_secret (RFC 7627)
                      HC.Use_EMS := True;
 
                   elsif Ext_Type = 16#0010# and then Ext_DLen >= 4
-                     and then EP + 6 <= Data'Last
+                     and then Ext_Pos + 6 <= Data'Last
                   then
                      --  ALPN (RFC 7301)
                      --  Format: list_len(2) + proto_len(1) + proto(N)
                      declare
-                        PL : constant Natural :=
-                           Natural (Data (EP + 6));
+                        Proto_Len : constant Natural :=
+                           Natural (Data (Ext_Pos + 6));
                      begin
-                        if PL > 0 and then PL <= Max_Hostname_Len
-                           and then N32 (PL + 3) <= Ext_DLen
-                           and then EP + N32 (7 + PL) - 1 <= Data'Last
+                        if Proto_Len > 0 and then Proto_Len <= Max_Hostname_Len
+                           and then N32 (Proto_Len + 3) <= Ext_DLen
+                           and then Ext_Pos + N32 (7 + Proto_Len) - 1 <= Data'Last
                         then
-                           S.Negotiated_ALPN.Len := PL;
-                           for I in 1 .. PL loop
+                           S.Negotiated_ALPN.Len := Proto_Len;
+                           for I in 1 .. Proto_Len loop
                               S.Negotiated_ALPN.Data (I) :=
-                                 Character'Val (Data (EP + N32 (6 + I)));
+                                 Character'Val (Data (Ext_Pos + N32 (6 + I)));
                            end loop;
                         end if;
                      end;
                   end if;
-                  EP := EP + 4 + Ext_DLen;
+                  Ext_Pos := Ext_Pos + 4 + Ext_DLen;
                end;
             end loop;
          end;
@@ -1127,7 +1127,7 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
-      P : N32 := 0;
+      Pos : N32 := 0;
       List_Start : N32;
    begin
       Result := (others => 0);
@@ -1135,23 +1135,23 @@ is
 
       --  Handshake header placeholder (fill length later)
       Result (0) := 16#0B#;  --  Certificate
-      P := 4;
+      Pos := 4;
 
       --  Certificate list length placeholder (fill later)
-      List_Start := P;
-      P := P + 3;
+      List_Start := Pos;
+      Pos := Pos + 3;
 
       --  Leaf certificate (use NaCl_Cert which is SPARKNaCl.Byte_Seq)
       --  Need space for: cert_len(3) + cert_data(NaCl_Cert_Len)
       if Id.NaCl_Cert_Len > 0
          and then Id.NaCl_Cert_Len <= Max_Cert_DER_Len
-         and then P <= Result'Last - 3 - Id.NaCl_Cert_Len + 1
+         and then Pos <= Result'Last - 3 - Id.NaCl_Cert_Len + 1
       then
-         Put24 (Result, P, Id.NaCl_Cert_Len);
-         P := P + 3;
-         Result (P .. P + Id.NaCl_Cert_Len - 1) :=
+         Put24 (Result, Pos, Id.NaCl_Cert_Len);
+         Pos := Pos + 3;
+         Result (Pos .. Pos + Id.NaCl_Cert_Len - 1) :=
             Id.NaCl_Cert_DER (0 .. Id.NaCl_Cert_Len - 1);
-         P := P + Id.NaCl_Cert_Len;
+         Pos := Pos + Id.NaCl_Cert_Len;
       else
          return;
       end if;
@@ -1161,19 +1161,19 @@ is
 
       --  Fill certificate list length
       declare
-         List_Len : constant N32 := P - List_Start - 3;
+         List_Len : constant N32 := Pos - List_Start - 3;
       begin
          Put24 (Result, List_Start, List_Len);
       end;
 
       --  Fill handshake message length
       declare
-         Msg_Body_Len : constant N32 := P - 4;
+         Msg_Body_Len : constant N32 := Pos - 4;
       begin
          Put24 (Result, 1, Msg_Body_Len);
       end;
 
-      Len := P;
+      Len := Pos;
    end Build_Certificate_Chain_12;
 
    procedure Build_Client_Hello_12

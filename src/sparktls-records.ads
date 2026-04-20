@@ -44,6 +44,7 @@ is
                 and Avail - 1 <= Data'Last,
         Post => (if Result.OK then
                    Result.Content /= Content_Unknown       --  known type
+                   and Result.Fragment_Len >= 1             --  never zero
                    and Result.Fragment_Len <= Max_Fragment + Max_Record_Overhead
                                                             --  RFC 8446 §5.1
                    and Result.Record_Len <= Avail           --  fits in buffer

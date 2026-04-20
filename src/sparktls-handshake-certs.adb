@@ -1,0 +1,418 @@
+with Ada.Unchecked_Deallocation;
+with Interfaces; use Interfaces;
+with SPARKNaCl.Hashing.SHA256;
+with SPARKNaCl.Hashing.SHA384;
+with SPARKNaCl.Hashing.SHA512;
+with SPARKNaCl.Sign;
+with SPARKNaCl.Sign.Utils;
+with SPARKTLS.P256.ECDSA;
+with SPARKTLS.P384.ECDSA;
+with SPARKTLS.RSA;
+with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
+with RFLX.TLS_Handshake.Certificate;
+with RFLX.TLS_Handshake.Certificate_Entries;
+with RFLX.TLS_Handshake.Certificate_Entry;
+with RFLX.TLS_Handshake.Certificate_Verify;
+with RFLX.Tls_Parameters;
+
+package body SPARKTLS.Handshake.Certs with
+   SPARK_Mode => On
+is
+   use type RBT.Length;
+   use type RBT.Index;
+   use type RBT.Bytes_Ptr;
+
+   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
+   with Post => Buf = null;
+
+   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
+   with SPARK_Mode => Off
+   is
+      procedure Dealloc is new Ada.Unchecked_Deallocation
+        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+   begin
+      Dealloc (Buf);
+   end RFLX_Free;
+
+   procedure Build_Certificate
+     (Cert_DER : in     Byte_Seq;
+      Cert_Len : in     N32;
+      Result   :    out Byte_Seq;
+      Len      :    out N32)
+   is
+      use RFLX.TLS_Handshake.Certificate;
+      --  Certificate entry: cert_data_len(3) + cert_data + ext_len(2) = 5 + Cert_Len
+      Entry_Len : constant N32 := 3 + Cert_Len + 2;
+      List_Len  : constant N32 := Entry_Len;
+      --  Body: context_len(1) + context(0) + list_len(3) + list
+      Body_Len  : constant N32 := 1 + 3 + List_Len;
+      Msg_Len   : constant N32 := 4 + Body_Len;
+      Ctx : Context;
+   begin
+      Result := (others => 0);
+      Len := 0;
+
+      if Msg_Len > N32 (Result'Length) then
+         return;
+      end if;
+
+      declare
+         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      begin
+         Initialize (Ctx, Buf);
+
+         --  Empty certificate_request_context
+         Set_Certificate_Request_Context_Length (Ctx, 0);
+         Set_Certificate_Request_Context_Empty (Ctx);
+
+         --  Certificate list with one entry
+         Set_Certificate_List_Length
+           (Ctx, RFLX.TLS_Handshake.Certificate_List_Length (List_Len));
+
+         declare
+            Entries_Ctx : RFLX.TLS_Handshake.Certificate_Entries.Context;
+         begin
+            Switch_To_Certificate_List (Ctx, Entries_Ctx);
+
+            --  Build one certificate entry
+            declare
+               E_Buf : RBT.Bytes_Ptr :=
+                  new RBT.Bytes'(1 .. RBT.Index (Entry_Len) => 0);
+               E_Ctx : RFLX.TLS_Handshake.Certificate_Entry.Context;
+            begin
+               RFLX.TLS_Handshake.Certificate_Entry.Initialize (E_Ctx, E_Buf);
+               RFLX.TLS_Handshake.Certificate_Entry.Set_Cert_Data_Length
+                 (E_Ctx, RFLX.TLS_Handshake.Cert_Data_Length (Cert_Len));
+               RFLX.TLS_Handshake.Certificate_Entry.Set_Cert_Data
+                 (E_Ctx, To_RFLX (Cert_DER (0 .. Cert_Len - 1)));
+               RFLX.TLS_Handshake.Certificate_Entry.Set_Extensions_Length
+                 (E_Ctx, 0);
+               RFLX.TLS_Handshake.Certificate_Entry.Set_Extensions_Empty
+                 (E_Ctx);
+               RFLX.TLS_Handshake.Certificate_Entries.Append_Element
+                 (Entries_Ctx, E_Ctx);
+               RFLX.TLS_Handshake.Certificate_Entry.Take_Buffer
+                 (E_Ctx, E_Buf);
+               RFLX_Free (E_Buf);
+            end;
+
+            Update_Certificate_List (Ctx, Entries_Ctx);
+         end;
+
+         Take_Buffer (Ctx, Buf);
+
+         --  Prepend handshake header
+         Result (0) := HT_Certificate;
+         Result (1) := Byte (Body_Len / 65536);
+         Result (2) := Byte ((Body_Len / 256) mod 256);
+         Result (3) := Byte (Body_Len mod 256);
+         Result (4 .. 4 + Body_Len - 1) :=
+            To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         RFLX_Free (Buf);
+      end;
+
+      Len := Msg_Len;
+   end Build_Certificate;
+
+   procedure Build_Certificate_Chain
+     (Id     : in     Identity;
+      Result :    out Byte_Seq;
+      Len    :    out N32)
+   is
+      --  Build the Certificate message manually (simpler than RFLX
+      --  for variable-count entries).
+      --
+      --  Format:
+      --    handshake_header(4)
+      --    certificate_request_context_length(1) = 0
+      --    certificate_list_length(3)
+      --    for each cert:
+      --      cert_data_length(3) + cert_data + extensions_length(2) = 0
+
+      Pos : N32 := 0;
+
+      procedure Put_U8 (V : Byte) is
+      begin
+         if Pos <= Result'Last then
+            Result (Pos) := V;
+            Pos := Pos + 1;
+         end if;
+      end Put_U8;
+
+      procedure Put_U24 (V : N32) is
+      begin
+         Put_U8 (Byte (V / 65536));
+         Put_U8 (Byte ((V / 256) mod 256));
+         Put_U8 (Byte (V mod 256));
+      end Put_U24;
+
+      procedure Put_Cert_Entry (DER : Byte_Seq; DER_Len : N32) is
+      begin
+         Put_U24 (DER_Len);              --  cert_data_length
+         if Pos + DER_Len - 1 <= Result'Last then
+            Result (Pos .. Pos + DER_Len - 1) := DER (0 .. DER_Len - 1);
+            Pos := Pos + DER_Len;
+         end if;
+         Put_U8 (0); Put_U8 (0);         --  extensions_length = 0
+      end Put_Cert_Entry;
+
+      --  Compute total list length
+      List_Len : N32 := 0;
+   begin
+      Result := (others => 0);
+      Len := 0;
+
+      if not Id.Has_Identity or Id.NaCl_Cert_Len = 0 then
+         return;
+      end if;
+
+      --  Leaf entry: 3 + cert_len + 2
+      List_Len := 3 + Id.NaCl_Cert_Len + 2;
+
+      --  Intermediate entries
+      for I in 0 .. Id.Int_Count - 1 loop
+         if Id.Ints (I).Present then
+            List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len) + 2;
+         end if;
+      end loop;
+
+      declare
+         Body_Len : constant N32 := 1 + 3 + List_Len;
+         Msg_Len  : constant N32 := 4 + Body_Len;
+      begin
+         if Msg_Len > N32 (Result'Length) then
+            return;
+         end if;
+
+         --  Handshake header
+         Put_U8 (HT_Certificate);
+         Put_U24 (Body_Len);
+
+         --  certificate_request_context (empty)
+         Put_U8 (0);
+
+         --  certificate_list_length
+         Put_U24 (List_Len);
+
+         --  Leaf certificate entry
+         Put_Cert_Entry (Id.NaCl_Cert_DER, Id.NaCl_Cert_Len);
+
+         --  Intermediate certificate entries
+         for I in 0 .. Id.Int_Count - 1 loop
+            if Id.Ints (I).Present then
+               declare
+                  Int_DER : Byte_Seq (0 .. N32 (Id.Ints (I).DER_Len) - 1);
+               begin
+                  --  Convert X509.Byte_Seq to SPARKNaCl.Byte_Seq
+                  for J in Int_DER'Range loop
+                     Int_DER (J) := Byte (Id.Ints (I).DER (X509.N32 (J)));
+                  end loop;
+                  Put_Cert_Entry (Int_DER, N32 (Id.Ints (I).DER_Len));
+               end;
+            end if;
+         end loop;
+
+         Len := Pos;
+      end;
+   end Build_Certificate_Chain;
+
+   procedure Build_Certificate_Verify
+     (Transcript_Hash : in     Byte_Seq;
+      Id              : in     Identity;
+      Sig_Algo_Wire   : in     Unsigned_16;
+      Role            : in     TLS_Role;
+      Random          : in     Random_Bytes_Fn;
+      Result          :    out Byte_Seq;
+      Len             :    out N32)
+   is
+      use RFLX.TLS_Handshake.Certificate_Verify;
+
+      Context_Str : constant String :=
+         (if Role = Role_Server
+          then "TLS 1.3, server CertificateVerify"
+          else "TLS 1.3, client CertificateVerify");
+      H_Len       : constant N32 := N32 (Transcript_Hash'Length);
+      Content_Len : constant N32 := 64 + N32 (Context_Str'Length) + 1 + H_Len;
+      Content     : Byte_Seq (0 .. Content_Len - 1);
+
+      Sig     : Byte_Seq (0 .. 511) := (others => 0);
+      Sig_Len : N32 := 0;
+      Sig_OK  : Boolean := False;
+
+      Algo_Enum : RFLX.Tls_Parameters.TLS_SignatureScheme_Enum;
+   begin
+      Result := (others => 0);
+      Len := 0;
+
+      Content (0 .. 63) := (others => 16#20#);
+      for I in Context_Str'Range loop
+         Content (64 + N32 (I - Context_Str'First)) :=
+            Byte (Character'Pos (Context_Str (I)));
+      end loop;
+      Content (64 + N32 (Context_Str'Length)) := 16#00#;
+      Content (64 + N32 (Context_Str'Length) + 1 ..
+               64 + N32 (Context_Str'Length) + H_Len) := Transcript_Hash;
+
+      case Sig_Algo_Wire is
+         when 16#0807# =>
+            Algo_Enum := RFLX.Tls_Parameters.Ed25519_0807;
+            Sig_Len := 64;
+            declare
+               SM_Len : constant N32 := 64 + Content_Len;
+               SM     : Byte_Seq (0 .. SM_Len - 1);
+               SK     : SPARKNaCl.Sign.Signing_SK;
+            begin
+               SPARKNaCl.Sign.Utils.Construct (Id.Ed25519_Key, SK);
+               SPARKNaCl.Sign.Sign (SM, Content, SK);
+               Sig (0 .. 63) := SM (0 .. 63);
+               Sig_OK := True;
+            end;
+
+         when 16#0403# =>
+            Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp256r1_Sha256;
+            declare
+               use SPARKNaCl.Hashing.SHA256;
+               H : constant Digest := Hash (Content);
+               K_Bytes : Bytes_32;
+               R_Half, S_Half : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
+            begin
+               Random.all (Byte_Seq (K_Bytes));
+               SPARKTLS.P256.ECDSA.Sign
+                 (Hash  => H,
+                  D     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half
+                             (Id.ECDSA_P256_Key),
+                  K     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
+                  R_Out => R_Half,
+                  S_Out => S_Half,
+                  OK    => Sig_OK);
+               if Sig_OK then
+                  ECDSA_To_DER
+                    (Byte_Seq (R_Half), Byte_Seq (S_Half), 32,
+                     Sig, Sig_Len);
+               end if;
+            end;
+
+         when 16#0503# =>
+            Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp384r1_Sha384;
+            declare
+               use SPARKNaCl.Hashing.SHA384;
+               H : constant Digest := Hash (Content);
+               K_Bytes : Bytes_48;
+               R_Half  : Byte_Seq (0 .. 47);
+               S_Half  : Byte_Seq (0 .. 47);
+            begin
+               Random.all (Byte_Seq (K_Bytes));
+               SPARKTLS.P384.ECDSA.Sign
+                 (Hash  => H,
+                  D     => Byte_Seq (Id.ECDSA_P384_Key),
+                  K     => Byte_Seq (K_Bytes),
+                  R_Out => R_Half,
+                  S_Out => S_Half,
+                  OK    => Sig_OK);
+               if Sig_OK then
+                  ECDSA_To_DER (R_Half, S_Half, 48, Sig, Sig_Len);
+               end if;
+            end;
+
+         when 16#0804# =>
+            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256;
+            declare
+               use SPARKNaCl.Hashing.SHA256;
+               H    : constant Digest := Hash (Content);
+               Salt : Bytes_32;
+            begin
+               Random.all (Byte_Seq (Salt));
+               SPARKTLS.RSA.Sign_PSS
+                 (M_Hash    => Byte_Seq (H),
+                  Hash_Len  => 32,
+                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA256,
+                  Modulus   => Id.RSA_Modulus,
+                  Mod_Len   => Id.RSA_Mod_Len,
+                  Priv_Exp  => Id.RSA_Priv_Exp,
+                  Salt      => Byte_Seq (Salt),
+                  Signature => Sig,
+                  Sig_Len   => Sig_Len,
+                  OK        => Sig_OK);
+            end;
+
+         when 16#0805# =>
+            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha384;
+            declare
+               use SPARKNaCl.Hashing.SHA384;
+               H    : constant Digest := Hash (Content);
+               Salt : Bytes_48;
+            begin
+               Random.all (Byte_Seq (Salt));
+               SPARKTLS.RSA.Sign_PSS
+                 (M_Hash    => Byte_Seq (H),
+                  Hash_Len  => 48,
+                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA384,
+                  Modulus   => Id.RSA_Modulus,
+                  Mod_Len   => Id.RSA_Mod_Len,
+                  Priv_Exp  => Id.RSA_Priv_Exp,
+                  Salt      => Byte_Seq (Salt),
+                  Signature => Sig,
+                  Sig_Len   => Sig_Len,
+                  OK        => Sig_OK);
+            end;
+
+         when 16#0806# =>
+            Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha512;
+            declare
+               use SPARKNaCl.Hashing.SHA512;
+               H    : constant Digest := Hash (Content);
+               Salt : Bytes_64;
+            begin
+               Random.all (Byte_Seq (Salt));
+               SPARKTLS.RSA.Sign_PSS
+                 (M_Hash    => Byte_Seq (H),
+                  Hash_Len  => 64,
+                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA512,
+                  Modulus   => Id.RSA_Modulus,
+                  Mod_Len   => Id.RSA_Mod_Len,
+                  Priv_Exp  => Id.RSA_Priv_Exp,
+                  Salt      => Byte_Seq (Salt),
+                  Signature => Sig,
+                  Sig_Len   => Sig_Len,
+                  OK        => Sig_OK);
+            end;
+
+         when others =>
+            return;
+      end case;
+
+      if not Sig_OK then
+         return;
+      end if;
+
+      declare
+         Body_Len : constant N32 := 4 + Sig_Len;
+         Msg_Len  : constant N32 := 4 + Body_Len;
+         Buf      : RBT.Bytes_Ptr;
+         Ctx      : Context;
+      begin
+         if Msg_Len > N32 (Result'Length) then
+            return;
+         end if;
+
+         Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+         Initialize (Ctx, Buf);
+         Set_Algorithm (Ctx, Algo_Enum);
+         Set_Signature_Length
+           (Ctx, RFLX.TLS_Handshake.Signature_Length (Sig_Len));
+         Set_Signature (Ctx, To_RFLX (Sig (0 .. Sig_Len - 1)));
+         Take_Buffer (Ctx, Buf);
+
+         Result (0) := HT_Certificate_Verify;
+         Result (1) := 16#00#;
+         Result (2) := Byte (Body_Len / 256);
+         Result (3) := Byte (Body_Len mod 256);
+         Result (4 .. 4 + Body_Len - 1) :=
+            To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+
+         RFLX_Free (Buf);
+         Len := Msg_Len;
+      end;
+   end Build_Certificate_Verify;
+
+end SPARKTLS.Handshake.Certs;

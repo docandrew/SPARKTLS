@@ -90,45 +90,45 @@ is
 
       --  1. ServerHello
       declare
-         SH : Byte_Seq (0 .. Max_Server_Hello_12 - 1); L : N32;
+         Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1); Hello_Len : N32;
       begin
-         Build_Server_Hello_12 (S, HC, SH, L);
-         if L = 0 then
+         Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+         if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
          end if;
-         Append_Transcript (HC, SH (0 .. L - 1));
-         Records.Build_Handshake_Record (SH (0 .. L - 1), S.Output, Rec_Out);
+         Append_Transcript (HC, Hello_Buf (0 .. Hello_Len - 1));
+         Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), S.Output, Rec_Out);
       end;
 
       --  2. Certificate (TLS 1.2 format)
       declare
-         CB : Byte_Seq (0 .. 8191); CL : N32;
+         Cert_Buf : Byte_Seq (0 .. 8191); Cert_Len : N32;
       begin
-         Build_Certificate_Chain_12 (HC.Cfg.Local.all, CB, CL);
-         if CL > 0 then
-            Append_Transcript (HC, CB (0 .. CL - 1));
-            Records.Build_Handshake_Record (CB (0 .. CL - 1), S.Output, Rec_Out);
+         Build_Certificate_Chain_12 (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
+         if Cert_Len > 0 then
+            Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
+            Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), S.Output, Rec_Out);
          end if;
       end;
 
       --  3. ServerKeyExchange
       declare
-         SK : Byte_Seq (0 .. Max_Server_Key_Exchange - 1); SL : N32;
+         SKE_Buf : Byte_Seq (0 .. Max_Server_Key_Exchange - 1); SKE_Len : N32;
       begin
-         Build_Server_Key_Exchange (HC, HC.Cfg.Local.all, Gen_Random, SK, SL);
-         if SL > 0 then
-            Append_Transcript (HC, SK (0 .. SL - 1));
-            Records.Build_Handshake_Record (SK (0 .. SL - 1), S.Output, Rec_Out);
+         Build_Server_Key_Exchange (HC, HC.Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
+         if SKE_Len > 0 then
+            Append_Transcript (HC, SKE_Buf (0 .. SKE_Len - 1));
+            Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), S.Output, Rec_Out);
          end if;
       end;
 
       --  4. ServerHelloDone
       declare
-         SD : Byte_Seq (0 .. 3); DL : N32;
+         Done_Buf : Byte_Seq (0 .. 3); Done_Len : N32;
       begin
-         Build_Server_Hello_Done (SD, DL);
-         Append_Transcript (HC, SD (0 .. DL - 1));
-         Records.Build_Handshake_Record (SD (0 .. DL - 1), S.Output, Rec_Out);
+         Build_Server_Hello_Done (Done_Buf, Done_Len);
+         Append_Transcript (HC, Done_Buf (0 .. Done_Len - 1));
+         Records.Build_Handshake_Record (Done_Buf (0 .. Done_Len - 1), S.Output, Rec_Out);
       end;
 
       Set_State (S, Server_Hello_Sent);
@@ -241,26 +241,26 @@ is
       end if;
 
       declare
-         FL : constant N32 := Rec.Fragment_Len;
+         Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Frag : Byte_Seq renames S.Input.Data (FS .. FS + FL - 1);
-         MT : Byte; ML : N32; POK : Boolean;
+         Frag : Byte_Seq renames S.Input.Data (FS .. FS + Frag_Len - 1);
+         Msg_Type : Byte; Msg_Len : N32; POK : Boolean;
       begin
-         Handshake.Parse_Handshake_Header (Frag, MT, ML, POK);
-         if not POK or MT /= HT_Client_Key_Exchange then
+         Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, POK);
+         if not POK or Msg_Type /= HT_Client_Key_Exchange then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Unexpected_Message, Result);
             return;
          end if;
 
          declare
-            MLC : constant N32 := ML;
+            Msg_Len_Const : constant N32 := Msg_Len;
             BS  : constant N32 := Frag'First + 4;
-            Body_Data : Byte_Seq (0 .. MLC - 1);
+            Body_Data : Byte_Seq (0 .. Msg_Len_Const - 1);
             CKE_OK : Boolean;
          begin
-            if ML > 0 and then 4 + ML <= FL then
-               Body_Data := Frag (BS .. BS + ML - 1);
+            if Msg_Len > 0 and then 4 + Msg_Len <= Frag_Len then
+               Body_Data := Frag (BS .. BS + Msg_Len - 1);
                Parse_Client_Key_Exchange (HC, Body_Data, CKE_OK);
                if not CKE_OK then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -357,21 +357,21 @@ is
       end if;
 
       declare
-         FL : constant N32 := Rec.Fragment_Len;
+         Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. FL - 1);
+         Encrypted : Byte_Seq (0 .. Frag_Len - 1);
          Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. FL - 1);
+         Plaintext : Byte_Seq (0 .. Frag_Len - 1);
          PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. FL - 1 loop
+         for I in N32 range 0 .. Frag_Len - 1 loop
             Encrypted (I) := S.Input.Data (FS + I);
          end loop;
          for I in N32 range 0 .. 4 loop
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if FL < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Decode_Error, Result); return;
          end if;
@@ -389,15 +389,15 @@ is
          end if;
 
          declare
-            MT : constant Byte := Plaintext (0);
-            ML : constant N32 := N32 (Plaintext (1)) * 65536 +
+            Msg_Type : constant Byte := Plaintext (0);
+            Msg_Len : constant N32 := N32 (Plaintext (1)) * 65536 +
                                  N32 (Plaintext (2)) * 256 +
                                  N32 (Plaintext (3));
          begin
-            if MT /= HT_Finished then
+            if Msg_Type /= HT_Finished then
                Send_Alert_And_Error (S, Unexpected_Message, Result); return;
             end if;
-            if ML /= Finished_Verify_Len or PL < 4 + Finished_Verify_Len then
+            if Msg_Len /= Finished_Verify_Len or PL < 4 + Finished_Verify_Len then
                Send_Alert_And_Error (S, Decode_Error, Result); return;
             end if;
 
@@ -516,21 +516,21 @@ is
       end if;
 
       declare
-         FL : constant N32 := Rec.Fragment_Len;
+         Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. FL - 1);
+         Encrypted : Byte_Seq (0 .. Frag_Len - 1);
          Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. FL - 1);
+         Plaintext : Byte_Seq (0 .. Frag_Len - 1);
          PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. FL - 1 loop
+         for I in N32 range 0 .. Frag_Len - 1 loop
             Encrypted (I) := S.Input.Data (FS + I);
          end loop;
          for I in N32 range 0 .. 4 loop
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if FL < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Unexpected_Message, Result); return;
          end if;
