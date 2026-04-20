@@ -22,12 +22,18 @@ if [ ! -d "$TLSFUZZER_DIR" ]; then
     git clone --depth 1 https://github.com/tlsfuzzer/tlsfuzzer.git "$TLSFUZZER_DIR"
 fi
 
-# Setup Python venv
+# Setup Python venv (prefer uv, fall back to python3 -m venv)
 if [ ! -d "$VENV_DIR" ]; then
     echo "Setting up Python venv..."
-    python3 -m venv "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-    pip install -q git+https://github.com/tlsfuzzer/tlslite-ng.git
+    if command -v uv > /dev/null 2>&1; then
+        uv venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        uv pip install git+https://github.com/tlsfuzzer/tlslite-ng.git
+    else
+        python3 -m venv "$VENV_DIR"
+        source "$VENV_DIR/bin/activate"
+        pip install -q git+https://github.com/tlsfuzzer/tlslite-ng.git
+    fi
 else
     source "$VENV_DIR/bin/activate"
 fi

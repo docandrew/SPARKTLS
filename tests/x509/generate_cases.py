@@ -93,7 +93,7 @@ def main():
 
         # Metadata
         peer_name = tc.get('expected_peer_name') or {}
-        hostname = peer_name.get('value', '') if peer_name.get('kind') == 'DNS' else ''
+        hostname = peer_name.get('value', '') if peer_name.get('kind') in ('DNS', 'IP') else ''
         vtime = parse_time(tc.get('validation_time'))
 
         with open(os.path.join(tc_dir, 'meta.txt'), 'w') as f:

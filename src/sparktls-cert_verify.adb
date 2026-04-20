@@ -377,17 +377,37 @@ is
       Mode : Validation_Mode := Mode_WebPKI) return Validation_Result
    is
    begin
-      --  RFC 5280 §6.1: Full structural validation of trust anchor
+      --  RFC 5280 §6.1: Structural validation of trust anchor.
+      --  Trust anchors are trusted by definition (RFC 5280 §6.1.1),
+      --  but we validate structure to catch obviously broken certs.
+      --  Exception: we tolerate Bad_Serial because legacy roots
+      --  (Starfield G2, serial=0) violate RFC 5280 §4.1.2.2 but
+      --  are in every major trust store.
       if not X509.Is_Structurally_Valid (Root, Now) then
-         if not X509.Is_Valid (Root) then
-            return Err_Parse_Failed;
-         elsif not X509.Is_Date_Valid (Root, Now) then
-            return Err_Expired;
-         elsif X509.Has_Unknown_Critical_Extension (Root) then
-            return Err_Unknown_Critical;
-         else
-            return Err_Parse_Failed;
+         --  Retry without serial: if serial is the only problem,
+         --  the cert passes all other individual checks.
+         if not (X509.Is_Valid (Root)
+                 and then X509.Is_Date_Valid (Root, Now)
+                 and then not X509.Has_Unknown_Critical_Extension (Root)
+                 and then not X509.Has_Duplicate_Extension (Root)
+                 and then not X509.Has_Bad_Extension_Criticality (Root)
+                 and then not X509.Has_Bad_Time_Format (Root)
+                 and then not X509.Has_Bad_SAN (Root)
+                 and then not X509.Has_Empty_Key_Usage_Value (Root)
+                 and then not X509.Has_Key_Cert_Sign_Without_CA (Root)
+                 and then X509.TBS (Root).Present)
+         then
+            if not X509.Is_Valid (Root) then
+               return Err_Parse_Failed;
+            elsif not X509.Is_Date_Valid (Root, Now) then
+               return Err_Expired;
+            elsif X509.Has_Unknown_Critical_Extension (Root) then
+               return Err_Unknown_Critical;
+            else
+               return Err_Parse_Failed;
+            end if;
          end if;
+         --  Only Bad_Serial — tolerate for trust anchors
       end if;
 
       --  RFC 5280 §4.2.1.9: Trust anchors must be CAs
@@ -584,6 +604,10 @@ is
          then
             return Err_Missing_SAN;
          end if;
+
+         --  TODO: CABF BR 7.1.4.3 CN_In_SAN check.
+         --  Requires fixing CN_In_SAN to handle >16 SANs,
+         --  case-insensitive comparison, and IP SAN matching.
 
          --  Leaf must not be a CA
          if X509.Is_CA (Leaf) then
