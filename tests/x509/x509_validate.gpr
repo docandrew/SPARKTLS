@@ -1,0 +1,13 @@
+with "../../sparktls.gpr";
+
+project X509_Validate is
+   for Create_Missing_Dirs use "True";
+   for Object_Dir use "obj";
+   for Exec_Dir use "../../bin/tests";
+   for Source_Dirs use (".");
+   for Main use ("x509_validate.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use ("-O2", "-gnatn", "-gnatp");
+   end Compiler;
+end X509_Validate;
