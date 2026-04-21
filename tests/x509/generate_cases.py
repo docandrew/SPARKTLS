@@ -96,9 +96,13 @@ def main():
         hostname = peer_name.get('value', '') if peer_name.get('kind') in ('DNS', 'IP') else ''
         vtime = parse_time(tc.get('validation_time'))
 
+        # Determine validation mode from test ID prefix
+        mode = "rfc5280" if tc['id'].startswith("rfc5280::") else "webpki"
+
         with open(os.path.join(tc_dir, 'meta.txt'), 'w') as f:
             f.write(f"hostname={hostname}\n")
             f.write(f"time={vtime}\n")
+            f.write(f"mode={mode}\n")
             f.write(f"features={','.join(features)}\n")
             f.write(f"description={tc.get('description', '')}\n")
 

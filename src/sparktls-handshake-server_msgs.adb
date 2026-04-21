@@ -226,6 +226,21 @@ is
                            RFLX.TLS_Handshake.CH_Extension_TLS.Get_Tag
                              (Ext_Ctx);
                      begin
+                        --  Record extension order fingerprint for
+                        --  HRR CH2 validation (rolling polynomial hash).
+                        declare
+                           Code : constant Unsigned_32 := Unsigned_32
+                              (RFLX.Tls_Extensiontype_Values
+                                 .To_Base_Integer (Tag));
+                        begin
+                           --  Skip cookie (0x002C) — it's added after HRR
+                           if Code /= 16#002C# then
+                              HC.CH_Ext_Hash :=
+                                 HC.CH_Ext_Hash * 31 xor Code;
+                              HC.CH_Ext_Count := HC.CH_Ext_Count + 1;
+                           end if;
+                        end;
+
                         if Tag.Known and then
                            Tag.Enum =
                               RFLX.Tls_Extensiontype_Values.Key_Share

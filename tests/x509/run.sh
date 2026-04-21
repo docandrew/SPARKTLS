@@ -34,6 +34,7 @@ for tc_dir in "$GEN_DIR"/*/; do
     expected=$(cat "$tc_dir/expect.txt" | tr -d '\n')
     hostname=$(grep "^hostname=" "$tc_dir/meta.txt" | cut -d= -f2)
     vtime=$(grep "^time=" "$tc_dir/meta.txt" | cut -d= -f2)
+    mode=$(grep "^mode=" "$tc_dir/meta.txt" 2>/dev/null | cut -d= -f2)
     tc_name=$(basename "$tc_dir")
 
     # Build command
@@ -41,6 +42,7 @@ for tc_dir in "$GEN_DIR"/*/; do
     [ -f "$tc_dir/intermediates.pem" ] && cmd+=("$tc_dir/intermediates.pem")
     [ -n "$hostname" ] && cmd+=(--hostname "$hostname")
     [ -n "$vtime" ] && cmd+=(--time "$vtime")
+    [ "$mode" = "rfc5280" ] && cmd+=(--mode rfc5280)
 
     # Run
     if timeout 10 "${cmd[@]}" > /dev/null 2>&1; then

@@ -76,6 +76,10 @@ is
    subtype Sig_Algo_Index is Natural range 0 .. Max_Sig_Algos - 1;
    type Sig_Algo_List is array (Sig_Algo_Index) of Unsigned_16;
 
+   --  CH1 extension order tracking (for HRR CH2 validation)
+   --  Uses a rolling polynomial hash (fingerprint * 31 xor code).
+   --  Reordering extensions changes the hash. No array needed.
+
    --  RFLX scratch buffer sizes (stack-allocated, no heap)
    RFLX_Main_Size : constant := 17000;  --  Holds largest message (incoming record)
 
@@ -710,6 +714,11 @@ is
       Selected_Group    : Unsigned_16 := 0;
       --  HelloRetryRequest state
       HRR_Sent          : Boolean := False;
+      --  RFC 8446 §4.1.2: CH extension order fingerprint.
+      --  Rolling polynomial hash of extension type codes in order.
+      --  CH2 must produce the same hash as CH1 (modulo cookie).
+      CH_Ext_Hash       : Unsigned_32 := 0;
+      CH_Ext_Count      : Natural := 0;
 
       --  Handshake traffic keys
       Client_HS     : Traffic_Keys;

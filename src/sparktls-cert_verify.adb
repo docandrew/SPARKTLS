@@ -583,7 +583,8 @@ is
 
       --  2. WebPKI mode (CABF Baseline Requirements)
       if Mode = Mode_WebPKI then
-         --  Leaf must have EKU with serverAuth
+         --  CABF BRs: leaf must have EKU with serverAuth.
+         --  RFC 5280: EKU is optional. Mode_WebPKI enforces CABF.
          if Purpose = Purpose_Server and then not X509.Has_EKU (Leaf) then
             return Err_Wrong_EKU;
          end if;
@@ -605,11 +606,13 @@ is
             return Err_Missing_SAN;
          end if;
 
-         --  TODO: CABF BR 7.1.4.3 CN_In_SAN check.
-         --  Requires fixing CN_In_SAN to handle >16 SANs,
-         --  case-insensitive comparison, and IP SAN matching.
+         --  Note: CABF BR 7.1.4.3 requires CN to match a SAN, but
+         --  this is a CA issuance requirement, not a validator
+         --  requirement. Validators match hostname against SANs
+         --  and ignore CN when SANs are present (RFC 6125).
 
-         --  Leaf must not be a CA
+         --  CABF BRs: leaf must not be a CA.
+         --  RFC 5280: allows CA in leaf position.
          if X509.Is_CA (Leaf) then
             return Err_Not_CA;
          end if;

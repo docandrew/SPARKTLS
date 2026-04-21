@@ -631,25 +631,43 @@ is
                                     Frag_Start + Frag_Len - 1);
                   Parse_OK : Boolean;
                begin
-                  --  Reset key_share flags (client sends new key_share)
-                  HC.Client_Has_X25519 := False;
-                  HC.Client_Has_P256 := False;
-                  HC.Client_Has_P384 := False;
+                  --  Save CH1 extension fingerprint before re-parsing
+                  declare
+                     CH1_Hash  : constant Unsigned_32 := HC.CH_Ext_Hash;
+                     CH1_Count : constant Natural := HC.CH_Ext_Count;
+                  begin
+                     --  Reset for CH2 parsing
+                     HC.Client_Has_X25519 := False;
+                     HC.Client_Has_P256 := False;
+                     HC.Client_Has_P384 := False;
+                     HC.CH_Ext_Hash := 0;
+                     HC.CH_Ext_Count := 0;
 
-                  Handshake.Server_Msgs.Parse_Client_Hello
-                    (S, HC, Frag, Parse_OK);
+                     Handshake.Server_Msgs.Parse_Client_Hello
+                       (S, HC, Frag, Parse_OK);
 
-                  if not Parse_OK then
-                     if S.Last_Error = Decode_Error then
-                        Send_Alert_And_Error (S, Decode_Error, Result);
-                     elsif S.Last_Error = Protocol_Version then
-                        Send_Alert_And_Error (S, Protocol_Version, Result);
-                     else
-                        Send_Alert_And_Error (S, Handshake_Failure, Result);
+                     if not Parse_OK then
+                        --  After HRR, CH2 parse failures are
+                        --  illegal_parameter (RFC 8446 §4.1.4)
+                        S.Input.Read_Pos :=
+                           S.Input.Read_Pos + Rec.Record_Len;
+                        Send_Alert_And_Error
+                          (S, Illegal_Parameter, Result);
+                        return;
                      end if;
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     return;
-                  end if;
+
+                     --  RFC 8446 §4.1.2: CH2 extensions must be in
+                     --  the same order as CH1. Compare fingerprints.
+                     --  Cookie is excluded from the hash in both CH1
+                     --  and CH2, so adding cookie doesn't affect it.
+                     if HC.CH_Ext_Hash /= CH1_Hash then
+                        S.Input.Read_Pos :=
+                           S.Input.Read_Pos + Rec.Record_Len;
+                        Send_Alert_And_Error
+                          (S, Illegal_Parameter, Result);
+                        return;
+                     end if;
+                  end;
 
                   --  Append CH2 to transcript
                   Append_Transcript (HC, Frag);

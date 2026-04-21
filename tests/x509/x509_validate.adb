@@ -231,6 +231,7 @@ procedure X509_Validate is
    Host_Len  : Natural := 0;
    Val_Time  : X509.Date_Time := (Year => 2025, Month => 1, Day => 1,
                                     others => 0);
+   Val_Mode  : Validation_Mode := Mode_WebPKI;
 begin
    if Ada.Command_Line.Argument_Count < 2 then
       Ada.Command_Line.Set_Exit_Status (2);
@@ -312,6 +313,13 @@ begin
                I := I + 1;
                Val_Time := Unix_To_DateTime
                   (Parse_Nat (Ada.Command_Line.Argument (I)));
+            elsif Arg = "--mode"
+               and I < Ada.Command_Line.Argument_Count
+            then
+               I := I + 1;
+               if Ada.Command_Line.Argument (I) = "rfc5280" then
+                  Val_Mode := Mode_RFC5280;
+               end if;
             elsif Arg (Arg'First) /= '-' then
                Load_Pool (Arg, Ints, Int_Count);
             end if;
@@ -361,7 +369,8 @@ begin
          Roots      => Roots.Roots,
          Root_Count => Roots.Root_Count,
          Now        => Val_Time,
-         Hostname   => Hostname (1 .. Host_Len));
+         Hostname   => Hostname (1 .. Host_Len),
+         Mode       => Val_Mode);
 
       if Result = Valid then
          Ada.Command_Line.Set_Exit_Status (0);
