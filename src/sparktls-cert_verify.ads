@@ -42,10 +42,12 @@ is
    --  by definition, and self-signature verification is not required by
    --  RFC 5280 §6.1).
    function Validate_Root
-     (Root : X509.Certificate;
-      Now  : X509.Date_Time;
-      Mode : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Post =>
+     (Root     : X509.Certificate;
+      Root_DER : X509.Byte_Seq;
+      Now      : X509.Date_Time;
+      Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
+   with Pre  => Root_DER'First = 0 and Root_DER'Last < X509.N32'Last,
+        Post =>
      (if Validate_Root'Result = Valid then
         --  RFC 5280 §6.1.1(d): trust anchor must parse
         X509.Is_Valid (Root)
@@ -108,8 +110,25 @@ is
       Must_Be_CA       : Boolean;
       CAs_Below_Issuer : Natural;
       Mode             : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
-               and Issuer_DER'First = 0 and Issuer_DER'Last < X509.N32'Last;
+   with Pre  => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
+                and Issuer_DER'First = 0 and Issuer_DER'Last < X509.N32'Last,
+        Post =>
+          --  RFC 5280 §6.1.3: issuer must match
+          (if Validate_Link'Result = Valid then
+             X509.Issuer_Matches (Cert, Cert_DER, Issuer, Issuer_DER))
+          and
+          --  RFC 5280 §6.1.3: cert must be within validity period
+          (if Validate_Link'Result = Valid then
+             X509.Is_Date_Valid (Cert, Now))
+          and
+          --  RFC 5280 §4.2.1.10: name constraints must be satisfied
+          --  (self-issued intermediates are exempt per §4.2.1.10)
+          (if Validate_Link'Result = Valid
+              and then not (Must_Be_CA
+                            and then X509.Is_Self_Issued (Cert, Cert_DER))
+           then
+             X509.Satisfies_Name_Constraints
+               (Cert, Cert_DER, Issuer, Issuer_DER));
 
    --  Validate leaf-specific policy.
    --  Called after Validate_Link succeeds on the leaf.
@@ -132,7 +151,29 @@ is
       Hostname : String;
       Purpose  : Validation_Purpose := Purpose_Server;
       Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last;
+   with Pre  => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last,
+        Post =>
+          --  RFC 5280 §4.2.1.12: if EKU present but wrong, reject
+          (if X509.Has_EKU (Leaf)
+              and then Purpose = Purpose_Server
+              and then not X509.Has_EKU_Server_Auth (Leaf)
+           then Validate_Leaf_Policy'Result /= Valid)
+          and
+          --  WebPKI: missing EKU → reject
+          (if Mode = Mode_WebPKI
+              and then Purpose = Purpose_Server
+              and then not X509.Has_EKU (Leaf)
+           then Validate_Leaf_Policy'Result /= Valid)
+          and
+          --  WebPKI: CA cert as leaf → reject
+          (if Mode = Mode_WebPKI
+              and then X509.Is_CA (Leaf)
+           then Validate_Leaf_Policy'Result /= Valid)
+          and
+          --  Hostname mismatch → reject (when hostname provided)
+          (if Hostname'Length > 0
+              and then not X509.Matches_Hostname (Leaf, Leaf_DER, Hostname)
+           then Validate_Leaf_Policy'Result /= Valid);
 
    --  Verify a raw signature against a certificate's public key.
    --

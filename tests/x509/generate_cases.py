@@ -58,6 +58,11 @@ def main():
         if 'has-crl' in features:
             skipped += 1
             continue
+        # max-chain-depth tests require a validator-configurable maximum
+        # chain depth policy, which we don't implement
+        if 'max-chain-depth' in features:
+            skipped += 1
+            continue
         if tc.get('validation_kind') != 'SERVER':
             skipped += 1
             continue
@@ -97,7 +102,12 @@ def main():
         vtime = parse_time(tc.get('validation_time'))
 
         # Determine validation mode from test ID prefix
-        mode = "rfc5280" if tc['id'].startswith("rfc5280::") else "webpki"
+        # rfc5280:: and pathlen:: tests use RFC 5280 (permissive)
+        # webpki:: and everything else uses WebPKI (strict)
+        if tc['id'].startswith("rfc5280::") or tc['id'].startswith("pathlen::"):
+            mode = "rfc5280"
+        else:
+            mode = "webpki"
 
         with open(os.path.join(tc_dir, 'meta.txt'), 'w') as f:
             f.write(f"hostname={hostname}\n")

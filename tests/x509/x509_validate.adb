@@ -249,39 +249,6 @@ begin
    --  Load trust store
    Credentials.Load_Trust_Store
      (Roots, Ada.Command_Line.Argument (2), Roots_OK);
-   Ada.Text_IO.Put_Line ("Trust store: OK=" & Roots_OK'Image
-                          & " roots=" & Roots.Root_Count'Image);
-   --  Debug: validate root directly
-   if Roots_OK and Roots.Root_Count > 0 then
-      declare
-         VR : Cert_Verify.Validation_Result;
-      begin
-         VR := Cert_Verify.Validate_Root (Roots.Roots (0).Cert, Val_Time);
-         Ada.Text_IO.Put_Line ("Root validation: " & VR'Image);
-         if VR /= Cert_Verify.Valid then
-            Ada.Text_IO.Put_Line ("  Is_Valid=" & X509.Is_Valid (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Unknown_Crit=" & X509.Has_Unknown_Critical_Extension (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Date_Valid=" & X509.Is_Date_Valid (Roots.Roots (0).Cert, Val_Time)'Image);
-            Ada.Text_IO.Put_Line ("  Is_CA=" & X509.Is_CA (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  BC_Critical=" & X509.Is_Basic_Constraints_Critical (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Structurally_Valid=" & X509.Is_Structurally_Valid (Roots.Roots (0).Cert, Val_Time)'Image);
-            Ada.Text_IO.Put_Line ("  Bad_Ext_Crit=" & X509.Has_Bad_Extension_Criticality (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Ext_Duplicate=" & X509.Has_Duplicate_Extension (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Sig_Algo=" & X509.Sig_Algorithm (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  PK_Algo=" & X509.PK_Algorithm (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Has_KCS_no_CA=" & X509.Has_Key_Cert_Sign_Without_CA (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Has_SKI=" & X509.Subject_Key_ID (Roots.Roots (0).Cert).Present'Image);
-            Ada.Text_IO.Put_Line ("  Bad_SAN=" & X509.Has_Bad_SAN (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  TBS_Present=" & X509.TBS (Roots.Roots (0).Cert).Present'Image);
-            Ada.Text_IO.Put_Line ("  Version=" & X509.Version (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Has_Exts=" & X509.Has_Extensions (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Sig_Algo2=" & X509.Sig_Algorithm_2 (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Bad_Serial=" & X509.Has_Bad_Serial (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Bad_Time=" & X509.Has_Bad_Time_Format (Roots.Roots (0).Cert)'Image);
-            Ada.Text_IO.Put_Line ("  Empty_KU=" & X509.Has_Empty_Key_Usage_Value (Roots.Roots (0).Cert)'Image);
-         end if;
-      end;
-   end if;
    if not Roots_OK then
       Ada.Command_Line.Set_Exit_Status (2);
       return;
@@ -333,34 +300,6 @@ begin
       use Cert_Verify;
       Result : Validation_Result;
    begin
-      --  Debug chain links
-      if Int_Count > 0 and Roots.Root_Count > 0 then
-         declare
-            LR : Validation_Result;
-         begin
-            LR := Validate_Link
-              (Cert_DER   => Ints (0).DER (0 .. Ints (0).DER_Len - 1),
-               Cert       => Ints (0).Cert,
-               Issuer_DER => Roots.Roots (0).DER
-                               (0 .. Roots.Roots (0).DER_Len - 1),
-               Issuer     => Roots.Roots (0).Cert,
-               Now        => Val_Time,
-               Must_Be_CA => True,
-               CAs_Below_Issuer => 1);
-            Ada.Text_IO.Put_Line ("Link int->root: " & LR'Image);
-
-            LR := Validate_Link
-              (Cert_DER   => Peer_DER (0 .. Peer_Len - 1),
-               Cert       => Peer_Cert,
-               Issuer_DER => Ints (0).DER (0 .. Ints (0).DER_Len - 1),
-               Issuer     => Ints (0).Cert,
-               Now        => Val_Time,
-               Must_Be_CA => False,
-               CAs_Below_Issuer => 0);
-            Ada.Text_IO.Put_Line ("Link leaf->int: " & LR'Image);
-         end;
-      end if;
-
       Result := Validate_Chain
         (Leaf_DER   => Peer_DER (0 .. Peer_Len - 1),
          Leaf       => Peer_Cert,
@@ -375,7 +314,6 @@ begin
       if Result = Valid then
          Ada.Command_Line.Set_Exit_Status (0);
       else
-         Ada.Text_IO.Put_Line ("Validation: " & Result'Image);
          Ada.Command_Line.Set_Exit_Status (1);
       end if;
    end;

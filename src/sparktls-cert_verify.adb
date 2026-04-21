@@ -372,9 +372,10 @@ is
    --================================================================
 
    function Validate_Root
-     (Root : X509.Certificate;
-      Now  : X509.Date_Time;
-      Mode : Validation_Mode := Mode_WebPKI) return Validation_Result
+     (Root     : X509.Certificate;
+      Root_DER : X509.Byte_Seq;
+      Now      : X509.Date_Time;
+      Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
    is
    begin
       --  RFC 5280 §6.1: Structural validation of trust anchor.
@@ -420,15 +421,38 @@ is
          return Err_Not_CA;
       end if;
 
+      --  RFC 5280 §4.2.1.2: CA certs MUST have SKI
+      if X509.CA_Missing_Subject_Key_ID (Root) then
+         return Err_Structural;
+      end if;
+
+      --  RFC 5280 §4.2.1.1: non-self-issued certs MUST have AKI
+      if not X509.Is_Self_Issued (Root, Root_DER)
+         and then not X509.Authority_Key_ID (Root).Present
+      then
+         return Err_Missing_AKI;
+      end if;
+
       if Mode = Mode_WebPKI then
          --  CABF: roots must not have EKU extension
          if X509.Has_EKU (Root) then
             return Err_Forbidden_EKU;
          end if;
 
-         --  CABF 7.1.2.1.3: root AKI must not have
-         --  authorityCertIssuer or authorityCertSerialNumber
+         --  CABF 7.1.2.1.3: root AKI constraints
+         --  Must not have authorityCertIssuer/Serial
          if X509.AKID_Serial (Root).Present then
+            return Err_Missing_AKI;
+         end if;
+         if X509.Has_AKID_Issuer (Root) then
+            return Err_Missing_AKI;
+         end if;
+         --  If AKI present, must have keyIdentifier
+         if X509.Has_AKID_Missing_Key_ID (Root) then
+            return Err_Missing_AKI;
+         end if;
+         --  CABF 7.1.2.1.3: AKI keyIdentifier must match SKI
+         if not X509.AKI_Matches_SKI (Root, Root_DER) then
             return Err_Missing_AKI;
          end if;
 
@@ -525,10 +549,21 @@ is
       end if;
 
       --  7. Name constraints
-      if not X509.Satisfies_Name_Constraints
-        (Cert, Cert_DER, Issuer, Issuer_DER)
-      then
+      --  RFC 5280 §4.2.1.10: NC MUST be critical.
+      --  CABF BRs explicitly allow non-critical NC for legacy compat.
+      if Mode = Mode_RFC5280 and then X509.Has_NC_Noncritical (Issuer) then
          return Err_Name_Constraint;
+      end if;
+      --  RFC 5280 §4.2.1.10: NC do not apply to self-issued intermediates
+      --  (but always apply to the leaf, i.e. when Must_Be_CA = False)
+      if not (Must_Be_CA
+              and then X509.Is_Self_Issued (Cert, Cert_DER))
+      then
+         if not X509.Satisfies_Name_Constraints
+           (Cert, Cert_DER, Issuer, Issuer_DER)
+         then
+            return Err_Name_Constraint;
+         end if;
       end if;
 
       --  8. Path length constraint on the issuer
@@ -606,10 +641,10 @@ is
             return Err_Missing_SAN;
          end if;
 
-         --  Note: CABF BR 7.1.4.3 requires CN to match a SAN, but
-         --  this is a CA issuance requirement, not a validator
-         --  requirement. Validators match hostname against SANs
-         --  and ignore CN when SANs are present (RFC 6125).
+         --  Note: CABF BR 7.1.4.3 requires CN to match a SAN entry,
+         --  but this is a CA issuance requirement. Validators do not
+         --  enforce this — it would reject many valid certificates
+         --  already in the wild.
 
          --  CABF BRs: leaf must not be a CA.
          --  RFC 5280: allows CA in leaf position.
@@ -946,6 +981,7 @@ is
          Cert     : X509.Certificate;
          Used     : Used_Set;
          Depth    : Natural;
+         PL_Depth : Natural;  --  non-self-issued CA count for pathlen
          Budget   : in out Natural;
          Result   : out Validation_Result)
       with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last,
@@ -979,7 +1015,10 @@ is
             then
                declare
                   VR : constant Validation_Result :=
-                     Validate_Root (Roots (Ri).Cert, Now, Mode);
+                     Validate_Root
+                       (Roots (Ri).Cert,
+                        Roots (Ri).DER (0 .. Roots (Ri).DER_Len - 1),
+                        Now, Mode);
                begin
                   if VR = Valid then
                      R := Validate_Link
@@ -990,7 +1029,7 @@ is
                         Issuer           => Roots (Ri).Cert,
                         Now              => Now,
                         Must_Be_CA       => Depth > 0,
-                        CAs_Below_Issuer => Depth,
+                        CAs_Below_Issuer => PL_Depth,
                         Mode             => Mode);
                      if R = Valid then
                         Result := Valid;
@@ -1018,18 +1057,27 @@ is
                   Issuer           => Ints (Ii).Cert,
                   Now              => Now,
                   Must_Be_CA       => Depth > 0,
-                  CAs_Below_Issuer => Depth,
+                  CAs_Below_Issuer => PL_Depth,
                   Mode             => Mode);
                if R = Valid then
-                  --  This intermediate is a valid issuer; recurse
+                  --  This intermediate is a valid issuer; recurse.
+                  --  RFC 5280 §4.2.1.9: self-issued certs don't count
+                  --  toward pathLenConstraint.
                   declare
                      Next_Used : Used_Set := Used;
+                     Next_PL   : constant Natural :=
+                       (if X509.Is_Self_Issued
+                              (Ints (Ii).Cert,
+                               Ints (Ii).DER
+                                 (0 .. Ints (Ii).DER_Len - 1))
+                        then PL_Depth
+                        else PL_Depth + 1);
                   begin
                      Next_Used (Ii) := True;
                      Try_Build
                        (Ints (Ii).DER (0 .. Ints (Ii).DER_Len - 1),
                         Ints (Ii).Cert,
-                        Next_Used, Depth + 1, Budget, R);
+                        Next_Used, Depth + 1, Next_PL, Budget, R);
                      if R = Valid then
                         Result := Valid;
                         return;
@@ -1047,10 +1095,11 @@ is
       --  Build chain from leaf upward
       Try_Build
         (Leaf_DER, Leaf,
-         Used   => (others => False),
-         Depth  => 0,
-         Budget => Budget,
-         Result => R);
+         Used     => (others => False),
+         Depth    => 0,
+         PL_Depth => 0,
+         Budget   => Budget,
+         Result   => R);
 
       if R /= Valid then
          return R;
