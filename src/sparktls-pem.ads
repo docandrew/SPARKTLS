@@ -20,6 +20,7 @@ is
 
    type Decode_Result is record
       OK        : Boolean   := False;
+      Oversize  : Boolean   := False;  --  DER exceeded Max_Cert_DER
       Label     : PEM_Label := Label_Unknown;
       Label_Raw : Label_String := (others => ' ');
       Label_Len : Natural := 0;

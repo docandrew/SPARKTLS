@@ -20,6 +20,7 @@ is
      (Valid,
       Err_Parse_Failed,
       Err_Structural,
+      Err_Cert_Too_Large,
       Err_Expired,
       Err_Unknown_Critical,
       Err_Unknown_Algorithm,

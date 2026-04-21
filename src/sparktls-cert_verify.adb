@@ -815,9 +815,14 @@ is
                end if;
 
                declare
-                  One_OK : Boolean;
+                  One_DER : X509.Byte_Seq (0 .. Total - 1);
+                  One_OK  : Boolean;
                begin
-                  Add_Root (Store, DER (Pos .. Pos + Total - 1), One_OK);
+                  --  Copy to 0-indexed slice (Add_Root requires DER'First = 0)
+                  for I in X509.N32 range 0 .. Total - 1 loop
+                     One_DER (I) := DER (Pos + I);
+                  end loop;
+                  Add_Root (Store, One_DER, One_OK);
                   if One_OK then
                      Loaded := Loaded + 1;
                   end if;

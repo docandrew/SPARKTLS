@@ -100,10 +100,17 @@ is
                         if B64_Len < Max_B64 then
                            B64_Len := B64_Len + 1;
                            B64_Buf (B64_Len) := Input (Pos);
+                        else
+                           --  Base64 content exceeds buffer — cert is oversize
+                           Result.Oversize := True;
                         end if;
                         Pos := Pos + 1;
                      end if;
                   end loop Collect;
+
+                  if Result.Oversize then
+                     return;
+                  end if;
 
                   --  Base64 decode → DER as X509.Byte_Seq
                   if B64_Len > 0 and then
@@ -115,9 +122,9 @@ is
                            Base64.Construct (B64_Buf (1 .. B64_Len));
                         DER_Str : constant String := Base64.Decode (B64);
                      begin
-                        if DER_Str'Length > 0
-                           and then DER_Str'Length <= Max_Cert_DER
-                        then
+                        if DER_Str'Length > Max_Cert_DER then
+                           Result.Oversize := True;
+                        elsif DER_Str'Length > 0 then
                            for I in 0 .. DER_Str'Length - 1 loop
                               Result.DER (X509.N32 (I)) :=
                                  X509.Byte (Character'Pos

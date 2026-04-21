@@ -130,7 +130,8 @@ procedure X509_Validate is
       Cert     : out X509.Certificate;
       Cert_DER : out Cert_DER_Buf;
       Cert_Len : out X509.N32;
-      OK       : out Boolean)
+      OK       : out Boolean;
+      Oversize : out Boolean)
    is
       Text : constant String := Read_File (Path);
       R    : Decode_Result;
@@ -138,10 +139,15 @@ procedure X509_Validate is
       Cert_DER := (others => 0);
       Cert_Len := 0;
       OK := False;
+      Oversize := False;
 
       if Text'Length = 0 then return; end if;
 
       Decode (Text, R);
+      if R.Oversize then
+         Oversize := True;
+         return;
+      end if;
       if not R.OK or else R.Label /= Label_Certificate
          or else R.DER_Len = 0
       then
@@ -219,12 +225,13 @@ procedure X509_Validate is
       return V;
    end Parse_Nat;
 
-   Roots     : Trust_Store;
-   Roots_OK  : Boolean;
-   Peer_Cert : X509.Certificate;
-   Peer_DER  : Cert_DER_Buf;
-   Peer_Len  : X509.N32;
-   Peer_OK   : Boolean;
+   Roots       : Trust_Store;
+   Roots_OK    : Boolean;
+   Peer_Cert   : X509.Certificate;
+   Peer_DER    : Cert_DER_Buf;
+   Peer_Len    : X509.N32;
+   Peer_OK     : Boolean;
+   Peer_Big    : Boolean;
    Ints      : Cert_Pool;
    Int_Count : Natural := 0;
    Hostname  : String (1 .. 255) := (others => ASCII.NUL);
@@ -240,9 +247,14 @@ begin
 
    --  Load peer cert
    Load_Peer (Ada.Command_Line.Argument (1),
-              Peer_Cert, Peer_DER, Peer_Len, Peer_OK);
+              Peer_Cert, Peer_DER, Peer_Len, Peer_OK, Peer_Big);
    if not Peer_OK then
-      Ada.Command_Line.Set_Exit_Status (2);
+      --  Oversize cert is a validation failure, not an internal error
+      if Peer_Big then
+         Ada.Command_Line.Set_Exit_Status (1);
+      else
+         Ada.Command_Line.Set_Exit_Status (2);
+      end if;
       return;
    end if;
 
