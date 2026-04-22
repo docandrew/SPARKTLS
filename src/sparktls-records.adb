@@ -266,6 +266,12 @@ is
       Inner_Type := 0;
       Valid      := False;
 
+      --  Defense-in-depth: verify precondition at runtime.
+      --  Encrypted must be at least Tag_Size + 1 bytes.
+      if N32 (Encrypted'Length) <= Tag_Size then
+         return;
+      end if;
+
       --  Extract tag (last 16 bytes)
       Tag := Bytes_16 (Encrypted (Cipher_Len .. Cipher_Len + 15));
 

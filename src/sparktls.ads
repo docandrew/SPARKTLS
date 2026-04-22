@@ -459,8 +459,7 @@ is
 
    --  RFC 8446 §5.3: Nonce space must not be exhausted.
    function Nonce_Space_Available (K : Traffic_Keys) return Boolean is
-     (K.Counter < Unsigned_64'Last)
-   with Ghost;
+     (K.Counter < Unsigned_64'Last);
 
    --================================================================
    --  Random byte generation callback
@@ -802,11 +801,22 @@ is
       Reasm_Len  : N32 := 0;   --  bytes accumulated so far
       Reasm_Need : N32 := 0;   --  total bytes needed (type+length+body)
 
+      --  Heap budget: total bytes allocated for extensions/reassembly.
+      --  Prevents DoS via large extensions in ClientHello/ServerHello.
+      Heap_Used : N32 := 0;
+
       --  RFLX scratch buffer
       RFLX_Main : aliased RFLX.RFLX_Builtin_Types.Bytes
                     (1 .. RFLX.RFLX_Builtin_Types.Index (RFLX_Main_Size))
                     := (others => 0);
    end record;
+
+   Max_Handshake_Heap : constant := 262_144;  --  256 KB per handshake
+
+   function Heap_Budget_OK
+     (HC : Handshake_Context; Size : N32) return Boolean
+   is (Size <= Max_Handshake_Heap
+       and then HC.Heap_Used <= Max_Handshake_Heap - Size);
 
    type Handshake_Context_Access is access Handshake_Context;
 

@@ -966,6 +966,11 @@ is
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
+               --  Zero traffic keys before closing
+               S.Server_App.Key := (others => 0);
+               S.Server_App.IV := (others => 0);
+               S.Client_App.Key := (others => 0);
+               S.Client_App.IV := (others => 0);
                Set_State (S, Closed);
                Result := Shutdown;
             end if;
@@ -994,13 +999,38 @@ is
 
             if S.State = Connected or S.State = Error_State then
                S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
-               --  Zero key material before freeing HC
+               --  Zero traffic keys on error (Connected path keeps them)
+               if S.State = Error_State then
+                  S.Server_App.Key := (others => 0);
+                  S.Server_App.IV := (others => 0);
+                  S.Client_App.Key := (others => 0);
+                  S.Client_App.IV := (others => 0);
+               end if;
+               --  Zero ALL key material before freeing HC.
+               --  This includes ephemeral keys (forward secrecy),
+               --  transcript (contains plaintext handshake), and
+               --  PSK material (resumption secrets).
                S.HC_Ptr.Shared_Secret := (others => 0);
                S.HC_Ptr.Client_HS_Secret := (others => 0);
                S.HC_Ptr.Server_HS_Secret := (others => 0);
                S.HC_Ptr.Handshake_Secret := (others => 0);
                S.HC_Ptr.Master_Secret := (others => 0);
                S.HC_Ptr.Master_Secret_12 := (others => 0);
+               --  Ephemeral private keys
+               S.HC_Ptr.Local_SK := (others => 0);
+               S.HC_Ptr.P256_Local_SK := (others => 0);
+               S.HC_Ptr.P384_Local_SK := (others => 0);
+               --  Transcript (32 KB of plaintext handshake messages)
+               S.HC_Ptr.Transcript
+                 (0 .. S.HC_Ptr.Transcript_Len) := (others => 0);
+               S.HC_Ptr.Transcript_Len := 0;
+               --  PSK material
+               S.HC_Ptr.PSK_Value := (others => 0);
+               S.HC_Ptr.PSK_Binder := (others => 0);
+               S.HC_Ptr.PSK_Ticket_ID := (others => 0);
+               --  Client/server random
+               S.HC_Ptr.Client_Random := (others => 0);
+               S.HC_Ptr.Server_Random := (others => 0);
                Free_Byte_Seq (S.HC_Ptr.Reasm_Buf);
                HC_Alloc.Free (S.HC_Ptr);
             end if;

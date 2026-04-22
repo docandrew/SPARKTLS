@@ -75,7 +75,8 @@ is
       Bytes_Out    :    out N32)
    with Pre  => Plaintext'First = 0
                 and Plaintext'Last < Max_Fragment
-                and Inner_Type in 16#15# | 16#16# | 16#17#,  --  RFC 8446 §5.4
+                and Inner_Type in 16#15# | 16#16# | 16#17#  --  RFC 8446 §5.4
+                and Nonce_Space_Available (Keys),             --  RFC 8446 §5.5
         Post => Keys.Counter = Keys.Counter'Old + 1;          --  RFC 8446 §5.3
 
    --  Decrypt a TLS 1.3 encrypted record.
@@ -96,7 +97,8 @@ is
                and Record_Hdr'First = 0
                and Record_Hdr'Length = Record_Header_Size
                and Plaintext'First = 0
-               and Plaintext'Last >= Encrypted'Last,  --  plaintext buffer >= encrypted
+               and Plaintext'Last >= Encrypted'Last  --  plaintext buffer >= encrypted
+               and Nonce_Space_Available (Keys),     --  RFC 8446 §5.5
         Post => Keys.Counter = Keys.Counter'Old + 1              --  RFC 8446 §5.3
                 and (if Valid then
                    (Plain_Len = 0

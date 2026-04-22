@@ -238,18 +238,23 @@ is
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
+               --  Zero traffic keys before closing
+               S.Server_App.Key := (others => 0);
+               S.Server_App.IV := (others => 0);
+               S.Client_App.Key := (others => 0);
+               S.Client_App.IV := (others => 0);
                Set_State (S, Closed);
                Result := Shutdown;
             end if;
 
          when Error_State =>
-            --  Drain any pending alert, then signal Error_Alert.
-            --  The caller should do a graceful TCP shutdown after
-            --  receiving Error_Alert (shutdown write side, wait
-            --  for peer to close, then close socket).
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
+               S.Server_App.Key := (others => 0);
+               S.Server_App.IV := (others => 0);
+               S.Client_App.Key := (others => 0);
+               S.Client_App.IV := (others => 0);
                Set_State (S, Closed);
                Result := Error_Alert;
             end if;
@@ -271,14 +276,24 @@ is
 
             if S.State in Connected | Error_State | Closed then
                S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
-               --  Zero key material before freeing HC
+               --  Zero ALL key material before freeing HC.
                S.HC_Ptr.Shared_Secret := (others => 0);
                S.HC_Ptr.Client_HS_Secret := (others => 0);
                S.HC_Ptr.Server_HS_Secret := (others => 0);
                S.HC_Ptr.Handshake_Secret := (others => 0);
                S.HC_Ptr.Master_Secret := (others => 0);
                S.HC_Ptr.Master_Secret_12 := (others => 0);
-               --  Free reassembly buffer if allocated
+               S.HC_Ptr.Local_SK := (others => 0);
+               S.HC_Ptr.P256_Local_SK := (others => 0);
+               S.HC_Ptr.P384_Local_SK := (others => 0);
+               S.HC_Ptr.Transcript
+                 (0 .. S.HC_Ptr.Transcript_Len) := (others => 0);
+               S.HC_Ptr.Transcript_Len := 0;
+               S.HC_Ptr.PSK_Value := (others => 0);
+               S.HC_Ptr.PSK_Binder := (others => 0);
+               S.HC_Ptr.PSK_Ticket_ID := (others => 0);
+               S.HC_Ptr.Client_Random := (others => 0);
+               S.HC_Ptr.Server_Random := (others => 0);
                Free_Byte_Seq (S.HC_Ptr.Reasm_Buf);
                HC_Alloc.Free (S.HC_Ptr);
             end if;

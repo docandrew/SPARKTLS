@@ -903,6 +903,31 @@ is
          HC.Version := TLS_1_3;
       else
          HC.Version := TLS_1_2;
+
+         --  RFC 8446 §4.1.3: Check downgrade sentinel.
+         --  If server doesn't offer TLS 1.3 but its random ends with the
+         --  sentinel, a MITM is stripping supported_versions. Abort.
+         declare
+            R : Byte_Seq renames HC.Server_Random;
+            --  TLS 1.3→1.2 sentinel: "DOWNGRD" + 0x01
+            Sentinel : constant Byte_Seq (0 .. 7) :=
+              (16#44#, 16#4F#, 16#57#, 16#4E#,
+               16#47#, 16#52#, 16#44#, 16#01#);
+            Match : Boolean := True;
+         begin
+            for I in N32 range 0 .. 7 loop
+               if R (24 + I) /= Sentinel (I) then
+                  Match := False;
+                  exit;
+               end if;
+            end loop;
+            if Match then
+               --  Downgrade detected — MITM stripping TLS 1.3
+               Take_Buffer (Ctx, Buf);
+               RFLX_Free (Buf);
+               return;
+            end if;
+         end;
       end if;
 
       --  For TLS 1.2, skip ECDHE shared secret here

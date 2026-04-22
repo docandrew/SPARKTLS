@@ -272,6 +272,12 @@ is
    begin
       Plaintext := (others => 0);
       Plain_Len := 0;
+      Valid := False;
+
+      --  Defense-in-depth: verify input is large enough for nonce + tag
+      if N32 (Encrypted'Length) < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         return;
+      end if;
       Valid     := False;
 
       --  Extract explicit nonce, ciphertext, and tag into 0-based buffers
