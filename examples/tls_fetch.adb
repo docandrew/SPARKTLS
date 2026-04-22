@@ -18,6 +18,7 @@ with SPARKNaCl;                  use SPARKNaCl;
 
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Client;
+with SPARKTLS.Credentials;
 with SPARKTLS.System_Roots;
 with Entropy_Random;
 
@@ -209,7 +210,9 @@ procedure TLS_Fetch is
    Verbose      : Boolean := False;
    Headers_Only : Boolean := False;
    Insecure     : Boolean := False;
+   Use_RFC5280  : Boolean := False;
    URL_Arg      : Natural := 0;
+   CAFile_Arg   : Natural := 0;
 
 begin
    Entropy_Random.Init;
@@ -225,6 +228,12 @@ begin
             Headers_Only := True;
          elsif Arg = "-k" or Arg = "--insecure" then
             Insecure := True;
+         elsif Arg = "--cafile" and I < Ada.Command_Line.Argument_Count then
+            CAFile_Arg := I + 1;
+         elsif CAFile_Arg = I then
+            null;  --  consumed by --cafile
+         elsif Arg = "--rfc5280" then
+            Use_RFC5280 := True;
          elsif Arg (Arg'First) /= '-' then
             URL_Arg := I;
          end if;
@@ -232,10 +241,11 @@ begin
    end loop;
 
    if URL_Arg = 0 then
-      Put_Line ("Usage: tls_fetch [-v] [-I] [-k] <https://host[:port][/path]>");
+      Put_Line ("Usage: tls_fetch [-v] [-I] [-k] [--cafile <pem>] <https://...>");
       Put_Line ("  -v, --verbose   Show handshake details");
       Put_Line ("  -I, --head      Show response headers only");
       Put_Line ("  -k, --insecure  Skip certificate verification");
+      Put_Line ("  --cafile <pem>  Use specific CA certificate file");
       return;
    end if;
 
@@ -294,9 +304,17 @@ begin
          Put_Line ("* Connected.");
       end if;
 
-      --  Load system roots (unless -k)
+      --  Load trust roots (unless -k)
       if not Insecure then
-         SPARKTLS.System_Roots.Load (Roots, Root_Count, Roots_OK);
+         if CAFile_Arg > 0 then
+            --  Load specific CA file
+            SPARKTLS.Credentials.Load_Trust_Store
+              (Roots, Ada.Command_Line.Argument (CAFile_Arg), Roots_OK);
+            Root_Count := Roots.Root_Count;
+         else
+            --  Load system root CAs
+            SPARKTLS.System_Roots.Load (Roots, Root_Count, Roots_OK);
+         end if;
          if Verbose then
             Put_Line ("* Loaded" & Root_Count'Image & " root CAs");
          end if;
@@ -310,7 +328,10 @@ begin
                       then null
                       else Roots'Unchecked_Access),
          Random   => Entropy_Random.Random'Access,
-         Clock    => Current_Time'Unrestricted_Access);
+         Clock    => Current_Time'Unrestricted_Access,
+         Mode     => (if Use_RFC5280
+                      then SPARKTLS.Mode_RFC5280
+                      else SPARKTLS.Mode_WebPKI));
 
       Handshake : loop
          SPARKTLS.Client.Advance (S, Res);

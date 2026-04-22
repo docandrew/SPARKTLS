@@ -1,35 +1,30 @@
-with Ada.Text_IO;
-with SPARKEntropy;
+with Ada.Streams.Stream_IO;
 
 package body Entropy_Random is
 
-   State : SPARKEntropy.Entropy_State;
-
    procedure Init is
-      OK : Boolean;
    begin
-      SPARKEntropy.Init (State, OK);
-      if not OK then
-         Ada.Text_IO.Put_Line ("FATAL: entropy source init failed");
-         raise Program_Error with "entropy init failed";
-      end if;
+      null;  --  /dev/urandom needs no initialization
    end Init;
 
    procedure Random (Output : out SPARKNaCl.Byte_Seq) is
+      use Ada.Streams;
+      use Ada.Streams.Stream_IO;
       use type SPARKNaCl.N32;
-      Len : constant Natural := Natural (Output'Length);
-      Buf : SPARKEntropy.Byte_Seq (0 .. Len - 1);
-      OK  : Boolean;
+      F    : File_Type;
+      Buf  : Stream_Element_Array (1 .. Stream_Element_Offset (Output'Length));
+      Last : Stream_Element_Offset;
    begin
-      SPARKEntropy.Generate (State, Buf, OK);
-      if not OK then
-         Ada.Text_IO.Put_Line ("FATAL: entropy generation failed");
-         raise Program_Error with "entropy generation failed";
-      end if;
-      for I in 0 .. Len - 1 loop
+      Open (F, In_File, "/dev/urandom");
+      Read (F, Buf, Last);
+      Close (F);
+      for I in 0 .. Output'Length - 1 loop
          Output (Output'First + SPARKNaCl.N32 (I)) :=
-            SPARKNaCl.Byte (Buf (I));
+            SPARKNaCl.Byte (Buf (Stream_Element_Offset (I) + 1));
       end loop;
+   exception
+      when others =>
+         Output := (others => 0);
    end Random;
 
 end Entropy_Random;

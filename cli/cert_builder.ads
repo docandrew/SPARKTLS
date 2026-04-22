@@ -38,6 +38,7 @@ package Cert_Builder is
       SPKI        : X509.Byte_Seq (0 .. 255) := (others => 0);  --  subject's SPKI
       SPKI_Len    : X509.N32 := 0;
       Is_CA       : Boolean := False;
+      Has_EKU_Server_Auth : Boolean := False;
       Valid_Days  : Natural := 365;
       SANs        : SAN_Array := (others => <>);
       SAN_Count   : Natural := 0;

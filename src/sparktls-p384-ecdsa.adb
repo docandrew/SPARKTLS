@@ -154,11 +154,11 @@ is
 
       --  Reduce mod n: if RX >= N, subtract N
       declare
-         Trial : constant Arith_Result := CT_Sub (RX_Int, N, 0);
-         Final : constant Arith_Result := CT_Sub (RX_Int, N,
-            CT_Not (Trial.Carry));
+         Trial : constant Arith_Result := CT_Sub (RX_Int, N, 1);
       begin
-         RX_Int := Final.Value;
+         if Trial.Carry = 0 then
+            RX_Int := Trial.Value;
+         end if;
       end;
 
       --  Compare RX with R
@@ -220,7 +220,7 @@ is
       R_Int.Len := N.Len;
 
       declare
-         Trial : constant Arith_Result := CT_Sub (R_Int, N, 0);
+         Trial : constant Arith_Result := CT_Sub (R_Int, N, 1);
       begin
          if Trial.Carry = 0 then
             R_Int := Trial.Value;
@@ -243,13 +243,16 @@ is
       RD := T1;
 
       declare
-         Add_Res : constant Arith_Result := CT_Add (RD, H_Int, 0);
+         --  TODO: CT_Add's Ctl parameter is a footgun (0=skip, 1=apply).
+         --  Redesign BigNat API to use a proper type or separate functions.
+         Add_Res : constant Arith_Result := CT_Add (RD, H_Int, 1);
          Sub_Res : Arith_Result;
       begin
          Sum := Add_Res.Value;
          Sum.Len := N.Len;
-         Sub_Res := CT_Sub (Sum, N, 0);
-         if Sub_Res.Carry = 0 then
+         --  Reduce: if carry from addition or Sum >= N, subtract N
+         Sub_Res := CT_Sub (Sum, N, 1);
+         if Add_Res.Carry /= 0 or Sub_Res.Carry = 0 then
             Sum := Sub_Res.Value;
          end if;
       end;
@@ -272,6 +275,24 @@ is
       Encode (S_Out, S_Int);
       OK := True;
    end Sign;
+
+   procedure Public_Key
+     (D  : in     Byte_Seq;
+      Qx :    out Byte_Seq;
+      Qy :    out Byte_Seq)
+   is
+      G_Pt : Jacobian;
+      T1   : Big_Nat;
+   begin
+      Init_Field;
+      Make_Generator (G_Pt);
+      Scalar_Mul (G_Pt, D);
+      To_Affine (G_Pt);
+      FE_From_Monty (T1, G_Pt.X);
+      Encode (Qx, T1);
+      FE_From_Monty (T1, G_Pt.Y);
+      Encode (Qy, T1);
+   end Public_Key;
 
 begin
    Init_Order;

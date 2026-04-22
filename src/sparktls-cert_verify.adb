@@ -1,3 +1,4 @@
+
 with Interfaces; use Interfaces;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
@@ -254,51 +255,61 @@ is
                      Sig_Len   => N32 (Sig_Len));
                end;
 
-            --  ECDSA P-384 with SHA-384
-            when X509.Algo_ECDSA_P384_SHA384 =>
-               if X509.PK_Algorithm (Issuer) /= X509.Algo_EC_P384
-                  or else PK_Len /= 97
+            --  ECDSA with SHA-384 or SHA-256
+            --  The sig algo determines the hash; the issuer's PK determines the curve.
+            when X509.Algo_ECDSA_P384_SHA384 | X509.Algo_ECDSA_P256_SHA256 =>
+               --  P-384 key
+               if X509.PK_Algorithm (Issuer) = X509.Algo_EC_P384
+                  and then PK_Len = 97
                then
-                  return False;
-               end if;
-               declare
-                  H     : Bytes_48;
-                  Qx    : Byte_Seq (0 .. 47) := (others => 0);
-                  Qy    : Byte_Seq (0 .. 47) := (others => 0);
-                  R_Val : Byte_Seq (0 .. 47) := (others => 0);
-                  S_Val : Byte_Seq (0 .. 47) := (others => 0);
-                  Sig_OK : Boolean;
-               begin
-                  SPARKNaCl.Hashing.SHA384.Hash (H, TBS_Bytes);
+                  declare
+                     H     : Bytes_48;
+                     H32   : Bytes_32;
+                     Qx    : Byte_Seq (0 .. 47) := (others => 0);
+                     Qy    : Byte_Seq (0 .. 47) := (others => 0);
+                     R_Val : Byte_Seq (0 .. 47) := (others => 0);
+                     S_Val : Byte_Seq (0 .. 47) := (others => 0);
+                     Sig_OK : Boolean;
+                  begin
+                     --  Hash with the algorithm specified by the signature
+                     if Sig_Algo = X509.Algo_ECDSA_P384_SHA384 then
+                        SPARKNaCl.Hashing.SHA384.Hash (H, TBS_Bytes);
+                     else
+                        --  SHA-256 hash, zero-pad to 48 bytes for P-384
+                        SPARKNaCl.Hashing.SHA256.Hash (H32, TBS_Bytes);
+                        H := (others => 0);
+                        for I in N32 range 0 .. 31 loop
+                           H (I) := H32 (I);
+                        end loop;
+                     end if;
 
-                  for I in 0 .. 47 loop
-                     Qx (N32 (I)) := Byte (PK_Data (X509.N32 (1 + I)));
-                     Qy (N32 (I)) := Byte (PK_Data (X509.N32 (49 + I)));
-                  end loop;
+                     for I in 0 .. 47 loop
+                        Qx (N32 (I)) := Byte (PK_Data (X509.N32 (1 + I)));
+                        Qy (N32 (I)) := Byte (PK_Data (X509.N32 (49 + I)));
+                     end loop;
 
-                  Parse_DER_ECDSA_Sig (Sig_Data, R_Val, S_Val, Sig_OK);
-                  if not Sig_OK then return False; end if;
+                     Parse_DER_ECDSA_Sig (Sig_Data, R_Val, S_Val, Sig_OK);
+                     if not Sig_OK then return False; end if;
 
-                  return P384.ECDSA.Verify
-                    (Hash => H, Qx => Qx, Qy => Qy, R => R_Val, S => S_Val);
-               end;
+                     return P384.ECDSA.Verify
+                       (Hash => H, Qx => Qx, Qy => Qy,
+                        R => R_Val, S => S_Val);
+                  end;
 
-            --  ECDSA P-256 with SHA-256
-            when X509.Algo_ECDSA_P256_SHA256 =>
-               if X509.PK_Algorithm (Issuer) /= X509.Algo_EC_P256
-                  or else PK_Len /= 65
+               --  P-256 key
+               elsif X509.PK_Algorithm (Issuer) = X509.Algo_EC_P256
+                  and then PK_Len = 65
                then
-                  return False;
-               end if;
-               declare
-                  H     : Bytes_32;
-                  Qx    : Byte_Seq (0 .. 31) := (others => 0);
-                  Qy    : Byte_Seq (0 .. 31) := (others => 0);
-                  R_Val : Byte_Seq (0 .. 31) := (others => 0);
-                  S_Val : Byte_Seq (0 .. 31) := (others => 0);
-                  Sig_OK : Boolean;
-               begin
-                  SPARKNaCl.Hashing.SHA256.Hash (H, TBS_Bytes);
+                  declare
+                     H     : Bytes_32;
+                     Qx    : Byte_Seq (0 .. 31) := (others => 0);
+                     Qy    : Byte_Seq (0 .. 31) := (others => 0);
+                     R_Val : Byte_Seq (0 .. 31) := (others => 0);
+                     S_Val : Byte_Seq (0 .. 31) := (others => 0);
+                     Sig_OK : Boolean;
+                  begin
+                     --  Both SHA-256 and SHA-384 sigs use SHA-256 for P-256
+                     SPARKNaCl.Hashing.SHA256.Hash (H, TBS_Bytes);
 
                   for I in 0 .. 31 loop
                      Qx (N32 (I)) := Byte (PK_Data (X509.N32 (1 + I)));
@@ -312,9 +323,15 @@ is
                     (Hash => H, Qx => Qx, Qy => Qy, R => R_Val, S => S_Val);
                end;
 
+               else
+                  --  Unknown EC key type for ECDSA
+                  return False;
+               end if;
+
             --  Ed25519
             when X509.Algo_Ed25519 =>
-               if X509.PK_Algorithm (Issuer) /= X509.Algo_EC_Ed25519
+               if X509.PK_Algorithm (Issuer) not in
+                     X509.Algo_Ed25519 | X509.Algo_EC_Ed25519
                   or else PK_Len /= 32
                then
                   return False;

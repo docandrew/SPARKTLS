@@ -28,4 +28,13 @@ is
                   and R_Out'First = 0 and R_Out'Length = 48
                   and S_Out'First = 0 and S_Out'Length = 48;
 
+   --  Compute public key Q = d * G. Returns uncompressed point (Qx, Qy).
+   procedure Public_Key
+     (D  : in     Byte_Seq;
+      Qx :    out Byte_Seq;
+      Qy :    out Byte_Seq)
+   with Pre => D'First = 0 and D'Length = 48
+               and Qx'First = 0 and Qx'Length = 48
+               and Qy'First = 0 and Qy'Length = 48;
+
 end SPARKTLS.P384.ECDSA;

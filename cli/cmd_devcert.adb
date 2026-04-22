@@ -229,7 +229,9 @@ package body Cmd_Devcert is
                Params.SPKI (0 .. Key.SPKI_Len - 1) :=
                   Key.SPKI (0 .. Key.SPKI_Len - 1);
                Params.SPKI_Len := Key.SPKI_Len;
-               Params.Is_CA := False;
+               Params.Is_CA := True;  --  Self-signed = trust anchor = CA
+               --  No EKU: WebPKI forbids EKU on root CAs.
+               --  Clients should use Mode_RFC5280 for self-signed certs.
                Params.Valid_Days := Days;
                Params.SANs := SANs;
                Params.SAN_Count := SAN_Count;
@@ -255,9 +257,17 @@ package body Cmd_Devcert is
                   return;
                end if;
 
-               Put_Line ("Wrote " & Key_Path (1 .. Key_Len) &
-                         " + " & Cert_Path (1 .. Cert_Len) &
-                         " (P-256, " & Name (1 .. Name_Len) & ")");
+               declare
+                  Algo_Name : constant String :=
+                    (case Algo is
+                       when Key_Util.Algo_Ed25519 => "Ed25519",
+                       when Key_Util.Algo_P256    => "P-256",
+                       when Key_Util.Algo_P384    => "P-384");
+               begin
+                  Put_Line ("Wrote " & Key_Path (1 .. Key_Len) &
+                            " + " & Cert_Path (1 .. Cert_Len) &
+                            " (" & Algo_Name & ", " & Name (1 .. Name_Len) & ")");
+               end;
             end;
          end;
       end;

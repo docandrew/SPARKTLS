@@ -61,7 +61,8 @@ is
       Trust    : Trust_Store_Access;
       Random   : Random_Bytes_Fn;
       Clock    : Get_Time_Fn;
-      Local    : Identity_Access := null)
+      Local    : Identity_Access := null;
+      Mode     : Validation_Mode := Mode_WebPKI)
    with Pre  => Random /= null and Clock /= null,
         Post => S.State = Client_Hello_Sent and
                 S.Role = Role_Client and

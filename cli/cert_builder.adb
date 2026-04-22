@@ -399,6 +399,88 @@ package body Cert_Builder is
             end;
          end if;
 
+         --  Extended Key Usage (serverAuth)
+         if Params.Has_EKU_Server_Auth then
+            declare
+               Ext_S : X509.N32;
+               --  SEQUENCE { OID id-kp-serverAuth (1.3.6.1.5.5.7.3.1) }
+               EKU_Value : constant X509.Byte_Seq (0 .. 11) :=
+                 (16#30#, 16#0A#,                          --  SEQUENCE, 10 bytes
+                  16#06#, 16#08#,                          --  OID, 8 bytes
+                  16#2B#, 16#06#, 16#01#, 16#05#,          --  1.3.6.1.
+                  16#05#, 16#07#, 16#03#, 16#01#);         --  5.5.7.3.1
+            begin
+               Start_Sequence (TBS_Buf, TBS_Pos, Ext_S);
+               Put_OID (TBS_Buf, TBS_Pos,
+                  X509.Byte_Seq'(16#55#, 16#1D#, 16#25#));  --  OID 2.5.29.37 (EKU)
+               Put_Octet_String (TBS_Buf, TBS_Pos, EKU_Value);
+               End_Sequence (TBS_Buf, TBS_Pos, Ext_S);
+            end;
+         end if;
+
+         --  Subject Key Identifier (RFC 5280 §4.2.1.2)
+         --  Value = SHA-1 hash of the SPKI BIT STRING content.
+         --  For simplicity, use first 20 bytes of SHA-256 of SPKI.
+         if Params.SPKI_Len > 0 then
+            declare
+               use SPARKNaCl.Hashing.SHA256;
+               Ext_S : X509.N32;
+               SPKI_N : Byte_Seq (0 .. N32 (Params.SPKI_Len) - 1);
+               Hash   : Digest;
+               --  SKI value: OCTET STRING of 20 bytes (truncated SHA-256)
+               SKI_Val : X509.Byte_Seq (0 .. 23) := (others => 0);
+               SKI_Pos : X509.N32 := 0;
+            begin
+               --  Hash the SPKI
+               for I in X509.N32 range 0 .. Params.SPKI_Len - 1 loop
+                  SPKI_N (N32 (I)) := Byte (Params.SPKI (I));
+               end loop;
+               SPARKNaCl.Hashing.SHA256.Hash (Hash, SPKI_N);
+
+               --  Build SKI value: OCTET STRING { 20 bytes }
+               SKI_Val (0) := X509.Byte (16#04#);   --  OCTET STRING tag
+               SKI_Val (1) := X509.Byte (16#14#);   --  length 20
+               for I in 0 .. 19 loop
+                  SKI_Val (X509.N32 (2 + I)) := X509.Byte (Hash (N32 (I)));
+               end loop;
+               SKI_Pos := 22;
+
+               --  Extension SEQUENCE { OID, OCTET STRING value }
+               Start_Sequence (TBS_Buf, TBS_Pos, Ext_S);
+               Put_OID (TBS_Buf, TBS_Pos,
+                  X509.Byte_Seq'(16#55#, 16#1D#, 16#0E#));  --  OID 2.5.29.14 (SKI)
+               Put_Octet_String (TBS_Buf, TBS_Pos,
+                  SKI_Val (0 .. SKI_Pos - 1));
+               End_Sequence (TBS_Buf, TBS_Pos, Ext_S);
+
+               --  Authority Key Identifier (RFC 5280 §4.2.1.1)
+               --  For self-signed: AKI keyIdentifier = SKI value
+               declare
+                  AKI_S : X509.N32;
+                  --  AKI value: SEQUENCE { [0] IMPLICIT keyIdentifier }
+                  AKI_Val : X509.Byte_Seq (0 .. 25) := (others => 0);
+                  AKI_Pos : X509.N32 := 0;
+               begin
+                  AKI_Val (0) := X509.Byte (16#30#);   --  SEQUENCE tag
+                  AKI_Val (1) := X509.Byte (16#16#);   --  length 22
+                  AKI_Val (2) := X509.Byte (16#80#);   --  [0] IMPLICIT tag
+                  AKI_Val (3) := X509.Byte (16#14#);   --  length 20
+                  for I in 0 .. 19 loop
+                     AKI_Val (X509.N32 (4 + I)) :=
+                        X509.Byte (Hash (N32 (I)));
+                  end loop;
+                  AKI_Pos := 24;
+
+                  Start_Sequence (TBS_Buf, TBS_Pos, AKI_S);
+                  Put_OID (TBS_Buf, TBS_Pos,
+                     X509.Byte_Seq'(16#55#, 16#1D#, 16#23#));  --  OID 2.5.29.35 (AKI)
+                  Put_Octet_String (TBS_Buf, TBS_Pos,
+                     AKI_Val (0 .. AKI_Pos - 1));
+                  End_Sequence (TBS_Buf, TBS_Pos, AKI_S);
+               end;
+            end;
+         end if;
+
          End_Sequence (TBS_Buf, TBS_Pos, Ext_Seq);
          End_Context (TBS_Buf, TBS_Pos, Ext_Ctx);
 

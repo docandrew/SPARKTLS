@@ -98,7 +98,8 @@ is
       Trust    : Trust_Store_Access;
       Random   : Random_Bytes_Fn;
       Clock    : Get_Time_Fn;
-      Local    : Identity_Access := null)
+      Local    : Identity_Access := null;
+      Mode     : Validation_Mode := Mode_WebPKI)
    is
       Cfg : Config;
    begin
@@ -107,6 +108,7 @@ is
       Cfg.Local       := Local;
       Cfg.Skip_Verify := Trust = null;
       Cfg.Get_Time    := Clock;
+      Cfg.Verify_Mode := Mode;
       if Hostname'Length > 0
          and then Hostname'Length <= Max_Hostname_Len
       then

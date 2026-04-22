@@ -2,6 +2,8 @@
 --
 --  Exit codes: 0 = valid, 1 = invalid, 2 = error
 
+with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Ada.Command_Line;
 with Ada.Text_IO;
 with SPARKNaCl;     use SPARKNaCl;
@@ -236,10 +238,27 @@ procedure X509_Validate is
    Int_Count : Natural := 0;
    Hostname  : String (1 .. 255) := (others => ASCII.NUL);
    Host_Len  : Natural := 0;
-   Val_Time  : X509.Date_Time := (Year => 2025, Month => 1, Day => 1,
-                                    others => 0);
+   Val_Time  : X509.Date_Time;
+   Now_Cal   : constant Ada.Calendar.Time := Ada.Calendar.Clock;
    Val_Mode  : Validation_Mode := Mode_WebPKI;
 begin
+   --  Initialize validation time from system clock
+   declare
+      use Ada.Calendar;
+      Y  : Year_Number;
+      Mo : Month_Number;
+      D  : Day_Number;
+      S  : Day_Duration;
+   begin
+      Split (Now_Cal, Y, Mo, D, S);
+      Val_Time := (Year   => Natural (Y),
+                   Month  => Natural (Mo),
+                   Day    => Natural (D),
+                   Hour   => Natural (S) / 3600,
+                   Minute => (Natural (S) mod 3600) / 60,
+                   Second => Natural (S) mod 60);
+   end;
+
    if Ada.Command_Line.Argument_Count < 2 then
       Ada.Command_Line.Set_Exit_Status (2);
       return;
