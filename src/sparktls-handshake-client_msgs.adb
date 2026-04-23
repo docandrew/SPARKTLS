@@ -3,6 +3,7 @@ with Interfaces; use Interfaces;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Scalar;
+with SPARKTLS.X25519;
 with SPARKNaCl.HKDF;   use SPARKNaCl.HKDF;
 with SPARKNaCl.MAC;    use SPARKNaCl.MAC;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
@@ -991,8 +992,8 @@ is
       else
          --  X25519 ECDHE
          HC.Shared_Secret := (others => 0);
-         HC.Shared_Secret (0 .. 31) :=
-            SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+         SPARKTLS.X25519.Scalar_Mult
+           (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
       end if;
 
       Take_Buffer (Ctx, Buf);

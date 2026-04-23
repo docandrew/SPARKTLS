@@ -49,6 +49,13 @@ if [ -f tests/x509/x509_validate.gpr ]; then
     cd "$REPO_ROOT"
 fi
 
+# Build crypto unit tests
+if [ -f tests/unit/alire.toml ]; then
+    cd tests/unit
+    alr build 2>&1 | tail -3
+    cd "$REPO_ROOT"
+fi
+
 # --- Generate test certificates ---
 section "Generating test certificates"
 bash tests/certs/generate.sh
@@ -66,6 +73,16 @@ if echo "$SUITES" | grep -q "unit"; then
         pass=$(echo "$output" | grep -c "PASS" || echo 0)
         fail=$(echo "$output" | grep -c "FAIL" || echo 0)
         echo "  test_prf12: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
+    # Crypto unit tests (sign/verify round-trips)
+    if [ -f bin/tests/test_crypto ]; then
+        output=$(bin/tests/test_crypto 2>&1 || true)
+        pass=$(echo "$output" | grep -c "PASS" || echo 0)
+        fail=$(echo "$output" | grep -c "FAIL" || echo 0)
+        echo "  test_crypto: $pass passed, $fail failed"
         UNIT_PASS=$((UNIT_PASS + pass))
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
@@ -99,22 +116,30 @@ if echo "$SUITES" | grep -q "integration"; then
 fi
 
 if echo "$SUITES" | grep -q "protocol"; then
-    section "Protocol Compliance Tests"
+    section "Protocol Compliance Tests (tlsfuzzer)"
     bash tests/protocol/run.sh
-    # Protocol suite has expected failures from unimplemented features.
-    # Count it as passed — regressions are caught by the per-suite output.
+    echo ""
+    echo "Known expected failures:"
+    echo "  psk_dhe_ke:          PSK resumption not implemented (performance only)"
+    echo "  session-resumption:  Client doesn't resume with tickets yet"
+    echo "  non-support:         Different error codes than tlsfuzzer expects (no security impact)"
+    echo "  version-negotiation: TLS 1.0/1.1 intentionally unsupported"
+    echo "  symetric-ciphers:    CCM/NULL ciphers intentionally unsupported"
+    echo "  ecdhe-curves:        Unsupported curves intentionally rejected"
     OVERALL_PASS=$((OVERALL_PASS + 1))
 fi
 
 if echo "$SUITES" | grep -q "x509"; then
     section "x509-limbo Certificate Validation Tests"
-    # Generate test cases if not present
     if [ ! -d tests/x509/generated ]; then
         bash tests/x509/generate.sh
     fi
     bash tests/x509/run.sh
-    # x509 suite has known failures (nameconstraints, pathbuilding).
-    # Count it as passed — regressions are caught by the per-suite output.
+    echo ""
+    echo "Known expected failures:"
+    echo "  pathbuilding (9):    Max_Pool_Size=8, tests need 9-35 intermediates"
+    echo "  webpki--cn (9):      CN-in-SAN is a CA issuance rule, not a validator rule"
+    echo "  public-suffix (1):   Would need Mozilla PSL dependency"
     OVERALL_PASS=$((OVERALL_PASS + 1))
 fi
 

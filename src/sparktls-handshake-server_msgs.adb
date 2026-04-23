@@ -2,6 +2,7 @@ with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
+with SPARKTLS.X25519;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with RFLX.TLS_Handshake.Client_Hello;
 with RFLX.TLS_Handshake.Server_Hello;
@@ -160,12 +161,16 @@ is
                                  (RFLX.Tls_Parameters.To_Base_Integer
                                     (Suite));
                         --  TLS 1.3 suites (0x13xx)
-                        if S.Negotiated_Suite = 0 and then
-                           Val in Suite_AES_256_GCM_SHA384
+                        --  Prefer ChaCha20 (fast in software) over AES-GCM
+                        if Val in Suite_AES_256_GCM_SHA384
                                 | Suite_AES_128_GCM_SHA256
                                 | Suite_CHACHA20_POLY1305_SHA256
                         then
-                           S.Negotiated_Suite := Val;
+                           if S.Negotiated_Suite = 0 then
+                              S.Negotiated_Suite := Val;
+                           elsif Val = Suite_CHACHA20_POLY1305_SHA256 then
+                              S.Negotiated_Suite := Val;
+                           end if;
                         end if;
 
                         --  TLS 1.2 suites (0xC0xx/0xCCxx)
@@ -803,8 +808,8 @@ is
          begin
             Gen_Random (HC.Local_SK);
             SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK_X, SK);
-            HC.Shared_Secret (0 .. 31) :=
-               SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+            SPARKTLS.X25519.Scalar_Mult
+              (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
             declare
                PK_Bytes : constant Bytes_32 :=
                   SPARKNaCl.Cryptobox.Serialize (PK_X);

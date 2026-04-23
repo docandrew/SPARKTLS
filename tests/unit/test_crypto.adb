@@ -6,6 +6,8 @@ with Ada.Command_Line;
 with SPARKNaCl;            use SPARKNaCl;
 with Interfaces;           use Interfaces;
 with SPARKTLS.P384.ECDSA;
+with SPARKTLS.X25519;
+with SPARKNaCl.Scalar;
 with SPARKTLS.BigNat;      use SPARKTLS.BigNat;
 
 procedure Test_Crypto is
@@ -163,6 +165,91 @@ begin
    end;
 
    Put_Line ("");
+   Put_Line ("--- X25519 ---");
+   --  Test field multiply: 9 * 9 = 81
+   declare
+      Nine : constant Bytes_32 := (9, others => 0);
+      EightyOne : constant Bytes_32 := (81, others => 0);
+      Result : Bytes_32;
+   begin
+      SPARKTLS.X25519.Test_FE_Mul (Nine, Nine, Result);
+      Check ("FE_Mul(9, 9) = 81",
+             Byte_Seq (Result) = Byte_Seq (EightyOne));
+      if Byte_Seq (Result) /= Byte_Seq (EightyOne) then
+         Put ("    Got(0..5): ");
+         for I in N32 range 0 .. 5 loop Put (Result (I)'Image); end loop; New_Line;
+      end if;
+   end;
+
+   --  Test encode/decode round-trip
+   declare
+      Test_In : constant Bytes_32 := (1, 2, 3, 4, 5, 6, 7, 8,
+                                       9, 10, 11, 12, 13, 14, 15, 16,
+                                       17, 18, 19, 20, 21, 22, 23, 24,
+                                       25, 26, 27, 28, 29, 30, 31, 0);
+      Test_Out : Bytes_32;
+   begin
+      SPARKTLS.X25519.Test_Encode_Decode (Test_In, Test_Out);
+      Check ("X25519 encode/decode round-trip",
+             Byte_Seq (Test_In) = Byte_Seq (Test_Out));
+      if Byte_Seq (Test_In) /= Byte_Seq (Test_Out) then
+         Put ("    In (0..7):  ");
+         for I in N32 range 0 .. 7 loop Put (Test_In (I)'Image); end loop; New_Line;
+         Put ("    Out(0..7):  ");
+         for I in N32 range 0 .. 7 loop Put (Test_Out (I)'Image); end loop; New_Line;
+      end if;
+   end;
+
+   declare
+      --  Scalar = 1 (after clamping: 64, because bit 254 is set)
+      --  Use RFC 7748 test vector instead:
+      --  scalar: a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4
+      --  u:      e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c
+      --  output: c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552
+      N_Key : constant Bytes_32 :=
+        (16#a5#, 16#46#, 16#e3#, 16#6b#, 16#f0#, 16#52#, 16#7c#, 16#9d#,
+         16#3b#, 16#16#, 16#15#, 16#4b#, 16#82#, 16#46#, 16#5e#, 16#dd#,
+         16#62#, 16#14#, 16#4c#, 16#0a#, 16#c1#, 16#fc#, 16#5a#, 16#18#,
+         16#50#, 16#6a#, 16#22#, 16#44#, 16#ba#, 16#44#, 16#9a#, 16#c4#);
+      P_Key : constant Bytes_32 :=
+        (16#e6#, 16#db#, 16#68#, 16#67#, 16#58#, 16#30#, 16#30#, 16#db#,
+         16#35#, 16#94#, 16#c1#, 16#a4#, 16#24#, 16#b1#, 16#5f#, 16#7c#,
+         16#72#, 16#66#, 16#24#, 16#ec#, 16#26#, 16#b3#, 16#35#, 16#3b#,
+         16#10#, 16#a9#, 16#03#, 16#a6#, 16#d0#, 16#ab#, 16#1c#, 16#4c#);
+      Expected : constant Bytes_32 :=
+        (16#c3#, 16#da#, 16#55#, 16#37#, 16#9d#, 16#e9#, 16#c6#, 16#90#,
+         16#8e#, 16#94#, 16#ea#, 16#4d#, 16#f2#, 16#8d#, 16#08#, 16#4f#,
+         16#32#, 16#ec#, 16#cf#, 16#03#, 16#49#, 16#1c#, 16#71#, 16#f7#,
+         16#54#, 16#b4#, 16#07#, 16#55#, 16#77#, 16#a2#, 16#85#, 16#52#);
+      P_Key_Simple : constant Bytes_32 := (9, others => 0);
+      Q_Ours : Bytes_32;
+      Q_Ref  : Bytes_32;
+   begin
+      --  Test against RFC 7748 §6.1 vector
+      SPARKTLS.X25519.Scalar_Mult (Q_Ours, N_Key, P_Key);
+      Check ("X25519 vs RFC 7748 vector",
+             Byte_Seq (Q_Ours) = Byte_Seq (Expected));
+      if Byte_Seq (Q_Ours) /= Byte_Seq (Expected) then
+         Put ("    Ours(0..5):     ");
+         for I in N32 range 0 .. 5 loop Put (Q_Ours (I)'Image); end loop; New_Line;
+         Put ("    Expected(0..5): ");
+         for I in N32 range 0 .. 5 loop Put (Expected (I)'Image); end loop; New_Line;
+      end if;
+
+      --  Test against SPARKNaCl with simple basepoint
+      SPARKTLS.X25519.Scalar_Mult (Q_Ours, N_Key, P_Key_Simple);
+      Q_Ref := SPARKNaCl.Scalar.Mult (N_Key, P_Key_Simple);
+      Check ("X25519 vs SPARKNaCl (basepoint)",
+             Byte_Seq (Q_Ours) = Byte_Seq (Q_Ref));
+      if Byte_Seq (Q_Ours) /= Byte_Seq (Q_Ref) then
+         Put ("    Ours(0..5): ");
+         for I in N32 range 0 .. 5 loop Put (Q_Ours (I)'Image); end loop; New_Line;
+         Put ("    Ref (0..5): ");
+         for I in N32 range 0 .. 5 loop Put (Q_Ref (I)'Image); end loop; New_Line;
+      end if;
+   end;
+   Put_Line ("");
+
    Put_Line ("--- P-384 ECDSA ---");
    Test_P384_Round_Trip;
 
