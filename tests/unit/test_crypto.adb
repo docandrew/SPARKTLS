@@ -12,7 +12,9 @@ with SPARKTLS.BigNat;      use SPARKTLS.BigNat;
 with SPARKTLS.Fiat_P256;
 with SPARKTLS.Ed25519;
 with SPARKTLS.Hashing.SHA256;
+with SPARKTLS.MAC;
 with SPARKNaCl.Hashing.SHA256;
+with SPARKNaCl.MAC;
 with SPARKNaCl.Sign;
 pragma Warnings (Off, "use clause for package");
 pragma Warnings (Off, "has no effect");
@@ -387,6 +389,58 @@ begin
          Hash (D, Msg_Abc);
          Check ("SHA-256 matches SPARKNaCl", D = D_NaCl);
       end;
+
+      --  Streaming API test: hash "abc" in pieces
+      declare
+         Ctx : Context;
+      begin
+         Init (Ctx);
+         Update (Ctx, Msg_Abc (0 .. 0));   --  "a"
+         Update (Ctx, Msg_Abc (1 .. 2));   --  "bc"
+         Final (Ctx, D);
+         Check ("SHA-256 streaming 'a'+'bc'", D = Expected_Abc);
+      end;
+
+      --  Streaming: one byte at a time
+      declare
+         Ctx : Context;
+      begin
+         Init (Ctx);
+         for I in Msg_448'Range loop
+            Update (Ctx, Msg_448 (I .. I));
+         end loop;
+         Final (Ctx, D);
+         Check ("SHA-256 streaming byte-at-a-time (448-bit)", D = Expected_448);
+      end;
+   end;
+   Put_Line ("");
+
+   Put_Line ("--- HMAC-SHA-256 (SPARKTLS) ---");
+   declare
+      use SPARKTLS.Hashing.SHA256;
+      D, D_NaCl : Digest;
+      --  RFC 4231 Test Case 2:
+      --  Key  = "Jefe" (4 bytes)
+      --  Data = "what do ya want for nothing?" (28 bytes)
+      --  HMAC = 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+      HMAC_Key : constant Byte_Seq (0 .. 3) := (16#4a#, 16#65#, 16#66#, 16#65#);
+      HMAC_Msg : constant Byte_Seq (0 .. 27) :=
+        (16#77#, 16#68#, 16#61#, 16#74#, 16#20#, 16#64#, 16#6f#, 16#20#,
+         16#79#, 16#61#, 16#20#, 16#77#, 16#61#, 16#6e#, 16#74#, 16#20#,
+         16#66#, 16#6f#, 16#72#, 16#20#, 16#6e#, 16#6f#, 16#74#, 16#68#,
+         16#69#, 16#6e#, 16#67#, 16#3f#);
+      Expected_HMAC : constant Bytes_32 :=
+        (16#5b#, 16#dc#, 16#c1#, 16#46#, 16#bf#, 16#60#, 16#75#, 16#4e#,
+         16#6a#, 16#04#, 16#24#, 16#26#, 16#08#, 16#95#, 16#75#, 16#c7#,
+         16#5a#, 16#00#, 16#3f#, 16#08#, 16#9d#, 16#27#, 16#39#, 16#83#,
+         16#9d#, 16#ec#, 16#58#, 16#b9#, 16#64#, 16#ec#, 16#38#, 16#43#);
+   begin
+      SPARKTLS.MAC.HMAC_SHA_256 (D, HMAC_Msg, HMAC_Key);
+      Check ("HMAC-SHA-256 RFC 4231 TC2", D = Expected_HMAC);
+
+      --  Cross-check with SPARKNaCl
+      SPARKNaCl.MAC.HMAC_SHA_256 (D_NaCl, HMAC_Msg, HMAC_Key);
+      Check ("HMAC matches SPARKNaCl", D = D_NaCl);
    end;
    Put_Line ("");
 

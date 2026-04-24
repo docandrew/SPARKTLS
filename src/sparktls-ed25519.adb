@@ -116,26 +116,62 @@ is
    --  From RFC 8032 / ref10: uses only 4 squarings + 4 muls
    --================================================================
 
+   --================================================================
+   --  P1xP1/P2 intermediate representations for chained doublings
+   --  Convention matches our Point_Add: E = H-(X+Y)², G = XX-YY
+   --================================================================
+
+   type Proj_Point is record
+      X, Y, Z : Fiat_25519.FE;
+   end record;
+
+   type P1xP1_Point is record
+      X, Y, Z, T : Fiat_25519.FE;
+   end record;
+
+   --  Double: P2 → P1xP1 (4 Sqr, 0 Mul)
+   --  P1xP1 components: X=E, Y=H, Z=G, T=F in our naming convention
+   function Double_P2 (P : Proj_Point) return P1xP1_Point is
+      XX    : constant Fiat_25519.FE := Fiat_25519.Sqr (P.X);
+      YY    : constant Fiat_25519.FE := Fiat_25519.Sqr (P.Y);
+      ZZ2   : Fiat_25519.FE := Fiat_25519.Add
+                (Fiat_25519.Sqr (P.Z), Fiat_25519.Sqr (P.Z));
+      H     : constant Fiat_25519.FE := Fiat_25519.Add (XX, YY);
+      XpYsq : constant Fiat_25519.FE :=
+        Fiat_25519.Sqr (Fiat_25519.Add (P.X, P.Y));
+      E     : constant Fiat_25519.FE := Fiat_25519.Sub (H, XpYsq);
+      G     : constant Fiat_25519.FE := Fiat_25519.Sub (XX, YY);
+      F     : Fiat_25519.FE;
+   begin
+      Fiat_25519.Carry (ZZ2);
+      F := Fiat_25519.Add (ZZ2, G);
+      return P1xP1_Point'(X => E, Y => H, Z => G, T => F);
+   end Double_P2;
+
+   --  P1xP1 → Extended: X=E*F, Y=G*H, Z=F*G, T=E*H (4 Mul)
+   function P1xP1_To_Ext (P : P1xP1_Point) return Ext_Point is
+     (X => Fiat_25519.Mul (P.X, P.T),   --  E * F
+      Y => Fiat_25519.Mul (P.Z, P.Y),   --  G * H
+      Z => Fiat_25519.Mul (P.T, P.Z),   --  F * G
+      T => Fiat_25519.Mul (P.X, P.Y));  --  E * H
+
+   --  P1xP1 → Projective: X=E*F, Y=G*H, Z=F*G (3 Mul, drop T)
+   function P1xP1_To_P2 (P : P1xP1_Point) return Proj_Point is
+     (X => Fiat_25519.Mul (P.X, P.T),   --  E * F
+      Y => Fiat_25519.Mul (P.Z, P.Y),   --  G * H
+      Z => Fiat_25519.Mul (P.T, P.Z));  --  F * G
+
+   --  Extended → Projective (drop T)
+   function Ext_To_P2 (P : Ext_Point) return Proj_Point is
+     (X => P.X, Y => P.Y, Z => P.Z);
+
+   --  Point_Double: uses P1xP1 internally, equivalent to old direct formula
    function Point_Double (P : Ext_Point) return Ext_Point
    with Pre  => Is_Valid (P),
         Post => Is_Valid (Point_Double'Result)
    is
-      A : constant Fiat_25519.FE := Fiat_25519.Sqr (P.X);
-      B : constant Fiat_25519.FE := Fiat_25519.Sqr (P.Y);
-      C0 : Fiat_25519.FE := Fiat_25519.Add
-             (Fiat_25519.Sqr (P.Z), Fiat_25519.Sqr (P.Z));
-      H : constant Fiat_25519.FE := Fiat_25519.Add (A, B);
-      E : constant Fiat_25519.FE := Fiat_25519.Sub
-            (H, Fiat_25519.Sqr (Fiat_25519.Add (P.X, P.Y)));
-      G : constant Fiat_25519.FE := Fiat_25519.Sub (A, B);
-      F : Fiat_25519.FE;
    begin
-      Fiat_25519.Carry (C0);
-      F := Fiat_25519.Add (C0, G);
-      return Ext_Point'(X => Fiat_25519.Mul (E, F),
-                         Y => Fiat_25519.Mul (G, H),
-                         Z => Fiat_25519.Mul (F, G),
-                         T => Fiat_25519.Mul (E, H));
+      return P1xP1_To_Ext (Double_P2 (Ext_To_P2 (P)));
    end Point_Double;
 
    --================================================================
@@ -278,21 +314,32 @@ is
    begin
       --  Process scalar 4 bits at a time, MSB first
       --  Scalar is 256 bits = 64 nibbles
+      --  Uses P2 intermediate form for chained doublings:
+      --  P2→P1xP1→P2→P1xP1→P2→P1xP1→P2→P1xP1→Ext for the CT_Add
+      --  Saves 4 Sqr + 4 Mul per nibble vs full Point_Double.
       for I in reverse N32 range 0 .. 31 loop
-         --  High nibble
+         --  High nibble: 4 doublings via P2 chain (saves 4 Mul vs Point_Double)
          Nibble := Unsigned_64 (Shift_Right (S (I), 4));
-         R := Point_Double (R);
-         R := Point_Double (R);
-         R := Point_Double (R);
-         R := Point_Double (R);
+         declare
+            P2 : Proj_Point := Ext_To_P2 (R);
+         begin
+            P2 := P1xP1_To_P2 (Double_P2 (P2));  --  3 Mul
+            P2 := P1xP1_To_P2 (Double_P2 (P2));  --  3 Mul
+            P2 := P1xP1_To_P2 (Double_P2 (P2));  --  3 Mul
+            R  := P1xP1_To_Ext (Double_P2 (P2));  --  4 Mul (need T for Add)
+         end;
          CT_Add (R, Nibble);
 
-         --  Low nibble
+         --  Low nibble: 4 doublings via P2 chain
          Nibble := Unsigned_64 (S (I) and 16#0F#);
-         R := Point_Double (R);
-         R := Point_Double (R);
-         R := Point_Double (R);
-         R := Point_Double (R);
+         declare
+            P2 : Proj_Point := Ext_To_P2 (R);
+         begin
+            P2 := P1xP1_To_P2 (Double_P2 (P2));
+            P2 := P1xP1_To_P2 (Double_P2 (P2));
+            P2 := P1xP1_To_P2 (Double_P2 (P2));
+            R  := P1xP1_To_Ext (Double_P2 (P2));
+         end;
          CT_Add (R, Nibble);
       end loop;
 
