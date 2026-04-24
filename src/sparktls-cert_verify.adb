@@ -1,6 +1,6 @@
 
 with Interfaces; use Interfaces;
-with SPARKNaCl.Hashing.SHA256;
+with SPARKTLS.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
 with SPARKTLS.Ed25519;
@@ -179,11 +179,11 @@ is
                   return False;
                end if;
                declare
-                  H : SPARKNaCl.Hashing.SHA256.Digest;
+                  H : SPARKTLS.Hashing.SHA256.Digest;
                   Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
                   Sig_Bytes : Byte_Seq (0 .. N32 (Sig_Len) - 1) := (others => 0);
                begin
-                  SPARKNaCl.Hashing.SHA256.Hash (H, TBS_Bytes);
+                  SPARKTLS.Hashing.SHA256.Hash (H, TBS_Bytes);
                   for I in N32 range 0 .. N32 (PK_Len) - 1 loop
                      Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                   end loop;
@@ -276,7 +276,7 @@ is
                         SPARKNaCl.Hashing.SHA384.Hash (H, TBS_Bytes);
                      else
                         --  SHA-256 hash, zero-pad to 48 bytes for P-384
-                        SPARKNaCl.Hashing.SHA256.Hash (H32, TBS_Bytes);
+                        SPARKTLS.Hashing.SHA256.Hash (H32, TBS_Bytes);
                         H := (others => 0);
                         for I in N32 range 0 .. 31 loop
                            H (I) := H32 (I);
@@ -309,7 +309,7 @@ is
                      Sig_OK : Boolean;
                   begin
                      --  Both SHA-256 and SHA-384 sigs use SHA-256 for P-256
-                     SPARKNaCl.Hashing.SHA256.Hash (H, TBS_Bytes);
+                     SPARKTLS.Hashing.SHA256.Hash (H, TBS_Bytes);
 
                   for I in 0 .. 31 loop
                      Qx (N32 (I)) := Byte (PK_Data (X509.N32 (1 + I)));
@@ -1164,11 +1164,11 @@ is
                return False;
             end if;
             declare
-               H : SPARKNaCl.Hashing.SHA256.Digest;
+               H : SPARKTLS.Hashing.SHA256.Digest;
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
                Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1) := (others => 0);
             begin
-               SPARKNaCl.Hashing.SHA256.Hash (H, Data);
+               SPARKTLS.Hashing.SHA256.Hash (H, Data);
                for I in N32 range 0 .. N32 (PK_Len) - 1 loop
                   Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                end loop;
@@ -1212,14 +1212,14 @@ is
             if PK_Algo /= X509.Algo_EC_P256 then return False; end if;
             if PK_Len /= 65 then return False; end if;
             declare
-               H     : SPARKNaCl.Hashing.SHA256.Digest;
+               H     : SPARKTLS.Hashing.SHA256.Digest;
                Qx    : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                Qy    : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                R_Val : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                S_Val : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                DER_OK : Boolean;
             begin
-               SPARKNaCl.Hashing.SHA256.Hash (H, Data);
+               SPARKTLS.Hashing.SHA256.Hash (H, Data);
                --  Extract public key (skip 0x04 uncompressed prefix)
                for I in 0 .. 31 loop
                   Qx (N32 (I)) := Byte (PK_Data (X509.N32 (I + 1)));

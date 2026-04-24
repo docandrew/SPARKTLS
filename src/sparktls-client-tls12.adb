@@ -1,6 +1,6 @@
 with Interfaces;                 use Interfaces;
 with SPARKNaCl;                  use SPARKNaCl;
-with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
+with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;

@@ -11,6 +11,8 @@ with SPARKNaCl.Scalar;
 with SPARKTLS.BigNat;      use SPARKTLS.BigNat;
 with SPARKTLS.Fiat_P256;
 with SPARKTLS.Ed25519;
+with SPARKTLS.Hashing.SHA256;
+with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Sign;
 pragma Warnings (Off, "use clause for package");
 pragma Warnings (Off, "has no effect");
@@ -312,6 +314,114 @@ begin
       R := From_Bytes (B);
       Check ("Fiat P-256 to/from_bytes round-trip",
              R = One_M);
+   end;
+   Put_Line ("");
+
+   Put_Line ("--- SHA-256 (SPARKTLS) ---");
+   declare
+      use SPARKTLS.Hashing.SHA256;
+      D : Digest;
+
+      --  FIPS 180-2 / NIST CAVP test vectors (digests verified via openssl)
+      --  Test 1: empty string
+      Expected_Empty : constant Bytes_32 :=
+        (16#e3#, 16#b0#, 16#c4#, 16#42#, 16#98#, 16#fc#, 16#1c#, 16#14#,
+         16#9a#, 16#fb#, 16#f4#, 16#c8#, 16#99#, 16#6f#, 16#b9#, 16#24#,
+         16#27#, 16#ae#, 16#41#, 16#e4#, 16#64#, 16#9b#, 16#93#, 16#4c#,
+         16#a4#, 16#95#, 16#99#, 16#1b#, 16#78#, 16#52#, 16#b8#, 16#55#);
+      --  Test 2: "abc"
+      Msg_Abc : constant Byte_Seq (0 .. 2) := (16#61#, 16#62#, 16#63#);
+      Expected_Abc : constant Bytes_32 :=
+        (16#ba#, 16#78#, 16#16#, 16#bf#, 16#8f#, 16#01#, 16#cf#, 16#ea#,
+         16#41#, 16#41#, 16#40#, 16#de#, 16#5d#, 16#ae#, 16#22#, 16#23#,
+         16#b0#, 16#03#, 16#61#, 16#a3#, 16#96#, 16#17#, 16#7a#, 16#9c#,
+         16#b4#, 16#10#, 16#ff#, 16#61#, 16#f2#, 16#00#, 16#15#, 16#ad#);
+      --  Test 3: 448-bit (two-block) message
+      Msg_448 : constant Byte_Seq (0 .. 55) :=
+        (16#61#, 16#62#, 16#63#, 16#64#, 16#62#, 16#63#, 16#64#, 16#65#,
+         16#63#, 16#64#, 16#65#, 16#66#, 16#64#, 16#65#, 16#66#, 16#67#,
+         16#65#, 16#66#, 16#67#, 16#68#, 16#66#, 16#67#, 16#68#, 16#69#,
+         16#67#, 16#68#, 16#69#, 16#6a#, 16#68#, 16#69#, 16#6a#, 16#6b#,
+         16#69#, 16#6a#, 16#6b#, 16#6c#, 16#6a#, 16#6b#, 16#6c#, 16#6d#,
+         16#6b#, 16#6c#, 16#6d#, 16#6e#, 16#6c#, 16#6d#, 16#6e#, 16#6f#,
+         16#6d#, 16#6e#, 16#6f#, 16#70#, 16#6e#, 16#6f#, 16#70#, 16#71#);
+      Expected_448 : constant Bytes_32 :=
+        (16#24#, 16#8d#, 16#6a#, 16#61#, 16#d2#, 16#06#, 16#38#, 16#b8#,
+         16#e5#, 16#c0#, 16#26#, 16#93#, 16#0c#, 16#3e#, 16#60#, 16#39#,
+         16#a3#, 16#3c#, 16#e4#, 16#59#, 16#64#, 16#ff#, 16#21#, 16#67#,
+         16#f6#, 16#ec#, 16#ed#, 16#d4#, 16#19#, 16#db#, 16#06#, 16#c1#);
+      --  Test 4: single byte 0xD3 (FIPS 180-4 ShortMsg len=8)
+      Msg_D3 : constant Byte_Seq (0 .. 0) := (0 => 16#D3#);
+      Expected_D3 : constant Bytes_32 :=
+        (16#28#, 16#96#, 16#9c#, 16#df#, 16#a7#, 16#4a#, 16#12#, 16#c8#,
+         16#2f#, 16#3b#, 16#ad#, 16#96#, 16#0b#, 16#0b#, 16#00#, 16#0a#,
+         16#ca#, 16#2a#, 16#c3#, 16#29#, 16#de#, 16#ea#, 16#5c#, 16#23#,
+         16#28#, 16#eb#, 16#c6#, 16#f2#, 16#ba#, 16#98#, 16#02#, 16#c1#);
+      Empty : constant Byte_Seq (1 .. 0) := (others => <>);
+   begin
+      Put_Line ("    HW accel: " & Boolean'Image (Has_HW_Accel));
+
+      Hash (D, Empty);
+      Check ("SHA-256 empty", D = Expected_Empty);
+      if D /= Expected_Empty then
+         Put ("    Got: ");
+         for I in N32 range 0 .. 7 loop Put (D (I)'Image); end loop; New_Line;
+         Put ("    Exp: ");
+         for I in N32 range 0 .. 7 loop Put (Expected_Empty (I)'Image); end loop; New_Line;
+      end if;
+
+      Hash (D, Msg_Abc);
+      Check ("SHA-256 'abc'", D = Expected_Abc);
+
+      Hash (D, Msg_448);
+      Check ("SHA-256 448-bit (two blocks)", D = Expected_448);
+
+      Hash (D, Msg_D3);
+      Check ("SHA-256 single byte 0xD3", D = Expected_D3);
+
+      --  Cross-check: our result matches SPARKNaCl
+      declare
+         D_NaCl : Bytes_32;
+      begin
+         SPARKNaCl.Hashing.SHA256.Hash (D_NaCl, Msg_Abc);
+         Hash (D, Msg_Abc);
+         Check ("SHA-256 matches SPARKNaCl", D = D_NaCl);
+      end;
+   end;
+   Put_Line ("");
+
+   Put_Line ("--- Ed25519 ASR_8 ---");
+   declare
+      use type Interfaces.Integer_64;
+      function ASR (X : I64) return I64 renames SPARKTLS.Ed25519.Test_ASR_8;
+   begin
+      --  Positive values: floor(X/256)
+      Check ("ASR_8(0) = 0", ASR (0) = 0);
+      Check ("ASR_8(255) = 0", ASR (255) = 0);
+      Check ("ASR_8(256) = 1", ASR (256) = 1);
+      Check ("ASR_8(257) = 1", ASR (257) = 1);
+      Check ("ASR_8(512) = 2", ASR (512) = 2);
+      Check ("ASR_8(1000) = 3", ASR (1000) = 3);
+      --  Negative values: floor division (round toward -inf, not zero)
+      Check ("ASR_8(-1) = -1", ASR (-1) = -1);
+      Check ("ASR_8(-128) = -1", ASR (-128) = -1);
+      Check ("ASR_8(-256) = -1", ASR (-256) = -1);
+      Check ("ASR_8(-257) = -2", ASR (-257) = -2);
+      Check ("ASR_8(-512) = -2", ASR (-512) = -2);
+      Check ("ASR_8(-1000) = -4", ASR (-1000) = -4);
+      --  Cross-check: must match Shift_Right_Arithmetic
+      declare
+         use Interfaces;
+         function SRA (X : I64) return I64 is
+           (I64 (Shift_Right_Arithmetic (Unsigned_64 (X), 8)));
+         Vals : constant array (1 .. 8) of I64 :=
+           (0, 1, 255, 256, -1, -128, -256, -1000);
+      begin
+         for V of Vals loop
+            Check ("ASR_8 matches SRA for" & V'Image,
+                   ASR (V) = SRA (V));
+         end loop;
+      end;
    end;
    Put_Line ("");
 

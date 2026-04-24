@@ -1,7 +1,7 @@
 --  SPARKTLS RSA-PSS-RSAE Signature Verification
 --  Uses SPARK-proven BigNat library for modular exponentiation.
 
-with SPARKNaCl.Hashing.SHA256;
+with SPARKTLS.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
 with SPARKTLS.BigNat;
@@ -169,10 +169,10 @@ is
       case Alg is
          when PSS_SHA256 =>
             declare
-               D : SPARKNaCl.Hashing.SHA256.Digest;
+               D : SPARKTLS.Hashing.SHA256.Digest;
                Len : constant Natural := Natural'Min (Out_Len, 32);
             begin
-               SPARKNaCl.Hashing.SHA256.Hash (D, Input);
+               SPARKTLS.Hashing.SHA256.Hash (D, Input);
                for I in 0 .. Len - 1 loop
                   Output (N32 (I)) := D (N32 (I));
                end loop;

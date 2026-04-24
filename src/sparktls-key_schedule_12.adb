@@ -1,7 +1,6 @@
 with Interfaces;                 use Interfaces;
-with SPARKNaCl.Hashing;
-with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
-with SPARKNaCl.MAC;              use SPARKNaCl.MAC;
+with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
+with SPARKTLS.MAC;               use SPARKTLS.MAC;
 with SPARKTLS.HMAC384;
 
 package body SPARKTLS.Key_Schedule_12 with

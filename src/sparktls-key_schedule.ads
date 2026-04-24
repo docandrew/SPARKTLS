@@ -1,8 +1,7 @@
 with SPARKNaCl;                  use SPARKNaCl;
-with SPARKNaCl.Hashing;
-with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
-with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
+with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
+with SPARKTLS.HKDF;              use SPARKTLS.HKDF;
 with SPARKTLS.HKDF384;
 
 --  TLS 1.3 Key Schedule (RFC 8446 Section 7)

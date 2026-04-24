@@ -2,7 +2,7 @@ with Interfaces;                 use Interfaces;
 with Ada.Unchecked_Deallocation;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
-with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
+with SPARKTLS.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Sign;
 with SPARKTLS.P256.Point;
@@ -193,8 +193,9 @@ is
                   or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
                then return; end if;
                declare
-                  H    : constant Digest := Hash
-                    (Sig_Input (0 .. Sig_Input_Len - 1));
+                  H    : constant SPARKTLS.Hashing.SHA256.Digest :=
+                    SPARKTLS.Hashing.SHA256.Hash
+                      (Sig_Input (0 .. Sig_Input_Len - 1));
                   Salt : Bytes_32;
                begin
                   Random.all (Byte_Seq (Salt));
@@ -214,8 +215,9 @@ is
             when 16#0403# =>  --  ecdsa_secp256r1_sha256
                Hash_Algo := 4; Sig_Algo := 3;
                declare
-                  H : constant Digest := Hash
-                    (Sig_Input (0 .. Sig_Input_Len - 1));
+                  H : constant SPARKTLS.Hashing.SHA256.Digest :=
+                    SPARKTLS.Hashing.SHA256.Hash
+                      (Sig_Input (0 .. Sig_Input_Len - 1));
                   K_Bytes : Bytes_32;
                   R_Half, S_Half : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
                begin
@@ -674,7 +676,7 @@ is
             begin
                Random.all (Byte_Seq (K_Bytes));
                SPARKTLS.P256.ECDSA.Sign
-                 (Hash  => Digest (Transcript_Hash (0 .. 31)),
+                 (Hash  => Bytes_32 (Transcript_Hash (0 .. 31)),
                   D     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half
                              (Id.ECDSA_P256_Key),
                   K     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),

@@ -1,9 +1,9 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
-with SPARKNaCl.Hashing.SHA256;
+with SPARKTLS.Hashing.SHA256;
 with SPARKTLS.X25519;
-with SPARKNaCl.HKDF;   use SPARKNaCl.HKDF;
-with SPARKNaCl.MAC;    use SPARKNaCl.MAC;
+with SPARKTLS.HKDF;    use SPARKTLS.HKDF;
+with SPARKTLS.MAC;     use SPARKTLS.MAC;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with SPARKTLS.Key_Schedule;
 with RFLX.TLS_Handshake.Client_Hello;
@@ -509,7 +509,7 @@ is
       --  We patch the extensions list length and handshake length after.
       if S.Ticket.Valid and then Len > 0 then
          declare
-            use SPARKNaCl.Hashing.SHA256;
+            use SPARKTLS.Hashing.SHA256;
             Tick_Len : constant N32 := S.Ticket.Ticket_Len;
             --  PSK identity: identity_len(2) + ticket + age(4)
             ID_Entry_Len : constant N32 := 2 + Tick_Len + 4;

@@ -1,9 +1,8 @@
 with Interfaces;                 use Interfaces;
-with SPARKNaCl.Hashing;
-with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
-with SPARKNaCl.MAC;              use SPARKNaCl.MAC;
-with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
+with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
+with SPARKTLS.MAC;               use SPARKTLS.MAC;
+with SPARKTLS.HKDF;              use SPARKTLS.HKDF;
 
 with SPARKTLS.Records;      use SPARKTLS.Records;
 with SPARKTLS.Cert_Verify;  use SPARKTLS.Cert_Verify;

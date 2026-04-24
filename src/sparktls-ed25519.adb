@@ -460,8 +460,9 @@ is
       16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#00#, 16#10#);
 
    --  Arithmetic shift right by 8 (floor division by 256)
+   --  Uses floor-div idiom: (X - 255) / 256 when negative, X / 256 when positive.
    function ASR_8 (X : I64) return I64 is
-     (I64 (Shift_Right_Arithmetic (Unsigned_64 (X), 8)));
+     ((X - (if X < 0 then 255 else 0)) / 256);
 
    function ModL (X_In : I64_Seq_64) return Bytes_32 is
       X : I64_Seq_64 := X_In;
@@ -651,5 +652,10 @@ is
       --  Encode to 32 little-endian bytes
       FE_To_Bytes (U, Mont_U);
    end Scalar_Mult_Base_To_Montgomery;
+
+   function Test_ASR_8 (X : I64) return I64 is
+   begin
+      return ASR_8 (X);
+   end Test_ASR_8;
 
 end SPARKTLS.Ed25519;

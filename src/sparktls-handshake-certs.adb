@@ -1,6 +1,6 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
-with SPARKNaCl.Hashing.SHA256;
+with SPARKTLS.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
 with SPARKTLS.Ed25519;
@@ -270,7 +270,7 @@ is
          when 16#0403# =>
             Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp256r1_Sha256;
             declare
-               use SPARKNaCl.Hashing.SHA256;
+               use SPARKTLS.Hashing.SHA256;
                H : constant Digest := Hash (Content);
                K_Bytes : Bytes_32;
                R_Half, S_Half : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
@@ -316,7 +316,7 @@ is
          when 16#0804# =>
             Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256;
             declare
-               use SPARKNaCl.Hashing.SHA256;
+               use SPARKTLS.Hashing.SHA256;
                H    : constant Digest := Hash (Content);
                Salt : Bytes_32;
             begin

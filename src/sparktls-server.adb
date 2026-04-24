@@ -1,9 +1,8 @@
 with Interfaces;                 use Interfaces;
-with SPARKNaCl.Hashing;
-with SPARKNaCl.Hashing.SHA256;   use SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
-with SPARKNaCl.MAC;              use SPARKNaCl.MAC;
-with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
+with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
+with SPARKTLS.MAC;               use SPARKTLS.MAC;
+with SPARKTLS.HKDF;              use SPARKTLS.HKDF;
 
 with SPARKTLS.Ed25519;
 with SPARKTLS.Records;      use SPARKTLS.Records;
@@ -742,7 +741,7 @@ is
       HRR_Len   :    out N32;
       Rec_Out   :    out N32)
    is
-      use SPARKNaCl.Hashing.SHA256;
+      use SPARKTLS.Hashing.SHA256;
 
       --  RFC 8446 §4.1.3: SHA-256("HelloRetryRequest")
       HRR_Random : constant Bytes_32 :=
@@ -961,7 +960,7 @@ is
                               Finished_Key : OKM_Seq (0 .. 31);
                               Expected     : Digest;
                            begin
-                              SPARKNaCl.Hashing.SHA256.Hash
+                              SPARKTLS.Hashing.SHA256.Hash
                                 (Trunc_Hash,
                                  HC.Transcript (0 .. Trunc_Len - 1));
                               Key_Schedule.Derive_Binder_Key
