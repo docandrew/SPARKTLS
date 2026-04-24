@@ -1,8 +1,6 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
-with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Hashing.SHA256;
-with SPARKNaCl.Scalar;
 with SPARKTLS.X25519;
 with SPARKNaCl.HKDF;   use SPARKNaCl.HKDF;
 with SPARKNaCl.MAC;    use SPARKNaCl.MAC;
@@ -61,9 +59,6 @@ is
       use RFLX.TLS_Handshake.Client_Hello;
       use RFLX.TLS_Common;
 
-      SK : SPARKNaCl.Cryptobox.Secret_Key;
-      PK : SPARKNaCl.Cryptobox.Public_Key;
-
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Extension data sizes
@@ -109,9 +104,13 @@ is
       Result := (others => 0);
       Len    := 0;
 
-      --  Generate ephemeral X25519 keypair
+      --  Generate ephemeral X25519 keypair (Fiat X25519)
       Gen_Random (HC.Local_SK);
-      SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK, SK);
+      declare
+         Basepoint : constant Bytes_32 := (9, others => 0);
+      begin
+         SPARKTLS.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
+      end;
 
       --  Generate ephemeral P-256 keypair
       declare
@@ -140,7 +139,7 @@ is
          HC.Legacy_Session_ID := Legacy_Session_ID;
       end;
 
-      PK_Bytes := SPARKNaCl.Cryptobox.Serialize (PK);
+      --  PK_Bytes already set by X25519.Scalar_Mult above
 
       --  Allocate buffer for ClientHello body
       Buf := new RBT.Bytes'(1 .. RBT.Index (RFLX_Main_Size) => 0);

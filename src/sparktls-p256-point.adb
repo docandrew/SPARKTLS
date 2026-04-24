@@ -4,8 +4,19 @@
 package body SPARKTLS.P256.Point with
    SPARK_Mode => On
 is
+   --  Curve parameter b in Montgomery representation.
+   --  b = 0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B
+   --  b_mont = b * R mod p where R = 2^256
+   P256_B : constant P256_FE :=
+     (16#D89CDF6229C4BDDF#,
+      16#ACF005CD78843090#,
+      16#E5A220ABF7212ED6#,
+      16#DC30061D04874834#);
+
    --  Precomputed window: k*G for k = 1..15
-   --  Each entry is 18 U32 values: 9 for X, 9 for Y (affine, z=1)
+   --  Each entry is 18 U32 values: 9 for X, 9 for Y (affine, 30-bit limbs)
+   --  These are in the legacy 30-bit representation and are converted
+   --  to Montgomery P256_FE at lookup time.
    type Gwin_Entry is array (0 .. 17) of U32;
    type Gwin_Table is array (0 .. 14) of Gwin_Entry;
 
@@ -103,6 +114,8 @@ is
 
    ---------------------------------------------------------------
    --  Constant-time table lookup for Gwin
+   --  Table is in legacy 30-bit limb format; convert to Montgomery
+   --  P256_FE at lookup time.
    ---------------------------------------------------------------
 
    procedure Lookup_Gwin
@@ -111,19 +124,33 @@ is
    is
       XY : array (0 .. 17) of U32 := (others => 0);
       M  : U32;
+      Tmp_Limbs : P256_Limbs;
+      Tmp_Bytes : Byte_Seq (0 .. 31);
    begin
+      --  Constant-time selection from table
       for K in 0 .. 14 loop
          M := 0 - CT_EQ (Idx, U32 (K) + 1);
          for U in 0 .. 17 loop
             XY (U) := XY (U) or (M and Gwin (K) (U));
          end loop;
       end loop;
+
+      --  Convert X from 30-bit limbs to Montgomery FE
       for I in Limb_Index loop
-         T.X (I) := XY (Integer (I));
-         T.Y (I) := XY (Integer (I) + 9);
+         Tmp_Limbs (I) := XY (Integer (I));
       end loop;
-      T.Z := FE_Zero;
-      T.Z (0) := 1;
+      LE30_To_BE8 (Tmp_Bytes, Tmp_Limbs);
+      Bytes_To_FE (T.X, Tmp_Bytes);
+
+      --  Convert Y from 30-bit limbs to Montgomery FE
+      for I in Limb_Index loop
+         Tmp_Limbs (I) := XY (Integer (I) + 9);
+      end loop;
+      LE30_To_BE8 (Tmp_Bytes, Tmp_Limbs);
+      Bytes_To_FE (T.Y, Tmp_Bytes);
+
+      --  Affine point: z = 1
+      T.Z := FE_One;
    end Lookup_Gwin;
 
    ---------------------------------------------------------------
@@ -131,7 +158,7 @@ is
    ---------------------------------------------------------------
 
    procedure P256_Double (Q : in out P256_Jacobian) is
-      T1, T2, T3, T4 : P256_Limbs;
+      T1, T2, T3, T4 : P256_FE;
    begin
       --  z^2 in T1
       Square_F256 (T1, Q.Z);
@@ -177,8 +204,8 @@ is
       P2  : in     P256_Jacobian;
       Ret :    out U32)
    is
-      T1, T2, T3, T4, T5, T6, T7 : P256_Limbs;
-      Dummy : U32;
+      T1, T2, T3, T4, T5, T6, T7 : P256_FE;
+      R64 : Unsigned_64;
    begin
       --  u1 = x1*z2^2 (in T1), s1 = y1*z2^3 (in T3)
       Square_F256 (T3, P2.Z);
@@ -195,11 +222,11 @@ is
       --  h = u2 - u1 (in T2), r = s2 - s1 (in T4)
       Sub_F256 (T2, T2, T1);
       Sub_F256 (T4, T4, T3);
-      Reduce_Final_F256 (T4, Dummy);
-      Ret := 0;
-      for I in Limb_Index loop
-         Ret := Ret or T4 (I);
-      end loop;
+
+      --  Check if r (T4) is nonzero — Montgomery zero is all-zero limbs
+      R64 := T4 (0) or T4 (1) or T4 (2) or T4 (3);
+      --  Fold 64-bit to 32-bit nonzero flag
+      Ret := U32 (R64 and 16#FFFF_FFFF#) or U32 (Shift_Right (R64, 32));
       Ret := Shift_Right ((Ret or (0 - Ret)), 31);
 
       --  u1*h^2 (in T6), h^3 (in T5)
@@ -233,8 +260,8 @@ is
       P2  : in     P256_Jacobian;
       Ret :    out U32)
    is
-      T1, T2, T3, T4, T5, T6, T7 : P256_Limbs;
-      Dummy : U32;
+      T1, T2, T3, T4, T5, T6, T7 : P256_FE;
+      R64 : Unsigned_64;
    begin
       --  u1 = x1 (in T1), s1 = y1 (in T3)
       T1 := P1.X;
@@ -249,11 +276,11 @@ is
       --  h = u2 - u1 (in T2), r = s2 - s1 (in T4)
       Sub_F256 (T2, T2, T1);
       Sub_F256 (T4, T4, T3);
-      Reduce_Final_F256 (T4, Dummy);
-      Ret := 0;
-      for I in Limb_Index loop
-         Ret := Ret or T4 (I);
-      end loop;
+
+      --  Check if r (T4) is nonzero — Montgomery zero is all-zero limbs
+      R64 := T4 (0) or T4 (1) or T4 (2) or T4 (3);
+      --  Fold 64-bit to 32-bit nonzero flag
+      Ret := U32 (R64 and 16#FFFF_FFFF#) or U32 (Shift_Right (R64, 32));
       Ret := Shift_Right ((Ret or (0 - Ret)), 31);
 
       --  u1*h^2 (in T6), h^3 (in T5)
@@ -282,8 +309,7 @@ is
    ---------------------------------------------------------------
 
    procedure P256_To_Affine (P : in out P256_Jacobian) is
-      T1, T2 : P256_Limbs;
-      Dummy  : U32;
+      T1, T2 : P256_FE;
    begin
       --  Compute z^(2^31-1) via square-and-multiply
       T1 := P.Z;
@@ -311,12 +337,9 @@ is
       Mul_F256 (P.X, T1, P.X);
       Mul_F256 (T1, T1, T2);
       Mul_F256 (P.Y, T1, P.Y);
-      Reduce_Final_F256 (P.X, Dummy);
-      Reduce_Final_F256 (P.Y, Dummy);
 
       --  z := z * (1/z) = 1 (or 0 if z was 0)
       Mul_F256 (P.Z, P.Z, T2);
-      Reduce_Final_F256 (P.Z, Dummy);
    end P256_To_Affine;
 
    ---------------------------------------------------------------
@@ -328,18 +351,13 @@ is
       Src   : in     Byte_Seq;
       Valid :    out U32)
    is
-      TX, TY, T1, T2 : P256_Limbs;
+      TX, TY, T1, T2 : P256_FE;
       Bad   : U32;
-      Dummy : U32;
    begin
       Bad := CT_NEQ (U32 (Src (0)), 16#04#);
 
-      BE8_To_LE30 (TX, Src (1 .. 32));
-      BE8_To_LE30 (TY, Src (33 .. 64));
-      Reduce_Final_F256 (TX, Dummy);
-      Bad := Bad or Dummy;
-      Reduce_Final_F256 (TY, Dummy);
-      Bad := Bad or Dummy;
+      Bytes_To_FE (TX, Src (1 .. 32));
+      Bytes_To_FE (TY, Src (33 .. 64));
 
       --  Check curve equation: y^2 = x^3 - 3x + b
       Square_F256 (T1, TX);
@@ -350,15 +368,15 @@ is
       Sub_F256 (T1, T1, TX);
       Add_F256 (T1, T1, P256_B);
       Sub_F256 (T1, T1, T2);
-      Reduce_Final_F256 (T1, Dummy);
-      for I in Limb_Index loop
-         Bad := Bad or T1 (I);
-      end loop;
+
+      --  Check if T1 is zero (curve equation satisfied)
+      if not FE_Is_Zero (T1) then
+         Bad := Bad or 1;
+      end if;
 
       P.X := TX;
       P.Y := TY;
-      P.Z := FE_Zero;
-      P.Z (0) := 1;
+      P.Z := FE_One;
       Valid := CT_EQ (Bad, 0);
    end P256_Decode;
 
@@ -372,8 +390,8 @@ is
    is
    begin
       Dst (0) := 16#04#;
-      LE30_To_BE8 (Dst (1 .. 32), P.X);
-      LE30_To_BE8 (Dst (33 .. 64), P.Y);
+      FE_To_Bytes (Dst (1 .. 32), P.X);
+      FE_To_Bytes (Dst (33 .. 64), P.Y);
    end P256_Encode;
 
    ---------------------------------------------------------------
@@ -494,16 +512,13 @@ is
 
       --  Final addition (may fail if PP = QQ)
       P256_Add (PP, QQ, T);
-      declare
-         ZZ : P256_Limbs := PP.Z;
-      begin
-         Reduce_Final_F256 (ZZ, Dummy);
+
+      --  Check if Z coordinate is zero
+      if FE_Is_Zero (PP.Z) then
+         Z := 1;
+      else
          Z := 0;
-         for I in Limb_Index loop
-            Z := Z or ZZ (I);
-         end loop;
-      end;
-      Z := CT_EQ (Z, 0);
+      end if;
 
       --  If Z=1 and T=0, then PP=QQ, use doubling instead
       P256_Double (QQ);

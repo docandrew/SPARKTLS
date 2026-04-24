@@ -236,7 +236,7 @@ is
       Tmp    : P256_Limbs;
       Started : Boolean := False;
    begin
-      Result := FE_One;
+      Result := (0 => 1, others => 0);
 
       for I in N32 range 0 .. 31 loop
          for Bit in reverse Natural range 0 .. 7 loop
@@ -378,7 +378,7 @@ is
       P256_Mulgen (Pt, Byte_Seq (K), 32);
       P256_To_Affine (Pt);
 
-      LE30_To_BE8 (RX, Pt.X);
+      FE_To_Bytes (RX, Pt.X);
       Scalar_From_Bytes (R_Limbs, ECDSA_Sig_Half (RX));
       if not Less_Than_Order (R_Limbs) then
          Sub_Order (Tmp, R_Limbs, N_Order, Borrow);

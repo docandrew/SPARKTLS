@@ -9,6 +9,11 @@ with SPARKTLS.P384.ECDSA;
 with SPARKTLS.X25519;
 with SPARKNaCl.Scalar;
 with SPARKTLS.BigNat;      use SPARKTLS.BigNat;
+with SPARKTLS.Fiat_P256;
+with SPARKTLS.Ed25519;
+with SPARKNaCl.Sign;
+pragma Warnings (Off, "use clause for package");
+pragma Warnings (Off, "has no effect");
 
 procedure Test_Crypto is
    Total : Natural := 0;
@@ -43,7 +48,7 @@ procedure Test_Crypto is
       Public_Key (D, Qx, Qy);
 
       --  Sign
-      Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
+      SPARKTLS.P384.ECDSA.Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
       Check ("P-384 Sign", Sign_OK);
       if not Sign_OK then return; end if;
       Put ("    s(0..5): ");
@@ -246,6 +251,196 @@ begin
          for I in N32 range 0 .. 5 loop Put (Q_Ours (I)'Image); end loop; New_Line;
          Put ("    Ref (0..5): ");
          for I in N32 range 0 .. 5 loop Put (Q_Ref (I)'Image); end loop; New_Line;
+      end if;
+   end;
+   Put_Line ("");
+
+   Put_Line ("--- Fiat P-256 ---");
+   declare
+      use SPARKTLS.Fiat_P256;
+      One_M : constant FE := FE_One;  --  Montgomery representation of 1
+      Zero_M : constant FE := FE_Zero;
+      R, S, T : FE;
+      B : Byte_Seq (0 .. 31);
+   begin
+      --  Test 1: from_montgomery(one_m) should give the integer 1
+      R := From_Montgomery (One_M);
+      Check ("Fiat P-256 from_monty(1_m) = 1",
+             R (0) = 1 and R (1) = 0 and R (2) = 0 and R (3) = 0);
+      if R (0) /= 1 or R (1) /= 0 then
+         Put_Line ("    Got:" & R (0)'Image & R (1)'Image & R (2)'Image & R (3)'Image);
+      end if;
+
+      --  Test 2: mul(one, one) = one
+      R := Mul (One_M, One_M);
+      Check ("Fiat P-256 mul(1, 1) = 1",
+             R = One_M);
+      if R /= One_M then
+         Put_Line ("    Got:" & R (0)'Image & R (1)'Image & R (2)'Image & R (3)'Image);
+      end if;
+
+      --  Test 3: add(one, one) then from_montgomery should give 2
+      R := Add (One_M, One_M);
+      S := From_Montgomery (R);
+      Check ("Fiat P-256 1 + 1 = 2",
+             S (0) = 2 and S (1) = 0 and S (2) = 0 and S (3) = 0);
+      if S (0) /= 2 then
+         Put_Line ("    Got:" & S (0)'Image & S (1)'Image);
+      end if;
+
+      --  Test 4: sub(one, one) = zero
+      R := Sub (One_M, One_M);
+      Check ("Fiat P-256 1 - 1 = 0",
+             R = Zero_M);
+
+      --  Test 5: to_montgomery(from_montgomery(one_m)) = one_m
+      R := From_Montgomery (One_M);
+      S := To_Montgomery (R);
+      Check ("Fiat P-256 to_monty(from_monty(x)) round-trip",
+             S = One_M);
+      if S /= One_M then
+         Put_Line ("    Got:" & S (0)'Image & S (1)'Image & S (2)'Image & S (3)'Image);
+      end if;
+
+      --  Test 6: sqr(one) = one
+      R := Sqr (One_M);
+      Check ("Fiat P-256 sqr(1) = 1",
+             R = One_M);
+
+      --  Test 7: to_bytes / from_bytes round-trip
+      To_Bytes (B, One_M);
+      R := From_Bytes (B);
+      Check ("Fiat P-256 to/from_bytes round-trip",
+             R = One_M);
+   end;
+   Put_Line ("");
+
+   Put_Line ("--- Ed25519 (Fiat) ---");
+   declare
+      Seed : constant Bytes_32 := (16#9d#, 16#61#, 16#b1#, 16#9d#,
+         16#ef#, 16#fd#, 16#5a#, 16#60#, 16#ba#, 16#84#, 16#4a#, 16#f4#,
+         16#92#, 16#ec#, 16#2c#, 16#c4#, 16#44#, 16#49#, 16#c5#, 16#69#,
+         16#7b#, 16#32#, 16#69#, 16#19#, 16#70#, 16#3b#, 16#ac#, 16#03#,
+         16#1c#, 16#ae#, 16#7f#, 16#60#);
+      PK : Bytes_32;
+      SK : Bytes_64;
+      --  Test message
+      Msg : constant Byte_Seq (0 .. 1) := (16#72#, 0);
+      SM  : Byte_Seq (0 .. 65);
+      M   : Byte_Seq (0 .. 65);
+      Valid : Boolean;
+      Msg_Len : I32;
+   begin
+      --  Generate keypair
+      SPARKTLS.Ed25519.Keypair (Seed, PK, SK);
+
+      --  Expected PK from RFC 8032 test vector 2:
+      --  d75a980182b10ab7d54bfed3c964073a0ee172f3daa3f4a18446b0b8d183f8e3 (test 1 seed)
+      --  Actually let's just test round-trip: sign then verify
+      Check ("Ed25519 keypair (PK not zero)",
+             Byte_Seq (PK) /= Byte_Seq (Bytes_32'(others => 0)));
+
+      --  Test: scalar=1 * G should give the encoded basepoint
+      declare
+         One_Scalar : Bytes_32 := (others => 0);
+         Result_PK : Bytes_32;
+         --  RFC 8032 encoded basepoint (y with x sign bit):
+         Expected_BP : constant Bytes_32 :=
+           (16#58#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#,
+            16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#,
+            16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#,
+            16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#, 16#66#);
+         D2 : Bytes_64;
+      begin
+         --  Hash a dummy seed to get the clamped scalar for "1*G"
+         --  Actually just test Pack(basepoint) directly
+         One_Scalar (0) := 1;
+         SPARKTLS.Ed25519.Keypair (One_Scalar, Result_PK, D2);
+         Put ("    1*G PK(0..7):  ");
+         for I in N32 range 0 .. 7 loop Put (Result_PK (I)'Image); end loop;
+         New_Line;
+      end;
+
+      --  Test: Scalar_Mult_Base matches Scalar_Mult(sk, 9)
+      declare
+         Test_SK : constant Bytes_32 := Seed;
+         PK_Edwards, PK_Montgomery : Bytes_32;
+         BP : constant Bytes_32 := (9, others => 0);
+      begin
+         SPARKTLS.X25519.Scalar_Mult_Base (PK_Edwards, Test_SK);
+         SPARKTLS.X25519.Scalar_Mult (PK_Montgomery, Test_SK, BP);
+         Check ("X25519 Scalar_Mult_Base matches Scalar_Mult",
+                Byte_Seq (PK_Edwards) = Byte_Seq (PK_Montgomery));
+         if Byte_Seq (PK_Edwards) /= Byte_Seq (PK_Montgomery) then
+            Put ("    Edwards(0..7): ");
+            for I in N32 range 0 .. 7 loop Put (PK_Edwards (I)'Image); end loop; New_Line;
+            Put ("    Montg.(0..7):  ");
+            for I in N32 range 0 .. 7 loop Put (PK_Montgomery (I)'Image); end loop; New_Line;
+         end if;
+      end;
+
+      --  Compare with SPARKNaCl's keypair
+      declare
+         NaCl_PK : SPARKNaCl.Sign.Signing_PK;
+         NaCl_SK : SPARKNaCl.Sign.Signing_SK;
+      begin
+         SPARKNaCl.Sign.Keypair (Seed, NaCl_PK, NaCl_SK);
+         Check ("Ed25519 PK matches SPARKNaCl",
+                Byte_Seq (PK) = Byte_Seq (SPARKNaCl.Sign.Serialize (NaCl_PK)));
+         if Byte_Seq (PK) /= Byte_Seq (SPARKNaCl.Sign.Serialize (NaCl_PK)) then
+            Put ("    Ours(0..7):  ");
+            for I in N32 range 0 .. 7 loop Put (PK (I)'Image); end loop; New_Line;
+            Put ("    NaCl(0..7):  ");
+            declare
+               NPK : constant Bytes_32 := SPARKNaCl.Sign.Serialize (NaCl_PK);
+            begin
+               for I in N32 range 0 .. 7 loop Put (NPK (I)'Image); end loop; New_Line;
+            end;
+         end if;
+      end;
+
+      --  Sign with ours
+      SPARKTLS.Ed25519.Sign (SM, Msg (0 .. 0), SK);
+
+      --  Sign with SPARKNaCl for comparison
+      declare
+         NaCl_PK2 : SPARKNaCl.Sign.Signing_PK;
+         NaCl_SK2 : SPARKNaCl.Sign.Signing_SK;
+         NaCl_SM : Byte_Seq (0 .. 65);
+      begin
+         SPARKNaCl.Sign.Keypair (Seed, NaCl_PK2, NaCl_SK2);
+         SPARKNaCl.Sign.Sign (NaCl_SM, Msg (0 .. 0), NaCl_SK2);
+         Check ("Ed25519 sig matches SPARKNaCl",
+                Byte_Seq (SM (0 .. 63)) = Byte_Seq (NaCl_SM (0 .. 63)));
+         if Byte_Seq (SM (0 .. 63)) /= Byte_Seq (NaCl_SM (0 .. 63)) then
+            Put ("    Ours(0..7):  ");
+            for I in N32 range 0 .. 7 loop Put (SM (I)'Image); end loop; New_Line;
+            Put ("    NaCl(0..7):  ");
+            for I in N32 range 0 .. 7 loop Put (NaCl_SM (I)'Image); end loop; New_Line;
+            Put ("    Ours(32..39):");
+            for I in N32 range 32 .. 39 loop Put (SM (I)'Image); end loop; New_Line;
+            Put ("    NaCl(32..39):");
+            for I in N32 range 32 .. 39 loop Put (NaCl_SM (I)'Image); end loop; New_Line;
+         end if;
+      end;
+
+      --  Verify our signature with SPARKNaCl
+      declare
+         NaCl_PK3 : SPARKNaCl.Sign.Signing_PK;
+         NaCl_M : Byte_Seq (0 .. 65);
+         NaCl_OK : Boolean;
+         NaCl_Len : I32;
+      begin
+         SPARKNaCl.Sign.PK_From_Bytes (PK, NaCl_PK3);
+         SPARKNaCl.Sign.Open (NaCl_M, NaCl_OK, NaCl_Len, SM, NaCl_PK3);
+         Check ("Ed25519 our sig verified by SPARKNaCl", NaCl_OK);
+      end;
+
+      --  Verify our signature with our code
+      SPARKTLS.Ed25519.Open (M, Valid, Msg_Len, SM, PK);
+      Check ("Ed25519 sign/verify round-trip", Valid);
+      if not Valid then
+         Put_Line ("    Our verify of our sig failed!");
       end if;
    end;
    Put_Line ("");

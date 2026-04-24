@@ -1,5 +1,4 @@
-with SPARKNaCl.Sign;
-with SPARKNaCl.Sign.Utils;
+with SPARKTLS.Ed25519;
 with SPARKTLS.PEM;           use SPARKTLS.PEM;
 with SPARKTLS.Cert_Verify;
 
@@ -208,17 +207,15 @@ is
       then
          declare
             Seed : Bytes_32;
-            SK   : SPARKNaCl.Sign.Signing_SK;
-            PK   : SPARKNaCl.Sign.Signing_PK;
-            Full : Bytes_64;
+            SK   : Bytes_64;
+            PK   : Bytes_32;
          begin
             for I in N32 range 0 .. 31 loop
                Seed (I) := SPARKNaCl.Byte (DER (16 + X509.N32 (I)));
             end loop;
-            SPARKNaCl.Sign.Keypair (Seed, PK, SK);
-            Full := SPARKNaCl.Sign.Serialize (SK);
+            SPARKTLS.Ed25519.Keypair (Seed, PK, SK);
             if Key_Out'Length >= 64 then
-               Key_Out (Key_Out'First .. Key_Out'First + 63) := Full;
+               Key_Out (Key_Out'First .. Key_Out'First + 63) := SK;
                Key_Len := 64;
                OK := True;
             end if;

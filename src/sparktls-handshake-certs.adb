@@ -3,8 +3,7 @@ with Interfaces; use Interfaces;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
-with SPARKNaCl.Sign;
-with SPARKNaCl.Sign.Utils;
+with SPARKTLS.Ed25519;
 with SPARKTLS.P256.ECDSA;
 with SPARKTLS.P384.ECDSA;
 with SPARKTLS.RSA;
@@ -260,10 +259,10 @@ is
             declare
                SM_Len : constant N32 := 64 + Content_Len;
                SM     : Byte_Seq (0 .. SM_Len - 1);
-               SK     : SPARKNaCl.Sign.Signing_SK;
+               SK     : Bytes_64;
             begin
-               SPARKNaCl.Sign.Utils.Construct (Id.Ed25519_Key, SK);
-               SPARKNaCl.Sign.Sign (SM, Content, SK);
+               SK := Id.Ed25519_Key;
+               SPARKTLS.Ed25519.Sign (SM, Content, SK);
                Sig (0 .. 63) := SM (0 .. 63);
                Sig_OK := True;
             end;

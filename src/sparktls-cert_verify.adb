@@ -3,7 +3,7 @@ with Interfaces; use Interfaces;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
-with SPARKNaCl.Sign;
+with SPARKTLS.Ed25519;
 with SPARKTLS.RSA;
 with SPARKTLS.P256.ECDSA;
 with SPARKTLS.P384.ECDSA;
@@ -345,7 +345,6 @@ is
                   SM     : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
                   M      : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
                   PK_B   : Bytes_32 := (others => 0);
-                  CV_PK  : SPARKNaCl.Sign.Signing_PK;
                   Verify_OK : Boolean;
                   Verify_Len : I32;
                begin
@@ -361,14 +360,13 @@ is
                   for I in 0 .. 31 loop
                      PK_B (N32 (I)) := Byte (PK_Data (X509.N32 (I)));
                   end loop;
-                  SPARKNaCl.Sign.PK_From_Bytes (PK_B, CV_PK);
 
-                  SPARKNaCl.Sign.Open
+                  SPARKTLS.Ed25519.Open
                     (M      => M,
-                     Status => Verify_OK,
-                     MLen   => Verify_Len,
+                     Valid  => Verify_OK,
+                     Msg_Len => Verify_Len,
                      SM     => SM,
-                     PK     => CV_PK);
+                     PK     => PK_B);
 
                   return Verify_OK;
                end;
@@ -1290,7 +1288,6 @@ is
                SM        : Byte_Seq (0 .. SM_Len - 1);
                M         : Byte_Seq (0 .. SM_Len - 1);
                PK_Bytes  : Bytes_32;
-               CV_PK     : SPARKNaCl.Sign.Signing_PK;
                OK        : Boolean;
                Len       : I32;
             begin
@@ -1299,8 +1296,7 @@ is
                for I in 0 .. 31 loop
                   PK_Bytes (N32 (I)) := Byte (PK_Data (X509.N32 (I)));
                end loop;
-               SPARKNaCl.Sign.PK_From_Bytes (PK_Bytes, CV_PK);
-               SPARKNaCl.Sign.Open (M, OK, Len, SM, CV_PK);
+               SPARKTLS.Ed25519.Open (M, OK, Len, SM, PK_Bytes);
                return OK;
             end;
 

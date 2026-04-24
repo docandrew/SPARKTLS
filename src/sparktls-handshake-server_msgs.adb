@@ -1,7 +1,5 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
-with SPARKNaCl.Cryptobox;
-with SPARKNaCl.Scalar;
 with SPARKTLS.X25519;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with RFLX.TLS_Handshake.Client_Hello;
@@ -760,9 +758,6 @@ is
       use RFLX.TLS_Handshake.Server_Hello;
       use RFLX.TLS_Common;
 
-      SK : SPARKNaCl.Cryptobox.Secret_Key;
-      PK : SPARKNaCl.Cryptobox.Public_Key;
-
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       function To_Suite_Enum (Val : Unsigned_16)
@@ -804,15 +799,19 @@ is
       if HC.Client_Has_X25519 then
          HC.Selected_Group := 16#001D#;
          declare
-            PK_X : SPARKNaCl.Cryptobox.Public_Key;
+            PK_Bytes : Bytes_32;
+            Basepoint : constant Bytes_32 := (9, others => 0);
          begin
             Gen_Random (HC.Local_SK);
-            SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK_X, SK);
+            --  Public key = Local_SK * basepoint (Fiat X25519)
+            declare
+               Basepoint : constant Bytes_32 := (9, others => 0);
+            begin
+               SPARKTLS.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
+            end;
+            --  Shared secret = Local_SK * Peer_PK
             SPARKTLS.X25519.Scalar_Mult
               (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
-            declare
-               PK_Bytes : constant Bytes_32 :=
-                  SPARKNaCl.Cryptobox.Serialize (PK_X);
             begin
                --  group(2) + key_len(2) + key(32) = 36
                KS_Raw (0) := 0; KS_Raw (1) := 16#1D#;  --  x25519

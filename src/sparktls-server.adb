@@ -5,7 +5,7 @@ with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.MAC;              use SPARKNaCl.MAC;
 with SPARKNaCl.HKDF;             use SPARKNaCl.HKDF;
 
-with SPARKNaCl.Sign;
+with SPARKTLS.Ed25519;
 with SPARKTLS.Records;      use SPARKTLS.Records;
 with SPARKTLS.Cert_Verify;  use SPARKTLS.Cert_Verify;
 with SPARKTLS.Handshake;
@@ -1805,7 +1805,6 @@ is
                                     M  : Byte_Seq (0 .. SM_Len - 1)
                                        := (others => 0);
                                     PK_Bytes : Bytes_32 := (others => 0);
-                                    CV_PK : SPARKNaCl.Sign.Signing_PK;
                                     V_OK : Boolean;
                                     V_Len : I32;
                                  begin
@@ -1822,10 +1821,8 @@ is
                                        end loop;
                                     end;
 
-                                    SPARKNaCl.Sign.PK_From_Bytes
-                                      (PK_Bytes, CV_PK);
-                                    SPARKNaCl.Sign.Open
-                                      (M, V_OK, V_Len, SM, CV_PK);
+                                    SPARKTLS.Ed25519.Open
+                                      (M, V_OK, V_Len, SM, PK_Bytes);
                                     Verified := V_OK;
                                  end;
                               end if;

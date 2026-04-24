@@ -10,9 +10,9 @@ package SPARKTLS.P256.Point with
    SPARK_Mode => On
 is
    type P256_Jacobian is record
-      X : P256_Limbs := FE_Zero;
-      Y : P256_Limbs := FE_Zero;
-      Z : P256_Limbs := FE_Zero;
+      X : P256_FE := FE_Zero;
+      Y : P256_FE := FE_Zero;
+      Z : P256_FE := FE_Zero;
    end record;
 
    --  Identity point (at infinity)
