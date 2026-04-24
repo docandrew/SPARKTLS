@@ -13,89 +13,80 @@ is
       16#E5A220ABF7212ED6#,
       16#DC30061D04874834#);
 
-   --  Precomputed window: k*G for k = 1..15
-   --  Each entry is 18 U32 values: 9 for X, 9 for Y (affine, 30-bit limbs)
-   --  These are in the legacy 30-bit representation and are converted
-   --  to Montgomery P256_FE at lookup time.
-   type Gwin_Entry is array (0 .. 17) of U32;
-   type Gwin_Table is array (0 .. 14) of Gwin_Entry;
+   --  Comb precomputed table for generator multiplication.
+   --  T[k] = sum_{j=0}^{3} bit_j(k) * 2^(64j) * G  for k=0..15
+   --  Points stored in Montgomery affine form (x_mont, y_mont).
+   --  Computed from NIST P-256 generator, verified on curve.
 
-   Gwin : constant Gwin_Table := (
-     0 => (16#1898C296#, 16#1284E517#, 16#1EB33A0F#, 16#00DF604B#,
-           16#2440F277#, 16#339B958E#, 16#04247F8B#, 16#347CB84B#,
-           16#00006B17#, 16#37BF51F5#, 16#2ED901A0#, 16#3315ECEC#,
-           16#338CD5DA#, 16#0F9E162B#, 16#1FAD29F0#, 16#27F9B8EE#,
-           16#10B8BF86#, 16#00004FE3#),
-     1 => (16#07669978#, 16#182D23F1#, 16#3F21B35A#, 16#225A789D#,
-           16#351AC3C0#, 16#08E00C12#, 16#34F7E8A5#, 16#1EC62340#,
-           16#00007CF2#, 16#227873D1#, 16#3812DE74#, 16#0E982299#,
-           16#1F6B798F#, 16#3430DBBA#, 16#366B1A7D#, 16#2D040293#,
-           16#154436E3#, 16#00000777#),
-     2 => (16#06E7FD6C#, 16#2D05986F#, 16#3ADA985F#, 16#31ADC87B#,
-           16#0BF165E6#, 16#1FBE5475#, 16#30A44C8F#, 16#3934698C#,
-           16#00005ECB#, 16#227D5032#, 16#29E6C49E#, 16#04FB83D9#,
-           16#0AAC0D8E#, 16#24A2ECD8#, 16#2C1B3869#, 16#0FF7E374#,
-           16#19031266#, 16#00008734#),
-     3 => (16#2B030852#, 16#024C0911#, 16#05596EF5#, 16#07F8B6DE#,
-           16#262BD003#, 16#3779967B#, 16#08FBBA02#, 16#128D4CB4#,
-           16#0000E253#, 16#184ED8C6#, 16#310B08FC#, 16#30EE0055#,
-           16#3F25B0FC#, 16#062D764E#, 16#3FB97F6A#, 16#33CC719D#,
-           16#15D69318#, 16#0000E0F1#),
-     4 => (16#03D033ED#, 16#05552837#, 16#35BE5242#, 16#2320BF47#,
-           16#268FDFEF#, 16#13215821#, 16#140D2D78#, 16#02DE9454#,
-           16#00005159#, 16#3DA16DA4#, 16#0742ED13#, 16#0D80888D#,
-           16#004BC035#, 16#0A79260D#, 16#06FCDAFE#, 16#2727D8AE#,
-           16#1F6A2412#, 16#0000E0C1#),
-     5 => (16#3C2291A9#, 16#1AC2ABA4#, 16#3B215B4C#, 16#131D037A#,
-           16#17DDE302#, 16#0C90B2E2#, 16#0602C92D#, 16#05CA9DA9#,
-           16#0000B01A#, 16#0FC77FE2#, 16#35F1214E#, 16#07E16BDF#,
-           16#003DDC07#, 16#2703791C#, 16#3038B7EE#, 16#3DAD56FE#,
-           16#041D0C8D#, 16#0000E85C#),
-     6 => (16#3187B2A3#, 16#0018A1C0#, 16#00FEF5B3#, 16#3E7E2E2A#,
-           16#01FB607E#, 16#2CC199F0#, 16#37B4625B#, 16#0EDBE82F#,
-           16#00008E53#, 16#01F400B4#, 16#15786A1B#, 16#3041B21C#,
-           16#31CD8CF2#, 16#35900053#, 16#1A7E0E9B#, 16#318366D0#,
-           16#076F780C#, 16#000073EB#),
-     7 => (16#1B6FB393#, 16#13767707#, 16#3CE97DBB#, 16#348E2603#,
-           16#354CADC1#, 16#09D0B4EA#, 16#1B053404#, 16#1DE76FBA#,
-           16#000062D9#, 16#0F09957E#, 16#295029A8#, 16#3E76A78D#,
-           16#3B547DAE#, 16#27CEE0A2#, 16#0575DC45#, 16#1D8244FF#,
-           16#332F647A#, 16#0000AD5A#),
-     8 => (16#10949EE0#, 16#1E7A292E#, 16#06DF8B3D#, 16#02B2E30B#,
-           16#31F8729E#, 16#24E35475#, 16#30B71878#, 16#35EDBFB7#,
-           16#0000EA68#, 16#0DD048FA#, 16#21688929#, 16#0DE823FE#,
-           16#1C53FAA9#, 16#0EA0C84D#, 16#052A592A#, 16#1FCE7870#,
-           16#11325CB2#, 16#00002A27#),
-     9 => (16#04C5723F#, 16#30D81A50#, 16#048306E4#, 16#329B11C7#,
-           16#223FB545#, 16#085347A8#, 16#2993E591#, 16#1B5ACA8E#,
-           16#0000CEF6#, 16#04AF0773#, 16#28D2EEA9#, 16#2751EEEC#,
-           16#037B4A7F#, 16#3B4C1059#, 16#08F37674#, 16#2AE906E1#,
-           16#18A88A6A#, 16#00008786#),
-     10 => (16#34BC21D1#, 16#0CCE474D#, 16#15048BF4#, 16#1D0BB409#,
-            16#021CDA16#, 16#20DE76C3#, 16#34C59063#, 16#04EDE20E#,
-            16#00003ED1#, 16#282A3740#, 16#0BE3BBF3#, 16#29889DAE#,
-            16#03413697#, 16#34C68A09#, 16#210EBE93#, 16#0C8A224C#,
-            16#0826B331#, 16#00009099#),
-     11 => (16#0624E3C4#, 16#140317BA#, 16#2F82C99D#, 16#260C0A2C#,
-            16#25D55179#, 16#194DCC83#, 16#3D95E462#, 16#356F6A05#,
-            16#0000741D#, 16#0D4481D3#, 16#2657FC8B#, 16#1BA5CA71#,
-            16#3AE44B0D#, 16#07B1548E#, 16#0E0D5522#, 16#05FDC567#,
-            16#2D1AA70E#, 16#00000770#),
-     12 => (16#06072C01#, 16#23857675#, 16#1EAD58A9#, 16#0B8A12D9#,
-            16#1EE2FC79#, 16#0177CB61#, 16#0495A618#, 16#20DEB82B#,
-            16#0000177C#, 16#2FC7BFD8#, 16#310EEF8B#, 16#1FB4DF39#,
-            16#3B8530E8#, 16#0F4E7226#, 16#0246B6D0#, 16#2A558A24#,
-            16#163353AF#, 16#000063BB#),
-     13 => (16#24D2920B#, 16#1C249DCC#, 16#2069C5E5#, 16#09AB2F9E#,
-            16#36DF3CF1#, 16#1991FD0C#, 16#062B97A7#, 16#1E80070E#,
-            16#000054E7#, 16#20D0B375#, 16#2E9F20BD#, 16#35090081#,
-            16#1C7A9DDC#, 16#22E7C371#, 16#087E3016#, 16#03175421#,
-            16#3C6ECA7D#, 16#0000F599#),
-     14 => (16#259B9D5F#, 16#0D9A318F#, 16#23A0EF16#, 16#00EBE4B7#,
-            16#088265AE#, 16#2CDE2666#, 16#2BAE7ADF#, 16#1371A5C6#,
-            16#0000F045#, 16#0D034F36#, 16#1F967378#, 16#1B5FA3F4#,
-            16#0EC8739D#, 16#1643E62A#, 16#1653947E#, 16#22D1F4E6#,
-            16#0FB8D64B#, 16#0000B5B9#));
+   type Comb_Point is record
+      X : P256_FE;
+      Y : P256_FE;
+   end record;
+   type Comb_Table_T is array (0 .. 15) of Comb_Point;
+
+   Comb_G : constant Comb_Table_T := (
+     0 => (X => (0, 0, 0, 0),
+           Y => (0, 0, 0, 0)),  --  infinity
+     1 => (X => (16#79E730D418A9143C#, 16#75BA95FC5FEDB601#,
+                  16#79FB732B77622510#, 16#18905F76A53755C6#),
+           Y => (16#DDF25357CE95560A#, 16#8B4AB8E4BA19E45C#,
+                  16#D2E88688DD21F325#, 16#8571FF1825885D85#)),
+     2 => (X => (16#4F922FC516A0D2BB#, 16#0D5CC16C1A623499#,
+                  16#9241CF3A57C62C8B#, 16#2F5E6961FD1B667F#),
+           Y => (16#5C15C70BF5A01797#, 16#3D20B44D60956192#,
+                  16#04911B37071FDB52#, 16#F648F9168D6F0F7B#)),
+     3 => (X => (16#9E566847E137BBBC#, 16#E434469E8A6A0BEC#,
+                  16#B1C4276179D73463#, 16#5ABE0285133D0015#),
+           Y => (16#92AA837CC04C7DAB#, 16#573D9F4C43260C07#,
+                  16#0C93156278E6CC37#, 16#94BB725B6B6F7383#)),
+     4 => (X => (16#62A8C244BFE20925#, 16#91C19AC38FDCE867#,
+                  16#5A96A5D5DD387063#, 16#61D587D421D324F6#),
+           Y => (16#E87673A2A37173EA#, 16#2384800853778B65#,
+                  16#10F8441E05BAB43E#, 16#FA11FE124621EFBE#)),
+     5 => (X => (16#1C891F2B2CB19FFD#, 16#01BA8D5BB1923C23#,
+                  16#B6D03D678AC5CA8E#, 16#586EB04C1F13BEDC#),
+           Y => (16#0C35C6E527E8ED09#, 16#1E81A33C1819EDE2#,
+                  16#278FD6C056C652FA#, 16#19D5AC0870864F11#)),
+     6 => (X => (16#62577734D2B533D5#, 16#673B8AF6A1BDDDC0#,
+                  16#577E7C9AA79EC293#, 16#BB6DE651C3B266B1#),
+           Y => (16#E7E9303AB65259B3#, 16#D6A0AFD3D03A7480#,
+                  16#C5AC83D19B3CFC27#, 16#60B4619A5D18B99B#)),
+     7 => (X => (16#BD6A38E11AE5AA1C#, 16#B8B7652B49E73658#,
+                  16#0B130014EE5F87ED#, 16#9D0F27B2AEEBFFCD#),
+           Y => (16#CA9246317A730A55#, 16#9C955B2FDDBBC83A#,
+                  16#07C1DFE0AC019A71#, 16#244A566D356EC48D#)),
+     8 => (X => (16#56F8410EF4F8B16A#, 16#97241AFEC47B266A#,
+                  16#0A406B8E6D9C87C1#, 16#803F3E02CD42AB1B#),
+           Y => (16#7F0309A804DBEC69#, 16#A83B85F73BBAD05F#,
+                  16#C6097273AD8E197F#, 16#C097440E5067ADC1#)),
+     9 => (X => (16#846A56F2C379AB34#, 16#A8EE068B841DF8D1#,
+                  16#20314459176C68EF#, 16#F1AF32D5915F1F30#),
+           Y => (16#99C375315D75BD50#, 16#837CFFBAF72F67BC#,
+                  16#0613A41848D7723F#, 16#23D0F130E2D41C8B#)),
+    10 => (X => (16#ED93E225D5BE5A2B#, 16#6FE799835934F3C6#,
+                  16#4314092622626FFC#, 16#50BBB4D97990216A#),
+           Y => (16#378191C6E57EC63E#, 16#65422C40181DCDB2#,
+                  16#41A8099B0236E0F6#, 16#2B10011801FE49C3#)),
+    11 => (X => (16#FC68B5C59B391593#, 16#C385F5A2598270FC#,
+                  16#7144F3AAD19ADCBB#, 16#DD55899983FBAE0C#),
+           Y => (16#93B88B8E74B82FF4#, 16#D2E03C4071E734C9#,
+                  16#9A7A9EAF43C0322A#, 16#E6E4C551149D6041#)),
+    12 => (X => (16#5FE14BFE80EC21FE#, 16#F6CE116AC255BE82#,
+                  16#98BC5A072F4A5D67#, 16#FAD27148DB7E63AF#),
+           Y => (16#90C0B6AC29AB05B3#, 16#37A9A83C4E251AE6#,
+                  16#0A7DC875C2AADE7D#, 16#77387DE39F0E1A84#)),
+    13 => (X => (16#1E9ECC49A56C0DD7#, 16#A5CFFCD846086C74#,
+                  16#8F7A1408F505AECE#, 16#B37B85C0BEF0C47E#),
+           Y => (16#3596B6E4CC0E6A8F#, 16#FD6D4BBF6B388F23#,
+                  16#ABA453FAC39CEF4E#, 16#9C135AC8F9F628D5#)),
+    14 => (X => (16#0A1C729495C8F8BE#, 16#2961C4803BF362BF#,
+                  16#9E418403DF63D4AC#, 16#C109F9CB91ECE900#),
+           Y => (16#C2D095D058945705#, 16#B9083D96DDEB85C0#,
+                  16#84692B8D7A40449B#, 16#9BC3344F2EEE1EE1#)),
+    15 => (X => (16#0D5AE35642913074#, 16#55491B2748A542B1#,
+                  16#469CA665B310732A#, 16#29591D525F1A4CC1#),
+           Y => (16#E76F5B6BB84F983F#, 16#BE7EEF419F5F84E1#,
+                  16#1200D49680BAA189#, 16#6376551F18EF332C#)));
 
    ---------------------------------------------------------------
    --  Constant-time conditional copy of Jacobian points
@@ -113,86 +104,81 @@ is
    end CT_Copy_Point;
 
    ---------------------------------------------------------------
-   --  Constant-time table lookup for Gwin
-   --  Table is in legacy 30-bit limb format; convert to Montgomery
-   --  P256_FE at lookup time.
+   --  Constant-time lookup in the comb table (16 entries).
+   --  Returns the affine point as a Jacobian (Z = 1, or Z = 0
+   --  for the identity when Idx = 0).
    ---------------------------------------------------------------
 
-   procedure Lookup_Gwin
+   procedure Lookup_Comb
      (T   : out P256_Jacobian;
       Idx : in  U32)
    is
-      XY : array (0 .. 17) of U32 := (others => 0);
-      M  : U32;
-      Tmp_Limbs : P256_Limbs;
-      Tmp_Bytes : Byte_Seq (0 .. 31);
+      M : U32;
    begin
-      --  Constant-time selection from table
-      for K in 0 .. 14 loop
-         M := 0 - CT_EQ (Idx, U32 (K) + 1);
-         for U in 0 .. 17 loop
-            XY (U) := XY (U) or (M and Gwin (K) (U));
-         end loop;
+      T := (X => FE_Zero, Y => FE_One, Z => FE_Zero);  --  identity
+
+      for K in 1 .. 15 loop
+         M := 0 - CT_EQ (Idx, U32 (K));
+         CT_Copy (M, T.X, Comb_G (K).X);
+         CT_Copy (M, T.Y, Comb_G (K).Y);
       end loop;
 
-      --  Convert X from 30-bit limbs to Montgomery FE
-      for I in Limb_Index loop
-         Tmp_Limbs (I) := XY (Integer (I));
-      end loop;
-      LE30_To_BE8 (Tmp_Bytes, Tmp_Limbs);
-      Bytes_To_FE (T.X, Tmp_Bytes);
-
-      --  Convert Y from 30-bit limbs to Montgomery FE
-      for I in Limb_Index loop
-         Tmp_Limbs (I) := XY (Integer (I) + 9);
-      end loop;
-      LE30_To_BE8 (Tmp_Bytes, Tmp_Limbs);
-      Bytes_To_FE (T.Y, Tmp_Bytes);
-
-      --  Affine point: z = 1
+      --  Z = 1 for non-zero index (affine point), 0 for identity
       T.Z := FE_One;
-   end Lookup_Gwin;
+      M := 0 - CT_EQ (Idx, 0);
+      CT_Copy (M, T.Z, FE_Zero);
+   end Lookup_Comb;
 
    ---------------------------------------------------------------
    --  Point doubling
    ---------------------------------------------------------------
 
    procedure P256_Double (Q : in out P256_Jacobian) is
-      T1, T2, T3, T4 : P256_FE;
+      --  EFD dbl-2001-b formula optimized for a = -3 (3M + 5S)
+      --  Saves 1 Mul vs generic BearSSL formula (4M + 4S) by computing
+      --  Z' = (Y+Z)^2 - gamma - delta instead of Z' = 2*Y*Z.
+      Dlt, Gamma, Beta, Alpha : P256_FE;
+      T1, T2 : P256_FE;
    begin
-      --  z^2 in T1
-      Square_F256 (T1, Q.Z);
+      --  delta = Z^2
+      Square_F256 (Dlt, Q.Z);                           -- 1S
 
-      --  x+z^2 in T2, x-z^2 in T1
-      Add_F256 (T2, Q.X, T1);
-      Sub_F256 (T1, Q.X, T1);
+      --  gamma = Y^2
+      Square_F256 (Gamma, Q.Y);                           -- 2S
 
-      --  3*(x+z^2)*(x-z^2) in T1  (m)
-      Mul_F256 (T3, T1, T2);
-      Add_F256 (T1, T3, T3);
-      Add_F256 (T1, T3, T1);
+      --  beta = X * gamma
+      Mul_F256 (Beta, Q.X, Gamma);                        -- 1M
 
-      --  2*y^2 in T3, 4*x*y^2 in T2  (s)
-      Square_F256 (T3, Q.Y);
-      Add_F256 (T3, T3, T3);
-      Mul_F256 (T2, Q.X, T3);
-      Add_F256 (T2, T2, T2);
+      --  alpha = 3 * (X - delta) * (X + delta)   [uses a = -3]
+      Sub_F256 (T1, Q.X, Dlt);
+      Add_F256 (T2, Q.X, Dlt);
+      Mul_F256 (Alpha, T1, T2);                           -- 2M
+      Add_F256 (T1, Alpha, Alpha);
+      Add_F256 (Alpha, Alpha, T1);                -- alpha = 3 * (X^2 - Z^4)
 
-      --  x' = m^2 - 2*s
-      Square_F256 (Q.X, T1);
-      Sub_F256 (Q.X, Q.X, T2);
-      Sub_F256 (Q.X, Q.X, T2);
+      --  X' = alpha^2 - 8*beta
+      Add_F256 (T1, Beta, Beta);                  -- 2*beta
+      Add_F256 (T1, T1, T1);                      -- 4*beta
+      Add_F256 (T2, T1, T1);                      -- 8*beta
+      Square_F256 (Q.X, Alpha);                           -- 3S
+      Sub_F256 (Q.X, Q.X, T2);                   -- X' = alpha^2 - 8*beta
 
-      --  z' = 2*y*z
-      Mul_F256 (T4, Q.Y, Q.Z);
-      Add_F256 (Q.Z, T4, T4);
+      --  Z' = (Y + Z)^2 - gamma - delta   [saves 1 Mul vs 2*Y*Z]
+      Add_F256 (T1, Q.Y, Q.Z);
+      Square_F256 (Q.Z, T1);                              -- 4S
+      Sub_F256 (Q.Z, Q.Z, Gamma);
+      Sub_F256 (Q.Z, Q.Z, Dlt);
 
-      --  y' = m*(s - x') - 8*y^4
-      Sub_F256 (T2, T2, Q.X);
-      Mul_F256 (Q.Y, T1, T2);
-      Square_F256 (T4, T3);
-      Add_F256 (T4, T4, T4);
-      Sub_F256 (Q.Y, Q.Y, T4);
+      --  Y' = alpha * (4*beta - X') - 8*gamma^2
+      Add_F256 (T1, Beta, Beta);                  -- 2*beta
+      Add_F256 (T1, T1, T1);                      -- 4*beta
+      Sub_F256 (T1, T1, Q.X);                    -- 4*beta - X'
+      Mul_F256 (Q.Y, Alpha, T1);                          -- 3M
+      Square_F256 (T2, Gamma);                             -- 5S
+      Add_F256 (T2, T2, T2);                      -- 2*gamma^2
+      Add_F256 (T2, T2, T2);                      -- 4*gamma^2
+      Add_F256 (T2, T2, T2);                      -- 8*gamma^2
+      Sub_F256 (Q.Y, Q.Y, T2);
    end P256_Double;
 
    ---------------------------------------------------------------
@@ -308,38 +294,46 @@ is
    --  Convert to affine via modular inversion z^(p-2)
    ---------------------------------------------------------------
 
-   procedure P256_To_Affine (P : in out P256_Jacobian) is
+   --  Modular inversion in GF(p): D := A^(p-2) mod p
+   procedure P256_Inv (D : out P256_FE; A : in P256_FE) is
       T1, T2 : P256_FE;
    begin
-      --  Compute z^(2^31-1) via square-and-multiply
-      T1 := P.Z;
+      --  Compute a^(2^31-1) via square-and-multiply
+      T1 := A;
       for I in 0 .. 29 loop
          Square_F256 (T1, T1);
-         Mul_F256 (T1, T1, P.Z);
+         Mul_F256 (T1, T1, A);
       end loop;
 
       --  Main exponentiation loop for p-2
-      T2 := P.Z;
+      T2 := A;
       for I in 1 .. 255 loop
          Square_F256 (T2, T2);
          case I is
             when 31 | 190 | 221 | 252 =>
                Mul_F256 (T2, T2, T1);
             when 63 | 253 | 255 =>
-               Mul_F256 (T2, T2, P.Z);
+               Mul_F256 (T2, T2, A);
             when others =>
                null;
          end case;
       end loop;
+      D := T2;
+   end P256_Inv;
+
+   procedure P256_To_Affine (P : in out P256_Jacobian) is
+      ZI, T1 : P256_FE;
+   begin
+      P256_Inv (ZI, P.Z);
 
       --  x := x * (1/z)^2, y := y * (1/z)^3
-      Mul_F256 (T1, T2, T2);
+      Mul_F256 (T1, ZI, ZI);
       Mul_F256 (P.X, T1, P.X);
-      Mul_F256 (T1, T1, T2);
+      Mul_F256 (T1, T1, ZI);
       Mul_F256 (P.Y, T1, P.Y);
 
       --  z := z * (1/z) = 1 (or 0 if z was 0)
-      Mul_F256 (P.Z, P.Z, T2);
+      Mul_F256 (P.Z, P.Z, ZI);
    end P256_To_Affine;
 
    ---------------------------------------------------------------
@@ -449,7 +443,13 @@ is
    end P256_Mul;
 
    ---------------------------------------------------------------
-   --  Generator multiplication (4-bit window with precomputed table)
+   --  Generator multiplication using comb method with 4 teeth.
+   --
+   --  Scalar bits are arranged as 64 columns of 4 bits each,
+   --  where column i contains bits {i, i+64, i+128, i+192}.
+   --  Each column indexes into the 16-entry precomputed table.
+   --  Evaluation uses Horner's method: 63 doublings + 63 adds
+   --  instead of the old approach's 256 doublings + 64 adds.
    ---------------------------------------------------------------
 
    procedure P256_Mulgen
@@ -457,35 +457,63 @@ is
       X    : in  Byte_Seq;
       Xlen : in  N32)
    is
-      Q           : P256_Jacobian;
-      T, U        : P256_Jacobian;
-      QZ          : U32;
-      Bits, BNZ   : U32;
-      BX          : U32;
-      Dummy       : U32;
+      --  Zero-padded scalar (always 32 bytes, big-endian)
+      S : Byte_Seq (0 .. 31) := (others => 0);
+
+      Q       : P256_Jacobian;
+      T, U    : P256_Jacobian;
+      QZ      : U32;
+      Idx     : U32;
+      BNZ     : U32;
+      Dummy   : U32;
+      Bit_Pos : Natural;
+      B0, B1, B2, B3 : U32;
    begin
+      --  Copy scalar into zero-padded 32-byte buffer (right-aligned)
+      if Xlen <= 32 then
+         for I in 0 .. Xlen - 1 loop
+            S (32 - Xlen + I) := X (I);
+         end loop;
+      else
+         S := X (Xlen - 32 .. Xlen - 1);
+      end if;
+
       Q := (X => FE_Zero, Y => FE_Zero, Z => FE_Zero);
       QZ := 1;
 
-      for J in 0 .. Xlen - 1 loop
-         BX := U32 (X (J));
-         for K in 0 .. 1 loop
+      --  Process columns 63 downto 0
+      --  Column i extracts bit i from each 64-bit quarter:
+      --    b0 = bit i of quarter 3 (bytes 24..31, LSB quarter)
+      --    b1 = bit i of quarter 2 (bytes 16..23)
+      --    b2 = bit i of quarter 1 (bytes 8..15)
+      --    b3 = bit i of quarter 0 (bytes 0..7, MSB quarter)
+      for Col in reverse 0 .. 63 loop
+         if QZ = 0 then
             P256_Double (Q);
-            P256_Double (Q);
-            P256_Double (Q);
-            P256_Double (Q);
+         end if;
 
-            Bits := Shift_Right (BX, 4) and 16#0F#;
-            BNZ := CT_NEQ (Bits, 0);
-            Lookup_Gwin (T, Bits);
-            U := Q;
-            P256_Add_Mixed (U, T, Dummy);
-            CT_Copy_Point (BNZ and QZ, Q, T);
-            CT_Copy_Point (BNZ and (not QZ), Q, U);
-            QZ := QZ and (not BNZ);
-            BX := Shift_Left (BX, 4);
-         end loop;
+         --  Extract 4-bit column index from each quarter
+         Bit_Pos := Col mod 8;
+         declare
+            Byte_In_Q : constant N32 := N32 (7 - Col / 8);
+         begin
+            B0 := Shift_Right (U32 (S (24 + Byte_In_Q)), Bit_Pos) and 1;
+            B1 := Shift_Right (U32 (S (16 + Byte_In_Q)), Bit_Pos) and 1;
+            B2 := Shift_Right (U32 (S (8  + Byte_In_Q)), Bit_Pos) and 1;
+            B3 := Shift_Right (U32 (S (     Byte_In_Q)), Bit_Pos) and 1;
+         end;
+         Idx := B0 or Shift_Left (B1, 1) or Shift_Left (B2, 2)
+                or Shift_Left (B3, 3);
+
+         BNZ := CT_NEQ (Idx, 0);
+         Lookup_Comb (T, Idx);
+         U := Q;
+         P256_Add_Mixed (U, T, Dummy);
+         CT_Copy_Point (BNZ and QZ, Q, T);
+         CT_Copy_Point (BNZ and (not QZ), Q, U);
+         QZ := QZ and (not BNZ);
       end loop;
+
       P := Q;
    end P256_Mulgen;
 

@@ -1,191 +1,255 @@
 --  SPARKTLS ECDSA P-256 Signature Verification (body)
 --
---  Scalar mod-n arithmetic uses 30-bit limbs with Barrett reduction.
+--  Scalar mod-n arithmetic uses 4×64-bit limbs with Barrett reduction.
+--  Wide multiplication via Unsigned_128.
 
 with SPARKTLS.P256.Point; use SPARKTLS.P256.Point;
 
 package body SPARKTLS.P256.ECDSA with
    SPARK_Mode => On
 is
-   --  Curve order n in 30-bit limbs (little-endian)
-   N_Order : constant P256_Limbs :=
-     (16#3C632551#, 16#0EE72B0B#, 16#3179E84F#, 16#39BEAB69#,
-      16#3FFFFFBC#, 16#3FFFFFFF#, 16#00000FFF#, 16#3FFFC000#,
-      16#0000FFFF#);
+   --  ================================================================
+   --  64-bit scalar types for mod-n arithmetic
+   --  ================================================================
 
-   --  Barrett constant mu = floor(2^512 / n), in 30-bit limbs
-   --  mu is 257 bits, fits in 9 limbs (limb 8 = 0x10000)
-   Mu_Barrett : constant P256_Limbs :=
-     (16#2EDF9BFE#, 16#04BFF617#, 16#31A6C210#, 16#064154B7#,
-      16#3FFFFF43#, 16#3FFFFBFF#, 16#3FFFFFFF#, 16#00003FFF#,
-      16#00010000#);
+   type Scalar_64 is array (0 .. 3) of Unsigned_64;
+   type Scalar_Wide is array (0 .. 7) of Unsigned_64;
 
-   --  Wide type for Barrett intermediate (36 limbs for 18x18 product,
-   --  but we only need 18x9 since mu has 9 limbs, giving 27 limbs)
-   subtype Barrett_Index is I32 range 0 .. 26;
-   type Barrett_Wide is array (Barrett_Index) of U64;
+   --  P-256 curve order n (little-endian 64-bit limbs)
+   N64 : constant Scalar_64 :=
+     (0 => 16#F3B9CAC2FC632551#,
+      1 => 16#BCE6FAADA7179E84#,
+      2 => 16#FFFFFFFFFFFFFFFF#,
+      3 => 16#FFFFFFFF00000000#);
+
+   --  Barrett constant mu = floor(2^512 / n)
+   --  257 bits, stored as 5 limbs (top limb = 1)
+   type Mu_Array is array (0 .. 4) of Unsigned_64;
+   Mu64 : constant Mu_Array :=
+     (0 => 16#012FFD85EEDF9BFE#,
+      1 => 16#43190552DF1A6C21#,
+      2 => 16#FFFFFFFEFFFFFFFF#,
+      3 => 16#00000000FFFFFFFF#,
+      4 => 16#0000000000000001#);
 
    ---------------------------------------------------------------
-   --  Multiply 18-limb value by 9-limb value -> 27-limb result
-   --  Used for t * mu in Barrett reduction
+   --  Convert 32-byte big-endian to 4×64-bit LE scalar
    ---------------------------------------------------------------
 
-   procedure Mul_18x9
-     (D :    out Barrett_Wide;
-      A : in     P256_Wide;
-      B : in     P256_Limbs)
+   procedure Bytes_To_Scalar
+     (D   : out Scalar_64;
+      Src : in  ECDSA_Sig_Half)
    is
-      function MUL (X, Y : U32) return U64 is
-        (U64 (X) * U64 (Y)) with Inline;
-      CC : U64;
-      W  : U64;
+   begin
+      --  Big-endian: Src(0) is MSB, Src(31) is LSB
+      --  Little-endian limbs: D(0) = bytes 24..31, D(3) = bytes 0..7
+      for L in 0 .. 3 loop
+         declare
+            Base : constant N32 := N32 (24 - L * 8);
+            V : Unsigned_64 := 0;
+         begin
+            for B in 0 .. 7 loop
+               V := V or Shift_Left (Unsigned_64 (Src (Base + N32 (B))),
+                                     (7 - B) * 8);
+            end loop;
+            D (L) := V;
+         end;
+      end loop;
+   end Bytes_To_Scalar;
+
+   ---------------------------------------------------------------
+   --  Convert 4×64-bit LE scalar to 32-byte big-endian
+   ---------------------------------------------------------------
+
+   procedure Scalar_To_Bytes
+     (Dst : out ECDSA_Sig_Half;
+      Src : in  Scalar_64)
+   is
+   begin
+      for L in 0 .. 3 loop
+         declare
+            Base : constant N32 := N32 (24 - L * 8);
+            V : constant Unsigned_64 := Src (L);
+         begin
+            for B in 0 .. 7 loop
+               Dst (Base + N32 (B)) :=
+                 Byte (Shift_Right (V, (7 - B) * 8) and 16#FF#);
+            end loop;
+         end;
+      end loop;
+   end Scalar_To_Bytes;
+
+   ---------------------------------------------------------------
+   --  4×4 schoolbook multiplication: 256-bit × 256-bit → 512-bit
+   --  Uses Unsigned_128 for wide multiply-accumulate
+   ---------------------------------------------------------------
+
+   procedure Mul_Wide
+     (D    : out Scalar_Wide;
+      A, B : in  Scalar_64)
+   is
+      W : Unsigned_128;
+      CC : Unsigned_128;
    begin
       D := (others => 0);
 
-      --  Schoolbook: for each limb of A, multiply by all of B
-      for I in Wide_Index loop
+      for I in 0 .. 3 loop
          CC := 0;
-         for J in Limb_Index loop
-            declare
-               K : constant Barrett_Index := I + J;
-            begin
-               W := D (K) + MUL (A (I), B (J)) + CC;
-               D (K) := W and U64 (Limb_Mask);
-               CC := Shift_Right (W, 30);
-            end;
+         for J in 0 .. 3 loop
+            W := Unsigned_128 (A (I)) * Unsigned_128 (B (J))
+                 + Unsigned_128 (D (I + J)) + CC;
+            D (I + J) := Unsigned_64 (W and 16#FFFF_FFFF_FFFF_FFFF#);
+            CC := Shift_Right (W, 64);
          end loop;
-         --  Propagate remaining carry
-         if I + 9 <= 26 then
-            D (I + 9) := D (I + 9) + CC;
-         end if;
+         D (I + 4) := Unsigned_64 (CC);
       end loop;
-   end Mul_18x9;
+   end Mul_Wide;
 
    ---------------------------------------------------------------
-   --  Multiply two 9-limb values -> 18-limb result (same as Mul9
-   --  but takes/returns different types for clarity in Barrett)
+   --  Squaring: 256-bit → 512-bit (uses Mul_Wide for simplicity)
    ---------------------------------------------------------------
 
-   --  We reuse the existing Mul9 from the parent package.
-
-   ---------------------------------------------------------------
-   --  Subtract 9-limb values: D := A - B
-   --  Returns borrow (0 = no borrow, 1 = borrow)
-   ---------------------------------------------------------------
-
-   procedure Sub_Order
-     (D      :    out P256_Limbs;
-      A      : in     P256_Limbs;
-      B      : in     P256_Limbs;
-      Borrow :    out U32)
+   procedure Sqr_Wide
+     (D : out Scalar_Wide;
+      A : in  Scalar_64)
    is
-      W  : U32;
-      CC : U32 := 0;
    begin
-      for I in Limb_Index loop
-         W := A (I) - B (I) - CC;
-         D (I) := W and Limb_Mask;
-         CC := Shift_Right (W, 31) and 1;
-      end loop;
-      Borrow := CC;
-   end Sub_Order;
+      Mul_Wide (D, A, A);
+   end Sqr_Wide;
 
    ---------------------------------------------------------------
-   --  Barrett reduction: given 18-limb product t, compute t mod n
+   --  Subtract: D := A - B, returns borrow (0 or 1)
+   ---------------------------------------------------------------
+
+   procedure Sub_Scalar
+     (D      : out Scalar_64;
+      A, B   : in  Scalar_64;
+      Borrow : out Unsigned_64)
+   is
+      W  : Unsigned_128;
+      CC : Unsigned_128 := 0;
+   begin
+      for I in 0 .. 3 loop
+         W := Unsigned_128 (A (I)) - Unsigned_128 (B (I)) - CC;
+         D (I) := Unsigned_64 (W and 16#FFFF_FFFF_FFFF_FFFF#);
+         --  Borrow: if W < 0 (bit 64 set in two's complement)
+         CC := Shift_Right (W, 127);  -- sign bit of 128-bit
+      end loop;
+      Borrow := Unsigned_64 (CC);
+   end Sub_Scalar;
+
+   ---------------------------------------------------------------
+   --  Barrett reduction: given 512-bit product T, compute T mod n
    --
-   --  Algorithm:
-   --  1. q = floor((t * mu) / 2^540)   [540 = 18*30]
-   --     Since t has 18 limbs and mu has 9 limbs, t*mu has 27 limbs.
-   --     Dividing by 2^540 = shifting right 18 limbs.
-   --     So q = limbs 18..26 of (t * mu), which is at most 9 limbs.
-   --
-   --  2. r = t - q * n (low 9 limbs only, since result < 3n < 2^258)
-   --
-   --  3. Conditionally subtract n at most twice.
-   --
-   --  Note: We use 2^540 instead of 2^512 because our limbs are
-   --  30 bits wide (18 * 30 = 540), and mu was computed as
-   --  floor(2^512 / n). We need to adjust: the product t*mu
-   --  represents t * floor(2^512/n), so the quotient estimate is
-   --  floor(t*mu / 2^512). In limb terms, 512 bits = 17.066 limbs.
-   --  We approximate by taking limbs 17.. and adjusting.
+   --  1. q = floor(T * mu / 2^512)
+   --  2. r = T - q * n (low 256 bits + carry)
+   --  3. Conditional subtract n (at most twice)
    ---------------------------------------------------------------
 
    procedure Barrett_Reduce
-     (D : out P256_Limbs;
-      T : in  P256_Wide)
+     (D : out Scalar_64;
+      T : in  Scalar_Wide)
    is
-      --  t * mu (27 limbs)
-      TM : Barrett_Wide;
+      --  T * mu: we need a 8×5 multiply, but only care about
+      --  limbs 8+ (bits 512+) for the quotient.
+      --  Actually: q = floor(T * mu >> 512).
+      --  T is 8 limbs, mu is 5 limbs, product is 13 limbs.
+      --  We need limbs 8..12 (5 limbs) of the product.
+      --
+      --  Optimization: we only need the high part, so we can skip
+      --  computing product limbs 0..6 entirely. We need limb 7
+      --  for the carry into limb 8+.
+      --
+      --  For correctness, compute the full product at first.
 
-      --  Quotient estimate q (9 limbs) - extracted from high part
-      Q : P256_Limbs;
+      --  Product T*mu (13 limbs, but we only store 14 for safety)
+      type Wide13 is array (0 .. 13) of Unsigned_64;
+      TM : Wide13 := (others => 0);
 
-      --  q * n (18 limbs)
-      QN : P256_Wide;
+      Q  : Scalar_64;   --  quotient estimate (limbs 8..11 of T*mu)
+      QN : Scalar_Wide;  --  q * n (512 bits)
+      R  : Scalar_64;
+      R4 : Unsigned_64;  --  5th limb of R (bits 256..319)
+      Borrow : Unsigned_64;
 
-      --  Intermediate result (9 limbs + possible carry)
-      R  : P256_Limbs;
-      Borrow : U32;
-
-      --  For extracting q from the right bit position:
-      --  We need bits 512..768 of (t * mu).
-      --  512 bits = 17 limbs + 2 bits (17*30 = 510, so bit 512 is
-      --  at position 2 within limb 17).
-      --  So q ≈ (TM >> 510) >> 2 = shift TM right by 17 limbs,
-      --  then shift the resulting value right by 2 bits.
+      W  : Unsigned_128;
+      CC : Unsigned_128;
    begin
-      --  Step 1: Compute t * mu
-      Mul_18x9 (TM, T, Mu_Barrett);
-
-      --  Step 2: Extract quotient q from bits 512+ of TM
-      --  Bit 512 of TM is at limb 17 (510 bits), bit offset 2.
-      --  q_i = (TM(17+i) >> 2) | (TM(18+i) << 28) masked to 30 bits
-      for I in Limb_Index loop
-         declare
-            Lo_Idx : constant Barrett_Index := 17 + I;
-            Hi_Idx : constant I32 := 18 + I;
-            Lo_Part : constant U64 := Shift_Right (TM (Lo_Idx), 2);
-            Hi_Part : U64;
-         begin
-            if Hi_Idx <= 26 then
-               Hi_Part := Shift_Left (TM (Hi_Idx), 28);
-            else
-               Hi_Part := 0;
-            end if;
-            Q (I) := U32 ((Lo_Part or Hi_Part) and U64 (Limb_Mask));
-         end;
+      --  Step 1: Compute T * mu (8 × 5 schoolbook)
+      for I in 0 .. 7 loop
+         CC := 0;
+         for J in 0 .. 4 loop
+            declare
+               K : constant Integer := I + J;
+            begin
+               if K <= 13 then
+                  W := Unsigned_128 (T (I)) * Unsigned_128 (Mu64 (J))
+                       + Unsigned_128 (TM (K)) + CC;
+                  TM (K) := Unsigned_64 (W and 16#FFFF_FFFF_FFFF_FFFF#);
+                  CC := Shift_Right (W, 64);
+               else
+                  CC := 0;
+               end if;
+            end;
+         end loop;
+         if I + 5 <= 13 then
+            TM (I + 5) := TM (I + 5) + Unsigned_64 (CC);
+         end if;
       end loop;
 
-      --  Step 3: Compute q * n (18 limbs)
-      Mul9 (QN, Q, N_Order);
+      --  Step 2: Extract quotient q = limbs 8..11 of T*mu
+      --  (This is floor(T * mu / 2^512))
+      Q := (TM (8), TM (9), TM (10), TM (11));
 
-      --  Step 4: r = t - q*n (low 9 limbs only, with borrow chain)
-      --  Since r < 3n < 2^258, only 9 limbs matter.
-      declare
-         W  : I64;
-         CC : I64 := 0;
-      begin
-         for I in Limb_Index loop
-            W := I64 (T (I)) - I64 (QN (I)) + CC;
-            R (I) := U32 (U64 (W) and U64 (Limb_Mask));
-            CC := Shift_Right_Arithmetic (W, 30);
+      --  Step 3: Compute q * n (low 512 bits = 8 limbs)
+      --  We only need the low 8 limbs since r < 3n < 2^258
+      QN := (others => 0);
+      for I in 0 .. 3 loop
+         CC := 0;
+         for J in 0 .. 3 loop
+            declare
+               K : constant Integer := I + J;
+            begin
+               if K <= 7 then
+                  W := Unsigned_128 (Q (I)) * Unsigned_128 (N64 (J))
+                       + Unsigned_128 (QN (K)) + CC;
+                  QN (K) := Unsigned_64 (W and 16#FFFF_FFFF_FFFF_FFFF#);
+                  CC := Shift_Right (W, 64);
+               end if;
+            end;
          end loop;
+         if I + 4 <= 7 then
+            QN (I + 4) := QN (I + 4) + Unsigned_64 (CC);
+         end if;
+      end loop;
+
+      --  Step 4: r = T - q*n (5 limbs, since R < 3n < 2^258)
+      declare
+         BW : Unsigned_128;
+         BC : Unsigned_128 := 0;
+      begin
+         for I in 0 .. 3 loop
+            BW := Unsigned_128 (T (I)) - Unsigned_128 (QN (I)) - BC;
+            R (I) := Unsigned_64 (BW and 16#FFFF_FFFF_FFFF_FFFF#);
+            BC := Shift_Right (BW, 127);
+         end loop;
+         --  5th limb
+         BW := Unsigned_128 (T (4)) - Unsigned_128 (QN (4)) - BC;
+         R4 := Unsigned_64 (BW and 16#FFFF_FFFF_FFFF_FFFF#);
       end;
 
       --  Step 5: Conditional subtract n (at most twice)
-      Sub_Order (D, R, N_Order, Borrow);
-      if Borrow = 1 then
-         --  R was < n, undo
-         D := R;
-      else
-         --  D = R - n, might still be >= n
-         R := D;
-         Sub_Order (D, R, N_Order, Borrow);
-         if Borrow = 1 then
-            D := R;
+      --  R_actual = R4 * 2^256 + R.  R_actual < 3n < 2^258.
+      --  Subtract n up to twice to bring into [0, n).
+      for Round in 1 .. 2 loop
+         Sub_Scalar (D, R, N64, Borrow);
+         if R4 > 0 or Borrow = 0 then
+            --  R_actual >= n: keep the subtraction
+            R := D;
+            R4 := R4 - Borrow;
          end if;
-      end if;
+      end loop;
+      D := R;
    end Barrett_Reduce;
 
    ---------------------------------------------------------------
@@ -193,13 +257,12 @@ is
    ---------------------------------------------------------------
 
    procedure Mul_Mod_N
-     (D : out P256_Limbs;
-      A : in  P256_Limbs;
-      B : in  P256_Limbs)
+     (D    : out Scalar_64;
+      A, B : in  Scalar_64)
    is
-      T : P256_Wide;
+      T : Scalar_Wide;
    begin
-      Mul9 (T, A, B);
+      Mul_Wide (T, A, B);
       Barrett_Reduce (D, T);
    end Mul_Mod_N;
 
@@ -208,22 +271,54 @@ is
    ---------------------------------------------------------------
 
    procedure Square_Mod_N
-     (D : out P256_Limbs;
-      A : in  P256_Limbs)
+     (D : out Scalar_64;
+      A : in  Scalar_64)
    is
-      T : P256_Wide;
+      T : Scalar_Wide;
    begin
-      Square9 (T, A);
+      Sqr_Wide (T, A);
       Barrett_Reduce (D, T);
    end Square_Mod_N;
+
+   ---------------------------------------------------------------
+   --  Modular addition: D := (A + B) mod n
+   ---------------------------------------------------------------
+
+   procedure Add_Mod_N
+     (D    : out Scalar_64;
+      A, B : in  Scalar_64)
+   is
+      W  : Unsigned_128;
+      CC : Unsigned_128 := 0;
+      Sum : Scalar_64;
+      Tmp : Scalar_64;
+      Borrow : Unsigned_64;
+   begin
+      --  Sum = A + B
+      for I in 0 .. 3 loop
+         W := Unsigned_128 (A (I)) + Unsigned_128 (B (I)) + CC;
+         Sum (I) := Unsigned_64 (W and 16#FFFF_FFFF_FFFF_FFFF#);
+         CC := Shift_Right (W, 64);
+      end loop;
+      --  Try subtract n.
+      --  If CC > 0, the true sum is 2^256 + Sum, which is > n,
+      --  so we must subtract.  Sub_Scalar gives the right 256-bit result
+      --  even with the implicit high bit (Tmp = 2^256 + Sum - n).
+      Sub_Scalar (Tmp, Sum, N64, Borrow);
+      if Unsigned_64 (CC) > 0 or Borrow = 0 then
+         D := Tmp;
+      else
+         D := Sum;
+      end if;
+   end Add_Mod_N;
 
    ---------------------------------------------------------------
    --  Modular inversion: D := A^(n-2) mod n (Fermat)
    ---------------------------------------------------------------
 
    procedure Inv_Mod_N
-     (D : out P256_Limbs;
-      A : in  P256_Limbs)
+     (D : out Scalar_64;
+      A : in  Scalar_64)
    is
       --  n - 2 in big-endian bytes
       N_Minus_2 : constant Byte_Seq (0 .. 31) :=
@@ -232,8 +327,8 @@ is
          16#BC#, 16#E6#, 16#FA#, 16#AD#, 16#A7#, 16#17#, 16#9E#, 16#84#,
          16#F3#, 16#B9#, 16#CA#, 16#C2#, 16#FC#, 16#63#, 16#25#, 16#4F#);
 
-      Result : P256_Limbs;
-      Tmp    : P256_Limbs;
+      Result : Scalar_64;
+      Tmp    : Scalar_64;
       Started : Boolean := False;
    begin
       Result := (0 => 1, others => 0);
@@ -261,81 +356,45 @@ is
    end Inv_Mod_N;
 
    ---------------------------------------------------------------
-   --  Check if a 9-limb value is zero (constant-time)
+   --  Check if scalar is zero (constant-time)
    ---------------------------------------------------------------
 
-   function Is_Zero_Limbs (A : P256_Limbs) return Boolean is
-      Z : U32 := 0;
+   function Is_Zero_Scalar (A : Scalar_64) return Boolean is
+      Z : Unsigned_64 := 0;
    begin
-      for I in Limb_Index loop
+      for I in 0 .. 3 loop
          Z := Z or A (I);
       end loop;
       return Z = 0;
-   end Is_Zero_Limbs;
+   end Is_Zero_Scalar;
 
    ---------------------------------------------------------------
-   --  Check if A < B for 9-limb values (try subtract, check borrow)
+   --  Check if A < n (try subtract, check borrow)
    ---------------------------------------------------------------
 
-   function Less_Than_Order (A : P256_Limbs) return Boolean is
-      Tmp    : P256_Limbs;
-      Borrow : U32;
+   function Less_Than_Order (A : Scalar_64) return Boolean is
+      Tmp    : Scalar_64;
+      Borrow : Unsigned_64;
    begin
-      Sub_Order (Tmp, A, N_Order, Borrow);
+      Sub_Scalar (Tmp, A, N64, Borrow);
       return Borrow = 1;
    end Less_Than_Order;
 
    ---------------------------------------------------------------
-   --  Convert 32-byte big-endian scalar to 9 x 30-bit limbs
-   --  (reuses BE8_To_LE30 from parent package)
+   --  Reduce mod n: if A >= n, subtract n
    ---------------------------------------------------------------
 
-   procedure Scalar_From_Bytes
-     (D   : out P256_Limbs;
-      Src : in  ECDSA_Sig_Half)
+   procedure Reduce_Once
+     (A : in out Scalar_64)
    is
+      Tmp    : Scalar_64;
+      Borrow : Unsigned_64;
    begin
-      BE8_To_LE30 (D, Byte_Seq (Src));
-   end Scalar_From_Bytes;
-
-   ---------------------------------------------------------------
-   --  Convert 9 x 30-bit limbs to 32-byte big-endian scalar
-   ---------------------------------------------------------------
-
-   procedure Scalar_To_Bytes
-     (Dst : out ECDSA_Sig_Half;
-      Src : in  P256_Limbs)
-   is
-      Tmp : Byte_Seq (0 .. 31);
-   begin
-      LE30_To_BE8 (Tmp, Src);
-      Dst := ECDSA_Sig_Half (Tmp);
-   end Scalar_To_Bytes;
-
-   ---------------------------------------------------------------
-   --  Modular addition: D := (A + B) mod n
-   ---------------------------------------------------------------
-
-   procedure Add_Mod_N
-     (D : out P256_Limbs;
-      A : in  P256_Limbs;
-      B : in  P256_Limbs)
-   is
-      CC : U32 := 0;
-      W  : U32;
-      Tmp    : P256_Limbs;
-      Borrow : U32;
-   begin
-      for I in Limb_Index loop
-         W := A (I) + B (I) + CC;
-         D (I) := W and Limb_Mask;
-         CC := Shift_Right (W, 30);
-      end loop;
-      Sub_Order (Tmp, D, N_Order, Borrow);
+      Sub_Scalar (Tmp, A, N64, Borrow);
       if Borrow = 0 then
-         D := Tmp;
+         A := Tmp;
       end if;
-   end Add_Mod_N;
+   end Reduce_Once;
 
    ---------------------------------------------------------------
    --  ECDSA Sign
@@ -349,57 +408,52 @@ is
       S_Out :    out ECDSA_Sig_Half;
       OK    :    out Boolean)
    is
-      K_Limbs, D_Limbs, H_Limbs : P256_Limbs;
-      R_Limbs, S_Limbs          : P256_Limbs;
-      RD, Sum, K_Inv            : P256_Limbs;
-      Tmp    : P256_Limbs;
-      Borrow : U32;
+      K_S, D_S, H_S : Scalar_64;
+      R_S, S_S      : Scalar_64;
+      RD, Sum, K_Inv : Scalar_64;
 
       Pt     : P256_Jacobian;
       RX     : Byte_Seq (0 .. 31);
+      RX_Half : ECDSA_Sig_Half;
    begin
       R_Out := (others => 0);
       S_Out := (others => 0);
       OK := False;
 
-      Scalar_From_Bytes (K_Limbs, K);
-      Scalar_From_Bytes (D_Limbs, D);
-      Scalar_From_Bytes (H_Limbs, ECDSA_Sig_Half (Hash));
+      Bytes_To_Scalar (K_S, K);
+      Bytes_To_Scalar (D_S, D);
+      Bytes_To_Scalar (H_S, ECDSA_Sig_Half (Hash));
 
-      if Is_Zero_Limbs (K_Limbs) or not Less_Than_Order (K_Limbs) then
+      if Is_Zero_Scalar (K_S) or not Less_Than_Order (K_S) then
          return;
       end if;
 
-      if not Less_Than_Order (H_Limbs) then
-         Sub_Order (Tmp, H_Limbs, N_Order, Borrow);
-         H_Limbs := Tmp;
-      end if;
+      Reduce_Once (H_S);
 
       P256_Mulgen (Pt, Byte_Seq (K), 32);
       P256_To_Affine (Pt);
 
       FE_To_Bytes (RX, Pt.X);
-      Scalar_From_Bytes (R_Limbs, ECDSA_Sig_Half (RX));
-      if not Less_Than_Order (R_Limbs) then
-         Sub_Order (Tmp, R_Limbs, N_Order, Borrow);
-         R_Limbs := Tmp;
-      end if;
+      RX_Half := ECDSA_Sig_Half (RX);
+      Bytes_To_Scalar (R_S, RX_Half);
+      Reduce_Once (R_S);
 
-      if Is_Zero_Limbs (R_Limbs) then
+      if Is_Zero_Scalar (R_S) then
          return;
       end if;
 
-      Mul_Mod_N (RD, R_Limbs, D_Limbs);
-      Add_Mod_N (Sum, H_Limbs, RD);
-      Inv_Mod_N (K_Inv, K_Limbs);
-      Mul_Mod_N (S_Limbs, K_Inv, Sum);
+      --  s = k^(-1) * (hash + r*d) mod n
+      Mul_Mod_N (RD, R_S, D_S);
+      Add_Mod_N (Sum, H_S, RD);
+      Inv_Mod_N (K_Inv, K_S);
+      Mul_Mod_N (S_S, K_Inv, Sum);
 
-      if Is_Zero_Limbs (S_Limbs) then
+      if Is_Zero_Scalar (S_S) then
          return;
       end if;
 
-      Scalar_To_Bytes (R_Out, R_Limbs);
-      Scalar_To_Bytes (S_Out, S_Limbs);
+      Scalar_To_Bytes (R_Out, R_S);
+      Scalar_To_Bytes (S_Out, S_S);
       OK := True;
    end Sign;
 
@@ -414,59 +468,52 @@ is
       R    : in ECDSA_Sig_Half;
       S    : in ECDSA_Sig_Half) return Boolean
    is
-      R_Limbs, S_Limbs : P256_Limbs;
-      H_Limbs          : P256_Limbs;
-      W_Limbs          : P256_Limbs;
-      U1_Limbs         : P256_Limbs;
-      U2_Limbs         : P256_Limbs;
+      R_S, S_S    : Scalar_64;
+      H_S         : Scalar_64;
+      W_S         : Scalar_64;
+      U1_S, U2_S  : Scalar_64;
 
-      U1_Bytes : ECDSA_Sig_Half;
-      U2_Bytes : ECDSA_Sig_Half;
+      U1_Bytes, U2_Bytes : ECDSA_Sig_Half;
 
       PK_Enc : Byte_Seq (0 .. 64);
       RX     : Byte_Seq (0 .. 31);
-      RX_Limbs : P256_Limbs;
+      RX_S   : Scalar_64;
+      Diff   : Scalar_64;
 
       OK     : U32;
-      Borrow : U32;
-      Tmp    : P256_Limbs;
+      Borrow : Unsigned_64;
    begin
-      --  Convert r, s to limbs
-      Scalar_From_Bytes (R_Limbs, R);
-      Scalar_From_Bytes (S_Limbs, S);
+      Bytes_To_Scalar (R_S, R);
+      Bytes_To_Scalar (S_S, S);
 
-      --  Step 1: Check r, s in [1, n-1]
-      if Is_Zero_Limbs (R_Limbs) or Is_Zero_Limbs (S_Limbs) then
+      --  Check r, s in [1, n-1]
+      if Is_Zero_Scalar (R_S) or Is_Zero_Scalar (S_S) then
          return False;
       end if;
-      if not Less_Than_Order (R_Limbs) then
+      if not Less_Than_Order (R_S) then
          return False;
       end if;
-      if not Less_Than_Order (S_Limbs) then
+      if not Less_Than_Order (S_S) then
          return False;
       end if;
 
-      --  Convert hash to limbs, reduce mod n if needed
-      Scalar_From_Bytes (H_Limbs, ECDSA_Sig_Half (Hash));
-      if not Less_Than_Order (H_Limbs) then
-         Sub_Order (Tmp, H_Limbs, N_Order, Borrow);
-         H_Limbs := Tmp;
-      end if;
+      Bytes_To_Scalar (H_S, ECDSA_Sig_Half (Hash));
+      Reduce_Once (H_S);
 
-      --  Step 2: w = s^(-1) mod n
-      Inv_Mod_N (W_Limbs, S_Limbs);
+      --  w = s^(-1) mod n
+      Inv_Mod_N (W_S, S_S);
 
-      --  Step 3: u1 = hash * w mod n
-      Mul_Mod_N (U1_Limbs, H_Limbs, W_Limbs);
+      --  u1 = hash * w mod n
+      Mul_Mod_N (U1_S, H_S, W_S);
 
-      --  Step 4: u2 = r * w mod n
-      Mul_Mod_N (U2_Limbs, R_Limbs, W_Limbs);
+      --  u2 = r * w mod n
+      Mul_Mod_N (U2_S, R_S, W_S);
 
-      --  Convert u1, u2 back to big-endian bytes for P256_Muladd
-      Scalar_To_Bytes (U1_Bytes, U1_Limbs);
-      Scalar_To_Bytes (U2_Bytes, U2_Limbs);
+      --  Convert back to bytes for P256_Muladd
+      Scalar_To_Bytes (U1_Bytes, U1_S);
+      Scalar_To_Bytes (U2_Bytes, U2_S);
 
-      --  Step 5: Compute R = u1*G + u2*Q using P256_Muladd
+      --  R = u1*G + u2*Q
       PK_Enc (0) := 16#04#;
       PK_Enc (1 .. 32) := Qx;
       PK_Enc (33 .. 64) := Qy;
@@ -478,20 +525,62 @@ is
          return False;
       end if;
 
-      --  Step 6: Check R.x == r (mod n)
+      --  Check R.x == r (mod n)
       RX := PK_Enc (1 .. 32);
+      Bytes_To_Scalar (RX_S, ECDSA_Sig_Half (RX));
+      Reduce_Once (RX_S);
 
-      --  Reduce RX mod n if needed
-      Scalar_From_Bytes (RX_Limbs, ECDSA_Sig_Half (RX));
-      if not Less_Than_Order (RX_Limbs) then
-         Sub_Order (Tmp, RX_Limbs, N_Order, Borrow);
-         RX_Limbs := Tmp;
-      end if;
-
-      --  Compare with r (both already < n)
-      --  Constant-time comparison via subtraction
-      Sub_Order (Tmp, RX_Limbs, R_Limbs, Borrow);
-      return Is_Zero_Limbs (Tmp) and Borrow = 0;
+      --  Constant-time comparison
+      Sub_Scalar (Diff, RX_S, R_S, Borrow);
+      return Is_Zero_Scalar (Diff) and Borrow = 0;
    end Verify;
+
+   procedure Test_Mul_Mod_N
+     (A_Bytes : in  ECDSA_Sig_Half;
+      B_Bytes : in  ECDSA_Sig_Half;
+      R_Bytes : out ECDSA_Sig_Half)
+   is
+      A_S, B_S, R_S : Scalar_64;
+   begin
+      Bytes_To_Scalar (A_S, A_Bytes);
+      Bytes_To_Scalar (B_S, B_Bytes);
+      Mul_Mod_N (R_S, A_S, B_S);
+      Scalar_To_Bytes (R_Bytes, R_S);
+   end Test_Mul_Mod_N;
+
+   procedure Test_Inv_Mod_N
+     (A_Bytes : in  ECDSA_Sig_Half;
+      R_Bytes : out ECDSA_Sig_Half)
+   is
+      A_S, R_S : Scalar_64;
+   begin
+      Bytes_To_Scalar (A_S, A_Bytes);
+      Inv_Mod_N (R_S, A_S);
+      Scalar_To_Bytes (R_Bytes, R_S);
+   end Test_Inv_Mod_N;
+
+   procedure Test_Add_Mod_N
+     (A_Bytes : in  ECDSA_Sig_Half;
+      B_Bytes : in  ECDSA_Sig_Half;
+      R_Bytes : out ECDSA_Sig_Half)
+   is
+      A_S, B_S, R_S : Scalar_64;
+   begin
+      Bytes_To_Scalar (A_S, A_Bytes);
+      Bytes_To_Scalar (B_S, B_Bytes);
+      Add_Mod_N (R_S, A_S, B_S);
+      Scalar_To_Bytes (R_Bytes, R_S);
+   end Test_Add_Mod_N;
+
+   procedure Test_Sqr_Mod_N
+     (A_Bytes : in  ECDSA_Sig_Half;
+      R_Bytes : out ECDSA_Sig_Half)
+   is
+      A_S, R_S : Scalar_64;
+   begin
+      Bytes_To_Scalar (A_S, A_Bytes);
+      Square_Mod_N (R_S, A_S);
+      Scalar_To_Bytes (R_Bytes, R_S);
+   end Test_Sqr_Mod_N;
 
 end SPARKTLS.P256.ECDSA;

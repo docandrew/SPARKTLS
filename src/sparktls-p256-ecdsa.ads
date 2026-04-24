@@ -23,4 +23,23 @@ is
       S_Out :    out ECDSA_Sig_Half;
       OK    :    out Boolean);
 
+   --  Test helpers (byte-level interface for unit testing)
+   procedure Test_Mul_Mod_N
+     (A_Bytes : in  ECDSA_Sig_Half;
+      B_Bytes : in  ECDSA_Sig_Half;
+      R_Bytes : out ECDSA_Sig_Half);
+
+   procedure Test_Inv_Mod_N
+     (A_Bytes : in  ECDSA_Sig_Half;
+      R_Bytes : out ECDSA_Sig_Half);
+
+   procedure Test_Add_Mod_N
+     (A_Bytes : in  ECDSA_Sig_Half;
+      B_Bytes : in  ECDSA_Sig_Half;
+      R_Bytes : out ECDSA_Sig_Half);
+
+   procedure Test_Sqr_Mod_N
+     (A_Bytes : in  ECDSA_Sig_Half;
+      R_Bytes : out ECDSA_Sig_Half);
+
 end SPARKTLS.P256.ECDSA;

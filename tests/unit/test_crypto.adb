@@ -6,6 +6,8 @@ with Ada.Command_Line;
 with SPARKNaCl;            use SPARKNaCl;
 with Interfaces;           use Interfaces;
 with SPARKTLS.P384.ECDSA;
+with SPARKTLS.P256.ECDSA;
+with SPARKTLS.P256.Point;
 with SPARKTLS.X25519;
 with SPARKNaCl.Scalar;
 with SPARKTLS.BigNat;      use SPARKTLS.BigNat;
@@ -668,6 +670,354 @@ begin
          SPARKTLS.Ed25519.Open (M2 (0 .. 65), V2, ML2, SM2 (0 .. 65), PK2);
          Check ("Ed25519 RFC 8032 vec2 verify", V2);
       end;
+   end;
+   Put_Line ("");
+
+   Put_Line ("--- P-256 Scalar Mod-N ---");
+   declare
+      use SPARKTLS.P256.ECDSA;
+      --  Test vector: a * b mod n (computed with Python)
+      --  a = 0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+      A_Bytes : constant ECDSA_Sig_Half :=
+        (16#01#, 16#02#, 16#03#, 16#04#, 16#05#, 16#06#, 16#07#, 16#08#,
+         16#09#, 16#0a#, 16#0b#, 16#0c#, 16#0d#, 16#0e#, 16#0f#, 16#10#,
+         16#11#, 16#12#, 16#13#, 16#14#, 16#15#, 16#16#, 16#17#, 16#18#,
+         16#19#, 16#1a#, 16#1b#, 16#1c#, 16#1d#, 16#1e#, 16#1f#, 16#20#);
+      --  b = 0x2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40
+      B_Bytes : constant ECDSA_Sig_Half :=
+        (16#21#, 16#22#, 16#23#, 16#24#, 16#25#, 16#26#, 16#27#, 16#28#,
+         16#29#, 16#2a#, 16#2b#, 16#2c#, 16#2d#, 16#2e#, 16#2f#, 16#30#,
+         16#31#, 16#32#, 16#33#, 16#34#, 16#35#, 16#36#, 16#37#, 16#38#,
+         16#39#, 16#3a#, 16#3b#, 16#3c#, 16#3d#, 16#3e#, 16#3f#, 16#40#);
+      --  a*b mod n = 0xe8499286bb2b7bad9b9b569666ebbbea467e9085f8077cf64c019117009729ec
+      Expected : constant ECDSA_Sig_Half :=
+        (16#e8#, 16#49#, 16#92#, 16#86#, 16#bb#, 16#2b#, 16#7b#, 16#ad#,
+         16#9b#, 16#9b#, 16#56#, 16#96#, 16#66#, 16#eb#, 16#bb#, 16#ea#,
+         16#46#, 16#7e#, 16#90#, 16#85#, 16#f8#, 16#07#, 16#7c#, 16#f6#,
+         16#4c#, 16#01#, 16#91#, 16#17#, 16#00#, 16#97#, 16#29#, 16#ec#);
+      R_Bytes : ECDSA_Sig_Half;
+
+      --  Expected inverse: a^(-1) mod n
+      Exp_Inv : constant ECDSA_Sig_Half :=
+        (16#fa#, 16#9a#, 16#44#, 16#87#, 16#00#, 16#4a#, 16#53#, 16#10#,
+         16#21#, 16#c7#, 16#80#, 16#6f#, 16#d0#, 16#71#, 16#fd#, 16#78#,
+         16#33#, 16#7b#, 16#7f#, 16#45#, 16#3b#, 16#78#, 16#74#, 16#66#,
+         16#ff#, 16#4e#, 16#8c#, 16#10#, 16#71#, 16#13#, 16#5d#, 16#8a#);
+
+      --  Expected sum: (a + b) mod n
+      Exp_Sum : constant ECDSA_Sig_Half :=
+        (16#22#, 16#24#, 16#26#, 16#28#, 16#2a#, 16#2c#, 16#2e#, 16#30#,
+         16#32#, 16#34#, 16#36#, 16#38#, 16#3a#, 16#3c#, 16#3e#, 16#40#,
+         16#42#, 16#44#, 16#46#, 16#48#, 16#4a#, 16#4c#, 16#4e#, 16#50#,
+         16#52#, 16#54#, 16#56#, 16#58#, 16#5a#, 16#5c#, 16#5e#, 16#60#);
+
+      --  Expected: a^2 mod n
+      Exp_Sqr : constant ECDSA_Sig_Half :=
+        (16#d1#, 16#68#, 16#32#, 16#cf#, 16#3a#, 16#9e#, 16#47#, 16#0b#,
+         16#e8#, 16#60#, 16#f2#, 16#b0#, 16#5e#, 16#fc#, 16#b3#, 16#17#,
+         16#75#, 16#57#, 16#f6#, 16#14#, 16#37#, 16#5d#, 16#1d#, 16#fe#,
+         16#be#, 16#11#, 16#45#, 16#00#, 16#9d#, 16#25#, 16#7d#, 16#50#);
+
+      One : constant ECDSA_Sig_Half := (31 => 16#01#, others => 0);
+      Inv_Bytes, Prod_Bytes, Sum_Bytes, Sqr_Bytes : ECDSA_Sig_Half;
+   begin
+      --  Test Mul_Mod_N
+      Test_Mul_Mod_N (A_Bytes, B_Bytes, R_Bytes);
+      Check ("P-256 Mul_Mod_N known vector",
+             Byte_Seq (R_Bytes) = Byte_Seq (Expected));
+      if Byte_Seq (R_Bytes) /= Byte_Seq (Expected) then
+         Put ("    Got:    ");
+         for I in 0 .. 15 loop Put (R_Bytes (N32 (I))'Image); end loop;
+         New_Line;
+         Put ("            ");
+         for I in 16 .. 31 loop Put (R_Bytes (N32 (I))'Image); end loop;
+         New_Line;
+      end if;
+
+      --  Test Inv_Mod_N
+      Test_Inv_Mod_N (A_Bytes, Inv_Bytes);
+      Check ("P-256 Inv_Mod_N known vector",
+             Byte_Seq (Inv_Bytes) = Byte_Seq (Exp_Inv));
+      if Byte_Seq (Inv_Bytes) /= Byte_Seq (Exp_Inv) then
+         Put ("    Got:    ");
+         for I in 0 .. 15 loop Put (Inv_Bytes (N32 (I))'Image); end loop;
+         New_Line;
+         Put ("            ");
+         for I in 16 .. 31 loop Put (Inv_Bytes (N32 (I))'Image); end loop;
+         New_Line;
+      end if;
+
+      --  Test a * a^(-1) mod n = 1
+      Test_Mul_Mod_N (A_Bytes, Inv_Bytes, Prod_Bytes);
+      Check ("P-256 a * a^(-1) = 1",
+             Byte_Seq (Prod_Bytes) = Byte_Seq (One));
+      if Byte_Seq (Prod_Bytes) /= Byte_Seq (One) then
+         Put ("    Got: ");
+         for I in 24 .. 31 loop Put (Prod_Bytes (N32 (I))'Image); end loop;
+         New_Line;
+      end if;
+
+      --  Test Sqr_Mod_N
+      Test_Sqr_Mod_N (A_Bytes, Sqr_Bytes);
+      Check ("P-256 Sqr_Mod_N known vector",
+             Byte_Seq (Sqr_Bytes) = Byte_Seq (Exp_Sqr));
+      if Byte_Seq (Sqr_Bytes) /= Byte_Seq (Exp_Sqr) then
+         Put ("    Got:    ");
+         for I in 0 .. 15 loop Put (Sqr_Bytes (N32 (I))'Image); end loop;
+         New_Line;
+         Put ("            ");
+         for I in 16 .. 31 loop Put (Sqr_Bytes (N32 (I))'Image); end loop;
+         New_Line;
+      end if;
+
+      --  Test a^2 = a * a (via Mul)
+      Test_Mul_Mod_N (A_Bytes, A_Bytes, R_Bytes);
+      Check ("P-256 a*a via Mul = a^2 via Sqr",
+             Byte_Seq (R_Bytes) = Byte_Seq (Sqr_Bytes));
+
+      --  Test chained: sqr(a) then sqr again, then mul
+      declare
+         Exp_A4 : constant ECDSA_Sig_Half :=
+           (16#c2#, 16#6f#, 16#0f#, 16#11#, 16#c4#, 16#89#, 16#ef#, 16#0e#,
+            16#87#, 16#4a#, 16#a3#, 16#95#, 16#46#, 16#a7#, 16#c1#, 16#31#,
+            16#bf#, 16#15#, 16#12#, 16#50#, 16#5a#, 16#eb#, 16#d8#, 16#ad#,
+            16#05#, 16#75#, 16#60#, 16#ff#, 16#2c#, 16#22#, 16#ba#, 16#71#);
+         Exp_A5 : constant ECDSA_Sig_Half :=
+           (16#c6#, 16#7e#, 16#d0#, 16#62#, 16#e4#, 16#7a#, 16#85#, 16#cf#,
+            16#38#, 16#25#, 16#5c#, 16#dc#, 16#c7#, 16#4e#, 16#da#, 16#46#,
+            16#c1#, 16#c7#, 16#5b#, 16#83#, 16#4c#, 16#d8#, 16#fb#, 16#bc#,
+            16#f7#, 16#40#, 16#dd#, 16#92#, 16#64#, 16#6f#, 16#56#, 16#cf#);
+         A4_Bytes, A5_Bytes : ECDSA_Sig_Half;
+      begin
+         --  a^4 = sqr(sqr(a))
+         Test_Sqr_Mod_N (A_Bytes, Sqr_Bytes);  --  a^2
+         Test_Sqr_Mod_N (Sqr_Bytes, A4_Bytes);  --  a^4
+         Check ("P-256 a^4 = sqr(sqr(a))",
+                Byte_Seq (A4_Bytes) = Byte_Seq (Exp_A4));
+         if Byte_Seq (A4_Bytes) /= Byte_Seq (Exp_A4) then
+            Put ("    Got:    ");
+            for I in 0 .. 15 loop Put (A4_Bytes (N32 (I))'Image); end loop;
+            New_Line;
+         end if;
+         --  a^5 = a^4 * a
+         Test_Mul_Mod_N (A4_Bytes, A_Bytes, A5_Bytes);
+         Check ("P-256 a^5 = a^4 * a",
+                Byte_Seq (A5_Bytes) = Byte_Seq (Exp_A5));
+         if Byte_Seq (A5_Bytes) /= Byte_Seq (Exp_A5) then
+            Put ("    Got:    ");
+            for I in 0 .. 15 loop Put (A5_Bytes (N32 (I))'Image); end loop;
+            New_Line;
+         end if;
+      end;
+
+      --  Test Inv_Mod_N with 2 (simple case)
+      declare
+         Two : constant ECDSA_Sig_Half := (31 => 16#02#, others => 0);
+         Exp_Two_Inv : constant ECDSA_Sig_Half :=
+           (16#7f#, 16#ff#, 16#ff#, 16#ff#, 16#80#, 16#00#, 16#00#, 16#00#,
+            16#7f#, 16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#ff#,
+            16#de#, 16#73#, 16#7d#, 16#56#, 16#d3#, 16#8b#, 16#cf#, 16#42#,
+            16#79#, 16#dc#, 16#e5#, 16#61#, 16#7e#, 16#31#, 16#92#, 16#a9#);
+         Inv2 : ECDSA_Sig_Half;
+         Prod2 : ECDSA_Sig_Half;
+      begin
+         Test_Inv_Mod_N (Two, Inv2);
+         Check ("P-256 Inv(2) known vector",
+                Byte_Seq (Inv2) = Byte_Seq (Exp_Two_Inv));
+         if Byte_Seq (Inv2) /= Byte_Seq (Exp_Two_Inv) then
+            Put ("    Got:    ");
+            for I in 0 .. 15 loop Put (Inv2 (N32 (I))'Image); end loop;
+            New_Line;
+            Put ("            ");
+            for I in 16 .. 31 loop Put (Inv2 (N32 (I))'Image); end loop;
+            New_Line;
+         end if;
+         --  Also: 2 * inv(2) = 1
+         Test_Mul_Mod_N (Two, Inv2, Prod2);
+         Check ("P-256 2 * Inv(2) = 1",
+                Byte_Seq (Prod2) = Byte_Seq (One));
+         if Byte_Seq (Prod2) /= Byte_Seq (One) then
+            Put ("    Got: ");
+            for I in 24 .. 31 loop Put (Prod2 (N32 (I))'Image); end loop;
+            New_Line;
+         end if;
+      end;
+
+      --  Test Add_Mod_N
+      Test_Add_Mod_N (A_Bytes, B_Bytes, Sum_Bytes);
+      Check ("P-256 Add_Mod_N known vector",
+             Byte_Seq (Sum_Bytes) = Byte_Seq (Exp_Sum));
+      if Byte_Seq (Sum_Bytes) /= Byte_Seq (Exp_Sum) then
+         Put ("    Got:    ");
+         for I in 0 .. 15 loop Put (Sum_Bytes (N32 (I))'Image); end loop;
+         New_Line;
+      end if;
+
+      --  Test Inv of k = n-3 (large value)
+      declare
+         K_Large : constant ECDSA_Sig_Half :=
+           (16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#00#, 16#00#, 16#00#,
+            16#00#, 16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#ff#,
+            16#ff#, 16#ff#, 16#bc#, 16#e6#, 16#fa#, 16#ad#, 16#a7#,
+            16#17#, 16#9e#, 16#84#, 16#f3#, 16#b9#, 16#ca#, 16#c2#,
+            16#fc#, 16#63#, 16#25#, 16#4e#);
+         Exp_KInv : constant ECDSA_Sig_Half :=
+           (16#55#, 16#55#, 16#55#, 16#55#, 16#00#, 16#00#, 16#00#,
+            16#00#, 16#55#, 16#55#, 16#55#, 16#55#, 16#55#, 16#55#,
+            16#55#, 16#55#, 16#3e#, 16#f7#, 16#a8#, 16#e4#, 16#8d#,
+            16#07#, 16#df#, 16#81#, 16#a6#, 16#93#, 16#43#, 16#96#,
+            16#54#, 16#21#, 16#0c#, 16#70#);
+         KI : ECDSA_Sig_Half;
+      begin
+         Test_Inv_Mod_N (K_Large, KI);
+         Check ("P-256 Inv(n-3) known vector",
+                Byte_Seq (KI) = Byte_Seq (Exp_KInv));
+         if Byte_Seq (KI) /= Byte_Seq (Exp_KInv) then
+            Put ("    Got:    ");
+            for I in 0 .. 31 loop Put (KI (N32 (I))'Image); end loop;
+            New_Line;
+            Put ("    Expect: ");
+            for I in 0 .. 31 loop Put (Exp_KInv (N32 (I))'Image); end loop;
+            New_Line;
+         end if;
+      end;
+
+      --  Test mul with large values: r * d where r is from our test
+      declare
+         R_Val : constant ECDSA_Sig_Half :=
+           (16#5e#, 16#cb#, 16#e4#, 16#d1#, 16#a6#, 16#33#, 16#0a#,
+            16#44#, 16#c8#, 16#f7#, 16#ef#, 16#95#, 16#1d#, 16#4b#,
+            16#f1#, 16#65#, 16#e6#, 16#c6#, 16#b7#, 16#21#, 16#ef#,
+            16#ad#, 16#a9#, 16#85#, 16#fb#, 16#41#, 16#66#, 16#1b#,
+            16#c6#, 16#e7#, 16#fd#, 16#6c#);
+         D_Val : constant ECDSA_Sig_Half := (0 => 0, others => 16#01#);
+         Exp_RD : constant ECDSA_Sig_Half :=
+           (16#61#, 16#27#, 16#f7#, 16#c4#, 16#f4#, 16#b0#, 16#1f#,
+            16#64#, 16#fc#, 16#c3#, 16#42#, 16#03#, 16#18#, 16#c1#,
+            16#c2#, 16#d8#, 16#0a#, 16#95#, 16#a4#, 16#46#, 16#a4#,
+            16#35#, 16#a4#, 16#78#, 16#e7#, 16#b4#, 16#76#, 16#70#,
+            16#d8#, 16#bb#, 16#81#, 16#19#);
+         RD : ECDSA_Sig_Half;
+      begin
+         Test_Mul_Mod_N (R_Val, D_Val, RD);
+         Check ("P-256 r*d mod n (large r)",
+                Byte_Seq (RD) = Byte_Seq (Exp_RD));
+         if Byte_Seq (RD) /= Byte_Seq (Exp_RD) then
+            Put ("    Got:    ");
+            for I in 0 .. 31 loop Put (RD (N32 (I))'Image); end loop;
+            New_Line;
+         end if;
+      end;
+   end;
+   Put_Line ("");
+
+   Put_Line ("--- P-256 ECDSA ---");
+   declare
+      use SPARKTLS.P256.ECDSA;
+      use SPARKTLS.P256.Point;
+      Hash : constant Bytes_32 := (others => 16#BB#);
+      --  Private key (small, valid < n)
+      D    : ECDSA_Sig_Half := (0 => 0, others => 16#01#);
+      --  Nonce (small, valid < n)
+      K    : ECDSA_Sig_Half := (0 => 0, 1 => 0, others => 16#42#);
+      R_Out, S_Out : ECDSA_Sig_Half;
+      Qx, Qy : Byte_Seq (0 .. 31);
+      Sign_OK : Boolean;
+      Pt : P256_Jacobian;
+   begin
+      --  Compute public key Q = D * G
+      P256_Mulgen (Pt, Byte_Seq (D), 32);
+      P256_To_Affine (Pt);
+      SPARKTLS.P256.FE_To_Bytes (Qx, Pt.X);
+      SPARKTLS.P256.FE_To_Bytes (Qy, Pt.Y);
+
+      Put ("    Qx: ");
+      for I in 0 .. 31 loop Put (Qx (N32 (I))'Image); end loop;
+      New_Line;
+      Put ("    Qy: ");
+      for I in 0 .. 31 loop Put (Qy (N32 (I))'Image); end loop;
+      New_Line;
+
+      --  Sign
+      SPARKTLS.P256.ECDSA.Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
+      Check ("P-256 Sign", Sign_OK);
+      if Sign_OK then
+         Put ("    r(0..5): ");
+         for I in 0 .. 5 loop Put (R_Out (N32 (I))'Image); end loop;
+         New_Line;
+         Put ("    s(0..5): ");
+         for I in 0 .. 5 loop Put (S_Out (N32 (I))'Image); end loop;
+         New_Line;
+
+         --  Verify
+         declare
+            V : constant Boolean := Verify (Hash, Qx, Qy, R_Out, S_Out);
+         begin
+            Check ("P-256 Verify (round-trip)", V);
+            if not V then
+               Put_Line ("    Verify failed! Dumping r/s bytes...");
+               Put ("    R: ");
+               for I in 0 .. 31 loop Put (R_Out (N32 (I))'Image); end loop;
+               New_Line;
+               Put ("    S: ");
+               for I in 0 .. 31 loop Put (S_Out (N32 (I))'Image); end loop;
+               New_Line;
+            end if;
+         end;
+
+         --  Verify with wrong hash should fail
+         declare
+            Bad_Hash : Bytes_32 := Hash;
+         begin
+            Bad_Hash (0) := Bad_Hash (0) xor 1;
+            Check ("P-256 Verify (wrong hash fails)",
+                   not Verify (Bad_Hash, Qx, Qy, R_Out, S_Out));
+         end;
+
+         --  Test with large nonce (close to n)
+         declare
+            K2 : constant ECDSA_Sig_Half :=
+              (16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#00#, 16#00#, 16#00#,
+               16#00#, 16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#ff#, 16#ff#,
+               16#ff#, 16#ff#, 16#bc#, 16#e6#, 16#fa#, 16#ad#, 16#a7#,
+               16#17#, 16#9e#, 16#84#, 16#f3#, 16#b9#, 16#ca#, 16#c2#,
+               16#fc#, 16#63#, 16#25#, 16#4e#);
+            R2, S2 : ECDSA_Sig_Half;
+            OK2 : Boolean;
+         begin
+            SPARKTLS.P256.ECDSA.Sign (Hash, D, K2, R2, S2, OK2);
+            Check ("P-256 Sign (large K)", OK2);
+            if OK2 then
+               Put ("    R2: ");
+               for I in 0 .. 31 loop Put (R2 (N32 (I))'Image); end loop;
+               New_Line;
+               Put ("    S2: ");
+               for I in 0 .. 31 loop Put (S2 (N32 (I))'Image); end loop;
+               New_Line;
+               Check ("P-256 Verify (large K)",
+                      Verify (Hash, Qx, Qy, R2, S2));
+            end if;
+         end;
+
+         --  Test with medium nonce
+         declare
+            K3 : constant ECDSA_Sig_Half :=
+              (16#aa#, 16#aa#, 16#aa#, 16#aa#, 16#bb#, 16#bb#, 16#bb#,
+               16#bb#, 16#cc#, 16#cc#, 16#cc#, 16#cc#, 16#dd#, 16#dd#,
+               16#dd#, 16#dd#, 16#ee#, 16#ee#, 16#ee#, 16#ee#, 16#ff#,
+               16#ff#, 16#ff#, 16#ff#, 16#11#, 16#11#, 16#11#, 16#11#,
+               16#22#, 16#22#, 16#22#, 16#22#);
+            R3, S3 : ECDSA_Sig_Half;
+            OK3 : Boolean;
+         begin
+            SPARKTLS.P256.ECDSA.Sign (Hash, D, K3, R3, S3, OK3);
+            Check ("P-256 Sign (med K)", OK3);
+            if OK3 then
+               Check ("P-256 Verify (med K)",
+                      Verify (Hash, Qx, Qy, R3, S3));
+            end if;
+         end;
+      end if;
    end;
    Put_Line ("");
 
