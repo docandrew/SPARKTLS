@@ -106,8 +106,8 @@ is
 
       for Pos in reverse 0 .. 254 loop
          pragma Loop_Invariant
-           (Is_Carried (X1) and Is_Carried (X2) and Is_Carried (Z2) and
-            Is_Carried (X3) and Is_Carried (Z3) and Swap <= 1);
+           (Is_Mul_Safe (X1) and Is_Mul_Safe (X2) and Is_Mul_Safe (Z2) and
+            Is_Mul_Safe (X3) and Is_Mul_Safe (Z3) and Swap <= 1);
          K_T := Shift_Right (Unsigned_64 (E (N32 (Pos / 8))),
                              Pos mod 8) and 1;
          K_T := K_T xor Swap;
@@ -135,12 +135,12 @@ is
       Fiat_25519.CSwap (Z2, Z3, Swap);
 
       --  After loop: X2 and Z2 are carried (from loop invariant + CSwap post)
-      pragma Assert (Fiat_25519.Is_Carried (X2));
-      pragma Assert (Fiat_25519.Is_Carried (Z2));
+      pragma Assert (Fiat_25519.Is_Mul_Safe (X2));
+      pragma Assert (Fiat_25519.Is_Mul_Safe (Z2));
       declare
          ZI : constant FE := Fiat_25519.Inv (Z2);
       begin
-         pragma Assert (Fiat_25519.Is_Carried (ZI));
+         pragma Assert (Fiat_25519.Is_Mul_Safe (ZI));
          for I in 0 .. 4 loop
             pragma Loop_Invariant
               (for all J in 0 .. I =>

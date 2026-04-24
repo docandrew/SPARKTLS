@@ -6,6 +6,14 @@
 package body SPARKTLS.Fiat_25519 with
    SPARK_Mode => On
 is
+   procedure Lemma_Reduced_Is_Mul_Safe (F : FE) is
+   begin
+      for I in 0 .. 4 loop
+         pragma Assert (F (I) <= Mask51);
+         pragma Loop_Invariant
+           (for all J in 0 .. I => F (J) <= 16#18_0000_0000_0000#);
+      end loop;
+   end Lemma_Reduced_Is_Mul_Safe;
 
    --================================================================
    --  carry_mul (lines 133-243 of curve25519_64.c)
@@ -84,7 +92,6 @@ is
       x51 := x49 and Mask51;
       x52 := x50 + x38;
       R := (x48, x51, x52, x41, x44);
-      Carry (R);
       return R;
    end Mul;
 
@@ -160,37 +167,10 @@ is
       x49 := x47 and Mask51;
       x50 := x48 + x36;
       R := (x46, x49, x50, x39, x42);
-      Carry (R);
       return R;
    end Sqr;
 
-   --================================================================
-   --  add (lines 406-422 of curve25519_64.c)
-   --================================================================
-
-   function Add (A, B : FE) return FE is
-      x1 : constant Unsigned_64 := A (0) + B (0);
-      x2 : constant Unsigned_64 := A (1) + B (1);
-      x3 : constant Unsigned_64 := A (2) + B (2);
-      x4 : constant Unsigned_64 := A (3) + B (3);
-      x5 : constant Unsigned_64 := A (4) + B (4);
-   begin
-      return FE'(x1, x2, x3, x4, x5);
-   end Add;
-
-   --================================================================
-   --  sub (lines 431-447 of curve25519_64.c)
-   --================================================================
-
-   function Sub (A, B : FE) return FE is
-      x1 : constant Unsigned_64 := (16#FFFF_FFFF_FFFDA# + A (0)) - B (0);
-      x2 : constant Unsigned_64 := (16#FFFF_FFFF_FFFFE# + A (1)) - B (1);
-      x3 : constant Unsigned_64 := (16#FFFF_FFFF_FFFFE# + A (2)) - B (2);
-      x4 : constant Unsigned_64 := (16#FFFF_FFFF_FFFFE# + A (3)) - B (3);
-      x5 : constant Unsigned_64 := (16#FFFF_FFFF_FFFFE# + A (4)) - B (4);
-   begin
-      return FE'(x1, x2, x3, x4, x5);
-   end Sub;
+   --  Add and Sub are expression functions defined in the spec
 
    --================================================================
    --  carry (lines 367-397 of curve25519_64.c)
@@ -282,66 +262,52 @@ is
 
    function Inv (Z : FE) return FE is
       T0, T1, T2, T3 : FE;
-      --  Lemma: Is_Carried implies Is_Loose (Mask51 < 3*2^51)
-      procedure Loose_Of_Carried (F : FE)
-      with Ghost,
-           Pre  => Is_Carried (F),
-           Post => Is_Loose (F);
-      procedure Loose_Of_Carried (F : FE) is
-      begin
-         for I in 0 .. 4 loop
-            pragma Assert (F (I) <= Mask51);
-            pragma Assert (Mask51 < 16#18_0000_0000_0000#);
-            pragma Loop_Invariant
-              (for all J in 0 .. I => F (J) <= 16#18_0000_0000_0000#);
-         end loop;
-      end Loose_Of_Carried;
    begin
-      T0 := Sqr (Z);     Loose_Of_Carried (T0);              -- z^2
-      T1 := Sqr (T0);    Loose_Of_Carried (T1);              -- z^4
-      T1 := Sqr (T1);    Loose_Of_Carried (T1);              -- z^8
-      T1 := Mul (Z, T1); Loose_Of_Carried (T1);              -- z^9
-      T0 := Mul (T0, T1); Loose_Of_Carried (T0);             -- z^11
-      T2 := Sqr (T0);    Loose_Of_Carried (T2);              -- z^22
-      T1 := Mul (T1, T2); Loose_Of_Carried (T1);             -- z^31
-      T2 := Sqr (T1);    Loose_Of_Carried (T2);
+      T0 := Sqr (Z);     Lemma_Reduced_Is_Mul_Safe (T0);              -- z^2
+      T1 := Sqr (T0);    Lemma_Reduced_Is_Mul_Safe (T1);              -- z^4
+      T1 := Sqr (T1);    Lemma_Reduced_Is_Mul_Safe (T1);              -- z^8
+      T1 := Mul (Z, T1); Lemma_Reduced_Is_Mul_Safe (T1);              -- z^9
+      T0 := Mul (T0, T1); Lemma_Reduced_Is_Mul_Safe (T0);             -- z^11
+      T2 := Sqr (T0);    Lemma_Reduced_Is_Mul_Safe (T2);              -- z^22
+      T1 := Mul (T1, T2); Lemma_Reduced_Is_Mul_Safe (T1);             -- z^31
+      T2 := Sqr (T1);    Lemma_Reduced_Is_Mul_Safe (T2);
       for I in 1 .. 4 loop
-         T2 := Sqr (T2); Loose_Of_Carried (T2);
+         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
       end loop;
-      T1 := Mul (T2, T1); Loose_Of_Carried (T1);             -- z^(2^10-1)
-      T2 := Sqr (T1);    Loose_Of_Carried (T2);
+      T1 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T1);             -- z^(2^10-1)
+      T2 := Sqr (T1);    Lemma_Reduced_Is_Mul_Safe (T2);
       for I in 1 .. 9 loop
-         T2 := Sqr (T2); Loose_Of_Carried (T2);
+         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
       end loop;
-      T2 := Mul (T2, T1); Loose_Of_Carried (T2);             -- z^(2^20-1)
-      T3 := Sqr (T2);    Loose_Of_Carried (T3);
+      T2 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T2);             -- z^(2^20-1)
+      T3 := Sqr (T2);    Lemma_Reduced_Is_Mul_Safe (T3);
       for I in 1 .. 19 loop
-         T3 := Sqr (T3); Loose_Of_Carried (T3);
+         T3 := Sqr (T3); Lemma_Reduced_Is_Mul_Safe (T3);
       end loop;
-      T2 := Mul (T3, T2); Loose_Of_Carried (T2);             -- z^(2^40-1)
+      T2 := Mul (T3, T2); Lemma_Reduced_Is_Mul_Safe (T2);             -- z^(2^40-1)
       for I in 1 .. 10 loop
-         T2 := Sqr (T2); Loose_Of_Carried (T2);
+         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
       end loop;
-      T1 := Mul (T2, T1); Loose_Of_Carried (T1);             -- z^(2^50-1)
-      T2 := Sqr (T1);    Loose_Of_Carried (T2);
+      T1 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T1);             -- z^(2^50-1)
+      T2 := Sqr (T1);    Lemma_Reduced_Is_Mul_Safe (T2);
       for I in 1 .. 49 loop
-         pragma Loop_Invariant (Is_Loose (T2));
-         T2 := Sqr (T2); Loose_Of_Carried (T2);
+         pragma Loop_Invariant (Is_Mul_Safe (T2));
+         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
       end loop;
-      T2 := Mul (T2, T1); Loose_Of_Carried (T2);             -- z^(2^100-1)
-      T3 := Sqr (T2);    Loose_Of_Carried (T3);
+      T2 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T2);             -- z^(2^100-1)
+      T3 := Sqr (T2);    Lemma_Reduced_Is_Mul_Safe (T3);
       for I in 1 .. 99 loop
-         pragma Loop_Invariant (Is_Loose (T3));
-         T3 := Sqr (T3); Loose_Of_Carried (T3);
+         pragma Loop_Invariant (Is_Mul_Safe (T3));
+         T3 := Sqr (T3); Lemma_Reduced_Is_Mul_Safe (T3);
       end loop;
-      T2 := Mul (T3, T2); Loose_Of_Carried (T2);             -- z^(2^200-1)
+      T2 := Mul (T3, T2); Lemma_Reduced_Is_Mul_Safe (T2);             -- z^(2^200-1)
       for I in 1 .. 50 loop
-         pragma Loop_Invariant (Is_Loose (T2));
-         T2 := Sqr (T2); Loose_Of_Carried (T2);
+         pragma Loop_Invariant (Is_Mul_Safe (T2));
+         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
       end loop;
-      T1 := Mul (T2, T1); Loose_Of_Carried (T1);             -- z^(2^250-1)
+      T1 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T1);             -- z^(2^250-1)
       for I in 1 .. 5 loop
-         T1 := Sqr (T1); Loose_Of_Carried (T1);
+         T1 := Sqr (T1); Lemma_Reduced_Is_Mul_Safe (T1);
       end loop;
       return Mul (T1, T0);                                    -- z^(2^255-21)
    end Inv;

@@ -50,8 +50,8 @@ is
    --================================================================
 
    function Is_Valid (P : Ext_Point) return Boolean is
-     (Fiat_25519.Is_Carried (P.X) and Fiat_25519.Is_Carried (P.Y) and
-      Fiat_25519.Is_Carried (P.Z) and Fiat_25519.Is_Carried (P.T))
+     (Fiat_25519.Is_Mul_Safe (P.X) and Fiat_25519.Is_Mul_Safe (P.Y) and
+      Fiat_25519.Is_Mul_Safe (P.Z) and Fiat_25519.Is_Mul_Safe (P.T))
    with Ghost;
 
    function Point_Add (P, Q : Ext_Point) return Ext_Point
