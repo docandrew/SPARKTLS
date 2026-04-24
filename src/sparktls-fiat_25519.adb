@@ -11,7 +11,7 @@ is
       for I in 0 .. 4 loop
          pragma Assert (F (I) <= Mask51);
          pragma Loop_Invariant
-           (for all J in 0 .. I => F (J) <= 16#18_0000_0000_0000#);
+           (for all J in 0 .. I => F (J) <= 16#20_0000_0000_0000#);
       end loop;
    end Lemma_Reduced_Is_Mul_Safe;
 
@@ -235,10 +235,8 @@ is
       x25 : constant Unsigned_64  := Shift_Right (x24, 51);
       x26 : constant Unsigned_64  := x24 and Mask51;
       x27 : constant Unsigned_64  := x25 + x13;
-      R : FE := (x23, x26, x27, x16, x19);
    begin
-      Carry (R);
-      return R;
+      return FE'(x23, x26, x27, x16, x19);
    end Scmul;
 
    --================================================================
@@ -263,51 +261,56 @@ is
    function Inv (Z : FE) return FE is
       T0, T1, T2, T3 : FE;
    begin
-      T0 := Sqr (Z);     Lemma_Reduced_Is_Mul_Safe (T0);              -- z^2
-      T1 := Sqr (T0);    Lemma_Reduced_Is_Mul_Safe (T1);              -- z^4
-      T1 := Sqr (T1);    Lemma_Reduced_Is_Mul_Safe (T1);              -- z^8
-      T1 := Mul (Z, T1); Lemma_Reduced_Is_Mul_Safe (T1);              -- z^9
-      T0 := Mul (T0, T1); Lemma_Reduced_Is_Mul_Safe (T0);             -- z^11
-      T2 := Sqr (T0);    Lemma_Reduced_Is_Mul_Safe (T2);              -- z^22
-      T1 := Mul (T1, T2); Lemma_Reduced_Is_Mul_Safe (T1);             -- z^31
-      T2 := Sqr (T1);    Lemma_Reduced_Is_Mul_Safe (T2);
+      T0 := Sqr (Z);                                         -- z^2
+      T1 := Sqr (T0);                                        -- z^4
+      T1 := Sqr (T1);                                        -- z^8
+      T1 := Mul (Z, T1);                                     -- z^9
+      T0 := Mul (T0, T1);                                    -- z^11
+      T2 := Sqr (T0);                                        -- z^22
+      T1 := Mul (T1, T2);                                    -- z^31
+      T2 := Sqr (T1);
       for I in 1 .. 4 loop
-         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
+         pragma Loop_Invariant (Is_Mul_Safe (T2));
+         T2 := Sqr (T2);
       end loop;
-      T1 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T1);             -- z^(2^10-1)
-      T2 := Sqr (T1);    Lemma_Reduced_Is_Mul_Safe (T2);
+      T1 := Mul (T2, T1);                                    -- z^(2^10-1)
+      T2 := Sqr (T1);
       for I in 1 .. 9 loop
-         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
+         pragma Loop_Invariant (Is_Mul_Safe (T2));
+         T2 := Sqr (T2);
       end loop;
-      T2 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T2);             -- z^(2^20-1)
-      T3 := Sqr (T2);    Lemma_Reduced_Is_Mul_Safe (T3);
+      T2 := Mul (T2, T1);                                    -- z^(2^20-1)
+      T3 := Sqr (T2);
       for I in 1 .. 19 loop
-         T3 := Sqr (T3); Lemma_Reduced_Is_Mul_Safe (T3);
+         pragma Loop_Invariant (Is_Mul_Safe (T3));
+         T3 := Sqr (T3);
       end loop;
-      T2 := Mul (T3, T2); Lemma_Reduced_Is_Mul_Safe (T2);             -- z^(2^40-1)
+      T2 := Mul (T3, T2);                                    -- z^(2^40-1)
       for I in 1 .. 10 loop
-         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
+         pragma Loop_Invariant (Is_Mul_Safe (T2));
+         T2 := Sqr (T2);
       end loop;
-      T1 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T1);             -- z^(2^50-1)
-      T2 := Sqr (T1);    Lemma_Reduced_Is_Mul_Safe (T2);
+      T1 := Mul (T2, T1);                                    -- z^(2^50-1)
+      T2 := Sqr (T1);
       for I in 1 .. 49 loop
          pragma Loop_Invariant (Is_Mul_Safe (T2));
-         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
+         T2 := Sqr (T2);
       end loop;
-      T2 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T2);             -- z^(2^100-1)
-      T3 := Sqr (T2);    Lemma_Reduced_Is_Mul_Safe (T3);
+      T2 := Mul (T2, T1);                                    -- z^(2^100-1)
+      T3 := Sqr (T2);
       for I in 1 .. 99 loop
          pragma Loop_Invariant (Is_Mul_Safe (T3));
-         T3 := Sqr (T3); Lemma_Reduced_Is_Mul_Safe (T3);
+         T3 := Sqr (T3);
       end loop;
-      T2 := Mul (T3, T2); Lemma_Reduced_Is_Mul_Safe (T2);             -- z^(2^200-1)
+      T2 := Mul (T3, T2);                                    -- z^(2^200-1)
       for I in 1 .. 50 loop
          pragma Loop_Invariant (Is_Mul_Safe (T2));
-         T2 := Sqr (T2); Lemma_Reduced_Is_Mul_Safe (T2);
+         T2 := Sqr (T2);
       end loop;
-      T1 := Mul (T2, T1); Lemma_Reduced_Is_Mul_Safe (T1);             -- z^(2^250-1)
+      T1 := Mul (T2, T1);                                    -- z^(2^250-1)
       for I in 1 .. 5 loop
-         T1 := Sqr (T1); Lemma_Reduced_Is_Mul_Safe (T1);
+         pragma Loop_Invariant (Is_Mul_Safe (T1));
+         T1 := Sqr (T1);
       end loop;
       return Mul (T1, T0);                                    -- z^(2^255-21)
    end Inv;
