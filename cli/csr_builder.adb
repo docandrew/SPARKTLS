@@ -2,8 +2,8 @@ with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
-with SPARKTLS.P256.ECDSA;
-with SPARKTLS.P384.ECDSA;
+with SPARKTLSCrypto.P256.ECDSA;
+with SPARKTLSCrypto.P384.ECDSA;
 with SPARKEntropy;
 
 package body CSR_Builder is
@@ -150,10 +150,10 @@ package body CSR_Builder is
                use SPARKNaCl.Hashing.SHA256;
                Data_N : Byte_Seq (0 .. N32 (Data'Length) - 1);
                H      : Digest;
-               D      : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
+               D      : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                K      : Bytes_32;
                K_X    : X509.Byte_Seq (0 .. 31);
-               R_Out, S_Out : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
+               R_Out, S_Out : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
                for I in Data'Range loop
                   Data_N (N32 (I)) := Byte (Data (I));
@@ -167,7 +167,7 @@ package body CSR_Builder is
                for I in N32 range 0 .. 31 loop
                   K (I) := Byte (K_X (X509.N32 (I)));
                end loop;
-               SPARKTLS.P256.ECDSA.Sign (H, D, Byte_Seq (K),
+               SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K),
                                           R_Out, S_Out, OK);
                if OK then
                   ECDSA_To_DER (Byte_Seq (R_Out), Byte_Seq (S_Out), 32,
@@ -197,7 +197,7 @@ package body CSR_Builder is
                for I in N32 range 0 .. 47 loop
                   K (I) := Byte (K_X (X509.N32 (I)));
                end loop;
-               SPARKTLS.P384.ECDSA.Sign (H, D, Byte_Seq (K),
+               SPARKTLSCrypto.P384.ECDSA.Sign (H, D, Byte_Seq (K),
                                           R_Out, S_Out, OK);
                if OK then
                   ECDSA_To_DER (R_Out, S_Out, 48, Sig_DER, Sig_Len);

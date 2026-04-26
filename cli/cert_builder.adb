@@ -3,8 +3,8 @@ with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
-with SPARKTLS.P256.ECDSA;
-with SPARKTLS.P384.ECDSA;
+with SPARKTLSCrypto.P256.ECDSA;
+with SPARKTLSCrypto.P384.ECDSA;
 with SPARKEntropy;
 
 package body Cert_Builder is
@@ -518,10 +518,10 @@ package body Cert_Builder is
                   use SPARKNaCl.Hashing.SHA256;
                   TBS_N : Byte_Seq (0 .. N32 (TBS'Length) - 1);
                   H     : Digest;
-                  D     : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
+                  D     : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                   K     : Bytes_32;
                   K_X   : X509.Byte_Seq (0 .. 31);
-                  R_Out, S_Out : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
+                  R_Out, S_Out : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                   Sig_OK : Boolean;
                begin
                   for I in TBS'Range loop
@@ -539,7 +539,7 @@ package body Cert_Builder is
                      K (I) := Byte (K_X (X509.N32 (I)));
                   end loop;
 
-                  SPARKTLS.P256.ECDSA.Sign (H, D, Byte_Seq (K),
+                  SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K),
                                              R_Out, S_Out, Sig_OK);
                   if not Sig_OK then return; end if;
 
@@ -572,7 +572,7 @@ package body Cert_Builder is
                      K (I) := Byte (K_X (X509.N32 (I)));
                   end loop;
 
-                  SPARKTLS.P384.ECDSA.Sign (H, D, Byte_Seq (K),
+                  SPARKTLSCrypto.P384.ECDSA.Sign (H, D, Byte_Seq (K),
                                              R_Out, S_Out, Sig_OK);
                   if not Sig_OK then return; end if;
 

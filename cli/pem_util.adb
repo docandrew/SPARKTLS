@@ -1,5 +1,5 @@
 with Ada.Text_IO;
-with Base64;
+with SPARKTLSCrypto.Base64;
 
 package body PEM_Util is
    use type X509.N32;
@@ -17,7 +17,8 @@ package body PEM_Util is
 
       declare
          B64 : constant String :=
-            Base64.To_String (Base64.Encode (Plain));
+            SPARKTLSCrypto.Base64.To_String
+              (SPARKTLSCrypto.Base64.Encode (Plain));
          Header : constant String :=
             "-----BEGIN " & Label & "-----" & ASCII.LF;
          Footer : constant String :=

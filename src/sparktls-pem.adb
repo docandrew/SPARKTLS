@@ -44,6 +44,7 @@ is
 
       --  Scan for "-----BEGIN "
       Find_Begin : loop
+         pragma Loop_Invariant (Pos in Input'First .. Input'Last + 1);
          exit Find_Begin when Pos + Begin_Marker'Length - 1 > Input'Last;
 
          if Input (Pos .. Pos + Begin_Marker'Length - 1) = Begin_Marker then
@@ -52,6 +53,8 @@ is
 
             --  Find closing dashes of the header line
             Find_Label_End : loop
+               pragma Loop_Invariant
+                 (Label_End in Label_Start .. Input'Last + 1);
                exit Find_Label_End when
                   Label_End + Dashes'Length - 1 > Input'Last;
 
@@ -77,12 +80,23 @@ is
                         (Input (Body_Start) = ASCII.LF or
                          Input (Body_Start) = ASCII.CR)
                   loop
+                     pragma Loop_Invariant
+                       (Body_Start in Label_End + Dashes'Length
+                                      .. Input'Last + 1);
                      Body_Start := Body_Start + 1;
                   end loop;
 
                   --  Collect SPARKTLSCrypto.Base64 characters until "-----END"
                   Pos := Body_Start;
                   Collect : loop
+                     pragma Loop_Invariant
+                       (Pos in Input'First .. Input'Last + 1);
+                     pragma Loop_Invariant (B64_Len in 0 .. Max_B64);
+                     pragma Loop_Invariant
+                       (for all I in 1 .. B64_Len =>
+                          B64_Buf (I) in
+                            'a' .. 'z' | 'A' .. 'Z' | '0' .. '9'
+                            | '+' | '/' | '=');
                      exit Collect when Pos > Input'Last;
                      if Pos + End_Marker'Length - 1 <= Input'Last
                         and then Input (Pos .. Pos + End_Marker'Length - 1) =
@@ -91,13 +105,10 @@ is
                         exit Collect;
                      end if;
 
-                     if Input (Pos) = ASCII.LF or
-                        Input (Pos) = ASCII.CR or
-                        Input (Pos) = ' ' or
-                        Input (Pos) = ASCII.HT
+                     if Input (Pos) in
+                          'a' .. 'z' | 'A' .. 'Z' | '0' .. '9'
+                          | '+' | '/' | '='
                      then
-                        Pos := Pos + 1;
-                     else
                         if B64_Len < Max_B64 then
                            B64_Len := B64_Len + 1;
                            B64_Buf (B64_Len) := Input (Pos);
@@ -105,8 +116,9 @@ is
                            --  SPARKTLSCrypto.Base64 content exceeds buffer — cert is oversize
                            Result.Oversize := True;
                         end if;
-                        Pos := Pos + 1;
                      end if;
+                     --  Skip everything else (whitespace, stray chars, etc.)
+                     Pos := Pos + 1;
                   end loop Collect;
 
                   if Result.Oversize then

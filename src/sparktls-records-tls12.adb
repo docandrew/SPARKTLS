@@ -94,7 +94,9 @@ is
      (Seq_Num       : Unsigned_64;
       Content_Type  : Byte;
       Plaintext_Len : N32) return Byte_Seq
-   with Pre => Plaintext_Len <= Max_Record_Plaintext
+   with Pre  => Plaintext_Len <= Max_Record_Plaintext,
+        Post => Build_AAD'Result'First = 0
+                and Build_AAD'Result'Last = AAD_Len - 1
    is
       AAD : Byte_Seq (0 .. AAD_Len - 1) := (others => 0);
    begin
@@ -119,6 +121,10 @@ is
    end Build_AAD;
 
    --  Encode sequence number as 8-byte big-endian explicit nonce
+   function Seq_To_Bytes (Seq : Unsigned_64) return Byte_Seq
+   with Post => Seq_To_Bytes'Result'First = 0
+                and Seq_To_Bytes'Result'Last = 7;
+
    function Seq_To_Bytes (Seq : Unsigned_64) return Byte_Seq is
       B : Byte_Seq (0 .. 7) := (others => 0);
    begin
@@ -143,7 +149,7 @@ is
       Bytes_Out    :    out N32)
    is
       pragma Assert (Plaintext'Last < Max_Record_Plaintext);
-      PT_Len : constant N32 := Plaintext'Last + 1;  --  First=0 per Pre
+      PT_Len : constant N32 := N32 (Plaintext'Length);
 
       --  Output = header[5] + explicit_nonce[8] + ciphertext[PT_Len] + tag[16]
       Total  : constant N32 :=

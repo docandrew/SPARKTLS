@@ -16,7 +16,9 @@ is
       Pos  : in out X509.N32;
       Len  : out X509.N32;
       P_OK : out Boolean)
-   with Pre => Buf'First = 0 and Buf'Last < X509.N32'Last
+   with Pre  => Buf'First = 0 and Buf'Last < X509.N32'Last,
+        Post => (if P_OK then Pos in Pos'Old + 1 .. Buf'Last + 1
+                              and Len <= 65535)
    is
    begin
       Len := 0;
@@ -28,12 +30,12 @@ is
          Pos := Pos + 1;
          P_OK := True;
       elsif Buf (Pos) = 16#81# then
-         if Pos + 1 > Buf'Last then return; end if;
+         if Buf'Last - Pos < 1 then return; end if;
          Len := X509.N32 (Buf (Pos + 1));
          Pos := Pos + 2;
          P_OK := True;
       elsif Buf (Pos) = 16#82# then
-         if Pos + 2 > Buf'Last then return; end if;
+         if Buf'Last - Pos < 2 then return; end if;
          Len := X509.N32 (Buf (Pos + 1)) * 256 +
                  X509.N32 (Buf (Pos + 2));
          Pos := Pos + 3;
@@ -49,7 +51,12 @@ is
       Val_Pos : out X509.N32;
       Val_Len : out X509.N32;
       P_OK    : out Boolean)
-   with Pre => Buf'First = 0 and Buf'Last < X509.N32'Last
+   with Pre  => Buf'First = 0 and Buf'Last < X509.N32'Last,
+        Post => (if P_OK then
+                   Val_Len > 0
+                   and Val_Pos in 0 .. Buf'Last
+                   and Val_Len <= Buf'Last - Val_Pos + 1
+                   and Pos <= Buf'Last + 1)
    is
       Raw_Len : X509.N32;
    begin
@@ -63,10 +70,11 @@ is
          P_OK := False;
          return;
       end if;
-      if Pos + Raw_Len - 1 > Buf'Last then
+      if Pos > Buf'Last or else Buf'Last - Pos < Raw_Len - 1 then
          P_OK := False;
          return;
       end if;
+      pragma Assert (Pos + Raw_Len <= Buf'Last + 1);
       Val_Pos := Pos;
       Val_Len := Raw_Len;
       --  Strip leading zero (sign padding)
@@ -86,9 +94,10 @@ is
       Key_Out : in out Byte_Seq;
       Key_Len : out N32;
       OK      : out Boolean)
-   with Pre => DER'First = 0 and DER'Last < X509.N32'Last
-               and Key_Out'First = 0 and Key_Out'Last < N32'Last
-               and Start + 9 <= DER'Last
+   with Pre  => DER'First = 0 and DER'Last < X509.N32'Last
+                and Key_Out'First = 0 and Key_Out'Last < N32'Last
+                and Start + 9 <= DER'Last,
+        Post => (if OK then Key_Len in 1 .. Key_Out'Last + 1)
    is
       Pos  : X509.N32 := Start + 9;
       Len  : X509.N32;
@@ -225,52 +234,56 @@ is
       end if;
 
       --  P-256 OID: 06 08 2A 86 48 CE 3D 03 01 07
-      declare
-         P256_OID : constant X509.Byte_Seq (0 .. 7) :=
-           (16#2A#, 16#86#, 16#48#, 16#CE#, 16#3D#, 16#03#, 16#01#, 16#07#);
-      begin
-         for Start in X509.N32 range 0 .. DER_Len - 8 loop
-            if DER (Start .. Start + 7) = P256_OID then
-               for J in Start + 8 .. DER_Len - 34 loop
-                  if DER (J) = 16#04# and then DER (J + 1) = 16#20# then
-                     if Key_Out'Length >= 32 then
-                        for K in N32 range 0 .. 31 loop
-                           Key_Out (Key_Out'First + K) :=
-                              SPARKNaCl.Byte (DER (J + 2 + X509.N32 (K)));
-                        end loop;
-                        Key_Len := 32;
-                        OK := True;
+      if DER_Len >= 34 then
+         declare
+            P256_OID : constant X509.Byte_Seq (0 .. 7) :=
+              (16#2A#, 16#86#, 16#48#, 16#CE#, 16#3D#, 16#03#, 16#01#, 16#07#);
+         begin
+            for Start in X509.N32 range 0 .. DER_Len - 8 loop
+               if DER (Start .. Start + 7) = P256_OID then
+                  for J in Start + 8 .. DER_Len - 34 loop
+                     if DER (J) = 16#04# and then DER (J + 1) = 16#20# then
+                        if Key_Out'Length >= 32 then
+                           for K in N32 range 0 .. 31 loop
+                              Key_Out (Key_Out'First + K) :=
+                                 SPARKNaCl.Byte (DER (J + 2 + X509.N32 (K)));
+                           end loop;
+                           Key_Len := 32;
+                           OK := True;
+                        end if;
+                        return;
                      end if;
-                     return;
-                  end if;
-               end loop;
-            end if;
-         end loop;
-      end;
+                  end loop;
+               end if;
+            end loop;
+         end;
+      end if;
 
       --  P-384 OID: 06 05 2B 81 04 00 22
-      declare
-         P384_OID : constant X509.Byte_Seq (0 .. 4) :=
-           (16#2B#, 16#81#, 16#04#, 16#00#, 16#22#);
-      begin
-         for Start in X509.N32 range 0 .. DER_Len - 5 loop
-            if DER (Start .. Start + 4) = P384_OID then
-               for J in Start + 5 .. DER_Len - 50 loop
-                  if DER (J) = 16#04# and then DER (J + 1) = 16#30# then
-                     if Key_Out'Length >= 48 then
-                        for K in N32 range 0 .. 47 loop
-                           Key_Out (Key_Out'First + K) :=
-                              SPARKNaCl.Byte (DER (J + 2 + X509.N32 (K)));
-                        end loop;
-                        Key_Len := 48;
-                        OK := True;
+      if DER_Len >= 50 then
+         declare
+            P384_OID : constant X509.Byte_Seq (0 .. 4) :=
+              (16#2B#, 16#81#, 16#04#, 16#00#, 16#22#);
+         begin
+            for Start in X509.N32 range 0 .. DER_Len - 5 loop
+               if DER (Start .. Start + 4) = P384_OID then
+                  for J in Start + 5 .. DER_Len - 50 loop
+                     if DER (J) = 16#04# and then DER (J + 1) = 16#30# then
+                        if Key_Out'Length >= 48 then
+                           for K in N32 range 0 .. 47 loop
+                              Key_Out (Key_Out'First + K) :=
+                                 SPARKNaCl.Byte (DER (J + 2 + X509.N32 (K)));
+                           end loop;
+                           Key_Len := 48;
+                           OK := True;
+                        end if;
+                        return;
                      end if;
-                     return;
-                  end if;
-               end loop;
-            end if;
-         end loop;
-      end;
+                  end loop;
+               end if;
+            end loop;
+         end;
+      end if;
 
       --  RSA OID: 06 09 2A 86 48 86 F7 0D 01 01 01
       declare
@@ -305,23 +318,102 @@ is
       Key_Len     : N32;
       Key_OK      : Boolean;
       Set_OK      : Boolean;
-      First_Cert  : Boolean := True;
       Pos         : Positive;
    begin
+      --  Set_Identity is the only entry point that fully initializes Id.
+      --  We must call it BEFORE any Add_Intermediate so SPARK sees Id
+      --  as initialized for the rest of the procedure. To do that we
+      --  parse + decode in this order:
+      --    1. Decode private key from Key_PEM
+      --    2. Extract raw key bytes
+      --    3. Decode the leaf cert (first PEM block) from Cert_PEM
+      --    4. Set_Identity (Id, leaf_DER, key) — Id now Initialized
+      --    5. Walk Cert_PEM picking up additional cert blocks and
+      --       passing each to Add_Intermediate.
       OK := False;
+      --  Initialize a fresh Identity locally and assign so SPARK sees
+      --  every field as set on every return path.
+      declare
+         Default_Id : Identity;
+      begin
+         Id := Default_Id;
+      end;
 
       if Cert_PEM'Length = 0 or Key_PEM'Length = 0 then
          return;
       end if;
 
-      --  Decode certs (first = leaf, rest = intermediates)
+      --  1+2: Decode key, extract raw bytes
+      PEM.Decode (Key_PEM, Key_Result);
+      if not Key_Result.OK
+         or else Key_Result.Label /= PEM.Label_Private_Key
+      then
+         return;
+      end if;
+      Extract_Key (Key_Result.DER, Key_Result.DER_Len,
+                   Key_Buf, Key_Len, Key_OK);
+      if not Key_OK or Key_Len = 0 then
+         return;
+      end if;
+
+      --  3: Decode leaf cert (first PEM block of Cert_PEM)
+      PEM.Decode (Cert_PEM, Cert_Result);
+      if not Cert_Result.OK
+         or else Cert_Result.Label /= PEM.Label_Certificate
+      then
+         return;
+      end if;
+
+      --  4: Initialize Id with leaf cert and key
+      Cert_Verify.Set_Identity
+        (Id,
+         Cert_Result.DER (0 .. Cert_Result.DER_Len - 1),
+         Key_Buf (0 .. Key_Len - 1),
+         Set_OK);
+      if not Set_OK then
+         return;
+      end if;
+
+      --  5: Walk remaining cert blocks → Add_Intermediate.
+      --  Find the first END marker so we skip the leaf cert we already
+      --  consumed, then iterate.
       Pos := Cert_PEM'First;
-      while Pos <= Cert_PEM'Last loop
+      declare
+         End_Marker : constant String := "-----END ";
+      begin
+         --  Skip past leaf's END marker line
+         while Pos + End_Marker'Length - 1 <= Cert_PEM'Last loop
+            pragma Loop_Invariant
+              (Pos in Cert_PEM'First .. Cert_PEM'Last);
+            if Cert_PEM (Pos .. Pos + End_Marker'Length - 1) = End_Marker
+            then
+               --  Skip to end of this line
+               while Pos <= Cert_PEM'Last
+                  and then Cert_PEM (Pos) /= ASCII.LF
+               loop
+                  pragma Loop_Invariant
+                    (Pos in Cert_PEM'First .. Cert_PEM'Last);
+                  if Pos = Cert_PEM'Last then exit; end if;
+                  Pos := Pos + 1;
+               end loop;
+               exit;
+            end if;
+            if Pos = Cert_PEM'Last then exit; end if;
+            Pos := Pos + 1;
+         end loop;
+      end;
+
+      while Pos < Cert_PEM'Last loop
+         pragma Loop_Invariant
+           (Pos in Cert_PEM'First .. Cert_PEM'Last);
+         Pos := Pos + 1;
          declare
             Begin_Marker : constant String := "-----BEGIN ";
-            Found : Boolean := False;
+            Found        : Boolean := False;
          begin
             while Pos + Begin_Marker'Length - 1 <= Cert_PEM'Last loop
+               pragma Loop_Invariant
+                 (Pos in Cert_PEM'First .. Cert_PEM'Last);
                if Cert_PEM (Pos .. Pos + Begin_Marker'Length - 1) =
                   Begin_Marker
                then
@@ -331,40 +423,39 @@ is
                if Pos = Cert_PEM'Last then exit; end if;
                Pos := Pos + 1;
             end loop;
-            if not Found then exit; end if;
+            exit when not Found;
          end;
 
          PEM.Decode (Cert_PEM (Pos .. Cert_PEM'Last), Cert_Result);
-
          if Cert_Result.OK
             and then Cert_Result.Label = PEM.Label_Certificate
          then
-            if First_Cert then
-               First_Cert := False;
-            else
-               declare
-                  Int_OK : Boolean;
-               begin
-                  Cert_Verify.Add_Intermediate
-                    (Id,
-                     Cert_Result.DER (0 .. Cert_Result.DER_Len - 1),
-                     Int_OK);
-               end;
-            end if;
+            declare
+               Int_OK : Boolean;
+            begin
+               Cert_Verify.Add_Intermediate
+                 (Id,
+                  Cert_Result.DER (0 .. Cert_Result.DER_Len - 1),
+                  Int_OK);
+            end;
          end if;
 
-         --  Skip past END marker
+         --  Advance past this cert's END marker
          declare
             End_Marker : constant String := "-----END ";
          begin
             while Pos + End_Marker'Length - 1 <= Cert_PEM'Last loop
+               pragma Loop_Invariant
+                 (Pos in Cert_PEM'First .. Cert_PEM'Last);
                if Cert_PEM (Pos .. Pos + End_Marker'Length - 1) =
                   End_Marker
                then
                   while Pos <= Cert_PEM'Last
                      and then Cert_PEM (Pos) /= ASCII.LF
                   loop
-                     if Pos = Cert_PEM'Last then exit; end if;
+                     pragma Loop_Invariant
+                       (Pos in Cert_PEM'First .. Cert_PEM'Last);
+                           if Pos = Cert_PEM'Last then exit; end if;
                      Pos := Pos + 1;
                   end loop;
                   exit;
@@ -373,38 +464,9 @@ is
                Pos := Pos + 1;
             end loop;
          end;
-         if Pos = Cert_PEM'Last then exit; end if;
-         Pos := Pos + 1;
       end loop;
 
-      --  Decode private key
-      PEM.Decode (Key_PEM, Key_Result);
-      if not Key_Result.OK
-         or else Key_Result.Label /= PEM.Label_Private_Key
-      then
-         return;
-      end if;
-
-      --  Extract raw key bytes from PKCS#8 DER
-      Extract_Key (Key_Result.DER, Key_Result.DER_Len,
-                   Key_Buf, Key_Len, Key_OK);
-      if not Key_OK or Key_Len = 0 then
-         return;
-      end if;
-
-      --  Decode first cert again for Set_Identity
-      PEM.Decode (Cert_PEM, Cert_Result);
-      if not Cert_Result.OK then
-         return;
-      end if;
-
-      Cert_Verify.Set_Identity
-        (Id,
-         Cert_Result.DER (0 .. Cert_Result.DER_Len - 1),
-         Key_Buf (0 .. Key_Len - 1),
-         Set_OK);
-
-      OK := Set_OK;
+      OK := True;
    end Load_Identity_PEM;
 
 end SPARKTLS.Credentials.Parsing;

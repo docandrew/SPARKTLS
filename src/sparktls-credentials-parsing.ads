@@ -5,7 +5,8 @@
 --  SPARK_Mode On: formally verified for memory safety.
 
 with X509;
-with SPARKNaCl; use SPARKNaCl;
+with SPARKNaCl;     use SPARKNaCl;
+with SPARKTLS.PEM;
 
 package SPARKTLS.Credentials.Parsing with
    SPARK_Mode => On
@@ -23,10 +24,12 @@ is
       Key_Out : out Byte_Seq;
       Key_Len : out N32;
       OK      : out Boolean)
-   with Pre => DER'First = 0
-               and DER'Last < X509.N32'Last
-               and Key_Out'First = 0
-               and Key_Out'Last < N32'Last;
+   with Pre  => DER'First = 0
+                and DER'Last < X509.N32'Last
+                and DER_Len <= DER'Last + 1
+                and Key_Out'First = 0
+                and Key_Out'Last < N32'Last,
+        Post => (if OK then Key_Len in 1 .. Key_Out'Last + 1);
 
    --  Load identity from PEM strings (no file I/O).
    --  Cert_PEM: leaf cert + optional intermediate chain.
@@ -36,7 +39,7 @@ is
       Cert_PEM : String;
       Key_PEM  : String;
       OK       : out Boolean)
-   with Relaxed_Initialization => Id,
-        Post => Id'Initialized;
+   with Pre  => Cert_PEM'Last <= PEM.Max_PEM_Input
+                and Key_PEM'Last <= PEM.Max_PEM_Input;
 
 end SPARKTLS.Credentials.Parsing;

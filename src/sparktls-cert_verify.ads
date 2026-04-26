@@ -1,5 +1,7 @@
 with SPARKNaCl; use SPARKNaCl;
 with X509;
+with SPARKTLSCrypto.P384.Field;
+with SPARKTLSCrypto.P384.ECDSA;
 
 --  Certificate Signature & Chain Verification
 --
@@ -13,7 +15,9 @@ is
      (Cert_DER : Byte_Seq;
       Cert     : X509.Certificate;
       Issuer   : X509.Certificate) return Boolean
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last;
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
+               and SPARKTLSCrypto.P384.Field.Initialized
+               and SPARKTLSCrypto.P384.ECDSA.Initialized;
 
    --  Validation result
    type Validation_Result is
@@ -47,7 +51,8 @@ is
       Root_DER : X509.Byte_Seq;
       Now      : X509.Date_Time;
       Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre  => Root_DER'First = 0 and Root_DER'Last < X509.N32'Last,
+   with Pre  => Root_DER'First = 0 and Root_DER'Last < X509.N32'Last
+                and X509.Spans_Valid (Root, Root_DER'Last),
         Post =>
      (if Validate_Root'Result = Valid then
         --  RFC 5280 §6.1.1(d): trust anchor must parse
@@ -60,8 +65,19 @@ is
         and X509.Is_CA (Root)
         --  RFC 5280 §4.2.1.9: BC must be critical on CA certs
         and X509.Is_Basic_Constraints_Critical (Root)
-        --  Full structural validity (encoding, extensions, etc.)
-        and X509.Is_Structurally_Valid (Root, Now));
+        --  Full structural validity, OR every individual structural
+        --  check passes (legacy-root tolerance: Bad_Serial-only certs
+        --  like Starfield G2 violate RFC 5280 §4.1.2.2 but ship in
+        --  every major trust store).
+        and (X509.Is_Structurally_Valid (Root, Now)
+             or else
+               (X509.TBS (Root).Present
+                and not X509.Has_Duplicate_Extension (Root)
+                and not X509.Has_Bad_Extension_Criticality (Root)
+                and not X509.Has_Bad_Time_Format (Root)
+                and not X509.Has_Bad_SAN (Root)
+                and not X509.Has_Empty_Key_Usage_Value (Root)
+                and not X509.Has_Key_Cert_Sign_Without_CA (Root))));
 
    --================================================================
    --  Chain validation building blocks
@@ -82,7 +98,9 @@ is
      (Cert_DER : X509.Byte_Seq;
       Cert     : X509.Certificate;
       Issuer   : X509.Certificate) return Boolean
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last;
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
+               and SPARKTLSCrypto.P384.Field.Initialized
+               and SPARKTLSCrypto.P384.ECDSA.Initialized;
 
    --  Validate one link in the chain: Issuer signs Cert.
    --
@@ -112,7 +130,11 @@ is
       CAs_Below_Issuer : Natural;
       Mode             : Validation_Mode := Mode_WebPKI) return Validation_Result
    with Pre  => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
-                and Issuer_DER'First = 0 and Issuer_DER'Last < X509.N32'Last,
+                and Issuer_DER'First = 0 and Issuer_DER'Last < X509.N32'Last
+                and X509.Spans_Valid (Cert, Cert_DER'Last)
+                and X509.Spans_Valid (Issuer, Issuer_DER'Last)
+                and SPARKTLSCrypto.P384.Field.Initialized
+                and SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post =>
           --  RFC 5280 §6.1.3: issuer must match
           (if Validate_Link'Result = Valid then
@@ -152,7 +174,8 @@ is
       Hostname : String;
       Purpose  : Validation_Purpose := Purpose_Server;
       Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre  => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last,
+   with Pre  => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last
+                and X509.Spans_Valid (Leaf, Leaf_DER'Last),
         Post =>
           --  RFC 5280 §4.2.1.12: if EKU present but wrong, reject
           (if X509.Has_EKU (Leaf)
@@ -198,10 +221,12 @@ is
       Cert       : X509.Certificate;
       Sig_Scheme : Unsigned_16) return Boolean
    with Pre => Data'First = 0
-               and Data'Last < N32'Last
+               and Data'Last < N32'Last - 64  --  +64 prefix in Ed25519 path
                and Sig'First = 0
                and Sig'Length > 0
-               and Sig'Last < N32'Last;
+               and Sig'Last < N32'Last
+               and SPARKTLSCrypto.P384.Field.Initialized
+               and SPARKTLSCrypto.P384.ECDSA.Initialized;
 
    --================================================================
    --  Credential loading helpers
@@ -216,8 +241,12 @@ is
      (Store : in out Trust_Store;
       DER   : X509.Byte_Seq;
       OK    : out Boolean)
-   with Pre => DER'First = 0 and DER'Last < X509.N32'Last
-               and X509.N32 (DER'Length) <= X509.N32 (Max_Cert_DER);
+   with Pre  => DER'First = 0 and DER'Last < X509.N32 (Max_Cert_DER)
+                and Store.Root_Count <= Max_Root_Pool_Size,
+        Post => Store.Root_Count <= Max_Root_Pool_Size
+                and Store.Root_Count >= Store.Root_Count'Old
+                and (if OK then Store.Root_Count = Store.Root_Count'Old + 1
+                     else Store.Root_Count = Store.Root_Count'Old);
 
    --  Load all DER certificates from a concatenated blob.
    --  Each cert is a complete DER SEQUENCE (tag 0x30 + length + value).
@@ -228,8 +257,7 @@ is
       Loaded : out Natural;
       OK     : out Boolean)
    with Pre  => DER'First = 0 and then DER'Last < X509.N32'Last,
-        Relaxed_Initialization => Store,
-        Post => Store'Initialized;
+        Post => Store.Root_Count <= Max_Root_Pool_Size;
 
    function Root_Count (Store : Trust_Store) return Natural is
      (Store.Root_Count);
@@ -246,17 +274,14 @@ is
       OK       : out Boolean)
    with Pre  => Cert_DER'First = 0 and then Cert_DER'Last < X509.N32'Last
                 and then X509.N32 (Cert_DER'Length) <= X509.N32 (Max_Cert_DER)
-                and then Key'First = 0,
-        Relaxed_Initialization => Id,
-        Post => Id'Initialized;
+                and then Key'First = 0;
 
    --  Add an intermediate certificate to the identity's chain.
    procedure Add_Intermediate
      (Id  : in out Identity;
       DER : X509.Byte_Seq;
       OK  : out Boolean)
-   with Pre => DER'First = 0 and DER'Last < X509.N32'Last
-               and X509.N32 (DER'Length) <= X509.N32 (Max_Cert_DER);
+   with Pre => DER'First = 0 and DER'Last < X509.N32 (Max_Cert_DER);
 
    --================================================================
    --  Chain building and validation
@@ -289,6 +314,9 @@ is
       Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
    with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last
                and Int_Count <= Max_Pool_Size
-               and Root_Count <= Max_Root_Pool_Size;
+               and Root_Count <= Max_Root_Pool_Size
+               and X509.Spans_Valid (Leaf, Leaf_DER'Last)
+               and SPARKTLSCrypto.P384.Field.Initialized
+               and SPARKTLSCrypto.P384.ECDSA.Initialized;
 
 end SPARKTLS.Cert_Verify;

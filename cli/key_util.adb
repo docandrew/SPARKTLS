@@ -1,8 +1,8 @@
 with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
 with SPARKEntropy;
-with SPARKTLS.P256.Point;
-with SPARKTLS.P384.Point;
+with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.P384.Point;
 with SPARKTLS.PEM;
 with DER_Builder; use DER_Builder;
 with Ada.Text_IO;
@@ -239,7 +239,7 @@ package body Key_Util is
 
          when Algo_P256 =>
             declare
-               use SPARKTLS.P256.Point;
+               use SPARKTLSCrypto.P256.Point;
                Scalar_X : X509.Byte_Seq (0 .. 31);
                Scalar_N : Byte_Seq (0 .. 31);
                PK_Jac   : P256_Jacobian;
@@ -346,7 +346,7 @@ package body Key_Util is
                   Scalar_N (I) := Byte (Scalar_X (X509.N32 (I)));
                end loop;
 
-               SPARKTLS.P384.Point.P384_Mulgen (PK_Enc, Scalar_N);
+               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, Scalar_N);
 
                for I in X509.N32 range 0 .. 96 loop
                   PK_X (I) := X509.Byte (PK_Enc (N32 (I)));
@@ -459,7 +459,7 @@ package body Key_Util is
                for J in Start + 8 .. R.DER_Len - 34 loop
                   if R.DER (J) = 16#04# and then R.DER (J + 1) = 16#20# then
                      declare
-                        use SPARKTLS.P256.Point;
+                        use SPARKTLSCrypto.P256.Point;
                         Scalar_N : Byte_Seq (0 .. 31);
                         PK_Jac   : P256_Jacobian;
                         PK_Enc   : Byte_Seq (0 .. 64);
@@ -517,7 +517,7 @@ package body Key_Util is
                            Scalar_N (K) := Byte (R.DER (J + 2 + X509.N32 (K)));
                         end loop;
 
-                        SPARKTLS.P384.Point.P384_Mulgen (PK_Enc, Scalar_N);
+                        SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, Scalar_N);
 
                         for K in X509.N32 range 0 .. 96 loop
                            PK_X (K) := X509.Byte (PK_Enc (N32 (K)));

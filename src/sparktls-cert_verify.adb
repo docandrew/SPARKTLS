@@ -699,6 +699,13 @@ is
       Index : Natural;
       DER   : X509.Byte_Seq;
       OK    : out Boolean)
+   with Pre => DER'First = 0 and DER'Last < X509.N32'Last;
+
+   procedure Add_To_Pool
+     (Pool  : in out Cert_Pool;
+      Index : Natural;
+      DER   : X509.Byte_Seq;
+      OK    : out Boolean)
    is
       C    : X509.Certificate;
       P_OK : Boolean;
@@ -716,9 +723,11 @@ is
          return;
       end if;
 
+      Pool (Index).Present := False;
       Pool (Index).Cert := C;
       Pool (Index).DER (0 .. X509.N32 (DER'Length) - 1) := DER;
       Pool (Index).DER_Len := X509.N32 (DER'Length);
+      pragma Assert (Pool (Index).DER_Len - 1 = DER'Last);
       Pool (Index).Present := True;
       OK := True;
    end Add_To_Pool;
@@ -748,9 +757,12 @@ is
       end if;
 
       Idx := Store.Root_Count;
+      --  Clear Present first so partial-update predicate checks are vacuous.
+      Store.Roots (Idx).Present := False;
       Store.Roots (Idx).Cert := C;
       Store.Roots (Idx).DER (0 .. X509.N32 (DER'Length) - 1) := DER;
       Store.Roots (Idx).DER_Len := X509.N32 (DER'Length);
+      pragma Assert (Store.Roots (Idx).DER_Len - 1 = DER'Last);
       Store.Roots (Idx).Present := True;
       Store.Root_Count := Store.Root_Count + 1;
       OK := True;
@@ -765,11 +777,15 @@ is
       use type X509.N32;
       Pos : X509.N32 := DER'First;
    begin
+      --  Fully initialize Store so 'Initialized holds on every path.
+      Store.Roots := (others => <>);
       Store.Root_Count := 0;
       Loaded := 0;
       OK := True;
 
       while Pos <= DER'Last and Store.Root_Count < Max_Root_Pool_Size loop
+         pragma Loop_Invariant (Loaded <= Store.Root_Count);
+         pragma Loop_Invariant (Store.Root_Count <= Max_Root_Pool_Size);
          --  Each cert starts with SEQUENCE tag (0x30)
          if DER (Pos) /= 16#30# then
             OK := Loaded > 0;
@@ -778,14 +794,15 @@ is
 
          --  Parse DER length to find the end of this certificate
          declare
-            Len_Pos : X509.N32 := Pos + 1;
+            Len_Pos  : constant X509.N32 := Pos + 1;
             Cert_Len : X509.N32;
             Hdr_Len  : X509.N32;
          begin
-            if Len_Pos > DER'Last then
+            if Pos >= DER'Last then
                OK := Loaded > 0;
                return;
             end if;
+            --  Now Len_Pos <= DER'Last (Pos < DER'Last so Pos + 1 <= DER'Last).
 
             if DER (Len_Pos) < 16#80# then
                --  Short form length
@@ -793,14 +810,14 @@ is
                Hdr_Len := 2;
             elsif DER (Len_Pos) = 16#81# then
                --  Long form, 1 byte
-               if Len_Pos + 1 > DER'Last then
+               if DER'Last - Len_Pos < 1 then
                   OK := Loaded > 0; return;
                end if;
                Cert_Len := X509.N32 (DER (Len_Pos + 1));
                Hdr_Len := 3;
             elsif DER (Len_Pos) = 16#82# then
                --  Long form, 2 bytes
-               if Len_Pos + 2 > DER'Last then
+               if DER'Last - Len_Pos < 2 then
                   OK := Loaded > 0; return;
                end if;
                Cert_Len := X509.N32 (DER (Len_Pos + 1)) * 256
@@ -808,7 +825,7 @@ is
                Hdr_Len := 4;
             elsif DER (Len_Pos) = 16#83# then
                --  Long form, 3 bytes
-               if Len_Pos + 3 > DER'Last then
+               if DER'Last - Len_Pos < 3 then
                   OK := Loaded > 0; return;
                end if;
                Cert_Len := X509.N32 (DER (Len_Pos + 1)) * 65536
@@ -823,8 +840,9 @@ is
             declare
                Total : constant X509.N32 := Hdr_Len + Cert_Len;
             begin
-               if Total > X509.N32 (Max_Cert_DER)
-                  or else Pos + Total - 1 > DER'Last
+               if Total = 0
+                  or else Total > X509.N32 (Max_Cert_DER)
+                  or else DER'Last - Pos < Total - 1
                then
                   OK := Loaded > 0;
                   return;
@@ -864,6 +882,25 @@ is
       P_OK : Boolean;
    begin
       OK := False;
+      --  Initialize all Id fields explicitly so SPARK flow analysis
+      --  sees a fully-set 'out' parameter on every return path.
+      Id.Int_Count    := 0;
+      Id.Ints         := (others => <>);
+      Id.Cert_DER     := (others => 0);
+      Id.Cert_DER_Len := 0;
+      Id.Cert         := C;  --  defaults
+      Id.Cert_Valid   := False;
+      Id.NaCl_Cert_DER := (others => 0);
+      Id.NaCl_Cert_Len := 0;
+      Id.Sign_Algo    := Sign_None;
+      Id.Ed25519_Key  := (others => 0);
+      Id.ECDSA_P256_Key := (others => 0);
+      Id.ECDSA_P384_Key := (others => 0);
+      Id.RSA_Modulus  := (others => 0);
+      Id.RSA_Mod_Len  := 0;
+      Id.RSA_Priv_Exp := (others => 0);
+      Id.RSA_Pub_Exp  := 0;
+      Id.Has_Identity := False;
 
       if Cert_DER'Length = 0 then
          return;
@@ -1004,7 +1041,11 @@ is
          PL_Depth : Natural;  --  non-self-issued CA count for pathlen
          Budget   : in out Natural;
          Result   : out Validation_Result)
-      with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last,
+      with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
+                  and PL_Depth <= Max_Chain_Depth
+                  and X509.Spans_Valid (Cert, Cert_DER'Last)
+                  and SPARKTLSCrypto.P384.Field.Initialized
+                  and SPARKTLSCrypto.P384.ECDSA.Initialized,
            Subprogram_Variant => (Decreases => Budget),
            Post => Budget <= Budget'Old
       is
@@ -1091,6 +1132,9 @@ is
                                Ints (Ii).DER
                                  (0 .. Ints (Ii).DER_Len - 1))
                         then PL_Depth
+                        elsif PL_Depth >= Max_Chain_Depth
+                        then Max_Chain_Depth  --  saturate; outer Depth
+                                              --  guard rejects in any case
                         else PL_Depth + 1);
                   begin
                      Next_Used (Ii) := True;
@@ -1149,11 +1193,15 @@ is
       Sig_Scheme : Unsigned_16) return Boolean
    is
       PK_Algo : constant X509.Algorithm_ID := X509.PK_Algorithm (Cert);
-      PK_Data : constant X509.Byte_Seq := X509.PK_Data (Cert);
       PK_Len  : constant X509.N32 := X509.PK_Length (Cert);
       Sig_Len : constant N32 := N32 (Sig'Length);
    begin
-      if PK_Len = 0 then return False; end if;
+      if PK_Len = 0 or PK_Len > X509.N32 (X509.Max_PK_Bytes) then
+         return False;
+      end if;
+      declare
+         PK_Data : constant X509.Byte_Seq := X509.PK_Data (Cert);
+      begin
 
       case Sig_Scheme is
 
@@ -1163,6 +1211,7 @@ is
             if PK_Len < 64 or PK_Len > X509.N32 (RSA.Max_RSA_Bytes) then
                return False;
             end if;
+            if Sig_Len /= N32 (PK_Len) then return False; end if;
             declare
                H : SPARKTLSCrypto.Hashing.SHA256.Digest;
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
@@ -1188,6 +1237,7 @@ is
             if PK_Len < 64 or PK_Len > X509.N32 (RSA.Max_RSA_Bytes) then
                return False;
             end if;
+            if Sig_Len /= N32 (PK_Len) then return False; end if;
             declare
                H : SPARKNaCl.Hashing.SHA384.Digest;
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
@@ -1304,6 +1354,7 @@ is
             return False;
 
       end case;
+      end;
    end Verify_Signature;
 
 end SPARKTLS.Cert_Verify;

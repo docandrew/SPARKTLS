@@ -497,10 +497,15 @@ is
 
    type Pool_Entry is record
       Cert    : X509.Certificate;
-      DER     : Cert_DER_Buf;
-      DER_Len : X509.N32;
-      Present : Boolean;
-   end record;
+      DER     : Cert_DER_Buf      := (others => 0);
+      DER_Len : X509.N32          := 0;
+      Present : Boolean           := False;
+   end record
+     with Predicate =>
+       (if Pool_Entry.Present then
+          Pool_Entry.DER_Len > 0
+          and Pool_Entry.DER_Len <= X509.N32 (Max_Cert_DER)
+          and X509.Spans_Valid (Pool_Entry.Cert, Pool_Entry.DER_Len - 1));
 
    type Cert_Pool is array (0 .. Max_Pool_Size - 1) of Pool_Entry;
    type Used_Set  is array (0 .. Max_Pool_Size - 1) of Boolean;

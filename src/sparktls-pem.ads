@@ -28,7 +28,11 @@ is
       DER_Len   : X509.N32 := 0;
    end record;
 
+   Max_PEM_Input : constant := 1_048_576;  --  1 MB cap (real PEMs are ~12 KB)
+
    --  Decode first PEM block from Input.
-   procedure Decode (Input : String; Result : out Decode_Result);
+   procedure Decode (Input : String; Result : out Decode_Result)
+   with Pre  => Input'Last <= Max_PEM_Input,
+        Post => (if Result.OK then Result.DER_Len in 1 .. Max_Cert_DER);
 
 end SPARKTLS.PEM;
