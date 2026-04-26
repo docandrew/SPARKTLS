@@ -25,7 +25,10 @@ is
 
    type Bytes is array (Index range <>) of Byte;
 
-   type Bytes_Ptr is access all Bytes;
+   type Bytes_Ptr is access Bytes;
+   --  Pool-specific (not "access all") so SPARK ownership tracking
+   --  works for "new RFLX.RFLX_Types.Bytes_Ptr := new Bytes'(...)" style
+   --  allocations used by the RFLX state machine.
 
    type Bit_Length is range 0 .. Length'Last * 8;
 

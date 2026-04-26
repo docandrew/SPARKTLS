@@ -119,15 +119,25 @@ is
       Keys       : in out Traffic_Keys;
       Output     : in out IO_Buffer;
       Bytes_Out  :    out N32)
-   with Pre => Level in 1 .. 2;
+   with Pre => Level in 1 .. 2
+               and Nonce_Space_Available (Keys);
 
    --  Build a plaintext alert record (no encryption).
    --  Uses RFLX-generated alert serializer for the payload.
    --  Used during handshake before keys are established.
+   --
+   --  RFC 8446 §6 (and the RFLX schema):
+   --    Warning level (1) is ONLY valid with close_notify (0) or
+   --    user_canceled (90).
+   --    Fatal level (2) is for all OTHER alerts (close_notify and
+   --    user_canceled are warning-only).
    procedure Build_Plaintext_Alert
      (Level     : in     Byte;   --  1=warning, 2=fatal
       Desc      : in     Byte;   --  TLS alert description
       Output    : in out IO_Buffer;
-      Bytes_Out :    out N32);
+      Bytes_Out :    out N32)
+   with Pre => Level in 1 .. 2
+               and (if Level = 1 then Desc = 0 or Desc = 90)
+               and (if Level = 2 then Desc /= 0 and Desc /= 90);
 
 end SPARKTLS.Records;

@@ -131,7 +131,12 @@ is
 
       Pos : N32 := 0;
 
-      procedure Put_U8 (V : Byte) is
+      procedure Put_U8 (V : Byte)
+      with Pre  => Pos <= Result'Last + 1
+                   and Result'Last < N32'Last,
+           Post => Pos <= Pos'Old + 1
+                   and Pos <= Result'Last + 1
+      is
       begin
          if Pos <= Result'Last then
             Result (Pos) := V;
@@ -139,17 +144,33 @@ is
          end if;
       end Put_U8;
 
-      procedure Put_U24 (V : N32) is
+      procedure Put_U24 (V : N32)
+      with Pre  => Pos <= Result'Last + 1
+                   and Result'Last < N32'Last,
+           Post => Pos <= Pos'Old + 3
+                   and Pos <= Result'Last + 1
+      is
       begin
          Put_U8 (Byte (V / 65536));
          Put_U8 (Byte ((V / 256) mod 256));
          Put_U8 (Byte (V mod 256));
       end Put_U24;
 
-      procedure Put_Cert_Entry (DER : Byte_Seq; DER_Len : N32) is
+      procedure Put_Cert_Entry (DER : Byte_Seq; DER_Len : N32)
+      with Pre  => DER'First = 0
+                   and DER_Len > 0
+                   and DER_Len <= N32 (Max_Cert_DER)
+                   and DER'Last in 0 .. N32 (Max_Cert_DER) - 1
+                   and DER'Last >= DER_Len - 1
+                   and Pos <= Result'Last + 1
+                   and Result'Last < N32'Last,
+           Post => Pos <= Result'Last + 1
+      is
       begin
          Put_U24 (DER_Len);              --  cert_data_length
-         if Pos + DER_Len - 1 <= Result'Last then
+         if Pos <= Result'Last
+            and then Result'Last - Pos >= DER_Len - 1
+         then
             Result (Pos .. Pos + DER_Len - 1) := DER (0 .. DER_Len - 1);
             Pos := Pos + DER_Len;
          end if;
@@ -169,8 +190,14 @@ is
       --  Leaf entry: 3 + cert_len + 2
       List_Len := 3 + Id.NaCl_Cert_Len + 2;
 
-      --  Intermediate entries
+      --  Intermediate entries. Each entry adds at most
+      --  3 + Max_Cert_DER + 2 bytes; with at most Max_Pool_Size
+      --  intermediates, total list ≤ leaf_entry + Max_Pool_Size *
+      --  (Max_Cert_DER + 5), well below N32'Last.
       for I in 0 .. Id.Int_Count - 1 loop
+         pragma Loop_Invariant
+           (List_Len <= 3 + Id.NaCl_Cert_Len + 2
+                        + N32 (I) * (3 + N32 (Max_Cert_DER) + 2));
          if Id.Ints (I).Present then
             List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len) + 2;
          end if;
@@ -199,7 +226,8 @@ is
 
          --  Intermediate certificate entries
          for I in 0 .. Id.Int_Count - 1 loop
-            if Id.Ints (I).Present then
+            pragma Loop_Invariant (Pos <= Result'Last + 1);
+            if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
                declare
                   Int_DER : Byte_Seq (0 .. N32 (Id.Ints (I).DER_Len) - 1);
                begin

@@ -53,7 +53,9 @@ is
      (Verify_Data : in     Bytes_32;
       Result      :    out Byte_Seq;
       Len         :    out N32)
-   with Pre  => Result'First = 0 and N32 (Result'Length) >= 36,
+   with Pre  => Result'First = 0
+                and Result'Last < N32'Last
+                and Result'Last >= 35,
         Post => Len = 36;
 
    --  Encode ECDSA (r, s) values as DER SEQUENCE of two INTEGERs.

@@ -344,6 +344,7 @@ is
          Found        : Boolean := False;
       begin
          for I in N32 range 0 .. Cipher_Len - 1 loop
+            pragma Loop_Invariant (Last_Nonzero in 0 .. Cipher_Len - 1);
             if Decrypted (I) /= 0 then
                Last_Nonzero := I;
                Found := True;
@@ -480,6 +481,9 @@ is
       --  Build alert payload via RFLX
       Initialize (Ctx, Buf_Ptr);
       Set_Level (Ctx, Alert_Lvl);
+      pragma Assert
+        (RFLX.Tls_Parameters.Valid_TLS_Alerts
+           (RFLX.Tls_Parameters.To_Base_Integer (Alert_Desc)));
       Set_Description (Ctx, Alert_Desc);
       Take_Buffer (Ctx, Buf_Ptr);
 

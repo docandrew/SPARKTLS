@@ -41,10 +41,12 @@ is
    end Send_Alert_And_Error;
 
    procedure Append_Transcript (HC : in out Handshake_Context; Data : Byte_Seq)
+   with Pre => Data'First = 0
+               and Data'Last in 0 .. HC.Transcript'Length - 1
    is
       Len : constant N32 := N32 (Data'Length);
    begin
-      if HC.Transcript_Len + Len <= HC.Transcript'Length then
+      if HC.Transcript_Len <= HC.Transcript'Length - Len then
          HC.Transcript (HC.Transcript_Len ..
                           HC.Transcript_Len + Len - 1) := Data;
          HC.Transcript_Len := HC.Transcript_Len + Len;

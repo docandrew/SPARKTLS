@@ -128,28 +128,44 @@ is
    is
       procedure Write_Int
         (Src : Byte_Seq; Pos : in out N32)
+      with Pre  => Src'First = 0
+                   and Src'Last in 31 | 47
+                   and Pos in 2 .. 58
+                   and DER_Out'First = 0
+                   and DER_Out'Last >= Max_ECDSA_DER_Len - 1,
+           Post => Pos in Pos'Old + 3 .. Pos'Old + Src'Last + 4
       is
-         Skip : N32 := 0;
-         Pad  : Boolean;
+         Src_Len : constant N32 := N32 (Src'Length);
+         Skip    : N32 := 0;
+         Pad     : Boolean;
       begin
-         while Skip < N32 (Src'Length) - 1
+         while Skip < Src_Len - 1
             and then Src (Src'First + Skip) = 0
          loop
+            pragma Loop_Invariant (Skip in 0 .. Src_Len - 1);
             Skip := Skip + 1;
          end loop;
          Pad := Src (Src'First + Skip) >= 16#80#;
          DER_Out (Pos) := 16#02#;
-         DER_Out (Pos + 1) := Byte (N32 (Src'Length) - Skip
+         DER_Out (Pos + 1) := Byte (Src_Len - Skip
                                      + (if Pad then 1 else 0));
          Pos := Pos + 2;
          if Pad then
             DER_Out (Pos) := 0;
             Pos := Pos + 1;
          end if;
-         for I in Skip .. N32 (Src'Length) - 1 loop
-            DER_Out (Pos) := Src (Src'First + I);
-            Pos := Pos + 1;
-         end loop;
+         declare
+            Start_Pos : constant N32 := Pos with Ghost;
+         begin
+            for I in Skip .. Src_Len - 1 loop
+               pragma Loop_Invariant
+                 (Pos = Start_Pos + (I - Skip));
+               pragma Loop_Invariant
+                 (Pos in Start_Pos .. Start_Pos + (Src_Len - Skip - 1));
+               DER_Out (Pos) := Src (Src'First + I);
+               Pos := Pos + 1;
+            end loop;
+         end;
       end Write_Int;
 
       Pos : N32 := 2;
@@ -157,13 +173,14 @@ is
       DER_Out := (others => 0);
       DER_Len := 0;
 
-      if Half_Len > 48 then
+      if Half_Len /= 32 and Half_Len /= 48 then
          return;
       end if;
 
-      Write_Int (R_Raw, Pos);
-      Write_Int (S_Raw, Pos);
+      Write_Int (R_Raw (0 .. Half_Len - 1), Pos);
+      Write_Int (S_Raw (0 .. Half_Len - 1), Pos);
 
+      pragma Assert (Pos >= 2);
       DER_Out (0) := 16#30#;
       DER_Out (1) := Byte (Pos - 2);
       --  Max: 2 + 2*(2 + 1 + 48) = 104 <= Max_ECDSA_DER_Len
