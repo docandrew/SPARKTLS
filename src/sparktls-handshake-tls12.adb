@@ -2,14 +2,15 @@ with Interfaces;                 use Interfaces;
 with Ada.Unchecked_Deallocation;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
-with SPARKTLS.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Sign;
-with SPARKTLS.P256.Point;
-with SPARKTLS.P256.ECDSA;
-with SPARKTLS.P384.Point;
-with SPARKTLS.P384.ECDSA;
-with SPARKTLS.RSA;
+with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.P256.ECDSA;
+with SPARKTLSCrypto.P384.Point;
+with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLSCrypto.RSA;
+use SPARKTLSCrypto;
 with SPARKTLS.Cert_Verify;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.RFLX_Bridge;      use SPARKTLS.RFLX_Bridge;
@@ -143,13 +144,13 @@ is
             --  P256_Peer_PK stores our pubkey in uncompressed form (0..64)
             --  Actually for SKE, we need the LOCAL public key, not peer
             declare
-               PK_Jac : SPARKTLS.P256.Point.P256_Jacobian;
+               PK_Jac : SPARKTLSCrypto.P256.Point.P256_Jacobian;
                PK_Enc : Byte_Seq (0 .. 64);
             begin
-               SPARKTLS.P256.Point.P256_Mulgen
+               SPARKTLSCrypto.P256.Point.P256_Mulgen
                  (PK_Jac, HC.P256_Local_SK, 32);
-               SPARKTLS.P256.Point.P256_To_Affine (PK_Jac);
-               SPARKTLS.P256.Point.P256_Encode (PK_Enc, PK_Jac);
+               SPARKTLSCrypto.P256.Point.P256_To_Affine (PK_Jac);
+               SPARKTLSCrypto.P256.Point.P256_Encode (PK_Enc, PK_Jac);
                Params (4 .. 4 + 64) := PK_Enc;
             end;
 
@@ -157,7 +158,7 @@ is
             declare
                PK_Enc : Byte_Seq (0 .. 96);
             begin
-               SPARKTLS.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
+               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
                Params (4 .. 4 + 96) := PK_Enc;
             end;
 
@@ -188,21 +189,21 @@ is
                Hash_Algo := 8; Sig_Algo := 4;
                --  RSA key size must satisfy Sign_PSS preconditions
                if Id.RSA_Mod_Len < 64
-                  or Id.RSA_Mod_Len > SPARKTLS.RSA.Max_RSA_Bytes
+                  or Id.RSA_Mod_Len > SPARKTLSCrypto.RSA.Max_RSA_Bytes
                   or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
                   or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
                then return; end if;
                declare
-                  H    : constant SPARKTLS.Hashing.SHA256.Digest :=
-                    SPARKTLS.Hashing.SHA256.Hash
+                  H    : constant SPARKTLSCrypto.Hashing.SHA256.Digest :=
+                    SPARKTLSCrypto.Hashing.SHA256.Hash
                       (Sig_Input (0 .. Sig_Input_Len - 1));
                   Salt : Bytes_32;
                begin
                   Random.all (Byte_Seq (Salt));
-                  SPARKTLS.RSA.Sign_PSS
+                  SPARKTLSCrypto.RSA.Sign_PSS
                     (M_Hash    => Byte_Seq (H),
                      Hash_Len  => 32,
-                     Hash_Alg  => SPARKTLS.RSA.PSS_SHA256,
+                     Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA256,
                      Modulus   => Id.RSA_Modulus,
                      Mod_Len   => Id.RSA_Mod_Len,
                      Priv_Exp  => Id.RSA_Priv_Exp,
@@ -215,18 +216,18 @@ is
             when 16#0403# =>  --  ecdsa_secp256r1_sha256
                Hash_Algo := 4; Sig_Algo := 3;
                declare
-                  H : constant SPARKTLS.Hashing.SHA256.Digest :=
-                    SPARKTLS.Hashing.SHA256.Hash
+                  H : constant SPARKTLSCrypto.Hashing.SHA256.Digest :=
+                    SPARKTLSCrypto.Hashing.SHA256.Hash
                       (Sig_Input (0 .. Sig_Input_Len - 1));
                   K_Bytes : Bytes_32;
-                  R_Half, S_Half : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
+                  R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                begin
                   Random.all (Byte_Seq (K_Bytes));
-                  SPARKTLS.P256.ECDSA.Sign
+                  SPARKTLSCrypto.P256.ECDSA.Sign
                     (Hash  => H,
-                     D     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half
+                     D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
                                 (Id.ECDSA_P256_Key),
-                     K     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
+                     K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
                      R_Out => R_Half,
                      S_Out => S_Half,
                      OK    => Sig_OK);
@@ -248,7 +249,7 @@ is
                   S_Half  : Byte_Seq (0 .. 47);
                begin
                   Random.all (Byte_Seq (K_Bytes));
-                  SPARKTLS.P384.ECDSA.Sign
+                  SPARKTLSCrypto.P384.ECDSA.Sign
                     (Hash  => H,
                      D     => Byte_Seq (Id.ECDSA_P384_Key),
                      K     => Byte_Seq (K_Bytes),
@@ -352,13 +353,13 @@ is
 
          when Group_Secp256r1 =>
             declare
-               PK_Jac : SPARKTLS.P256.Point.P256_Jacobian;
+               PK_Jac : SPARKTLSCrypto.P256.Point.P256_Jacobian;
                PK_Enc : Byte_Seq (0 .. 64);
             begin
-               SPARKTLS.P256.Point.P256_Mulgen
+               SPARKTLSCrypto.P256.Point.P256_Mulgen
                  (PK_Jac, HC.P256_Local_SK, 32);
-               SPARKTLS.P256.Point.P256_To_Affine (PK_Jac);
-               SPARKTLS.P256.Point.P256_Encode (PK_Enc, PK_Jac);
+               SPARKTLSCrypto.P256.Point.P256_To_Affine (PK_Jac);
+               SPARKTLSCrypto.P256.Point.P256_Encode (PK_Enc, PK_Jac);
                Result (5 .. 5 + 64) := PK_Enc;
             end;
 
@@ -366,7 +367,7 @@ is
             declare
                PK_Enc : Byte_Seq (0 .. 96);
             begin
-               SPARKTLS.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
+               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
                Result (5 .. 5 + 96) := PK_Enc;
             end;
 
@@ -646,7 +647,7 @@ is
       case Sig_Algo_Wire is
          when 16#0804# =>  --  rsa_pss_rsae_sha256
             Hash_Algo := 8; Sig_Algo := 4;
-            if Id.RSA_Mod_Len not in 64 .. SPARKTLS.RSA.Max_RSA_Bytes
+            if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
                or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
                or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
                or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
@@ -655,10 +656,10 @@ is
                Salt : Bytes_32;
             begin
                Random.all (Byte_Seq (Salt));
-               SPARKTLS.RSA.Sign_PSS
+               SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Transcript_Hash (0 .. 31),
                   Hash_Len  => 32,
-                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA256,
+                  Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA256,
                   Modulus   => Id.RSA_Modulus,
                   Mod_Len   => Id.RSA_Mod_Len,
                   Priv_Exp  => Id.RSA_Priv_Exp,
@@ -672,14 +673,14 @@ is
             Hash_Algo := 4; Sig_Algo := 3;
             declare
                K_Bytes : Bytes_32;
-               R_Half, S_Half : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
+               R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
                Random.all (Byte_Seq (K_Bytes));
-               SPARKTLS.P256.ECDSA.Sign
+               SPARKTLSCrypto.P256.ECDSA.Sign
                  (Hash  => Bytes_32 (Transcript_Hash (0 .. 31)),
-                  D     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half
+                  D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
                              (Id.ECDSA_P256_Key),
-                  K     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
+                  K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
                   R_Out => R_Half,
                   S_Out => S_Half,
                   OK    => Sig_OK);
@@ -821,11 +822,16 @@ is
       Result := (others => 0);
       Len := 0;
 
-      --  Generate server random
-      Gen_Random (HC.Server_Random);
-
-      --  Generate session ID (32 bytes, random)
-      Gen_Random (HC.Legacy_Session_ID);
+      --  Generate server random + session ID (use temps to avoid SPARK aliasing)
+      declare
+         Tmp_SR  : Bytes_32;
+         Tmp_SID : Bytes_32;
+      begin
+         Gen_Random (Byte_Seq (Tmp_SR));
+         HC.Server_Random := Tmp_SR;
+         Gen_Random (Byte_Seq (Tmp_SID));
+         HC.Legacy_Session_ID := Tmp_SID;
+      end;
 
       --  Allocate RFLX buffer and initialize context
       Buf := new RBT.Bytes'(1 .. RBT.Index (RFLX_Main_Size) => 0);
@@ -1177,17 +1183,5 @@ is
 
       Len := Pos;
    end Build_Certificate_Chain_12;
-
-   procedure Build_Client_Hello_12
-     (S      : in out Session;
-      HC     : in out Handshake_Context;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
-   is
-   begin
-      Result := (others => 0);
-      Len := 0;
-      raise Program_Error with "Build_Client_Hello_12 not yet implemented";
-   end Build_Client_Hello_12;
 
 end SPARKTLS.Handshake.TLS12;

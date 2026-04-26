@@ -1,7 +1,8 @@
 with Interfaces;                 use Interfaces;
-with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
-with SPARKTLS.MAC;               use SPARKTLS.MAC;
-with SPARKTLS.HMAC384;
+with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
+with SPARKTLSCrypto.MAC;               use SPARKTLSCrypto.MAC;
+with SPARKTLSCrypto.HMAC384;
+use SPARKTLSCrypto;
 
 package body SPARKTLS.Key_Schedule_12 with
    SPARK_Mode => On
@@ -74,8 +75,12 @@ is
             Pos := Pos + Remain;
          end if;
 
-         --  A(i+1) = HMAC(secret, A(i))
-         HMAC_SHA_256 (A_Val, Byte_Seq (A_Val), Secret);
+         --  A(i+1) = HMAC(secret, A(i)) — temp avoids out/in aliasing
+         declare
+            A_In : constant SPARKTLSCrypto.Hashing.SHA256.Digest := A_Val;
+         begin
+            HMAC_SHA_256 (A_Val, Byte_Seq (A_In), Secret);
+         end;
       end loop;
    end PRF_SHA256;
 
@@ -128,7 +133,11 @@ is
             Pos := Pos + Remain;
          end if;
 
-         HMAC384.HMAC_SHA_384 (A_Val, Byte_Seq (A_Val), Secret);
+         declare
+            A_In : constant HMAC384.Digest_384 := A_Val;
+         begin
+            HMAC384.HMAC_SHA_384 (A_Val, Byte_Seq (A_In), Secret);
+         end;
       end loop;
    end PRF_SHA384;
 

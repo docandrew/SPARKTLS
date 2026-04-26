@@ -394,28 +394,6 @@ is
                    Valid_TLS12_Suite (S.Negotiated_Suite)
                    and HC.Version = TLS_1_2);
 
-   --  Build TLS 1.2 ClientHello.
-   --
-   --  Differences from TLS 1.3 ClientHello:
-   --    - client_version = 0x0303 (actual version, not legacy)
-   --    - No supported_versions extension
-   --    - No key_share extension (ECDHE happens in ClientKeyExchange)
-   --    - No psk_key_exchange_modes extension
-   --    - Includes elliptic_curves (supported_groups) extension
-   --    - Includes ec_point_formats extension (uncompressed only)
-   --    - Includes signature_algorithms extension
-   --    - Includes renegotiation_info extension (empty for initial)
-   --    - Cipher suites from TLS 1.2 ECDHE+AEAD set
-   procedure Build_Client_Hello_12
-     (S      : in out Session;
-      HC     : in out Handshake_Context;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
-   with Pre  => Result'First = 0
-                and Result'Last >= Client_Msgs.Max_Client_Hello - 1
-                and HC.Cfg.Random /= null
-                and HC.Version = TLS_1_2;
-
    --  RFC 5246 §7.4.2: Build TLS 1.2 Certificate message.
    --
    --  TLS 1.2 format (no certificate_request_context, no per-cert extensions):

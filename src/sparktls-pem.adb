@@ -1,4 +1,5 @@
-with Base64;
+with SPARKTLSCrypto.Base64;
+use SPARKTLSCrypto;
 
 package body SPARKTLS.PEM with
    SPARK_Mode => On
@@ -22,7 +23,7 @@ is
    end Classify_Label;
 
    procedure Decode (Input : String; Result : out Decode_Result) is
-      --  Maximum Base64 content: (Max_Cert_DER * 4) / 3 + 4
+      --  Maximum SPARKTLSCrypto.Base64 content: (Max_Cert_DER * 4) / 3 + 4
       Max_B64 : constant := (Max_Cert_DER * 4) / 3 + 4;
 
       B64_Buf : String (1 .. Max_B64) := (others => 'A');
@@ -79,7 +80,7 @@ is
                      Body_Start := Body_Start + 1;
                   end loop;
 
-                  --  Collect Base64 characters until "-----END"
+                  --  Collect SPARKTLSCrypto.Base64 characters until "-----END"
                   Pos := Body_Start;
                   Collect : loop
                      exit Collect when Pos > Input'Last;
@@ -101,7 +102,7 @@ is
                            B64_Len := B64_Len + 1;
                            B64_Buf (B64_Len) := Input (Pos);
                         else
-                           --  Base64 content exceeds buffer — cert is oversize
+                           --  SPARKTLSCrypto.Base64 content exceeds buffer — cert is oversize
                            Result.Oversize := True;
                         end if;
                         Pos := Pos + 1;
@@ -112,15 +113,15 @@ is
                      return;
                   end if;
 
-                  --  Base64 decode → DER as X509.Byte_Seq
+                  --  SPARKTLSCrypto.Base64 decode → DER as X509.Byte_Seq
                   if B64_Len > 0 and then
                      B64_Len mod 4 = 0 and then
-                     Base64.Validate (B64_Buf (1 .. B64_Len))
+                     SPARKTLSCrypto.Base64.Validate (B64_Buf (1 .. B64_Len))
                   then
                      declare
-                        B64 : constant Base64.Base64_String :=
-                           Base64.Construct (B64_Buf (1 .. B64_Len));
-                        DER_Str : constant String := Base64.Decode (B64);
+                        B64 : constant SPARKTLSCrypto.Base64.Base64_String :=
+                           SPARKTLSCrypto.Base64.Construct (B64_Buf (1 .. B64_Len));
+                        DER_Str : constant String := SPARKTLSCrypto.Base64.Decode (B64);
                      begin
                         if DER_Str'Length > Max_Cert_DER then
                            Result.Oversize := True;

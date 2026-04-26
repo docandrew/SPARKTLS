@@ -1,4 +1,5 @@
-with SPARKTLS.Ed25519;
+with SPARKTLSCrypto.Ed25519;
+use SPARKTLSCrypto;
 with SPARKTLS.PEM;           use SPARKTLS.PEM;
 with SPARKTLS.Cert_Verify;
 
@@ -213,7 +214,7 @@ is
             for I in N32 range 0 .. 31 loop
                Seed (I) := SPARKNaCl.Byte (DER (16 + X509.N32 (I)));
             end loop;
-            SPARKTLS.Ed25519.Keypair (Seed, PK, SK);
+            SPARKTLSCrypto.Ed25519.Keypair (Seed, PK, SK);
             if Key_Out'Length >= 64 then
                Key_Out (Key_Out'First .. Key_Out'First + 63) := SK;
                Key_Len := 64;
@@ -307,7 +308,6 @@ is
       First_Cert  : Boolean := True;
       Pos         : Positive;
    begin
-      Id := (others => <>);
       OK := False;
 
       if Cert_PEM'Length = 0 or Key_PEM'Length = 0 then

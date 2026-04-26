@@ -1,6 +1,6 @@
 with Interfaces;                 use Interfaces;
 with SPARKNaCl;                  use SPARKNaCl;
-with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
@@ -10,8 +10,9 @@ with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.Cert_Verify;       use SPARKTLS.Cert_Verify;
-with SPARKTLS.P256.Point;
-with SPARKTLS.P384.Point;
+with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.P384.Point;
+use SPARKTLSCrypto;
 with X509;
 use type X509.Algorithm_ID;
 
@@ -287,7 +288,7 @@ is
                               end loop;
                               declare
                                  Cert_X : X509.Byte_Seq
-                                    (0 .. X509.N32 (C_Len) - 1);
+                                    (0 .. X509.N32 (C_Len) - 1) := (others => 0);
                                  P_OK : Boolean;
                               begin
                                  for I in N32 range 0 .. C_Len - 1 loop
@@ -305,7 +306,7 @@ is
                                     Idx : constant Natural :=
                                        HC.Peer_Int_Count;
                                     Int_X : X509.Byte_Seq
-                                       (0 .. X509.N32 (C_Len) - 1);
+                                       (0 .. X509.N32 (C_Len) - 1) := (others => 0);
                                     C   : X509.Certificate;
                                     P_OK : Boolean;
                                  begin
@@ -349,7 +350,7 @@ is
                   declare
                      PCDL : constant N32 := HC.Peer_Cert_DER_Len;
                      Cert_X : X509.Byte_Seq
-                        (0 .. X509.N32 (PCDL) - 1);
+                        (0 .. X509.N32 (PCDL) - 1) := (others => 0);
                      VR : Validation_Result;
                   begin
                      for I in N32 range 0 .. PCDL - 1 loop
@@ -430,7 +431,7 @@ is
                      when Group_Secp256r1 =>
                         Gen (Byte_Seq (HC.P256_Local_SK));
                         declare
-                           use SPARKTLS.P256.Point;
+                           use SPARKTLSCrypto.P256.Point;
                            Pt : P256_Jacobian; V : SPARKNaCl.U32;
                         begin
                            P256_Decode (Pt, HC.P256_Peer_PK, V);
@@ -450,7 +451,7 @@ is
                         Gen (Byte_Seq (HC.P384_Local_SK));
                         declare SS : Bytes_48; OK384 : Boolean;
                         begin
-                           SPARKTLS.P384.Point.P384_ECDHE
+                           SPARKTLSCrypto.P384.Point.P384_ECDHE
                              (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
                            if OK384 then
                               HC.Shared_Secret := SS; SS_OK := True;

@@ -1,8 +1,8 @@
 with Interfaces;                 use Interfaces;
 with SPARKNaCl.Hashing.SHA384;
-with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
-with SPARKTLS.MAC;               use SPARKTLS.MAC;
-with SPARKTLS.HKDF;              use SPARKTLS.HKDF;
+with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
+with SPARKTLSCrypto.MAC;               use SPARKTLSCrypto.MAC;
+with SPARKTLSCrypto.HKDF;              use SPARKTLSCrypto.HKDF;
 
 with SPARKTLS.Records;      use SPARKTLS.Records;
 with SPARKTLS.Cert_Verify;  use SPARKTLS.Cert_Verify;
@@ -11,8 +11,9 @@ with SPARKTLS.Handshake.Client_Msgs;
 with SPARKTLS.Handshake.Certs;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule;
-with SPARKTLS.HMAC384;
-with SPARKTLS.HKDF384;
+with SPARKTLSCrypto.HMAC384;
+with SPARKTLSCrypto.HKDF384;
+use SPARKTLSCrypto;
 with SPARKTLS.HC_Alloc;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Client.TLS12;
@@ -244,7 +245,7 @@ is
 
                               declare
                                  Cert_X : X509.Byte_Seq
-                                    (0 .. X509.N32 (C_Len) - 1);
+                                    (0 .. X509.N32 (C_Len) - 1) := (others => 0);
                                  P_OK : Boolean;
                               begin
                                  for I in N32 range 0 .. C_Len - 1 loop
@@ -262,7 +263,7 @@ is
                                     Idx : constant Natural :=
                                        HC.Peer_Int_Count;
                                     Int_X : X509.Byte_Seq
-                                       (0 .. X509.N32 (C_Len) - 1);
+                                       (0 .. X509.N32 (C_Len) - 1) := (others => 0);
                                     C   : X509.Certificate;
                                     P_OK : Boolean;
                                  begin
@@ -316,7 +317,7 @@ is
                declare
                   Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
                   Cert_X : X509.Byte_Seq
-                     (0 .. X509.N32 (Cert_DER_Len_Const) - 1);
+                     (0 .. X509.N32 (Cert_DER_Len_Const) - 1) := (others => 0);
                   VR : Validation_Result;
                begin
                   --  Copy peer DER to X509.Byte_Seq for Validate_Chain
@@ -390,7 +391,7 @@ is
                      "TLS 1.3, server CertificateVerify";
                   Content_Len : constant N32 :=
                      64 + N32 (Context_Str'Length) + 1 + H_Len;
-                  Content     : Byte_Seq (0 .. Content_Len - 1);
+                  Content     : Byte_Seq (0 .. Content_Len - 1) := (others => 0);
                begin
                   --  64 spaces
                   Content (0 .. 63) := (others => 16#20#);
@@ -553,7 +554,7 @@ is
          --  Server requested cert but we have none.
          --  Send empty Certificate message (allowed by RFC 8446 S.4.4.2).
          declare
-            Empty_Cert : Byte_Seq (0 .. 7);
+            Empty_Cert : Byte_Seq (0 .. 7) := (others => 0);
          begin
             --  HS header: type=Certificate(0x0B), length=4
             Empty_Cert (0) := Handshake.HT_Certificate;
@@ -698,7 +699,7 @@ is
             Finished_Buf (3) := 16#30#;  --  48 decimal = 0x30
             --  We need a bigger buffer for 48-byte verify data
             declare
-               Big_Finished : Byte_Seq (0 .. 51);  -- 4 + 48
+               Big_Finished : Byte_Seq (0 .. 51) := (others => 0);  -- 4 + 48
             begin
                Big_Finished (0) := Handshake.HT_Finished;
                Big_Finished (1) := 16#00#;
@@ -910,7 +911,7 @@ is
                case S.Negotiated_Suite is
                   when Suite_AES_256_GCM_SHA384 =>
                      declare
-                        use SPARKTLS.HKDF384;
+                        use SPARKTLSCrypto.HKDF384;
                         Full_Hash : constant Key_Schedule.Digest_384 :=
                            Transcript_Hash_384 (HC);
                         Res : OKM384_Seq (0 .. 47);
@@ -1175,6 +1176,7 @@ is
    is
       Rec : Records.Parse_Result;
    begin
+      Result := OK;   --  default; overwritten by every code path below
       if Input_Available (S) = 0 then
          Result := Need_Input;
          return;
@@ -1503,7 +1505,7 @@ is
                                     case S.Negotiated_Suite is
                                        when Suite_AES_256_GCM_SHA384 =>
                                           declare
-                                             use SPARKTLS.HKDF384;
+                                             use SPARKTLSCrypto.HKDF384;
                                              PSK_Out : OKM384_Seq (0 .. 47);
                                           begin
                                              Key_Schedule.Derive_PSK_384

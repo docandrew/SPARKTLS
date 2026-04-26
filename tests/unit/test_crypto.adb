@@ -5,16 +5,16 @@ with Ada.Text_IO;          use Ada.Text_IO;
 with Ada.Command_Line;
 with SPARKNaCl;            use SPARKNaCl;
 with Interfaces;           use Interfaces;
-with SPARKTLS.P384.ECDSA;
-with SPARKTLS.P256.ECDSA;
-with SPARKTLS.P256.Point;
-with SPARKTLS.X25519;
+with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLSCrypto.P256.ECDSA;
+with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.X25519;
 with SPARKNaCl.Scalar;
-with SPARKTLS.BigNat;      use SPARKTLS.BigNat;
-with SPARKTLS.Fiat_P256;
-with SPARKTLS.Ed25519;
-with SPARKTLS.Hashing.SHA256;
-with SPARKTLS.MAC;
+with SPARKTLSCrypto.BigNat;      use SPARKTLSCrypto.BigNat;
+with SPARKTLSCrypto.Fiat_P256;
+with SPARKTLSCrypto.Ed25519;
+with SPARKTLSCrypto.Hashing.SHA256;
+with SPARKTLSCrypto.MAC;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKNaCl.MAC;
 with SPARKNaCl.Sign;
@@ -42,7 +42,7 @@ procedure Test_Crypto is
    --  P-384 ECDSA Sign/Verify round-trip
    --================================================================
    procedure Test_P384_Round_Trip is
-      use SPARKTLS.P384.ECDSA;
+      use SPARKTLSCrypto.P384.ECDSA;
       Hash : constant Bytes_48 := (others => 16#BB#);
       D    : Byte_Seq (0 .. 47) := (0 => 0, others => 16#01#);
       K    : Byte_Seq (0 .. 47) := (0 => 0, 1 => 0, others => 16#42#);
@@ -54,7 +54,7 @@ procedure Test_Crypto is
       Public_Key (D, Qx, Qy);
 
       --  Sign
-      SPARKTLS.P384.ECDSA.Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
+      SPARKTLSCrypto.P384.ECDSA.Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
       Check ("P-384 Sign", Sign_OK);
       if not Sign_OK then return; end if;
       Put ("    s(0..5): ");
@@ -183,7 +183,7 @@ begin
       EightyOne : constant Bytes_32 := (81, others => 0);
       Result : Bytes_32;
    begin
-      SPARKTLS.X25519.Test_FE_Mul (Nine, Nine, Result);
+      SPARKTLSCrypto.X25519.Test_FE_Mul (Nine, Nine, Result);
       Check ("FE_Mul(9, 9) = 81",
              Byte_Seq (Result) = Byte_Seq (EightyOne));
       if Byte_Seq (Result) /= Byte_Seq (EightyOne) then
@@ -200,7 +200,7 @@ begin
                                        25, 26, 27, 28, 29, 30, 31, 0);
       Test_Out : Bytes_32;
    begin
-      SPARKTLS.X25519.Test_Encode_Decode (Test_In, Test_Out);
+      SPARKTLSCrypto.X25519.Test_Encode_Decode (Test_In, Test_Out);
       Check ("X25519 encode/decode round-trip",
              Byte_Seq (Test_In) = Byte_Seq (Test_Out));
       if Byte_Seq (Test_In) /= Byte_Seq (Test_Out) then
@@ -237,7 +237,7 @@ begin
       Q_Ref  : Bytes_32;
    begin
       --  Test against RFC 7748 §6.1 vector
-      SPARKTLS.X25519.Scalar_Mult (Q_Ours, N_Key, P_Key);
+      SPARKTLSCrypto.X25519.Scalar_Mult (Q_Ours, N_Key, P_Key);
       Check ("X25519 vs RFC 7748 vector",
              Byte_Seq (Q_Ours) = Byte_Seq (Expected));
       if Byte_Seq (Q_Ours) /= Byte_Seq (Expected) then
@@ -248,7 +248,7 @@ begin
       end if;
 
       --  Test against SPARKNaCl with simple basepoint
-      SPARKTLS.X25519.Scalar_Mult (Q_Ours, N_Key, P_Key_Simple);
+      SPARKTLSCrypto.X25519.Scalar_Mult (Q_Ours, N_Key, P_Key_Simple);
       Q_Ref := SPARKNaCl.Scalar.Mult (N_Key, P_Key_Simple);
       Check ("X25519 vs SPARKNaCl (basepoint)",
              Byte_Seq (Q_Ours) = Byte_Seq (Q_Ref));
@@ -263,7 +263,7 @@ begin
 
    Put_Line ("--- Fiat P-256 ---");
    declare
-      use SPARKTLS.Fiat_P256;
+      use SPARKTLSCrypto.Fiat_P256;
       One_M : constant FE := FE_One;  --  Montgomery representation of 1
       Zero_M : constant FE := FE_Zero;
       R, S, T : FE;
@@ -321,9 +321,67 @@ begin
    end;
    Put_Line ("");
 
+   --  Non-trivial KAT vectors. Inputs are the P-256 generator's X and Y
+   --  in Montgomery form (from sparktlscrypto-p256-point.adb's Comb_G[1]).
+   --  Expected outputs were dumped by SPARKTLSCrypto/tools/dump_fiat_kat.adb
+   --  on the known-good Fiat impl. Re-run that tool to regenerate after
+   --  any intentional algorithm change.
+   Put_Line ("--- Fiat P-256 KAT (non-trivial inputs) ---");
+   declare
+      use SPARKTLSCrypto.Fiat_P256;
+      KAT_A : constant FE :=
+        (16#79E730D418A9143C#, 16#75BA95FC5FEDB601#,
+         16#79FB732B77622510#, 16#18905F76A53755C6#);
+      KAT_B : constant FE :=
+        (16#DDF25357CE95560A#, 16#8B4AB8E4BA19E45C#,
+         16#D2E88688DD21F325#, 16#8571FF1825885D85#);
+      Exp_Mul_AB : constant FE :=
+        (16#49131DD62DFA1C7D#, 16#04B39B8A74BD829A#,
+         16#2C6C94E2B940CC5A#, 16#64CFE5D68F68C3F4#);
+      Exp_Sqr_A  : constant FE :=
+        (16#0B265D0755686DC7#, 16#29CF115A4CE8A1BC#,
+         16#5E57EB53EB9B15E1#, 16#EC775624EE15BE17#);
+      Exp_Add_AB : constant FE :=
+        (16#57D9842BE73E6A46#, 16#01054EE11A079A5E#,
+         16#4CE3F9B454841836#, 16#9E025E8ECABFB34C#);
+      Exp_Sub_AB : constant FE :=
+        (16#9BF4DD7C4A13BE31#, 16#EA6FDD18A5D3D1A4#,
+         16#A712ECA29A4031EA#, 16#931E605D7FAEF841#);
+      Exp_FromM_A : constant FE :=
+        (16#F4A13945D898C296#, 16#77037D812DEB33A0#,
+         16#F8BCE6E563A440F2#, 16#6B17D1F2E12C4247#);
+      Exp_ToBytes_A : constant Byte_Seq (0 .. 31) :=
+        (16#3C#, 16#14#, 16#A9#, 16#18#, 16#D4#, 16#30#, 16#E7#, 16#79#,
+         16#01#, 16#B6#, 16#ED#, 16#5F#, 16#FC#, 16#95#, 16#BA#, 16#75#,
+         16#10#, 16#25#, 16#62#, 16#77#, 16#2B#, 16#73#, 16#FB#, 16#79#,
+         16#C6#, 16#55#, 16#37#, 16#A5#, 16#76#, 16#5F#, 16#90#, 16#18#);
+      RFE  : FE;
+      RBs  : Byte_Seq (0 .. 31);
+   begin
+      RFE := Mul (KAT_A, KAT_B);
+      Check ("Fiat KAT Mul(A,B)",  RFE = Exp_Mul_AB);
+      RFE := Mul (KAT_A, KAT_A);
+      Check ("Fiat KAT Mul(A,A) = Sqr(A)", RFE = Exp_Sqr_A);
+      RFE := Sqr (KAT_A);
+      Check ("Fiat KAT Sqr(A)",    RFE = Exp_Sqr_A);
+      RFE := Add (KAT_A, KAT_B);
+      Check ("Fiat KAT Add(A,B)",  RFE = Exp_Add_AB);
+      RFE := Sub (KAT_A, KAT_B);
+      Check ("Fiat KAT Sub(A,B)",  RFE = Exp_Sub_AB);
+      RFE := From_Montgomery (KAT_A);
+      Check ("Fiat KAT From_Montgomery(A)", RFE = Exp_FromM_A);
+      RFE := To_Montgomery (Exp_FromM_A);
+      Check ("Fiat KAT To_Montgomery round-trip", RFE = KAT_A);
+      To_Bytes (RBs, KAT_A);
+      Check ("Fiat KAT To_Bytes(A)", RBs = Exp_ToBytes_A);
+      RFE := From_Bytes (Exp_ToBytes_A);
+      Check ("Fiat KAT From_Bytes round-trip", RFE = KAT_A);
+   end;
+   Put_Line ("");
+
    Put_Line ("--- SHA-256 (SPARKTLS) ---");
    declare
-      use SPARKTLS.Hashing.SHA256;
+      use SPARKTLSCrypto.Hashing.SHA256;
       D : Digest;
 
       --  FIPS 180-2 / NIST CAVP test vectors (digests verified via openssl)
@@ -419,7 +477,7 @@ begin
 
    Put_Line ("--- HMAC-SHA-256 (SPARKTLS) ---");
    declare
-      use SPARKTLS.Hashing.SHA256;
+      use SPARKTLSCrypto.Hashing.SHA256;
       D, D_NaCl : Digest;
       --  RFC 4231 Test Case 2:
       --  Key  = "Jefe" (4 bytes)
@@ -437,7 +495,7 @@ begin
          16#5a#, 16#00#, 16#3f#, 16#08#, 16#9d#, 16#27#, 16#39#, 16#83#,
          16#9d#, 16#ec#, 16#58#, 16#b9#, 16#64#, 16#ec#, 16#38#, 16#43#);
    begin
-      SPARKTLS.MAC.HMAC_SHA_256 (D, HMAC_Msg, HMAC_Key);
+      SPARKTLSCrypto.MAC.HMAC_SHA_256 (D, HMAC_Msg, HMAC_Key);
       Check ("HMAC-SHA-256 RFC 4231 TC2", D = Expected_HMAC);
 
       --  Cross-check with SPARKNaCl
@@ -449,7 +507,7 @@ begin
    Put_Line ("--- Ed25519 ASR_8 ---");
    declare
       use type Interfaces.Integer_64;
-      function ASR (X : I64) return I64 renames SPARKTLS.Ed25519.Test_ASR_8;
+      function ASR (X : I64) return I64 renames SPARKTLSCrypto.Ed25519.Test_ASR_8;
    begin
       --  Positive values: floor(X/256)
       Check ("ASR_8(0) = 0", ASR (0) = 0);
@@ -504,7 +562,7 @@ begin
          16#af#, 16#02#, 16#1a#, 16#68#, 16#f7#, 16#07#, 16#51#, 16#1a#);
    begin
       --  Generate keypair
-      SPARKTLS.Ed25519.Keypair (Seed, PK, SK);
+      SPARKTLSCrypto.Ed25519.Keypair (Seed, PK, SK);
 
       Check ("Ed25519 keypair (PK not zero)",
              Byte_Seq (PK) /= Byte_Seq (Bytes_32'(others => 0)));
@@ -534,7 +592,7 @@ begin
          --  Hash a dummy seed to get the clamped scalar for "1*G"
          --  Actually just test Pack(basepoint) directly
          One_Scalar (0) := 1;
-         SPARKTLS.Ed25519.Keypair (One_Scalar, Result_PK, D2);
+         SPARKTLSCrypto.Ed25519.Keypair (One_Scalar, Result_PK, D2);
          Put ("    1*G PK(0..7):  ");
          for I in N32 range 0 .. 7 loop Put (Result_PK (I)'Image); end loop;
          New_Line;
@@ -546,8 +604,8 @@ begin
          PK_Edwards, PK_Montgomery : Bytes_32;
          BP : constant Bytes_32 := (9, others => 0);
       begin
-         SPARKTLS.X25519.Scalar_Mult_Base (PK_Edwards, Test_SK);
-         SPARKTLS.X25519.Scalar_Mult (PK_Montgomery, Test_SK, BP);
+         SPARKTLSCrypto.X25519.Scalar_Mult_Base (PK_Edwards, Test_SK);
+         SPARKTLSCrypto.X25519.Scalar_Mult (PK_Montgomery, Test_SK, BP);
          Check ("X25519 Scalar_Mult_Base matches Scalar_Mult",
                 Byte_Seq (PK_Edwards) = Byte_Seq (PK_Montgomery));
          if Byte_Seq (PK_Edwards) /= Byte_Seq (PK_Montgomery) then
@@ -579,7 +637,7 @@ begin
       end;
 
       --  Sign with ours
-      SPARKTLS.Ed25519.Sign (SM, Msg (0 .. 0), SK);
+      SPARKTLSCrypto.Ed25519.Sign (SM, Msg (0 .. 0), SK);
 
       --  Sign with SPARKNaCl for comparison
       declare
@@ -616,7 +674,7 @@ begin
       end;
 
       --  Verify our signature with our code
-      SPARKTLS.Ed25519.Open (M, Valid, Msg_Len, SM, PK);
+      SPARKTLSCrypto.Ed25519.Open (M, Valid, Msg_Len, SM, PK);
       Check ("Ed25519 sign/verify round-trip", Valid);
       if not Valid then
          Put_Line ("    Our verify of our sig failed!");
@@ -652,12 +710,12 @@ begin
          V2 : Boolean;
          ML2 : I32;
       begin
-         SPARKTLS.Ed25519.Keypair (Seed2, PK2, SK2);
+         SPARKTLSCrypto.Ed25519.Keypair (Seed2, PK2, SK2);
          Check ("Ed25519 RFC 8032 vec2 PK",
                 Byte_Seq (PK2) = Byte_Seq (Expected_PK2));
 
          --  Sign single byte 0x72
-         SPARKTLS.Ed25519.Sign (SM2 (0 .. 65), Msg2 (0 .. 0), SK2);
+         SPARKTLSCrypto.Ed25519.Sign (SM2 (0 .. 65), Msg2 (0 .. 0), SK2);
          --  Note: sig R-point matches SPARKNaCl but may differ from RFC 8032
          --  reference due to ModL implementation differences. Verify passes.
          if Byte_Seq (SM2 (0 .. 63)) /= Byte_Seq (Expected_Sig2) then
@@ -667,7 +725,7 @@ begin
          end if;
 
          --  Verify
-         SPARKTLS.Ed25519.Open (M2 (0 .. 65), V2, ML2, SM2 (0 .. 65), PK2);
+         SPARKTLSCrypto.Ed25519.Open (M2 (0 .. 65), V2, ML2, SM2 (0 .. 65), PK2);
          Check ("Ed25519 RFC 8032 vec2 verify", V2);
       end;
    end;
@@ -675,7 +733,7 @@ begin
 
    Put_Line ("--- P-256 Scalar Mod-N ---");
    declare
-      use SPARKTLS.P256.ECDSA;
+      use SPARKTLSCrypto.P256.ECDSA;
       --  Test vector: a * b mod n (computed with Python)
       --  a = 0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
       A_Bytes : constant ECDSA_Sig_Half :=
@@ -913,8 +971,8 @@ begin
 
    Put_Line ("--- P-256 ECDSA ---");
    declare
-      use SPARKTLS.P256.ECDSA;
-      use SPARKTLS.P256.Point;
+      use SPARKTLSCrypto.P256.ECDSA;
+      use SPARKTLSCrypto.P256.Point;
       Hash : constant Bytes_32 := (others => 16#BB#);
       --  Private key (small, valid < n)
       D    : ECDSA_Sig_Half := (0 => 0, others => 16#01#);
@@ -928,8 +986,8 @@ begin
       --  Compute public key Q = D * G
       P256_Mulgen (Pt, Byte_Seq (D), 32);
       P256_To_Affine (Pt);
-      SPARKTLS.P256.FE_To_Bytes (Qx, Pt.X);
-      SPARKTLS.P256.FE_To_Bytes (Qy, Pt.Y);
+      SPARKTLSCrypto.P256.FE_To_Bytes (Qx, Pt.X);
+      SPARKTLSCrypto.P256.FE_To_Bytes (Qy, Pt.Y);
 
       Put ("    Qx: ");
       for I in 0 .. 31 loop Put (Qx (N32 (I))'Image); end loop;
@@ -939,7 +997,7 @@ begin
       New_Line;
 
       --  Sign
-      SPARKTLS.P256.ECDSA.Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
+      SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K, R_Out, S_Out, Sign_OK);
       Check ("P-256 Sign", Sign_OK);
       if Sign_OK then
          Put ("    r(0..5): ");
@@ -985,7 +1043,7 @@ begin
             R2, S2 : ECDSA_Sig_Half;
             OK2 : Boolean;
          begin
-            SPARKTLS.P256.ECDSA.Sign (Hash, D, K2, R2, S2, OK2);
+            SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K2, R2, S2, OK2);
             Check ("P-256 Sign (large K)", OK2);
             if OK2 then
                Put ("    R2: ");
@@ -1010,7 +1068,7 @@ begin
             R3, S3 : ECDSA_Sig_Half;
             OK3 : Boolean;
          begin
-            SPARKTLS.P256.ECDSA.Sign (Hash, D, K3, R3, S3, OK3);
+            SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K3, R3, S3, OK3);
             Check ("P-256 Sign (med K)", OK3);
             if OK3 then
                Check ("P-256 Verify (med K)",

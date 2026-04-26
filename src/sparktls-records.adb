@@ -1,6 +1,7 @@
 with Interfaces; use Interfaces;
 with SPARKNaCl.AES;
-with SPARKTLS.AES_GCM;
+with SPARKTLSCrypto.AES_GCM;
+use SPARKTLSCrypto;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with Ada.Unchecked_Deallocation;
 with RFLX.RFLX_Builtin_Types;

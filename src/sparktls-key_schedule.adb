@@ -1,5 +1,6 @@
 with SPARKNaCl.Hashing.SHA384;
-with SPARKTLS.HMAC384;
+with SPARKTLSCrypto.HMAC384;
+use SPARKTLSCrypto;
 
 package body SPARKTLS.Key_Schedule with
    SPARK_Mode => On
@@ -71,7 +72,7 @@ is
          end loop;
       end if;
 
-      SPARKTLS.HKDF.Expand (OKM, PRK, HKDF_Label);
+      SPARKTLSCrypto.HKDF.Expand (OKM, PRK, HKDF_Label);
    end Expand_Label;
 
    procedure Derive_Early_Secret
@@ -80,7 +81,7 @@ is
    is
       One_Zero : Byte_Seq (0 .. 0) := (others => 0);
    begin
-      SPARKTLS.HKDF.Extract
+      SPARKTLSCrypto.HKDF.Extract
         (PRK  => Early,
          IKM  => PSK,
          Salt => One_Zero);
@@ -100,7 +101,7 @@ is
                     PRK     => Early_Secret,
                     Label   => "derived",
                     Context => Empty_Hash);
-      SPARKTLS.HKDF.Extract
+      SPARKTLSCrypto.HKDF.Extract
         (PRK  => HS_Secret,
          IKM  => Shared,
          Salt => Byte_Seq (Derived));
@@ -171,7 +172,7 @@ is
                     PRK     => HS_Secret,
                     Label   => "derived",
                     Context => Empty_Hash);
-      SPARKTLS.HKDF.Extract
+      SPARKTLSCrypto.HKDF.Extract
         (PRK  => Master,
          IKM  => All_Zeroes,
          Salt => Byte_Seq (Derived));
@@ -239,7 +240,7 @@ is
       Empty_Hash : Digest;
    begin
       Derive_Early_Secret (Early, PSK);
-      SPARKTLS.Hashing.SHA256.Hash (Empty_Hash, Empty);
+      SPARKTLSCrypto.Hashing.SHA256.Hash (Empty_Hash, Empty);
       Expand_Label (OKM     => Binder_Key,
                     PRK     => Early,
                     Label   => "res binder",

@@ -10,7 +10,6 @@
 
 pragma Style_Checks ("N3aAbCdefhiIklnOprStux");
 pragma Warnings (Off, """Always_Terminates"" is not a valid aspect identifier");
-with Ada.Unchecked_Deallocation;
 with RFLX.RFLX_Arithmetic;
 
 generic
@@ -111,7 +110,5 @@ is
    pragma Warnings (On, "precondition is always False");
 
    procedure Lemma_Size (Val : Base_Integer; Size : Positive) renames RFLX.RFLX_Arithmetic.Lemma_Size;
-
-   procedure Free is new Ada.Unchecked_Deallocation (Object => Bytes, Name => Bytes_Ptr);
 
 end RFLX.RFLX_Generic_Types;

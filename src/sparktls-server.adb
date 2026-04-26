@@ -1,10 +1,10 @@
 with Interfaces;                 use Interfaces;
 with SPARKNaCl.Hashing.SHA384;
-with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
-with SPARKTLS.MAC;               use SPARKTLS.MAC;
-with SPARKTLS.HKDF;              use SPARKTLS.HKDF;
+with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
+with SPARKTLSCrypto.MAC;               use SPARKTLSCrypto.MAC;
+with SPARKTLSCrypto.HKDF;              use SPARKTLSCrypto.HKDF;
 
-with SPARKTLS.Ed25519;
+with SPARKTLSCrypto.Ed25519;
 with SPARKTLS.Records;      use SPARKTLS.Records;
 with SPARKTLS.Cert_Verify;  use SPARKTLS.Cert_Verify;
 with SPARKTLS.Handshake;
@@ -14,8 +14,9 @@ with SPARKTLS.Key_Schedule;
 with SPARKTLS.HC_Alloc;
 with X509;
 use type X509.Algorithm_ID;
-with SPARKTLS.HMAC384;
-with SPARKTLS.HKDF384;
+with SPARKTLSCrypto.HMAC384;
+with SPARKTLSCrypto.HKDF384;
+use SPARKTLSCrypto;
 with SPARKTLS.Ticket_Cache;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Server.TLS12;
@@ -486,9 +487,11 @@ is
                         end if;
                      end;
 
-                     --  Single-record message — parse directly
+                     --  Single-record message — parse directly.
+                     --  Copy (not rename) to avoid SPARK aliasing between
+                     --  the Frag parameter and the in-out Session global.
                      declare
-                        Frag : Byte_Seq renames
+                        Frag : constant Byte_Seq :=
                            S.Input.Data (Frag_Start ..
                                          Frag_Start + Frag_Len - 1);
                      begin
@@ -741,7 +744,7 @@ is
       HRR_Len   :    out N32;
       Rec_Out   :    out N32)
    is
-      use SPARKTLS.Hashing.SHA256;
+      use SPARKTLSCrypto.Hashing.SHA256;
 
       --  RFC 8446 §4.1.3: SHA-256("HelloRetryRequest")
       HRR_Random : constant Bytes_32 :=
@@ -836,7 +839,7 @@ is
       --  For SHA-256: message_hash type=254, length=32, then 32-byte hash.
       declare
          CH1_Hash : Digest;
-         Synthetic : Byte_Seq (0 .. 35);  --  type(1) + len(3) + hash(32) = 36
+         Synthetic : Byte_Seq (0 .. 35) := (others => 0);  --  type(1) + len(3) + hash(32) = 36
       begin
          --  Hash the current transcript (which contains CH1)
          Hash (CH1_Hash, HC.Transcript (0 .. HC.Transcript_Len - 1));
@@ -933,7 +936,7 @@ is
 
                         if PSK_Len = 48 then
                            declare
-                              use SPARKTLS.HKDF384;
+                              use SPARKTLSCrypto.HKDF384;
                               Trunc_Hash  : Key_Schedule.Digest_384;
                               Binder_Key  : OKM384_Seq (0 .. 47);
                               Finished_Key : OKM384_Seq (0 .. 47);
@@ -960,7 +963,7 @@ is
                               Finished_Key : OKM_Seq (0 .. 31);
                               Expected     : Digest;
                            begin
-                              SPARKTLS.Hashing.SHA256.Hash
+                              SPARKTLSCrypto.Hashing.SHA256.Hash
                                 (Trunc_Hash,
                                  HC.Transcript (0 .. Trunc_Len - 1));
                               Key_Schedule.Derive_Binder_Key
@@ -1267,7 +1270,7 @@ is
                      Transcript_Hash_384 (HC);
                   Fin_Key      : OKM384_Seq (0 .. 47);
                   Verify_48    : Bytes_48;
-                  Big_Finished : Byte_Seq (0 .. 51);  --  4 + 48
+                  Big_Finished : Byte_Seq (0 .. 51) := (others => 0);  --  4 + 48
                begin
                   Key_Schedule.Derive_Finished_Key_384
                     (Fin_Key, HC.Server_HS_Secret);
@@ -1714,7 +1717,7 @@ is
 
                                           declare
                                              Cert_X : X509.Byte_Seq
-                                                (0 .. X509.N32 (C_Len) - 1);
+                                                (0 .. X509.N32 (C_Len) - 1) := (others => 0);
                                              P_OK : Boolean;
                                           begin
                                              for I in N32 range
@@ -1779,7 +1782,7 @@ is
                                  "TLS 1.3, client CertificateVerify";
                               C_Len : constant N32 :=
                                  64 + N32 (Ctx_Str'Length) + 1 + H_Len;
-                              Content : Byte_Seq (0 .. C_Len - 1);
+                              Content : Byte_Seq (0 .. C_Len - 1) := (others => 0);
                               Verified : Boolean := False;
                            begin
                               Content (0 .. 63) := (others => 16#20#);
@@ -1820,7 +1823,7 @@ is
                                        end loop;
                                     end;
 
-                                    SPARKTLS.Ed25519.Open
+                                    SPARKTLSCrypto.Ed25519.Open
                                       (M, V_OK, V_Len, SM, PK_Bytes);
                                     Verified := V_OK;
                                  end;
@@ -1845,7 +1848,7 @@ is
                            declare
                               Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
                               Cert_X : X509.Byte_Seq
-                                 (0 .. X509.N32 (Cert_DER_Len_Const) - 1);
+                                 (0 .. X509.N32 (Cert_DER_Len_Const) - 1) := (others => 0);
                               VR : Validation_Result;
                            begin
                               for I in N32 range
@@ -2189,7 +2192,7 @@ is
                      declare
                         use SPARKTLS.Ticket_Cache;
                         Nonce    : Byte_Seq (0 .. 1) := (0, 0);
-                        TID : Ticket_ID;
+                        TID : Ticket_ID := (others => 0);
                         Enc_Out  : N32;
                      begin
                         case S.Negotiated_Suite is
@@ -2207,12 +2210,20 @@ is
                                    (PSK_Out, Byte_Seq (Res_Master), Nonce);
                                  --  Store in cache
                                  if HC.Cfg.Ticket_Store /= null then
+                                    pragma Warnings
+                                      (Off, "value conversion implemented by copy");
                                     Ticket_Cache.Store
                                       (HC.Cfg.Ticket_Store.all,
                                        Bytes_48 (PSK_Out), 48,
                                        S.Negotiated_Suite, 0, TID);
+                                    pragma Warnings
+                                      (On, "value conversion implemented by copy");
                                  end if;
+                                 pragma Warnings
+                                   (Off, "value conversion implemented by copy");
                                  S.Res_Master := Bytes_48 (Res_Master);
+                                 pragma Warnings
+                                   (On, "value conversion implemented by copy");
                                  S.Res_Master_Len := 48;
                               end;
                            when others =>

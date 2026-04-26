@@ -35,6 +35,8 @@ is
      (Id       : out Identity;
       Cert_PEM : String;
       Key_PEM  : String;
-      OK       : out Boolean);
+      OK       : out Boolean)
+   with Relaxed_Initialization => Id,
+        Post => Id'Initialized;
 
 end SPARKTLS.Credentials.Parsing;

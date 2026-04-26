@@ -47,9 +47,9 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre  => HC.Version = TLS_1_2
-                and HC.Cfg.Local /= null
-                and HC.Cfg.Local.Has_Identity
-                and HC.Cfg.Random /= null;
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null;
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
@@ -89,6 +89,7 @@ is
    --  Dispatches on inner content type (0x17=app data, 0x15=alert).
    procedure Process_Connected_12
      (S      : in out Session;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => S.State = Connected;
 
 end SPARKTLS.Server.TLS12;

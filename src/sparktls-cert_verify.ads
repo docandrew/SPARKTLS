@@ -227,7 +227,9 @@ is
       DER    : X509.Byte_Seq;
       Loaded : out Natural;
       OK     : out Boolean)
-   with Pre => DER'First = 0 and DER'Last < X509.N32'Last;
+   with Pre  => DER'First = 0 and then DER'Last < X509.N32'Last,
+        Relaxed_Initialization => Store,
+        Post => Store'Initialized;
 
    function Root_Count (Store : Trust_Store) return Natural is
      (Store.Root_Count);
@@ -242,9 +244,11 @@ is
       Cert_DER : X509.Byte_Seq;
       Key      : Byte_Seq;
       OK       : out Boolean)
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
-               and X509.N32 (Cert_DER'Length) <= X509.N32 (Max_Cert_DER)
-               and Key'First = 0;
+   with Pre  => Cert_DER'First = 0 and then Cert_DER'Last < X509.N32'Last
+                and then X509.N32 (Cert_DER'Length) <= X509.N32 (Max_Cert_DER)
+                and then Key'First = 0,
+        Relaxed_Initialization => Id,
+        Post => Id'Initialized;
 
    --  Add an intermediate certificate to the identity's chain.
    procedure Add_Intermediate

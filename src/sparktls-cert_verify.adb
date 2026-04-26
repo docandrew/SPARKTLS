@@ -1,12 +1,13 @@
 
 with Interfaces; use Interfaces;
-with SPARKTLS.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
-with SPARKTLS.Ed25519;
-with SPARKTLS.RSA;
-with SPARKTLS.P256.ECDSA;
-with SPARKTLS.P384.ECDSA;
+with SPARKTLSCrypto.Ed25519;
+with SPARKTLSCrypto.RSA;
+with SPARKTLSCrypto.P256.ECDSA;
+with SPARKTLSCrypto.P384.ECDSA;
+use SPARKTLSCrypto;
 
 package body SPARKTLS.Cert_Verify with
    SPARK_Mode => On
@@ -179,11 +180,11 @@ is
                   return False;
                end if;
                declare
-                  H : SPARKTLS.Hashing.SHA256.Digest;
+                  H : SPARKTLSCrypto.Hashing.SHA256.Digest;
                   Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
                   Sig_Bytes : Byte_Seq (0 .. N32 (Sig_Len) - 1) := (others => 0);
                begin
-                  SPARKTLS.Hashing.SHA256.Hash (H, TBS_Bytes);
+                  SPARKTLSCrypto.Hashing.SHA256.Hash (H, TBS_Bytes);
                   for I in N32 range 0 .. N32 (PK_Len) - 1 loop
                      Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                   end loop;
@@ -276,7 +277,7 @@ is
                         SPARKNaCl.Hashing.SHA384.Hash (H, TBS_Bytes);
                      else
                         --  SHA-256 hash, zero-pad to 48 bytes for P-384
-                        SPARKTLS.Hashing.SHA256.Hash (H32, TBS_Bytes);
+                        SPARKTLSCrypto.Hashing.SHA256.Hash (H32, TBS_Bytes);
                         H := (others => 0);
                         for I in N32 range 0 .. 31 loop
                            H (I) := H32 (I);
@@ -309,7 +310,7 @@ is
                      Sig_OK : Boolean;
                   begin
                      --  Both SHA-256 and SHA-384 sigs use SHA-256 for P-256
-                     SPARKTLS.Hashing.SHA256.Hash (H, TBS_Bytes);
+                     SPARKTLSCrypto.Hashing.SHA256.Hash (H, TBS_Bytes);
 
                   for I in 0 .. 31 loop
                      Qx (N32 (I)) := Byte (PK_Data (X509.N32 (1 + I)));
@@ -361,7 +362,7 @@ is
                      PK_B (N32 (I)) := Byte (PK_Data (X509.N32 (I)));
                   end loop;
 
-                  SPARKTLS.Ed25519.Open
+                  SPARKTLSCrypto.Ed25519.Open
                     (M      => M,
                      Valid  => Verify_OK,
                      Msg_Len => Verify_Len,
@@ -764,7 +765,7 @@ is
       use type X509.N32;
       Pos : X509.N32 := DER'First;
    begin
-      Store := (Roots => <>, Root_Count => 0);
+      Store.Root_Count := 0;
       Loaded := 0;
       OK := True;
 
@@ -862,7 +863,6 @@ is
       C    : X509.Certificate;
       P_OK : Boolean;
    begin
-      Id := (others => <>);
       OK := False;
 
       if Cert_DER'Length = 0 then
@@ -1164,11 +1164,11 @@ is
                return False;
             end if;
             declare
-               H : SPARKTLS.Hashing.SHA256.Digest;
+               H : SPARKTLSCrypto.Hashing.SHA256.Digest;
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
                Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1) := (others => 0);
             begin
-               SPARKTLS.Hashing.SHA256.Hash (H, Data);
+               SPARKTLSCrypto.Hashing.SHA256.Hash (H, Data);
                for I in N32 range 0 .. N32 (PK_Len) - 1 loop
                   Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                end loop;
@@ -1212,14 +1212,14 @@ is
             if PK_Algo /= X509.Algo_EC_P256 then return False; end if;
             if PK_Len /= 65 then return False; end if;
             declare
-               H     : SPARKTLS.Hashing.SHA256.Digest;
+               H     : SPARKTLSCrypto.Hashing.SHA256.Digest;
                Qx    : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                Qy    : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                R_Val : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                S_Val : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                DER_OK : Boolean;
             begin
-               SPARKTLS.Hashing.SHA256.Hash (H, Data);
+               SPARKTLSCrypto.Hashing.SHA256.Hash (H, Data);
                --  Extract public key (skip 0x04 uncompressed prefix)
                for I in 0 .. 31 loop
                   Qx (N32 (I)) := Byte (PK_Data (X509.N32 (I + 1)));
@@ -1227,7 +1227,7 @@ is
                end loop;
                --  Parse DER signature into r, s
                declare
-                  X_Sig : X509.Byte_Seq (0 .. X509.N32 (Sig_Len) - 1);
+                  X_Sig : X509.Byte_Seq (0 .. X509.N32 (Sig_Len) - 1) := (others => 0);
                begin
                   for I in N32 range 0 .. Sig_Len - 1 loop
                      X_Sig (X509.N32 (I)) := X509.Byte (Sig (I));
@@ -1263,7 +1263,7 @@ is
                   Qy (N32 (I)) := Byte (PK_Data (X509.N32 (I + 49)));
                end loop;
                declare
-                  X_Sig : X509.Byte_Seq (0 .. X509.N32 (Sig_Len) - 1);
+                  X_Sig : X509.Byte_Seq (0 .. X509.N32 (Sig_Len) - 1) := (others => 0);
                begin
                   for I in N32 range 0 .. Sig_Len - 1 loop
                      X_Sig (X509.N32 (I)) := X509.Byte (Sig (I));
@@ -1285,9 +1285,9 @@ is
             if PK_Len /= 32 or Sig_Len /= 64 then return False; end if;
             declare
                SM_Len    : constant N32 := 64 + N32 (Data'Length);
-               SM        : Byte_Seq (0 .. SM_Len - 1);
-               M         : Byte_Seq (0 .. SM_Len - 1);
-               PK_Bytes  : Bytes_32;
+               SM        : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
+               M         : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
+               PK_Bytes  : Bytes_32 := (others => 0);
                OK        : Boolean;
                Len       : I32;
             begin
@@ -1296,7 +1296,7 @@ is
                for I in 0 .. 31 loop
                   PK_Bytes (N32 (I)) := Byte (PK_Data (X509.N32 (I)));
                end loop;
-               SPARKTLS.Ed25519.Open (M, OK, Len, SM, PK_Bytes);
+               SPARKTLSCrypto.Ed25519.Open (M, OK, Len, SM, PK_Bytes);
                return OK;
             end;
 

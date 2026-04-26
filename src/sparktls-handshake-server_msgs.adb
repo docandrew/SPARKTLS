@@ -1,6 +1,6 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
-with SPARKTLS.X25519;
+with SPARKTLSCrypto.X25519;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with RFLX.TLS_Handshake.Client_Hello;
 with RFLX.TLS_Handshake.Server_Hello;
@@ -22,8 +22,9 @@ with RFLX.TLS_Handshake.CR_Extensions;
 with RFLX.TLS_Handshake.CR_Extension;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
-with SPARKTLS.P256.Point;
-with SPARKTLS.P384.Point;
+with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.P384.Point;
+use SPARKTLSCrypto;
 
 package body SPARKTLS.Handshake.Server_Msgs with
    SPARK_Mode => On
@@ -791,8 +792,13 @@ is
       Result := (others => 0);
       Len    := 0;
 
-      --  Generate server random
-      Gen_Random (HC.Server_Random);
+      --  Generate server random (use temp to avoid SPARK aliasing)
+      declare
+         Tmp_SR : Bytes_32;
+      begin
+         Gen_Random (Byte_Seq (Tmp_SR));
+         HC.Server_Random := Tmp_SR;
+      end;
 
       --  Select key exchange group (prefer x25519 > P-256 > P-384)
       HC.Shared_Secret := (others => 0);
@@ -801,16 +807,18 @@ is
          declare
             PK_Bytes : Bytes_32;
             Basepoint : constant Bytes_32 := (9, others => 0);
+            Tmp_SK   : Bytes_32;
          begin
-            Gen_Random (HC.Local_SK);
+            Gen_Random (Byte_Seq (Tmp_SK));
+            HC.Local_SK := Tmp_SK;
             --  Public key = Local_SK * basepoint (Fiat X25519)
             declare
                Basepoint : constant Bytes_32 := (9, others => 0);
             begin
-               SPARKTLS.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
+               SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
             end;
             --  Shared secret = Local_SK * Peer_PK
-            SPARKTLS.X25519.Scalar_Mult
+            SPARKTLSCrypto.X25519.Scalar_Mult
               (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
             begin
                --  group(2) + key_len(2) + key(32) = 36
@@ -826,13 +834,15 @@ is
       elsif HC.Client_Has_P256 then
          HC.Selected_Group := 16#0017#;
          declare
-            use SPARKTLS.P256.Point;
+            use SPARKTLSCrypto.P256.Point;
             PK_Jac  : P256_Jacobian;
             PK_Enc  : Byte_Seq (0 .. 64);
             Peer_Pt : P256_Jacobian;
             Valid   : SPARKNaCl.U32;
+            Tmp_SK  : Bytes_32;
          begin
-            Gen_Random (HC.P256_Local_SK);
+            Gen_Random (Byte_Seq (Tmp_SK));
+            HC.P256_Local_SK := Tmp_SK;
             --  Our public key
             P256_Mulgen (PK_Jac, HC.P256_Local_SK, 32);
             P256_To_Affine (PK_Jac);
@@ -864,10 +874,12 @@ is
             PK_Enc : Byte_Seq (0 .. 96);
             SS     : Bytes_48;
             SS_OK  : Boolean;
+            Tmp_SK : Bytes_48;
          begin
-            Gen_Random (Byte_Seq (HC.P384_Local_SK));
-            SPARKTLS.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
-            SPARKTLS.P384.Point.P384_ECDHE
+            Gen_Random (Byte_Seq (Tmp_SK));
+            HC.P384_Local_SK := Tmp_SK;
+            SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
+            SPARKTLSCrypto.P384.Point.P384_ECDHE
               (Secret  => SS,
                OK      => SS_OK,
                SK      => HC.P384_Local_SK,
@@ -943,7 +955,7 @@ is
          declare
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-            SV_Raw  : Byte_Seq (0 .. SV_Data_Len - 1);
+            SV_Raw  : Byte_Seq (0 .. SV_Data_Len - 1) := (others => 0);
          begin
             SV_Raw (0) := 16#03#;
             SV_Raw (1) := 16#04#;  --  TLS 1.3

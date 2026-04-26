@@ -1,12 +1,13 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
-with SPARKTLS.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
-with SPARKTLS.Ed25519;
-with SPARKTLS.P256.ECDSA;
-with SPARKTLS.P384.ECDSA;
-with SPARKTLS.RSA;
+with SPARKTLSCrypto.Ed25519;
+with SPARKTLSCrypto.P256.ECDSA;
+with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLSCrypto.RSA;
+use SPARKTLSCrypto;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with RFLX.TLS_Handshake.Certificate;
 with RFLX.TLS_Handshake.Certificate_Entries;
@@ -232,7 +233,7 @@ is
           else "TLS 1.3, client CertificateVerify");
       H_Len       : constant N32 := N32 (Transcript_Hash'Length);
       Content_Len : constant N32 := 64 + N32 (Context_Str'Length) + 1 + H_Len;
-      Content     : Byte_Seq (0 .. Content_Len - 1);
+      Content     : Byte_Seq (0 .. Content_Len - 1) := (others => 0);
 
       Sig     : Byte_Seq (0 .. 511) := (others => 0);
       Sig_Len : N32 := 0;
@@ -262,7 +263,7 @@ is
                SK     : Bytes_64;
             begin
                SK := Id.Ed25519_Key;
-               SPARKTLS.Ed25519.Sign (SM, Content, SK);
+               SPARKTLSCrypto.Ed25519.Sign (SM, Content, SK);
                Sig (0 .. 63) := SM (0 .. 63);
                Sig_OK := True;
             end;
@@ -270,17 +271,17 @@ is
          when 16#0403# =>
             Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp256r1_Sha256;
             declare
-               use SPARKTLS.Hashing.SHA256;
+               use SPARKTLSCrypto.Hashing.SHA256;
                H : constant Digest := Hash (Content);
                K_Bytes : Bytes_32;
-               R_Half, S_Half : SPARKTLS.P256.ECDSA.ECDSA_Sig_Half;
+               R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
                Random.all (Byte_Seq (K_Bytes));
-               SPARKTLS.P256.ECDSA.Sign
+               SPARKTLSCrypto.P256.ECDSA.Sign
                  (Hash  => H,
-                  D     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half
+                  D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
                              (Id.ECDSA_P256_Key),
-                  K     => SPARKTLS.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
+                  K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
                   R_Out => R_Half,
                   S_Out => S_Half,
                   OK    => Sig_OK);
@@ -301,7 +302,7 @@ is
                S_Half  : Byte_Seq (0 .. 47);
             begin
                Random.all (Byte_Seq (K_Bytes));
-               SPARKTLS.P384.ECDSA.Sign
+               SPARKTLSCrypto.P384.ECDSA.Sign
                  (Hash  => H,
                   D     => Byte_Seq (Id.ECDSA_P384_Key),
                   K     => Byte_Seq (K_Bytes),
@@ -316,15 +317,15 @@ is
          when 16#0804# =>
             Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256;
             declare
-               use SPARKTLS.Hashing.SHA256;
+               use SPARKTLSCrypto.Hashing.SHA256;
                H    : constant Digest := Hash (Content);
                Salt : Bytes_32;
             begin
                Random.all (Byte_Seq (Salt));
-               SPARKTLS.RSA.Sign_PSS
+               SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 32,
-                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA256,
+                  Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA256,
                   Modulus   => Id.RSA_Modulus,
                   Mod_Len   => Id.RSA_Mod_Len,
                   Priv_Exp  => Id.RSA_Priv_Exp,
@@ -342,10 +343,10 @@ is
                Salt : Bytes_48;
             begin
                Random.all (Byte_Seq (Salt));
-               SPARKTLS.RSA.Sign_PSS
+               SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 48,
-                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA384,
+                  Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA384,
                   Modulus   => Id.RSA_Modulus,
                   Mod_Len   => Id.RSA_Mod_Len,
                   Priv_Exp  => Id.RSA_Priv_Exp,
@@ -363,10 +364,10 @@ is
                Salt : Bytes_64;
             begin
                Random.all (Byte_Seq (Salt));
-               SPARKTLS.RSA.Sign_PSS
+               SPARKTLSCrypto.RSA.Sign_PSS
                  (M_Hash    => Byte_Seq (H),
                   Hash_Len  => 64,
-                  Hash_Alg  => SPARKTLS.RSA.PSS_SHA512,
+                  Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA512,
                   Modulus   => Id.RSA_Modulus,
                   Mod_Len   => Id.RSA_Mod_Len,
                   Priv_Exp  => Id.RSA_Priv_Exp,

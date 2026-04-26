@@ -1,9 +1,9 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
-with SPARKTLS.Hashing.SHA256;
-with SPARKTLS.X25519;
-with SPARKTLS.HKDF;    use SPARKTLS.HKDF;
-with SPARKTLS.MAC;     use SPARKTLS.MAC;
+with SPARKTLSCrypto.Hashing.SHA256;
+with SPARKTLSCrypto.X25519;
+with SPARKTLSCrypto.HKDF;    use SPARKTLSCrypto.HKDF;
+with SPARKTLSCrypto.MAC;     use SPARKTLSCrypto.MAC;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with SPARKTLS.Key_Schedule;
 with RFLX.TLS_Handshake.Client_Hello;
@@ -18,8 +18,9 @@ with RFLX.TLS_Handshake.Cipher_Suite_TLS;
 with RFLX.TLS_Common;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
-with SPARKTLS.P256.Point;
-with SPARKTLS.P384.Point;
+with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.P384.Point;
+use SPARKTLSCrypto;
 
 package body SPARKTLS.Handshake.Client_Msgs with
    SPARK_Mode => On
@@ -104,32 +105,50 @@ is
       Result := (others => 0);
       Len    := 0;
 
-      --  Generate ephemeral X25519 keypair (Fiat X25519)
-      Gen_Random (HC.Local_SK);
+      --  Generate ephemeral X25519 keypair (Fiat X25519).
+      --  Use temporaries to avoid SPARK aliasing between Gen_Random's out
+      --  parameter and HC's globals (HC is in-out global to this proc).
       declare
-         Basepoint : constant Bytes_32 := (9, others => 0);
+         Tmp_X25519 : Bytes_32;
       begin
-         SPARKTLS.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
+         Gen_Random (Byte_Seq (Tmp_X25519));
+         HC.Local_SK := Tmp_X25519;
+         declare
+            Basepoint : constant Bytes_32 := (9, others => 0);
+         begin
+            SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
+         end;
       end;
 
       --  Generate ephemeral P-256 keypair
       declare
-         P256_Pt : SPARKTLS.P256.Point.P256_Jacobian;
+         P256_Pt    : SPARKTLSCrypto.P256.Point.P256_Jacobian;
+         Tmp_P256   : Bytes_32;
       begin
-         Gen_Random (HC.P256_Local_SK);
-         --  Compute public key = [private_key] * G
-         SPARKTLS.P256.Point.P256_Mulgen
+         Gen_Random (Byte_Seq (Tmp_P256));
+         HC.P256_Local_SK := Tmp_P256;
+         SPARKTLSCrypto.P256.Point.P256_Mulgen
            (P256_Pt, HC.P256_Local_SK, 32);
-         SPARKTLS.P256.Point.P256_To_Affine (P256_Pt);
-         SPARKTLS.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
+         SPARKTLSCrypto.P256.Point.P256_To_Affine (P256_Pt);
+         SPARKTLSCrypto.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
       end;
 
       --  Generate ephemeral P-384 keypair
-      Gen_Random (HC.P384_Local_SK);
-      SPARKTLS.P384.Point.P384_Mulgen (P384_PK_Enc, HC.P384_Local_SK);
+      declare
+         Tmp_P384 : Bytes_48;
+      begin
+         Gen_Random (Byte_Seq (Tmp_P384));
+         HC.P384_Local_SK := Tmp_P384;
+         SPARKTLSCrypto.P384.Point.P384_Mulgen (P384_PK_Enc, HC.P384_Local_SK);
+      end;
 
       --  Generate client random
-      Gen_Random (HC.Client_Random);
+      declare
+         Tmp_CR : Bytes_32;
+      begin
+         Gen_Random (Byte_Seq (Tmp_CR));
+         HC.Client_Random := Tmp_CR;
+      end;
 
       --  Generate 32-byte legacy session ID for middlebox compatibility
       declare
@@ -270,7 +289,7 @@ is
          declare
             Ext_Buf  : RBT.Bytes_Ptr;
             Ext_Ctx  : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-            SNI_Raw  : Byte_Seq (0 .. SNI_Data_Len - 1);
+            SNI_Raw  : Byte_Seq (0 .. SNI_Data_Len - 1) := (others => 0);
          begin
             --  SNI list: list_len(2) + type(1) + name_len(2) + name
             SNI_Raw (0) := Byte ((Host_Len + 3) / 256);
@@ -509,7 +528,7 @@ is
       --  We patch the extensions list length and handshake length after.
       if S.Ticket.Valid and then Len > 0 then
          declare
-            use SPARKTLS.Hashing.SHA256;
+            use SPARKTLSCrypto.Hashing.SHA256;
             Tick_Len : constant N32 := S.Ticket.Ticket_Len;
             --  PSK identity: identity_len(2) + ticket + age(4)
             ID_Entry_Len : constant N32 := 2 + Tick_Len + 4;
@@ -946,7 +965,7 @@ is
             Secret_384 : Bytes_48;
             P384_OK    : Boolean;
          begin
-            SPARKTLS.P384.Point.P384_ECDHE
+            SPARKTLSCrypto.P384.Point.P384_ECDHE
               (Secret  => Secret_384,
                OK      => P384_OK,
                SK      => HC.P384_Local_SK,
@@ -962,11 +981,11 @@ is
       elsif HC.Use_P256_KE then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
          declare
-            Peer_Pt : SPARKTLS.P256.Point.P256_Jacobian;
+            Peer_Pt : SPARKTLSCrypto.P256.Point.P256_Jacobian;
             Valid   : SPARKNaCl.U32;
             X_Bytes : Byte_Seq (0 .. 31);
          begin
-            SPARKTLS.P256.Point.P256_Decode
+            SPARKTLSCrypto.P256.Point.P256_Decode
               (Peer_Pt, HC.P256_Peer_PK, Valid);
             if Valid = 0 then
                OK := False;
@@ -975,14 +994,14 @@ is
                return;
             end if;
             --  Multiply peer's public key by our private scalar
-            SPARKTLS.P256.Point.P256_Mul
+            SPARKTLSCrypto.P256.Point.P256_Mul
               (Peer_Pt, HC.P256_Local_SK, 32);
-            SPARKTLS.P256.Point.P256_To_Affine (Peer_Pt);
+            SPARKTLSCrypto.P256.Point.P256_To_Affine (Peer_Pt);
             --  Encode to get x-coordinate (bytes 1..32 of uncompressed point)
             declare
                Encoded : Byte_Seq (0 .. 64);
             begin
-               SPARKTLS.P256.Point.P256_Encode (Encoded, Peer_Pt);
+               SPARKTLSCrypto.P256.Point.P256_Encode (Encoded, Peer_Pt);
                X_Bytes := Encoded (1 .. 32);
             end;
             HC.Shared_Secret := (others => 0);
@@ -991,7 +1010,7 @@ is
       else
          --  X25519 ECDHE
          HC.Shared_Secret := (others => 0);
-         SPARKTLS.X25519.Scalar_Mult
+         SPARKTLSCrypto.X25519.Scalar_Mult
            (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
       end if;
 

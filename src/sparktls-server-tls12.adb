@@ -1,6 +1,6 @@
 with Interfaces;                 use Interfaces;
 with SPARKNaCl;                  use SPARKNaCl;
-with SPARKTLS.Hashing.SHA256;    use SPARKTLS.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
@@ -9,8 +9,9 @@ with SPARKTLS.Records.TLS12;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule_12;
-with SPARKTLS.P256.Point;
-with SPARKTLS.P384.Point;
+with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.P384.Point;
+use SPARKTLSCrypto;
 
 package body SPARKTLS.Server.TLS12 with
    SPARK_Mode => On
@@ -288,7 +289,7 @@ is
                SS_OK := True;
             when Group_Secp256r1 =>
                declare
-                  use SPARKTLS.P256.Point;
+                  use SPARKTLSCrypto.P256.Point;
                   Pt : P256_Jacobian; V : SPARKNaCl.U32;
                begin
                   P256_Decode (Pt, HC.P256_Peer_PK, V);
@@ -307,7 +308,7 @@ is
             when Group_Secp384r1 =>
                declare SS : Bytes_48; OK384 : Boolean;
                begin
-                  SPARKTLS.P384.Point.P384_ECDHE
+                  SPARKTLSCrypto.P384.Point.P384_ECDHE
                     (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
                   if OK384 then HC.Shared_Secret := SS; SS_OK := True; end if;
                end;
@@ -326,7 +327,11 @@ is
    ------------------------------------------------------------------
    procedure Process_Client_CCS_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-   is begin
+   is
+      pragma Unreferenced (S, HC);
+   begin
+      --  TODO: implement CCS handling per RFC 5246 §7.1 — activate client
+      --  write keys for decrypting subsequent records.
       Result := Error_Alert;
    end Process_Client_CCS_12;
 
@@ -547,7 +552,10 @@ is
 
          case Rec.Content is
             when Records.Content_Application_Data =>
-               if PL > 0 and then S.App_Data_Len + PL <= S.App_Data'Length then
+               if PL > 0
+                  and then S.App_Data_Len <= S.App_Data'Length
+                  and then PL <= S.App_Data'Length - S.App_Data_Len
+               then
                   S.App_Data (S.App_Data_Len .. S.App_Data_Len + PL - 1) :=
                      Plaintext (0 .. PL - 1);
                   S.App_Data_Len := S.App_Data_Len + PL;

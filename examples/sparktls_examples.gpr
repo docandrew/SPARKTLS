@@ -8,6 +8,7 @@ project SPARKTLS_Examples is
    for Main use ("tls_fetch.adb", "tls_web_epoll.adb",
                   "tls_test_client.adb", "tls_test_server.adb",
                   "tls_blocking_server.adb",
+                  "tls_bench_server.adb",
                   "test_prf12.adb");
 
    package Compiler is

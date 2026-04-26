@@ -70,8 +70,8 @@ if echo "$SUITES" | grep -q "unit"; then
     # PRF-12 test
     if [ -f bin/examples/test_prf12 ]; then
         output=$(bin/examples/test_prf12 2>&1 || true)
-        pass=$(echo "$output" | grep -c "PASS" || echo 0)
-        fail=$(echo "$output" | grep -c "FAIL" || echo 0)
+        pass=$(echo "$output" | grep -c "PASS" || true)
+        fail=$(echo "$output" | grep -c "FAIL" || true)
         echo "  test_prf12: $pass passed, $fail failed"
         UNIT_PASS=$((UNIT_PASS + pass))
         UNIT_FAIL=$((UNIT_FAIL + fail))
@@ -80,9 +80,39 @@ if echo "$SUITES" | grep -q "unit"; then
     # Crypto unit tests (sign/verify round-trips)
     if [ -f bin/tests/test_crypto ]; then
         output=$(bin/tests/test_crypto 2>&1 || true)
-        pass=$(echo "$output" | grep -c "PASS" || echo 0)
-        fail=$(echo "$output" | grep -c "FAIL" || echo 0)
+        pass=$(echo "$output" | grep -c "PASS" || true)
+        fail=$(echo "$output" | grep -c "FAIL" || true)
         echo "  test_crypto: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
+    # Fiat P-256 vs C-reference KAT (catches arithmetic regressions)
+    if [ -f bin/tests/test_fiat_p256_kat ]; then
+        output=$(bin/tests/test_fiat_p256_kat 2>&1 || true)
+        pass=$(echo "$output" | awk '/Total checks/ {print $3}')
+        fail=$(echo "$output" | awk '/Total checks/ {print $5}')
+        echo "  test_fiat_p256_kat: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
+    # Fiat 25519 vs C-reference KAT
+    if [ -f bin/tests/test_fiat_25519_kat ]; then
+        output=$(bin/tests/test_fiat_25519_kat 2>&1 || true)
+        pass=$(echo "$output" | awk '/Total checks/ {print $3}')
+        fail=$(echo "$output" | awk '/Total checks/ {print $5}')
+        echo "  test_fiat_25519_kat: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
+    # X25519 / Ed25519 RFC 7748 / 8032 standards vectors
+    if [ -f bin/tests/test_25519_rfc ]; then
+        output=$(bin/tests/test_25519_rfc 2>&1 || true)
+        pass=$(echo "$output" | awk '/Total checks/ {print $3}')
+        fail=$(echo "$output" | awk '/Total checks/ {print $5}')
+        echo "  test_25519_rfc: $pass passed, $fail failed"
         UNIT_PASS=$((UNIT_PASS + pass))
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
@@ -92,8 +122,8 @@ if echo "$SUITES" | grep -q "unit"; then
         if [ -f "$test_bin" ]; then
             name=$(basename "$test_bin")
             output=$("$test_bin" 2>&1 || true)
-            pass=$(echo "$output" | grep -c "PASS" || echo 0)
-            fail=$(echo "$output" | grep -c "FAIL" || echo 0)
+            pass=$(echo "$output" | grep -c "PASS" || true)
+            fail=$(echo "$output" | grep -c "FAIL" || true)
             echo "  $name: $pass passed, $fail failed"
             UNIT_PASS=$((UNIT_PASS + pass))
             UNIT_FAIL=$((UNIT_FAIL + fail))

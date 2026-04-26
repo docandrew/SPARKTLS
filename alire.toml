@@ -13,6 +13,9 @@ gnat = ">=14.2.1"
 sparknacl = "^4.0.0"
 [[depends-on]]
 sparkx509 = "~0.0.1"
+[[depends-on]]
+sparktlscrypto = "~0.0.1"
 [[pins]]
 sparkx509 = { path='../sparkx509' }
 sparknacl = { path='../sparknacl' }
+sparktlscrypto = { path='../SPARKTLSCrypto' }

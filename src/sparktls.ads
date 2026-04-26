@@ -919,8 +919,11 @@ is
       Bytes_Drained  :    out N32)
    with Pre  => Dest'First = 0
                 and Dest'Last < N32'Last,
+        Relaxed_Initialization => Dest,
         Post => Bytes_Drained <= N32 (Dest'Length)
-                and S.State = S.State'Old;         --  draining doesn't change state
+                and S.State = S.State'Old         --  draining doesn't change state
+                and (for all I in 0 .. Bytes_Drained - 1 =>
+                       Dest (I)'Initialized);
 
    --  How many bytes are waiting to be sent?
    function Output_Pending (S : Session) return N32 is
@@ -968,6 +971,9 @@ is
    with Pre  => Dest'First = 0
                 and Dest'Last < N32'Last
                 and S.App_Data_Len <= Max_Record_Plaintext,
-        Post => Bytes_Read <= N32 (Dest'Length);
+        Relaxed_Initialization => Dest,
+        Post => Bytes_Read <= N32 (Dest'Length)
+                and (for all I in 0 .. Bytes_Read - 1 =>
+                       Dest (I)'Initialized);
 
 end SPARKTLS;

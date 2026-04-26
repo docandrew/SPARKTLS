@@ -2,7 +2,8 @@ with Interfaces;             use Interfaces;
 with SPARKNaCl.AES;
 with SPARKNaCl.Core;         use SPARKNaCl.Core;
 with SPARKNaCl.Secretbox;
-with SPARKTLS.AES_GCM;
+with SPARKTLSCrypto.AES_GCM;
+use SPARKTLSCrypto;
 
 --  TLS 1.2 Record Layer — AEAD (GCM + ChaCha20-Poly1305)
 --

@@ -90,4 +90,12 @@ project Sparktls is
       for Switches ("Ada") use ("-Es"); --  Symbolic traceback
    end Binder;
 
+   --  Exclude RecordFlux-generated code from gnatprove (proving RFLX needs
+   --  a GNAT Pro license; rflx-rflx_generic_types.ads:115 trips a SPARK
+   --  Unchecked_Deallocation violation that aborts whole-project analysis).
+   --  This is gnatprove-only; build still includes generated/.
+   package Prove is
+      for Excluded_Source_Files use ("rflx*.ads", "rflx*.adb");
+   end Prove;
+
 end Sparktls;

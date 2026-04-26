@@ -1,5 +1,6 @@
 with SPARKNaCl;       use SPARKNaCl;
-with SPARKTLS.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA256;
+use SPARKTLSCrypto;
 
 --  TLS 1.2 Key Derivation (RFC 5246 Sections 5, 6.3, 7.4.9, 8.1)
 --
