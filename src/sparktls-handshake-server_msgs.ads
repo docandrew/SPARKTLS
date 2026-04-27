@@ -42,7 +42,8 @@ is
       S      : in out Session;
       Result :    out Byte_Seq;
       Len    :    out N32)
-   with Pre  => Result'First = 0 and Result'Last >= 255;
+   with Pre  => Result'First = 0 and Result'Last >= 270;
+   --  Header(4) + ext_list_len(2) + ALPN ext(7 + Max_Hostname_Len=255) = 268
 
    --  Build a CertificateRequest handshake message (server -> client).
    --  Minimal: empty certificate_request_context, signature_algorithms
@@ -50,6 +51,7 @@ is
    procedure Build_Certificate_Request
      (Result :    out Byte_Seq;
       Len    :    out N32)
-   with Pre => Result'First = 0 and N32 (Result'Length) >= 32;
+   with Pre => Result'First = 0
+               and Result'Last in 31 .. 16#FFFF#;
 
 end SPARKTLS.Handshake.Server_Msgs;

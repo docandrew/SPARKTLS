@@ -23,6 +23,7 @@ with RFLX.TLS_Handshake.CR_Extension;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
 with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.Point;
 use SPARKTLSCrypto;
 
@@ -31,6 +32,7 @@ package body SPARKTLS.Handshake.Server_Msgs with
 is
    use type RBT.Length;
    use type RBT.Index;
+   use type RBT.Bit_Length;
    use type RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values_Enum;
    use type RFLX.Tls_Parameters.TLS_Supported_Groups_Enum;
 
@@ -750,6 +752,198 @@ is
    --  Server-side build procedures
    --================================================================
 
+   --================================================================
+   --  Helpers extracted from Build_Server_Hello so each piece is
+   --  small enough for SPARK's SMT solvers to discharge.
+   --
+   --  KS_Raw layout: 4-byte TLS NamedGroupEntry header (group(2) +
+   --  key_len(2)) followed by the encoded public key bytes.
+   --================================================================
+
+   subtype KS_Raw_Buffer is Byte_Seq (0 .. 103);  --  max P-384: 4 + 97
+   --  Wire representation of a single TLS 1.3 KeyShareEntry.
+
+   --  X25519 key share generation (RFC 8446 §4.2.8.2).
+   --  Always succeeds.
+   procedure Generate_KS_X25519
+     (HC         : in out Handshake_Context;
+      KS_Raw     :    out KS_Raw_Buffer;
+      KS_Raw_Len :    out N32)
+   with Pre  => HC.Cfg.Random /= null,
+        Post => KS_Raw_Len = 36
+   is
+      procedure Gen_Random (Output : out Byte_Seq)
+        renames HC.Cfg.Random.all;
+      PK_Bytes  : Bytes_32;
+      Basepoint : constant Bytes_32 := (9, others => 0);
+      Tmp_SK    : Bytes_32;
+   begin
+      KS_Raw := (others => 0);
+
+      Gen_Random (Byte_Seq (Tmp_SK));
+      HC.Local_SK := Tmp_SK;
+      SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
+      SPARKTLSCrypto.X25519.Scalar_Mult
+        (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
+
+      --  group(2) + key_len(2) + key(32) = 36
+      KS_Raw (0) := 0; KS_Raw (1) := 16#1D#;  --  x25519
+      KS_Raw (2) := 0; KS_Raw (3) := 32;
+      for I in N32 range 0 .. 31 loop
+         KS_Raw (4 + I) := PK_Bytes (I);
+      end loop;
+      KS_Raw_Len := 36;
+   end Generate_KS_X25519;
+
+   --  P-256 key share generation (RFC 8446 §4.2.8.2 + RFC 8422 §5).
+   --  OK = False if HC.P256_Peer_PK is not a valid point.
+   procedure Generate_KS_P256
+     (HC         : in out Handshake_Context;
+      KS_Raw     :    out KS_Raw_Buffer;
+      KS_Raw_Len :    out N32;
+      OK         :    out Boolean)
+   with Pre  => HC.Cfg.Random /= null,
+        Post => (if OK then KS_Raw_Len = 69 else KS_Raw_Len = 0)
+   is
+      use SPARKTLSCrypto.P256.Point;
+      procedure Gen_Random (Output : out Byte_Seq)
+        renames HC.Cfg.Random.all;
+      PK_Jac  : P256_Jacobian;
+      PK_Enc  : Byte_Seq (0 .. 64);
+      Peer_Pt : P256_Jacobian;
+      Valid   : SPARKNaCl.U32;
+      Tmp_SK  : Bytes_32;
+   begin
+      KS_Raw     := (others => 0);
+      KS_Raw_Len := 0;
+      OK         := False;
+
+      Gen_Random (Byte_Seq (Tmp_SK));
+      HC.P256_Local_SK := Tmp_SK;
+      --  Our public key
+      P256_Mulgen (PK_Jac, HC.P256_Local_SK, 32);
+      P256_To_Affine (PK_Jac);
+      P256_Encode (PK_Enc, PK_Jac);
+      --  Shared secret: x-coord of [our_sk] * peer_pk
+      P256_Decode (Peer_Pt, HC.P256_Peer_PK, Valid);
+      if Valid = 0 then
+         return;  --  invalid peer pubkey
+      end if;
+      P256_Mul (Peer_Pt, HC.P256_Local_SK, 32);
+      P256_To_Affine (Peer_Pt);
+      declare
+         Enc : Byte_Seq (0 .. 64);
+      begin
+         P256_Encode (Enc, Peer_Pt);
+         HC.Shared_Secret := (others => 0);
+         HC.Shared_Secret (0 .. 31) := Enc (1 .. 32);
+      end;
+      --  group(2) + key_len(2) + key(65) = 69
+      KS_Raw (0) := 0; KS_Raw (1) := 16#17#;
+      KS_Raw (2) := 0; KS_Raw (3) := 65;
+      for I in N32 range 0 .. 64 loop
+         KS_Raw (4 + I) := PK_Enc (I);
+      end loop;
+      KS_Raw_Len := 69;
+      OK := True;
+   end Generate_KS_P256;
+
+   --  P-384 key share generation.
+   --  OK = False if P384_ECDHE rejects HC.P384_Peer_PK.
+   procedure Generate_KS_P384
+     (HC         : in out Handshake_Context;
+      KS_Raw     :    out KS_Raw_Buffer;
+      KS_Raw_Len :    out N32;
+      OK         :    out Boolean)
+   with Pre  => HC.Cfg.Random /= null
+                and SPARKTLSCrypto.P384.Field.Initialized,
+        Post => (if OK then KS_Raw_Len = 101 else KS_Raw_Len = 0)
+   is
+      procedure Gen_Random (Output : out Byte_Seq)
+        renames HC.Cfg.Random.all;
+      PK_Enc : Byte_Seq (0 .. 96);
+      SS     : Bytes_48;
+      SS_OK  : Boolean;
+      Tmp_SK : Bytes_48;
+   begin
+      KS_Raw     := (others => 0);
+      KS_Raw_Len := 0;
+      OK         := False;
+
+      Gen_Random (Byte_Seq (Tmp_SK));
+      HC.P384_Local_SK := Tmp_SK;
+      SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
+      SPARKTLSCrypto.P384.Point.P384_ECDHE
+        (Secret  => SS,
+         OK      => SS_OK,
+         SK      => HC.P384_Local_SK,
+         Peer_PK => HC.P384_Peer_PK);
+      if not SS_OK then
+         return;
+      end if;
+      HC.Shared_Secret := SS;
+      --  group(2) + key_len(2) + key(97) = 101
+      KS_Raw (0) := 0; KS_Raw (1) := 16#18#;
+      KS_Raw (2) := 0; KS_Raw (3) := 97;
+      for I in N32 range 0 .. 96 loop
+         KS_Raw (4 + I) := PK_Enc (I);
+      end loop;
+      KS_Raw_Len := 101;
+      OK := True;
+   end Generate_KS_P384;
+
+   --  Append one ServerHello extension to an open extensions sequence.
+   --  Allocates a temp buffer, initializes an SH_Extension_TLS context,
+   --  fills tag + data, appends to Exts_Ctx, frees.
+   --
+   --  Tag must be one of the enum values RFLX's SH_Extension_TLS
+   --  Field_Condition for F_Tag accepts (RFC 8446 §4.2 extension
+   --  types valid in ServerHello).
+   procedure Append_SH_Extension
+     (Exts_Ctx : in out RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
+      Tag      : in     RFLX.Tls_Extensiontype_Values
+                          .TLS_ExtensionType_Values_Enum;
+      Data     : in     Byte_Seq)
+   with Pre => Data'First = 0
+               and Data'Last in 0 .. 65534
+               and Tag in
+                     RFLX.Tls_Extensiontype_Values.Key_Share
+                   | RFLX.Tls_Extensiontype_Values.Supported_Versions
+                   | RFLX.Tls_Extensiontype_Values.Pre_Shared_Key
+                   | RFLX.Tls_Extensiontype_Values.Password_Salt
+                   | RFLX.Tls_Extensiontype_Values
+                       .Tls_Cert_With_Extern_Psk
+               and RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer
+                     (Exts_Ctx)
+               and RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Exts_Ctx)
+               and RFLX.TLS_Handshake.SH_Extensions_TLS.Available_Space
+                     (Exts_Ctx) >= RBT.Bit_Length (524_312);
+   --  524_312 = 8 * (4 + 65535) bits, the max element size given the
+   --  Pre's bound on Data'Length.
+
+   procedure Append_SH_Extension
+     (Exts_Ctx : in out RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
+      Tag      : in     RFLX.Tls_Extensiontype_Values
+                          .TLS_ExtensionType_Values_Enum;
+      Data     : in     Byte_Seq)
+   is
+      Data_Len : constant N32 := N32 (Data'Length);
+      Ext_Buf  : RBT.Bytes_Ptr;
+      Ext_Ctx  : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+   begin
+      Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + Data_Len) => 0);
+      RFLX.TLS_Handshake.SH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
+      RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag (Ext_Ctx, Tag);
+      RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
+        (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (Data_Len));
+      RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
+        (Ext_Ctx, To_RFLX (Data));
+      RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
+        (Exts_Ctx, Ext_Ctx);
+      RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer (Ext_Ctx, Ext_Buf);
+      RFLX_Free (Ext_Buf);
+   end Append_SH_Extension;
+
    procedure Build_Server_Hello
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -758,6 +952,7 @@ is
    is
       use RFLX.TLS_Handshake.Server_Hello;
       use RFLX.TLS_Common;
+      use type RFLX.RFLX_Builtin_Types.Bit_Length;
 
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
@@ -778,7 +973,7 @@ is
       SV_Data_Len : constant := 2;
 
       --  Key share data: varies by selected group
-      KS_Raw     : Byte_Seq (0 .. 103) := (others => 0);  --  max P-384: 4+97
+      KS_Raw     : KS_Raw_Buffer := (others => 0);
       KS_Raw_Len : N32 := 0;
 
       KS_Data_Len : N32;
@@ -804,97 +999,23 @@ is
       HC.Shared_Secret := (others => 0);
       if HC.Client_Has_X25519 then
          HC.Selected_Group := 16#001D#;
-         declare
-            PK_Bytes : Bytes_32;
-            Basepoint : constant Bytes_32 := (9, others => 0);
-            Tmp_SK   : Bytes_32;
-         begin
-            Gen_Random (Byte_Seq (Tmp_SK));
-            HC.Local_SK := Tmp_SK;
-            --  Public key = Local_SK * basepoint (Fiat X25519)
-            declare
-               Basepoint : constant Bytes_32 := (9, others => 0);
-            begin
-               SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
-            end;
-            --  Shared secret = Local_SK * Peer_PK
-            SPARKTLSCrypto.X25519.Scalar_Mult
-              (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
-            begin
-               --  group(2) + key_len(2) + key(32) = 36
-               KS_Raw (0) := 0; KS_Raw (1) := 16#1D#;  --  x25519
-               KS_Raw (2) := 0; KS_Raw (3) := 32;
-               for I in N32 range 0 .. 31 loop
-                  KS_Raw (4 + I) := PK_Bytes (I);
-               end loop;
-               KS_Raw_Len := 36;
-            end;
-         end;
-
+         Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len);
       elsif HC.Client_Has_P256 then
          HC.Selected_Group := 16#0017#;
          declare
-            use SPARKTLSCrypto.P256.Point;
-            PK_Jac  : P256_Jacobian;
-            PK_Enc  : Byte_Seq (0 .. 64);
-            Peer_Pt : P256_Jacobian;
-            Valid   : SPARKNaCl.U32;
-            Tmp_SK  : Bytes_32;
+            P256_OK : Boolean;
          begin
-            Gen_Random (Byte_Seq (Tmp_SK));
-            HC.P256_Local_SK := Tmp_SK;
-            --  Our public key
-            P256_Mulgen (PK_Jac, HC.P256_Local_SK, 32);
-            P256_To_Affine (PK_Jac);
-            P256_Encode (PK_Enc, PK_Jac);
-            --  Shared secret: x-coord of [our_sk] * peer_pk
-            P256_Decode (Peer_Pt, HC.P256_Peer_PK, Valid);
-            if Valid = 0 then return; end if;
-            P256_Mul (Peer_Pt, HC.P256_Local_SK, 32);
-            P256_To_Affine (Peer_Pt);
-            declare
-               Enc : Byte_Seq (0 .. 64);
-            begin
-               P256_Encode (Enc, Peer_Pt);
-               HC.Shared_Secret := (others => 0);
-               HC.Shared_Secret (0 .. 31) := Enc (1 .. 32);
-            end;
-            --  group(2) + key_len(2) + key(65) = 69
-            KS_Raw (0) := 0; KS_Raw (1) := 16#17#;
-            KS_Raw (2) := 0; KS_Raw (3) := 65;
-            for I in N32 range 0 .. 64 loop
-               KS_Raw (4 + I) := PK_Enc (I);
-            end loop;
-            KS_Raw_Len := 69;
+            Generate_KS_P256 (HC, KS_Raw, KS_Raw_Len, P256_OK);
+            if not P256_OK then return; end if;
          end;
-
       elsif HC.Client_Has_P384 then
          HC.Selected_Group := 16#0018#;
          declare
-            PK_Enc : Byte_Seq (0 .. 96);
-            SS     : Bytes_48;
-            SS_OK  : Boolean;
-            Tmp_SK : Bytes_48;
+            P384_OK : Boolean;
          begin
-            Gen_Random (Byte_Seq (Tmp_SK));
-            HC.P384_Local_SK := Tmp_SK;
-            SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
-            SPARKTLSCrypto.P384.Point.P384_ECDHE
-              (Secret  => SS,
-               OK      => SS_OK,
-               SK      => HC.P384_Local_SK,
-               Peer_PK => HC.P384_Peer_PK);
-            if not SS_OK then return; end if;
-            HC.Shared_Secret := SS;
-            --  group(2) + key_len(2) + key(97) = 101
-            KS_Raw (0) := 0; KS_Raw (1) := 16#18#;
-            KS_Raw (2) := 0; KS_Raw (3) := 97;
-            for I in N32 range 0 .. 96 loop
-               KS_Raw (4 + I) := PK_Enc (I);
-            end loop;
-            KS_Raw_Len := 101;
+            Generate_KS_P384 (HC, KS_Raw, KS_Raw_Len, P384_OK);
+            if not P384_OK then return; end if;
          end;
-
       else
          --  No common key exchange group.
          --  Set Len = 0; caller will send handshake_failure alert.
@@ -928,53 +1049,20 @@ is
          Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
          --  Extension 1: key_share (0x0033)
-         declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-         begin
-            --  KS_Raw already populated with the selected group's key share
-
-            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + KS_Data_Len) => 0);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
-              (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Key_Share);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (KS_Data_Len));
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (KS_Raw (0 .. KS_Raw_Len - 1)));
-
-            RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
-
-            RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
-         end;
+         Append_SH_Extension
+           (Exts_Ctx,
+            RFLX.Tls_Extensiontype_Values.Key_Share,
+            KS_Raw (0 .. KS_Raw_Len - 1));
 
          --  Extension 2: supported_versions (0x002B)
          declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-            SV_Raw  : Byte_Seq (0 .. SV_Data_Len - 1) := (others => 0);
+            SV_Raw : constant Byte_Seq (0 .. SV_Data_Len - 1) :=
+              (16#03#, 16#04#);  --  TLS 1.3
          begin
-            SV_Raw (0) := 16#03#;
-            SV_Raw (1) := 16#04#;  --  TLS 1.3
-
-            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SV_Data_Len) => 0);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
-              (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Versions);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, SV_Data_Len);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (SV_Raw));
-
-            RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
-
-            RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
+            Append_SH_Extension
+              (Exts_Ctx,
+               RFLX.Tls_Extensiontype_Values.Supported_Versions,
+               SV_Raw);
          end;
 
          Update_Extensions_TLS (Ctx, Exts_Ctx);
@@ -1177,8 +1265,19 @@ is
                             (Sig_Algo_Data'Length));
                RFLX.TLS_Handshake.CR_Extension.Set_Data
                  (E_Ctx, Sig_Algo_Data);
-               RFLX.TLS_Handshake.CR_Extensions.Append_Element
-                 (Ext_Seq_Ctx, E_Ctx);
+               declare
+                  use type RFLX.RFLX_Builtin_Types.Bit_Length;
+               begin
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CR_Extension.Size (E_Ctx) > 0);
+                  if RFLX.TLS_Handshake.CR_Extensions.Available_Space
+                       (Ext_Seq_Ctx)
+                     >= RFLX.TLS_Handshake.CR_Extension.Size (E_Ctx)
+                  then
+                     RFLX.TLS_Handshake.CR_Extensions.Append_Element
+                       (Ext_Seq_Ctx, E_Ctx);
+                  end if;
+               end;
                RFLX.TLS_Handshake.CR_Extension.Take_Buffer
                  (E_Ctx, E_Buf);
                RFLX_Free (E_Buf);

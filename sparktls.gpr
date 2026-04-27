@@ -96,6 +96,16 @@ project Sparktls is
    --  This is gnatprove-only; build still includes generated/.
    package Prove is
       for Excluded_Source_Files use ("rflx*.ads", "rflx*.adb");
+      --  Per RFLX docs § "First steps": throw multiple provers, no
+      --  step limit, generous per-VC timeout, suppress counterexamples
+      --  for speed. RFLX-generated specs need this profile.
+      for Proof_Switches ("Ada") use
+        ("-j0",
+         "--prover=z3,cvc5,altergo",
+         "--steps=0",
+         "--timeout=180",
+         "--memlimit=2000",
+         "--counterexamples=off");
    end Prove;
 
 end Sparktls;

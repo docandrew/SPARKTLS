@@ -31,6 +31,12 @@ is
 
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
+   with Pre => S.State not in Idle | Closing | Closed | Error_State
+               and Alert_Desc (Err) /= 0
+               and Alert_Desc (Err) /= 90;
+
+   procedure Send_Alert_And_Error
+     (S : in out Session; Err : Error_Code; Result : out Action)
    is
       Dummy : N32;
    begin

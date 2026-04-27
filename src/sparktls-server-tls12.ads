@@ -59,11 +59,16 @@ is
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
    --  derives master secret and expands into per-connection keys.
+   --
+   --  Called from server.adb's Wait_Client_Finished dispatch when
+   --  the TLS 1.2 ClientKeyExchange / ChangeCipherSpec haven't yet
+   --  arrived.
    procedure Process_Client_Key_Exchange_12
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
+               and then S.State = Wait_Client_Finished
                and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity
                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -76,7 +81,8 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => HC.Version = TLS_1_2;
+   with Pre => HC.Version = TLS_1_2
+               and then S.State = Wait_Client_Finished;
 
    --  Process the client's encrypted Finished message.
    --  Verifies the 12-byte verify_data against expected value.
@@ -85,7 +91,8 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => HC.Version = TLS_1_2;
+   with Pre => HC.Version = TLS_1_2
+               and then S.State = Wait_Client_Finished;
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:
