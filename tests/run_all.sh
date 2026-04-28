@@ -127,6 +127,16 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # Parse_Client_Hello regression suite (pinned before the refactor)
+    if [ -f bin/tests/test_parse_client_hello ]; then
+        output=$(bin/tests/test_parse_client_hello 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_parse_client_hello: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # ECDSA/ECDHE tests (if built)
     for test_bin in bin/tests/ecdsa_p256_test bin/tests/ecdhe_p384_test; do
         if [ -f "$test_bin" ]; then

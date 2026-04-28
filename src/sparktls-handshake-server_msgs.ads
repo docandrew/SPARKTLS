@@ -1,5 +1,6 @@
 with SPARKNaCl; use SPARKNaCl;
 with Interfaces; use Interfaces;
+with SPARKTLSCrypto.P384.Field;
 
 --  TLS 1.3 Server Handshake Messages
 --
@@ -31,8 +32,9 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
-                and N32 (Result'Length) >= Max_Server_Hello
-                and HC.Cfg.Random /= null;
+                and Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
+                and HC.Cfg.Random /= null
+                and SPARKTLSCrypto.P384.Field.Initialized;
 
    --  RFC 8446 Section 4.3.1: Build EncryptedExtensions.
    --  Sent immediately after ServerHello (encrypted with HS keys).
