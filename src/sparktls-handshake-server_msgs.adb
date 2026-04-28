@@ -1224,6 +1224,7 @@ is
             Gen_Random (Byte_Seq (Tmp_SR));
             exit when Tmp_SR /= HRR_Sentinel;
          end loop;
+         pragma Assert (Tmp_SR /= HRR_Sentinel);
          HC.Server_Random := Tmp_SR;
       end;
 

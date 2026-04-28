@@ -737,6 +737,13 @@ is
          Result := Need_Input; return;
       end if;
 
+      --  The record length bound below is from Parse_Record_Header's Post
+      --  (Record_Len <= Avail = Write_Pos - Read_Pos). Pin it here while
+      --  the call's Avail argument is still in syntactic scope, so later
+      --  asserts about FS + Frag_Len can chain.
+      pragma Assert
+        (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
+
       if Rec.Content = Records.Content_Change_Cipher_Spec then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Result := OK; return;
@@ -752,55 +759,93 @@ is
       declare
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. Frag_Len - 1);
-         Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. Frag_Len - 1);
-         PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. Frag_Len - 1 loop
-            Encrypted (I) := S.Input.Data (FS + I);
-         end loop;
-         for I in N32 range 0 .. 4 loop
-            Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
-         end loop;
-
-         if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+         --  Reject records exceeding the TLS 1.2 max ciphertext size
+         --  (matches Decrypt_Record_12's Pre); Parse_Record_Header allows
+         --  larger via the looser Max_Record_Overhead bound.
+         if Frag_Len >= Max_Record_Plaintext + TLS12_Record_Overhead then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK; return;
-         end if;
-
-         Decrypt_Record_12 (Encrypted, Hdr, S.Server_App,
-                            S.Server_IV_12, S.Server_Seq_12,
-                            Plaintext, PL, DV);
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-
-         if not DV then
-            S.Last_Error := Bad_Record_MAC;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
+            Send_Alert_And_Error (S, Record_Overflow, Result);
             return;
          end if;
+         --  FS + Frag_Len = Read_Pos + Fragment_Pos + Fragment_Len
+         --                = Read_Pos + Record_Len   (Post: Record_Len =
+         --                                            Fragment_Pos + Fragment_Len)
+         --                <= Read_Pos + Avail
+         --                = Read_Pos + (Write_Pos - Read_Pos)
+         --                = Write_Pos.
+         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+         declare
+            Encrypted : Byte_Seq (0 .. Frag_Len - 1);
+            Hdr : Byte_Seq (0 .. 4);
+            Plaintext : Byte_Seq (0 .. Frag_Len - 1);
+            PL : N32; DV : Boolean;
+         begin
+            for I in N32 range 0 .. Frag_Len - 1 loop
+               Encrypted (I) := S.Input.Data (FS + I);
+            end loop;
+            for I in N32 range 0 .. 4 loop
+               Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
+            end loop;
 
-         case Rec.Content is
-            when Records.Content_Application_Data =>
-               if PL > 0 and then S.App_Data_Len + PL <= S.App_Data'Length then
-                  S.App_Data (S.App_Data_Len .. S.App_Data_Len + PL - 1) :=
-                     Plaintext (0 .. PL - 1);
-                  S.App_Data_Len := S.App_Data_Len + PL;
-                  Result := Plaintext_Ready;
-               else
+            if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Result := OK; return;
+            end if;
+
+            --  RFC 5246 §6.1: "If a TLS implementation would need to
+            --  wrap a sequence number, it must renegotiate instead."
+            --  AEAD nonce uniqueness in GCM depends on the sequence
+            --  number never wrapping; reuse would catastrophically
+            --  leak the AEAD key. We don't support renegotiation, so
+            --  abort the connection. Decrypt_Record_12's Pre also
+            --  requires Seq_Num < Unsigned_64'Last so increment is
+            --  safe. 2^64 records is practically unreachable.
+            if S.Server_Seq_12 = Unsigned_64'Last then
+               Send_Alert_And_Error (S, Internal_Error, Result);
+               return;
+            end if;
+
+            Decrypt_Record_12 (Encrypted, Hdr, S.Server_App,
+                               S.Server_IV_12, S.Server_Seq_12,
+                               Plaintext, PL, DV);
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+            if not DV then
+               Send_Alert_And_Error (S, Bad_Record_MAC, Result);
+               return;
+            end if;
+
+            case Rec.Content is
+               when Records.Content_Application_Data =>
+                  if PL > 0
+                    and then S.App_Data_Len <= S.App_Data'Length - PL
+                  then
+                     S.App_Data
+                       (S.App_Data_Len .. S.App_Data_Len + PL - 1) :=
+                        Plaintext (0 .. PL - 1);
+                     S.App_Data_Len := S.App_Data_Len + PL;
+                     Result := Plaintext_Ready;
+                  else
+                     Result := OK;
+                  end if;
+               when Records.Content_Alert =>
+                  if PL >= 2 and then Plaintext (1) = 0 then
+                     --  Runtime check: prover can't carry S.State through
+                     --  the prior S-field updates without a much heavier
+                     --  contract. Connected→Closing is the only valid
+                     --  transition we expect here.
+                     if S.State = Connected then
+                        Set_State (S, Closing);
+                     end if;
+                     Result := Shutdown;
+                  else
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  end if;
+               when others =>
                   Result := OK;
-               end if;
-            when Records.Content_Alert =>
-               if PL >= 2 and then Plaintext (1) = 0 then
-                  Set_State (S, Closing); Result := Shutdown;
-               else
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State); Result := Error_Alert;
-               end if;
-            when others =>
-               Result := OK;
-         end case;
+            end case;
+         end;
       end;
    end Process_Connected_12;
 

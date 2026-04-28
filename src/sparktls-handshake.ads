@@ -39,7 +39,8 @@ is
       Msg_Type :    out HS_Msg_Type;
       Msg_Len  :    out N32;
       OK       :    out Boolean)
-   with Pre  => Data'First = 0 and Data'Last < N32'Last,
+   --  Body uses Data'Length and To_RFLX, both First-agnostic.
+   with Pre  => Data'Length > 0 and Data'Last < N32 (Natural'Last),
         Post => (if OK then
                    Msg_Type in 16#01# | 16#02# | 16#04# | 16#08# |
                               16#0B# | 16#0C# | 16#0D# | 16#0E# |

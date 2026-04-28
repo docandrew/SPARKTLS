@@ -38,10 +38,14 @@ is
      (Data   : in     Byte_Seq;
       Avail  : in     N32;
       Result :    out Parse_Result)
-   with Pre  => Data'First = 0
-                and Data'Last < N32'Last - 1
-                and Avail > 0
-                and Avail - 1 <= Data'Last,
+   --  Body indexes via Data'First + offset, so no First = 0 needed.
+   --  Data'Last bounded by IO_Buffer_Capacity so all callers (slices
+   --  into S.Input.Data, which is itself bounded) satisfy the Pre.
+   with Pre  => Data'Length > 0
+                and then Data'Last < N32 (IO_Buffer_Capacity)
+                and then Avail > 0
+                and then Avail <= N32 (IO_Buffer_Capacity)
+                and then Data'First + Avail - 1 <= Data'Last,
         Post => (if Result.OK then
                    Result.Content /= Content_Unknown       --  known type
                    and Result.Fragment_Len >= 1             --  never zero
@@ -49,6 +53,10 @@ is
                                                             --  RFC 8446 §5.1
                    and Result.Record_Len <= Avail           --  fits in buffer
                    and Result.Fragment_Pos = Record_Header_Size
+                   --  Body sets Record_Len := Header_Size + Fragment_Len,
+                   --  so callers can derive Fragment_Pos + Fragment_Len.
+                   and Result.Record_Len =
+                         Result.Fragment_Pos + Result.Fragment_Len
                    and not Result.Overflow)                  --  type predicate
                and (if Result.Overflow then not Result.OK);  --  overflow → !OK
 

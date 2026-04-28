@@ -417,7 +417,20 @@ is
                         return;
                      end if;
 
-                     --  Full message reassembled — parse it
+                     --  Full message reassembled — parse it.
+                     --  The reassembly path already enforces
+                     --  HS_Total <= Max_HS_Msg (line 465 above), so
+                     --  Reasm_Len cannot exceed Max_HS_Msg here. The
+                     --  guard is defensive: it lets Parse_Client_Hello's
+                     --  Pre be discharged without proving the entire
+                     --  reassembly invariant chain in one go.
+                     if HC.Reasm_Len = 0
+                       or HC.Reasm_Len > N32 (Max_HS_Msg)
+                     then
+                        Free_Reasm;
+                        Send_Alert_And_Error (S, Decode_Error, Result);
+                        return;
+                     end if;
                      declare
                         R_Len : constant N32 := HC.Reasm_Len;
                         Full_Msg : constant Byte_Seq :=

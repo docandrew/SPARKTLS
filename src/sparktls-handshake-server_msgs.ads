@@ -17,16 +17,17 @@ is
    --  key share (client public key).
    --  Selects the best cipher suite we support.
    --
-   --  Pre bounds Data'Length by Max_HS_Msg + 4 (handshake header) so
-   --  the body length and bit-length conversions can't overflow.
-   --  Callers (record-layer reassembly) already enforce this bound.
+   --  Pre bounds Data'Length by Max_HS_Msg (the wire-message limit
+   --  enforced by the record-layer reassembler). Without this bound
+   --  the body-length conversion and bit-length multiplications inside
+   --  could overflow N32.
    procedure Parse_Client_Hello
      (S    : in out Session;
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre => Data'Length > 0
-              and Data'Last <= N32 (Max_HS_Msg) + 4;
+              and Data'Last <= N32 (Max_HS_Msg) - 1;
 
    --  Build a ServerHello handshake message.
    --  Includes key_share and supported_versions extensions.

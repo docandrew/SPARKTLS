@@ -4,10 +4,14 @@ is
    use type RBT.Index;
 
    function To_RFLX (Data : Byte_Seq) return RBT.Bytes is
+      use type RBT.Byte;
       Result : RBT.Bytes (1 .. RBT.Index (Data'Length)) := (others => 0);
    begin
       for I in Data'Range loop
          Result (RBT.Index (I - Data'First + 1)) := RBT.Byte (Data (I));
+         pragma Loop_Invariant
+           (for all J in Data'First .. I =>
+              Result (RBT.Index (J - Data'First + 1)) = RBT.Byte (Data (J)));
       end loop;
       return Result;
    end To_RFLX;

@@ -47,8 +47,9 @@ is
    end Send_Alert_And_Error;
 
    procedure Append_Transcript (HC : in out Handshake_Context; Data : Byte_Seq)
-   with Pre => Data'First = 0
-               and Data'Last in 0 .. HC.Transcript'Length - 1
+   --  Body uses Ada slide-assignment, which works for any Data'First.
+   with Pre => Data'Length > 0
+               and then Data'Length <= HC.Transcript'Length
    is
       Len : constant N32 := N32 (Data'Length);
    begin
@@ -253,37 +254,48 @@ is
       declare
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Frag : Byte_Seq renames S.Input.Data (FS .. FS + Frag_Len - 1);
-         Msg_Type : Byte; Msg_Len : N32; POK : Boolean;
       begin
-         Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, POK);
-         if not POK or Msg_Type /= HT_Client_Key_Exchange then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Unexpected_Message, Result);
-            return;
-         end if;
-
+         --  Slice bound: Parse_Record_Header Post gives Record_Len <= Avail,
+         --  i.e., Read_Pos + Record_Len <= Write_Pos <= IO_Buffer_Capacity.
+         --  So FS + Frag_Len = Read_Pos + Fragment_Pos + Fragment_Len
+         --                  = Read_Pos + Record_Len <= Write_Pos.
+         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
          declare
-            Msg_Len_Const : constant N32 := Msg_Len;
-            BS  : constant N32 := Frag'First + 4;
-            Body_Data : Byte_Seq (0 .. Msg_Len_Const - 1);
-            CKE_OK : Boolean;
+            Frag : Byte_Seq renames S.Input.Data (FS .. FS + Frag_Len - 1);
+            Msg_Type : Byte; Msg_Len : N32; POK : Boolean;
          begin
-            if Msg_Len > 0 and then 4 + Msg_Len <= Frag_Len then
-               Body_Data := Frag (BS .. BS + Msg_Len - 1);
-               Parse_Client_Key_Exchange (HC, Body_Data, CKE_OK);
-               if not CKE_OK then
+            Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, POK);
+            if not POK or Msg_Type /= HT_Client_Key_Exchange then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               return;
+            end if;
+
+            declare
+               Msg_Len_Const : constant N32 := Msg_Len;
+               BS  : constant N32 := Frag'First + 4;
+               Body_Data : Byte_Seq (0 .. Msg_Len_Const - 1);
+               CKE_OK : Boolean;
+            begin
+               --  Min CKE body for ECDHE: 1-byte length + 32-byte X25519
+               --  point = 33 bytes. Require at least 4 to satisfy
+               --  Parse_Client_Key_Exchange's Pre.
+               if Msg_Len >= 4 and then 4 + Msg_Len <= Frag_Len then
+                  Body_Data := Frag (BS .. BS + Msg_Len - 1);
+                  Parse_Client_Key_Exchange (HC, Body_Data, CKE_OK);
+                  if not CKE_OK then
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     Send_Alert_And_Error (S, Decode_Error, Result); return;
+                  end if;
+               else
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error (S, Decode_Error, Result); return;
                end if;
-            else
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result); return;
-            end if;
-         end;
+            end;
 
-         Append_Transcript (HC, Frag);
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Append_Transcript (HC, Frag);
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         end;
       end;
 
       --  Compute ECDHE shared secret
