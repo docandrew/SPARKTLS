@@ -16,12 +16,17 @@ is
    --  Extracts: client_random, legacy_session_id, cipher suites offered,
    --  key share (client public key).
    --  Selects the best cipher suite we support.
+   --
+   --  Pre bounds Data'Length by Max_HS_Msg + 4 (handshake header) so
+   --  the body length and bit-length conversions can't overflow.
+   --  Callers (record-layer reassembly) already enforce this bound.
    procedure Parse_Client_Hello
      (S    : in out Session;
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
-   with Pre => Data'Length > 0;
+   with Pre => Data'Length > 0
+              and Data'Last <= N32 (Max_HS_Msg) + 4;
 
    --  Build a ServerHello handshake message.
    --  Includes key_share and supported_versions extensions.

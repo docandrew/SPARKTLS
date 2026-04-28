@@ -22,6 +22,7 @@ with RFLX.TLS_Handshake.CR_Extensions;
 with RFLX.TLS_Handshake.CR_Extension;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
+with RFLX.RFLX_Types;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.Point;
@@ -172,7 +173,13 @@ is
          Written_Last => RBT.Bit_Length (RBT.Length (DLen) * 8));
       RFLX.TLS_Handshake.Key_Share_CH.Verify_Message (KS_Ctx);
 
-      if RFLX.TLS_Handshake.Key_Share_CH.Well_Formed_Message (KS_Ctx) then
+      --  Switch_To_Shares requires Field_Size F_Shares > 0
+      --  (= Get_Length * 8). If client sent an empty shares list,
+      --  there's nothing to iterate.
+      if RFLX.TLS_Handshake.Key_Share_CH.Well_Formed_Message (KS_Ctx)
+        and then RFLX.TLS_Handshake.Key_Share_CH.Field_Size
+                   (KS_Ctx, RFLX.TLS_Handshake.Key_Share_CH.F_Shares) > 0
+      then
          declare
             Shares_Ctx : RFLX.TLS_Handshake.Key_Share_Entries.Context;
          begin
@@ -182,6 +189,29 @@ is
             while RFLX.TLS_Handshake.Key_Share_Entries.Has_Element
                     (Shares_Ctx)
             loop
+               --  Invariants needed across iterations:
+               --    Switch (...) Pre   : Has_Buffer (Shares_Ctx)
+               --    Update_Shares Pre  : KS_Ctx.Buffer_* = Shares_Ctx.Buffer_*
+               --                       and Shares_Ctx.First = Field_First
+               --                                       (KS_Ctx, F_Shares)
+               pragma Loop_Invariant
+                 (RFLX.TLS_Handshake.Key_Share_Entries.Has_Buffer
+                    (Shares_Ctx)
+                  and then RFLX.TLS_Handshake.Key_Share_Entries.Valid
+                    (Shares_Ctx)
+                  and then KS_Ctx.Buffer_First = Shares_Ctx.Buffer_First
+                  and then KS_Ctx.Buffer_Last  = Shares_Ctx.Buffer_Last
+                  and then RFLX.TLS_Handshake.Key_Share_CH.Valid_Next
+                             (KS_Ctx,
+                              RFLX.TLS_Handshake.Key_Share_CH.F_Shares)
+                  and then Shares_Ctx.First =
+                             RFLX.TLS_Handshake.Key_Share_CH.Field_First
+                               (KS_Ctx,
+                                RFLX.TLS_Handshake.Key_Share_CH.F_Shares)
+                  and then Shares_Ctx.Last =
+                             RFLX.TLS_Handshake.Key_Share_CH.Field_Last
+                               (KS_Ctx,
+                                RFLX.TLS_Handshake.Key_Share_CH.F_Shares));
                declare
                   E_Ctx : RFLX.TLS_Handshake.Key_Share_Entry.Context;
                begin
@@ -490,6 +520,316 @@ is
       end;
    end Parse_PSK_Extension;
 
+   --  Apply one parsed cipher suite to the session's negotiation state:
+   --  pick the best TLS 1.3 suite (preferring ChaCha20) and the first
+   --  TLS 1.2 ECDHE suite we recognize.
+   procedure Apply_Cipher_Suite
+     (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+      S         : in out Session)
+   with Pre =>
+     RFLX.TLS_Handshake.Cipher_Suite_TLS.Has_Buffer (Suite_Ctx)
+     and then RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
+                (Suite_Ctx);
+
+   procedure Apply_Cipher_Suite
+     (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+      S         : in out Session)
+   is
+      Suite : constant RFLX.Tls_Parameters.TLS_Cipher_Suites :=
+                RFLX.TLS_Handshake.Cipher_Suite_TLS.Get_Suite (Suite_Ctx);
+      --  TLS_Cipher_Suites_Enum has Size=>16; Raw is 16-bit wire value.
+      --  Both branches fit in Unsigned_16 — guard with Valid predicate
+      --  to make it explicit for the prover.
+      Suite_Code : constant RFLX.RFLX_Types.Base_Integer :=
+                     RFLX.Tls_Parameters.To_Base_Integer (Suite);
+      Val   : Unsigned_16;
+   begin
+      if not RFLX.Tls_Parameters.Valid_TLS_Cipher_Suites (Suite_Code) then
+         return;
+      end if;
+      Val := Unsigned_16 (Suite_Code);
+      --  TLS 1.3 suites (0x13xx). Prefer ChaCha20 over AES-GCM.
+      if Val in Suite_AES_256_GCM_SHA384
+              | Suite_AES_128_GCM_SHA256
+              | Suite_CHACHA20_POLY1305_SHA256
+      then
+         if S.Negotiated_Suite = 0 then
+            S.Negotiated_Suite := Val;
+         elsif Val = Suite_CHACHA20_POLY1305_SHA256 then
+            S.Negotiated_Suite := Val;
+         end if;
+      end if;
+
+      --  TLS 1.2 suites (0xC0xx/0xCCxx)
+      if S.Negotiated_Suite_12 = 0
+        and then Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                       | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                       | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                       | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                       | Suite_ECDHE_RSA_CHACHA20_SHA256
+                       | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+      then
+         S.Negotiated_Suite_12 := Val;
+      end if;
+   end Apply_Cipher_Suite;
+
+   --  Dispatch a single CH extension by Tag and update HC accordingly.
+   --  Records the extension in the order-fingerprint hash (skipping
+   --  cookie which is added after HRR).
+   --
+   --  OK = False signals the outer parser to abort with Decode_Error.
+   --  Currently only the signature_algorithms branch with a malformed
+   --  inner length triggers this; other malformed extensions are
+   --  silently skipped (RFC 8446 doesn't require strict per-ext error).
+   procedure Apply_CH_Extension
+     (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
+      HC      : in out Handshake_Context;
+      OK      :    out Boolean)
+   with Pre => RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer (Ext_Ctx)
+              and then RFLX.TLS_Handshake.CH_Extension_TLS
+                         .Well_Formed_Message (Ext_Ctx);
+
+   procedure Apply_CH_Extension
+     (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
+      HC      : in out Handshake_Context;
+      OK      :    out Boolean)
+   is
+      Tag : constant
+        RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values :=
+        RFLX.TLS_Handshake.CH_Extension_TLS.Get_Tag (Ext_Ctx);
+      DLen : constant N32 :=
+        N32 (RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length (Ext_Ctx));
+   begin
+      OK := True;
+
+      --  Record extension order fingerprint (rolling polynomial hash).
+      --  Skip cookie (0x002C) — it's added after HRR.
+      declare
+         Code : constant Unsigned_32 :=
+           Unsigned_32
+             (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tag));
+      begin
+         if Code /= 16#002C# then
+            HC.CH_Ext_Hash := HC.CH_Ext_Hash * 31 xor Code;
+            --  Saturating increment: the loop bound (max ~16K extensions
+            --  in a 64K extensions field) is far below Natural'Last but
+            --  the prover doesn't see that without an invariant.
+            if HC.CH_Ext_Count < Natural'Last then
+               HC.CH_Ext_Count := HC.CH_Ext_Count + 1;
+            end if;
+         end if;
+      end;
+
+      if not Tag.Known then
+         return;
+      end if;
+
+      case Tag.Enum is
+         when RFLX.Tls_Extensiontype_Values.Key_Share =>
+            if DLen in Wire_Key_Share_Len then
+               Parse_KS_Extension (Ext_Ctx, DLen, HC);
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values.Signature_Algorithms =>
+            if DLen not in Wire_Ext_Len or else DLen < 4
+              or else DLen > N32 (RFLX.TLS_Handshake.Data_Length'Last)
+            then
+               OK := False;
+               return;
+            end if;
+            declare
+               SA_OK : Boolean;
+            begin
+               Parse_Sig_Algs_Extension (Ext_Ctx, DLen, HC, SA_OK);
+               if not SA_OK then
+                  OK := False;
+                  return;
+               end if;
+            end;
+
+         when RFLX.Tls_Extensiontype_Values.Supported_Groups =>
+            if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
+               Parse_Supported_Groups_Extension (Ext_Ctx, DLen, HC);
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values.Pre_Shared_Key =>
+            if DLen in Wire_PSK_Ext_Len then
+               Parse_PSK_Extension (Ext_Ctx, DLen, HC);
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values.Supported_Versions =>
+            if DLen in Wire_Small_Ext_Len and then DLen >= 3 then
+               Parse_Supported_Versions_Extension (Ext_Ctx, DLen, HC);
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values
+                .Application_Layer_Protocol_Negotiation =>
+            if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
+               Parse_ALPN_Extension (Ext_Ctx, DLen, HC);
+            end if;
+
+         when others =>
+            null;
+      end case;
+   end Apply_CH_Extension;
+
+   --  Iterate the F_Extensions_TLS list and call Apply_CH_Extension on
+   --  each well-formed entry. Mirrors Parse_CH_Cipher_Suites: same
+   --  Switch_To/Switch/Update/Update_Outer pattern with the same
+   --  Loop_Invariant set for the Has_Buffer / Buffer_First/Last /
+   --  Field_First/Last alignment across iterations.
+   --
+   --  OK = False if any extension dispatcher returned False (currently
+   --  only sig_algs malformed). On that path we still drain the loop
+   --  with Update + Update_Extensions_TLS so Ctx regains the buffer
+   --  and the caller can Take_Buffer + RFLX_Free cleanly.
+   procedure Parse_CH_Extensions
+     (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
+      HC  : in out Handshake_Context;
+      OK  :    out Boolean)
+   with Pre =>
+     not Ctx'Constrained
+     and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
+                (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS),
+     Post =>
+       RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+       and Ctx.Buffer_First = Ctx.Buffer_First'Old
+       and Ctx.Buffer_Last  = Ctx.Buffer_Last'Old;
+
+   procedure Parse_CH_Extensions
+     (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
+      HC  : in out Handshake_Context;
+      OK  :    out Boolean)
+   is
+      use RFLX.TLS_Handshake.Client_Hello;
+      Aborting : Boolean := False;
+   begin
+      OK := True;
+      if Field_Size (Ctx, F_Extensions_TLS) = 0 then
+         return;
+      end if;
+
+      declare
+         Exts_Ctx : RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
+      begin
+         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
+
+         while RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Element (Exts_Ctx)
+         loop
+            pragma Loop_Invariant
+              (RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Buffer (Exts_Ctx)
+               and then RFLX.TLS_Handshake.CH_Extensions_TLS.Valid
+                          (Exts_Ctx)
+               and then Ctx.Buffer_First = Exts_Ctx.Buffer_First
+               and then Ctx.Buffer_Last  = Exts_Ctx.Buffer_Last
+               and then Valid_Next (Ctx, F_Extensions_TLS)
+               and then Exts_Ctx.First =
+                          Field_First (Ctx, F_Extensions_TLS)
+               and then Exts_Ctx.Last  =
+                          Field_Last  (Ctx, F_Extensions_TLS));
+            declare
+               Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
+            begin
+               RFLX.TLS_Handshake.CH_Extensions_TLS.Switch
+                 (Exts_Ctx, Ext_Ctx);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Verify_Message (Ext_Ctx);
+
+               if not Aborting
+                 and then RFLX.TLS_Handshake.CH_Extension_TLS
+                            .Well_Formed_Message (Ext_Ctx)
+               then
+                  declare
+                     Sub_OK : Boolean;
+                  begin
+                     Apply_CH_Extension (Ext_Ctx, HC, Sub_OK);
+                     if not Sub_OK then
+                        Aborting := True;
+                     end if;
+                  end;
+               end if;
+
+               RFLX.TLS_Handshake.CH_Extensions_TLS.Update
+                 (Exts_Ctx, Ext_Ctx);
+            end;
+         end loop;
+
+         Update_Extensions_TLS (Ctx, Exts_Ctx);
+      end;
+
+      if Aborting then
+         OK := False;
+      end if;
+   end Parse_CH_Extensions;
+
+   --  Iterate the F_Cipher_Suites_TLS list and call Apply_Cipher_Suite
+   --  on each well-formed entry. Mirrors Parse_KS_Extension's inner
+   --  loop pattern: Switch_To, while Has_Element loop with Switch /
+   --  Verify / Update, Update_Outer.
+   procedure Parse_CH_Cipher_Suites
+     (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
+      S   : in out Session)
+   with Pre =>
+     not Ctx'Constrained
+     and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
+                (Ctx,
+                 RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_TLS),
+     Post =>
+       RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+       and Ctx.Buffer_First = Ctx.Buffer_First'Old
+       and Ctx.Buffer_Last  = Ctx.Buffer_Last'Old;
+
+   procedure Parse_CH_Cipher_Suites
+     (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
+      S   : in out Session)
+   is
+      use RFLX.TLS_Handshake.Client_Hello;
+   begin
+      if Field_Size (Ctx, F_Cipher_Suites_TLS) = 0 then
+         return;
+      end if;
+
+      declare
+         Suites_Ctx : RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
+      begin
+         Switch_To_Cipher_Suites_TLS (Ctx, Suites_Ctx);
+
+         while RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Element
+                 (Suites_Ctx)
+         loop
+            pragma Loop_Invariant
+              (RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Buffer (Suites_Ctx)
+               and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Valid
+                          (Suites_Ctx)
+               and then Ctx.Buffer_First = Suites_Ctx.Buffer_First
+               and then Ctx.Buffer_Last  = Suites_Ctx.Buffer_Last
+               and then Valid_Next (Ctx, F_Cipher_Suites_TLS)
+               and then Suites_Ctx.First =
+                          Field_First (Ctx, F_Cipher_Suites_TLS)
+               and then Suites_Ctx.Last  =
+                          Field_Last  (Ctx, F_Cipher_Suites_TLS));
+            declare
+               Suite_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+            begin
+               RFLX.TLS_Handshake.Cipher_Suites_TLS.Switch
+                 (Suites_Ctx, Suite_Ctx);
+               RFLX.TLS_Handshake.Cipher_Suite_TLS.Verify_Message
+                 (Suite_Ctx);
+               if RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
+                    (Suite_Ctx)
+               then
+                  Apply_Cipher_Suite (Suite_Ctx, S);
+               end if;
+               RFLX.TLS_Handshake.Cipher_Suites_TLS.Update
+                 (Suites_Ctx, Suite_Ctx);
+            end;
+         end loop;
+
+         Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
+      end;
+   end Parse_CH_Cipher_Suites;
+
    procedure Parse_Client_Hello
      (S    : in out Session;
       HC   : in out Handshake_Context;
@@ -569,69 +909,7 @@ is
       S.Negotiated_Suite_12 := 0;
 
       if Well_Formed (Ctx, F_Cipher_Suites_TLS) then
-         declare
-            Suites_Ctx : RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
-         begin
-            Switch_To_Cipher_Suites_TLS (Ctx, Suites_Ctx);
-
-            while RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Element
-                    (Suites_Ctx)
-            loop
-               declare
-                  Suite_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-               begin
-                  RFLX.TLS_Handshake.Cipher_Suites_TLS.Switch
-                    (Suites_Ctx, Suite_Ctx);
-                  RFLX.TLS_Handshake.Cipher_Suite_TLS.Verify_Message
-                    (Suite_Ctx);
-
-                  if RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
-                       (Suite_Ctx)
-                  then
-                     declare
-                        Suite : constant
-                           RFLX.Tls_Parameters.TLS_Cipher_Suites :=
-                           RFLX.TLS_Handshake.Cipher_Suite_TLS.Get_Suite
-                             (Suite_Ctx);
-                        Val   : Unsigned_16;
-                     begin
-                        Val := Unsigned_16
-                                 (RFLX.Tls_Parameters.To_Base_Integer
-                                    (Suite));
-                        --  TLS 1.3 suites (0x13xx)
-                        --  Prefer ChaCha20 (fast in software) over AES-GCM
-                        if Val in Suite_AES_256_GCM_SHA384
-                                | Suite_AES_128_GCM_SHA256
-                                | Suite_CHACHA20_POLY1305_SHA256
-                        then
-                           if S.Negotiated_Suite = 0 then
-                              S.Negotiated_Suite := Val;
-                           elsif Val = Suite_CHACHA20_POLY1305_SHA256 then
-                              S.Negotiated_Suite := Val;
-                           end if;
-                        end if;
-
-                        --  TLS 1.2 suites (0xC0xx/0xCCxx)
-                        if S.Negotiated_Suite_12 = 0 and then
-                           Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
-                                | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                | Suite_ECDHE_RSA_CHACHA20_SHA256
-                                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                        then
-                           S.Negotiated_Suite_12 := Val;
-                        end if;
-                     end;
-                  end if;
-
-                  RFLX.TLS_Handshake.Cipher_Suites_TLS.Update
-                    (Suites_Ctx, Suite_Ctx);
-               end;
-            end loop;
-
-            Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
-         end;
+         Parse_CH_Cipher_Suites (Ctx, S);
       end if;
 
       --  Need at least one matching suite (either TLS 1.3 or 1.2)
@@ -641,173 +919,20 @@ is
          return;
       end if;
 
-      --  Iterate extensions to find key_share (using RFLX)
+      --  Iterate extensions to find key_share / sig_algs / etc.
       if Well_Formed (Ctx, F_Extensions_TLS) then
          declare
-            Exts_Ctx : RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
+            Ext_OK : Boolean;
          begin
-            Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
-
-            while RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Element
-                    (Exts_Ctx)
-            loop
-               declare
-                  Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-               begin
-                  RFLX.TLS_Handshake.CH_Extensions_TLS.Switch
-                    (Exts_Ctx, Ext_Ctx);
-                  RFLX.TLS_Handshake.CH_Extension_TLS.Verify_Message
-                    (Ext_Ctx);
-
-                  if RFLX.TLS_Handshake.CH_Extension_TLS.Well_Formed_Message
-                       (Ext_Ctx)
-                  then
-                     declare
-                        Tag : constant
-                           RFLX.Tls_Extensiontype_Values
-                              .TLS_ExtensionType_Values :=
-                           RFLX.TLS_Handshake.CH_Extension_TLS.Get_Tag
-                             (Ext_Ctx);
-                     begin
-                        --  Record extension order fingerprint for
-                        --  HRR CH2 validation (rolling polynomial hash).
-                        declare
-                           Code : constant Unsigned_32 := Unsigned_32
-                              (RFLX.Tls_Extensiontype_Values
-                                 .To_Base_Integer (Tag));
-                        begin
-                           --  Skip cookie (0x002C) — it's added after HRR
-                           if Code /= 16#002C# then
-                              HC.CH_Ext_Hash :=
-                                 HC.CH_Ext_Hash * 31 xor Code;
-                              HC.CH_Ext_Count := HC.CH_Ext_Count + 1;
-                           end if;
-                        end;
-
-                        if Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values.Key_Share
-                        then
-                           declare
-                              DLen : constant N32 := N32
-                                 (RFLX.TLS_Handshake.CH_Extension_TLS
-                                    .Get_Data_Length (Ext_Ctx));
-                           begin
-                              --  Reject 0 or unreasonably large key_share.
-                              --  Max ~210 B (x25519 + P-256 + P-384).
-                              if DLen in Wire_Key_Share_Len then
-                                 Parse_KS_Extension (Ext_Ctx, DLen, HC);
-                              end if;
-                           end;
-
-                        elsif Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values
-                                 .Signature_Algorithms
-                        then
-                           declare
-                              DLen : constant N32 := N32
-                                 (RFLX.TLS_Handshake.CH_Extension_TLS
-                                    .Get_Data_Length (Ext_Ctx));
-                              SA_OK : Boolean;
-                           begin
-                              if DLen not in Wire_Ext_Len or else DLen < 4 then
-                                 Take_Buffer (Ctx, Buf);
-                                 RFLX_Free (Buf);
-                                 S.Last_Error := Decode_Error;
-                                 return;
-                              end if;
-                              Parse_Sig_Algs_Extension
-                                (Ext_Ctx, DLen, HC, SA_OK);
-                              if not SA_OK then
-                                 Take_Buffer (Ctx, Buf);
-                                 RFLX_Free (Buf);
-                                 S.Last_Error := Decode_Error;
-                                 return;
-                              end if;
-                           end;
-
-                        --  supported_groups extension (0x000A)
-                        --  Used by TLS 1.2 to signal supported ECDHE curves
-                        --  (TLS 1.3 also uses this alongside key_share)
-                        elsif Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values.Supported_Groups
-                        then
-                           declare
-                              DLen : constant N32 := N32
-                                 (RFLX.TLS_Handshake.CH_Extension_TLS
-                                    .Get_Data_Length (Ext_Ctx));
-                           begin
-                              --  supported_groups: max ~100 groups = 202 bytes
-                              if DLen in Wire_Small_Ext_Len and then DLen >= 4
-                              then
-                                 Parse_Supported_Groups_Extension
-                                   (Ext_Ctx, DLen, HC);
-                              end if;
-                           end;
-
-                        --  pre_shared_key extension (0x0029)
-                        elsif Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values.Pre_Shared_Key
-                        then
-                           declare
-                              DLen : constant N32 := N32
-                                 (RFLX.TLS_Handshake.CH_Extension_TLS
-                                    .Get_Data_Length (Ext_Ctx));
-                           begin
-                              if DLen in Wire_PSK_Ext_Len then
-                                 Parse_PSK_Extension (Ext_Ctx, DLen, HC);
-                              end if;
-                           end;
-
-                        --  supported_versions extension (0x002B)
-                        --  RFC 8446 §4.2.1: list_len(1) || version(2)...
-                        elsif Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values.Supported_Versions
-                        then
-                           declare
-                              DLen : constant N32 := N32
-                                 (RFLX.TLS_Handshake.CH_Extension_TLS
-                                    .Get_Data_Length (Ext_Ctx));
-                           begin
-                              --  supported_versions: max ~50 versions = 101 B
-                              if DLen in Wire_Small_Ext_Len and then DLen >= 3
-                              then
-                                 Parse_Supported_Versions_Extension
-                                   (Ext_Ctx, DLen, HC);
-                              end if;
-                           end;
-
-                        --  ALPN extension (0x0010)
-                        elsif Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values
-                                .Application_Layer_Protocol_Negotiation
-                        then
-                           declare
-                              DLen : constant N32 := N32
-                                 (RFLX.TLS_Handshake.CH_Extension_TLS
-                                    .Get_Data_Length (Ext_Ctx));
-                           begin
-                              if DLen in Wire_Small_Ext_Len and then DLen >= 4
-                              then
-                                 Parse_ALPN_Extension (Ext_Ctx, DLen, HC);
-                              end if;
-                           end;
-
-                        end if;
-                     end;
-                  end if;
-
-                  RFLX.TLS_Handshake.CH_Extensions_TLS.Update
-                    (Exts_Ctx, Ext_Ctx);
-               end;
-            end loop;
-
-            Update_Extensions_TLS (Ctx, Exts_Ctx);
+            Parse_CH_Extensions (Ctx, HC, Ext_OK);
+            if not Ext_OK then
+               --  Sig_algs malformed. Parse_CH_Extensions has already
+               --  closed Exts_Ctx back to Ctx, so Take_Buffer is safe.
+               Take_Buffer (Ctx, Buf);
+               RFLX_Free (Buf);
+               S.Last_Error := Decode_Error;
+               return;
+            end if;
          end;
       end if;
 
