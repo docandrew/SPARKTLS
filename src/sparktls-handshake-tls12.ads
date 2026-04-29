@@ -369,7 +369,12 @@ is
                 and Result'Last >= Max_Server_Hello_12 - 1
                 and HC.Cfg.Random /= null
                 and HC.Version = TLS_1_2,
-        Post => Len <= Max_Server_Hello_12;
+        --  Frame postcondition: S.State is not modified by ServerHello
+        --  construction. Callers (Build_Server_Flight_12) need this so
+        --  subsequent Set_State / Send_Alert_And_Error preconditions
+        --  about S.State stay provable through the flight body.
+        Post => Len <= Max_Server_Hello_12
+                and S.State = S.State'Old;
 
    --  RFC 5246 §7.4.1.2: Parse TLS 1.2 ServerHello.
    --

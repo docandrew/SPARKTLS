@@ -28,9 +28,10 @@ is
      (S  : in     Session;
       HC : in out Handshake_Context);
    procedure Send_Client_Certificate
-     (S      : in out Session;
-      HC     : in out Handshake_Context;
-      Result :    out Action);
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Scratch : in out IO_Buffer;
+      Result  :    out Action);
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -538,9 +539,10 @@ is
    --  mTLS: send client Certificate + CertificateVerify if requested.
    --  Called before sending Client Finished.
    procedure Send_Client_Certificate
-     (S      : in out Session;
-      HC     : in out Handshake_Context;
-      Result :    out Action)
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Scratch : in out IO_Buffer;
+      Result  :    out Action)
    is
       Enc_Out : N32;
    begin
@@ -572,8 +574,11 @@ is
               (Plaintext  => Empty_Cert,
                Inner_Type => 16#16#,
                Keys       => HC.Client_HS,
-               Output     => S.Output,
+               Output     => Scratch,
                Bytes_Out  => Enc_Out);
+            if Enc_Out = 0 then
+               Result := Error_Alert;
+            end if;
          end;
          return;
       end if;
@@ -596,8 +601,12 @@ is
               (Plaintext  => Cert_Buf (0 .. Cert_Len - 1),
                Inner_Type => 16#16#,
                Keys       => HC.Client_HS,
-               Output     => S.Output,
+               Output     => Scratch,
                Bytes_Out  => Enc_Out);
+            if Enc_Out = 0 then
+               Result := Error_Alert;
+               return;
+            end if;
          end if;
       end;
 
@@ -637,8 +646,12 @@ is
                     (Plaintext  => CV_Buf (0 .. CV_Len - 1),
                      Inner_Type => 16#16#,
                      Keys       => HC.Client_HS,
-                     Output     => S.Output,
+                     Output     => Scratch,
                      Bytes_Out  => Enc_Out);
+                  if Enc_Out = 0 then
+                     Result := Error_Alert;
+                     return;
+                  end if;
                end if;
             end;
          end;
@@ -656,10 +669,21 @@ is
       CCS_Out      : N32;
       Enc_Out      : N32;
       Cert_Result  : Action;
+      --  Atomic flight assembly: client mTLS flight is
+      --  [Cert + CertVerify] (optional) + CCS + Finished. We build into
+      --  Scratch and only commit once everything fits, so the peer
+      --  never sees a half-flight. Each Build_Encrypted_Record call
+      --  advances HC.Client_HS.Counter; we save it and restore on any
+      --  failure to keep AEAD nonces in sync with what the peer saw.
+      Scratch   : IO_Buffer;
+      Saved_Ctr : constant Unsigned_64 := HC.Client_HS.Counter;
    begin
       --  mTLS: send client certificate before Finished if requested
-      Send_Client_Certificate (S, HC, Cert_Result);
+      Send_Client_Certificate (S, HC, Scratch, Cert_Result);
       if Cert_Result = Error_Alert then
+         HC.Client_HS.Counter := Saved_Ctr;
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
          Result := Error_Alert;
          return;
       end if;
@@ -695,16 +719,25 @@ is
                Big_Finished (3) := 16#30#;  --  48
                Big_Finished (4 .. 51) := Verify_48;
 
-               Records.Build_CCS_Record (S.Output, CCS_Out);
+               Records.Build_CCS_Record (Scratch, CCS_Out);
+               if CCS_Out = 0 then
+                  HC.Client_HS.Counter := Saved_Ctr;
+                  S.Last_Error := Insufficient_Buffer;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
+
                Records.Build_Encrypted_Record
                  (Plaintext  => Big_Finished,
                   Inner_Type => 16#16#,
                   Keys       => HC.Client_HS,
-                  Output     => S.Output,
+                  Output     => Scratch,
                   Bytes_Out  => Enc_Out);
             end;
 
             if Enc_Out = 0 then
+               HC.Client_HS.Counter := Saved_Ctr;
                S.Last_Error := Insufficient_Buffer;
                Set_State (S, Error_State);
                Result := Error_Alert;
@@ -749,15 +782,24 @@ is
             Handshake.Build_Finished
               (Client_Verify, Finished_Buf, Finished_Len);
 
-            Records.Build_CCS_Record (S.Output, CCS_Out);
+            Records.Build_CCS_Record (Scratch, CCS_Out);
+            if CCS_Out = 0 then
+               HC.Client_HS.Counter := Saved_Ctr;
+               S.Last_Error := Insufficient_Buffer;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+               return;
+            end if;
+
             Records.Build_Encrypted_Record
               (Plaintext  => Finished_Buf (0 .. Finished_Len - 1),
                Inner_Type => 16#16#,
                Keys       => HC.Client_HS,
-               Output     => S.Output,
+               Output     => Scratch,
                Bytes_Out  => Enc_Out);
 
             if Enc_Out = 0 then
+               HC.Client_HS.Counter := Saved_Ctr;
                S.Last_Error := Insufficient_Buffer;
                Set_State (S, Error_State);
                Result := Error_Alert;
@@ -785,6 +827,19 @@ is
             end;
          end;
       end case;
+
+      --  Atomic commit: full client flight assembled in Scratch.
+      if Free_Space (S.Output) < Scratch.Write_Pos then
+         HC.Client_HS.Counter := Saved_Ctr;
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+      S.Output.Data (S.Output.Write_Pos ..
+                     S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+         Scratch.Data (0 .. Scratch.Write_Pos - 1);
+      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
 
       Set_State (S, Client_Finished_Sent);
       Result := Has_Output;

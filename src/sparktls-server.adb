@@ -874,17 +874,39 @@ is
 
       HRR_Len := Msg_Len;
 
-      --  Write HRR as a plaintext handshake record
-      Records.Build_Handshake_Record
-        (Fragment  => HRR_Buf (0 .. Msg_Len - 1),
-         Output    => S.Output,
-         Bytes_Out => Rec_Out);
-
-      --  Send CCS for middlebox compatibility
+      --  Atomic flight assembly: HRR + CCS into scratch, commit only if
+      --  the whole flight fits. If commit fails, signal the caller via
+      --  Rec_Out = 0 (caller bails to the alert path).
       declare
+         Scratch : IO_Buffer;
          CCS_Out : N32;
       begin
-         Records.Build_CCS_Record (S.Output, CCS_Out);
+         Records.Build_Handshake_Record
+           (Fragment  => HRR_Buf (0 .. Msg_Len - 1),
+            Output    => Scratch,
+            Bytes_Out => Rec_Out);
+         if Rec_Out = 0 then
+            HRR_Len := 0;
+            return;
+         end if;
+
+         --  Send CCS for middlebox compatibility
+         Records.Build_CCS_Record (Scratch, CCS_Out);
+         if CCS_Out = 0 then
+            Rec_Out := 0;
+            HRR_Len := 0;
+            return;
+         end if;
+
+         if Free_Space (S.Output) < Scratch.Write_Pos then
+            Rec_Out := 0;
+            HRR_Len := 0;
+            return;
+         end if;
+         S.Output.Data (S.Output.Write_Pos ..
+                        S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+            Scratch.Data (0 .. Scratch.Write_Pos - 1);
+         S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
       end;
    end Build_Hello_Retry_Request;
 
@@ -899,6 +921,17 @@ is
       SH_Len  : N32;
       Rec_Out : N32;
       CCS_Out : N32;
+      --  Atomic flight assembly: every record goes into Scratch first.
+      --  We commit to S.Output as one block at the end so the peer never
+      --  observes a partial flight. Each Build_Encrypted_Record call
+      --  advances HC.Server_HS.Counter; if the commit fails we restore
+      --  the counter so the next record's AEAD nonce stays in sync with
+      --  what the peer actually sees.
+      Scratch    : IO_Buffer;
+      Saved_Ctr  : Unsigned_64;
+      --  Track whether we've started writing encrypted records (so we
+      --  know whether a counter rollback is needed on commit failure).
+      Encryption_Started : Boolean := False;
    begin
       --  Check for PSK resumption (must happen before Build_Server_Hello
       --  so the ServerHello includes the pre_shared_key extension)
@@ -1122,10 +1155,10 @@ is
       --  Add ServerHello to transcript
       Append_Transcript (HC, SH_Buf (0 .. SH_Len - 1));
 
-      --  Write ServerHello record (plaintext)
+      --  Write ServerHello record (plaintext) into Scratch
       Records.Build_Handshake_Record
         (Fragment  => SH_Buf (0 .. SH_Len - 1),
-         Output    => S.Output,
+         Output    => Scratch,
          Bytes_Out => Rec_Out);
 
       if Rec_Out = 0 then
@@ -1137,9 +1170,21 @@ is
 
       --  Derive handshake keys
       Derive_Handshake_Keys (S, HC);
+      --  Save the AEAD counter snapshot now: every Build_Encrypted_Record
+      --  call below advances HC.Server_HS.Counter unconditionally
+      --  (Post: Keys.Counter = Keys.Counter'Old + 1). If the final
+      --  commit fails we restore this so the next record's nonce stays
+      --  in sync with whatever the peer last saw.
+      Saved_Ctr := HC.Server_HS.Counter;
 
       --  Send CCS for middlebox compatibility
-      Records.Build_CCS_Record (S.Output, CCS_Out);
+      Records.Build_CCS_Record (Scratch, CCS_Out);
+      if CCS_Out = 0 then
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
 
       --  Build EncryptedExtensions (encrypted with server HS keys)
       declare
@@ -1154,10 +1199,12 @@ is
            (Plaintext  => EE_Buf (0 .. EE_Len - 1),
             Inner_Type => 16#16#,
             Keys       => HC.Server_HS,
-            Output     => S.Output,
+            Output     => Scratch,
             Bytes_Out  => Enc_Out);
+         Encryption_Started := True;
 
          if Enc_Out = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -1182,8 +1229,15 @@ is
                  (Plaintext  => CR_Buf (0 .. CR_Len - 1),
                   Inner_Type => 16#16#,
                   Keys       => HC.Server_HS,
-                  Output     => S.Output,
+                  Output     => Scratch,
                   Bytes_Out  => Enc_Out);
+               if Enc_Out = 0 then
+                  HC.Server_HS.Counter := Saved_Ctr;
+                  S.Last_Error := Insufficient_Buffer;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
             end if;
          end;
       end if;
@@ -1201,6 +1255,7 @@ is
             Len    => Cert_Len);
 
          if Cert_Len = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -1213,10 +1268,11 @@ is
            (Plaintext  => Cert_Buf (0 .. Cert_Len - 1),
             Inner_Type => 16#16#,
             Keys       => HC.Server_HS,
-            Output     => S.Output,
+            Output     => Scratch,
             Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -1253,6 +1309,7 @@ is
             Len             => CV_Len);
 
          if CV_Len = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -1265,10 +1322,11 @@ is
            (Plaintext  => CV_Buf (0 .. CV_Len - 1),
             Inner_Type => 16#16#,
             Keys       => HC.Server_HS,
-            Output     => S.Output,
+            Output     => Scratch,
             Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -1311,7 +1369,7 @@ is
                     (Plaintext  => Big_Finished,
                      Inner_Type => 16#16#,
                      Keys       => HC.Server_HS,
-                     Output     => S.Output,
+                     Output     => Scratch,
                      Bytes_Out  => Enc_Out);
                end;
 
@@ -1337,18 +1395,37 @@ is
                     (Plaintext  => Fin_Buf (0 .. Fin_Len - 1),
                      Inner_Type => 16#16#,
                      Keys       => HC.Server_HS,
-                     Output     => S.Output,
+                     Output     => Scratch,
                      Bytes_Out  => Enc_Out);
                end;
          end case;
 
          if Enc_Out = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
       end;
+
+      --  Atomic commit: full flight assembled in Scratch. If S.Output
+      --  has room, copy in one shot; otherwise abort and roll the
+      --  AEAD counter back so subsequent records (or the alert we may
+      --  send) stay nonce-synchronised with the peer.
+      if Free_Space (S.Output) < Scratch.Write_Pos then
+         if Encryption_Started then
+            HC.Server_HS.Counter := Saved_Ctr;
+         end if;
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+      S.Output.Data (S.Output.Write_Pos ..
+                     S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+         Scratch.Data (0 .. Scratch.Write_Pos - 1);
+      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
 
       --  Derive application keys now (using transcript through server Finished)
       Derive_App_Keys (S, HC);
@@ -2307,13 +2384,28 @@ is
                               --  extensions_length: 0
                               NST (33) := 0; NST (34) := 0;
 
-                              --  Encrypt and queue as post-handshake record
-                              Records.Build_Encrypted_Record
-                                (Plaintext  => NST,
-                                 Inner_Type => 16#16#,  --  handshake
-                                 Keys       => S.Server_App,
-                                 Output     => S.Output,
-                                 Bytes_Out  => Enc_Out);
+                              --  NewSessionTicket is a post-handshake
+                              --  optimisation (RFC 8446 §4.6.1); it is
+                              --  not required for handshake completion.
+                              --  If S.Output is too full to hold it,
+                              --  skip silently and roll back the AEAD
+                              --  counter so the next encrypted record
+                              --  on these keys keeps its nonce in sync
+                              --  with what the peer last received.
+                              declare
+                                 Saved : constant Unsigned_64 :=
+                                    S.Server_App.Counter;
+                              begin
+                                 Records.Build_Encrypted_Record
+                                   (Plaintext  => NST,
+                                    Inner_Type => 16#16#,  --  handshake
+                                    Keys       => S.Server_App,
+                                    Output     => S.Output,
+                                    Bytes_Out  => Enc_Out);
+                                 if Enc_Out = 0 then
+                                    S.Server_App.Counter := Saved;
+                                 end if;
+                              end;
                            end;
                         end if;
                      end;

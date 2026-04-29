@@ -468,31 +468,19 @@ is
                   end if;
                end;
 
-               --  Build and send ClientKeyExchange
-               declare
-                  CKE : Byte_Seq (0 .. Max_Client_Key_Exchange - 1);
-                  CKE_Len : N32;
-                  Rec_Out : N32;
-               begin
-                  Build_Client_Key_Exchange (HC, CKE, CKE_Len);
-                  if CKE_Len > 0 then
-                     Append_Transcript (HC, CKE (0 .. CKE_Len - 1));
-                     Records.Build_Handshake_Record
-                       (CKE (0 .. CKE_Len - 1), S.Output, Rec_Out);
-                  end if;
-               end;
-
-               --  Derive keys (uses transcript up to CKE)
-               Derive_Keys_12 (S, HC);
-
-               --  Send CCS
-               declare CCS_Out : N32;
-               begin Records.Build_CCS_Record (S.Output, CCS_Out); end;
-
-               --  Build and send encrypted Finished
+               --  Atomic flight assembly: build CKE + CCS + encrypted
+               --  Finished into Scratch; commit only if the whole
+               --  flight fits. The Finished encryption advances
+               --  HC.Client_Seq_12, so save it and roll back on commit
+               --  failure to keep AEAD nonces in sync with the peer.
                declare
                   use Key_Schedule_12;
                   use Records.TLS12;
+                  Scratch : IO_Buffer;
+                  CKE : Byte_Seq (0 .. Max_Client_Key_Exchange - 1);
+                  CKE_Len : N32;
+                  Rec_Out : N32;
+                  CCS_Out : N32;
                   FB : Byte_Seq (0 .. Finished_12_Total_Len - 1);
                   FL : N32; EO : N32;
                   TH : Digest;
@@ -500,7 +488,37 @@ is
                   Use_384 : constant Boolean :=
                      S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
                                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+                  Saved_Seq : Unsigned_64;
                begin
+                  --  CKE
+                  Build_Client_Key_Exchange (HC, CKE, CKE_Len);
+                  if CKE_Len > 0 then
+                     Append_Transcript (HC, CKE (0 .. CKE_Len - 1));
+                     Records.Build_Handshake_Record
+                       (CKE (0 .. CKE_Len - 1), Scratch, Rec_Out);
+                     if Rec_Out = 0 then
+                        Free_Byte_Seq (HC.Reasm_Buf);
+                        HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                        Send_Alert_And_Error
+                          (S, Insufficient_Buffer, Result);
+                        return;
+                     end if;
+                  end if;
+
+                  --  Derive keys (uses transcript up to CKE)
+                  Derive_Keys_12 (S, HC);
+
+                  --  CCS
+                  Records.Build_CCS_Record (Scratch, CCS_Out);
+                  if CCS_Out = 0 then
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                     Send_Alert_And_Error
+                       (S, Insufficient_Buffer, Result);
+                     return;
+                  end if;
+
+                  --  Encrypted Finished (advances HC.Client_Seq_12)
                   if Use_384 then
                      SPARKNaCl.Hashing.SHA384.Hash
                        (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
@@ -517,10 +535,35 @@ is
                   --  Add client Finished to transcript
                   Append_Transcript (HC, FB (0 .. FL - 1));
 
+                  Saved_Seq := HC.Client_Seq_12;
                   Build_Encrypted_Record_12
                     (FB (0 .. FL - 1), 16#16#, S.Client_App,
                      HC.Client_Write_IV_12, HC.Client_Seq_12,
-                     S.Output, EO);
+                     Scratch, EO);
+                  if EO = 0 then
+                     HC.Client_Seq_12 := Saved_Seq;
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                     Send_Alert_And_Error
+                       (S, Insufficient_Buffer, Result);
+                     return;
+                  end if;
+
+                  --  Atomic commit
+                  if Free_Space (S.Output) < Scratch.Write_Pos then
+                     HC.Client_Seq_12 := Saved_Seq;
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                     Send_Alert_And_Error
+                       (S, Insufficient_Buffer, Result);
+                     return;
+                  end if;
+                  S.Output.Data
+                    (S.Output.Write_Pos ..
+                     S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+                     Scratch.Data (0 .. Scratch.Write_Pos - 1);
+                  S.Output.Write_Pos :=
+                     S.Output.Write_Pos + Scratch.Write_Pos;
                end;
 
                HC.CKE_Received_12 := True;

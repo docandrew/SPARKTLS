@@ -65,7 +65,13 @@ is
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    is
       Gen_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
-      Rec_Out : N32;
+      Rec_Out    : N32;
+      --  Atomic flight assembly: build every record into a scratch buffer
+      --  first. We commit to S.Output only when the entire flight has
+      --  been built and we know it fits, so the peer never observes a
+      --  partial flight. (All four records here are plaintext, so the
+      --  AEAD counter doesn't need rolling back on failure.)
+      Scratch : IO_Buffer;
    begin
       --  TLS 1.2 uses supported_groups (no key_share extension)
       if HC.Client_Has_X25519 or HC.Client_Supports_X25519 then
@@ -106,7 +112,12 @@ is
             Send_Alert_And_Error (S, Internal_Error, Result); return;
          end if;
          Append_Transcript (HC, Hello_Buf (0 .. Hello_Len - 1));
-         Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), S.Output, Rec_Out);
+         Records.Build_Handshake_Record
+           (Hello_Buf (0 .. Hello_Len - 1), Scratch, Rec_Out);
+         if Rec_Out = 0 then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
       end;
 
       --  2. Certificate (TLS 1.2 format)
@@ -116,7 +127,12 @@ is
          Build_Certificate_Chain_12 (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
          if Cert_Len > 0 then
             Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
-            Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), S.Output, Rec_Out);
+            Records.Build_Handshake_Record
+              (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out);
+            if Rec_Out = 0 then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
          end if;
       end;
 
@@ -124,10 +140,16 @@ is
       declare
          SKE_Buf : Byte_Seq (0 .. Max_Server_Key_Exchange - 1); SKE_Len : N32;
       begin
-         Build_Server_Key_Exchange (HC, HC.Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
+         Build_Server_Key_Exchange
+           (HC, HC.Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
          if SKE_Len > 0 then
             Append_Transcript (HC, SKE_Buf (0 .. SKE_Len - 1));
-            Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), S.Output, Rec_Out);
+            Records.Build_Handshake_Record
+              (SKE_Buf (0 .. SKE_Len - 1), Scratch, Rec_Out);
+            if Rec_Out = 0 then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
          end if;
       end;
 
@@ -137,8 +159,24 @@ is
       begin
          Build_Server_Hello_Done (Done_Buf, Done_Len);
          Append_Transcript (HC, Done_Buf (0 .. Done_Len - 1));
-         Records.Build_Handshake_Record (Done_Buf (0 .. Done_Len - 1), S.Output, Rec_Out);
+         Records.Build_Handshake_Record
+           (Done_Buf (0 .. Done_Len - 1), Scratch, Rec_Out);
+         if Rec_Out = 0 then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
       end;
+
+      --  Atomic commit: full flight built. If it fits in S.Output, copy
+      --  in one shot; otherwise abort without touching S.Output.
+      if Free_Space (S.Output) < Scratch.Write_Pos then
+         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+         return;
+      end if;
+      S.Output.Data (S.Output.Write_Pos ..
+                     S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+         Scratch.Data (0 .. Scratch.Write_Pos - 1);
+      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
 
       Set_State (S, Server_Hello_Sent);
       Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
@@ -461,15 +499,27 @@ is
          end;
       end;
 
-      --  Send server CCS
-      declare CCS_Out : N32;
-      begin Records.Build_CCS_Record (S.Output, CCS_Out); end;
-
-      --  Build and send encrypted server Finished
+      --  Atomic flight assembly: build CCS + encrypted Finished into a
+      --  scratch buffer; commit only if the whole flight fits in
+      --  S.Output. The Finished encryption advances HC.Server_Seq_12, so
+      --  we save it and roll back on commit failure to keep AEAD nonces
+      --  in sync with what the peer actually sees.
       declare
+         Scratch       : IO_Buffer;
+         CCS_Out       : N32;
+         EO            : N32;
+         Saved_Seq     : constant Unsigned_64 := HC.Server_Seq_12;
          FB : Byte_Seq (0 .. Finished_12_Total_Len - 1); FL : N32;
-         TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest; EO : N32;
+         TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
       begin
+         Records.Build_CCS_Record (Scratch, CCS_Out);
+         if CCS_Out = 0 then
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
+
          if Use_384 then
             SPARKNaCl.Hashing.SHA384.Hash
               (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
@@ -481,9 +531,30 @@ is
                                Byte_Seq (TH), False, FB, FL);
          end if;
 
-         Build_Encrypted_Record_12 (FB (0 .. FL - 1), 16#16#, S.Server_App,
-                                     HC.Server_Write_IV_12, HC.Server_Seq_12,
-                                     S.Output, EO);
+         Build_Encrypted_Record_12
+           (FB (0 .. FL - 1), 16#16#, S.Server_App,
+            HC.Server_Write_IV_12, HC.Server_Seq_12, Scratch, EO);
+         if EO = 0 then
+            HC.Server_Seq_12 := Saved_Seq;  --  Build_Encrypted_Record_12
+                                            --  always advances; rollback.
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
+
+         --  Atomic commit
+         if Free_Space (S.Output) < Scratch.Write_Pos then
+            HC.Server_Seq_12 := Saved_Seq;
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
+         S.Output.Data (S.Output.Write_Pos ..
+                        S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+            Scratch.Data (0 .. Scratch.Write_Pos - 1);
+         S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
       end;
 
       --  Copy TLS 1.2 state to Session
