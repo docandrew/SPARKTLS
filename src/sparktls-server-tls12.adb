@@ -48,8 +48,19 @@ is
 
    procedure Append_Transcript (HC : in out Handshake_Context; Data : Byte_Seq)
    --  Body uses Ada slide-assignment, which works for any Data'First.
-   with Pre => Data'Length > 0
-               and then Data'Length <= HC.Transcript'Length
+   --  Frame: only writes HC.Transcript / HC.Transcript_Len. The Cfg
+   --  pointer + identity are preserved across the call so callers
+   --  don't lose those facts. SPARK forbids equality on access types,
+   --  so we restate the specific properties on exit (matching the
+   --  Pre bound) rather than HC.Cfg.Local = HC.Cfg.Local'Old.
+   with Pre  => Data'Length > 0
+                and then Data'Length <= HC.Transcript'Length
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null,
+        Post => HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
    is
       Len : constant N32 := N32 (Data'Length);
    begin

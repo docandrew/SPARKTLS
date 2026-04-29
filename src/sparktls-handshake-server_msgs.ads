@@ -45,13 +45,20 @@ is
    --  RFC 8446 Section 4.3.1: Build EncryptedExtensions.
    --  Sent immediately after ServerHello (encrypted with HS keys).
    --  May include ALPN extension if client offered and server matches.
+   --
+   --  Body writes S.Negotiated_ALPN on a successful match but never
+   --  touches S.State; the frame post lets callers preserve their
+   --  S.State knowledge through the call so the surrounding flight
+   --  builder can keep proving its Set_State / Send_Alert_And_Error
+   --  preconditions.
    procedure Build_Encrypted_Extensions
      (HC     : in     Handshake_Context;
       S      : in out Session;
       Result :    out Byte_Seq;
       Len    :    out N32)
-   with Pre  => Result'First = 0 and Result'Last >= 270;
+   with Pre  => Result'First = 0 and Result'Last >= 270,
    --  Header(4) + ext_list_len(2) + ALPN ext(7 + Max_Hostname_Len=255) = 268
+        Post => S.State = S.State'Old;
 
    --  Build a CertificateRequest handshake message (server -> client).
    --  Minimal: empty certificate_request_context, signature_algorithms

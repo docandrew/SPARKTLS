@@ -52,7 +52,12 @@ is
                 and then HC.Cfg.Local /= null
                 and then HC.Cfg.Local.Has_Identity
                 and then HC.Cfg.Random /= null
-                and then S.State in Wait_Client_Hello | Client_Hello_Sent
+                --  Server-side state on entry. Client_Hello_Sent (the
+                --  client's own post-CH state) is intentionally NOT
+                --  permitted here -- the only valid transition out of
+                --  Client_Hello_Sent is Wait_Server_Hello, which would
+                --  conflict with the final Set_State (Server_Hello_Sent).
+                and then S.State = Wait_Client_Hello
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized;
 

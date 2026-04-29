@@ -367,14 +367,22 @@ is
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and Result'Last >= Max_Server_Hello_12 - 1
+                and HC.Cfg.Local /= null
+                and HC.Cfg.Local.Has_Identity
                 and HC.Cfg.Random /= null
                 and HC.Version = TLS_1_2,
-        --  Frame postcondition: S.State is not modified by ServerHello
-        --  construction. Callers (Build_Server_Flight_12) need this so
-        --  subsequent Set_State / Send_Alert_And_Error preconditions
-        --  about S.State stay provable through the flight body.
+        --  Frame postcondition: ServerHello construction does not
+        --  touch S.State, the configuration pointer/identity, or the
+        --  Random callback. Callers (Build_Server_Flight_12) need
+        --  these to keep proving subsequent Set_State preconditions
+        --  and HC.Cfg.Local.* dereferences. SPARK forbids equality on
+        --  access types, so we restate the specific facts as Post
+        --  rather than HC.Cfg = HC.Cfg'Old.
         Post => Len <= Max_Server_Hello_12
-                and S.State = S.State'Old;
+                and S.State = S.State'Old
+                and HC.Cfg.Local /= null
+                and HC.Cfg.Local.Has_Identity
+                and HC.Cfg.Random /= null;
 
    --  RFC 5246 §7.4.1.2: Parse TLS 1.2 ServerHello.
    --
@@ -411,7 +419,8 @@ is
      (Id     : in     Identity;
       Result :    out Byte_Seq;
       Len    :    out N32)
-   with Pre => Result'First = 0 and Result'Last >= 15
-               and Id.Has_Identity;
+   with Pre  => Result'First = 0 and Result'Last >= 15
+                and Id.Has_Identity,
+        Post => Len <= Result'Length;
 
 end SPARKTLS.Handshake.TLS12;
