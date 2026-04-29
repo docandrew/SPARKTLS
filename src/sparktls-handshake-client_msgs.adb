@@ -52,7 +52,7 @@ is
    --================================================================
 
    procedure Build_Client_Hello
-     (S      : in out Session;
+     (S      : in     Session;
       HC     : in out Handshake_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)

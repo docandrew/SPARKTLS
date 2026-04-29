@@ -314,7 +314,7 @@ is
    is
       Cert_Result : PEM.Decode_Result;
       Key_Result  : PEM.Decode_Result;
-      Key_Buf     : Byte_Seq (0 .. 1099) := (others => 0);
+      Key_Buf     : Byte_Seq (0 .. 1099);
       Key_Len     : N32;
       Key_OK      : Boolean;
       Set_OK      : Boolean;

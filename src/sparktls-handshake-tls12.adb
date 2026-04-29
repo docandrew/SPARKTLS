@@ -98,7 +98,7 @@ is
    is
       --  EC params + point bytes (without handshake header)
       Params     : Byte_Seq (0 .. 3 + P384_Point_Len) := (others => 0);
-      Params_Len : N32 := 0;
+      Params_Len : N32;
 
       --  Signature input: client_random || server_random || params
       Sig_Input     : Byte_Seq (0 .. 63 + 4 + P384_Point_Len) := (others => 0);
@@ -107,7 +107,7 @@ is
       --  Signature output
       Sig     : Byte_Seq (0 .. Max_Sig - 1) := (others => 0);
       Sig_Len : N32 := 0;
-      Sig_OK  : Boolean := False;
+      Sig_OK  : Boolean;
 
       Pt_Len : N32;
       Pos    : N32;
@@ -479,7 +479,7 @@ is
          Sig_Input_Len : constant N32 := 64 + Params_Len;
          Sig_Input : Byte_Seq (0 .. Sig_Input_Len - 1) := (others => 0);
 
-         Sig_OK : Boolean := False;
+         Sig_OK : Boolean;
       begin
          Pos := Pos + 4;
 
@@ -511,7 +511,7 @@ is
             Scheme : constant Unsigned_16 :=
                Unsigned_16 (Sig_Hash_Alg) * 256 +
                Unsigned_16 (Sig_Sig_Alg);
-            Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1) := (others => 0);
+            Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
          begin
             for I in N32 range 0 .. Sig_Len - 1 loop
                Sig_Bytes (I) := Data (Pos + I);
@@ -637,7 +637,7 @@ is
    is
       Sig     : Byte_Seq (0 .. Max_Sig - 1) := (others => 0);
       Sig_Len : N32 := 0;
-      Sig_OK  : Boolean := False;
+      Sig_OK  : Boolean;
       Hash_Algo, Sig_Algo : Byte;
    begin
       Result := (others => 0);
@@ -1135,7 +1135,7 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
-      Pos : N32 := 0;
+      Pos : N32;
       List_Start : N32;
    begin
       Result := (others => 0);

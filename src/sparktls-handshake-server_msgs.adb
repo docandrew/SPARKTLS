@@ -1171,7 +1171,7 @@ is
    end Append_SH_Extension;
 
    procedure Build_Server_Hello
-     (S      : in out Session;
+     (S      : in     Session;
       HC     : in out Handshake_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
@@ -1199,8 +1199,8 @@ is
       SV_Data_Len : constant := 2;
 
       --  Key share data: varies by selected group
-      KS_Raw     : KS_Raw_Buffer := (others => 0);
-      KS_Raw_Len : N32 := 0;
+      KS_Raw     : KS_Raw_Buffer;
+      KS_Raw_Len : N32;
 
       KS_Data_Len : N32;
       Ext_Total   : N32;
@@ -1436,7 +1436,6 @@ is
       Pos : N32;
    begin
       Result := (others => 0);
-      Len := 0;
 
       --  Handshake header
       Result (0) := HT_Encrypted_Extensions;
@@ -1472,7 +1471,6 @@ is
             Result (Pos + N32 (6 + I)) :=
                Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
          end loop;
-         Pos := Pos + ALPN_Ext_Len;
 
          S.Negotiated_ALPN := HC.Cfg.ALPN;
       end if;

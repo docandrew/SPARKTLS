@@ -41,7 +41,7 @@ is
       Full_Label : constant String := "tls13 " & Label;
       HKDF_Label : Byte_Seq (0 .. N32 (3 + Full_Label'Length + 1 +
                                         Context'Length) - 1) := (others => 0);
-      Pos : N32 := 0;
+      Pos : N32;
    begin
       --  Build HKDF label manually to help the prover with bounds
       --  Length (2 bytes, big-endian)
@@ -261,7 +261,7 @@ is
       Full_Label : constant String := "tls13 " & Label;
       HKDF_Label : Byte_Seq (0 .. N32 (3 + Full_Label'Length + 1 +
                                         Context'Length) - 1) := (others => 0);
-      Pos : N32 := 0;
+      Pos : N32;
    begin
       HKDF_Label (0) := Byte (Unsigned_16 (OKM'Length) / 256);
       HKDF_Label (1) := Byte (Unsigned_16 (OKM'Length) mod 256);

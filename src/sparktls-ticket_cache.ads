@@ -22,13 +22,22 @@ is
 
    --  RFC 8446 §4.2.11: Look up a pre_shared_key identity.
    --  Lookup is read-only — does not modify the cache.
+   --
+   --  Want_Suite is the cipher suite the server has already negotiated
+   --  for this connection. RFC 8446 §4.2.11 forbids resuming a PSK
+   --  under a different cipher suite (would allow downgrade and breaks
+   --  the key schedule's hash binding). Lookup enforces this by only
+   --  reporting Found => True when the cached suite matches Want_Suite;
+   --  the Post-condition lets callers prove RFC compliance.
    procedure Lookup
-     (Cache   : Ticket_Store;
-      ID      : Byte_Seq;
-      PSK     : out Bytes_48;
-      PSK_Len : out N32;
-      Suite   : out Unsigned_16;
-      Found   : out Boolean)
-   with Pre  => ID'First = 0 and ID'Length = Ticket_ID_Len;
+     (Cache      : Ticket_Store;
+      ID         : Byte_Seq;
+      Want_Suite : Unsigned_16;
+      PSK        : out Bytes_48;
+      PSK_Len    : out N32;
+      Suite      : out Unsigned_16;
+      Found      : out Boolean)
+   with Pre  => ID'First = 0 and ID'Length = Ticket_ID_Len,
+        Post => (if Found then Suite = Want_Suite);
 
 end SPARKTLS.Ticket_Cache;

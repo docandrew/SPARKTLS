@@ -160,7 +160,7 @@ is
 
       Nonce      : Bytes_12;
       AAD        : Byte_Seq (0 .. AAD_Len - 1);
-      Ciphertext : Byte_Seq (0 .. Plaintext'Last) := (others => 0);
+      Ciphertext : Byte_Seq (0 .. Plaintext'Last);
       Tag        : Bytes_16;
       Hdr        : Byte_Seq (0 .. 4) := (others => 0);
       Exp_Nonce  : Byte_Seq (0 .. 7);
@@ -267,15 +267,15 @@ is
          N32 (Encrypted'Length) - Explicit_Nonce_Len - GCM_Tag_Len;
 
       --  Extract explicit nonce (first 8 bytes) into 0-based buffer
-      Exp_Nonce : Byte_Seq (0 .. 7) := (others => 0);
+      Exp_Nonce : Byte_Seq (0 .. 7);
 
       Nonce : Bytes_12 := (others => 0);
       AAD   : Byte_Seq (0 .. AAD_Len - 1);
-      Tag   : Bytes_16 := (others => 0);
+      Tag   : Bytes_16;
 
       --  0-based copy of ciphertext for AEAD (requires First = 0)
-      CT_Copy   : Byte_Seq (0 .. CT_Len - 1) := (others => 0);
-      Decrypted : Byte_Seq (0 .. CT_Len - 1) := (others => 0);
+      CT_Copy   : Byte_Seq (0 .. CT_Len - 1);
+      Decrypted : Byte_Seq (0 .. CT_Len - 1);
    begin
       Plaintext := (others => 0);
       Plain_Len := 0;
@@ -285,7 +285,6 @@ is
       if N32 (Encrypted'Length) < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
          return;
       end if;
-      Valid     := False;
 
       --  Extract explicit nonce, ciphertext, and tag into 0-based buffers
       for I in N32 range 0 .. 7 loop

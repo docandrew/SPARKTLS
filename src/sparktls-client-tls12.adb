@@ -65,10 +65,10 @@ is
          (if S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
                                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
           then 16 else 32);
-      CK : Byte_Seq (0 .. Key_Len - 1) := (others => 0);
-      SK : Byte_Seq (0 .. Key_Len - 1) := (others => 0);
-      CI : Byte_Seq (0 .. 3) := (others => 0);
-      SI : Byte_Seq (0 .. 3) := (others => 0);
+      CK : Byte_Seq (0 .. Key_Len - 1);
+      SK : Byte_Seq (0 .. Key_Len - 1);
+      CI : Byte_Seq (0 .. 3);
+      SI : Byte_Seq (0 .. 3);
       Shared_Len : constant N32 :=
          (if HC.Selected_Group = Group_Secp384r1 then 48 else 32);
    begin

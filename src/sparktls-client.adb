@@ -25,7 +25,7 @@ package body SPARKTLS.Client with
 is
    --  Forward declarations for internal procedures
    procedure Derive_Handshake_Keys
-     (S  : in out Session;
+     (S  : in     Session;
       HC : in out Handshake_Context);
    procedure Send_Client_Certificate
      (S      : in out Session;
@@ -48,7 +48,7 @@ is
      (S      : in out Session;
       Result :    out Action);
    procedure Set_Traffic_Keys
-     (TK     : in out Traffic_Keys;
+     (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
       Suite  : in     Unsigned_16);
 
@@ -655,11 +655,8 @@ is
       Finished_Len : N32;
       CCS_Out      : N32;
       Enc_Out      : N32;
-      Verify_32    : Bytes_32;
       Cert_Result  : Action;
    begin
-      Result := OK;
-
       --  mTLS: send client certificate before Finished if requested
       Send_Client_Certificate (S, HC, Cert_Result);
       if Cert_Result = Error_Alert then
@@ -687,17 +684,8 @@ is
                M      => TS_Hash,
                K      => Byte_Seq (Finished_Key_384));
 
-            --  Build Finished: verify_data is 48 bytes for SHA-384
-            --  but Build_Finished expects Bytes_32. We need a larger variant.
-            --  For now, use only first 32 bytes - wait, that's wrong.
-            --  TLS 1.3 finished verify_data length = Hash.length.
-            --  For SHA-384, it's 48 bytes. Let me build it manually.
-            Finished_Buf := (others => 0);
-            Finished_Buf (0) := Handshake.HT_Finished;
-            Finished_Buf (1) := 16#00#;
-            Finished_Buf (2) := 16#00#;
-            Finished_Buf (3) := 16#30#;  --  48 decimal = 0x30
-            --  We need a bigger buffer for 48-byte verify data
+            --  Finished for SHA-384: header(4) + 48-byte verify_data.
+            --  (Build_Finished assumes Bytes_32, so build manually.)
             declare
                Big_Finished : Byte_Seq (0 .. 51) := (others => 0);  -- 4 + 48
             begin
@@ -1041,7 +1029,7 @@ is
 
    --  Helper: derive key/IV and set Traffic_Keys based on suite
    procedure Set_Traffic_Keys
-     (TK     : in out Traffic_Keys;
+     (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
       Suite  : in     Unsigned_16)
    is
@@ -1086,7 +1074,7 @@ is
 
    --  Derive handshake traffic keys from shared secret
    procedure Derive_Handshake_Keys
-     (S  : in out Session;
+     (S  : in     Session;
       HC : in out Handshake_Context)
    is
    begin

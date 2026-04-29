@@ -164,7 +164,7 @@ is
    is
       Inner_Len  : constant N32 := N32 (Plaintext'Length) + 1;
       Inner      : Byte_Seq (0 .. Inner_Len - 1) := (others => 0);
-      Ciphertext : Byte_Seq (0 .. Inner_Len - 1) := (others => 0);
+      Ciphertext : Byte_Seq (0 .. Inner_Len - 1);
       Tag        : Bytes_16;
       Nonce      : Bytes_12;
 
@@ -260,7 +260,7 @@ is
       Cipher_Len : constant N32 := N32 (Encrypted'Length) - Tag_Size;
       Tag        : Bytes_16;
       Nonce      : Bytes_12;
-      Decrypted  : Byte_Seq (0 .. Cipher_Len - 1) := (others => 0);
+      Decrypted  : Byte_Seq (0 .. Cipher_Len - 1);
    begin
       Plaintext  := (others => 0);
       Plain_Len  := 0;

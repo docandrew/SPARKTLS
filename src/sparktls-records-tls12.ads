@@ -56,28 +56,6 @@ is
       and Seq_Num < Unsigned_64'Last)  --  nonce space not exhausted
    with Ghost;
 
-   --  RFC 5246 §6.2.3.3: AAD construction.
-   --  additional_data = seq_num[8] || type[1] || version[2] || length[2]
-   --  The "length" field is the PLAINTEXT length, not ciphertext.
-   --  This is a common implementation bug — using ciphertext length
-   --  causes MAC failure.
-   function AAD_Uses_Plaintext_Length
-     (AAD           : Byte_Seq;
-      Seq_Num       : Unsigned_64;
-      Content_Type  : Byte;
-      Plaintext_Len : N32) return Boolean is
-     (AAD'Length = AAD_Len
-      --  Bytes 0..7: sequence number (big-endian)
-      and then AAD (AAD'First + 8) = Content_Type
-      --  Bytes 9..10: version (0x0303)
-      and then AAD (AAD'First + 9) = TLS12_Version_Major
-      and then AAD (AAD'First + 10) = TLS12_Version_Minor
-      --  Bytes 11..12: plaintext length (big-endian)
-      and then AAD (AAD'First + 11) = Byte (Plaintext_Len / 256)
-      and then AAD (AAD'First + 12) = Byte (Plaintext_Len mod 256))
-   with Ghost,
-        Pre => AAD'Length = AAD_Len and Plaintext_Len <= Max_Record_Plaintext;
-
    --  RFC 5246 §6.1: Sequence numbers.
    --  "MUST be set to zero whenever a connection state is made active"
    --  "Sequence numbers do not wrap"

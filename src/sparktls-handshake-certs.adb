@@ -178,7 +178,7 @@ is
       end Put_Cert_Entry;
 
       --  Compute total list length
-      List_Len : N32 := 0;
+      List_Len : N32;
    begin
       Result := (others => 0);
       Len := 0;
@@ -265,7 +265,7 @@ is
 
       Sig     : Byte_Seq (0 .. 511) := (others => 0);
       Sig_Len : N32 := 0;
-      Sig_OK  : Boolean := False;
+      Sig_OK  : Boolean;
 
       Algo_Enum : RFLX.Tls_Parameters.TLS_SignatureScheme_Enum;
    begin

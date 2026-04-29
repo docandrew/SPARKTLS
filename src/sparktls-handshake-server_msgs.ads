@@ -33,7 +33,7 @@ is
    --  Includes key_share and supported_versions extensions.
    --  Returns the complete handshake message ready for record wrapping.
    procedure Build_Server_Hello
-     (S      : in out Session;
+     (S      : in     Session;
       HC     : in out Handshake_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)

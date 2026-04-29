@@ -268,8 +268,8 @@ is
                      H32   : Bytes_32;
                      Qx    : Byte_Seq (0 .. 47) := (others => 0);
                      Qy    : Byte_Seq (0 .. 47) := (others => 0);
-                     R_Val : Byte_Seq (0 .. 47) := (others => 0);
-                     S_Val : Byte_Seq (0 .. 47) := (others => 0);
+                     R_Val : Byte_Seq (0 .. 47);
+                     S_Val : Byte_Seq (0 .. 47);
                      Sig_OK : Boolean;
                   begin
                      --  Hash with the algorithm specified by the signature
@@ -305,8 +305,8 @@ is
                      H     : Bytes_32;
                      Qx    : Byte_Seq (0 .. 31) := (others => 0);
                      Qy    : Byte_Seq (0 .. 31) := (others => 0);
-                     R_Val : Byte_Seq (0 .. 31) := (others => 0);
-                     S_Val : Byte_Seq (0 .. 31) := (others => 0);
+                     R_Val : Byte_Seq (0 .. 31);
+                     S_Val : Byte_Seq (0 .. 31);
                      Sig_OK : Boolean;
                   begin
                      --  Both SHA-256 and SHA-384 sigs use SHA-256 for P-256
@@ -344,7 +344,7 @@ is
                   --  Ed25519 sig = 64 bytes, verify via Sign.Open
                   SM_Len : constant N32 := 64 + N32 (TBS_Bytes'Length);
                   SM     : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
-                  M      : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
+                  M      : Byte_Seq (0 .. SM_Len - 1);
                   PK_B   : Bytes_32 := (others => 0);
                   Verify_OK : Boolean;
                   Verify_Len : I32;
@@ -1055,7 +1055,6 @@ is
          Result := Err_No_Trust_Anchor;
 
          if Budget = 0 then
-            Saved_Budget := 0;
             return;
          end if;
          Budget := Budget - 1;
@@ -1215,7 +1214,7 @@ is
             declare
                H : SPARKTLSCrypto.Hashing.SHA256.Digest;
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
-               Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1) := (others => 0);
+               Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
             begin
                SPARKTLSCrypto.Hashing.SHA256.Hash (H, Data);
                for I in N32 range 0 .. N32 (PK_Len) - 1 loop
@@ -1241,7 +1240,7 @@ is
             declare
                H : SPARKNaCl.Hashing.SHA384.Digest;
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
-               Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1) := (others => 0);
+               Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
             begin
                SPARKNaCl.Hashing.SHA384.Hash (H, Data);
                for I in N32 range 0 .. N32 (PK_Len) - 1 loop
@@ -1265,8 +1264,8 @@ is
                H     : SPARKTLSCrypto.Hashing.SHA256.Digest;
                Qx    : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
                Qy    : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
-               R_Val : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
-               S_Val : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
+               R_Val : P256.ECDSA.ECDSA_Sig_Half;
+               S_Val : P256.ECDSA.ECDSA_Sig_Half;
                DER_OK : Boolean;
             begin
                SPARKTLSCrypto.Hashing.SHA256.Hash (H, Data);
@@ -1303,8 +1302,8 @@ is
                H     : SPARKNaCl.Hashing.SHA384.Digest;
                Qx    : Byte_Seq (0 .. 47) := (others => 0);
                Qy    : Byte_Seq (0 .. 47) := (others => 0);
-               R_Val : Byte_Seq (0 .. 47) := (others => 0);
-               S_Val : Byte_Seq (0 .. 47) := (others => 0);
+               R_Val : Byte_Seq (0 .. 47);
+               S_Val : Byte_Seq (0 .. 47);
                DER_OK : Boolean;
             begin
                SPARKNaCl.Hashing.SHA384.Hash (H, Data);
@@ -1336,7 +1335,7 @@ is
             declare
                SM_Len    : constant N32 := 64 + N32 (Data'Length);
                SM        : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
-               M         : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
+               M         : Byte_Seq (0 .. SM_Len - 1);
                PK_Bytes  : Bytes_32 := (others => 0);
                OK        : Boolean;
                Len       : I32;

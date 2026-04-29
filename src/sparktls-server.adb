@@ -56,7 +56,7 @@ is
    procedure Process_Connected (S : in out Session; Result : out Action);
 
    procedure Derive_Handshake_Keys
-     (S  : in out Session;
+     (S  : in     Session;
       HC : in out Handshake_Context);
 
    procedure Derive_App_Keys
@@ -64,7 +64,7 @@ is
       HC : in out Handshake_Context);
 
    procedure Set_Traffic_Keys
-     (TK     : in out Traffic_Keys;
+     (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
       Suite  : in     Unsigned_16);
 
@@ -780,7 +780,7 @@ is
       --  + compression(1) + ext_len(2) + extensions(12) = 84
       Msg_Len  : constant N32 := 4 + Body_Len;
 
-      P : N32 := 0;
+      P : N32;
    begin
       HRR_Buf := (others => 0);
       HRR_Len := 0;
@@ -900,8 +900,6 @@ is
       Rec_Out : N32;
       CCS_Out : N32;
    begin
-      Result := OK;
-
       --  Check for PSK resumption (must happen before Build_Server_Hello
       --  so the ServerHello includes the pre_shared_key extension)
       if HC.PSK_Offered and then HC.Cfg.Ticket_Store /= null then
@@ -911,10 +909,19 @@ is
             Suite   : Unsigned_16;
             Found   : Boolean;
          begin
+            --  RFC 8446 §4.2.11: Lookup enforces that the cached PSK's
+            --  suite matches the already-negotiated suite. The Post on
+            --  Lookup makes this provable: Found => Suite = Want_Suite.
             Ticket_Cache.Lookup
-              (HC.Cfg.Ticket_Store.all,
-               HC.PSK_Ticket_ID,
-               PSK, PSK_Len, Suite, Found);
+              (Cache      => HC.Cfg.Ticket_Store.all,
+               ID         => HC.PSK_Ticket_ID,
+               Want_Suite => S.Negotiated_Suite,
+               PSK        => PSK,
+               PSK_Len    => PSK_Len,
+               Suite      => Suite,
+               Found      => Found);
+            pragma Assert
+              (if Found then Suite = S.Negotiated_Suite);
             if Found and then HC.PSK_Binder_Len > 0 then
                --  Verify the PSK binder before accepting
                --  The binder covers the truncated ClientHello:
@@ -1352,7 +1359,7 @@ is
 
    --  Derive handshake traffic keys from shared secret
    procedure Derive_Handshake_Keys
-     (S  : in out Session;
+     (S  : in     Session;
       HC : in out Handshake_Context)
    is
    begin
@@ -1364,7 +1371,6 @@ is
                Transcript_Hash_384 (HC);
             Early      : Key_Schedule.Digest_384;
             HS_Secret  : Key_Schedule.Digest_384;
-            No_PSK     : Bytes_48 := (others => 0);
             Client_Sec : OKM384_Seq (0 .. 47);
             Server_Sec : OKM384_Seq (0 .. 47);
          begin
@@ -1391,7 +1397,6 @@ is
             Hello_Hash : Digest := Transcript_Hash_256 (HC);
             Early      : Digest;
             HS_Secret  : Digest;
-            No_PSK     : Bytes_32 := (others => 0);
             Client_Sec : OKM_Seq (0 .. 31);
             Server_Sec : OKM_Seq (0 .. 31);
          begin
@@ -1483,7 +1488,7 @@ is
 
    --  Helper: derive key/IV and set Traffic_Keys based on suite
    procedure Set_Traffic_Keys
-     (TK     : in out Traffic_Keys;
+     (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
       Suite  : in     Unsigned_16)
    is
@@ -1817,8 +1822,7 @@ is
                                     SM_Len : constant N32 := 64 + C_Len;
                                     SM : Byte_Seq (0 .. SM_Len - 1)
                                        := (others => 0);
-                                    M  : Byte_Seq (0 .. SM_Len - 1)
-                                       := (others => 0);
+                                    M  : Byte_Seq (0 .. SM_Len - 1);
                                     PK_Bytes : Bytes_32 := (others => 0);
                                     V_OK : Boolean;
                                     V_Len : I32;
@@ -2280,7 +2284,6 @@ is
                               --  age_add(4) + nonce_len(1) + nonce(2) +
                               --  ticket_len(2) + ticket(16) + ext_len(2) = 35
                               NST : Byte_Seq (0 .. 34) := (others => 0);
-                              P   : N32 := 0;
                            begin
                               --  Handshake type: NewSessionTicket (0x04)
                               NST (0) := 16#04#;

@@ -13,7 +13,6 @@ is
       Idx : constant Natural := Cache.Next;
    begin
       --  Derive ID from PSK bytes + index (caller provides proper random)
-      ID_Out := (others => 0);
       for I in N32 range 0 .. Ticket_ID_Len - 1 loop
          ID_Out (I) := PSK (I) xor Byte (Idx mod 256);
       end loop;
@@ -34,12 +33,13 @@ is
    end Store;
 
    procedure Lookup
-     (Cache   : Ticket_Store;
-      ID      : Byte_Seq;
-      PSK     : out Bytes_48;
-      PSK_Len : out N32;
-      Suite   : out Unsigned_16;
-      Found   : out Boolean)
+     (Cache      : Ticket_Store;
+      ID         : Byte_Seq;
+      Want_Suite : Unsigned_16;
+      PSK        : out Bytes_48;
+      PSK_Len    : out N32;
+      Suite      : out Unsigned_16;
+      Found      : out Boolean)
    is
    begin
       PSK := (others => 0);
@@ -48,7 +48,10 @@ is
       Found := False;
 
       for I in Cache.Entries'Range loop
-         if Cache.Entries (I).Valid then
+         pragma Loop_Invariant (if Found then Suite = Want_Suite);
+         if Cache.Entries (I).Valid
+           and then Cache.Entries (I).Suite = Want_Suite
+         then
             declare
                Match : Boolean := True;
             begin

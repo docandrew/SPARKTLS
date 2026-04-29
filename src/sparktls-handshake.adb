@@ -94,7 +94,6 @@ is
       Ctx : Context;
    begin
       Result := (others => 0);
-      Len := 0;
 
       declare
          Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);

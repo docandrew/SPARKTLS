@@ -31,13 +31,13 @@ is
       Combined     : Byte_Seq (0 .. Combined_Len - 1) := (others => 0);
 
       --  A(i): iterative HMAC chain, always 32 bytes
-      A_Val : Digest := (others => 0);
+      A_Val : Digest;
 
       --  P(i) = HMAC(secret, A(i) || combined), 32 bytes each
       P_Input : Byte_Seq (0 .. Hash_Size - 1 + Combined_Len) := (others => 0);
       P_Val   : Digest;
 
-      Pos     : N32 := 0;
+      Pos     : N32;
       Remain  : N32;
    begin
       Output := (others => 0);
@@ -95,12 +95,12 @@ is
       Combined_Len : constant N32 := N32 (Label'Length) + N32 (Seed'Length);
       Combined     : Byte_Seq (0 .. Combined_Len - 1) := (others => 0);
 
-      A_Val : HMAC384.Digest_384 := (others => 0);
+      A_Val : HMAC384.Digest_384;
 
       P_Input : Byte_Seq (0 .. Hash_Size - 1 + Combined_Len) := (others => 0);
       P_Val   : HMAC384.Digest_384;
 
-      Pos     : N32 := 0;
+      Pos     : N32;
       Remain  : N32;
    begin
       Output := (others => 0);
@@ -178,7 +178,7 @@ is
       --  (OPPOSITE order from master secret derivation!)
       Seed      : Seed_64 := (others => 0);
       Block_Len : constant N32 := 2 * Key_Len + 2 * Fixed_IV_Len;
-      Key_Block : Byte_Seq (0 .. Block_Len - 1) := (others => 0);
+      Key_Block : Byte_Seq (0 .. Block_Len - 1);
       Pos       : N32 := 0;
    begin
       Seed (0 .. 31)  := Server_Random;
