@@ -2654,31 +2654,69 @@ is
       Plaintext      : in     Byte_Seq;
       Bytes_Written  :    out N32)
    is
-      Enc_Out : N32;
+      --  RFC 8446 §5.1 caps a single TLS record at 2^14 bytes of
+      --  plaintext (Max_Record_Plaintext = 16384). Anything larger has
+      --  to be split across multiple records, each with its own header,
+      --  AEAD tag, and (for TLS 1.3) per-record nonce.
+      --
+      --  The loop:
+      --    * Slices Plaintext into ≤ Max_Record_Plaintext chunks.
+      --    * Pre-checks Free_Space (S.Output) ≥ chunk + record-overhead
+      --      BEFORE encrypting, so we never advance the AEAD counter
+      --      for a record that won't fit. (Build_Encrypted_Record's
+      --      Post is `Counter = Counter'Old + 1` unconditionally — it
+      --      bumps the counter even on Bytes_Out := 0. Same shape as
+      --      the silent buffer-overflow Bug #2 fixed earlier; we
+      --      avoid it here by gating BEFORE the call.)
+      --    * Returns Bytes_Written < Plaintext'Length when S.Output
+      --      runs out of room. Caller drains and re-calls on the
+      --      remaining suffix.
+      Total      : constant N32 := N32 (Plaintext'Length);
+      Pos        : N32 := 0;
+      Chunk      : N32;
+      Enc_Out    : N32;
+      --  TLS 1.3 record on the wire: Header(5) + InnerType(1) + Tag(16) = 22.
+      --  TLS 1.2 record on the wire: Header(5) + ExplicitNonce(8) + Tag(16) = 29.
+      TLS13_Overhead : constant N32 := 22;
+      TLS12_Overhead : constant N32 := 29;
+      Overhead   : constant N32 :=
+         (if S.Negotiated_Version = TLS_1_2
+          then TLS12_Overhead else TLS13_Overhead);
    begin
-      if S.Negotiated_Version = TLS_1_2 then
-         Records.TLS12.Build_Encrypted_Record_12
-           (Plaintext    => Plaintext,
-            Content_Type => 16#17#,  --  application_data
-            Keys         => S.Server_App,
-            Implicit_IV  => S.Server_IV_12,
-            Seq_Num      => S.Server_Seq_12,
-            Output       => S.Output,
-            Bytes_Out    => Enc_Out);
-      else
-         Records.Build_Encrypted_Record
-           (Plaintext  => Plaintext,
-            Inner_Type => 16#17#,
-            Keys       => S.Server_App,
-            Output     => S.Output,
-            Bytes_Out  => Enc_Out);
-      end if;
+      while Pos < Total loop
+         Chunk := N32'Min (Max_Record_Plaintext, Total - Pos);
 
-      if Enc_Out > 0 then
-         Bytes_Written := N32 (Plaintext'Length);
-      else
-         Bytes_Written := 0;
-      end if;
+         --  Bail if S.Output can't hold this record. Caller drains.
+         if Free_Space (S.Output) < Chunk + Overhead then
+            exit;
+         end if;
+
+         if S.Negotiated_Version = TLS_1_2 then
+            Records.TLS12.Build_Encrypted_Record_12
+              (Plaintext    =>
+                  Plaintext (Plaintext'First + Pos ..
+                             Plaintext'First + Pos + Chunk - 1),
+               Content_Type => 16#17#,  --  application_data
+               Keys         => S.Server_App,
+               Implicit_IV  => S.Server_IV_12,
+               Seq_Num      => S.Server_Seq_12,
+               Output       => S.Output,
+               Bytes_Out    => Enc_Out);
+         else
+            Records.Build_Encrypted_Record
+              (Plaintext  =>
+                  Plaintext (Plaintext'First + Pos ..
+                             Plaintext'First + Pos + Chunk - 1),
+               Inner_Type => 16#17#,
+               Keys       => S.Server_App,
+               Output     => S.Output,
+               Bytes_Out  => Enc_Out);
+         end if;
+
+         exit when Enc_Out = 0;
+         Pos := Pos + Chunk;
+      end loop;
+      Bytes_Written := Pos;
    end Write_Plaintext;
 
    procedure Close_Notify (S : in out Session) is

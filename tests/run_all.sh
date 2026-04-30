@@ -137,6 +137,38 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # AES-NI hardware path: FIPS 197 KAT + 1024 random equivalence cases
+    # vs SPARKNaCl software AES (skipped on non-AES-NI CPUs)
+    if [ -f bin/tests/test_aes_ni ]; then
+        output=$(bin/tests/test_aes_ni 2>&1 || true)
+        if echo "$output" | grep -q "^SKIP:"; then
+            echo "  test_aes_ni: SKIP (no AES-NI on this CPU)"
+        else
+            pass=$(echo "$output" | grep -c "^FAIL:" >/dev/null && echo 0 \
+                   || echo "$output" | awk '/^Pass:/ {print $2}')
+            fail=$(echo "$output" | grep -c "^FAIL:" || true)
+            echo "  test_aes_ni: $pass passed, $fail failed"
+            UNIT_PASS=$((UNIT_PASS + pass))
+            UNIT_FAIL=$((UNIT_FAIL + fail))
+        fi
+    fi
+
+    # GHASH-NI (PCLMULQDQ) hardware path: NIST KAT + 1024 random
+    # equivalence cases vs the bit-by-bit GF(2^128) reference
+    if [ -f bin/tests/test_ghash_ni ]; then
+        output=$(bin/tests/test_ghash_ni 2>&1 || true)
+        if echo "$output" | grep -q "^SKIP:"; then
+            echo "  test_ghash_ni: SKIP (no PCLMULQDQ on this CPU)"
+        else
+            pass=$(echo "$output" | grep -c "^FAIL:" >/dev/null && echo 0 \
+                   || echo "$output" | awk '/^Pass:/ {print $2}')
+            fail=$(echo "$output" | grep -c "^FAIL:" || true)
+            echo "  test_ghash_ni: $pass passed, $fail failed"
+            UNIT_PASS=$((UNIT_PASS + pass))
+            UNIT_FAIL=$((UNIT_FAIL + fail))
+        fi
+    fi
+
     # ECDSA/ECDHE tests (if built)
     for test_bin in bin/tests/ecdsa_p256_test bin/tests/ecdhe_p384_test; do
         if [ -f "$test_bin" ]; then

@@ -53,27 +53,11 @@ procedure TLS_Web_Epoll is
               Second => Natural (Secs) mod 60);
    end Current_Time;
 
-   --  Convert SPARKNaCl.Byte_Seq to/from C buffer
-   procedure To_C_Buf (Src : Byte_Seq; Dst : System.Address; Len : N32) is
-      type C_Bytes is array (0 .. Natural (Len) - 1) of Unsigned_8;
-      Buf : C_Bytes;
-      for Buf'Address use Dst;
-   begin
-      for I in 0 .. N32 (Len) - 1 loop
-         Buf (Natural (I)) := Unsigned_8 (Src (I));
-      end loop;
-   end To_C_Buf;
-
-   procedure From_C_Buf (Src : System.Address; Dst : out Byte_Seq;
-                         Len : Natural) is
-      type C_Bytes is array (0 .. Len - 1) of Unsigned_8;
-      Buf : C_Bytes;
-      for Buf'Address use Src;
-   begin
-      for I in 0 .. Len - 1 loop
-         Dst (N32 (I)) := SPARKNaCl.Byte (Buf (I));
-      end loop;
-   end From_C_Buf;
+   --  To_C_Buf / From_C_Buf removed 2026-04-30. SPARKNaCl.Byte is just
+   --  `subtype Byte is Unsigned_8`, so Byte_Seq has identical memory
+   --  layout to a C `unsigned char *`. Pass `Buf'Address` straight to
+   --  read(2) / write(2) — no per-byte copy needed. Cuts ~16 KB of
+   --  byte-shuffling per record on the bulk-throughput path.
 
    --  Read a file into a Byte_Seq (for serving static content)
    function Read_File (Path : String) return Byte_Seq is
@@ -86,7 +70,7 @@ procedure TLS_Web_Epoll is
       end if;
       SIO.Open (F, SIO.In_File, Path);
       Size := Natural (SIO.Size (F));
-      if Size = 0 or Size > 1048576 then  --  1MB max
+      if Size = 0 or Size > 268435456 then  --  256 MB max (bench-friendly)
          SIO.Close (F);
          return Byte_Seq'(0 => 0);
       end if;
@@ -172,10 +156,11 @@ procedure TLS_Web_Epoll is
       return -1;
    end Find_Free;
 
-   --  Network buffers
+   --  Network buffers — passed directly to read(2) / write(2) via
+   --  Buf'Address. No intermediate `aliased String C_Buf` layer
+   --  any more (was costing two ~16 KB byte-shuffles per record).
    Raw_Buf : aliased Byte_Seq (0 .. 16383) := (others => 0);
-   Snd_Buf : Byte_Seq (0 .. 16383);
-   C_Buf   : aliased String (1 .. 16384);
+   Snd_Buf : aliased Byte_Seq (0 .. 16383) := (others => 0);
 
    --  epoll state
    Epfd     : int;
@@ -189,15 +174,14 @@ procedure TLS_Web_Epoll is
       Fed : N32;
       Res : SPARKTLS.Action;
    begin
-      --  Read from socket
-      Rd := C_Read (Conn.FD, C_Buf'Address, C_Buf'Length);
+      --  Read directly into Raw_Buf — Byte_Seq is array of Unsigned_8,
+      --  byte-identical to a C buffer.
+      Rd := C_Read (Conn.FD, Raw_Buf'Address, Raw_Buf'Length);
       if Rd <= 0 then
          Conn.State := Closed;
          return;
       end if;
 
-      --  Convert and feed to TLS
-      From_C_Buf (C_Buf'Address, Raw_Buf, Natural (Rd));
       SPARKTLS.Feed_Ciphertext (Conn.S, Raw_Buf (0 .. N32 (Rd) - 1), Fed);
 
       --  Process TLS state machine
@@ -212,8 +196,7 @@ procedure TLS_Web_Epoll is
                begin
                   SPARKTLS.Drain_Ciphertext (Conn.S, Snd_Buf, N);
                   if N > 0 then
-                     To_C_Buf (Snd_Buf, C_Buf'Address, N);
-                     Wr := C_Write (Conn.FD, C_Buf'Address, size_t (N));
+                     Wr := C_Write (Conn.FD, Snd_Buf'Address, size_t (N));
                   end if;
                end;
 
@@ -344,23 +327,37 @@ procedure TLS_Web_Epoll is
                                        Written : N32;
                                        Wr : long;
                                     begin
-                                       SPARKTLS.Server.Write_Plaintext
-                                         (Conn.S, Resp, Written);
-                                       --  Drain encrypted output
-                                       loop
-                                          declare
-                                             Snd_N : N32;
-                                          begin
-                                             SPARKTLS.Drain_Ciphertext
-                                               (Conn.S, Snd_Buf, Snd_N);
-                                             exit when Snd_N = 0;
-                                             To_C_Buf
-                                               (Snd_Buf, C_Buf'Address, Snd_N);
-                                             Wr := C_Write
-                                               (Conn.FD, C_Buf'Address,
-                                                size_t (Snd_N));
-                                          end;
-                                       end loop;
+                                       --  Write_Plaintext returns
+                                       --  partial-write counts when the
+                                       --  output buffer fills up.  Loop:
+                                       --  write what fits, drain to
+                                       --  socket, write the rest.
+                                       declare
+                                          Total_Sent : N32 := 0;
+                                       begin
+                                          while Total_Sent < N32 (Resp'Length) loop
+                                             SPARKTLS.Server.Write_Plaintext
+                                               (Conn.S,
+                                                Resp (Total_Sent .. Resp'Last),
+                                                Written);
+                                             exit when Written = 0;
+                                             Total_Sent := Total_Sent + Written;
+                                             --  Drain encrypted output
+                                             loop
+                                                declare
+                                                   Snd_N : N32;
+                                                begin
+                                                   SPARKTLS.Drain_Ciphertext
+                                                     (Conn.S, Snd_Buf, Snd_N);
+                                                   exit when Snd_N = 0;
+                                                   Wr := C_Write
+                                                     (Conn.FD,
+                                                      Snd_Buf'Address,
+                                                      size_t (Snd_N));
+                                                end;
+                                             end loop;
+                                          end loop;
+                                       end;
                                        --  Send close_notify (Connection: close)
                                        SPARKTLS.Server.Close_Notify (Conn.S);
                                        loop
@@ -370,10 +367,8 @@ procedure TLS_Web_Epoll is
                                              SPARKTLS.Drain_Ciphertext
                                                (Conn.S, Snd_Buf, Snd_N);
                                              exit when Snd_N = 0;
-                                             To_C_Buf
-                                               (Snd_Buf, C_Buf'Address, Snd_N);
                                              Wr := C_Write
-                                               (Conn.FD, C_Buf'Address,
+                                               (Conn.FD, Snd_Buf'Address,
                                                 size_t (Snd_N));
                                           end;
                                        end loop;
@@ -398,8 +393,7 @@ procedure TLS_Web_Epoll is
                begin
                   SPARKTLS.Drain_Ciphertext (Conn.S, Snd_Buf, Snd_N);
                   if Snd_N > 0 then
-                     To_C_Buf (Snd_Buf, C_Buf'Address, Snd_N);
-                     Wr := C_Write (Conn.FD, C_Buf'Address, size_t (Snd_N));
+                     Wr := C_Write (Conn.FD, Snd_Buf'Address, size_t (Snd_N));
                   end if;
                end;
                Conn.State := Closed;

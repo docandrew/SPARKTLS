@@ -81,8 +81,12 @@ is
       Keys         : in out Traffic_Keys;
       Output       : in out IO_Buffer;
       Bytes_Out    :    out N32)
-   with Pre  => Plaintext'First = 0
-                and Plaintext'Last < Max_Fragment
+   --  Relaxed 2026-04-29: the body uses Ada slide-assignment to copy
+   --  Plaintext into a 0-based local Inner buffer, so any First works.
+   --  Length-based bound replaces the prior absolute-Last bound so a
+   --  fragmenting caller can pass slices `Plaintext (Pos .. ...)` of
+   --  a larger buffer without re-basing each chunk.
+   with Pre  => N32 (Plaintext'Length) <= Max_Fragment
                 and Inner_Type in 16#15# | 16#16# | 16#17#  --  RFC 8446 §5.4
                 and Nonce_Space_Available (Keys),             --  RFC 8446 §5.5
         Post => Keys.Counter = Keys.Counter'Old + 1;          --  RFC 8446 §5.3
