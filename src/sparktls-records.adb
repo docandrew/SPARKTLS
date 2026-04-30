@@ -163,89 +163,123 @@ is
       Bytes_Out    :    out N32)
    is
       Inner_Len  : constant N32 := N32 (Plaintext'Length) + 1;
-      Inner      : Byte_Seq (0 .. Inner_Len - 1) := (others => 0);
-      Ciphertext : Byte_Seq (0 .. Inner_Len - 1);
+      Enc_Len    : constant N32 := Inner_Len + Tag_Size;
+      Total      : constant N32 := Record_Header_Size + Enc_Len;
+      Hdr        : Byte_Seq (0 .. 4) := (others => 0);
       Tag        : Bytes_16;
       Nonce      : Bytes_12;
-
-      Enc_Len    : constant N32 := Inner_Len + Tag_Size;
-      Hdr        : Byte_Seq (0 .. 4) := (others => 0);
-      OK         : Boolean;
    begin
       Bytes_Out := 0;
 
-      --  Assemble inner plaintext
-      if Plaintext'Length > 0 then
-         Inner (0 .. N32 (Plaintext'Length) - 1) := Plaintext;
+      --  Bail if Output can't fit the whole record (header + ciphertext
+      --  + tag). The atomic-flight callers gate on this too, but we
+      --  need to know before reserving slice positions below.
+      if Free_Space (Output) < Total then
+         return;
       end if;
-      Inner (Inner'Last) := Inner_Type;
 
-      --  Build record header
-      Hdr (0) := 16#17#;
+      --  Build TLS record header (5 bytes: type + version + length).
+      Hdr (0) := 16#17#;  --  application_data outer type
       Hdr (1) := 16#03#;
       Hdr (2) := 16#03#;
       Hdr (3 .. 4) := TS16 (Unsigned_16 (Enc_Len));
 
-      --  Compute nonce
+      --  Compute the per-record nonce. Counter advances unconditionally
+      --  here, matching the original Build_Encrypted_Record semantics.
       Nonce := Make_Nonce (Keys.IV, Keys.Counter);
       Keys.Counter := Keys.Counter + 1;
 
-      --  Encrypt with the negotiated AEAD
-      case Keys.Suite is
-         when Suite_AES_128_GCM_SHA256 =>
-            declare
-               AES_Key : constant AES.AES128_Key :=
-                  AES.Construct (Keys.Key (0 .. 15));
-            begin
-               AES_GCM.Encrypt
-                 (C   => Ciphertext,
-                  Tag => Tag,
-                  M   => Inner,
-                  N   => Nonce,
-                  K   => AES_Key,
-                  AAD => Hdr);
-            end;
+      declare
+         Hdr_Pos : constant N32 := Output.Write_Pos;
+         CT_Pos  : constant N32 := Hdr_Pos + Record_Header_Size;
+         Tag_Pos : constant N32 := CT_Pos + Inner_Len;
+      begin
+         --  Header at [Hdr_Pos .. Hdr_Pos + 4]
+         for I in 0 .. 4 loop
+            Output.Data (Hdr_Pos + N32 (I)) := Hdr (N32 (I));
+         end loop;
 
-         when Suite_AES_256_GCM_SHA384 =>
-            declare
-               AES_Key : constant AES.AES256_Key :=
-                  AES.Construct (Keys.Key);
-            begin
-               AES_GCM.Encrypt_256
-                 (C   => Ciphertext,
-                  Tag => Tag,
-                  M   => Inner,
-                  N   => Nonce,
-                  K   => AES_Key,
-                  AAD => Hdr);
-            end;
+         --  Plaintext + content_type byte at [CT_Pos .. Tag_Pos - 1].
+         --  This single Plaintext-into-Output copy is the only data
+         --  movement at this layer; the prior code did Plaintext ->
+         --  Inner -> Ciphertext -> Output (3 copies, ~48 KB extra
+         --  shuffle per 16 KB record).
+         if Plaintext'Length > 0 then
+            for I in N32 range 0 .. N32 (Plaintext'Length) - 1 loop
+               Output.Data (CT_Pos + I) :=
+                  Plaintext (Plaintext'First + I);
+            end loop;
+         end if;
+         Output.Data (Tag_Pos - 1) := Inner_Type;
 
-         when others =>
-            declare
-               Key : constant ChaCha20_Key :=
-                  SPARKNaCl.Core.Construct (Keys.Key);
-            begin
-               SPARKNaCl.Secretbox.Create
-                 (C   => Ciphertext,
-                  Tag => Tag,
-                  M   => Inner,
-                  N   => ChaCha20_IETF_Nonce (Nonce),
-                  K   => Key,
-                  AAD => Hdr);
-            end;
-      end case;
+         --  Encrypt in place + compute tag, slice-aware.
+         case Keys.Suite is
+            when Suite_AES_128_GCM_SHA256 =>
+               declare
+                  AES_Key : constant AES.AES128_Key :=
+                     AES.Construct (Keys.Key (0 .. 15));
+               begin
+                  AES_GCM.Encrypt_InPlace
+                    (Buf => Output.Data (CT_Pos .. Tag_Pos - 1),
+                     Tag => Tag,
+                     N   => Nonce,
+                     K   => AES_Key,
+                     AAD => Hdr);
+               end;
 
-      --  Write header + ciphertext + tag
-      Write_To_Output (Output, Hdr, OK);
-      if not OK then return; end if;
+            when Suite_AES_256_GCM_SHA384 =>
+               declare
+                  AES_Key : constant AES.AES256_Key :=
+                     AES.Construct (Keys.Key);
+               begin
+                  AES_GCM.Encrypt_InPlace_256
+                    (Buf => Output.Data (CT_Pos .. Tag_Pos - 1),
+                     Tag => Tag,
+                     N   => Nonce,
+                     K   => AES_Key,
+                     AAD => Hdr);
+               end;
 
-      Write_To_Output (Output, Ciphertext, OK);
-      if not OK then return; end if;
+            when others =>
+               --  ChaCha20-Poly1305 fallback path: keep the older
+               --  separate-buffer code until we have an in-place
+               --  variant for SPARKNaCl.Secretbox.Create. AES suites
+               --  carry the bulk of TLS traffic, so the optimization
+               --  there is what shows up in benchmarks.
+               declare
+                  Inner      : Byte_Seq (0 .. Inner_Len - 1)
+                                  := (others => 0);
+                  Ciphertext : Byte_Seq (0 .. Inner_Len - 1);
+                  Key : constant ChaCha20_Key :=
+                     SPARKNaCl.Core.Construct (Keys.Key);
+               begin
+                  if Plaintext'Length > 0 then
+                     Inner (0 .. N32 (Plaintext'Length) - 1) := Plaintext;
+                  end if;
+                  Inner (Inner'Last) := Inner_Type;
+                  SPARKNaCl.Secretbox.Create
+                    (C   => Ciphertext,
+                     Tag => Tag,
+                     M   => Inner,
+                     N   => ChaCha20_IETF_Nonce (Nonce),
+                     K   => Key,
+                     AAD => Hdr);
+                  --  Copy ChaCha20 ciphertext into the destination
+                  --  slice we already reserved above.
+                  for I in N32 range 0 .. Inner_Len - 1 loop
+                     Output.Data (CT_Pos + I) := Ciphertext (I);
+                  end loop;
+               end;
+         end case;
 
-      Write_To_Output (Output, Tag, OK);
-      if not OK then return; end if;
+         --  Tag at [Tag_Pos .. Tag_Pos + 15]
+         for I in 0 .. 15 loop
+            Output.Data (Tag_Pos + N32 (I)) := Tag (N32 (I));
+         end loop;
 
-      Bytes_Out := Record_Header_Size + Enc_Len;
+         Output.Write_Pos := Output.Write_Pos + Total;
+      end;
+      Bytes_Out := Total;
    end Build_Encrypted_Record;
 
    procedure Decrypt_Record
