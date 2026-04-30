@@ -12,6 +12,7 @@ with Interfaces;              use Interfaces;
 with SPARKNaCl;               use SPARKNaCl;
 with SPARKNaCl.AES;
 with SPARKTLSCrypto.AES_NI;
+with SPARKTLSCrypto.GHASH_NI;
 
 procedure Test_AES_NI is
    Total : Natural := 0;
@@ -199,6 +200,442 @@ begin
          end;
       end loop;
       Check ("AES-256 SW/HW equivalence over 1024 random cases", Bad = 0);
+   end;
+
+   --================================================================
+   --  Test 5: Pre-swapped round-key path — Cipher_*_PreSw must match
+   --  Cipher_* (which itself matches SPARKNaCl). Tests the byteswap
+   --  optimization used by AES_CTR_*_InPlace.
+   --================================================================
+   declare
+      Bad_128 : Natural := 0;
+      Bad_256 : Natural := 0;
+   begin
+      for Trial in 1 .. 256 loop
+         declare
+            K128 : Bytes_16; K256 : Bytes_32; PT : Bytes_16;
+            CT_Slow_128, CT_Fast_128 : Bytes_16;
+            CT_Slow_256, CT_Fast_256 : Bytes_16;
+         begin
+            Fill_16 (K128); Fill_32 (K256); Fill_16 (PT);
+            declare
+               AES_K128 : constant SPARKNaCl.AES.AES128_Key :=
+                             SPARKNaCl.AES.Construct (K128);
+               RK128    : constant SPARKNaCl.AES.AES128_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K128);
+               AES_K256 : constant SPARKNaCl.AES.AES256_Key :=
+                             SPARKNaCl.AES.Construct (K256);
+               RK256    : constant SPARKNaCl.AES.AES256_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K256);
+               Pre_128  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_128;
+               Pre_256  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_256;
+            begin
+               SPARKTLSCrypto.AES_NI.Cipher_128 (CT_Slow_128, PT, RK128);
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_128 (RK128, Pre_128);
+               SPARKTLSCrypto.AES_NI.Cipher_128_PreSw
+                 (CT_Fast_128, PT, Pre_128);
+               if CT_Slow_128 /= CT_Fast_128 then Bad_128 := Bad_128 + 1; end if;
+
+               SPARKTLSCrypto.AES_NI.Cipher_256 (CT_Slow_256, PT, RK256);
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_256 (RK256, Pre_256);
+               SPARKTLSCrypto.AES_NI.Cipher_256_PreSw
+                 (CT_Fast_256, PT, Pre_256);
+               if CT_Slow_256 /= CT_Fast_256 then Bad_256 := Bad_256 + 1; end if;
+            end;
+         end;
+      end loop;
+      Check ("AES-128 PreSw == Cipher_128 over 256 random cases",
+             Bad_128 = 0);
+      Check ("AES-256 PreSw == Cipher_256 over 256 random cases",
+             Bad_256 = 0);
+   end;
+
+   --================================================================
+   --  Test 6: 4-way pipelined Cipher_4x_*_PreSw must produce 4 blocks
+   --  matching 4 individual Cipher_*_PreSw calls. Tests the AESENC
+   --  pipeline optimization used by AES_CTR_*_InPlace.
+   --================================================================
+   declare
+      Bad_128 : Natural := 0;
+      Bad_256 : Natural := 0;
+   begin
+      for Trial in 1 .. 256 loop
+         declare
+            K128 : Bytes_16; K256 : Bytes_32;
+            PT_Buf : SPARKTLSCrypto.AES_NI.Bytes_64;
+            CT_4x_128, CT_4x_256 : SPARKTLSCrypto.AES_NI.Bytes_64;
+            CT_Ref : Bytes_16;
+         begin
+            Fill_16 (K128); Fill_32 (K256);
+            for I in PT_Buf'Range loop PT_Buf (I) := Rand_Byte; end loop;
+            declare
+               AES_K128 : constant SPARKNaCl.AES.AES128_Key :=
+                             SPARKNaCl.AES.Construct (K128);
+               RK128    : constant SPARKNaCl.AES.AES128_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K128);
+               AES_K256 : constant SPARKNaCl.AES.AES256_Key :=
+                             SPARKNaCl.AES.Construct (K256);
+               RK256    : constant SPARKNaCl.AES.AES256_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K256);
+               Pre_128  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_128;
+               Pre_256  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_256;
+            begin
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_128 (RK128, Pre_128);
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_256 (RK256, Pre_256);
+
+               SPARKTLSCrypto.AES_NI.Cipher_4x_128_PreSw
+                 (CT_4x_128, PT_Buf, Pre_128);
+               SPARKTLSCrypto.AES_NI.Cipher_4x_256_PreSw
+                 (CT_4x_256, PT_Buf, Pre_256);
+
+               for B in 0 .. 3 loop
+                  declare
+                     PT_Block : Bytes_16;
+                  begin
+                     for I in 0 .. 15 loop
+                        PT_Block (N32 (I)) := PT_Buf (N32 (B * 16 + I));
+                     end loop;
+                     SPARKTLSCrypto.AES_NI.Cipher_128_PreSw
+                       (CT_Ref, PT_Block, Pre_128);
+                     for I in 0 .. 15 loop
+                        if CT_4x_128 (N32 (B * 16 + I)) /= CT_Ref (N32 (I)) then
+                           Bad_128 := Bad_128 + 1;
+                        end if;
+                     end loop;
+                     SPARKTLSCrypto.AES_NI.Cipher_256_PreSw
+                       (CT_Ref, PT_Block, Pre_256);
+                     for I in 0 .. 15 loop
+                        if CT_4x_256 (N32 (B * 16 + I)) /= CT_Ref (N32 (I)) then
+                           Bad_256 := Bad_256 + 1;
+                        end if;
+                     end loop;
+                  end;
+               end loop;
+            end;
+         end;
+      end loop;
+      Check ("AES-128 4x_PreSw matches 4× Cipher_128_PreSw over 256 random cases",
+             Bad_128 = 0);
+      Check ("AES-256 4x_PreSw matches 4× Cipher_256_PreSw over 256 random cases",
+             Bad_256 = 0);
+   end;
+
+   --================================================================
+   --  Test 7: Fused Cipher_4x_*_PreSw_XOR == 4-way keystream + XOR
+   --  with the buffer. Tests the in-place fused encrypt path used by
+   --  AES_CTR_*_InPlace.
+   --================================================================
+   declare
+      Bad_128 : Natural := 0;
+      Bad_256 : Natural := 0;
+   begin
+      for Trial in 1 .. 256 loop
+         declare
+            K128 : Bytes_16; K256 : Bytes_32;
+            Ctr_Buf : SPARKTLSCrypto.AES_NI.Bytes_64;
+            KS_Buf  : SPARKTLSCrypto.AES_NI.Bytes_64;
+            Buf_Ref, Buf_Fast : Byte_Seq (0 .. 63);
+         begin
+            Fill_16 (K128); Fill_32 (K256);
+            for I in Ctr_Buf'Range loop Ctr_Buf (I) := Rand_Byte; end loop;
+            for I in Buf_Ref'Range loop Buf_Ref (I) := Rand_Byte; end loop;
+            Buf_Fast := Buf_Ref;
+            declare
+               AES_K128 : constant SPARKNaCl.AES.AES128_Key :=
+                             SPARKNaCl.AES.Construct (K128);
+               RK128    : constant SPARKNaCl.AES.AES128_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K128);
+               AES_K256 : constant SPARKNaCl.AES.AES256_Key :=
+                             SPARKNaCl.AES.Construct (K256);
+               RK256    : constant SPARKNaCl.AES.AES256_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K256);
+               Pre_128  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_128;
+               Pre_256  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_256;
+            begin
+               --  AES-128: reference = generate keystream, manually XOR.
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_128 (RK128, Pre_128);
+               SPARKTLSCrypto.AES_NI.Cipher_4x_128_PreSw
+                 (KS_Buf, Ctr_Buf, Pre_128);
+               for I in 0 .. 63 loop
+                  Buf_Ref (N32 (I)) := Buf_Ref (N32 (I)) xor KS_Buf (N32 (I));
+               end loop;
+               SPARKTLSCrypto.AES_NI.Cipher_4x_128_PreSw_XOR
+                 (Buf_Fast, Ctr_Buf, Pre_128);
+               if Buf_Fast /= Buf_Ref then Bad_128 := Bad_128 + 1; end if;
+
+               --  Reset for AES-256 trial (use same Buf_Ref/Buf_Fast pattern).
+               for I in Buf_Ref'Range loop Buf_Ref (I) := Rand_Byte; end loop;
+               Buf_Fast := Buf_Ref;
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_256 (RK256, Pre_256);
+               SPARKTLSCrypto.AES_NI.Cipher_4x_256_PreSw
+                 (KS_Buf, Ctr_Buf, Pre_256);
+               for I in 0 .. 63 loop
+                  Buf_Ref (N32 (I)) := Buf_Ref (N32 (I)) xor KS_Buf (N32 (I));
+               end loop;
+               SPARKTLSCrypto.AES_NI.Cipher_4x_256_PreSw_XOR
+                 (Buf_Fast, Ctr_Buf, Pre_256);
+               if Buf_Fast /= Buf_Ref then Bad_256 := Bad_256 + 1; end if;
+            end;
+         end;
+      end loop;
+      Check ("AES-128 PreSw_XOR == keystream + XOR over 256 random cases",
+             Bad_128 = 0);
+      Check ("AES-256 PreSw_XOR == keystream + XOR over 256 random cases",
+             Bad_256 = 0);
+   end;
+
+   --================================================================
+   --  Test 8: Fully-fused Encrypt_GCM_Stripe_4 (AES + XOR + 4-block
+   --  aggregated GHASH in one asm) must match the unfused sequence
+   --  (AES_CTR + separate GHASH) for both buffer and S accumulator.
+   --================================================================
+   declare
+      Bad_128 : Natural := 0;
+      Bad_256 : Natural := 0;
+   begin
+      for Trial in 1 .. 256 loop
+         declare
+            K128 : Bytes_16; K256 : Bytes_32;
+            H    : Bytes_16;
+            S0   : Bytes_16;
+            Ctr  : SPARKTLSCrypto.AES_NI.Bytes_64;
+            Buf_Ref, Buf_Fast : Byte_Seq (0 .. 63);
+            S_Ref, S_Fast : Bytes_16;
+            KS   : SPARKTLSCrypto.AES_NI.Bytes_64;
+         begin
+            Fill_16 (K128); Fill_32 (K256);
+            Fill_16 (H); Fill_16 (S0);
+            for I in Ctr'Range loop Ctr (I) := Rand_Byte; end loop;
+            for I in Buf_Ref'Range loop Buf_Ref (I) := Rand_Byte; end loop;
+
+            --  AES-128 path
+            Buf_Fast := Buf_Ref;
+            S_Ref := S0; S_Fast := S0;
+            declare
+               AES_K128 : constant SPARKNaCl.AES.AES128_Key :=
+                             SPARKNaCl.AES.Construct (K128);
+               RK128    : constant SPARKNaCl.AES.AES128_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K128);
+               Pre_128  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_128;
+               HP       : SPARKTLSCrypto.GHASH_NI.Pre_H_Powers;
+            begin
+               --  Reference: encrypt then GHASH_4_Blocks separately.
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_128 (RK128, Pre_128);
+               SPARKTLSCrypto.AES_NI.Cipher_4x_128_PreSw (KS, Ctr, Pre_128);
+               for I in 0 .. 63 loop
+                  Buf_Ref (N32 (I)) := Buf_Ref (N32 (I)) xor KS (N32 (I));
+               end loop;
+               SPARKTLSCrypto.GHASH_NI.Compute_H_Powers (H, HP);
+               SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks (S_Ref, Buf_Ref, HP);
+
+               --  Fused stripe.
+               SPARKTLSCrypto.AES_NI.Encrypt_GCM_Stripe_4_128
+                 (Buf_Fast, S_Fast, Ctr, Pre_128, HP);
+
+               if Buf_Fast /= Buf_Ref or else S_Fast /= S_Ref then
+                  Bad_128 := Bad_128 + 1;
+                  if Bad_128 <= 3 then
+                     Put_Line ("    trial" & Trial'Image
+                               & " buf_eq=" & Boolean'Image (Buf_Fast = Buf_Ref)
+                               & " s_eq=" & Boolean'Image (S_Fast = S_Ref));
+                  end if;
+               end if;
+            end;
+
+            --  AES-256 path (fresh inputs)
+            for I in Buf_Ref'Range loop Buf_Ref (I) := Rand_Byte; end loop;
+            Buf_Fast := Buf_Ref;
+            S_Ref := S0; S_Fast := S0;
+            declare
+               AES_K256 : constant SPARKNaCl.AES.AES256_Key :=
+                             SPARKNaCl.AES.Construct (K256);
+               RK256    : constant SPARKNaCl.AES.AES256_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K256);
+               Pre_256  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_256;
+               HP       : SPARKTLSCrypto.GHASH_NI.Pre_H_Powers;
+            begin
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_256 (RK256, Pre_256);
+               SPARKTLSCrypto.AES_NI.Cipher_4x_256_PreSw (KS, Ctr, Pre_256);
+               for I in 0 .. 63 loop
+                  Buf_Ref (N32 (I)) := Buf_Ref (N32 (I)) xor KS (N32 (I));
+               end loop;
+               SPARKTLSCrypto.GHASH_NI.Compute_H_Powers (H, HP);
+               SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks (S_Ref, Buf_Ref, HP);
+
+               SPARKTLSCrypto.AES_NI.Encrypt_GCM_Stripe_4_256
+                 (Buf_Fast, S_Fast, Ctr, Pre_256, HP);
+
+               if Buf_Fast /= Buf_Ref or else S_Fast /= S_Ref then
+                  Bad_256 := Bad_256 + 1;
+               end if;
+            end;
+         end;
+      end loop;
+      Check ("AES-128 GCM fused stripe == unfused over 256 random cases",
+             Bad_128 = 0);
+      Check ("AES-256 GCM fused stripe == unfused over 256 random cases",
+             Bad_256 = 0);
+   end;
+
+   --================================================================
+   --  Test 9: 2-stripe pipelined Encrypt_GHASH_Pipelined_4 must
+   --  produce the same (ciphertext, S) as separate AES + GHASH
+   --  primitives on each stripe.
+   --================================================================
+   declare
+      Bad_128 : Natural := 0;
+      Bad_256 : Natural := 0;
+   begin
+      for Trial in 1 .. 256 loop
+         declare
+            K128 : Bytes_16; K256 : Bytes_32;
+            H : Bytes_16; S0 : Bytes_16;
+            Ctr_New : SPARKTLSCrypto.AES_NI.Bytes_64;
+            New_Buf_Ref, New_Buf_Fast : Byte_Seq (0 .. 63);
+            Prev_Ct  : Byte_Seq (0 .. 63);    -- already-encrypted input
+            S_Ref, S_Fast : Bytes_16;
+            KS : SPARKTLSCrypto.AES_NI.Bytes_64;
+         begin
+            Fill_16 (K128); Fill_32 (K256);
+            Fill_16 (H); Fill_16 (S0);
+            for I in Ctr_New'Range loop Ctr_New (I) := Rand_Byte; end loop;
+            for I in New_Buf_Ref'Range loop
+               New_Buf_Ref (I) := Rand_Byte;
+            end loop;
+            for I in Prev_Ct'Range loop Prev_Ct (I) := Rand_Byte; end loop;
+            New_Buf_Fast := New_Buf_Ref;
+            S_Ref := S0; S_Fast := S0;
+
+            --  AES-128 path
+            declare
+               AES_K128 : constant SPARKNaCl.AES.AES128_Key :=
+                             SPARKNaCl.AES.Construct (K128);
+               RK128    : constant SPARKNaCl.AES.AES128_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K128);
+               Pre_128  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_128;
+               HP       : SPARKTLSCrypto.GHASH_NI.Pre_H_Powers;
+            begin
+               --  Reference: GHASH the previous ciphertext, THEN AES-encrypt
+               --  the new plaintext (separate operations, expected to give
+               --  the same result as the fused pipelined call).
+               SPARKTLSCrypto.GHASH_NI.Compute_H_Powers (H, HP);
+               SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks (S_Ref, Prev_Ct, HP);
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_128 (RK128, Pre_128);
+               SPARKTLSCrypto.AES_NI.Cipher_4x_128_PreSw (KS, Ctr_New, Pre_128);
+               for I in 0 .. 63 loop
+                  New_Buf_Ref (N32 (I)) :=
+                     New_Buf_Ref (N32 (I)) xor KS (N32 (I));
+               end loop;
+
+               --  Pipelined call.
+               SPARKTLSCrypto.AES_NI.Encrypt_GHASH_Pipelined_4_128
+                 (New_Buf_Fast, Prev_Ct, S_Fast, Ctr_New, Pre_128, HP);
+
+               if New_Buf_Fast /= New_Buf_Ref or else S_Fast /= S_Ref then
+                  Bad_128 := Bad_128 + 1;
+                  if Bad_128 <= 3 then
+                     Put_Line ("    trial" & Trial'Image
+                               & " buf_eq=" & Boolean'Image
+                                 (New_Buf_Fast = New_Buf_Ref)
+                               & " s_eq=" & Boolean'Image
+                                 (S_Fast = S_Ref));
+                  end if;
+               end if;
+            end;
+
+            --  AES-256 path (fresh randoms).
+            for I in New_Buf_Ref'Range loop
+               New_Buf_Ref (I) := Rand_Byte;
+            end loop;
+            for I in Prev_Ct'Range loop Prev_Ct (I) := Rand_Byte; end loop;
+            New_Buf_Fast := New_Buf_Ref;
+            S_Ref := S0; S_Fast := S0;
+            declare
+               AES_K256 : constant SPARKNaCl.AES.AES256_Key :=
+                             SPARKNaCl.AES.Construct (K256);
+               RK256    : constant SPARKNaCl.AES.AES256_Round_Keys :=
+                             SPARKNaCl.AES.Key_Expansion (AES_K256);
+               Pre_256  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_256;
+               HP       : SPARKTLSCrypto.GHASH_NI.Pre_H_Powers;
+            begin
+               SPARKTLSCrypto.GHASH_NI.Compute_H_Powers (H, HP);
+               SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks (S_Ref, Prev_Ct, HP);
+               SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_256 (RK256, Pre_256);
+               SPARKTLSCrypto.AES_NI.Cipher_4x_256_PreSw (KS, Ctr_New, Pre_256);
+               for I in 0 .. 63 loop
+                  New_Buf_Ref (N32 (I)) :=
+                     New_Buf_Ref (N32 (I)) xor KS (N32 (I));
+               end loop;
+               SPARKTLSCrypto.AES_NI.Encrypt_GHASH_Pipelined_4_256
+                 (New_Buf_Fast, Prev_Ct, S_Fast, Ctr_New, Pre_256, HP);
+               if New_Buf_Fast /= New_Buf_Ref or else S_Fast /= S_Ref then
+                  Bad_256 := Bad_256 + 1;
+               end if;
+            end;
+         end;
+      end loop;
+      Check ("AES-128 GCM 2-stripe pipelined matches reference (256 cases)",
+             Bad_128 = 0);
+      Check ("AES-256 GCM 2-stripe pipelined matches reference (256 cases)",
+             Bad_256 = 0);
+   end;
+
+   --================================================================
+   --  Test 10: Build_Ctr_Block_4 must produce the same 4 counter
+   --  blocks (and same updated CB) as the equivalent Ada loop using
+   --  the existing Increment_Counter helper.
+   --================================================================
+   declare
+      --  Mirror the SPARKNaCl-style BE u32 counter increment used in
+      --  the Ada path so we have a self-contained reference here.
+      procedure Inc_Ref (CB : in out Bytes_16) is
+         Val : Unsigned_32 :=
+            Unsigned_32 (CB (12)) * 2**24 +
+            Unsigned_32 (CB (13)) * 2**16 +
+            Unsigned_32 (CB (14)) * 2**8 +
+            Unsigned_32 (CB (15));
+      begin
+         Val := Val + 1;
+         CB (12) := Byte (Shift_Right (Val, 24) and 16#FF#);
+         CB (13) := Byte (Shift_Right (Val, 16) and 16#FF#);
+         CB (14) := Byte (Shift_Right (Val, 8) and 16#FF#);
+         CB (15) := Byte (Val and 16#FF#);
+      end Inc_Ref;
+
+      Bad : Natural := 0;
+   begin
+      for Trial in 1 .. 1024 loop
+         declare
+            CB_Ref, CB_Fast : Bytes_16;
+            Ctr_Ref         : SPARKTLSCrypto.AES_NI.Bytes_64;
+            Ctr_Fast        : SPARKTLSCrypto.AES_NI.Bytes_64;
+         begin
+            Fill_16 (CB_Ref);
+            CB_Fast := CB_Ref;
+
+            --  Reference: Ada-side 4-block counter setup.
+            for B in 0 .. 3 loop
+               for I in 0 .. 15 loop
+                  Ctr_Ref (N32 (B * 16 + I)) := CB_Ref (N32 (I));
+               end loop;
+               Inc_Ref (CB_Ref);
+            end loop;
+
+            --  Asm primitive.
+            SPARKTLSCrypto.AES_NI.Build_Ctr_Block_4 (CB_Fast, Ctr_Fast);
+
+            if Ctr_Fast /= Ctr_Ref or else CB_Fast /= CB_Ref then
+               Bad := Bad + 1;
+               if Bad <= 3 then
+                  Put_Line ("    trial" & Trial'Image
+                            & " ctr_eq=" & Boolean'Image (Ctr_Fast = Ctr_Ref)
+                            & " cb_eq=" & Boolean'Image (CB_Fast = CB_Ref));
+               end if;
+            end if;
+         end;
+      end loop;
+      Check ("Build_Ctr_Block_4 matches Ada Increment_Counter loop (1024 cases)",
+             Bad = 0);
    end;
 
    New_Line;

@@ -22,6 +22,7 @@ with Ada.Command_Line;
 with Ada.Directories;
 with Ada.Streams;           use Ada.Streams;
 with Ada.Streams.Stream_IO;
+with Ada.Unchecked_Deallocation;
 with Ada.Calendar;
 with Interfaces;            use Interfaces;
 with Interfaces.C;          use Interfaces.C;
@@ -127,6 +128,43 @@ procedure TLS_Web_Epoll is
    Docroot : String (1 .. 256) := (others => ' ');
    Doc_Len : Natural := 0;
    Port    : constant := 8443;
+
+   --  Single-slot file cache: avoids re-reading the same file from
+   --  disk (and re-allocating its Byte_Seq) on every request. The
+   --  bench drives one path repeatedly, so this turns N reads into 1.
+   --  Reuses SPARKTLS.Byte_Seq_Access (already visible via use clause).
+   Cache_Path     : String (1 .. 256) := (others => ' ');
+   Cache_Path_Len : Natural := 0;
+   Cache_Body     : Byte_Seq_Access := null;
+
+   function Get_Cached (Full : String) return Byte_Seq_Access is
+   begin
+      if Cache_Body /= null
+         and then Full'Length <= Cache_Path'Length
+         and then Cache_Path_Len = Full'Length
+         and then Cache_Path (1 .. Cache_Path_Len) = Full
+      then
+         return Cache_Body;
+      end if;
+      declare
+         Loaded : constant Byte_Seq := Read_File (Full);
+      begin
+         if Loaded'Length <= 1 then
+            return null;
+         end if;
+         if Cache_Body /= null then
+            Free_Byte_Seq (Cache_Body);
+         end if;
+         Cache_Body := new Byte_Seq'(Loaded);
+         if Full'Length <= Cache_Path'Length then
+            Cache_Path (1 .. Full'Length) := Full;
+            Cache_Path_Len := Full'Length;
+         else
+            Cache_Path_Len := 0;
+         end if;
+         return Cache_Body;
+      end;
+   end Get_Cached;
 
    --  Session ticket cache (shared across connections)
    Tickets : aliased SPARKTLS.Ticket_Store;
@@ -315,34 +353,54 @@ procedure TLS_Web_Epoll is
 
                                        Full : constant String :=
                                           Docroot (1 .. Doc_Len) & Path;
-                                       Content : constant Byte_Seq :=
-                                          Read_File (Full);
-                                       Resp : Byte_Seq :=
-                                          (if Content'Length <= 1
-                                           then HTTP_404
-                                           else HTTP_Response
-                                                  ("200 OK",
-                                                   Content_Type (Path),
-                                                   Content));
+                                       Body_Ref : Byte_Seq_Access :=
+                                          Get_Cached (Full);
+                                       --  Header is small; build inline (no body copy).
+                                       Hdr_Str : constant String :=
+                                          (if Body_Ref = null
+                                           then "HTTP/1.1 404 Not Found"
+                                                & ASCII.CR & ASCII.LF
+                                                & "Content-Type: text/plain"
+                                                & ASCII.CR & ASCII.LF
+                                                & "Content-Length: 13"
+                                                & ASCII.CR & ASCII.LF
+                                                & "Connection: close"
+                                                & ASCII.CR & ASCII.LF
+                                                & ASCII.CR & ASCII.LF
+                                                & "404 Not Found"
+                                           else "HTTP/1.1 200 OK"
+                                                & ASCII.CR & ASCII.LF
+                                                & "Content-Type: "
+                                                & Content_Type (Path)
+                                                & ASCII.CR & ASCII.LF
+                                                & "Content-Length:"
+                                                & Body_Ref'Length'Image
+                                                & ASCII.CR & ASCII.LF
+                                                & "Connection: close"
+                                                & ASCII.CR & ASCII.LF
+                                                & ASCII.CR & ASCII.LF);
+                                       Hdr_Bytes : Byte_Seq
+                                          (0 .. N32 (Hdr_Str'Length) - 1);
                                        Written : N32;
                                        Wr : long;
                                     begin
-                                       --  Write_Plaintext returns
-                                       --  partial-write counts when the
-                                       --  output buffer fills up.  Loop:
-                                       --  write what fits, drain to
-                                       --  socket, write the rest.
+                                       for I in Hdr_Str'Range loop
+                                          Hdr_Bytes (N32 (I - Hdr_Str'First)) :=
+                                             SPARKNaCl.Byte
+                                               (Character'Pos (Hdr_Str (I)));
+                                       end loop;
+
+                                       --  Send header (and 404 inline body if applicable).
                                        declare
                                           Total_Sent : N32 := 0;
                                        begin
-                                          while Total_Sent < N32 (Resp'Length) loop
+                                          while Total_Sent < Hdr_Bytes'Length loop
                                              SPARKTLS.Server.Write_Plaintext
                                                (Conn.S,
-                                                Resp (Total_Sent .. Resp'Last),
+                                                Hdr_Bytes (Total_Sent .. Hdr_Bytes'Last),
                                                 Written);
                                              exit when Written = 0;
                                              Total_Sent := Total_Sent + Written;
-                                             --  Drain encrypted output
                                              loop
                                                 declare
                                                    Snd_N : N32;
@@ -358,6 +416,40 @@ procedure TLS_Web_Epoll is
                                              end loop;
                                           end loop;
                                        end;
+
+                                       --  Send body by reference (no per-request copy).
+                                       if Body_Ref /= null then
+                                          declare
+                                             Total_Sent : N32 := 0;
+                                             B_Last     : constant N32 := Body_Ref'Last;
+                                             B_First    : constant N32 := Body_Ref'First;
+                                             B_Len      : constant N32 :=
+                                                N32 (Body_Ref'Length);
+                                          begin
+                                             while Total_Sent < B_Len loop
+                                                SPARKTLS.Server.Write_Plaintext
+                                                  (Conn.S,
+                                                   Body_Ref
+                                                     (B_First + Total_Sent .. B_Last),
+                                                   Written);
+                                                exit when Written = 0;
+                                                Total_Sent := Total_Sent + Written;
+                                                loop
+                                                   declare
+                                                      Snd_N : N32;
+                                                   begin
+                                                      SPARKTLS.Drain_Ciphertext
+                                                        (Conn.S, Snd_Buf, Snd_N);
+                                                      exit when Snd_N = 0;
+                                                      Wr := C_Write
+                                                        (Conn.FD,
+                                                         Snd_Buf'Address,
+                                                         size_t (Snd_N));
+                                                   end;
+                                                end loop;
+                                             end loop;
+                                          end;
+                                       end if;
                                        --  Send close_notify (Connection: close)
                                        SPARKTLS.Server.Close_Notify (Conn.S);
                                        loop

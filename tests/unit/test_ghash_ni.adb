@@ -157,6 +157,53 @@ begin
       Check ("HW/SW equivalence over 1024 random pairs", Bad = 0);
    end;
 
+   --================================================================
+   --  4-block aggregated GHASH must match 4 sequential GF128_Mul calls.
+   --================================================================
+   declare
+      Bad : Natural := 0;
+   begin
+      for Trial in 1 .. 256 loop
+         declare
+            H : Bytes_16;
+            S0 : Bytes_16;
+            B : Byte_Seq (0 .. 63);
+            S_4x : Bytes_16;
+            S_Ref : Bytes_16;
+            HP : SPARKTLSCrypto.GHASH_NI.Pre_H_Powers;
+         begin
+            Fill (H); Fill (S0);
+            for I in B'Range loop B (I) := Rand_Byte; end loop;
+
+            --  Reference: 4 sequential (S ^ B_i) * H multiplications.
+            S_Ref := S0;
+            for K in 0 .. 3 loop
+               for I in 0 .. 15 loop
+                  S_Ref (N32 (I)) :=
+                     S_Ref (N32 (I)) xor B (N32 (K * 16 + I));
+               end loop;
+               S_Ref := SPARKTLSCrypto.GHASH_NI.GF128_Mul (S_Ref, H);
+            end loop;
+
+            --  Aggregated path.
+            S_4x := S0;
+            SPARKTLSCrypto.GHASH_NI.Compute_H_Powers (H, HP);
+            SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks (S_4x, B, HP);
+
+            if S_4x /= S_Ref then
+               Bad := Bad + 1;
+               if Bad <= 3 then
+                  Put_Line ("    trial" & Trial'Image);
+                  Put_Line ("      ref=" & Hex (S_Ref));
+                  Put_Line ("      4x= " & Hex (S_4x));
+               end if;
+            end if;
+         end;
+      end loop;
+      Check ("GHASH_4_Blocks == 4 x GF128_Mul over 256 random cases",
+             Bad = 0);
+   end;
+
    New_Line;
    Put_Line ("Pass:" & Pass'Image & " /" & Total'Image);
    if Fail > 0 then
