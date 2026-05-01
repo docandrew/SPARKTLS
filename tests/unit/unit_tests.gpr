@@ -10,7 +10,10 @@ project Unit_Tests is
                  "test_build_server_hello.adb",
                  "test_parse_client_hello.adb",
                  "test_aes_ni.adb",
-                 "test_ghash_ni.adb");
+                 "test_ghash_ni.adb",
+                 "test_vaes.adb",
+                 "test_poly1305.adb",
+                 "test_chacha20_avx512.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use ("-O2", "-gnatn", "-gnatp");

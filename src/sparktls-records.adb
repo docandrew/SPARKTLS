@@ -1,6 +1,7 @@
 with Interfaces; use Interfaces;
 with SPARKNaCl.AES;
 with SPARKTLSCrypto.AES_GCM;
+with SPARKTLSCrypto.ChaCha20_Poly1305;
 use SPARKTLSCrypto;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with Ada.Unchecked_Deallocation;
@@ -257,7 +258,7 @@ is
                      Inner (0 .. N32 (Plaintext'Length) - 1) := Plaintext;
                   end if;
                   Inner (Inner'Last) := Inner_Type;
-                  SPARKNaCl.Secretbox.Create
+                  SPARKTLSCrypto.ChaCha20_Poly1305.Encrypt
                     (C   => Ciphertext,
                      Tag => Tag,
                      M   => Inner,

@@ -86,10 +86,21 @@ is
    --  Length-based bound replaces the prior absolute-Last bound so a
    --  fragmenting caller can pass slices `Plaintext (Pos .. ...)` of
    --  a larger buffer without re-basing each chunk.
-   with Pre  => N32 (Plaintext'Length) <= Max_Fragment
+   --
+   --  Plaintext'Length is compared without the N32 conversion that
+   --  SPARK can't prove safe (Plaintext'Last could in principle be
+   --  N32'Last, making Length one past N32'Last).
+   --
+   --  Post is conditional: when Output is full, the body bails early
+   --  with Bytes_Out = 0 and does not advance Keys.Counter. Callers
+   --  must check Bytes_Out and only treat the call as completed when
+   --  it is non-zero.
+   with Pre  => Plaintext'Length <= Max_Fragment
                 and Inner_Type in 16#15# | 16#16# | 16#17#  --  RFC 8446 §5.4
                 and Nonce_Space_Available (Keys),             --  RFC 8446 §5.5
-        Post => Keys.Counter = Keys.Counter'Old + 1;          --  RFC 8446 §5.3
+        Post => (if Bytes_Out > 0
+                 then Keys.Counter = Keys.Counter'Old + 1   --  RFC 8446 §5.3
+                 else Keys.Counter = Keys.Counter'Old);
 
    --  Decrypt a TLS 1.3 encrypted record.
    --  RFC 8446 Section 5.4: After decryption, the inner plaintext

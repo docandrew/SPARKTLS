@@ -491,19 +491,17 @@ begin
             K128 : Bytes_16; K256 : Bytes_32;
             H : Bytes_16; S0 : Bytes_16;
             Ctr_New : SPARKTLSCrypto.AES_NI.Bytes_64;
-            New_Buf_Ref, New_Buf_Fast : Byte_Seq (0 .. 63);
-            Prev_Ct  : Byte_Seq (0 .. 63);    -- already-encrypted input
+            --  128-byte sliding window: [0..63] = prev ct (GHASH input,
+            --  unmodified), [64..127] = new plaintext encrypted in place.
+            Buf_Ref, Buf_Fast : Byte_Seq (0 .. 127);
             S_Ref, S_Fast : Bytes_16;
             KS : SPARKTLSCrypto.AES_NI.Bytes_64;
          begin
             Fill_16 (K128); Fill_32 (K256);
             Fill_16 (H); Fill_16 (S0);
             for I in Ctr_New'Range loop Ctr_New (I) := Rand_Byte; end loop;
-            for I in New_Buf_Ref'Range loop
-               New_Buf_Ref (I) := Rand_Byte;
-            end loop;
-            for I in Prev_Ct'Range loop Prev_Ct (I) := Rand_Byte; end loop;
-            New_Buf_Fast := New_Buf_Ref;
+            for I in Buf_Ref'Range loop Buf_Ref (I) := Rand_Byte; end loop;
+            Buf_Fast := Buf_Ref;
             S_Ref := S0; S_Fast := S0;
 
             --  AES-128 path
@@ -515,28 +513,28 @@ begin
                Pre_128  : SPARKTLSCrypto.AES_NI.Pre_Swapped_RKs_128;
                HP       : SPARKTLSCrypto.GHASH_NI.Pre_H_Powers;
             begin
-               --  Reference: GHASH the previous ciphertext, THEN AES-encrypt
-               --  the new plaintext (separate operations, expected to give
-               --  the same result as the fused pipelined call).
+               --  Reference: GHASH the prev-ct half, then AES-encrypt the
+               --  new-pt half via separate primitives.
                SPARKTLSCrypto.GHASH_NI.Compute_H_Powers (H, HP);
-               SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks (S_Ref, Prev_Ct, HP);
+               SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks
+                 (S_Ref, Buf_Ref (0 .. 63), HP);
                SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_128 (RK128, Pre_128);
                SPARKTLSCrypto.AES_NI.Cipher_4x_128_PreSw (KS, Ctr_New, Pre_128);
                for I in 0 .. 63 loop
-                  New_Buf_Ref (N32 (I)) :=
-                     New_Buf_Ref (N32 (I)) xor KS (N32 (I));
+                  Buf_Ref (N32 (64 + I)) :=
+                     Buf_Ref (N32 (64 + I)) xor KS (N32 (I));
                end loop;
 
                --  Pipelined call.
                SPARKTLSCrypto.AES_NI.Encrypt_GHASH_Pipelined_4_128
-                 (New_Buf_Fast, Prev_Ct, S_Fast, Ctr_New, Pre_128, HP);
+                 (Buf_Fast, S_Fast, Ctr_New, Pre_128, HP);
 
-               if New_Buf_Fast /= New_Buf_Ref or else S_Fast /= S_Ref then
+               if Buf_Fast /= Buf_Ref or else S_Fast /= S_Ref then
                   Bad_128 := Bad_128 + 1;
                   if Bad_128 <= 3 then
                      Put_Line ("    trial" & Trial'Image
                                & " buf_eq=" & Boolean'Image
-                                 (New_Buf_Fast = New_Buf_Ref)
+                                 (Buf_Fast = Buf_Ref)
                                & " s_eq=" & Boolean'Image
                                  (S_Fast = S_Ref));
                   end if;
@@ -544,11 +542,8 @@ begin
             end;
 
             --  AES-256 path (fresh randoms).
-            for I in New_Buf_Ref'Range loop
-               New_Buf_Ref (I) := Rand_Byte;
-            end loop;
-            for I in Prev_Ct'Range loop Prev_Ct (I) := Rand_Byte; end loop;
-            New_Buf_Fast := New_Buf_Ref;
+            for I in Buf_Ref'Range loop Buf_Ref (I) := Rand_Byte; end loop;
+            Buf_Fast := Buf_Ref;
             S_Ref := S0; S_Fast := S0;
             declare
                AES_K256 : constant SPARKNaCl.AES.AES256_Key :=
@@ -559,16 +554,17 @@ begin
                HP       : SPARKTLSCrypto.GHASH_NI.Pre_H_Powers;
             begin
                SPARKTLSCrypto.GHASH_NI.Compute_H_Powers (H, HP);
-               SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks (S_Ref, Prev_Ct, HP);
+               SPARKTLSCrypto.GHASH_NI.GHASH_4_Blocks
+                 (S_Ref, Buf_Ref (0 .. 63), HP);
                SPARKTLSCrypto.AES_NI.Pre_Swap_RKs_256 (RK256, Pre_256);
                SPARKTLSCrypto.AES_NI.Cipher_4x_256_PreSw (KS, Ctr_New, Pre_256);
                for I in 0 .. 63 loop
-                  New_Buf_Ref (N32 (I)) :=
-                     New_Buf_Ref (N32 (I)) xor KS (N32 (I));
+                  Buf_Ref (N32 (64 + I)) :=
+                     Buf_Ref (N32 (64 + I)) xor KS (N32 (I));
                end loop;
                SPARKTLSCrypto.AES_NI.Encrypt_GHASH_Pipelined_4_256
-                 (New_Buf_Fast, Prev_Ct, S_Fast, Ctr_New, Pre_256, HP);
-               if New_Buf_Fast /= New_Buf_Ref or else S_Fast /= S_Ref then
+                 (Buf_Fast, S_Fast, Ctr_New, Pre_256, HP);
+               if Buf_Fast /= Buf_Ref or else S_Fast /= S_Ref then
                   Bad_256 := Bad_256 + 1;
                end if;
             end;
