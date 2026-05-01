@@ -1,0 +1,39 @@
+--  Project file for the ctgrind constant-time test harnesses.
+--  Builds C + Ada — the C side wraps Valgrind client requests.
+
+with "../../sparktls.gpr";
+
+project Ctgrind is
+   for Create_Missing_Dirs use "True";
+   for Object_Dir use "obj";
+   for Exec_Dir use "../../bin/tests/ctgrind";
+   for Languages use ("Ada", "C");
+   for Source_Dirs use (".");
+   for Main use ("ct_chacha20_poly1305.adb",
+                 "ct_negative_control.adb",
+                 "ct_x25519.adb",
+                 "ct_ed25519.adb",
+                 "ct_poly1305_scalar.adb",
+                 "ct_p256_ecdsa.adb",
+                 "ct_p384_ecdsa.adb",
+                 "ct_hkdf.adb",
+                 "ct_aes_gcm.adb",
+                 "dudect_x25519.adb",
+                 "dudect_p256_ecdsa.adb",
+                 "dudect_p384_ecdsa.adb");
+
+   package Compiler is
+      --  Force a baseline x86-64-v2 codegen target so the compiler
+      --  doesn't auto-vectorize scalar code into AVX-512 (which
+      --  Valgrind 3.22 doesn't fully support). Our explicit inline
+      --  asm in the SPARKTLSCrypto library still uses AVX-512
+      --  literally — but at runtime under valgrind the CPUID
+      --  detection lies about AVX-512F so the dispatch falls back
+      --  to the scalar paths, and those are what we actually want
+      --  to vet for constant-time correctness here.
+      for Default_Switches ("Ada") use
+        ("-O2", "-g", "-gnatp", "-march=x86-64-v2");
+      for Default_Switches ("C")   use
+        ("-O2", "-g", "-march=x86-64-v2");
+   end Compiler;
+end Ctgrind;

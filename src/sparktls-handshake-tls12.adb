@@ -9,6 +9,7 @@ with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P256.ECDSA;
 with SPARKTLSCrypto.P384.Point;
 with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLSCrypto.RFC6979;
 with SPARKTLSCrypto.RSA;
 use SPARKTLSCrypto;
 with SPARKTLS.Cert_Verify;
@@ -222,7 +223,11 @@ is
                   K_Bytes : Bytes_32;
                   R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                begin
-                  Random.all (Byte_Seq (K_Bytes));
+                  --  RFC 6979 deterministic nonce.
+                  SPARKTLSCrypto.RFC6979.Derive_K_P256
+                    (D => Bytes_32 (Id.ECDSA_P256_Key),
+                     H => Bytes_32 (H),
+                     K => K_Bytes);
                   SPARKTLSCrypto.P256.ECDSA.Sign
                     (Hash  => H,
                      D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
@@ -248,7 +253,11 @@ is
                   R_Half  : Byte_Seq (0 .. 47);
                   S_Half  : Byte_Seq (0 .. 47);
                begin
-                  Random.all (Byte_Seq (K_Bytes));
+                  --  RFC 6979 deterministic nonce (HMAC-SHA-384 DRBG).
+                  SPARKTLSCrypto.RFC6979.Derive_K_P384
+                    (D => Bytes_48 (Id.ECDSA_P384_Key),
+                     H => Bytes_48 (H),
+                     K => K_Bytes);
                   SPARKTLSCrypto.P384.ECDSA.Sign
                     (Hash  => H,
                      D     => Byte_Seq (Id.ECDSA_P384_Key),
@@ -675,7 +684,11 @@ is
                K_Bytes : Bytes_32;
                R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
-               Random.all (Byte_Seq (K_Bytes));
+               --  RFC 6979 deterministic nonce.
+               SPARKTLSCrypto.RFC6979.Derive_K_P256
+                 (D => Bytes_32 (Id.ECDSA_P256_Key),
+                  H => Bytes_32 (Transcript_Hash (0 .. 31)),
+                  K => K_Bytes);
                SPARKTLSCrypto.P256.ECDSA.Sign
                  (Hash  => Bytes_32 (Transcript_Hash (0 .. 31)),
                   D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
