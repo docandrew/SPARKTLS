@@ -18,9 +18,14 @@ project Ctgrind is
                  "ct_p384_ecdsa.adb",
                  "ct_hkdf.adb",
                  "ct_aes_gcm.adb",
+                 "ct_aead_decrypt.adb",
+                 "ct_key_schedule.adb",
+                 "ct_rfc6979.adb",
+                 "ct_hmac.adb",
                  "dudect_x25519.adb",
                  "dudect_p256_ecdsa.adb",
-                 "dudect_p384_ecdsa.adb");
+                 "dudect_p384_ecdsa.adb",
+                 "dudect_aead.adb");
 
    package Compiler is
       --  Force a baseline x86-64-v2 codegen target so the compiler

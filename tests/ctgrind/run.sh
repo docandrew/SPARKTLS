@@ -78,6 +78,10 @@ run_one ct_p256_ecdsa        0  || fail=1
 run_one ct_p384_ecdsa        0  || fail=1
 run_one ct_hkdf              0  || fail=1
 run_one ct_aes_gcm           0  || fail=1
+run_one ct_aead_decrypt      0  || fail=1
+run_one ct_key_schedule      0  || fail=1
+run_one ct_rfc6979           0  || fail=1
+run_one ct_hmac              0  || fail=1
 
 echo ""
 if [ "$fail" -eq 0 ]; then

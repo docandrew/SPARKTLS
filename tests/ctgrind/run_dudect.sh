@@ -37,3 +37,4 @@ run_one() {
 run_one dudect_x25519
 run_one dudect_p256_ecdsa
 run_one dudect_p384_ecdsa
+run_one dudect_aead
