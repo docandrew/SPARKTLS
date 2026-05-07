@@ -349,6 +349,7 @@ is
       Bad_Certificate,
       Certificate_Expired,
       Certificate_Verify_Failed,
+      Certificate_Required,        --  RFC 8446 §6 alert 116
       Decode_Error,
       Illegal_Parameter,
       Protocol_Version,
@@ -397,6 +398,7 @@ is
          when Decode_Error             => 50,
          when Certificate_Verify_Failed => 51,
          when Protocol_Version         => 70,
+         when Certificate_Required     => 116,
          when Internal_Error
             | Insufficient_Buffer
             | No_Error                 => 80,
@@ -649,8 +651,20 @@ is
       --  Empty (Len=0) means no ALPN extension is sent.
       ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
 
-      --  Server: request a client certificate (mTLS).
+      --  Server: request a client certificate (mTLS). When True the
+      --  server sends a CertificateRequest in the handshake.
       Request_Client_Cert : Boolean := False;
+
+      --  Server: also REQUIRE that the client present a valid cert.
+      --  Only meaningful when Request_Client_Cert is True. When True
+      --  and the client sends an empty Certificate or one that fails
+      --  to parse / validate, the server aborts the handshake with
+      --  certificate_required (TLS 1.3) or handshake_failure (TLS 1.2).
+      --  When False (default) the server falls back to anonymous
+      --  authentication if the client doesn't present a cert — the
+      --  classic OpenSSL SSL_VERIFY_PEER vs
+      --  SSL_VERIFY_FAIL_IF_NO_PEER_CERT distinction.
+      Require_Client_Cert : Boolean := False;
 
       --  Server: ticket cache for session resumption.
       --  If non-null, server sends NewSessionTicket after handshake.

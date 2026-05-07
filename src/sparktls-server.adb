@@ -78,6 +78,7 @@ is
          when Bad_Certificate       => 42,
          when Certificate_Expired   => 45,
          when Certificate_Verify_Failed => 51,
+         when Certificate_Required  => 116,
          when Decode_Error          => 50,
          when Illegal_Parameter     => 47,
          when Protocol_Version     => 70,
@@ -177,6 +178,7 @@ is
       Random              : Random_Bytes_Fn;
       Trust               : Trust_Store_Access := null;
       Request_Client_Cert : Boolean := False;
+      Require_Client_Cert : Boolean := False;
       Tickets             : Ticket_Store_Access := null)
    with SPARK_Mode => Off
    is
@@ -186,6 +188,7 @@ is
       Cfg.Local               := Local;
       Cfg.Trust               := Trust;
       Cfg.Request_Client_Cert := Request_Client_Cert;
+      Cfg.Require_Client_Cert := Require_Client_Cert;
       Cfg.Ticket_Store        := Tickets;
       Init (S, Cfg);
    end Configure;
@@ -1777,7 +1780,14 @@ is
 
                         Append_Transcript (HC, Data);
 
-                        --  Parse client certificate (same logic as client)
+                        --  Parse client certificate chain: leaf +
+                        --  intermediates. Mirrors the client-side
+                        --  parsing in sparktls-client.adb. Format
+                        --  (past the 4-byte HS header):
+                        --    request_context_len(1) + context +
+                        --    cert_list_len(3) + entries
+                        --  Each entry: cert_len(3) + cert_DER +
+                        --    ext_len(2) + exts
                         HC.Peer_Cert_Valid := False;
                         HC.Peer_Int_Count := 0;
                         if Msg_Len > 4 and then
@@ -1788,12 +1798,14 @@ is
                               Ctx_Len : constant N32 := N32 (Data (B));
                               List_Start : constant N32 := B + 1 + Ctx_Len;
                               Pos : N32;
+                              Cert_Idx : Natural := 0;
                            begin
                               if List_Start + 3 <= N32 (Data'Length) then
                                  Pos := List_Start + 3;
 
-                                 --  First cert is the leaf
-                                 if Pos + 3 <= N32 (Data'Length) then
+                                 while Pos + 3 <= N32 (Data'Length)
+                                    and then Cert_Idx <= Max_Pool_Size
+                                 loop
                                     declare
                                        C_Len : constant N32 :=
                                           N32 (Data (Pos)) * 65536 +
@@ -1801,18 +1813,19 @@ is
                                           N32 (Data (Pos + 2));
                                     begin
                                        Pos := Pos + 3;
-                                       if C_Len > 0
-                                          and then C_Len <= Max_Cert_DER_Len
-                                          and then Pos + C_Len <=
-                                                      N32 (Data'Length)
-                                       then
+                                       exit when C_Len = 0
+                                          or else C_Len > N32 (Max_Cert_DER)
+                                          or else Pos + C_Len > N32 (Data'Length);
+
+                                       if Cert_Idx = 0 then
+                                          --  Leaf cert
                                           HC.Peer_Cert_DER_Len := C_Len;
                                           HC.Peer_Cert_DER (0 .. C_Len - 1) :=
                                              Data (Pos .. Pos + C_Len - 1);
-
                                           declare
                                              Cert_X : X509.Byte_Seq
-                                                (0 .. X509.N32 (C_Len) - 1) := (others => 0);
+                                                (0 .. X509.N32 (C_Len) - 1)
+                                                := (others => 0);
                                              P_OK : Boolean;
                                           begin
                                              for I in N32 range
@@ -1827,16 +1840,76 @@ is
                                                 and then
                                                    X509.Is_Valid (HC.Peer_Cert);
                                           end;
+                                       else
+                                          --  Intermediate cert
+                                          if HC.Peer_Int_Count < Max_Pool_Size
+                                          then
+                                             declare
+                                                Idx : constant Natural :=
+                                                   HC.Peer_Int_Count;
+                                                Int_X : X509.Byte_Seq
+                                                   (0 .. X509.N32 (C_Len) - 1)
+                                                   := (others => 0);
+                                                C    : X509.Certificate;
+                                                P_OK : Boolean;
+                                             begin
+                                                for I in N32 range
+                                                   0 .. C_Len - 1
+                                                loop
+                                                   Int_X (X509.N32 (I)) :=
+                                                      X509.Byte (Data (Pos + I));
+                                                end loop;
+                                                X509.Parse (Int_X, C, P_OK);
+                                                if P_OK
+                                                   and then X509.Is_Valid (C)
+                                                then
+                                                   HC.Peer_Ints (Idx).Cert := C;
+                                                   for I in X509.N32 range
+                                                      0 .. X509.N32 (C_Len) - 1
+                                                   loop
+                                                      HC.Peer_Ints (Idx).DER (I) :=
+                                                         X509.Byte (Data (Pos + N32 (I)));
+                                                   end loop;
+                                                   HC.Peer_Ints (Idx).DER_Len :=
+                                                      X509.N32 (C_Len);
+                                                   HC.Peer_Ints (Idx).Present := True;
+                                                   HC.Peer_Int_Count :=
+                                                      HC.Peer_Int_Count + 1;
+                                                end if;
+                                             end;
+                                          end if;
                                        end if;
+
+                                       Pos := Pos + C_Len;
+                                       Cert_Idx := Cert_Idx + 1;
+
+                                       --  Skip per-cert extensions
+                                       --  (2-byte length).
+                                       exit when Pos + 2 > N32 (Data'Length);
+                                       declare
+                                          Ext_Len : constant N32 :=
+                                             N32 (Data (Pos)) * 256 +
+                                             N32 (Data (Pos + 1));
+                                       begin
+                                          Pos := Pos + 2 + Ext_Len;
+                                       end;
                                     end;
-                                 end if;
+                                 end loop;
                               end if;
                            end;
                         end if;
 
-                        --  Empty cert list is OK (client has no cert)
                         if not HC.Peer_Cert_Valid then
-                           --  No client cert — skip CertificateVerify
+                           if HC.Cfg.Require_Client_Cert then
+                              --  Required-cert mode: client did not
+                              --  present a valid cert. Abort with
+                              --  certificate_required (RFC 8446 §6).
+                              Send_Alert_And_Error
+                                (S, Certificate_Required, Result);
+                              return;
+                           end if;
+                           --  Optional-cert mode: empty / invalid cert
+                           --  is allowed. Skip CertificateVerify.
                            Set_State (S, Wait_Client_Finished);
                         else
                            Set_State (S, Wait_Client_Cert_Verify);
@@ -1890,45 +1963,52 @@ is
                                        64 + N32 (Ctx_Str'Length) + H_Len) :=
                                  CV_Hash;
 
-                              --  Ed25519 verification
-                              if X509.PK_Algorithm (HC.Peer_Cert) =
-                                    X509.Algo_EC_Ed25519
-                                 and then Msg_Len >= 68
-                              then
+                              --  Parse SignatureScheme + Sig from CV
+                              --  message. Layout (past 4-byte HS hdr):
+                              --    sig_scheme(2) + sig_len(2) + sig(N)
+                              if Msg_Len >= 8 then
                                  declare
-                                    SM_Len : constant N32 := 64 + C_Len;
-                                    SM : Byte_Seq (0 .. SM_Len - 1)
-                                       := (others => 0);
-                                    M  : Byte_Seq (0 .. SM_Len - 1);
-                                    PK_Bytes : Bytes_32 := (others => 0);
-                                    V_OK : Boolean;
-                                    V_Len : I32;
+                                    Sig_Scheme : constant Unsigned_16 :=
+                                       Unsigned_16 (Data (4)) * 256 +
+                                       Unsigned_16 (Data (5));
+                                    Sig_Len : constant N32 :=
+                                       N32 (Data (6)) * 256 +
+                                       N32 (Data (7));
+                                    Sig_Start : constant N32 := 8;
                                  begin
-                                    SM (0 .. 63) := Data (8 .. 71);
-                                    SM (64 .. SM_Len - 1) := Content;
+                                    --  RFC 8446 §4.2.3: rsa_pkcs1_*
+                                    --  MUST NOT be used in TLS 1.3 CV.
+                                    if Sig_Scheme = 16#0401#
+                                       or Sig_Scheme = 16#0501#
+                                       or Sig_Scheme = 16#0601#
+                                    then
+                                       Send_Alert_And_Error
+                                         (S, Illegal_Parameter, Result);
+                                       return;
+                                    end if;
 
-                                    declare
-                                       PK : constant X509.Byte_Seq :=
-                                          X509.PK_Data (HC.Peer_Cert);
-                                    begin
-                                       for I in 0 .. 31 loop
-                                          PK_Bytes (N32 (I)) :=
-                                             Byte (PK (X509.N32 (I)));
-                                       end loop;
-                                    end;
-
-                                    SPARKTLSCrypto.Ed25519.Open
-                                      (M, V_OK, V_Len, SM, PK_Bytes);
-                                    Verified := V_OK;
+                                    if Sig_Len > 0
+                                       and then Sig_Start + Sig_Len
+                                                  <= N32 (Data'Length)
+                                    then
+                                       declare
+                                          Sig : Byte_Seq (0 .. Sig_Len - 1);
+                                       begin
+                                          Sig := Data (Sig_Start ..
+                                                       Sig_Start + Sig_Len - 1);
+                                          Verified := Cert_Verify.Verify_Signature
+                                            (Data       => Content,
+                                             Sig        => Sig,
+                                             Cert       => HC.Peer_Cert,
+                                             Sig_Scheme => Sig_Scheme);
+                                       end;
+                                    end if;
                                  end;
                               end if;
 
-                              --  TODO: ECDSA P-256/P-384 verification
-
                               if not Verified then
-                                 S.Last_Error := Certificate_Verify_Failed;
-                                 Set_State (S, Error_State);
-                                 Result := Error_Alert;
+                                 Send_Alert_And_Error
+                                   (S, Certificate_Verify_Failed, Result);
                                  return;
                               end if;
                            end;

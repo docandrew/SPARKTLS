@@ -44,6 +44,7 @@ is
       Random              : Random_Bytes_Fn;
       Trust               : Trust_Store_Access := null;
       Request_Client_Cert : Boolean := False;
+      Require_Client_Cert : Boolean := False;
       Tickets             : Ticket_Store_Access := null)
    with SPARK_Mode => Off;
    --  SPARK_Mode Off: Ticket_Store_Access is access-all (shared mutable

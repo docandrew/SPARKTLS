@@ -13,7 +13,8 @@ project Unit_Tests is
                  "test_ghash_ni.adb",
                  "test_vaes.adb",
                  "test_poly1305.adb",
-                 "test_chacha20_avx512.adb");
+                 "test_chacha20_avx512.adb",
+                 "test_rsa_pkcs1_kat.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use ("-O2", "-gnatn", "-gnatp");

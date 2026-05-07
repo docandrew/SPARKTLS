@@ -26,6 +26,7 @@ procedure TLS_Blocking_Server is
    Tickets : aliased SPARKTLS.Ticket_Store;
    Roots   : aliased SPARKTLS.Trust_Store;
    MTLS    : Boolean := False;
+   MTLS_Require : Boolean := False;
 
    Server_Sock : Socket_Type;
    Port        : constant := 8443;
@@ -90,6 +91,7 @@ procedure TLS_Blocking_Server is
          Trust               => (if MTLS then Roots'Unchecked_Access
                                  else null),
          Request_Client_Cert => MTLS,
+         Require_Client_Cert => MTLS_Require,
          Tickets             => Tickets'Unchecked_Access);
 
       --  Handshake + data loop
@@ -189,9 +191,10 @@ begin
       return;
    end if;
 
-   --  Check for --mtls flag
+   --  Check for --mtls / --mtls-require flag
    if Ada.Command_Line.Argument_Count >= 4
-      and then Ada.Command_Line.Argument (3) = "--mtls"
+      and then (Ada.Command_Line.Argument (3) = "--mtls"
+                or else Ada.Command_Line.Argument (3) = "--mtls-require")
    then
       declare
          Roots_OK : Boolean;
@@ -200,8 +203,11 @@ begin
            (Roots, Ada.Command_Line.Argument (4), Roots_OK);
          if Roots_OK then
             MTLS := True;
+            MTLS_Require :=
+              Ada.Command_Line.Argument (3) = "--mtls-require";
             Put_Line ("mTLS enabled (trust: " &
-                      Ada.Command_Line.Argument (4) & ")");
+                      Ada.Command_Line.Argument (4)
+                      & (if MTLS_Require then ", REQUIRED)" else ")"));
          else
             Put_Line ("Warning: failed to load trust store, mTLS disabled");
          end if;

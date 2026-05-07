@@ -235,8 +235,11 @@ begin
          Msg : Byte_Seq (0 .. 127);
          type U64_Lane is array (0 .. 7) of Unsigned_64;
          type Triplet is array (0 .. 2) of U64_Lane;
+         --  Asm writes 192 bytes (3 × 8 × U64) lane-major into a flat
+         --  buffer; we then unpack into Triplet for comparison.
+         Asm_Bytes : Byte_Seq (0 .. 191) := (others => 0);
+         for Asm_Bytes'Alignment use 64;
          Asm_Out : Triplet := (others => (others => 0));
-         for Asm_Out'Alignment use 64;
          Ada_Out : Triplet := (others => (others => 0));
          M44 : constant Unsigned_64 := 16#0FFF_FFFF_FFFF#;
          function To_U32 (P : N32) return Unsigned_32 is
@@ -252,7 +255,26 @@ begin
 
          --  Asm path
          SPARKTLSCrypto.Poly1305_AVX512_IFMA.Debug_Unpack
-           (Msg (0)'Address, Asm_Out'Address);
+           (Msg, Asm_Bytes);
+
+         --  Unpack flat byte buffer into Triplet for comparison.
+         for K in 0 .. 2 loop
+            for I in 0 .. 7 loop
+               declare
+                  Off : constant N32 := N32 (K) * 64 + N32 (I) * 8;
+               begin
+                  Asm_Out (K) (I) :=
+                       Unsigned_64 (Asm_Bytes (Off))
+                    or Shift_Left (Unsigned_64 (Asm_Bytes (Off + 1)),  8)
+                    or Shift_Left (Unsigned_64 (Asm_Bytes (Off + 2)), 16)
+                    or Shift_Left (Unsigned_64 (Asm_Bytes (Off + 3)), 24)
+                    or Shift_Left (Unsigned_64 (Asm_Bytes (Off + 4)), 32)
+                    or Shift_Left (Unsigned_64 (Asm_Bytes (Off + 5)), 40)
+                    or Shift_Left (Unsigned_64 (Asm_Bytes (Off + 6)), 48)
+                    or Shift_Left (Unsigned_64 (Asm_Bytes (Off + 7)), 56);
+               end;
+            end loop;
+         end loop;
 
          --  Ada path
          for I in 0 .. 7 loop

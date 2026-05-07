@@ -419,6 +419,21 @@ is
                            N32 (Data (6)) * 256 + N32 (Data (7));
                         Sig_Start : constant N32 := 8;
                      begin
+                        --  RFC 8446 §4.2.3: rsa_pkcs1_* schemes
+                        --  (0x0401/0x0501/0x0601) MUST NOT be used in
+                        --  TLS 1.3 CertificateVerify. Reject with
+                        --  illegal_parameter before invoking the
+                        --  shared verifier.
+                        if Sig_Scheme = 16#0401#
+                           or Sig_Scheme = 16#0501#
+                           or Sig_Scheme = 16#0601#
+                        then
+                           S.Last_Error := Illegal_Parameter;
+                           Set_State (S, Error_State);
+                           Result := Error_Alert;
+                           return;
+                        end if;
+
                         if Sig_Len > 0
                            and then Sig_Start + Sig_Len <=
                                        N32 (Data'Length)

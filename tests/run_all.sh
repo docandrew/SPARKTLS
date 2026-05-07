@@ -87,6 +87,41 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # RSA PKCS#1 v1.5 KAT (verifies the new EMSA-PKCS1-v1_5 path)
+    if [ -f bin/tests/test_rsa_pkcs1_kat ]; then
+        output=$(bin/tests/test_rsa_pkcs1_kat 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_rsa_pkcs1_kat: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
+    # Project Wycheproof: adversarial test vectors for crypto primitives.
+    # Skipped if test vectors haven't been fetched (large external dep).
+    if [ -d tests/wycheproof/wycheproof/testvectors_v1 ]; then
+        output=$(bash tests/wycheproof/run.sh 2>&1 || true)
+        wp_total=$(echo "$output" | grep -oE "[0-9]+/[0-9]+ passed" | tail -1 | cut -d'/' -f1)
+        wp_count=$(echo "$output" | grep -oE "[0-9]+ failed" | tail -1 | awk '{print $1}')
+        wp_count=${wp_count:-0}
+        wp_total=${wp_total:-0}
+        echo "  wycheproof: $wp_total tests, $wp_count failed"
+        UNIT_PASS=$((UNIT_PASS + wp_total))
+        UNIT_FAIL=$((UNIT_FAIL + wp_count))
+    fi
+
+    # NIST CAVP: ECDSA SigVer (FIPS 186-4) for P-256 + P-384.
+    # Skipped if SigVer.rsp hasn't been downloaded.
+    if [ -f tests/cavp/ecdsa_SigVer.rsp ] || command -v curl >/dev/null; then
+        output=$(bash tests/cavp/run.sh 2>&1 || true)
+        cv_pass=$(echo "$output" | grep -oE "[0-9]+/[0-9]+ passed" | tail -1 | cut -d'/' -f1)
+        cv_fail=$(echo "$output" | grep -oE "[0-9]+ failed" | tail -1 | awk '{print $1}')
+        cv_pass=${cv_pass:-0}; cv_fail=${cv_fail:-0}
+        echo "  cavp: $cv_pass tests, $cv_fail failed"
+        UNIT_PASS=$((UNIT_PASS + cv_pass))
+        UNIT_FAIL=$((UNIT_FAIL + cv_fail))
+    fi
+
     # Fiat P-256 vs C-reference KAT (catches arithmetic regressions)
     if [ -f bin/tests/test_fiat_p256_kat ]; then
         output=$(bin/tests/test_fiat_p256_kat 2>&1 || true)

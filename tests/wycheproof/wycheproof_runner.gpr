@@ -1,0 +1,13 @@
+with "../../sparktls.gpr";
+
+project Wycheproof_Runner is
+   for Create_Missing_Dirs use "True";
+   for Object_Dir use "obj";
+   for Exec_Dir use "../../bin/tests";
+   for Source_Dirs use (".");
+   for Main use ("wycheproof_runner.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use ("-O2", "-gnatp");
+   end Compiler;
+end Wycheproof_Runner;

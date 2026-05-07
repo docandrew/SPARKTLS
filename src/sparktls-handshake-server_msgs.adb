@@ -470,8 +470,21 @@ is
          IDs_Len : constant N32 :=
                      N32 (Ext_Data (0)) * 256 + N32 (Ext_Data (1));
          P : N32 := 2;
+         --  Single-identity wire size: tick_len(2) + ticket + age(4).
+         Single_ID_Size : constant N32 := 2 + N32 (Ticket_ID_Len) + 4;
       begin
          if P + 2 > DLen or else IDs_Len = 0 then
+            return;
+         end if;
+         --  Reject multi-identity PSK extensions. RFC 8446 §4.2.11
+         --  permits multiple identities (server picks one) but our
+         --  parser handles only the single-identity / single-binder
+         --  shape today. Mis-parsing a multi-identity offer would
+         --  bind the wrong binder to the wrong identity, which is a
+         --  protocol-correctness issue (Bug #1 class). Bailing out
+         --  silently here causes the server to fall back to a full
+         --  handshake — safe, just no resumption.
+         if IDs_Len /= Single_ID_Size then
             return;
          end if;
          --  First identity: len(2) + ticket + age(4)

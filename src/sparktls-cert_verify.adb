@@ -47,6 +47,8 @@ is
       S_Len     : X509.N32;
       R_Off     : X509.N32;
       S_Off     : X509.N32;
+      Outer_Len : X509.N32;
+      Outer_End : X509.N32;
    begin
       R_Out := (others => 0);
       S_Out := (others => 0);
@@ -57,14 +59,40 @@ is
       if Sig'Length < 8 or else Sig'Last > 512 or else Sig (Idx) /= 16#30# then
          return;
       end if;
-      Idx := Idx + 2;  --  skip tag + length
+      Idx := Idx + 1;  --  skip SEQUENCE tag
 
-      --  First INTEGER (r)
+      --  Parse SEQUENCE length. Supports short-form (single byte 0..127)
+      --  and long-form 0x81 (one length byte 128..255). Reject 0x82+
+      --  (longer payloads) — DER ECDSA sigs for P-256/P-384/P-521 fit
+      --  in <= 200 bytes, so any longer encoding is malformed.
+      if Idx > Sig'Last then return; end if;
+      if Sig (Idx) < 16#80# then
+         Outer_Len := X509.N32 (Sig (Idx));
+         Idx := Idx + 1;
+      elsif Sig (Idx) = 16#81# and then Idx + 1 <= Sig'Last then
+         Outer_Len := X509.N32 (Sig (Idx + 1));
+         Idx := Idx + 2;
+      else
+         return;
+      end if;
+      if Outer_Len = 0 or else Outer_Len > X509.N32 (Sig'Last - Idx + 1) then
+         return;
+      end if;
+      Outer_End := Idx + Outer_Len;
+      --  Strict-DER: outer SEQUENCE must consume the full input. No
+      --  trailing data after (r, s).
+      if Outer_End - 1 /= Sig'Last then
+         return;
+      end if;
+
+      --  First INTEGER (r). Length is short-form; INTEGERs in
+      --  P-256/P-384/P-521 sigs are at most 66 bytes (< 128).
       if Idx > Sig'Last or else Sig (Idx) /= 16#02# then
          return;
       end if;
       Idx := Idx + 1;
       if Idx > Sig'Last then return; end if;
+      if Sig (Idx) >= 16#80# then return; end if;  -- reject long-form
       R_Len := X509.N32 (Sig (Idx));
       Idx := Idx + 1;
 
@@ -96,6 +124,7 @@ is
       end if;
       Idx := Idx + 1;
       if Idx > Sig'Last then return; end if;
+      if Sig (Idx) >= 16#80# then return; end if;  -- reject long-form
       S_Len := X509.N32 (Sig (Idx));
       Idx := Idx + 1;
 
@@ -114,6 +143,12 @@ is
                Byte (Sig (Idx + S_Off + I));
          end loop;
       else
+         return;
+      end if;
+
+      --  Strict-DER: after consuming s, the cursor must land exactly
+      --  on the SEQUENCE end (no trailing bytes inside the SEQUENCE).
+      if Idx + S_Off + S_Len /= Outer_End then
          return;
       end if;
 
@@ -172,7 +207,12 @@ is
       begin
          case Sig_Algo is
 
-            --  RSA-PSS / RSA PKCS#1 with SHA-256
+            --  RSA PKCS#1 v1.5 with SHA-256, or RSA-PSS with SHA-256.
+            --  NB: sparkx509 currently exposes a single Algo_RSA_PSS
+            --  (no per-hash variant) so PSS in cert chains is treated
+            --  as PSS-SHA256 here. Real-world PSS-SHA384/512 chain
+            --  certs are rare; lift this restriction by extending
+            --  X509.Algorithm_ID to carry the PSS hash variant.
             when X509.Algo_RSA_PKCS1_SHA256 | X509.Algo_RSA_PSS =>
                if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
                   or else PK_Len < 64 or else PK_Len /= Sig_Len
@@ -191,16 +231,26 @@ is
                   for I in N32 range 0 .. N32 (Sig_Len) - 1 loop
                      Sig_Bytes (I) := Byte (Sig_Data (X509.N32 (I)));
                   end loop;
-                  return RSA.Verify_PSS_SHA256
-                    (Hash      => Bytes_32 (Byte_Seq (H)),
-                     Modulus   => Mod_Bytes,
-                     Mod_Len   => N32 (PK_Len),
-                     Exponent  => Unsigned_32 (X509.RSA_Exponent (Issuer)),
-                     Signature => Sig_Bytes,
-                     Sig_Len   => N32 (Sig_Len));
+                  if Sig_Algo = X509.Algo_RSA_PSS then
+                     return RSA.Verify_PSS_SHA256
+                       (Hash      => Bytes_32 (Byte_Seq (H)),
+                        Modulus   => Mod_Bytes,
+                        Mod_Len   => N32 (PK_Len),
+                        Exponent  => Unsigned_32 (X509.RSA_Exponent (Issuer)),
+                        Signature => Sig_Bytes,
+                        Sig_Len   => N32 (Sig_Len));
+                  else
+                     return RSA.Verify_PKCS1_v1_5_SHA256
+                       (Hash      => Bytes_32 (Byte_Seq (H)),
+                        Modulus   => Mod_Bytes,
+                        Mod_Len   => N32 (PK_Len),
+                        Exponent  => Unsigned_32 (X509.RSA_Exponent (Issuer)),
+                        Signature => Sig_Bytes,
+                        Sig_Len   => N32 (Sig_Len));
+                  end if;
                end;
 
-            --  RSA PKCS#1 with SHA-384
+            --  RSA PKCS#1 v1.5 with SHA-384
             when X509.Algo_RSA_PKCS1_SHA384 =>
                if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
                   or else PK_Len < 64 or else PK_Len /= Sig_Len
@@ -219,7 +269,7 @@ is
                   for I in N32 range 0 .. N32 (Sig_Len) - 1 loop
                      Sig_Bytes (I) := Byte (Sig_Data (X509.N32 (I)));
                   end loop;
-                  return RSA.Verify_PSS_SHA384
+                  return RSA.Verify_PKCS1_v1_5_SHA384
                     (Hash      => Bytes_48 (Byte_Seq (H)),
                      Modulus   => Mod_Bytes,
                      Mod_Len   => N32 (PK_Len),
@@ -228,7 +278,7 @@ is
                      Sig_Len   => N32 (Sig_Len));
                end;
 
-            --  RSA PKCS#1 with SHA-512
+            --  RSA PKCS#1 v1.5 with SHA-512
             when X509.Algo_RSA_PKCS1_SHA512 =>
                if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
                   or else PK_Len < 64 or else PK_Len /= Sig_Len
@@ -247,7 +297,7 @@ is
                   for I in N32 range 0 .. N32 (Sig_Len) - 1 loop
                      Sig_Bytes (I) := Byte (Sig_Data (X509.N32 (I)));
                   end loop;
-                  return RSA.Verify_PSS_SHA512
+                  return RSA.Verify_PKCS1_v1_5_SHA512
                     (Hash      => Bytes_64 (Byte_Seq (H)),
                      Modulus   => Mod_Bytes,
                      Mod_Len   => N32 (PK_Len),
@@ -1204,7 +1254,10 @@ is
 
       case Sig_Scheme is
 
-         --  RSA-PSS-SHA256 (0x0804) or RSA-PKCS1-SHA256 (0x0401)
+         --  RSA-PSS-SHA256 (0x0804) or RSA-PKCS1-SHA256 (0x0401).
+         --  Both schemes are accepted at this layer; the TLS 1.3
+         --  caller is responsible for rejecting rsa_pkcs1_* per
+         --  RFC 8446 §4.2.3 before reaching here.
          when 16#0804# | 16#0401# =>
             if PK_Algo /= X509.Algo_RSA then return False; end if;
             if PK_Len < 64 or PK_Len > X509.N32 (RSA.Max_RSA_Bytes) then
@@ -1221,13 +1274,23 @@ is
                   Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                end loop;
                Sig_Bytes := Sig;
-               return RSA.Verify_PSS_SHA256
-                 (Hash      => Bytes_32 (Byte_Seq (H)),
-                  Modulus   => Mod_Bytes,
-                  Mod_Len   => N32 (PK_Len),
-                  Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
-                  Signature => Sig_Bytes,
-                  Sig_Len   => Sig_Len);
+               if Sig_Scheme = 16#0804# then
+                  return RSA.Verify_PSS_SHA256
+                    (Hash      => Bytes_32 (Byte_Seq (H)),
+                     Modulus   => Mod_Bytes,
+                     Mod_Len   => N32 (PK_Len),
+                     Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
+                     Signature => Sig_Bytes,
+                     Sig_Len   => Sig_Len);
+               else
+                  return RSA.Verify_PKCS1_v1_5_SHA256
+                    (Hash      => Bytes_32 (Byte_Seq (H)),
+                     Modulus   => Mod_Bytes,
+                     Mod_Len   => N32 (PK_Len),
+                     Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
+                     Signature => Sig_Bytes,
+                     Sig_Len   => Sig_Len);
+               end if;
             end;
 
          --  RSA-PSS-SHA384 (0x0805) or RSA-PKCS1-SHA384 (0x0501)
@@ -1247,13 +1310,59 @@ is
                   Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                end loop;
                Sig_Bytes := Sig;
-               return RSA.Verify_PSS_SHA384
-                 (Hash      => Bytes_48 (Byte_Seq (H)),
-                  Modulus   => Mod_Bytes,
-                  Mod_Len   => N32 (PK_Len),
-                  Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
-                  Signature => Sig_Bytes,
-                  Sig_Len   => Sig_Len);
+               if Sig_Scheme = 16#0805# then
+                  return RSA.Verify_PSS_SHA384
+                    (Hash      => Bytes_48 (Byte_Seq (H)),
+                     Modulus   => Mod_Bytes,
+                     Mod_Len   => N32 (PK_Len),
+                     Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
+                     Signature => Sig_Bytes,
+                     Sig_Len   => Sig_Len);
+               else
+                  return RSA.Verify_PKCS1_v1_5_SHA384
+                    (Hash      => Bytes_48 (Byte_Seq (H)),
+                     Modulus   => Mod_Bytes,
+                     Mod_Len   => N32 (PK_Len),
+                     Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
+                     Signature => Sig_Bytes,
+                     Sig_Len   => Sig_Len);
+               end if;
+            end;
+
+         --  RSA-PSS-SHA512 (0x0806) or RSA-PKCS1-SHA512 (0x0601)
+         when 16#0806# | 16#0601# =>
+            if PK_Algo /= X509.Algo_RSA then return False; end if;
+            if PK_Len < 64 or PK_Len > X509.N32 (RSA.Max_RSA_Bytes) then
+               return False;
+            end if;
+            if Sig_Len /= N32 (PK_Len) then return False; end if;
+            declare
+               H : SPARKNaCl.Hashing.SHA512.Digest;
+               Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
+               Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
+            begin
+               SPARKNaCl.Hashing.SHA512.Hash (H, Data);
+               for I in N32 range 0 .. N32 (PK_Len) - 1 loop
+                  Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
+               end loop;
+               Sig_Bytes := Sig;
+               if Sig_Scheme = 16#0806# then
+                  return RSA.Verify_PSS_SHA512
+                    (Hash      => Bytes_64 (Byte_Seq (H)),
+                     Modulus   => Mod_Bytes,
+                     Mod_Len   => N32 (PK_Len),
+                     Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
+                     Signature => Sig_Bytes,
+                     Sig_Len   => Sig_Len);
+               else
+                  return RSA.Verify_PKCS1_v1_5_SHA512
+                    (Hash      => Bytes_64 (Byte_Seq (H)),
+                     Modulus   => Mod_Bytes,
+                     Mod_Len   => N32 (PK_Len),
+                     Exponent  => Unsigned_32 (X509.RSA_Exponent (Cert)),
+                     Signature => Sig_Bytes,
+                     Sig_Len   => Sig_Len);
+               end if;
             end;
 
          --  ECDSA-P256-SHA256 (0x0403)

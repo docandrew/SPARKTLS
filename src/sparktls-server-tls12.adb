@@ -25,6 +25,7 @@ is
          when Bad_Certificate       => 42, when Certificate_Expired => 45,
          when Certificate_Verify_Failed => 51, when Decode_Error  => 50,
          when Illegal_Parameter     => 47, when Protocol_Version  => 70,
+         when Certificate_Required  => 116,
          when Internal_Error    => 80,
          when Insufficient_Buffer   => 80, when Unsupported_Cipher_Suite => 40,
          when No_Error              => 80);
@@ -105,7 +106,55 @@ is
          return;
       end if;
 
-      HC.Negotiated_Sig_Algo := 16#0804#;  -- RSA-PSS-SHA256
+      --  Negotiate signature scheme: pick the first client-offered
+      --  scheme that is compatible with our local key's signing
+      --  algorithm. RSA-PKCS#1 v1.5 schemes (0x0401/0x0501/0x0601)
+      --  would be valid in TLS 1.2 but we don't yet implement
+      --  v1.5 *signing* in SPARKTLSCrypto.RSA — only verify — so
+      --  we offer PSS only for RSA keys. Verify is supported, so
+      --  client cert sigs in v1.5 are still accepted via the
+      --  cert_verify path.
+      declare
+         Negotiated : Unsigned_16 := 0;
+      begin
+         for I in Natural range 0 .. HC.Peer_Sig_Algo_Count - 1 loop
+            declare
+               Scheme : constant Unsigned_16 := HC.Peer_Sig_Algos (I);
+            begin
+               case HC.Cfg.Local.Sign_Algo is
+                  when Sign_RSA_PSS =>
+                     if Scheme = 16#0804# or Scheme = 16#0805#
+                        or Scheme = 16#0806#
+                     then
+                        Negotiated := Scheme;
+                        exit;
+                     end if;
+                  when Sign_ECDSA_P256 =>
+                     if Scheme = 16#0403# then
+                        Negotiated := Scheme;
+                        exit;
+                     end if;
+                  when Sign_ECDSA_P384 =>
+                     if Scheme = 16#0503# then
+                        Negotiated := Scheme;
+                        exit;
+                     end if;
+                  when Sign_Ed25519 =>
+                     if Scheme = 16#0807# then
+                        Negotiated := Scheme;
+                        exit;
+                     end if;
+                  when Sign_None =>
+                     null;
+               end case;
+            end;
+         end loop;
+         if Negotiated = 0 then
+            Send_Alert_And_Error (S, Handshake_Failure, Result);
+            return;
+         end if;
+         HC.Negotiated_Sig_Algo := Negotiated;
+      end;
 
       case HC.Selected_Group is
          when Group_X25519    => Gen_Random (Byte_Seq (HC.Local_SK));
