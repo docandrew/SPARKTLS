@@ -341,6 +341,51 @@ is
          return;
       end if;
 
+      if Rec.Content = Records.Content_Alert then
+         --  RFC 5246 §7.2.1: close_notify can arrive at any time
+         --  (including mid-handshake before keys are established).
+         --  We must reply with close_notify (warning level) and
+         --  close. Other plaintext alerts during handshake are
+         --  protocol violations — fatal.
+         declare
+            FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+            Alert_Level : Byte := 0;
+            Alert_Desc  : Byte := 0;
+         begin
+            if Rec.Fragment_Len >= 2 then
+               Alert_Level := S.Input.Data (FS);
+               Alert_Desc  := S.Input.Data (FS + 1);
+            end if;
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if Alert_Desc = 0 then
+               --  close_notify — reply in kind (plaintext warning).
+               declare
+                  A : N32;
+               begin
+                  Records.Build_Plaintext_Alert
+                    (Level     => 1,
+                     Desc      => 0,
+                     Output    => S.Output,
+                     Bytes_Out => A);
+               end;
+               Set_State (S, Closing);
+               if Output_Pending (S) > 0 then
+                  Result := Has_Output;
+               else
+                  Result := Shutdown;
+               end if;
+            else
+               --  Other alert mid-handshake — peer is closing on us
+               --  with a fatal condition; just close (no reply).
+               S.Last_Error := Unexpected_Message;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+            end if;
+            pragma Unreferenced (Alert_Level);
+            return;
+         end;
+      end if;
+
       if Rec.Content /= Records.Content_Handshake then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);
@@ -402,7 +447,22 @@ is
             when Group_X25519 =>
                HC.Shared_Secret (0 .. 31) :=
                   SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
-               SS_OK := True;
+               --  RFC 7748 §6.1 / RFC 8422 §5.10: reject all-zeros
+               --  shared secret. X25519 maps small-subgroup peer
+               --  public keys (orders 1, 2, 4, 8 — eight specific
+               --  byte strings) to a zero shared secret. Accepting
+               --  these allows a passive attacker to coerce the
+               --  shared secret to a known value (full handshake
+               --  break). Constant-time OR-fold across the 32
+               --  bytes; SS_OK iff at least one byte non-zero.
+               declare
+                  Acc : Byte := 0;
+               begin
+                  for I in N32 range 0 .. 31 loop
+                     Acc := Acc or HC.Shared_Secret (I);
+                  end loop;
+                  SS_OK := Acc /= 0;
+               end;
             when Group_Secp256r1 =>
                declare
                   use SPARKTLSCrypto.P256.Point;

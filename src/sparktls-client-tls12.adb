@@ -428,7 +428,16 @@ is
                         Gen (Byte_Seq (HC.Local_SK));
                         HC.Shared_Secret (0 .. 31) :=
                            SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
-                        SS_OK := True;
+                        --  RFC 7748 §6.1: reject all-zeros shared
+                        --  secret (small-subgroup attack defence).
+                        declare
+                           Acc : Byte := 0;
+                        begin
+                           for I in N32 range 0 .. 31 loop
+                              Acc := Acc or HC.Shared_Secret (I);
+                           end loop;
+                           SS_OK := Acc /= 0;
+                        end;
                      when Group_Secp256r1 =>
                         Gen (Byte_Seq (HC.P256_Local_SK));
                         declare

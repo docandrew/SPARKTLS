@@ -52,6 +52,12 @@ if [ ! -f "$SERVER" ]; then
     exit 2
 fi
 
+# Always rebuild the library + example binary so the run reflects
+# the current source. Easy to forget and chase a stale binary.
+echo "Rebuilding sparktls + examples..."
+(cd "$REPO_ROOT" && alr build 2>&1 | tail -2)
+(cd "$REPO_ROOT/examples" && alr build 2>&1 | tail -2)
+
 cleanup() {
     for pid in $(ss -tlnp 2>/dev/null | grep ":$PORT " | grep -oP 'pid=\K\d+'); do
         kill "$pid" 2>/dev/null || true

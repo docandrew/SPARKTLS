@@ -1772,9 +1772,10 @@ is
                   case S.State is
                      when Wait_Client_Certificate =>
                         if Msg_Type /= Handshake.HT_Certificate then
-                           S.Last_Error := Unexpected_Message;
-                           Set_State (S, Error_State);
-                           Result := Error_Alert;
+                           --  RFC 8446 §6.2: send fatal
+                           --  unexpected_message alert before close.
+                           Send_Encrypted_Alert
+                             (S, Unexpected_Message, Result);
                            return;
                         end if;
 
@@ -1918,9 +1919,9 @@ is
 
                      when Wait_Client_Cert_Verify =>
                         if Msg_Type /= Handshake.HT_Certificate_Verify then
-                           S.Last_Error := Unexpected_Message;
-                           Set_State (S, Error_State);
-                           Result := Error_Alert;
+                           --  RFC 8446 §6.2: fatal alert before close.
+                           Send_Encrypted_Alert
+                             (S, Unexpected_Message, Result);
                            return;
                         end if;
 
