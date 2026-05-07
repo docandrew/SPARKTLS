@@ -681,6 +681,48 @@ is
                Parse_ALPN_Extension (Ext_Ctx, DLen, HC);
             end if;
 
+         when RFLX.Tls_Extensiontype_Values.Ec_Point_Formats =>
+            --  RFC 8422 §5.1.2: the only valid value is 0
+            --  (uncompressed). Formats 1 (ansiX962_compressed_prime)
+            --  and 2 (ansiX962_compressed_char2) are deprecated and
+            --  MUST NOT be supported. We reject any ClientHello
+            --  whose ec_point_formats list contains anything other
+            --  than 0, OR is missing 0 entirely.
+            --
+            --  TLS 1.3 ignores this extension (RFC 8446 §4.2.6);
+            --  TLS 1.2 ECDHE paths use it. TLS-Anvil tests
+            --  8422-DRMPmFHPDy (deprecatedFormat) and
+            --  8422-hCNJHtPUAY (invalidPointFormat) flag the
+            --  acceptance of non-0 values.
+            if DLen >= 2 and then DLen in Wire_Small_Ext_Len then
+               declare
+                  ED        : RBT.Bytes (1 .. RBT.Index (DLen));
+                  Ext_Data  : Byte_Seq (0 .. DLen - 1);
+                  List_Len  : N32;
+                  Has_Uncompressed : Boolean := False;
+                  Has_Deprecated   : Boolean := False;
+               begin
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
+                  Ext_Data := To_NaCl (ED);
+                  List_Len := N32 (Ext_Data (0));
+                  if List_Len > 0 and then List_Len <= DLen - 1 then
+                     for I in N32 range 1 .. List_Len loop
+                        if Ext_Data (I) = 0 then
+                           Has_Uncompressed := True;
+                        else
+                           --  Anything non-zero is deprecated
+                           --  (formats 1 and 2) or invalid.
+                           Has_Deprecated := True;
+                        end if;
+                     end loop;
+                     if not Has_Uncompressed or Has_Deprecated then
+                        OK := False;
+                        return;
+                     end if;
+                  end if;
+               end;
+            end if;
+
          when others =>
             null;
       end case;

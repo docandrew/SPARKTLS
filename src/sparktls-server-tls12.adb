@@ -715,8 +715,29 @@ is
 
             when Records.Content_Alert =>
                if PL >= 2 and then Plaintext (1) = 0 then
+                  --  close_notify received — RFC 5246 §7.2.1 (and
+                  --  RFC 8446 §6.1) require a close_notify reply at
+                  --  warning level (1) before tearing the
+                  --  connection down. Without this TLS-Anvil's
+                  --  closeNotify test sees a level-2 alert from us.
+                  declare
+                     A : N32;
+                  begin
+                     Records.TLS12.Build_Alert_Record_12
+                       (Level       => 1,
+                        Desc        => 0,
+                        Keys        => S.Server_App,
+                        Implicit_IV => S.Server_IV_12,
+                        Seq_Num     => S.Server_Seq_12,
+                        Output      => S.Output,
+                        Bytes_Out   => A);
+                  end;
                   Set_State (S, Closing);
-                  Result := Shutdown;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Shutdown;
+                  end if;
                else
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);

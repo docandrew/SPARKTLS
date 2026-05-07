@@ -297,10 +297,15 @@ procedure Wycheproof_Runner is
       Idx := DER'First;
       if DER (Idx) /= 16#30# then return False; end if;
       Idx := Idx + 1;
+      --  Outer SEQUENCE length: strict DER allows 0x81 (long form) only
+      --  when the value is >= 128. Anything < 128 must use short form.
       if DER (Idx) < 16#80# then
          Outer_Len := N32 (DER (Idx));
          Idx := Idx + 1;
-      elsif DER (Idx) = 16#81# and Idx + 1 <= DER'Last then
+      elsif DER (Idx) = 16#81#
+         and then Idx + 1 <= DER'Last
+         and then DER (Idx + 1) >= 16#80#
+      then
          Outer_Len := N32 (DER (Idx + 1));
          Idx := Idx + 2;
       else
@@ -308,28 +313,49 @@ procedure Wycheproof_Runner is
       end if;
       Outer_End := Idx + Outer_Len;
       if Outer_End - 1 /= DER'Last then return False; end if;
+      --  R INTEGER. INTEGERs in P-256/P-384/P-521 sigs are < 128 bytes.
       if DER (Idx) /= 16#02# then return False; end if;
       Idx := Idx + 1;
-      if DER (Idx) >= 16#80# then return False; end if;
+      if DER (Idx) >= 16#80# then return False; end if;  -- long-form len
       R_Len := N32 (DER (Idx)); Idx := Idx + 1;
-      R_Off := 0;
-      if R_Len > 0 and DER (Idx) = 0 then R_Off := 1; R_Len := R_Len - 1; end if;
-      if R_Len = 0 or R_Len > Coord_Len
-         or Idx + R_Off + R_Len - 1 > DER'Last
+      if R_Len = 0 or R_Len > Coord_Len + 1
+         or Idx + R_Len - 1 > DER'Last
       then return False; end if;
+      --  Strict DER: positive INTEGER with high bit set in byte 0 must
+      --  have a leading 0x00 byte; without it the encoding would be
+      --  ambiguous (negative in two's complement). Conversely, a
+      --  leading 0x00 followed by a byte with high bit clear is
+      --  superfluous (would shrink to one fewer byte) — also invalid.
+      R_Off := 0;
+      if DER (Idx) = 0 then
+         if R_Len < 2 or DER (Idx + 1) < 16#80# then return False; end if;
+         R_Off := 1;
+         R_Len := R_Len - 1;
+      elsif DER (Idx) >= 16#80# then
+         return False;  -- missing leading 0 on positive INTEGER
+      end if;
+      if R_Len = 0 or R_Len > Coord_Len then return False; end if;
       for I in N32 range 0 .. R_Len - 1 loop
          R (Coord_Len - R_Len + I) := DER (Idx + R_Off + I);
       end loop;
       Idx := Idx + R_Off + R_Len;
+      --  S INTEGER (same strict-DER treatment)
       if DER (Idx) /= 16#02# then return False; end if;
       Idx := Idx + 1;
       if DER (Idx) >= 16#80# then return False; end if;
       S_Len := N32 (DER (Idx)); Idx := Idx + 1;
-      S_Off := 0;
-      if S_Len > 0 and DER (Idx) = 0 then S_Off := 1; S_Len := S_Len - 1; end if;
-      if S_Len = 0 or S_Len > Coord_Len
-         or Idx + S_Off + S_Len - 1 > DER'Last
+      if S_Len = 0 or S_Len > Coord_Len + 1
+         or Idx + S_Len - 1 > DER'Last
       then return False; end if;
+      S_Off := 0;
+      if DER (Idx) = 0 then
+         if S_Len < 2 or DER (Idx + 1) < 16#80# then return False; end if;
+         S_Off := 1;
+         S_Len := S_Len - 1;
+      elsif DER (Idx) >= 16#80# then
+         return False;
+      end if;
+      if S_Len = 0 or S_Len > Coord_Len then return False; end if;
       for I in N32 range 0 .. S_Len - 1 loop
          S (Coord_Len - S_Len + I) := DER (Idx + S_Off + I);
       end loop;

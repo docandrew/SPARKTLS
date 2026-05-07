@@ -2701,9 +2701,28 @@ is
             when 16#15# =>
                --  Alert
                if Plain_Len >= 2 and then Plaintext (1) = 0 then
-                  --  close_notify
+                  --  close_notify received — RFC 8446 §6.1 says we
+                  --  SHOULD reply with our own close_notify at
+                  --  warning level (1) before closing the write-half.
+                  --  Without this, peers that strictly check the
+                  --  alert level (e.g. TLS-Anvil's closeNotify test)
+                  --  flag an apparent fatal-vs-warning mismatch.
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (Level     => 1,
+                        Desc      => 0,
+                        Keys      => S.Server_App,
+                        Output    => S.Output,
+                        Bytes_Out => A);
+                  end;
                   Set_State (S, Closing);
-                  Result := Shutdown;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Shutdown;
+                  end if;
                else
                   --  Invalid/empty alert — send unexpected_message
                   declare

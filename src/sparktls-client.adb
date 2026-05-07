@@ -1604,9 +1604,25 @@ is
             when 16#15# =>
                --  Alert
                if Plain_Len >= 2 and then Plaintext (1) = 0 then
-                  --  close_notify
+                  --  close_notify received — RFC 8446 §6.1: reply
+                  --  with our own close_notify (warning level 1)
+                  --  before closing.
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (Level     => 1,
+                        Desc      => 0,
+                        Keys      => S.Client_App,
+                        Output    => S.Output,
+                        Bytes_Out => A);
+                  end;
                   Set_State (S, Closing);
-                  Result := Shutdown;
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Shutdown;
+                  end if;
                else
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);

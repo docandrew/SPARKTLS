@@ -66,10 +66,14 @@ is
       --  (longer payloads) — DER ECDSA sigs for P-256/P-384/P-521 fit
       --  in <= 200 bytes, so any longer encoding is malformed.
       if Idx > Sig'Last then return; end if;
+      --  Strict DER: 0x81 long-form is permitted only when the value
+      --  is >= 128. Anything < 128 must use short form (a single byte).
       if Sig (Idx) < 16#80# then
          Outer_Len := X509.N32 (Sig (Idx));
          Idx := Idx + 1;
-      elsif Sig (Idx) = 16#81# and then Idx + 1 <= Sig'Last then
+      elsif Sig (Idx) = 16#81# and then Idx + 1 <= Sig'Last
+         and then Sig (Idx + 1) >= 16#80#
+      then
          Outer_Len := X509.N32 (Sig (Idx + 1));
          Idx := Idx + 2;
       else
@@ -96,11 +100,22 @@ is
       R_Len := X509.N32 (Sig (Idx));
       Idx := Idx + 1;
 
-      --  Skip leading zero byte
+      --  Strict DER for the INTEGER value:
+      --   - byte 0 with high bit set requires a leading 0x00 (otherwise
+      --     the encoding would denote a negative value)
+      --   - leading 0x00 followed by byte < 0x80 is superfluous (would
+      --     shrink to one fewer byte) — also non-canonical
       R_Off := 0;
       if R_Len > 0 and then Idx <= Sig'Last and then Sig (Idx) = 0 then
+         if R_Len < 2 or else Idx + 1 > Sig'Last
+            or else Sig (Idx + 1) < 16#80#
+         then return; end if;
          R_Off := 1;
          R_Len := R_Len - 1;
+      elsif R_Len > 0 and then Idx <= Sig'Last
+         and then Sig (Idx) >= 16#80#
+      then
+         return;  -- positive INTEGER missing required leading 0x00
       end if;
 
       --  Copy r, right-aligned
@@ -130,8 +145,15 @@ is
 
       S_Off := 0;
       if S_Len > 0 and then Idx <= Sig'Last and then Sig (Idx) = 0 then
+         if S_Len < 2 or else Idx + 1 > Sig'Last
+            or else Sig (Idx + 1) < 16#80#
+         then return; end if;
          S_Off := 1;
          S_Len := S_Len - 1;
+      elsif S_Len > 0 and then Idx <= Sig'Last
+         and then Sig (Idx) >= 16#80#
+      then
+         return;  -- positive INTEGER missing required leading 0x00
       end if;
 
       if S_Len > 0 and then S_Len <= X509.N32 (Coord_Len)

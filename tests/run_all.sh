@@ -122,6 +122,19 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + cv_fail))
     fi
 
+    # Real-world CA chain test: handshake against major HTTPS sites
+    # using the OS Mozilla CA bundle. Skipped automatically when no
+    # network or no CA bundle.
+    if [ -f /etc/ssl/certs/ca-certificates.crt ] && getent hosts www.google.com >/dev/null 2>&1; then
+        output=$(bash tests/realworld/run.sh 2>&1 || true)
+        rw_pass=$(echo "$output" | grep -oE "[0-9]+/[0-9]+ passed" | tail -1 | cut -d'/' -f1)
+        rw_fail=$(echo "$output" | grep -oE "[0-9]+ failed" | tail -1 | awk '{print $1}')
+        rw_pass=${rw_pass:-0}; rw_fail=${rw_fail:-0}
+        echo "  realworld: $rw_pass sites, $rw_fail failed"
+        UNIT_PASS=$((UNIT_PASS + rw_pass))
+        UNIT_FAIL=$((UNIT_FAIL + rw_fail))
+    fi
+
     # Fiat P-256 vs C-reference KAT (catches arithmetic regressions)
     if [ -f bin/tests/test_fiat_p256_kat ]; then
         output=$(bin/tests/test_fiat_p256_kat 2>&1 || true)

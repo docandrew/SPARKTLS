@@ -157,6 +157,18 @@ begin
              Signature => Sig,
              Sig_Len   => 256));
 
+   --  5. v1.5 signature must NOT pass PSS verifier (different padding).
+   --  This used to silently succeed because CT_Eq0 was broken — a
+   --  regression test for that fix.
+   Check ("v1.5 signature does not pass PSS verifier",
+          not SPARKTLSCrypto.RSA.Verify_PSS_SHA256
+            (Hash      => Hash,
+             Modulus   => Modulus,
+             Mod_Len   => 256,
+             Exponent  => 16#0001_0001#,
+             Signature => Sig,
+             Sig_Len   => 256));
+
    New_Line;
    Put_Line ("Pass:" & Pass'Image & " /" & Total'Image);
    if Fail = 0 then
