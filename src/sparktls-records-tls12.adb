@@ -224,10 +224,13 @@ is
       --  Increment sequence number AFTER using it for nonce
       Seq_Num := Seq_Num + 1;
 
-      --  Build record header: content_type || 0x0303 || fragment_length
+      --  Build record header: content_type || 0x0303 || fragment_length.
+      --  RFC 5246 §6.2.1: version = negotiated (0x0303 for TLS 1.2).
       Hdr (0) := Content_Type;
       Hdr (1) := TLS12_Version_Major;
       Hdr (2) := TLS12_Version_Minor;
+      pragma Assert
+        (SPARKTLS.Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
       Hdr (3 .. 4) := TS16 (Unsigned_16 (Frag_Len));
 
       --  Write: header || explicit_nonce || ciphertext || tag

@@ -46,7 +46,8 @@ is
    procedure Process_Client_Auth
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify;
 
    procedure Process_Client_Finished
      (S      : in out Session;
@@ -1798,9 +1799,11 @@ is
                     (Data, Msg_Type, Msg_Len, Parse_OK);
 
                   if not Parse_OK then
-                     S.Last_Error := Decode_Error;
-                     Set_State (S, Error_State);
-                     Result := Error_Alert;
+                     --  RFC 8446 §6.2: malformed handshake → fatal
+                     --  decode_error alert. We're past keys, so use
+                     --  the encrypted alert path. Was missing the
+                     --  alert entirely (peer saw TCP RST).
+                     Send_Encrypted_Alert (S, Decode_Error, Result);
                      return;
                   end if;
 

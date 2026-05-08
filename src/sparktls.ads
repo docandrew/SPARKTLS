@@ -500,20 +500,23 @@ is
      with Ghost;
 
    --  ----- RFC 8422 §5.1.2 ec_point_formats compliance -------------
-   --  RFC 8422 deprecates point formats 1 (ansiX962_compressed_prime)
-   --  and 2 (ansiX962_compressed_char2). Only 0 (uncompressed) is
-   --  acceptable. A valid ec_point_formats list MUST be non-empty and
-   --  consist solely of byte values equal to 0. The Post-condition
-   --  encodes this exactly; the body's loop invariant lets gnatprove
-   --  discharge it.
+   --  RFC 8422 §5.1.2 deprecates point formats 1
+   --  (ansiX962_compressed_prime) and 2 (ansiX962_compressed_char2);
+   --  only 0 (uncompressed) is recommended. **However**, a server
+   --  MUST NOT reject a ClientHello that lists deprecated formats —
+   --  RFC 8446 §4.2.6 says TLS 1.3 ignores this extension entirely,
+   --  and OpenSSL / Go / NSS clients all include {0, 1, 2} by
+   --  default for backward-compat. The acceptable check here is
+   --  therefore "does the list include format 0", not "is the list
+   --  exactly {0}".
    --
-   --  Note: an empty list is rejected because RFC 8422 §5.1.1 requires
-   --  the field be non-empty when the extension is sent.
+   --  An empty list is still rejected because RFC 8422 §5.1.1
+   --  requires the field be non-empty when the extension is sent.
    function EC_Point_Formats_Acceptable
      (List : Byte_Seq) return Boolean
    with Post => EC_Point_Formats_Acceptable'Result =
                   (List'Length > 0 and then
-                   (for all I in List'Range => List (I) = 0));
+                   (for some I in List'Range => List (I) = 0));
 
    --  ----- RFC 5246 §7.4.1.4.1 sig_algs negotiated-from-offered ----
    --  RFC 5246 §7.4.1.4.1 / RFC 8446 §4.2.3: if the client sent the
@@ -1117,6 +1120,69 @@ is
         when Not_Derived => True,  --  not yet derived; vacuously true
         when Extended    => HC.Use_EMS,
         when Legacy      => not HC.Use_EMS)
+     with Ghost;
+
+   --  ----- RFC 8446 §4.3.2 CertificateRequest empty context --------
+   --  RFC 8446 §4.3.2: for a server-initiated CertificateRequest
+   --  during a normal handshake, the certificate_request_context
+   --  MUST be empty (length 0). Non-zero is reserved for
+   --  post-handshake-auth where the context binds the request to
+   --  a specific re-auth round.
+   function CR_Context_Empty_Initial_RFC_8446_4_3_2
+     (Ctx_Len : N32) return Boolean is (Ctx_Len = 0)
+     with Ghost;
+
+   --  ----- RFC 8446 §4 handshake_type recognition ------------------
+   --  RFC 8446 §4 / RFC 5246 §7.4: every handshake message begins
+   --  with a 1-byte HandshakeType field. The set of valid types in
+   --  this implementation:
+   --    0x01 client_hello
+   --    0x02 server_hello
+   --    0x08 encrypted_extensions (TLS 1.3)
+   --    0x0B certificate
+   --    0x0C server_key_exchange (TLS 1.2)
+   --    0x0D certificate_request
+   --    0x0E server_hello_done (TLS 1.2)
+   --    0x0F certificate_verify
+   --    0x10 client_key_exchange (TLS 1.2)
+   --    0x14 finished
+   --    0x04 new_session_ticket
+   --  Anything else is decode_error per RFC 8446 §6.2.
+   function Handshake_Type_Valid_RFC_8446_4
+     (T : Byte) return Boolean is
+     (T = 16#01# or else T = 16#02# or else T = 16#04#
+        or else T = 16#08# or else T = 16#0B# or else T = 16#0C#
+        or else T = 16#0D# or else T = 16#0E# or else T = 16#0F#
+        or else T = 16#10# or else T = 16#14#)
+     with Ghost;
+
+   --  ----- RFC 8446 §5.1 outer record content_type recognition -----
+   --  RFC 8446 §5.1 (and RFC 5246 §6.2.1): the outer record header's
+   --  type field MUST be one of:
+   --    0x14 = change_cipher_spec
+   --    0x15 = alert
+   --    0x16 = handshake
+   --    0x17 = application_data
+   --  Any other value MUST cause the record to be rejected
+   --  (unexpected_message). This is the OUTER counterpart to
+   --  Inner_Type_Valid_RFC_8446_5_4 — outer accepts CCS, inner
+   --  does not.
+   function Outer_Content_Type_Valid_RFC_8446_5_1
+     (T : Byte) return Boolean is
+     (T = 16#14# or else T = 16#15#
+        or else T = 16#16# or else T = 16#17#)
+     with Ghost;
+
+   --  ----- RFC 8446 §5.1 record-layer legacy_record_version --------
+   --  RFC 8446 §5.1: the TLSPlaintext.legacy_record_version field
+   --  MUST be 0x0303 ("TLS 1.2") for all records other than the
+   --  initial ClientHello (which MAY use 0x0301 for old-server
+   --  middlebox compatibility). Servers MUST reject any other value.
+   --  RFC 5246 §6.2.1: same — the wire version stays at the
+   --  negotiated TLS 1.2 record-layer version.
+   function Record_Version_RFC_8446_5_1
+     (Major, Minor : Byte) return Boolean is
+     (Major = 16#03# and then Minor = 16#03#)
      with Ghost;
 
    --  ----- RFC 8446 §6.1 / §6.2 alert level/description binding ----

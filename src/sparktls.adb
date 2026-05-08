@@ -30,6 +30,9 @@ is
    end Shared_Secret_Is_Acceptable_X25519;
 
    --  RFC 8422 §5.1.2: see contract in spec.
+   --  Returns True iff the list is non-empty AND contains at least
+   --  one occurrence of 0 (uncompressed). Deprecated formats {1, 2}
+   --  are silently tolerated alongside 0.
    function EC_Point_Formats_Acceptable
      (List : Byte_Seq) return Boolean
    is
@@ -39,12 +42,12 @@ is
       end if;
       for I in List'Range loop
          pragma Loop_Invariant
-           (for all J in List'First .. I - 1 => List (J) = 0);
-         if List (I) /= 0 then
-            return False;
+           (not (for some J in List'First .. I - 1 => List (J) = 0));
+         if List (I) = 0 then
+            return True;
          end if;
       end loop;
-      return True;
+      return False;
    end EC_Point_Formats_Acceptable;
 
    --================================================================

@@ -130,6 +130,12 @@ is
                          Result.OK := True;
          when others  => null;  --  unknown content type, OK stays False
       end case;
+      --  RFC 8446 §5.1: every accepted record matches one of the
+      --  RFC-recognized types. Pin the property; a future edit that
+      --  added 0x18 or similar must update both the case AND the
+      --  predicate, otherwise SPARK proof fails here.
+      pragma Assert
+        (if Result.OK then Outer_Content_Type_Valid_RFC_8446_5_1 (Data (B)));
    end Parse_Record_Header;
 
    procedure Build_Handshake_Record
@@ -151,6 +157,7 @@ is
       Hdr (0) := 16#16#;  --  handshake
       Hdr (1) := 16#03#;
       Hdr (2) := 16#03#;  --  TLS 1.2 / 1.3 record layer version
+      pragma Assert (Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
       Hdr (3) := Byte (Frag_Len / 256);
       Hdr (4) := Byte (Frag_Len mod 256);
 
@@ -190,6 +197,7 @@ is
       Hdr (0) := 16#17#;  --  application_data outer type
       Hdr (1) := 16#03#;
       Hdr (2) := 16#03#;
+      pragma Assert (Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
       Hdr (3 .. 4) := TS16 (Unsigned_16 (Enc_Len));
 
       --  Compute the per-record nonce. Counter advances unconditionally
