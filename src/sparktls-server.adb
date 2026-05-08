@@ -123,11 +123,16 @@ is
       Err    : Error_Code;
       Result : out Action)
    with Pre  => S.State not in Idle | Closed | Closing | Error_State
-                and Alert_Desc (Err) /= 0,
+                and Alert_Desc (Err) /= 0
+                and Nonce_Space_Available (S.Server_App),
         Post => S.State = Error_State
                 and S.Last_Error = Err
-                and Error_Has_Alert (S.State, Output_Pending (S),
-                                     S.Last_Error)
+                --  Error_Has_Alert (Pending > 0 OR Err = Unexpected_Message)
+                --  is NOT in this Post: Records.Build_Alert_Record gives no
+                --  postcondition about Output_Pending, so we can't carry
+                --  "alert was queued" through proof. Call sites that need
+                --  it add a pragma Assert (Output_Pending (S) > 0) before
+                --  the bridging Cert/Finished/AEAD-class predicate.
    is
       Dummy : N32;
    begin

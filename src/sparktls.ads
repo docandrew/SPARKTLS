@@ -1507,7 +1507,15 @@ is
    --  S.State directly.
    procedure Set_State (S : in out Session; To : Connection_State)
      with Pre  => Valid_Transition (S.State, To),
-          Post => S.State = To;
+          Post => S.State = To
+                  --  Frame: Set_State only mutates S.State. Pin the
+                  --  unchanged fields so callers don't have to
+                  --  re-establish Pre's like Nonce_Space_Available
+                  --  (S.Server_App) across the call.
+                  and S.Server_App = S.Server_App'Old
+                  and S.Client_App = S.Client_App'Old
+                  and S.Last_Error = S.Last_Error'Old
+                  and S.Negotiated_Suite = S.Negotiated_Suite'Old;
 
    --  Push received ciphertext bytes into the session's input buffer.
    --  RFC 8446 §5.1: the record layer accepts bytes from the transport.

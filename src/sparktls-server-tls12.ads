@@ -1,6 +1,7 @@
 with SPARKNaCl; use SPARKNaCl;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLS.Records.TLS12;
 
 --  TLS 1.2 Server State Machine (RFC 5246)
 --
@@ -118,7 +119,11 @@ is
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
                and then S.State = Wait_Client_Finished
-               and then CCS_Precedes_Finished_RFC_5246_7_1 (HC);
+               and then CCS_Precedes_Finished_RFC_5246_7_1 (HC)
+               --  Required by Send_Encrypted_Alert_12 in error paths
+               --  (RFC 5246 §7.2.1 post-CCS encrypted alerts).
+               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                          (HC.Server_Seq_12);
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:

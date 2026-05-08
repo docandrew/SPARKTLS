@@ -59,6 +59,54 @@ is
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
 
+   --  ----- RFC 5246 §7.2.1 post-CCS encrypted alert helper ---------
+   --  After the client has sent ChangeCipherSpec, RFC 5246 §7.2.1
+   --  requires further alerts to be sent encrypted under the
+   --  established traffic keys. Sending a plaintext alert at this
+   --  point is a protocol violation; strict TLS 1.2 clients reject
+   --  it as unexpected_message.
+   --
+   --  Mirrors Send_Encrypted_Alert in server.adb (TLS 1.3 path)
+   --  using Build_Alert_Record_12 with TLS 1.2 implicit IV +
+   --  explicit sequence number.
+   procedure Send_Encrypted_Alert_12
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Err    : Error_Code;
+      Result : out Action)
+   with Pre  => S.State not in Idle | Closed | Closing | Error_State
+                and Alert_Desc (Err) /= 0
+                and Alert_Desc (Err) /= 90
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Server_Seq_12),
+        Post => S.State = Error_State
+                and S.Last_Error = Err;
+                --  Error_Has_Alert is NOT in this Post — see
+                --  matching note on Send_Encrypted_Alert in
+                --  sparktls-server.adb. Call sites bridge to
+                --  Pending > 0 via local pragma Assert.
+
+   procedure Send_Encrypted_Alert_12
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Err    : Error_Code;
+      Result : out Action)
+   is
+      Dummy : N32;
+   begin
+      Set_State (S, Error_State);
+      S.Last_Error := Err;
+      Records.TLS12.Build_Alert_Record_12
+        (Level       => 2,
+         Desc        => Alert_Desc (Err),
+         Keys        => S.Server_App,
+         Implicit_IV => HC.Server_Write_IV_12,
+         Seq_Num     => HC.Server_Seq_12,
+         Output      => S.Output,
+         Bytes_Out   => Dummy);
+      Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
+   end Send_Encrypted_Alert_12;
+
    procedure Append_Transcript (HC : in out Handshake_Context; Data : Byte_Seq)
    --  Body uses Ada slide-assignment, which works for any Data'First.
    --  Frame: only writes HC.Transcript / HC.Transcript_Len. The Cfg
@@ -634,14 +682,15 @@ is
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Available (S.Input), Rec);
       if not Rec.OK then
-         if Rec.Overflow then Send_Alert_And_Error (S, Record_Overflow, Result);
+         --  RFC 5246 §7.2.1: post-CCS alerts MUST be encrypted.
+         if Rec.Overflow then Send_Encrypted_Alert_12 (S, HC, Record_Overflow, Result);
          else Result := Need_Input; end if;
          return;
       end if;
 
       if Rec.Content /= Records.Content_Handshake then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Send_Alert_And_Error (S, Unexpected_Message, Result); return;
+         Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result); return;
       end if;
 
       declare
@@ -661,7 +710,7 @@ is
 
          if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Decode_Error, Result); return;
+            Send_Encrypted_Alert_12 (S, HC, Decode_Error, Result); return;
          end if;
 
          Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
@@ -670,10 +719,10 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not DV then
-            Send_Alert_And_Error (S, Bad_Record_MAC, Result); return;
+            Send_Encrypted_Alert_12 (S, HC, Bad_Record_MAC, Result); return;
          end if;
          if PL < 4 then
-            Send_Alert_And_Error (S, Decode_Error, Result); return;
+            Send_Encrypted_Alert_12 (S, HC, Decode_Error, Result); return;
          end if;
 
          declare
@@ -683,10 +732,10 @@ is
                                  N32 (Plaintext (3));
          begin
             if Msg_Type /= HT_Finished then
-               Send_Alert_And_Error (S, Unexpected_Message, Result); return;
+               Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result); return;
             end if;
             if Msg_Len /= Finished_Verify_Len or PL < 4 + Finished_Verify_Len then
-               Send_Alert_And_Error (S, Decode_Error, Result); return;
+               Send_Encrypted_Alert_12 (S, HC, Decode_Error, Result); return;
             end if;
 
             declare
@@ -715,14 +764,14 @@ is
                        (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
                begin
                   if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
-                     Send_Alert_And_Error (S, Handshake_Failure, Result);
-                     --  RFC 5246 §7.4.9 / RFC 8446 §4.4.4: Finished
-                     --  verify mismatch → fatal alert + Error_State.
-                     --  Bridge from Error_Has_Alert (the Post on
-                     --  Send_Alert_And_Error) to Pending > 0:
-                     --  Last_Error = Handshake_Failure /=
-                     --  Unexpected_Message, so the disjunction in
-                     --  Error_Has_Alert collapses to Pending > 0.
+                     --  RFC 5246 §7.4.9 / §7.2.1 / RFC 8446 §4.4.4:
+                     --  Finished verify mismatch → fatal encrypted
+                     --  alert + Error_State. Post-CCS so MUST be
+                     --  encrypted. Send_Encrypted_Alert_12's Post
+                     --  guarantees the state; the bridging asserts
+                     --  collapse Error_Has_Alert to Pending > 0.
+                     Send_Encrypted_Alert_12
+                       (S, HC, Handshake_Failure, Result);
                      pragma Assert
                        (S.Last_Error /= Unexpected_Message);
                      pragma Assert (Output_Pending (S) > 0);
