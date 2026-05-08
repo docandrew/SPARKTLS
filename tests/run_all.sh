@@ -7,6 +7,8 @@
 #   ./tests/run_all.sh protocol     # release build, only protocol compliance
 #   ./tests/run_all.sh unit         # release build, only unit tests
 #   ./tests/run_all.sh x509         # release build, only x509-limbo tests
+#   ./tests/run_all.sh bogo         # BoringSSL adversarial tests
+#                                   # (first run: ~10 min setup)
 #   ./tests/run_all.sh --checked    # debug build with runtime checks + contracts ON
 #                                   # runs unit + protocol + x509 (no integration —
 #                                   # see RFLX 0.26.0 limitation note in source)
@@ -333,6 +335,15 @@ if echo "$SUITES" | grep -q "x509"; then
     echo "  pathbuilding (9):    Max_Pool_Size=8, tests need 9-35 intermediates"
     echo "  webpki--cn (9):      CN-in-SAN is a CA issuance rule, not a validator rule"
     echo "  public-suffix (1):   Would need Mozilla PSL dependency"
+    OVERALL_PASS=$((OVERALL_PASS + 1))
+fi
+
+#  BoGo (BoringSSL adversarial tests). Opt-in via the "bogo" suite
+#  selector because first run downloads ~150 MB (Go + BoringSSL) and
+#  full test set is 7880 cases. After first run, ~10 sec wall time.
+if echo "$SUITES" | grep -q "bogo"; then
+    section "BoGo Adversarial Tests"
+    bash tests/bogo/run.sh
     OVERALL_PASS=$((OVERALL_PASS + 1))
 fi
 
