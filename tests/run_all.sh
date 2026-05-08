@@ -2,11 +2,16 @@
 # SPARKTLS comprehensive test suite.
 #
 # Usage:
-#   ./tests/run_all.sh              # run everything
+#   ./tests/run_all.sh              # run everything (release build)
 #   ./tests/run_all.sh integration  # run only integration tests
 #   ./tests/run_all.sh protocol     # run only protocol compliance
 #   ./tests/run_all.sh unit         # run only unit tests
 #   ./tests/run_all.sh x509         # run only x509-limbo tests
+#   ./tests/run_all.sh --checked    # build with runtime checks + contracts ON
+#                                   # (slower, but catches runtime violations
+#                                   #  that static proof did not cover)
+#   ./tests/run_all.sh --checked unit  # combine
+# Env: CHECKED_BUILD=1 has the same effect as --checked.
 #
 # Prerequisites: OpenSSL, Python 3, git.
 # Everything else is set up automatically on first run.
@@ -16,7 +21,23 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$DIR/.."
 cd "$REPO_ROOT"
 
-SUITES="${@:-unit integration protocol x509}"
+# --- Parse args ---
+# --checked (or env CHECKED_BUILD=1) builds with runtime checks +
+# assertions/contracts ON. Default release build has -gnatp (suppress
+# checks) for speed; the checked build catches bounds / range / overflow
+# / Pre / Post / pragma Assert violations at runtime against the same
+# tests, exposing bugs that static proof might have missed.
+CHECKED_BUILD="${CHECKED_BUILD:-0}"
+SUITES_ARG=()
+for a in "$@"; do
+    case "$a" in
+        --checked|--runtime-checks)
+            CHECKED_BUILD=1 ;;
+        *) SUITES_ARG+=("$a") ;;
+    esac
+done
+
+SUITES="${SUITES_ARG[*]:-unit integration protocol x509}"
 OVERALL_PASS=0
 OVERALL_FAIL=0
 
@@ -29,12 +50,25 @@ section() {
 }
 
 # --- Build ---
-section "Building SPARKTLS"
+if [ "$CHECKED_BUILD" = "1" ]; then
+    section "Building SPARKTLS (CHECKED: runtime checks + contracts ON)"
+    export SPARKTLS_RUNTIME_CHECKS=enabled
+    export SPARKTLS_CONTRACTS=enabled
+    # Force a clean of obj dir so the checks-on switches are picked up
+    # even when we just toggled from a cached release build.
+    rm -rf obj/* lib/*.a lib/*.so 2>/dev/null
+else
+    section "Building SPARKTLS"
+fi
+
 if ! alr build 2>&1 | tail -3; then
     echo "FATAL: Library build failed"
     exit 1
 fi
 cd examples
+if [ "$CHECKED_BUILD" = "1" ]; then
+    rm -rf obj/* 2>/dev/null
+fi
 if ! alr build 2>&1 | tail -3; then
     echo "FATAL: Examples build failed"
     exit 1

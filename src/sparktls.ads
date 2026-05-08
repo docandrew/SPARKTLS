@@ -515,6 +515,28 @@ is
                   (List'Length > 0 and then
                    (for all I in List'Range => List (I) = 0));
 
+   --  ----- RFC 5246 §7.4.1.4.1 sig_algs negotiated-from-offered ----
+   --  RFC 5246 §7.4.1.4.1 / RFC 8446 §4.2.3: if the client sent the
+   --  signature_algorithms extension, the server MUST select a
+   --  scheme present in that list. Selecting an unoffered scheme
+   --  breaks downgrade resistance and may signal a misnegotiation
+   --  bug.
+   --
+   --  This predicate captures the membership constraint: a non-zero
+   --  Negotiated value MUST appear in the first `Count` slots of
+   --  `Offered`. (Negotiated = 0 means we're on the default-fallback
+   --  path; that case is governed by the strong-hash predicate
+   --  below.)
+   function Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+     (Negotiated : Unsigned_16;
+      Offered    : Sig_Algo_List;
+      Count      : Natural) return Boolean is
+     (Negotiated = 0
+        or else (for some I in 0 .. Count - 1
+                   => Offered (I) = Negotiated))
+     with Ghost,
+          Pre => Count <= Max_Sig_Algos;
+
    --  ----- RFC 5246 §7.4.1.4.1 sig_algs default fallback -----------
    --  When the client omits the signature_algorithms extension, the
    --  RFC's literal text says the server "MUST act as if [...]
@@ -864,6 +886,14 @@ is
    --  see the pointer, only the record.
    --================================================================
 
+   --  RFC 7627 §4 ghost type: tracks which TLS 1.2 master_secret PRF
+   --  was used. Set inside Derive_Keys_12 along the matching code
+   --  path. The companion predicate EMS_PRF_Binding_RFC_7627_4 ties
+   --  the choice of PRF to HC.Use_EMS — the property whose absence
+   --  caused the v9→v12 TLS-Anvil regression.
+   type Master_Secret_Derivation_Mode is
+     (Not_Derived, Legacy, Extended);
+
    type Handshake_Context is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
@@ -943,7 +973,13 @@ is
 
       --  Signature algorithm negotiation
       Peer_Sig_Algos      : Sig_Algo_List := (others => 0);
-      Peer_Sig_Algo_Count : Natural := 0;
+      --  Bounded by Max_Sig_Algos: parse site at
+      --  Parse_Sig_Algs_Extension gates increment on
+      --  `Peer_Sig_Algo_Count < Max_Sig_Algos`. Encoding the bound
+      --  in the type lets cross-procedure proofs discharge
+      --  Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1's
+      --  precondition without a pragma Assume bridge.
+      Peer_Sig_Algo_Count : Natural range 0 .. Max_Sig_Algos := 0;
       Negotiated_Sig_Algo : Unsigned_16 := 0;
 
       --  Handshake tracking
@@ -976,6 +1012,16 @@ is
       Server_Write_IV_12 : Byte_Seq (0 .. 3) := (others => 0);
       Client_Seq_12      : Unsigned_64 := 0;
       Server_Seq_12      : Unsigned_64 := 0;
+
+      --  RFC 7627 §4: tracks which PRF path produced Master_Secret_12.
+      --  Use_EMS ↔ extended PRF; (not Use_EMS) ↔ legacy PRF. The
+      --  v9→v12 bug we hit during the TLS-Anvil drive-down was a
+      --  violation of this binding (we always emitted EMS in SH but
+      --  always derived with legacy PRF). Updated only inside
+      --  Derive_Keys_12. We keep this as a real field (not Ghost)
+      --  because Ada record components cannot carry the Ghost aspect
+      --  directly. The runtime overhead is one byte per HC.
+      MS_Derivation : Master_Secret_Derivation_Mode := Not_Derived;
 
       --  Resumption
       Using_PSK     : Boolean := False;
@@ -1027,6 +1073,75 @@ is
      (HC.CKE_Received_12)
      with Ghost;
 
+   --  ----- RFC 7627 §4 EMS PRF binding ------------------------------
+   --  RFC 7627 §4: when the extended_master_secret extension is
+   --  negotiated (HC.Use_EMS = True), the master_secret MUST be
+   --  derived using the extended PRF (label "extended master secret",
+   --  seed = transcript hash). Otherwise the legacy RFC 5246 §8.1
+   --  PRF (label "master secret", seed = client_random ||
+   --  server_random) MUST be used.
+   --
+   --  The binding is symmetric: both peers see the same ServerHello
+   --  EMS extension presence; both compute the same master_secret
+   --  iff they take the same PRF branch.
+   --
+   --  This predicate captures the binding precisely. The ghost field
+   --  HC.MS_Derivation is updated inside Derive_Keys_12 to match the
+   --  branch that was actually executed; the Post on Derive_Keys_12
+   --  asserts the binding holds.
+   function EMS_PRF_Binding_RFC_7627_4
+     (HC : Handshake_Context) return Boolean is
+     (case HC.MS_Derivation is
+        when Not_Derived => True,  --  not yet derived; vacuously true
+        when Extended    => HC.Use_EMS,
+        when Legacy      => not HC.Use_EMS)
+     with Ghost;
+
+   --  ----- RFC 8446 §4.1.3 downgrade-protection sentinel -----------
+   --  RFC 8446 §4.1.3: a TLS 1.3 server MUST set the last 8 bytes of
+   --  ServerHello.Random to the specific sentinel
+   --  44 4F 57 4E 47 52 44 01 ("DOWNGRD" + 0x01) when responding to
+   --  a TLS 1.2 client (it doesn't, but RFC requires it for protocol
+   --  layer downgrade detection). The TLS 1.3 client checks this:
+   --  if the server's random ends with the sentinel but the server
+   --  did NOT offer supported_versions = TLS 1.3, an active MITM is
+   --  stripping the extension. Client MUST abort.
+   --
+   --  This predicate identifies the sentinel pattern. Used at the
+   --  client check site to pin the literal bytes; any future edit
+   --  that changes the comparison would fail SPARK proof.
+   function TLS13_Downgrade_Sentinel_RFC_8446_4_1_3
+     (Random_Tail : Byte_Seq) return Boolean is
+     (Random_Tail'Length = 8 and then
+        Random_Tail (Random_Tail'First) = 16#44# and then
+        Random_Tail (Random_Tail'First + 1) = 16#4F# and then
+        Random_Tail (Random_Tail'First + 2) = 16#57# and then
+        Random_Tail (Random_Tail'First + 3) = 16#4E# and then
+        Random_Tail (Random_Tail'First + 4) = 16#47# and then
+        Random_Tail (Random_Tail'First + 5) = 16#52# and then
+        Random_Tail (Random_Tail'First + 6) = 16#44# and then
+        Random_Tail (Random_Tail'First + 7) = 16#01#)
+     with Ghost;
+
+   --  ----- RFC 5246 §7.4.2 / RFC 8446 §6.2 cert validation alert --
+   --  RFC 5246 §7.4.2: "If the validation fails, the [server | client]
+   --  SHOULD send a fatal bad_certificate alert."
+   --  RFC 8446 §6.2: same, mandatory for fatal cert errors.
+   --
+   --  Predicate captures the post-failure invariant: Error_State,
+   --  encrypted alert queued, Last_Error pinned to a cert-related
+   --  code (Bad_Certificate covers the chain-validation path; other
+   --  cert errors map to Certificate_Expired or
+   --  Certificate_Verify_Failed elsewhere).
+   function Cert_Validation_Alerted_RFC_5246_7_4_2
+     (State : Connection_State; Pending : N32; Err : Error_Code)
+      return Boolean is
+     (State = Error_State and then Pending > 0
+        and then Err in Bad_Certificate | Certificate_Expired
+                       | Certificate_Verify_Failed
+                       | Certificate_Required)
+     with Ghost;
+
    --  ----- RFC 5246 §7.4.9 / RFC 8446 §4.4.4 Finished-mismatch ----
    --  RFC 5246 §7.4.9: "It is a fatal error if a Finished message is
    --  not preceded by a ChangeCipherSpec message at the appropriate
@@ -1046,6 +1161,23 @@ is
       return Boolean is
      (State = Error_State and then Pending > 0
         and then Err in Handshake_Failure | Bad_Record_MAC)
+     with Ghost;
+
+   --  ----- RFC 8446 §5.4 inner content type after AEAD decrypt ----
+   --  RFC 8446 §5.4: after stripping padding zeros from a decrypted
+   --  TLSInnerPlaintext, the last byte is the type field. It MUST
+   --  be one of:
+   --    0x15 = alert
+   --    0x16 = handshake
+   --    0x17 = application_data
+   --  (0x14 = change_cipher_spec only appears in plaintext records,
+   --  never inside AEAD.) Anything else MUST be a fatal alert
+   --  (unexpected_message). Without this check, an attacker who
+   --  forges a record with type 0x00 or other could probe state-
+   --  machine reactions.
+   function Inner_Type_Valid_RFC_8446_5_4
+     (T : Byte) return Boolean is
+     (T = 16#15# or else T = 16#16# or else T = 16#17#)
      with Ghost;
 
    --  ----- RFC 8446 §5.2 / §5.4 AEAD-failure → bad_record_mac ------

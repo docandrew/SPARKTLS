@@ -140,7 +140,13 @@ is
               | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
               | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
               | Suite_ECDHE_RSA_CHACHA20_SHA256
-              | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
+              | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+        --  RFC 7627 §4: master_secret PRF binding. After Derive_Keys_12
+        --  returns, HC.MS_Derivation matches HC.Use_EMS via the
+        --  EMS_PRF_Binding_RFC_7627_4 predicate. This is the v9→v12
+        --  invariant whose absence caused the TLS-Anvil regression.
+        Post => EMS_PRF_Binding_RFC_7627_4 (HC)
+                and then HC.MS_Derivation /= Not_Derived;
 
    --  Process records in Connected state for TLS 1.2.
    --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).

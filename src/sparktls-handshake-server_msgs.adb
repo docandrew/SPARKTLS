@@ -1033,9 +1033,10 @@ is
    procedure Generate_KS_X25519
      (HC         : in out Handshake_Context;
       KS_Raw     :    out KS_Raw_Buffer;
-      KS_Raw_Len :    out N32)
+      KS_Raw_Len :    out N32;
+      OK         :    out Boolean)
    with Pre  => HC.Cfg.Random /= null,
-        Post => KS_Raw_Len = 36
+        Post => (if OK then KS_Raw_Len = 36 else KS_Raw_Len = 0)
    is
       procedure Gen_Random (Output : out Byte_Seq)
         renames HC.Cfg.Random.all;
@@ -1051,6 +1052,21 @@ is
       SPARKTLSCrypto.X25519.Scalar_Mult
         (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
 
+      --  RFC 7748 §6.1 / RFC 8422 §5.10: reject all-zero shared
+      --  secret (small-subgroup attack defense). The X25519 spec
+      --  permits this output for points of small order (orders 1,
+      --  2, 4, 8 — eight specific 32-byte strings). Without this
+      --  check, an attacker who feeds such a point can predict
+      --  the master secret. The helper's Post is formally proven.
+      if not Shared_Secret_Is_Acceptable_X25519
+               (HC.Shared_Secret (0 .. 31))
+      then
+         HC.Shared_Secret := (others => 0);
+         KS_Raw_Len := 0;
+         OK := False;
+         return;
+      end if;
+
       --  group(2) + key_len(2) + key(32) = 36
       KS_Raw (0) := 0; KS_Raw (1) := 16#1D#;  --  x25519
       KS_Raw (2) := 0; KS_Raw (3) := 32;
@@ -1058,6 +1074,7 @@ is
          KS_Raw (4 + I) := PK_Bytes (I);
       end loop;
       KS_Raw_Len := 36;
+      OK := True;
    end Generate_KS_X25519;
 
    --  P-256 key share generation (RFC 8446 §4.2.8.2 + RFC 8422 §5).
@@ -1296,7 +1313,17 @@ is
       if HC.Client_Has_X25519 then
          HC.Selected_Group := 16#001D#;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
-         Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len);
+         declare
+            X25_OK : Boolean;
+         begin
+            Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len, X25_OK);
+            if not X25_OK then
+               --  RFC 7748 §6.1: peer sent a small-order point.
+               --  Set Len = 0; caller sends handshake_failure.
+               Len := 0;
+               return;
+            end if;
+         end;
       elsif HC.Client_Has_P256 then
          HC.Selected_Group := 16#0017#;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));

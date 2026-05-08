@@ -114,17 +114,24 @@ is
 
    --  Send an encrypted fatal alert and set error state.
    --  Used when application/handshake keys are established.
+   --  RFC 8446 §6.2 / RFC 5246 §7.2.2: encrypted fatal alert is
+   --  sent before the connection terminates so the peer learns the
+   --  reason instead of seeing only a TCP RST.
    procedure Send_Encrypted_Alert
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
-   with Pre => S.State not in Idle | Closed | Closing | Error_State
+   with Pre  => S.State not in Idle | Closed | Closing | Error_State
+                and Alert_Desc (Err) /= 0,
+        Post => S.State = Error_State
+                and S.Last_Error = Err
+                and Error_Has_Alert (S.State, Output_Pending (S),
+                                     S.Last_Error)
    is
       Dummy : N32;
    begin
-      null; -- debug removed
-      S.Last_Error := Err;
       Set_State (S, Error_State);
+      S.Last_Error := Err;
       Records.Build_Alert_Record
         (Level     => 2,
          Desc      => Alert_Desc (Err),
@@ -2066,9 +2073,26 @@ is
                                  Mode       => HC.Cfg.Verify_Mode);
 
                               if VR /= Valid then
-                                 S.Last_Error := Bad_Certificate;
-                                 Set_State (S, Error_State);
-                                 Result := Error_Alert;
+                                 --  RFC 5246 §7.4.2 / RFC 8446 §6.2:
+                                 --  certificate path validation failure
+                                 --  MUST send a fatal bad_certificate
+                                 --  alert (42). Previously we just set
+                                 --  Last_Error and Error_State without
+                                 --  queueing the alert — peer would see
+                                 --  a TCP RST instead of the RFC alert.
+                                 Send_Encrypted_Alert
+                                   (S, Bad_Certificate, Result);
+                                 --  Bridge: Error_Has_Alert (the Post on
+                                 --  Send_Encrypted_Alert) plus
+                                 --  Last_Error = Bad_Certificate /=
+                                 --  Unexpected_Message gives Pending > 0.
+                                 pragma Assert
+                                   (S.Last_Error /= Unexpected_Message);
+                                 pragma Assert (Output_Pending (S) > 0);
+                                 pragma Assert
+                                   (Cert_Validation_Alerted_RFC_5246_7_4_2
+                                      (S.State, Output_Pending (S),
+                                       S.Last_Error));
                                  return;
                               end if;
                            end;

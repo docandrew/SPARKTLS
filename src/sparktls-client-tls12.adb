@@ -104,6 +104,7 @@ is
                            "extended master secret", Byte_Seq (TH));
             end if;
          end;
+         HC.MS_Derivation := Extended;
       else
          --  RFC 5246 §8.1: Standard master secret
          --  master_secret = PRF(pms, "master secret", CR || SR)
@@ -111,6 +112,7 @@ is
            (HC.Master_Secret_12,
             HC.Shared_Secret (0 .. Shared_Len - 1),
             HC.Client_Random, HC.Server_Random, Use_384);
+         HC.MS_Derivation := Legacy;
       end if;
 
       Expand_Keys_12 (CK, SK, CI, SI, HC.Master_Secret_12,

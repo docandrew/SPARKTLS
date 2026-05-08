@@ -163,6 +163,10 @@ is
                           (Negotiated));
          else
             for I in Natural range 0 .. HC.Peer_Sig_Algo_Count - 1 loop
+               pragma Loop_Invariant
+                 (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+                    (Negotiated, HC.Peer_Sig_Algos,
+                     HC.Peer_Sig_Algo_Count));
                declare
                   Scheme : constant Unsigned_16 := HC.Peer_Sig_Algos (I);
                begin
@@ -194,6 +198,15 @@ is
                   end case;
                end;
             end loop;
+            --  RFC 5246 §7.4.1.4.1 / RFC 8446 §4.2.3: post-loop the
+            --  Negotiated scheme (if non-zero) is one the client
+            --  offered. The loop invariant builds this incrementally:
+            --  every iteration either exits with Negotiated set to
+            --  HC.Peer_Sig_Algos(I), or leaves Negotiated unchanged.
+            pragma Assert
+              (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+                 (Negotiated, HC.Peer_Sig_Algos,
+                  HC.Peer_Sig_Algo_Count));
          end if;
          if Negotiated = 0 then
             Send_Alert_And_Error (S, Handshake_Failure, Result);
@@ -335,9 +348,16 @@ is
                            "extended master secret", Byte_Seq (TH));
             end if;
          end;
+         --  RFC 7627 §4: ghost-record the PRF branch taken so
+         --  EMS_PRF_Binding_RFC_7627_4 can prove on exit.
+         HC.MS_Derivation := Extended;
       else
          declare
-            Seed : Byte_Seq (0 .. 63);
+            --  Initialize so flow can see Seed is fully defined before
+            --  the PRF call; the two slice writes below cover the full
+            --  range, but flow analysis can't see a slice-pair as a
+            --  whole-array write.
+            Seed : Byte_Seq (0 .. 63) := (others => 0);
          begin
             Seed (0 .. 31)  := Byte_Seq (HC.Client_Random);
             Seed (32 .. 63) := Byte_Seq (HC.Server_Random);
@@ -351,6 +371,7 @@ is
                            "master secret", Seed);
             end if;
          end;
+         HC.MS_Derivation := Legacy;
       end if;
 
       Expand_Keys_12 (CK, SK, CI, SI, HC.Master_Secret_12,

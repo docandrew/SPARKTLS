@@ -941,7 +941,12 @@ is
                end if;
             end loop;
             if Match then
-               --  Downgrade detected — MITM stripping TLS 1.3
+               --  Downgrade detected — MITM stripping TLS 1.3.
+               --  Pin the sentinel pattern: any future edit that
+               --  loosens the literal bytes would let MITMs through.
+               pragma Assert
+                 (TLS13_Downgrade_Sentinel_RFC_8446_4_1_3
+                    (R (24 .. 31)));
                Take_Buffer (Ctx, Buf);
                RFLX_Free (Buf);
                return;

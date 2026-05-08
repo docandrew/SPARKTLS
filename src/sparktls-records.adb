@@ -416,6 +416,11 @@ is
             Valid := False;
             return;
          end if;
+         --  Past the guard, Inner_Type is RFC-valid. The pragma pins
+         --  the property: future edits that loosen the membership
+         --  check (e.g. accidentally allowing 0x00 or 0x14) would
+         --  fail SPARK proof here.
+         pragma Assert (Inner_Type_Valid_RFC_8446_5_4 (Inner_Type));
 
          if Plain_Len > 0 and then Plain_Len - 1 <= Plaintext'Last then
             Plaintext (0 .. Plain_Len - 1) :=
