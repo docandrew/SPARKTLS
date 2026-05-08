@@ -10,6 +10,43 @@ is
       Dealloc (Ptr);
    end Free_Byte_Seq;
 
+   --  RFC 7748 §6.1 / RFC 8422 §5.10: see the contract in the spec.
+   --  The body accumulates a byte-wise OR; the loop invariant ties
+   --  the accumulator to the existence of a non-zero byte seen so
+   --  far, allowing gnatprove to discharge the function-level Post.
+   function Shared_Secret_Is_Acceptable_X25519
+     (Shared_Secret : Byte_Seq) return Boolean
+   is
+      Acc : Byte := 0;
+   begin
+      for I in Shared_Secret'Range loop
+         pragma Loop_Invariant
+           ((Acc /= 0) =
+              (for some J in Shared_Secret'First .. I - 1
+                 => Shared_Secret (J) /= 0));
+         Acc := Acc or Shared_Secret (I);
+      end loop;
+      return Acc /= 0;
+   end Shared_Secret_Is_Acceptable_X25519;
+
+   --  RFC 8422 §5.1.2: see contract in spec.
+   function EC_Point_Formats_Acceptable
+     (List : Byte_Seq) return Boolean
+   is
+   begin
+      if List'Length = 0 then
+         return False;
+      end if;
+      for I in List'Range loop
+         pragma Loop_Invariant
+           (for all J in List'First .. I - 1 => List (J) = 0);
+         if List (I) /= 0 then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end EC_Point_Formats_Acceptable;
+
    --================================================================
    --  Set_State
    --================================================================

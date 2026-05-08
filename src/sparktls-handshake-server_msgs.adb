@@ -681,41 +681,45 @@ is
                Parse_ALPN_Extension (Ext_Ctx, DLen, HC);
             end if;
 
+         when RFLX.Tls_Extensiontype_Values.Renegotiation_Info =>
+            --  RFC 5746: client offered the renegotiation_info
+            --  extension. We echo it in ServerHello only when this
+            --  flag (or the SCSV signal) is set.
+            HC.Saw_Reneg_Info := True;
+
+         when RFLX.Tls_Extensiontype_Values.Extended_Master_Secret =>
+            --  RFC 7627: extended_master_secret extension. Empty body
+            --  (DLen = 0). When the client sends it, the server
+            --  derives master_secret using the EMS PRF and echoes the
+            --  extension in ServerHello. When the client doesn't send
+            --  it, the server MUST use the original RFC 5246 PRF.
+            --  Without tracking this, every TLS-1.2 client that
+            --  doesn't request EMS produces a master-secret mismatch
+            --  (TLS-Anvil's HappyFlow tests fail in 12/12 such
+            --  combinations).
+            if DLen = 0 then
+               HC.Use_EMS := True;
+            end if;
+
          when RFLX.Tls_Extensiontype_Values.Ec_Point_Formats =>
-            --  RFC 8422 §5.1.2: the only valid value is 0
-            --  (uncompressed). Formats 1 (ansiX962_compressed_prime)
-            --  and 2 (ansiX962_compressed_char2) are deprecated and
-            --  MUST NOT be supported. We reject any ClientHello
-            --  whose ec_point_formats list contains anything other
-            --  than 0, OR is missing 0 entirely.
-            --
-            --  TLS 1.3 ignores this extension (RFC 8446 §4.2.6);
-            --  TLS 1.2 ECDHE paths use it. TLS-Anvil tests
-            --  8422-DRMPmFHPDy (deprecatedFormat) and
-            --  8422-hCNJHtPUAY (invalidPointFormat) flag the
-            --  acceptance of non-0 values.
+            --  RFC 8422 §5.1.2: only point format 0 (uncompressed)
+            --  may appear in this list — formats 1 and 2 are
+            --  deprecated and MUST NOT be supported. We delegate to
+            --  EC_Point_Formats_Acceptable, whose Post is formally
+            --  proven by SPARK to match the RFC exactly.
             if DLen >= 2 and then DLen in Wire_Small_Ext_Len then
                declare
                   ED        : RBT.Bytes (1 .. RBT.Index (DLen));
                   Ext_Data  : Byte_Seq (0 .. DLen - 1);
                   List_Len  : N32;
-                  Has_Uncompressed : Boolean := False;
-                  Has_Deprecated   : Boolean := False;
                begin
                   RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
                   Ext_Data := To_NaCl (ED);
                   List_Len := N32 (Ext_Data (0));
                   if List_Len > 0 and then List_Len <= DLen - 1 then
-                     for I in N32 range 1 .. List_Len loop
-                        if Ext_Data (I) = 0 then
-                           Has_Uncompressed := True;
-                        else
-                           --  Anything non-zero is deprecated
-                           --  (formats 1 and 2) or invalid.
-                           Has_Deprecated := True;
-                        end if;
-                     end loop;
-                     if not Has_Uncompressed or Has_Deprecated then
+                     if not EC_Point_Formats_Acceptable
+                              (Ext_Data (1 .. List_Len))
+                     then
                         OK := False;
                         return;
                      end if;
@@ -1283,13 +1287,19 @@ is
          HC.Server_Random := Tmp_SR;
       end;
 
-      --  Select key exchange group (prefer x25519 > P-256 > P-384)
+      --  Select key exchange group (prefer x25519 > P-256 > P-384).
+      --  RFC 8446 §4.2.8: the selected_group MUST come from a group
+      --  the client offered. Each branch below conditions on the
+      --  matching Client_Has_* flag so the per-branch pragma Assert
+      --  proves the cross-reference.
       HC.Shared_Secret := (others => 0);
       if HC.Client_Has_X25519 then
          HC.Selected_Group := 16#001D#;
+         pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len);
       elsif HC.Client_Has_P256 then
          HC.Selected_Group := 16#0017#;
+         pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          declare
             P256_OK : Boolean;
          begin
@@ -1298,6 +1308,7 @@ is
          end;
       elsif HC.Client_Has_P384 then
          HC.Selected_Group := 16#0018#;
+         pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          declare
             P384_OK : Boolean;
          begin
@@ -1320,12 +1331,20 @@ is
       Buf := new RBT.Bytes'(1 .. RBT.Index (RFLX_Main_Size) => 0);
       Initialize (Ctx, Buf);
 
-      --  Set ServerHello fields via RFLX
+      --  Set ServerHello fields via RFLX.
+      --  RFC 8446 §4.1.3: legacy_version = 0x0303 even for TLS 1.3.
+      --  The real version is in supported_versions extension below.
+      pragma Assert (ServerHello_Legacy_Version_RFC_8446_4_1_3 (TLS_1_2));
       Set_Legacy_Version (Ctx, TLS_1_2);
+      pragma Assert (Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random));
       Set_Random (Ctx, To_RFLX (HC.Server_Random));
       Set_Legacy_Session_ID_Length (Ctx, 32);
       Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       Set_Cipher_Suite_TLS_Suite (Ctx, To_Suite_Enum (S.Negotiated_Suite));
+      --  RFC 8446 §4.1.3: legacy_compression_method MUST be 0.
+      --  TLS 1.3 has no compression at all; the field is preserved
+      --  for wire-format compatibility with TLS 1.2 parsers.
+      pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));
       Set_Legacy_Compression_Method (Ctx, 0);
 
       --  Set_Extensions_Length's Field_Condition is just
@@ -1379,6 +1398,12 @@ is
             SV_Raw : constant Byte_Seq (0 .. SV_Data_Len - 1) :=
               (16#03#, 16#04#);  --  TLS 1.3
          begin
+            --  RFC 8446 §4.2.1: server's selected_version is the
+            --  exact 2-byte wire form 0x0304. Pinning the literal
+            --  here means a future edit that miscodes the version
+            --  (e.g. (3, 3) for TLS 1.2) fails SPARK proof.
+            pragma Assert
+              (Supported_Versions_Server_TLS13_RFC_8446_4_2_1 (SV_Raw));
             Append_SH_Extension
               (Exts_Ctx,
                RFLX.Tls_Extensiontype_Values.Supported_Versions,

@@ -59,10 +59,14 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action);
 
-   --  Append handshake message bytes to the transcript
+   --  Append handshake message bytes to the transcript.
+   --  RFC 5246 §7.4.9 / RFC 8446 §4.4.1: the transcript drives
+   --  Finished verify_data, so it is append-only — losing bytes
+   --  desyncs from the peer.
    procedure Append_Transcript
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
+   with Post => HC.Transcript_Len >= HC.Transcript_Len'Old
    is
       Len : constant N32 := N32 (Data'Length);
    begin

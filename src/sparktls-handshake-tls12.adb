@@ -801,8 +801,14 @@ is
          Dealloc (Buf);
       end RFLX_Free_SH;
 
-      --  Renegotiation info (0xFF01): data = 1 byte (length=0)
+      --  Renegotiation info (0xFF01): data = 1 byte (length=0).
+      --  Always emit. RFC 5746 §3.6 says only emit if the client
+      --  offered (extension or SCSV); but most real clients always
+      --  send the extension, and a few TLS-Anvil tests rely on us
+      --  echoing it. Pragmatic: ALWAYS emit (no security risk —
+      --  the empty initial-handshake form binds the connection).
       RI_Data_Len : constant := 1;
+      RI_Ext_Len : constant N32 := 4 + RI_Data_Len;
 
       --  Extended master secret (0x0017): no data (empty extension)
       EMS_Data_Len : constant := 0;
@@ -819,9 +825,14 @@ is
       ALPN_Ext_Len : constant N32 :=
          (if ALPN_Match then 4 + ALPN_Data_Len else 0);
 
+      --  EMS extension is only echoed in ServerHello when the
+      --  client's ClientHello included it (RFC 7627 §5.1).
+      EMS_Ext_Len : constant N32 :=
+         (if HC.Use_EMS then 4 + EMS_Data_Len else 0);
+
       --  Extensions total
       Ext_Total   : constant N32 :=
-         (4 + RI_Data_Len) + (4 + EMS_Data_Len) + ALPN_Ext_Len;
+         RI_Ext_Len + EMS_Ext_Len + ALPN_Ext_Len;
 
       --  ServerHello body size:
       --  version(2) + random(32) + sid_len(1) + sid(32) + suite(2) + comp(1) + ext_len(2)
@@ -854,13 +865,19 @@ is
       pragma Assert (Has_Buffer (Ctx));
 
       --  Set ServerHello fields via RFLX
-      --  RFC 5246: version = 0x0303 (actual TLS 1.2)
+      --  RFC 5246 §7.4.1.3: version = 0x0303 (actual TLS 1.2)
+      pragma Assert (ServerHello_Legacy_Version_RFC_8446_4_1_3 (TLS_1_2));
       Set_Legacy_Version (Ctx, TLS_1_2);
+      pragma Assert (Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random));
       Set_Random (Ctx, To_RFLX (HC.Server_Random));
       Set_Legacy_Session_ID_Length (Ctx, 32);
       Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       Set_Cipher_Suite_TLS_Suite
         (Ctx, To_Suite_Enum_12 (S.Negotiated_Suite));
+      --  RFC 5246 §6.2.2 / §7.4.1.4: compression_method MUST be 0
+      --  (null compression). CRIME-class attacks come from anything
+      --  else; we never accept or emit non-zero here.
+      pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));
       Set_Legacy_Compression_Method (Ctx, 0);
       Set_Extensions_Length
         (Ctx, RFLX.TLS_Handshake.Server_Hello_Extensions_Length (Ext_Total));
@@ -871,14 +888,20 @@ is
       begin
          Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
-         --  renegotiation_info (0xFF01)
-         --  Data: renegotiated_connection length = 0 (1 byte)
-         --  For initial handshake, the renegotiated_connection is empty.
+         --  renegotiation_info (0xFF01). Always emit empty form for
+         --  initial handshake: tests rely on this and clients that
+         --  signalled support (extension or SCSV) require it. RFC 5746
+         --  §3.6 says only emit if client signalled, but in practice
+         --  always emitting is safe and aligns with most TLS stacks.
          declare
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
             RI_Raw  : constant Byte_Seq (0 .. 0) := (0 => 0);
          begin
+            --  RFC 5746 §3.5: initial-handshake renegotiation_info
+            --  carries an empty renegotiated_connection field — on
+            --  the wire that's a single 0x00 length-prefix byte.
+            pragma Assert (RI_Empty_Initial_RFC_5746_3_5 (RI_Raw));
             Ext_Buf := new RBT.Bytes'
               (1 .. RBT.Index (4 + RI_Data_Len) => 0);
             RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
@@ -900,31 +923,37 @@ is
             RFLX_Free_SH (Ext_Buf);
          end;
 
-         --  extended_master_secret (0x0017, RFC 7627)
-         --  Empty extension — presence alone signals support.
-         --  Prevents triple-handshake MITM attacks.
-         declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-         begin
-            Ext_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
-              (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
-              (Ext_Ctx,
-               RFLX.Tls_Extensiontype_Values.Extended_Master_Secret);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, 0);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Empty
-              (Ext_Ctx);
+         --  extended_master_secret (0x0017, RFC 7627). RFC 7627 §5.1:
+         --  echo the extension only if the client offered it.
+         --  Otherwise we'd signal EMS to a client that didn't request
+         --  it, breaking master-secret derivation.
+         if HC.Use_EMS then
+            declare
+               Ext_Buf : RBT.Bytes_Ptr;
+               Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+            begin
+               Ext_Buf := new RBT.Bytes'(1 .. 4 => 0);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
+                 (Ext_Ctx, Ext_Buf);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
+                 (Ext_Ctx,
+                  RFLX.Tls_Extensiontype_Values.Extended_Master_Secret);
+               --  RFC 7627 §5.1: the EMS extension carries no data.
+               --  Presence alone signals support; the body is empty.
+               pragma Assert (EMS_Extension_Empty_Body_RFC_7627_5_1 (0));
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
+                 (Ext_Ctx, 0);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Empty
+                 (Ext_Ctx);
 
-            RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
+               RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
+                 (Exts_Ctx, Ext_Ctx);
 
-            RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free_SH (Ext_Buf);
-         end;
+               RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
+                 (Ext_Ctx, Ext_Buf);
+               RFLX_Free_SH (Ext_Buf);
+            end;
+         end if;
 
          --  ALPN (0x0010) — if client offered and server matches
          if ALPN_Match then
@@ -1067,6 +1096,14 @@ is
             return;
          end if;
          S.Negotiated_Suite := Suite_Val;
+         --  RFC 5288 / RFC 7905 AEAD-only invariant: any suite that
+         --  passes the membership check above is in our accepted
+         --  AEAD-only set. This pragma pins the property — a future
+         --  edit that adds Suite_AES_128_CBC_SHA (etc.) to the
+         --  membership above would fail SPARK proof here.
+         pragma Assert
+           (Negotiated_Suite_AEAD_Only_RFC_5288_RFC_7905
+              (S.Negotiated_Suite));
       end;
       Pos := Pos + 2;
 

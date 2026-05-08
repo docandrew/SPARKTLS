@@ -110,6 +110,13 @@ is
 
       Result.Fragment_Pos := Record_Header_Size;
       Result.Fragment_Len := Frag_Len;
+      --  RFC 8446 §5.1/§5.2: any fragment that survived the length
+      --  check above satisfies the per-type max. The pragma pins the
+      --  invariant — a future loosening of Max_Len (e.g., dropping
+      --  the type-conditioned cap) would break SPARK proof here.
+      pragma Assert
+        (Record_Length_Bound_RFC_8446_5_1
+           (Data (B), Result.Fragment_Len));
       Result.Record_Len   := Record_Header_Size + Frag_Len;
 
       case Data (B) is

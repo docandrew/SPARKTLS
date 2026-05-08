@@ -138,10 +138,13 @@ is
       end if;
    end Send_Encrypted_Alert;
 
-   --  Append handshake message bytes to the transcript
+   --  Append handshake message bytes to the transcript.
+   --  RFC 5246 §7.4.9 / RFC 8446 §4.4.1: append-only invariant
+   --  (transcript drives Finished verify_data).
    procedure Append_Transcript
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
+   with Post => HC.Transcript_Len >= HC.Transcript_Len'Old
    is
       Len : constant N32 := N32 (Data'Length);
    begin
@@ -343,19 +346,15 @@ is
                end if;
 
                if Rec.Content = Records.Content_Change_Cipher_Spec then
-                  --  CCS for middlebox compatibility.
+                  --  RFC 8446 §5: CCS for middlebox compatibility is
+                  --  permitted only AFTER the first ClientHello has
+                  --  been sent or received. CCS arriving before any
+                  --  ClientHello (we're still in Wait_Client_Hello)
+                  --  is a state-machine violation. TLS-Anvil's
+                  --  beginWithChangeCipherSpec test (XSM-1yXVP5Gbsr)
+                  --  exercises this.
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  if Rec.Fragment_Len /= 1 then
-                     Send_Alert_And_Error (S, Unexpected_Message, Result);
-                     return;
-                  end if;
-                  if HC.CCS_Received then
-                     --  RFC 8446: only one CCS allowed
-                     Send_Alert_And_Error (S, Unexpected_Message, Result);
-                     return;
-                  end if;
-                  HC.CCS_Received := True;
-                  Result := OK;
+                  Send_Alert_And_Error (S, Unexpected_Message, Result);
                   return;
                end if;
 
@@ -1040,6 +1039,12 @@ is
                   end;
 
                   if Binder_OK then
+                     --  RFC 8446 §4.2.11.2: PSK installation gated on
+                     --  binder verification. The pragma pins the
+                     --  invariant — without Binder_OK = True we MUST
+                     --  NOT install the PSK or derive any key from it.
+                     pragma Assert
+                       (PSK_Binder_Validated_RFC_8446_4_2_11_2 (Binder_OK));
                      HC.Using_PSK := True;
                      HC.PSK_Value := PSK;
                      HC.PSK_Value_Len := PSK_Len;
@@ -1142,6 +1147,11 @@ is
                end if;
                Set_State (S, Wait_Client_Hello_Retry);
                HC.HRR_Sent := True;
+               --  RFC 8446 §4.1.4: at-most-one-HRR invariant. After
+               --  this assignment, the outer `if not HC.HRR_Sent`
+               --  guard prevents any further HRR from being built
+               --  in this connection.
+               pragma Assert (HRR_Sent_At_Most_Once_RFC_8446_4_1_4 (HC));
                Result := Has_Output;
                return;
             end if;
@@ -1359,6 +1369,11 @@ is
                     (Output => Verify_48,
                      M      => TS_Hash,
                      K      => Byte_Seq (Fin_Key));
+                  --  RFC 8446 §4.4.4: TLS 1.3 verify_data length =
+                  --  Hash.length. SHA-384 → 48 bytes.
+                  pragma Assert
+                    (Verify_Data_Length_TLS13_RFC_8446_4_4_4
+                       (Byte_Seq (Verify_48)));
 
                   Big_Finished (0) := Handshake.HT_Finished;
                   Big_Finished (1) := 16#00#;
@@ -1390,6 +1405,11 @@ is
                     (Output => Verify_32,
                      M      => TS_Hash,
                      K      => Byte_Seq (Fin_Key));
+                  --  RFC 8446 §4.4.4: TLS 1.3 verify_data length =
+                  --  Hash.length. SHA-256 → 32 bytes.
+                  pragma Assert
+                    (Verify_Data_Length_TLS13_RFC_8446_4_4_4
+                       (Byte_Seq (Verify_32)));
 
                   Handshake.Build_Finished (Verify_32, Fin_Buf, Fin_Len);
                   Append_Transcript (HC, Fin_Buf (0 .. Fin_Len - 1));
@@ -2669,10 +2689,16 @@ is
                   Output    => S.Output,
                   Bytes_Out => Alert_Out);
             end;
-            S.Last_Error := Bad_Record_MAC;
             Set_State (S, Error_State);
+            S.Last_Error := Bad_Record_MAC;
             --  Return Has_Output to drain the alert before Error_Alert
             if Output_Pending (S) > 0 then
+               --  RFC 8446 §5.2: AEAD-failure invariant: alert
+               --  queued, Error_State entered, Last_Error pinned
+               --  to Bad_Record_MAC. No timing oracle leaked.
+               pragma Assert
+                 (AEAD_Failure_Alerted_RFC_8446_5_2
+                    (S.State, Output_Pending (S), S.Last_Error));
                Result := Has_Output;
             else
                Result := Error_Alert;
@@ -2720,6 +2746,12 @@ is
                   end;
                   Set_State (S, Closing);
                   if Output_Pending (S) > 0 then
+                     --  RFC 8446 §6.1 / RFC 5246 §7.2.1 close_notify
+                     --  reply invariant: the encrypted reply is
+                     --  queued AND we've transitioned to Closing.
+                     pragma Assert
+                       (Close_Notify_Reply_State_RFC_5246_7_2_1
+                          (S.State, Output_Pending (S)));
                      Result := Has_Output;
                   else
                      Result := Shutdown;

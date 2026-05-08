@@ -87,6 +87,12 @@ is
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
+   --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
+   --  pragma Assert at the end of the body (in the .adb), since
+   --  the body's preexisting medium-severity unproven calls block
+   --  level-1 discharge of a procedure-level Post here. The Assert
+   --  pins the property at the success exit; the runtime guard at
+   --  the top of the body enforces it on the wire.
 
    --  Process ChangeCipherSpec from client.
    --  Activates the client's write keys for decrypting subsequent records.
@@ -101,12 +107,18 @@ is
    --  Process the client's encrypted Finished message.
    --  Verifies the 12-byte verify_data against expected value.
    --  On success: sends server CCS + server Finished, transitions to Connected.
+   --
+   --  RFC 5246 §7.1: ChangeCipherSpec MUST precede Finished. The
+   --  CCS_Precedes_Finished_RFC_5246_7_1 Pre captures this — both
+   --  CKE and CCS MUST already be received before we attempt to
+   --  decrypt and verify the Finished record.
    procedure Process_Client_Finished_12
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
-               and then S.State = Wait_Client_Finished;
+               and then S.State = Wait_Client_Finished
+               and then CCS_Precedes_Finished_RFC_5246_7_1 (HC);
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:

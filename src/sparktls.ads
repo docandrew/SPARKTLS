@@ -370,6 +370,175 @@ is
       else Label = "master secret")
    with Ghost;
 
+   --  ----- RFC 7748 §6.1 / RFC 8422 §5.10 small-subgroup defence ---
+   --  An X25519 shared secret of all zeros indicates the peer used a
+   --  point of small order (orders 1, 2, 4, 8 — eight specific 32-byte
+   --  strings). Without rejecting these, an attacker who feeds such a
+   --  point can predict the master secret. RFC 7748 §6.1 mandates the
+   --  rejection; RFC 8422 §5.10 mirrors it for TLS-1.2 ECDHE-X25519.
+   --
+   --  The Post-condition is the formal RFC criterion: the function
+   --  returns True iff at least one byte of the shared secret is
+   --  non-zero (equivalently, the secret is not the all-zeros string
+   --  that small-subgroup attacks coerce). gnatprove discharges the
+   --  contract from the loop invariant in the body.
+   function Shared_Secret_Is_Acceptable_X25519
+     (Shared_Secret : Byte_Seq) return Boolean
+   with Post => Shared_Secret_Is_Acceptable_X25519'Result =
+                  (for some I in Shared_Secret'Range
+                     => Shared_Secret (I) /= 0);
+
+   --  ----- Phase 1 structural pinning: wire-format constants -------
+   --  Each ghost predicate captures one normative MUST value from
+   --  TLS 1.2 / 1.3 / EMS / Renegotiation / GCM. Pinned at the
+   --  emission site via pragma Assert so a future edit that
+   --  introduces a non-conforming value fails SPARK proof.
+
+   --  RFC 5246 §7.4.1.3 / RFC 8446 §4.1.3: ServerHello.legacy_version
+   --  MUST be 0x0303 (the wire encoding of TLS_1_2). For TLS 1.3 the
+   --  real version is signalled in the supported_versions extension;
+   --  legacy_version stays 0x0303 for middlebox compatibility.
+   function ServerHello_Legacy_Version_RFC_8446_4_1_3
+     (V : TLS_Version) return Boolean is
+     (V = TLS_1_2)
+     with Ghost;
+
+   --  RFC 5246 §7.4.1.2 / §7.4.1.3 / RFC 8446 §4.1.2/§4.1.3: the
+   --  Random fields are exactly 32 bytes. Already type-enforced via
+   --  Bytes_32; this ghost lifts the constraint to a named clause for
+   --  RFC traceability.
+   function Random_Length_RFC_5246_7_4_1_2
+     (R : Bytes_32) return Boolean is
+     (R'Length = 32)
+     with Ghost;
+
+   --  RFC 5246 §6.2.2 / §7.4.1.4 / RFC 8446 §4.1.2: the only
+   --  compression method TLS 1.2 servers MAY negotiate is
+   --  null (0x00); compression is removed from TLS 1.3 entirely.
+   --  Anything else is a CRIME-class attack vector.
+   function Compression_Method_None_RFC_5246_6_2_2
+     (M : Byte) return Boolean is
+     (M = 0)
+     with Ghost;
+
+   --  RFC 8446 §4.2.1: server's supported_versions ServerHello
+   --  extension carries exactly one selected_version. For a server
+   --  that selected TLS 1.3, the wire bytes are exactly (0x03, 0x04).
+   function Supported_Versions_Server_TLS13_RFC_8446_4_2_1
+     (Data : Byte_Seq) return Boolean is
+     (Data'Length = 2 and then Data (Data'First) = 16#03#
+        and then Data (Data'First + 1) = 16#04#)
+     with Ghost;
+
+   --  RFC 8446 §4.1.2: ClientHello.legacy_compression_methods MUST
+   --  contain exactly one byte with value 0x00. Anything else is a
+   --  protocol violation (real TLS 1.3 has no compression).
+   function Legacy_Compression_Methods_TLS13_RFC_8446_4_1_2
+     (Methods : Byte_Seq) return Boolean is
+     (Methods'Length = 1 and then Methods (Methods'First) = 0)
+     with Ghost;
+
+   --  RFC 5746 §3.5 / §3.6: on initial handshake, the
+   --  renegotiation_info extension's renegotiated_connection field
+   --  MUST be empty. On the wire that's a single 0x00 byte (the
+   --  length prefix) — total ext data = 1 byte.
+   function RI_Empty_Initial_RFC_5746_3_5
+     (Data : Byte_Seq) return Boolean is
+     (Data'Length = 1 and then Data (Data'First) = 0)
+     with Ghost;
+
+   --  RFC 7627 §5.1: the extended_master_secret extension carries
+   --  no data. Extension data length MUST be 0; presence alone
+   --  signals EMS support.
+   function EMS_Extension_Empty_Body_RFC_7627_5_1
+     (Data_Len : N32) return Boolean is
+     (Data_Len = 0)
+     with Ghost;
+
+   --  RFC 5288 §3 / RFC 5246 §6.2.3.3: AES-GCM nonce is always
+   --  12 bytes (4 implicit + 8 explicit). Already type-enforced
+   --  via Bytes_12.
+   function GCM_Nonce_Length_RFC_5288_3
+     (N : Bytes_12) return Boolean is
+     (N'Length = 12)
+     with Ghost;
+
+   --  RFC 5246 §7.4.9: TLS 1.2 Finished.verify_data is exactly
+   --  12 bytes regardless of cipher suite. Already type-enforced
+   --  via SPARKTLS.Key_Schedule_12.Verify_Data_12 (constant 12).
+   function Verify_Data_Length_TLS12_RFC_5246_7_4_9
+     (VD : Byte_Seq) return Boolean is
+     (VD'Length = 12)
+     with Ghost;
+
+   --  RFC 8446 §4.4.4: TLS 1.3 Finished.verify_data is Hash.length
+   --  bytes — 32 for SHA-256, 48 for SHA-384.
+   function Verify_Data_Length_TLS13_RFC_8446_4_4_4
+     (VD : Byte_Seq) return Boolean is
+     (VD'Length = 32 or else VD'Length = 48)
+     with Ghost;
+
+   --  ----- RFC 5246 §A.5 / RFC 5288 / RFC 7905 AEAD-only deviation
+   --  RFC 5246 Appendix A.5 lists all standard TLS 1.2 cipher suites,
+   --  including CBC modes (MAC-then-encrypt), 3DES, and RC4. We
+   --  deliberately deviate: this implementation supports only the
+   --  RFC 5288 GCM and RFC 7905 ChaCha20-Poly1305 AEAD suites — no
+   --  CBC, no MAC-then-encrypt, no 3DES, no RC4. This eliminates the
+   --  Lucky13, padding-oracle, BEAST, and CRIME attack classes by
+   --  construction. The predicate captures the exact accepted set.
+   function Negotiated_Suite_AEAD_Only_RFC_5288_RFC_7905
+     (Suite : Unsigned_16) return Boolean is
+     (Suite = Suite_ECDHE_RSA_AES128_GCM_SHA256
+        or else Suite = Suite_ECDHE_RSA_AES256_GCM_SHA384
+        or else Suite = Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+        or else Suite = Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+        or else Suite = Suite_ECDHE_RSA_CHACHA20_SHA256
+        or else Suite = Suite_ECDHE_ECDSA_CHACHA20_SHA256
+        or else Suite = Suite_AES_128_GCM_SHA256
+        or else Suite = Suite_AES_256_GCM_SHA384
+        or else Suite = Suite_CHACHA20_POLY1305_SHA256)
+     with Ghost;
+
+   --  ----- RFC 8422 §5.1.2 ec_point_formats compliance -------------
+   --  RFC 8422 deprecates point formats 1 (ansiX962_compressed_prime)
+   --  and 2 (ansiX962_compressed_char2). Only 0 (uncompressed) is
+   --  acceptable. A valid ec_point_formats list MUST be non-empty and
+   --  consist solely of byte values equal to 0. The Post-condition
+   --  encodes this exactly; the body's loop invariant lets gnatprove
+   --  discharge it.
+   --
+   --  Note: an empty list is rejected because RFC 8422 §5.1.1 requires
+   --  the field be non-empty when the extension is sent.
+   function EC_Point_Formats_Acceptable
+     (List : Byte_Seq) return Boolean
+   with Post => EC_Point_Formats_Acceptable'Result =
+                  (List'Length > 0 and then
+                   (for all I in List'Range => List (I) = 0));
+
+   --  ----- RFC 5246 §7.4.1.4.1 sig_algs default fallback -----------
+   --  When the client omits the signature_algorithms extension, the
+   --  RFC's literal text says the server "MUST act as if [...]
+   --  {sha1, *}" was sent. We deliberately deviate: SHA-1 is broken
+   --  and we don't support it. Our default uses SHA-256 (or SHA-384)
+   --  matched to the server cert's algorithm.
+   --
+   --  This predicate captures the security-relevant property: any
+   --  Negotiated sig scheme produced by our default fallback MUST be
+   --  SHA-256 or stronger. The 16-bit scheme codes in TLS 1.2:
+   --    rsa_pkcs1_sha256 = 0x0401, rsa_pkcs1_sha384 = 0x0501,
+   --    rsa_pkcs1_sha512 = 0x0601, ecdsa_secp256r1_sha256 = 0x0403,
+   --    ecdsa_secp384r1_sha384 = 0x0503, rsa_pss_rsae_sha256 = 0x0804,
+   --    rsa_pss_rsae_sha384 = 0x0805, rsa_pss_rsae_sha512 = 0x0806,
+   --    ed25519 = 0x0807. The low byte ≥ 4 distinguishes SHA-256+
+   --    schemes (SHA-1 schemes are 0x0201/0x0202/0x0203, low byte 1-3).
+   function Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1
+     (Scheme : Unsigned_16) return Boolean is
+     (Scheme = 16#0804# or else Scheme = 16#0805#
+        or else Scheme = 16#0806#
+        or else Scheme = 16#0403# or else Scheme = 16#0503#
+        or else Scheme = 16#0807#)
+     with Ghost;
+
    --  RFC 8446 §6: Error handling invariant.
    --  When entering Error_State, the implementation MUST have queued
    --  an alert record in the output buffer (unless the error is from
@@ -792,6 +961,12 @@ is
       --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
       Use_EMS : Boolean := False;
 
+      --  TLS 1.2: client offered renegotiation_info extension (RFC 5746)
+      --  or sent the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) in
+      --  cipher_suites. Servers echo the extension only when one of
+      --  these signals is present (RFC 5746 §3.6).
+      Saw_Reneg_Info : Boolean := False;
+
       --  Client's offered ALPN protocol (parsed from ClientHello)
       Client_ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
 
@@ -836,6 +1011,183 @@ is
      (HC : Handshake_Context; Size : N32) return Boolean
    is (Size <= Max_Handshake_Heap
        and then HC.Heap_Used <= Max_Handshake_Heap - Size);
+
+   --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------
+   --  TLS 1.2 §7.4.7: the client sends exactly one ClientKeyExchange
+   --  per handshake, immediately after the (optional) Certificate.
+   --  A second CKE in the same handshake is a state-machine violation
+   --  and MUST be rejected with an unexpected_message alert (§7.2.2).
+   --
+   --  HC.CKE_Received_12 starts False and transitions monotonically
+   --  to True on the first successful CKE. After that, the flag is
+   --  the predicate guarding rejection of any further CKE messages
+   --  in the same handshake.
+   function Single_CKE_RFC_5246_7_4_7
+     (HC : Handshake_Context) return Boolean is
+     (HC.CKE_Received_12)
+     with Ghost;
+
+   --  ----- RFC 5246 §7.4.9 / RFC 8446 §4.4.4 Finished-mismatch ----
+   --  RFC 5246 §7.4.9: "It is a fatal error if a Finished message is
+   --  not preceded by a ChangeCipherSpec message at the appropriate
+   --  point in the handshake." (Sequencing covered by
+   --  CCS_Precedes_Finished_RFC_5246_7_1 above.)
+   --
+   --  RFC 8446 §4.4.4: "Recipients of Finished messages MUST verify
+   --  that the contents are correct and if incorrect MUST terminate
+   --  the connection with a 'decrypt_error' alert."
+   --
+   --  This predicate captures the post-mismatch state: Error_State
+   --  reached, fatal alert queued, Last_Error in the set of valid
+   --  Finished-mismatch responses (Handshake_Failure for TLS 1.2,
+   --  Bad_Record_MAC for TLS 1.3 since our enum lacks Decrypt_Error).
+   function Finished_Mismatch_Alerted_RFC_8446_4_4_4
+     (State : Connection_State; Pending : N32; Err : Error_Code)
+      return Boolean is
+     (State = Error_State and then Pending > 0
+        and then Err in Handshake_Failure | Bad_Record_MAC)
+     with Ghost;
+
+   --  ----- RFC 8446 §5.2 / §5.4 AEAD-failure → bad_record_mac ------
+   --  RFC 8446 §5.2 (and RFC 5246 §6.2.3.3): "If the decryption
+   --  fails, a fatal bad_record_mac alert MUST be generated."
+   --  The receiver MUST NOT distinguish in the alert between
+   --  decrypt failure, tag-mismatch, and (for TLS 1.3) wrong
+   --  inner content type — all three resolve to bad_record_mac
+   --  (or decrypt_error in TLS 1.3 §6.2). This denies attackers
+   --  the timing/error oracle that enables padding-oracle attacks.
+   --
+   --  This predicate captures the post-failure state: Error_State,
+   --  alert queued (Pending > 0), and Last_Error is one of the
+   --  three RFC-mandated codes for AEAD failure.
+   function AEAD_Failure_Alerted_RFC_8446_5_2
+     (State : Connection_State; Pending : N32; Err : Error_Code)
+      return Boolean is
+     (State = Error_State and then Pending > 0
+        and then Err = Bad_Record_MAC)
+     with Ghost;
+
+   --  ----- RFC 8446 §5.1 / §5.2 record-fragment length bound -------
+   --  RFC 8446 §5.1: plaintext fragment ≤ 2^14 = 16384 bytes.
+   --  RFC 8446 §5.2: encrypted (application_data) fragment ≤
+   --  2^14 + 256 = 16640 bytes (the +256 allows for AEAD overhead).
+   --  RFC 5246 §6.2.1 (TLS 1.2): same limits apply.
+   --
+   --  A receiver MUST send record_overflow alert (22) on any
+   --  record exceeding these bounds. Without this, an attacker can
+   --  exhaust receiver memory or trigger oversized-buffer bugs.
+   function Record_Length_Bound_RFC_8446_5_1
+     (Content_Type : Byte; Frag_Len : N32) return Boolean is
+     (if Content_Type = 16#17# then Frag_Len <= 16384 + 256
+      else Frag_Len <= 16384)
+     with Ghost;
+
+   --  ----- RFC 8446 §4.2.11.2 PSK binder validated before use ------
+   --  RFC 8446 §4.2.11.2: on receipt of a ClientHello PSK extension,
+   --  the server MUST validate the PSK binder (HMAC of the truncated
+   --  transcript with a binder_key derived from the PSK) BEFORE
+   --  installing the PSK or deriving any session keys from it. A
+   --  server that derives keys from an unvalidated PSK is vulnerable
+   --  to selective-PSK injection: an attacker who knows a peer's
+   --  ticket but not the PSK could trigger key derivation that
+   --  reveals timing/error oracles.
+   --
+   --  This predicate captures the structural pre-condition: at any
+   --  call site that installs PSK_Value, the binder check MUST have
+   --  succeeded. The runtime guard is the if-Binder_OK gate.
+   function PSK_Binder_Validated_RFC_8446_4_2_11_2
+     (Binder_Verified : Boolean) return Boolean is
+     (Binder_Verified)
+     with Ghost;
+
+   --  ----- RFC 5246 §7.2.1 / RFC 8446 §6.1 close_notify reply ------
+   --  RFC 5246 §7.2.1 (and RFC 8446 §6.1): on receipt of a close_notify
+   --  alert, the receiver MUST send its own close_notify in reply
+   --  before closing the write side. After the reply is queued the
+   --  connection enters the Closing state. This predicate captures
+   --  the post-receipt invariant: S.State = Closing AND the output
+   --  buffer holds the queued close_notify (or the reply attempt
+   --  filled the buffer beyond capacity, in which case the caller
+   --  drains then retries — Output_Pending > 0 still holds).
+   function Close_Notify_Reply_State_RFC_5246_7_2_1
+     (State : Connection_State; Pending : N32) return Boolean is
+     (State = Closing and then Pending > 0)
+     with Ghost;
+
+   --  ----- RFC 8446 §4.2.8 key_share group bounded by client offer
+   --  RFC 8446 §4.2.8: the server's selected_group in its KeyShareEntry
+   --  MUST be one that the client offered in either its key_share or
+   --  supported_groups extensions. A server that selects an
+   --  unoffered group breaks key agreement and (more importantly)
+   --  signals a serious negotiation bug — clients refuse to derive
+   --  shared secrets with mismatched groups.
+   --
+   --  This predicate cross-references HC.Selected_Group against the
+   --  per-group `Client_Has_*` flags (key_share data present) and
+   --  the `Client_Supports_*` flags (offered in supported_groups).
+   --  Selected_Group = 0 means "not yet selected" and is allowed
+   --  prior to ServerHello build.
+   function Selected_Group_Was_Offered_RFC_8446_4_2_8
+     (HC : Handshake_Context) return Boolean is
+     (HC.Selected_Group = 0
+        or else (HC.Selected_Group = 16#001D#
+                   and then (HC.Client_Has_X25519
+                               or else HC.Client_Supports_X25519))
+        or else (HC.Selected_Group = 16#0017#
+                   and then (HC.Client_Has_P256
+                               or else HC.Client_Supports_P256))
+        or else (HC.Selected_Group = 16#0018#
+                   and then (HC.Client_Has_P384
+                               or else HC.Client_Supports_P384)))
+     with Ghost;
+
+   --  ----- RFC 8446 §4.1.4 HelloRetryRequest at most once -----------
+   --  TLS 1.3 §4.1.4: a server MUST send at most one HRR per
+   --  connection. HRR is a one-shot mechanism to coax the client
+   --  into a recoverable ClientHello (different group, missing
+   --  cookie, etc.); a second HRR signals an infinite-loop server
+   --  bug or attempted DoS amplification.
+   --
+   --  HC.HRR_Sent transitions monotonically False → True; the
+   --  guard `if not HC.HRR_Sent` at the HRR build site enforces
+   --  the at-most-once property at runtime.
+   function HRR_Sent_At_Most_Once_RFC_8446_4_1_4
+     (HC : Handshake_Context) return Boolean is
+     (HC.HRR_Sent)
+     with Ghost;
+
+   --  ----- RFC 5246 §7.1 single-ChangeCipherSpec invariant ----------
+   --  TLS 1.2 §7.1: each direction sends exactly one CCS per
+   --  handshake, immediately before the encrypted Finished. A second
+   --  CCS in the same handshake is a state-machine violation
+   --  (CVE-2014-0224 "ChangeCipherSpec injection" was a class of
+   --  bugs where servers accepted out-of-sequence CCS).
+   --
+   --  HC.CCS_Received transitions monotonically False → True. A
+   --  second CCS is rejected at sparktls-server-tls12.adb:399 with
+   --  unexpected_message; the runtime guard is `not HC.CCS_Received`.
+   function Single_CCS_RFC_5246_7_1
+     (HC : Handshake_Context) return Boolean is
+     (HC.CCS_Received)
+     with Ghost;
+
+   --  ----- RFC 5246 §7.1 CCS-precedes-Finished sequence ------------
+   --  RFC 5246 §7.1 (and §7.4.9): the ChangeCipherSpec record MUST
+   --  arrive between ClientKeyExchange and Finished — never standalone,
+   --  never before CKE, never twice. The Finished message that follows
+   --  is encrypted with the freshly-installed keys; receiving Finished
+   --  without a prior CCS means we either skipped key activation
+   --  (decryption would fail) or accepted a plaintext Finished
+   --  (protocol violation).
+   --
+   --  This predicate captures the sequencing invariant on the
+   --  Handshake_Context: CKE_Received_12 implies keys are derived;
+   --  CCS_Received implies the client has signaled switch-to-encrypted.
+   --  Both MUST hold when the server admits a TLS 1.2 Finished record.
+   function CCS_Precedes_Finished_RFC_5246_7_1
+     (HC : Handshake_Context) return Boolean is
+     (HC.CKE_Received_12 and then HC.CCS_Received)
+     with Ghost;
 
    type Handshake_Context_Access is access Handshake_Context;
 

@@ -32,9 +32,21 @@ is
 
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and Alert_Desc (Err) /= 0
-               and Alert_Desc (Err) /= 90;
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and Alert_Desc (Err) /= 0
+                and Alert_Desc (Err) /= 90,
+        Post => S.State = Error_State
+                --  RFC 8446 §6.2 / RFC 5246 §7.2.2: a fatal alert
+                --  MUST be sent to the peer before the connection
+                --  closes. We satisfy this by queueing the alert
+                --  record in the output buffer (Result = Has_Output)
+                --  before transitioning to Error_State. The
+                --  Error_Has_Alert ghost predicate captures the
+                --  invariant: in Error_State, output is non-empty
+                --  unless the error is one we couldn't write
+                --  (Unexpected_Message after early plaintext).
+                and Error_Has_Alert (S.State, Output_Pending (S),
+                                     S.Last_Error);
 
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
@@ -62,6 +74,13 @@ is
         Post => HC.Cfg.Local /= null
                 and then HC.Cfg.Local.Has_Identity
                 and then HC.Cfg.Random /= null
+                --  RFC 5246 §7.4.9 transcript-monotonicity invariant:
+                --  the handshake transcript is the basis for Finished
+                --  verify_data. Once a byte enters the transcript it
+                --  cannot be removed or rewritten, otherwise the peer's
+                --  Finished computation will diverge from ours and
+                --  authentic handshakes will fail. Length never shrinks.
+                and then HC.Transcript_Len >= HC.Transcript_Len'Old
    is
       Len : constant N32 := N32 (Data'Length);
    begin
@@ -117,38 +136,65 @@ is
       declare
          Negotiated : Unsigned_16 := 0;
       begin
-         for I in Natural range 0 .. HC.Peer_Sig_Algo_Count - 1 loop
-            declare
-               Scheme : constant Unsigned_16 := HC.Peer_Sig_Algos (I);
-            begin
-               case HC.Cfg.Local.Sign_Algo is
-                  when Sign_RSA_PSS =>
-                     if Scheme = 16#0804# or Scheme = 16#0805#
-                        or Scheme = 16#0806#
-                     then
-                        Negotiated := Scheme;
-                        exit;
-                     end if;
-                  when Sign_ECDSA_P256 =>
-                     if Scheme = 16#0403# then
-                        Negotiated := Scheme;
-                        exit;
-                     end if;
-                  when Sign_ECDSA_P384 =>
-                     if Scheme = 16#0503# then
-                        Negotiated := Scheme;
-                        exit;
-                     end if;
-                  when Sign_Ed25519 =>
-                     if Scheme = 16#0807# then
-                        Negotiated := Scheme;
-                        exit;
-                     end if;
-                  when Sign_None =>
-                     null;
-               end case;
-            end;
-         end loop;
+         if HC.Peer_Sig_Algo_Count = 0 then
+            --  RFC 5246 §7.4.1.4.1: when client omits the
+            --  signature_algorithms extension, the server uses a
+            --  default. RFC 5246 specifies SHA-1, but SHA-1 is
+            --  deprecated and we don't support it. Modern practice
+            --  (OpenSSL, Go) is to default to SHA-256 with the
+            --  cert's algorithm. TLS-Anvil's
+            --  ecdsaNoSignatureAlgorithmsExtension test (5246-MjFVuYUzfF)
+            --  exercises this path.
+            case HC.Cfg.Local.Sign_Algo is
+               when Sign_RSA_PSS    => Negotiated := 16#0804#;  -- PSS-SHA256
+               when Sign_ECDSA_P256 => Negotiated := 16#0403#;
+               when Sign_ECDSA_P384 => Negotiated := 16#0503#;
+               when Sign_Ed25519    => Negotiated := 16#0807#;
+               when Sign_None       => null;
+            end case;
+            --  RFC 5246 §7.4.1.4.1 strong-hash invariant: every value
+            --  the case selects above is a SHA-256-or-stronger scheme.
+            --  This pragma Assert pins the property; a future edit
+            --  that introduces a SHA-1 default (e.g. 0x0201, 0x0202)
+            --  would fail SPARK proof here.
+            pragma Assert
+              (Negotiated = 0
+                 or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1
+                          (Negotiated));
+         else
+            for I in Natural range 0 .. HC.Peer_Sig_Algo_Count - 1 loop
+               declare
+                  Scheme : constant Unsigned_16 := HC.Peer_Sig_Algos (I);
+               begin
+                  case HC.Cfg.Local.Sign_Algo is
+                     when Sign_RSA_PSS =>
+                        if Scheme = 16#0804# or Scheme = 16#0805#
+                           or Scheme = 16#0806#
+                        then
+                           Negotiated := Scheme;
+                           exit;
+                        end if;
+                     when Sign_ECDSA_P256 =>
+                        if Scheme = 16#0403# then
+                           Negotiated := Scheme;
+                           exit;
+                        end if;
+                     when Sign_ECDSA_P384 =>
+                        if Scheme = 16#0503# then
+                           Negotiated := Scheme;
+                           exit;
+                        end if;
+                     when Sign_Ed25519 =>
+                        if Scheme = 16#0807# then
+                           Negotiated := Scheme;
+                           exit;
+                        end if;
+                     when Sign_None =>
+                        null;
+                  end case;
+               end;
+            end loop;
+         end if;
          if Negotiated = 0 then
             Send_Alert_And_Error (S, Handshake_Failure, Result);
             return;
@@ -260,27 +306,52 @@ is
       Shared_Len : constant N32 :=
          (if HC.Selected_Group = Group_Secp384r1 then 48 else 32);
    begin
-      --  Server always uses EMS (we signal it in ServerHello)
-      pragma Assert (EMS_Label_Consistent (True, "extended master secret"));
+      --  RFC 7627 §4: master_secret derivation. If the client
+      --  offered the extended_master_secret extension we use the
+      --  EMS PRF (label "extended master secret", seed = transcript
+      --  hash). Otherwise we MUST use the original RFC 5246 §8.1
+      --  PRF (label "master secret", seed = client_random ||
+      --  server_random). Mismatch here breaks Finished verification
+      --  for any client that didn't request EMS — caught by
+      --  TLS-Anvil's HappyFlow battery (12/12 fail without this).
+      pragma Assert (EMS_Label_Consistent (HC.Use_EMS,
+        (if HC.Use_EMS then "extended master secret" else "master secret")));
 
-      --  RFC 7627: Extended Master Secret
-      declare
-         TH     : Digest;
-         TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
-      begin
-         if Use_384 then
-            SPARKNaCl.Hashing.SHA384.Hash
-              (TH_384, HC.Transcript (0 .. HC.Transcript_Len - 1));
-            PRF_SHA384 (Byte_Seq (HC.Master_Secret_12),
-                        HC.Shared_Secret (0 .. Shared_Len - 1),
-                        "extended master secret", Byte_Seq (TH_384));
-         else
-            Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
-            PRF_SHA256 (Byte_Seq (HC.Master_Secret_12),
-                        HC.Shared_Secret (0 .. Shared_Len - 1),
-                        "extended master secret", Byte_Seq (TH));
-         end if;
-      end;
+      if HC.Use_EMS then
+         declare
+            TH     : Digest;
+            TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
+         begin
+            if Use_384 then
+               SPARKNaCl.Hashing.SHA384.Hash
+                 (TH_384, HC.Transcript (0 .. HC.Transcript_Len - 1));
+               PRF_SHA384 (Byte_Seq (HC.Master_Secret_12),
+                           HC.Shared_Secret (0 .. Shared_Len - 1),
+                           "extended master secret", Byte_Seq (TH_384));
+            else
+               Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+               PRF_SHA256 (Byte_Seq (HC.Master_Secret_12),
+                           HC.Shared_Secret (0 .. Shared_Len - 1),
+                           "extended master secret", Byte_Seq (TH));
+            end if;
+         end;
+      else
+         declare
+            Seed : Byte_Seq (0 .. 63);
+         begin
+            Seed (0 .. 31)  := Byte_Seq (HC.Client_Random);
+            Seed (32 .. 63) := Byte_Seq (HC.Server_Random);
+            if Use_384 then
+               PRF_SHA384 (Byte_Seq (HC.Master_Secret_12),
+                           HC.Shared_Secret (0 .. Shared_Len - 1),
+                           "master secret", Seed);
+            else
+               PRF_SHA256 (Byte_Seq (HC.Master_Secret_12),
+                           HC.Shared_Secret (0 .. Shared_Len - 1),
+                           "master secret", Seed);
+            end if;
+         end;
+      end if;
 
       Expand_Keys_12 (CK, SK, CI, SI, HC.Master_Secret_12,
                        HC.Server_Random, HC.Client_Random, Key_Len, Use_384);
@@ -337,6 +408,12 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          if Rec.Fragment_Len = 1 and then not HC.CCS_Received then
             HC.CCS_Received := True; Result := OK;
+            --  RFC 5246 §7.1 single-CCS invariant: after this
+            --  assignment the server's view records that the client
+            --  has signaled switch-to-encrypted exactly once. Future
+            --  CCS records on this connection MUST be rejected via
+            --  the `not HC.CCS_Received` guard above.
+            pragma Assert (Single_CCS_RFC_5246_7_1 (HC));
          else Send_Alert_And_Error (S, Unexpected_Message, Result); end if;
          return;
       end if;
@@ -370,6 +447,10 @@ is
                end;
                Set_State (S, Closing);
                if Output_Pending (S) > 0 then
+                  --  RFC 5246 §7.2.1: invariant after queued reply.
+                  pragma Assert
+                    (Close_Notify_Reply_State_RFC_5246_7_2_1
+                       (S.State, Output_Pending (S)));
                   Result := Has_Output;
                else
                   Result := Shutdown;
@@ -387,6 +468,16 @@ is
       end if;
 
       if Rec.Content /= Records.Content_Handshake then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         return;
+      end if;
+
+      --  RFC 5246 §7.4.7: only one ClientKeyExchange permitted. A
+      --  second handshake-content record after we've already seen
+      --  CKE is a state-machine violation — fatal alert.
+      --  TLS-Anvil's secondClientKeyExchange test (XSM-zmpmr7nVki).
+      if HC.CKE_Received_12 then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);
          return;
@@ -448,21 +539,10 @@ is
                HC.Shared_Secret (0 .. 31) :=
                   SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
                --  RFC 7748 §6.1 / RFC 8422 §5.10: reject all-zeros
-               --  shared secret. X25519 maps small-subgroup peer
-               --  public keys (orders 1, 2, 4, 8 — eight specific
-               --  byte strings) to a zero shared secret. Accepting
-               --  these allows a passive attacker to coerce the
-               --  shared secret to a known value (full handshake
-               --  break). Constant-time OR-fold across the 32
-               --  bytes; SS_OK iff at least one byte non-zero.
-               declare
-                  Acc : Byte := 0;
-               begin
-                  for I in N32 range 0 .. 31 loop
-                     Acc := Acc or HC.Shared_Secret (I);
-                  end loop;
-                  SS_OK := Acc /= 0;
-               end;
+               --  shared secret (small-subgroup defence). The
+               --  helper's Post is formally proven by SPARK.
+               SS_OK := Shared_Secret_Is_Acceptable_X25519
+                          (HC.Shared_Secret (0 .. 31));
             when Group_Secp256r1 =>
                declare
                   use SPARKTLSCrypto.P256.Point;
@@ -498,6 +578,11 @@ is
       Derive_Keys_12 (S, HC);
       HC.CKE_Received_12 := True;
       Result := (if Input_Available (S) > 0 then OK else Need_Input);
+      --  RFC 5246 §7.4.7: at this exit point, the single-CKE
+      --  invariant MUST hold. A future edit that drops the
+      --  HC.CKE_Received_12 := True assignment above would fail
+      --  this pragma — that's the point.
+      pragma Assert (Single_CKE_RFC_5246_7_4_7 (HC));
    end Process_Client_Key_Exchange_12;
 
    ------------------------------------------------------------------
@@ -610,6 +695,19 @@ is
                begin
                   if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
                      Send_Alert_And_Error (S, Handshake_Failure, Result);
+                     --  RFC 5246 §7.4.9 / RFC 8446 §4.4.4: Finished
+                     --  verify mismatch → fatal alert + Error_State.
+                     --  Bridge from Error_Has_Alert (the Post on
+                     --  Send_Alert_And_Error) to Pending > 0:
+                     --  Last_Error = Handshake_Failure /=
+                     --  Unexpected_Message, so the disjunction in
+                     --  Error_Has_Alert collapses to Pending > 0.
+                     pragma Assert
+                       (S.Last_Error /= Unexpected_Message);
+                     pragma Assert (Output_Pending (S) > 0);
+                     pragma Assert
+                       (Finished_Mismatch_Alerted_RFC_8446_4_4_4
+                          (S.State, Output_Pending (S), S.Last_Error));
                      return;
                   end if;
                end;

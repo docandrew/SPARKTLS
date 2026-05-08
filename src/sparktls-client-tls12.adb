@@ -45,6 +45,10 @@ is
    end Send_Alert_And_Error;
 
    procedure Append_Transcript (HC : in out Handshake_Context; Data : Byte_Seq)
+   --  RFC 5246 §7.4.9 transcript-monotonicity: bytes already
+   --  appended cannot be removed. The Post pins this; a future
+   --  edit that resets HC.Transcript_Len in this proc would fail.
+   with Post => HC.Transcript_Len >= HC.Transcript_Len'Old
    is
       Len : constant N32 := N32 (Data'Length);
    begin
@@ -428,16 +432,10 @@ is
                         Gen (Byte_Seq (HC.Local_SK));
                         HC.Shared_Secret (0 .. 31) :=
                            SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
-                        --  RFC 7748 §6.1: reject all-zeros shared
-                        --  secret (small-subgroup attack defence).
-                        declare
-                           Acc : Byte := 0;
-                        begin
-                           for I in N32 range 0 .. 31 loop
-                              Acc := Acc or HC.Shared_Secret (I);
-                           end loop;
-                           SS_OK := Acc /= 0;
-                        end;
+                        --  RFC 7748 §6.1: small-subgroup defence.
+                        --  Post-condition formally proven by SPARK.
+                        SS_OK := Shared_Secret_Is_Acceptable_X25519
+                                   (HC.Shared_Secret (0 .. 31));
                      when Group_Secp256r1 =>
                         Gen (Byte_Seq (HC.P256_Local_SK));
                         declare

@@ -1012,23 +1012,17 @@ is
          HC.Shared_Secret := (others => 0);
          SPARKTLSCrypto.X25519.Scalar_Mult
            (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
-         --  RFC 7748 §6.1: reject all-zeros shared secret. A peer
-         --  who sent a small-subgroup public key (orders 1, 2, 4, 8)
-         --  forces our X25519 output to zero, which would let them
-         --  predict the master secret.
-         declare
-            Acc : Byte := 0;
-         begin
-            for I in N32 range 0 .. 31 loop
-               Acc := Acc or HC.Shared_Secret (I);
-            end loop;
-            if Acc = 0 then
-               Take_Buffer (Ctx, Buf);
-               RFLX_Free (Buf);
-               OK := False;
-               return;
-            end if;
-         end;
+         --  RFC 7748 §6.1: small-subgroup defence. The helper has
+         --  a SPARK-proven Post that ties its result to the byte-
+         --  sequence existential.
+         if not Shared_Secret_Is_Acceptable_X25519
+                  (HC.Shared_Secret (0 .. 31))
+         then
+            Take_Buffer (Ctx, Buf);
+            RFLX_Free (Buf);
+            OK := False;
+            return;
+         end if;
       end if;
 
       Take_Buffer (Ctx, Buf);
