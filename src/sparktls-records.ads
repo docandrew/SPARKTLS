@@ -96,7 +96,10 @@ is
    --  must check Bytes_Out and only treat the call as completed when
    --  it is non-zero.
    with Pre  => Plaintext'Length <= Max_Fragment
-                and Inner_Type in 16#15# | 16#16# | 16#17#  --  RFC 8446 §5.4
+                --  RFC 8446 §5.4: only alert/handshake/application_data
+                --  may be emitted as inner content type. CCS (0x14)
+                --  only appears in unencrypted records.
+                and SPARKTLS.Inner_Type_Valid_RFC_8446_5_4 (Inner_Type)
                 and Nonce_Space_Available (Keys),             --  RFC 8446 §5.5
         Post => (if Bytes_Out > 0
                  then Keys.Counter = Keys.Counter'Old + 1   --  RFC 8446 §5.3
@@ -135,15 +138,17 @@ is
    with Post => Bytes_Out in 0 | 6;  --  RFC 8446 §5: CCS is exactly 6 bytes
 
    --  RFC 8446 §6: Build an encrypted alert record.
-   --  Level: 1 = warning (only for close_notify), 2 = fatal.
+   --  RFC 8446 §6.1 / §6.2 binding: warning level only for close_notify
+   --  / user_canceled; everything else is fatal.
    procedure Build_Alert_Record
      (Level      : in     Byte;
       Desc       : in     Byte;
       Keys       : in out Traffic_Keys;
       Output     : in out IO_Buffer;
       Bytes_Out  :    out N32)
-   with Pre => Level in 1 .. 2
-               and Nonce_Space_Available (Keys);
+   with Pre =>
+     SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc)
+     and Nonce_Space_Available (Keys);
 
    --  Build a plaintext alert record (no encryption).
    --  Uses RFLX-generated alert serializer for the payload.
@@ -159,8 +164,7 @@ is
       Desc      : in     Byte;   --  TLS alert description
       Output    : in out IO_Buffer;
       Bytes_Out :    out N32)
-   with Pre => Level in 1 .. 2
-               and (if Level = 1 then Desc = 0 or Desc = 90)
-               and (if Level = 2 then Desc /= 0 and Desc /= 90);
+   with Pre =>
+     SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc);
 
 end SPARKTLS.Records;

@@ -1319,6 +1319,14 @@ is
                end;
          end case;
 
+         --  RFC 8446 §4.4.3 modern-scheme invariant: Negotiated_Sig_Algo
+         --  is the wire scheme we'll sign with. We never set it to a
+         --  PKCS#1 v1.5 value (no Sign_RSA_PKCS1 in our Sign_Algo
+         --  type); pin it here so a future addition would fail proof.
+         pragma Assert
+           (HC.Negotiated_Sig_Algo = 0
+              or else CertificateVerify_Modern_Scheme_RFC_8446_4_4_3
+                       (HC.Negotiated_Sig_Algo));
          Handshake.Certs.Build_Certificate_Verify
            (Transcript_Hash => CV_Hash,
             Id              => HC.Cfg.Local.all,
@@ -2035,8 +2043,22 @@ is
                               end if;
 
                               if not Verified then
-                                 Send_Alert_And_Error
+                                 --  RFC 8446 §6.2: at Wait_Client_Cert_Verify
+                                 --  we've already sent server Finished, so
+                                 --  app keys are live — emit ENCRYPTED
+                                 --  fatal alert. Was using plaintext
+                                 --  Send_Alert_And_Error which a strict
+                                 --  TLS 1.3 client treats as protocol
+                                 --  violation (alert in clear after keys).
+                                 Send_Encrypted_Alert
                                    (S, Certificate_Verify_Failed, Result);
+                                 pragma Assert
+                                   (S.Last_Error /= Unexpected_Message);
+                                 pragma Assert (Output_Pending (S) > 0);
+                                 pragma Assert
+                                   (Cert_Validation_Alerted_RFC_5246_7_4_2
+                                      (S.State, Output_Pending (S),
+                                       S.Last_Error));
                                  return;
                               end if;
                            end;

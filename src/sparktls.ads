@@ -537,6 +537,28 @@ is
      with Ghost,
           Pre => Count <= Max_Sig_Algos;
 
+   --  ----- RFC 8446 §4.4.3 CertificateVerify modern schemes only ---
+   --  RFC 8446 §4.4.3: a TLS 1.3 CertificateVerify signature MUST
+   --  use rsa_pss_rsae_sha{256,384,512} (0x0804/0x0805/0x0806),
+   --  ecdsa_secp{256r1,384r1,521r1}_sha{256,384,512}
+   --  (0x0403/0x0504/0x0603), or ed25519/ed448 (0x0807/0x0808).
+   --  RFC 8446 explicitly forbids RSASSA-PKCS1-v1_5 schemes
+   --  (0x0401/0x0501/0x0601) for CertificateVerify because PKCS#1 v1.5
+   --  is malleable and historically vulnerable to Bleichenbacher-style
+   --  attacks; PSS supersedes it.
+   --
+   --  This implementation does not support PKCS#1 v1.5 server signing
+   --  at all (no Sign_RSA_PKCS1 in Sign_Algo). The predicate captures
+   --  the wire-scheme constraint for traceability.
+   function CertificateVerify_Modern_Scheme_RFC_8446_4_4_3
+     (Scheme : Unsigned_16) return Boolean is
+     (Scheme = 16#0804# or else Scheme = 16#0805#
+        or else Scheme = 16#0806#
+        or else Scheme = 16#0403#
+        or else Scheme = 16#0503#
+        or else Scheme = 16#0807#)
+     with Ghost;
+
    --  ----- RFC 5246 §7.4.1.4.1 sig_algs default fallback -----------
    --  When the client omits the signature_algorithms extension, the
    --  RFC's literal text says the server "MUST act as if [...]
@@ -1095,6 +1117,25 @@ is
         when Not_Derived => True,  --  not yet derived; vacuously true
         when Extended    => HC.Use_EMS,
         when Legacy      => not HC.Use_EMS)
+     with Ghost;
+
+   --  ----- RFC 8446 §6.1 / §6.2 alert level/description binding ----
+   --  RFC 8446 §6.1: warning (level 1) is ONLY valid with
+   --  close_notify (description 0) or user_canceled (90).
+   --  RFC 8446 §6.2: fatal (level 2) is for everything else; in
+   --  particular close_notify and user_canceled MUST NOT be sent
+   --  at fatal level.
+   --
+   --  TLS 1.3 §6: implementations SHOULD emit any non-zero alert
+   --  at fatal level even when TLS 1.2 would have used warning.
+   --  We follow the strict RFC binding via the predicate below;
+   --  the matching Pre on Build_Plaintext_Alert / Build_Alert_Record
+   --  enforces it at every emission site.
+   function Alert_Level_Description_Valid_RFC_8446_6_1
+     (Level : Byte; Desc : Byte) return Boolean is
+     (Level in 1 .. 2
+        and then (if Level = 1 then Desc = 0 or else Desc = 90)
+        and then (if Level = 2 then Desc /= 0 and then Desc /= 90))
      with Ghost;
 
    --  ----- RFC 8446 §4.1.3 downgrade-protection sentinel -----------
