@@ -163,6 +163,12 @@ is
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Available (S.Input), Rec);
 
+      if Rec.Bad_Version then
+         S.Last_Error := Protocol_Version;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
       if not Rec.OK then
          Result := Need_Input; return;
       end if;
@@ -608,6 +614,12 @@ is
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Available (S.Input), Rec);
 
+      if Rec.Bad_Version then
+         S.Last_Error := Protocol_Version;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
       if not Rec.OK then Result := Need_Input; return; end if;
 
       if Rec.Content = Records.Content_Change_Cipher_Spec then
@@ -644,6 +656,12 @@ is
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Available (S.Input), Rec);
 
+      if Rec.Bad_Version then
+         S.Last_Error := Protocol_Version;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
       if not Rec.OK then Result := Need_Input; return; end if;
 
       if Rec.Content /= Records.Content_Handshake then
@@ -786,6 +804,12 @@ is
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Available (S.Input), Rec);
 
+      if Rec.Bad_Version then
+         S.Last_Error := Protocol_Version;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
       if not Rec.OK then
          Result := Need_Input; return;
       end if;

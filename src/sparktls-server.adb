@@ -348,6 +348,13 @@ is
                   return;
                end if;
 
+               if Rec.Bad_Version then
+                  --  RFC 8446 §5.1: legacy_record_version must lie
+                  --  in {3,1}..{3,4}. Out-of-band → protocol_version.
+                  Send_Alert_And_Error (S, Protocol_Version, Result);
+                  return;
+               end if;
+
                if not Rec.OK then
                   if Rec.Record_Len > 0 then
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -487,6 +494,10 @@ is
                      if not Parse_OK then
                         if S.Last_Error = Decode_Error then
                            Send_Alert_And_Error (S, Decode_Error, Result);
+                        elsif S.Last_Error = Unexpected_Message then
+                           --  Wrong handshake type — RFC 8446 §6
+                           Send_Alert_And_Error
+                             (S, Unexpected_Message, Result);
                         elsif S.Last_Error = Protocol_Version then
                            Send_Alert_And_Error
                              (S, Protocol_Version, Result);
@@ -576,6 +587,10 @@ is
                            if S.Last_Error = Decode_Error then
                               Send_Alert_And_Error
                                 (S, Decode_Error, Result);
+                           elsif S.Last_Error = Unexpected_Message then
+                              --  Wrong handshake type — RFC 8446 §6
+                              Send_Alert_And_Error
+                                (S, Unexpected_Message, Result);
                            elsif S.Last_Error = Protocol_Version then
                               Send_Alert_And_Error
                                 (S, Protocol_Version, Result);
@@ -683,6 +698,13 @@ is
 
                if Rec.Overflow then
                   Send_Alert_And_Error (S, Record_Overflow, Result);
+                  return;
+               end if;
+
+               if Rec.Bad_Version then
+                  --  RFC 8446 §5.1: legacy_record_version must lie
+                  --  in {3,1}..{3,4}. Out-of-band → protocol_version.
+                  Send_Alert_And_Error (S, Protocol_Version, Result);
                   return;
                end if;
 
@@ -2388,10 +2410,17 @@ is
                         (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                          then 48 else 32);
                   begin
-                     --  Check Finished length first: wrong length = decode_error
-                     if Msg_Len /= Expected_Len or else
-                        N32 (Data'Length) < 4 + Expected_Len
-                     then
+                     --  Length must match exactly. RFC 8446 §4.4.4
+                     --  Finished is the last handshake message in
+                     --  the client's first flight; any plaintext
+                     --  bytes after it in the same record is
+                     --  excess handshake data — fatal
+                     --  unexpected_message (BoGo
+                     --  TrailingDataWithFinished, expected error
+                     --  ":EXCESS_HANDSHAKE_DATA:" / "remote error:
+                     --  unexpected message"). Wrong inner Msg_Len
+                     --  is malformed → decode_error.
+                     if Msg_Len /= Expected_Len then
                         declare
                            A : N32;
                         begin
@@ -2399,6 +2428,22 @@ is
                              (2, 50, S.Server_App, S.Output, A);
                         end;
                         S.Last_Error := Decode_Error;
+                        Set_State (S, Error_State);
+                        if Output_Pending (S) > 0 then
+                           Result := Has_Output;
+                        else
+                           Result := Error_Alert;
+                        end if;
+                        return;
+                     end if;
+                     if N32 (Data'Length) /= 4 + Expected_Len then
+                        declare
+                           A : N32;
+                        begin
+                           Records.Build_Alert_Record
+                             (2, 10, S.Server_App, S.Output, A);
+                        end;
+                        S.Last_Error := Unexpected_Message;
                         Set_State (S, Error_State);
                         if Output_Pending (S) > 0 then
                            Result := Has_Output;

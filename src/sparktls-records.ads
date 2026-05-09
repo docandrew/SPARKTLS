@@ -21,6 +21,7 @@ is
    type Parse_Result is record
       OK           : Boolean := False;
       Overflow     : Boolean := False;  --  fragment exceeds RFC limit
+      Bad_Version  : Boolean := False;  --  record version not in {3,1}..{3,4}
       Content      : Record_Content := Content_Unknown;
       Fragment_Pos : N32 := 0;  --  offset of fragment in Data
       Fragment_Len : N32 := 0;  --  fragment byte count
@@ -30,7 +31,8 @@ is
        (if Parse_Result.OK then
           Parse_Result.Content /= Content_Unknown
           and Parse_Result.Fragment_Pos = Record_Header_Size
-          and not Parse_Result.Overflow);
+          and not Parse_Result.Overflow
+          and not Parse_Result.Bad_Version);
 
    --  RFC 8446 §5.1: Parse a TLS record header (5 bytes).
    --  Validates content type and fragment length bounds.

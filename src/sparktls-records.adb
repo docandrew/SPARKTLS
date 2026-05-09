@@ -87,6 +87,19 @@ is
 
       B := Data'First;
 
+      --  RFC 8446 §5.1 / RFC 5246 §6.2.1: the record-layer version
+      --  must encode some TLS version. The major byte must be 0x03,
+      --  and the minor byte one of 0x01 (TLS 1.0) .. 0x04 (TLS 1.3).
+      --  Anything outside this band — e.g. BoGo's
+      --  CheckRecordVersion test sending 0x03FF — is a record-layer
+      --  framing violation: reject without trying to parse further.
+      if Data (B + 1) /= 16#03#
+        or else Data (B + 2) not in 16#01# .. 16#04#
+      then
+         Result.Bad_Version := True;
+         return;
+      end if;
+
       --  Parse 2-byte fragment length (big-endian) from bytes 3..4
       Frag_Len := N32 (Data (B + 3)) * 256 + N32 (Data (B + 4));
 

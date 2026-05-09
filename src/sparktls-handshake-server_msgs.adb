@@ -538,7 +538,8 @@ is
    --  TLS 1.2 ECDHE suite we recognize.
    procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-      S         : in out Session)
+      S         : in out Session;
+      HC        : in out Handshake_Context)
    with Pre =>
      RFLX.TLS_Handshake.Cipher_Suite_TLS.Has_Buffer (Suite_Ctx)
      and then RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
@@ -546,7 +547,8 @@ is
 
    procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-      S         : in out Session)
+      S         : in out Session;
+      HC        : in out Handshake_Context)
    is
       Suite : constant RFLX.Tls_Parameters.TLS_Cipher_Suites :=
                 RFLX.TLS_Handshake.Cipher_Suite_TLS.Get_Suite (Suite_Ctx);
@@ -556,12 +558,27 @@ is
       Suite_Code : constant RFLX.RFLX_Types.Base_Integer :=
                      RFLX.Tls_Parameters.To_Base_Integer (Suite);
       Val   : Unsigned_16;
+      --  Cert algorithm gating (RFC 5246 §7.4.2 / RFC 8422 §5.4).
+      --  ECDHE_ECDSA and ECDHE_RSA require certs of the matching
+      --  signature type. Picking a suite our cert can't sign blocks
+      --  the client side ("ECDHE_ECDSA requires ECDSA / Ed25519
+      --  server public key" or equivalent). Was: any TLS 1.2 suite
+      --  in the offered list was accepted, regardless of cert.
+      Cert_Is_ECDSA : constant Boolean :=
+         HC.Cfg.Local /= null
+         and then HC.Cfg.Local.Sign_Algo in
+                    Sign_ECDSA_P256 | Sign_ECDSA_P384;
+      Cert_Is_RSA : constant Boolean :=
+         HC.Cfg.Local /= null
+         and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS;
    begin
       if not RFLX.Tls_Parameters.Valid_TLS_Cipher_Suites (Suite_Code) then
          return;
       end if;
       Val := Unsigned_16 (Suite_Code);
       --  TLS 1.3 suites (0x13xx). Prefer ChaCha20 over AES-GCM.
+      --  TLS 1.3 cipher selection is independent of cert type
+      --  (signature comes from signature_algorithms extension).
       if Val in Suite_AES_256_GCM_SHA384
               | Suite_AES_128_GCM_SHA256
               | Suite_CHACHA20_POLY1305_SHA256
@@ -573,14 +590,24 @@ is
          end if;
       end if;
 
-      --  TLS 1.2 suites (0xC0xx/0xCCxx)
+      --  TLS 1.2 ECDHE_ECDSA suites (0xC02B / 0xC02C / 0xCCA9):
+      --  cert must be ECDSA.
       if S.Negotiated_Suite_12 = 0
+        and then Cert_Is_ECDSA
+        and then Val in Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                       | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                       | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+      then
+         S.Negotiated_Suite_12 := Val;
+      end if;
+
+      --  TLS 1.2 ECDHE_RSA suites (0xC02F / 0xC030 / 0xCCA8):
+      --  cert must be RSA.
+      if S.Negotiated_Suite_12 = 0
+        and then Cert_Is_RSA
         and then Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
                        | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                       | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                       | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                        | Suite_ECDHE_RSA_CHACHA20_SHA256
-                       | Suite_ECDHE_ECDSA_CHACHA20_SHA256
       then
          S.Negotiated_Suite_12 := Val;
       end if;
@@ -827,7 +854,8 @@ is
    --  Verify / Update, Update_Outer.
    procedure Parse_CH_Cipher_Suites
      (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
-      S   : in out Session)
+      S   : in out Session;
+      HC  : in out Handshake_Context)
    with Pre =>
      not Ctx'Constrained
      and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
@@ -841,7 +869,8 @@ is
 
    procedure Parse_CH_Cipher_Suites
      (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
-      S   : in out Session)
+      S   : in out Session;
+      HC  : in out Handshake_Context)
    is
       use RFLX.TLS_Handshake.Client_Hello;
    begin
@@ -878,7 +907,7 @@ is
                if RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
                     (Suite_Ctx)
                then
-                  Apply_Cipher_Suite (Suite_Ctx, S);
+                  Apply_Cipher_Suite (Suite_Ctx, S, HC);
                end if;
                RFLX.TLS_Handshake.Cipher_Suites_TLS.Update
                  (Suites_Ctx, Suite_Ctx);
@@ -908,7 +937,13 @@ is
       end if;
 
       if Data (Data'First) /= HT_Client_Hello then
-         S.Last_Error := Decode_Error;
+         --  RFC 8446 §6: a handshake message of an inappropriate
+         --  type for the current state must be rejected with
+         --  unexpected_message, not decode_error. The message is
+         --  structurally well-formed (we read its 4-byte header to
+         --  reach this point); the type byte just identifies a
+         --  different message that doesn't belong here.
+         S.Last_Error := Unexpected_Message;
          return;
       end if;
 
@@ -920,6 +955,23 @@ is
       Initialize (Ctx, Buf,
                   Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       Verify_Message (Ctx);
+
+      --  Strict trailing-data check: the parsed CH structure must
+      --  consume the entire body. RFC 8446 §4.1.2 / RFC 5246 §7.4.1.2
+      --  do not permit trailing data after the extensions block.
+      --  BoGo's `SendTrailingMessageData` test appends a stray byte
+      --  inside the handshake length; if RFLX's structural fields
+      --  all parse but the byte count exceeds Message_Last, reject
+      --  with decode_error rather than silently accepting.
+      if Well_Formed_Message (Ctx)
+        and then Message_Last (Ctx) /=
+                   RBT.Bit_Length (RBT.Length (Body_Len) * 8)
+      then
+         Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
 
       if not Well_Formed_Message (Ctx) then
          Take_Buffer (Ctx, Buf);
@@ -968,7 +1020,7 @@ is
       S.Negotiated_Suite_12 := 0;
 
       if Well_Formed (Ctx, F_Cipher_Suites_TLS) then
-         Parse_CH_Cipher_Suites (Ctx, S);
+         Parse_CH_Cipher_Suites (Ctx, S, HC);
       end if;
 
       --  Need at least one matching suite (either TLS 1.3 or 1.2)

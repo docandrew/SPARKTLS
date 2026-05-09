@@ -896,6 +896,13 @@ is
                   Avail => Available (S.Input),
                   Result => Rec);
 
+               if Rec.Bad_Version then
+                  S.Last_Error := Protocol_Version;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
+
                if not Rec.OK then
                   Result := Need_Input;
                   return;
@@ -950,11 +957,37 @@ is
                         Result := OK;
                      end;
 
-                  when others =>
-                     --  Skip unexpected record
+                  when Records.Content_Change_Cipher_Spec =>
+                     --  RFC 8446 §5: a TLS 1.3 client may receive
+                     --  CCS for middlebox-compat at any point after
+                     --  the first ClientHello — drain and continue.
                      S.Input.Read_Pos :=
                         S.Input.Read_Pos + Rec.Record_Len;
                      Result := OK;
+
+                  when Records.Content_Alert =>
+                     --  Plaintext alert before keys are established
+                     --  (e.g. server's close_notify or fatal alert).
+                     --  Process by closing — keep parity with the
+                     --  later alert-handling sites.
+                     S.Input.Read_Pos :=
+                        S.Input.Read_Pos + Rec.Record_Len;
+                     S.Last_Error := Unexpected_Message;
+                     Set_State (S, Error_State);
+                     Result := Error_Alert;
+
+                  when others =>
+                     --  RFC 8446 §6.2: any other record type — most
+                     --  commonly Content_Application_Data — before
+                     --  ServerHello is a record-layer state-machine
+                     --  violation. Reject with unexpected_message
+                     --  (BoGo AppDataBeforeHandshake, expected
+                     --  ":UNEXPECTED_RECORD:").
+                     S.Input.Read_Pos :=
+                        S.Input.Read_Pos + Rec.Record_Len;
+                     S.Last_Error := Unexpected_Message;
+                     Set_State (S, Error_State);
+                     Result := Error_Alert;
                end case;
             end;
 
@@ -1250,6 +1283,17 @@ is
          Avail => Available (S.Input),
          Result => Rec);
 
+      if Rec.Bad_Version then
+         --  RFC 8446 §5.1 / RFC 5246 §6.2.1: legacy_record_version
+         --  must be 0x03xx with minor in 1..4. Anything else
+         --  (BoGo CheckRecordVersion: 0x03FF) → fatal
+         --  protocol_version alert.
+         S.Last_Error := Protocol_Version;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
       if not Rec.OK then
          Result := Need_Input;
          return;
@@ -1449,6 +1493,17 @@ is
                                  S.Input.Write_Pos - 1),
          Avail => Available (S.Input),
          Result => Rec);
+
+      if Rec.Bad_Version then
+         --  RFC 8446 §5.1 / RFC 5246 §6.2.1: legacy_record_version
+         --  must be 0x03xx with minor in 1..4. Anything else
+         --  (BoGo CheckRecordVersion: 0x03FF) → fatal
+         --  protocol_version alert.
+         S.Last_Error := Protocol_Version;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
 
       if not Rec.OK then
          Result := Need_Input;

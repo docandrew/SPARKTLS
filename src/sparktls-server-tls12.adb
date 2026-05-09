@@ -468,8 +468,13 @@ is
          Available (S.Input), Rec);
 
       if not Rec.OK then
-         if Rec.Overflow then Send_Alert_And_Error (S, Record_Overflow, Result);
-         else Result := Need_Input; end if;
+         if Rec.Bad_Version then
+            Send_Alert_And_Error (S, Protocol_Version, Result);
+         elsif Rec.Overflow then
+            Send_Alert_And_Error (S, Record_Overflow, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -683,8 +688,13 @@ is
          Available (S.Input), Rec);
       if not Rec.OK then
          --  RFC 5246 §7.2.1: post-CCS alerts MUST be encrypted.
-         if Rec.Overflow then Send_Encrypted_Alert_12 (S, HC, Record_Overflow, Result);
-         else Result := Need_Input; end if;
+         if Rec.Bad_Version then
+            Send_Encrypted_Alert_12 (S, HC, Protocol_Version, Result);
+         elsif Rec.Overflow then
+            Send_Encrypted_Alert_12 (S, HC, Record_Overflow, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -734,8 +744,17 @@ is
             if Msg_Type /= HT_Finished then
                Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result); return;
             end if;
-            if Msg_Len /= Finished_Verify_Len or PL < 4 + Finished_Verify_Len then
+            if Msg_Len /= Finished_Verify_Len then
                Send_Encrypted_Alert_12 (S, HC, Decode_Error, Result); return;
+            end if;
+            --  RFC 5246 §7.4.9: Finished is the last handshake
+            --  message in the client's flight. Any plaintext bytes
+            --  in the same record beyond `4 + Finished_Verify_Len`
+            --  is excess data → fatal unexpected_message
+            --  (BoGo TrailingDataWithFinished).
+            if PL /= 4 + Finished_Verify_Len then
+               Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result);
+               return;
             end if;
 
             declare
@@ -875,6 +894,9 @@ is
 
       if Rec.Overflow then
          Send_Alert_And_Error (S, Record_Overflow, Result); return;
+      end if;
+      if Rec.Bad_Version then
+         Send_Alert_And_Error (S, Protocol_Version, Result); return;
       end if;
       if not Rec.OK then
          if Rec.Record_Len > 0 then
