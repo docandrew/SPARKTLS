@@ -501,6 +501,9 @@ is
                         elsif S.Last_Error = Protocol_Version then
                            Send_Alert_And_Error
                              (S, Protocol_Version, Result);
+                        elsif S.Last_Error = Illegal_Parameter then
+                           Send_Alert_And_Error
+                             (S, Illegal_Parameter, Result);
                         else
                            Send_Alert_And_Error
                              (S, Handshake_Failure, Result);
@@ -594,6 +597,11 @@ is
                            elsif S.Last_Error = Protocol_Version then
                               Send_Alert_And_Error
                                 (S, Protocol_Version, Result);
+                           elsif S.Last_Error = Illegal_Parameter then
+                              --  RFC 8446 §4.1.2 / §6.2.1: malformed
+                              --  legacy_compression_methods.
+                              Send_Alert_And_Error
+                                (S, Illegal_Parameter, Result);
                            else
                               Send_Alert_And_Error
                                 (S, Handshake_Failure, Result);
@@ -2854,9 +2862,27 @@ is
                                S.App_Data_Len + Plain_Len - 1) :=
                      Plaintext (0 .. Plain_Len - 1);
                   S.App_Data_Len := S.App_Data_Len + Plain_Len;
+                  S.Empty_Records_Recvd := 0;
                   Result := Plaintext_Ready;
                else
-                  Result := OK;
+                  --  Empty plaintext record — count + cap (BoGo
+                  --  SendEmptyRecords / TOO_MANY_EMPTY_FRAGMENTS).
+                  S.Empty_Records_Recvd :=
+                     S.Empty_Records_Recvd + 1;
+                  if S.Empty_Records_Recvd > 32 then
+                     declare
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (2, 10, S.Server_App, S.Output, A);
+                     end;
+                     S.Last_Error := Unexpected_Message;
+                     Set_State (S, Error_State);
+                     Result := (if Output_Pending (S) > 0
+                                then Has_Output else Error_Alert);
+                  else
+                     Result := OK;
+                  end if;
                end if;
 
             when 16#16# =>
@@ -2864,14 +2890,36 @@ is
                Result := OK;
 
             when 16#15# =>
-               --  Alert
-               if Plain_Len >= 2 and then Plaintext (1) = 0 then
-                  --  close_notify received — RFC 8446 §6.1 says we
-                  --  SHOULD reply with our own close_notify at
-                  --  warning level (1) before closing the write-half.
-                  --  Without this, peers that strictly check the
-                  --  alert level (e.g. TLS-Anvil's closeNotify test)
-                  --  flag an apparent fatal-vs-warning mismatch.
+               --  Alert. RFC 8446 §6 / RFC 5246 §7.2: 2-byte payload
+               --  `level | description`. Validate level, distinguish
+               --  close_notify, tolerate user_canceled (with cap),
+               --  reject every other warning with decode_error, and
+               --  reject bogus levels with illegal_parameter.
+               if Plain_Len < 2 then
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 50, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Decode_Error;
+                  Set_State (S, Error_State);
+                  Result := (if Output_Pending (S) > 0
+                             then Has_Output else Error_Alert);
+               elsif Plaintext (0) /= 1 and Plaintext (0) /= 2 then
+                  --  Bogus level (BoGo SendBogusAlertType: 0x42).
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 47, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Illegal_Parameter;
+                  Set_State (S, Error_State);
+                  Result := (if Output_Pending (S) > 0
+                             then Has_Output else Error_Alert);
+               elsif Plaintext (1) = 0 then
+                  --  close_notify — reply in kind (warning level 1).
                   declare
                      A : N32;
                   begin
@@ -2884,9 +2932,6 @@ is
                   end;
                   Set_State (S, Closing);
                   if Output_Pending (S) > 0 then
-                     --  RFC 8446 §6.1 / RFC 5246 §7.2.1 close_notify
-                     --  reply invariant: the encrypted reply is
-                     --  queued AND we've transitioned to Closing.
                      pragma Assert
                        (Close_Notify_Reply_State_RFC_5246_7_2_1
                           (S.State, Output_Pending (S)));
@@ -2894,21 +2939,45 @@ is
                   else
                      Result := Shutdown;
                   end if;
+               elsif Plaintext (0) = 1 then
+                  --  Warning-level alert (level=1) other than
+                  --  close_notify. RFC 8446 §6.1 deprecates these
+                  --  but keeps user_canceled for back-compat.
+                  if Plaintext (1) = 90 then
+                     S.Warning_Alerts_Recvd :=
+                        S.Warning_Alerts_Recvd + 1;
+                     if S.Warning_Alerts_Recvd >= 5 then
+                        declare
+                           A : N32;
+                        begin
+                           Records.Build_Alert_Record
+                             (2, 50, S.Server_App, S.Output, A);
+                        end;
+                        S.Last_Error := Decode_Error;
+                        Set_State (S, Error_State);
+                        Result := (if Output_Pending (S) > 0
+                                   then Has_Output else Error_Alert);
+                     else
+                        Result := OK;
+                     end if;
+                  else
+                     declare
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (2, 50, S.Server_App, S.Output, A);
+                     end;
+                     S.Last_Error := Decode_Error;
+                     Set_State (S, Error_State);
+                     Result := (if Output_Pending (S) > 0
+                                then Has_Output else Error_Alert);
+                  end if;
                else
-                  --  Invalid/empty alert — send unexpected_message
-                  declare
-                     A : N32;
-                  begin
-                     Records.Build_Alert_Record
-                       (2, 10, S.Server_App, S.Output, A);
-                  end;
+                  --  Fatal alert from peer (level=2): close without
+                  --  reply per RFC 8446 §6.2 (no alerts about alerts).
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
-                  if Output_Pending (S) > 0 then
-                     Result := Has_Output;
-                  else
-                     Result := Error_Alert;
-                  end if;
+                  Result := Error_Alert;
                end if;
 
             when others =>

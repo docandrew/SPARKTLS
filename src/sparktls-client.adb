@@ -629,8 +629,16 @@ is
          end if;
       end;
 
-      --  Send CertificateVerify
-      if HC.Cfg.Local.Sign_Algo = Sign_Ed25519 then
+      --  Send CertificateVerify (RFC 8446 §4.4.3). Required after
+      --  any non-empty client Certificate to prove possession of
+      --  the private key. Was Ed25519-only — RSA-PSS / ECDSA certs
+      --  skipped the CV entirely, so the runner saw [Cert, Finished]
+      --  and rejected with "unexpected handshake message of type
+      --  finishedMsg when waiting for certificateVerifyMsg".
+      if HC.Cfg.Local.Sign_Algo in
+           Sign_Ed25519 | Sign_RSA_PSS
+           | Sign_ECDSA_P256 | Sign_ECDSA_P384
+      then
          declare
             H_Len : constant N32 := HC.Hash_Len;
             CV_Hash : Byte_Seq (0 .. H_Len - 1);
@@ -696,7 +704,22 @@ is
       --  failure to keep AEAD nonces in sync with what the peer saw.
       Scratch   : IO_Buffer;
       Saved_Ctr : constant Unsigned_64 := HC.Client_HS.Counter;
+      Pre_CCS_Out : N32;
    begin
+      --  RFC 8446 §D.4: middlebox-compatibility CCS goes FIRST
+      --  in the client's post-server-Finished flight, BEFORE any
+      --  encrypted record. Used to be emitted between Certificate
+      --  and Finished in the mTLS case, which the runner-side Go
+      --  TLS stack rejects with "invalid TLS 1.3 ChangeCipherSpec"
+      --  because it expects a CCS where it sees an app_data record.
+      Records.Build_CCS_Record (Scratch, Pre_CCS_Out);
+      if Pre_CCS_Out = 0 then
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
       --  mTLS: send client certificate before Finished if requested
       Send_Client_Certificate (S, HC, Scratch, Cert_Result);
       if Cert_Result = Error_Alert then
@@ -738,14 +761,9 @@ is
                Big_Finished (3) := 16#30#;  --  48
                Big_Finished (4 .. 51) := Verify_48;
 
-               Records.Build_CCS_Record (Scratch, CCS_Out);
-               if CCS_Out = 0 then
-                  HC.Client_HS.Counter := Saved_Ctr;
-                  S.Last_Error := Insufficient_Buffer;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
-                  return;
-               end if;
+               --  CCS already emitted at the top of the flight
+               --  (RFC 8446 §D.4); CCS_Out is unused here.
+               CCS_Out := 1;
 
                Records.Build_Encrypted_Record
                  (Plaintext  => Big_Finished,
@@ -801,14 +819,8 @@ is
             Handshake.Build_Finished
               (Client_Verify, Finished_Buf, Finished_Len);
 
-            Records.Build_CCS_Record (Scratch, CCS_Out);
-            if CCS_Out = 0 then
-               HC.Client_HS.Counter := Saved_Ctr;
-               S.Last_Error := Insufficient_Buffer;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
+            --  CCS already emitted at top of flight (RFC 8446 §D.4).
+            CCS_Out := 1;
 
             Records.Build_Encrypted_Record
               (Plaintext  => Finished_Buf (0 .. Finished_Len - 1),
@@ -1345,9 +1357,29 @@ is
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
                if not Dec_Valid then
+                  --  RFC 8446 §5.2: AEAD decryption failure MUST
+                  --  trigger a fatal bad_record_mac alert. The
+                  --  alert is sent under our handshake write key
+                  --  (we have it the moment we derived
+                  --  client_handshake_traffic_secret). Was missing
+                  --  the alert entirely (peer saw TCP RST). BoGo's
+                  --  AppDataBeforeTLS13KeyChange exercises this:
+                  --  server sends app_data with the wrong key after
+                  --  our key-change point.
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (Level     => 2,
+                        Desc      => 20,  --  bad_record_mac
+                        Keys      => HC.Client_HS,
+                        Output    => S.Output,
+                        Bytes_Out => A);
+                  end;
                   S.Last_Error := Bad_Record_MAC;
                   Set_State (S, Error_State);
-                  Result := Error_Alert;
+                  Result := (if Output_Pending (S) > 0
+                             then Has_Output else Error_Alert);
                   return;
                end if;
 
@@ -1547,9 +1579,23 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not Dec_Valid then
+            --  RFC 8446 §5.2: send fatal bad_record_mac alert on
+            --  AEAD verification failure. Post-handshake we use
+            --  the client application traffic key.
+            declare
+               A : N32;
+            begin
+               Records.Build_Alert_Record
+                 (Level     => 2,
+                  Desc      => 20,  --  bad_record_mac
+                  Keys      => S.Client_App,
+                  Output    => S.Output,
+                  Bytes_Out => A);
+            end;
             S.Last_Error := Bad_Record_MAC;
             Set_State (S, Error_State);
-            Result := Error_Alert;
+            Result := (if Output_Pending (S) > 0
+                       then Has_Output else Error_Alert);
             return;
          end if;
 
@@ -1563,9 +1609,32 @@ is
                                S.App_Data_Len + Plain_Len - 1) :=
                      Plaintext (0 .. Plain_Len - 1);
                   S.App_Data_Len := S.App_Data_Len + Plain_Len;
+                  S.Empty_Records_Recvd := 0;
                   Result := Plaintext_Ready;
                else
-                  Result := OK;
+                  --  Empty plaintext record. Count + cap to limit
+                  --  DoS via flood (BoGo SendEmptyRecords: 33+ →
+                  --  TOO_MANY_EMPTY_FRAGMENTS).
+                  S.Empty_Records_Recvd :=
+                     S.Empty_Records_Recvd + 1;
+                  if S.Empty_Records_Recvd > 32 then
+                     declare
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (Level     => 2,
+                           Desc      => 10,  --  unexpected_message
+                           Keys      => S.Client_App,
+                           Output    => S.Output,
+                           Bytes_Out => A);
+                     end;
+                     S.Last_Error := Unexpected_Message;
+                     Set_State (S, Error_State);
+                     Result := (if Output_Pending (S) > 0
+                                then Has_Output else Error_Alert);
+                  else
+                     Result := OK;
+                  end if;
                end if;
 
             when 16#16# =>
@@ -1661,11 +1730,46 @@ is
                Result := OK;
 
             when 16#15# =>
-               --  Alert
-               if Plain_Len >= 2 and then Plaintext (1) = 0 then
-                  --  close_notify received — RFC 8446 §6.1: reply
-                  --  with our own close_notify (warning level 1)
-                  --  before closing.
+               --  RFC 8446 §6 / RFC 5246 §7.2 alert. The 2-byte
+               --  payload is `level(1) | description(1)`. The level
+               --  byte MUST be 1 (warning) or 2 (fatal); any other
+               --  value (e.g. BoGo SendBogusAlertType: level 0x42)
+               --  is a protocol violation — we MUST reply with a
+               --  fatal illegal_parameter alert (47).
+               if Plain_Len < 2 then
+                  --  Truncated alert.
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (Level     => 2,
+                        Desc      => 50,  --  decode_error
+                        Keys      => S.Client_App,
+                        Output    => S.Output,
+                        Bytes_Out => A);
+                  end;
+                  S.Last_Error := Decode_Error;
+                  Set_State (S, Error_State);
+                  Result := (if Output_Pending (S) > 0
+                             then Has_Output else Error_Alert);
+               elsif Plaintext (0) /= 1 and Plaintext (0) /= 2 then
+                  --  Bogus alert level → fatal illegal_parameter.
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (Level     => 2,
+                        Desc      => 47,  --  illegal_parameter
+                        Keys      => S.Client_App,
+                        Output    => S.Output,
+                        Bytes_Out => A);
+                  end;
+                  S.Last_Error := Illegal_Parameter;
+                  Set_State (S, Error_State);
+                  Result := (if Output_Pending (S) > 0
+                             then Has_Output else Error_Alert);
+               elsif Plaintext (1) = 0 then
+                  --  close_notify (warning, desc=0). Reply in kind.
                   declare
                      A : N32;
                   begin
@@ -1682,7 +1786,55 @@ is
                   else
                      Result := Shutdown;
                   end if;
+               elsif Plaintext (0) = 1 then
+                  --  Warning-level alert other than close_notify.
+                  --  RFC 8446 §6.1 deprecates TLS 1.3 warning alerts
+                  --  but keeps user_canceled (90) for back-compat
+                  --  (JDK11 misuses it as a half-duplex hint). Match
+                  --  BoringSSL/NSS/OpenSSL: silently skip up to 4
+                  --  user_canceled, fatal-decode_error every other
+                  --  warning, and fatal too-many-warnings on the 5th.
+                  if Plaintext (1) = 90 then
+                     --  user_canceled — tolerate, with cap.
+                     S.Warning_Alerts_Recvd :=
+                        S.Warning_Alerts_Recvd + 1;
+                     if S.Warning_Alerts_Recvd >= 5 then
+                        declare
+                           A : N32;
+                        begin
+                           Records.Build_Alert_Record
+                             (Level     => 2,
+                              Desc      => 50,  --  decode_error
+                              Keys      => S.Client_App,
+                              Output    => S.Output,
+                              Bytes_Out => A);
+                        end;
+                        S.Last_Error := Decode_Error;
+                        Set_State (S, Error_State);
+                        Result := (if Output_Pending (S) > 0
+                                   then Has_Output else Error_Alert);
+                     else
+                        Result := OK;
+                     end if;
+                  else
+                     declare
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (Level     => 2,
+                           Desc      => 50,  --  decode_error
+                           Keys      => S.Client_App,
+                           Output    => S.Output,
+                           Bytes_Out => A);
+                     end;
+                     S.Last_Error := Decode_Error;
+                     Set_State (S, Error_State);
+                     Result := (if Output_Pending (S) > 0
+                                then Has_Output else Error_Alert);
+                  end if;
                else
+                  --  Fatal alert from peer: close without replying
+                  --  (RFC 8446 §6.2: don't send alerts about alerts).
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
                   Result := Error_Alert;

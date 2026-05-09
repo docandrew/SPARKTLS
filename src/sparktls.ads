@@ -928,6 +928,12 @@ is
    type Master_Secret_Derivation_Mode is
      (Not_Derived, Legacy, Extended);
 
+   --  Bounded array of seen CH extension type codes (RFC 8446 §4.2
+   --  duplicate-extension check). Modern CHs carry ~10-20 extensions;
+   --  64 is comfortably above realistic peers and bounds the linear
+   --  scan cost in Apply_CH_Extension.
+   type Ext_Tag_Array is array (1 .. 64) of Unsigned_32;
+
    type Handshake_Context is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
@@ -971,6 +977,12 @@ is
       CH_Ext_Hash       : Unsigned_32 := 0;
       CH_Ext_Count      : Natural := 0;
 
+      --  RFC 8446 §4.2: "the same extension type MUST NOT appear in
+      --  a given extension list more than once". Track seen tag codes
+      --  to enforce. Modern CHs use ~10-20 extensions; cap at 64.
+      Seen_Ext_Tags     : Ext_Tag_Array := (others => 0);
+      Seen_Ext_Count    : Natural := 0;
+
       --  Handshake traffic keys
       Client_HS     : Traffic_Keys;
       Server_HS     : Traffic_Keys;
@@ -1004,6 +1016,11 @@ is
 
       --  Legacy session ID (middlebox compatibility)
       Legacy_Session_ID : Bytes_32 := (others => 0);
+      --  RFC 8446 §4.1.3: server's ServerHello MUST echo the client's
+      --  legacy_session_id (whatever its length, 0..32). We store
+      --  both the bytes and the length so we can echo accurately
+      --  rather than always padding to 32.
+      Legacy_Session_ID_Len : N32 := 0;
 
       --  Signature algorithm negotiation
       Peer_Sig_Algos      : Sig_Algo_List := (others => 0);
@@ -1497,6 +1514,21 @@ is
 
       --  True on first Advance in Connected state (to deliver Handshake_Done)
       Handshake_Just_Done : Boolean := False;
+
+      --  Counter for received warning-level user_canceled alerts.
+      --  RFC 8446 §6.1: TLS 1.3 deprecates warning alerts but keeps
+      --  user_canceled (90) for compatibility with TLS 1.2 stacks
+      --  (notably JDK11). BoringSSL/NSS/OpenSSL convention is to
+      --  tolerate up to 4 in a row; 5+ → fatal "too_many_warning_alerts"
+      --  to limit DoS via alert-flooding. Resets on application data.
+      Warning_Alerts_Recvd : Natural := 0;
+
+      --  Counter for received empty (zero-length plaintext) records.
+      --  RFC 8446 §5.2 / RFC 5246 §6.2.1: zero-length-plaintext
+      --  records waste decrypt CPU without delivering progress.
+      --  BoringSSL caps at 32; 33+ → fatal too_many_empty_fragments.
+      --  Resets on any non-empty record.
+      Empty_Records_Recvd : Natural := 0;
 
       --  TLS 1.2: GCM implicit nonces and sequence numbers
       --  (persist past handshake for Connected-state encrypt/decrypt)

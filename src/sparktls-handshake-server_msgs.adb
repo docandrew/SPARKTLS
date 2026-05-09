@@ -590,6 +590,23 @@ is
          end if;
       end if;
 
+      --  When no cert is configured (unit-test path or pre-configure),
+      --  fall back to the original "accept any TLS 1.2 ECDHE suite"
+      --  behaviour so the suite is recorded for later inspection.
+      if HC.Cfg.Local = null then
+         if S.Negotiated_Suite_12 = 0
+           and then Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                          | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                          | Suite_ECDHE_RSA_CHACHA20_SHA256
+                          | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+         then
+            S.Negotiated_Suite_12 := Val;
+         end if;
+         return;
+      end if;
+
       --  TLS 1.2 ECDHE_ECDSA suites (0xC02B / 0xC02C / 0xCCA9):
       --  cert must be ECDSA.
       if S.Negotiated_Suite_12 = 0
@@ -649,6 +666,18 @@ is
            Unsigned_32
              (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tag));
       begin
+         --  RFC 8446 §4.2: duplicate extension types in CH MUST be
+         --  rejected. BoGo's DuplicateExtension test exercises this.
+         for I in 1 .. HC.Seen_Ext_Count loop
+            if HC.Seen_Ext_Tags (I) = Code then
+               OK := False;
+               return;
+            end if;
+         end loop;
+         if HC.Seen_Ext_Count < HC.Seen_Ext_Tags'Last then
+            HC.Seen_Ext_Count := HC.Seen_Ext_Count + 1;
+            HC.Seen_Ext_Tags (HC.Seen_Ext_Count) := Code;
+         end if;
          if Code /= 16#002C# then
             HC.CH_Ext_Hash := HC.CH_Ext_Hash * 31 xor Code;
             --  Saturating increment: the loop bound (max ~16K extensions
@@ -976,15 +1005,57 @@ is
       if not Well_Formed_Message (Ctx) then
          Take_Buffer (Ctx, Buf);
          RFLX_Free (Buf);
-         --  Check if the failure is due to wrong legacy_version.
-         --  ClientHello body: legacy_version(2) at offset Data'First+4..+5.
-         --  RFC 8446 §4.1.2: legacy_version MUST be 0x0303.
+         --  Distinguish failure modes for the right alert:
+         --    legacy_version != 0x0303      → protocol_version
+         --    legacy_compression_methods    → illegal_parameter
+         --       != single 0x00 byte
+         --    other                         → decode_error
+         --
+         --  ClientHello body layout (RFC 8446 §4.1.2):
+         --    legacy_version(2) | random(32) | session_id_len(1) |
+         --    session_id(0..32) | cipher_suites_len(2) |
+         --    cipher_suites    | compression_methods_len(1) |
+         --    compression_methods(1..255) | extensions...
          if Data'Length >= 6 and then
             (Data (Data'First + 4) /= 16#03# or Data (Data'First + 5) /= 16#03#)
          then
             S.Last_Error := Protocol_Version;
          else
-            S.Last_Error := Decode_Error;
+            --  Walk to legacy_compression_methods to check it's
+            --  exactly the single byte 0x00. RFC 8446 §4.1.2 +
+            --  §6.2.1: any other compression list is illegal_parameter.
+            declare
+               BS  : constant N32 := Data'First + 4;  --  past HS hdr
+               P   : N32;
+               OK  : Boolean := False;
+               Sid_Len, Cs_Len, Cm_Len : N32;
+            begin
+               --  Need at least: version(2)+random(32)+sid_len(1) = 35
+               if N32 (Data'Length) >= 4 + 35 then
+                  Sid_Len := N32 (Data (BS + 34));
+                  P := BS + 35 + Sid_Len;
+                  if P + 2 <= N32 (Data'Last) - N32 (Data'First) + 1
+                              + N32 (Data'First)
+                  then
+                     Cs_Len := N32 (Data (P)) * 256 + N32 (Data (P + 1));
+                     P := P + 2 + Cs_Len;
+                     if P + 1 <= Data'Last then
+                        Cm_Len := N32 (Data (P));
+                        if Cm_Len /= 1
+                          or else (P + 1 <= Data'Last
+                                   and then Data (P + 1) /= 0)
+                        then
+                           OK := True;  --  found bad compression
+                        end if;
+                     end if;
+                  end if;
+               end if;
+               if OK then
+                  S.Last_Error := Illegal_Parameter;
+               else
+                  S.Last_Error := Decode_Error;
+               end if;
+            end;
          end if;
          return;
       end if;
@@ -997,12 +1068,15 @@ is
          HC.Client_Random := To_NaCl (Random_Bytes);
       end;
 
-      --  Extract legacy session ID
+      --  Extract legacy session ID. RFC 8446 §4.1.3: server MUST
+      --  echo the exact bytes (and length) the client sent. Track
+      --  both so Build_Server_Hello can echo accurately.
       declare
          SID_Len : constant N32 :=
             N32 (Get_Legacy_Session_ID_Length (Ctx));
       begin
          HC.Legacy_Session_ID := (others => 0);
+         HC.Legacy_Session_ID_Len := SID_Len;
          if SID_Len > 0 and SID_Len <= 32 then
             declare
                SID : RBT.Bytes (1 .. RBT.Index (SID_Len));
@@ -1417,8 +1491,35 @@ is
       Set_Legacy_Version (Ctx, TLS_1_2);
       pragma Assert (Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random));
       Set_Random (Ctx, To_RFLX (HC.Server_Random));
-      Set_Legacy_Session_ID_Length (Ctx, 32);
-      Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
+      --  RFC 8446 §4.1.3: echo the client's exact session_id length
+      --  and bytes. BoGo Server-ShortSessionID-TLS13 sends a < 32-
+      --  byte session_id; we used to always echo 32, which the
+      --  runner rejects with "ClientHello and ServerHello session
+      --  IDs did not match".
+      declare
+         Echo_Len : constant N32 :=
+            (if HC.Legacy_Session_ID_Len in 0 .. 32
+             then HC.Legacy_Session_ID_Len else 0);
+      begin
+         Set_Legacy_Session_ID_Length
+           (Ctx,
+            RFLX.TLS_Handshake.Legacy_Session_ID_Length (Echo_Len));
+         if Echo_Len > 0 then
+            declare
+               SID : constant Byte_Seq (0 .. Echo_Len - 1) :=
+                  HC.Legacy_Session_ID (0 .. Echo_Len - 1);
+            begin
+               Set_Legacy_Session_ID (Ctx, To_RFLX (SID));
+            end;
+         else
+            --  RFLX requires the field to be set even when empty.
+            declare
+               Empty : constant Byte_Seq (1 .. 0) := (others => 0);
+            begin
+               Set_Legacy_Session_ID (Ctx, To_RFLX (Empty));
+            end;
+         end if;
+      end;
       Set_Cipher_Suite_TLS_Suite (Ctx, To_Suite_Enum (S.Negotiated_Suite));
       --  RFC 8446 §4.1.3: legacy_compression_method MUST be 0.
       --  TLS 1.3 has no compression at all; the field is preserved

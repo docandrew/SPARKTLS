@@ -302,6 +302,9 @@ procedure Bogo_Shim is
       else
          declare
             Trust : constant String := Trim_Path (Cfg.Trust_Cert);
+            Cert  : constant String := Trim_Path (Cfg.Cert_File);
+            Key   : constant String := Trim_Path (Cfg.Key_File);
+            Have_Local : Boolean := False;
          begin
             if Trust /= "" then
                SPARKTLS.Credentials.Load_Trust_Store (Roots, Trust, Roots_OK);
@@ -312,12 +315,24 @@ procedure Bogo_Shim is
                   return;
                end if;
             end if;
+            if Cert /= "" and Key /= "" then
+               --  mTLS: client cert + key for CertificateRequest reply.
+               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
+               if not Id_OK then
+                  Err ("bogo_shim: load client identity failed");
+                  Ada.Command_Line.Set_Exit_Status
+                    (Ada.Command_Line.Exit_Status (Exit_Failure));
+                  return;
+               end if;
+               Have_Local := True;
+            end if;
             SPARKTLS.Client.Configure
               (S        => S,
                Hostname => "localhost",
                Trust    => (if Trust /= "" then Roots'Unchecked_Access else null),
                Random   => Entropy_Random.Random'Access,
-               Clock    => null);
+               Clock    => null,
+               Local    => (if Have_Local then Id'Unchecked_Access else null));
          end;
       end if;
 

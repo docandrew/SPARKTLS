@@ -912,6 +912,31 @@ is
          Result := OK; return;
       end if;
 
+      --  RFC 5246 §7.4.1.2 / RFC 5746: a TLS 1.2 server MAY refuse
+      --  client-initiated renegotiation. A Handshake record in the
+      --  Connected state is a renegotiation attempt — reply with a
+      --  no_renegotiation warning alert (level 1, desc 100) and
+      --  continue. BoGo Renegotiate-Server-Forbidden expects
+      --  "remote error: no renegotiation" specifically.
+      if Rec.Content = Records.Content_Handshake then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         declare
+            A : N32;
+         begin
+            Records.TLS12.Build_Alert_Record_12
+              (Level       => 1,
+               Desc        => 100,
+               Keys        => S.Server_App,
+               Implicit_IV => S.Server_IV_12,
+               Seq_Num     => S.Server_Seq_12,
+               Output      => S.Output,
+               Bytes_Out   => A);
+         end;
+         Result := (if Output_Pending (S) > 0
+                    then Has_Output else OK);
+         return;
+      end if;
+
       --  Only app_data and alert are valid encrypted record types
       if Rec.Content not in Records.Content_Application_Data
                           | Records.Content_Alert
