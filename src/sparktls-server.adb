@@ -402,6 +402,7 @@ is
                      Free_Byte_Seq (HC.Reasm_Buf);
                      HC.Reasm_Len := 0;
                      HC.Reasm_Need := 0;
+                     HC.Reasm_Hdr_Pending := False;
                   end Free_Reasm;
                begin
                   --  Check if we're in the middle of reassembly
@@ -425,6 +426,30 @@ is
                         end if;
                      end;
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+                     --  Header-pending sentinel: once 4 bytes are
+                     --  present, decode the actual HS_Total and
+                     --  upgrade Reasm_Need.
+                     if HC.Reasm_Hdr_Pending
+                       and then HC.Reasm_Len >= 4
+                       and then HC.Reasm_Buf /= null
+                     then
+                        declare
+                           HS_Total : constant N32 :=
+                              N32 (HC.Reasm_Buf (1)) * 65536
+                              + N32 (HC.Reasm_Buf (2)) * 256
+                              + N32 (HC.Reasm_Buf (3)) + 4;
+                        begin
+                           HC.Reasm_Hdr_Pending := False;
+                           if HS_Total < 4 or HS_Total > Max_HS_Msg then
+                              Free_Reasm;
+                              Send_Alert_And_Error
+                                (S, Decode_Error, Result);
+                              return;
+                           end if;
+                           HC.Reasm_Need := HS_Total;
+                        end;
+                     end if;
 
                      if HC.Reasm_Len < HC.Reasm_Need then
                         --  Still need more fragments
@@ -477,9 +502,30 @@ is
                      --  spans multiple records by reading the 3-byte
                      --  handshake length.
                      if Frag_Len < 4 then
+                        --  RFC 8446 §5.1: handshake messages MAY span
+                        --  records. The first fragment is shorter than
+                        --  the 4-byte HS header itself — start
+                        --  reassembly with a header-pending sentinel.
+                        --  The reassembly path decodes the real
+                        --  HS_Total once 4 bytes are accumulated.
+                        if Frag_Len = 0 then
+                           S.Input.Read_Pos :=
+                              S.Input.Read_Pos + Rec.Record_Len;
+                           Send_Alert_And_Error
+                             (S, Decode_Error, Result);
+                           return;
+                        end if;
+                        HC.Reasm_Buf := new Byte_Seq'
+                           (0 .. Max_HS_Msg - 1 => 0);
+                        HC.Reasm_Need := 4;
+                        HC.Reasm_Hdr_Pending := True;
+                        HC.Reasm_Len := Frag_Len;
+                        HC.Reasm_Buf (0 .. Frag_Len - 1) :=
+                           S.Input.Data (Frag_Start ..
+                                         Frag_Start + Frag_Len - 1);
                         S.Input.Read_Pos :=
                            S.Input.Read_Pos + Rec.Record_Len;
-                        Send_Alert_And_Error (S, Decode_Error, Result);
+                        Result := OK;
                         return;
                      end if;
 
@@ -1114,24 +1160,25 @@ is
       end if;
 
       --  Check if HelloRetryRequest is needed.
-      --  Our group preference is x25519 > P-256 > P-384.
-      --  If the client supports our preferred group (via supported_groups)
-      --  but didn't include it in key_share, send HRR.
+      --
+      --  RFC 8446 §4.1.4: HRR is sent ONLY when we cannot proceed
+      --  from the offered ClientHello — i.e. no usable key_share
+      --  was provided for any group we and the client both support.
+      --  We MUST NOT send HRR purely to express a server preference
+      --  for a different group: if the client offered P-256 and we
+      --  support X25519/P-256/P-384, we use P-256 and proceed. The
+      --  Go TLS test client (BoGo) treats preference-based HRR as
+      --  an "invalid HelloRetryRequest" and aborts.
       if not HC.HRR_Sent then
          declare
             Need_HRR    : Boolean := False;
             HRR_Group   : Unsigned_16 := 0;
          begin
-            --  Check if we have key_share data for ANY group.
-            --  If not, we MUST send HRR for a group the client
-            --  listed in supported_groups.
-            --  If we have key_share data but prefer a different
-            --  group that the client supports, send HRR for that.
+            --  Only HRR if no usable key_share AT ALL.
             if not (HC.Client_Has_X25519 or HC.Client_Has_P256
                     or HC.Client_Has_P384)
             then
-               --  No key_share data at all — request our preferred
-               --  group from supported_groups
+               --  Pick a group from supported_groups for HRR.
                if HC.Client_Supports_X25519 then
                   Need_HRR := True;
                   HRR_Group := 16#001D#;
@@ -1142,13 +1189,6 @@ is
                   Need_HRR := True;
                   HRR_Group := 16#0018#;
                end if;
-            elsif HC.Client_Supports_X25519
-               and then not HC.Client_Has_X25519
-            then
-               --  We prefer x25519 and client supports it but
-               --  sent a different group in key_share
-               Need_HRR := True;
-               HRR_Group := 16#001D#;
             end if;
 
             if Need_HRR then
@@ -2205,7 +2245,6 @@ is
             end if;
 
          when Records.Content_Application_Data =>
-            --  Encrypted handshake record (client Finished)
             declare
                Frag_Len   : constant N32 := Rec.Fragment_Len;
                Frag_Start : constant N32 :=

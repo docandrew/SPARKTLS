@@ -367,8 +367,82 @@ procedure Bogo_Shim is
          return;
       end if;
 
-      --  Phase-1: don't implement application-data echo yet — close
-      --  cleanly. Many basic BoGo tests only check the handshake.
+      --  ----- Phase-2 application-data echo loop ---------------------
+      --  After handshake, BoGo's bssl_shim does an XOR-echo: read
+      --  ciphertext, decrypt, XOR each plaintext byte with 0xFF,
+      --  write back. Runs until peer closes (close_notify / TCP FIN).
+      --
+      --  -shim-writes-first: per bssl_shim.cc:1183, shim sends the
+      --  fixed string "hello" before reading anything else.
+      if Cfg.Shim_Writes_First then
+         declare
+            Hello : constant Byte_Seq := (16#68#, 16#65#, 16#6C#,
+                                          16#6C#, 16#6F#);  --  "hello"
+            Written : N32;
+         begin
+            if Cfg.Is_Server then
+               SPARKTLS.Server.Write_Plaintext (S, Hello, Written);
+            else
+               SPARKTLS.Client.Write_Plaintext (S, Hello, Written);
+            end if;
+            Send_Pending;
+         end;
+      end if;
+      Echo_Loop :
+      loop
+         if Cfg.Is_Server then
+            SPARKTLS.Server.Advance (S, Res);
+         else
+            SPARKTLS.Client.Advance (S, Res);
+         end if;
+         case Res is
+            when Has_Output =>
+               Send_Pending;
+            when Need_Input =>
+               declare
+                  Done : Boolean;
+               begin
+                  Recv_Once (Done);
+                  exit Echo_Loop when Done;  --  peer closed
+               end;
+            when Plaintext_Ready =>
+               --  BoGo echo protocol from bssl_shim.cc:1255-1257:
+               --    for (int i = 0; i < n; i++) buf[i] ^= 0xff;
+               --  Read decrypted bytes, XOR each with 0xff, write back.
+               declare
+                  App   : Byte_Seq (0 .. 16383);
+                  App_N : N32;
+                  Written : N32;
+               begin
+                  Read_Plaintext (S, App, App_N);
+                  if App_N > 0 then
+                     for I in N32 range 0 .. App_N - 1 loop
+                        App (I) := App (I) xor 16#FF#;
+                     end loop;
+                     if Cfg.Is_Server then
+                        SPARKTLS.Server.Write_Plaintext
+                          (S, App (0 .. App_N - 1), Written);
+                     else
+                        SPARKTLS.Client.Write_Plaintext
+                          (S, App (0 .. App_N - 1), Written);
+                     end if;
+                     Send_Pending;
+                  end if;
+               end;
+            when OK =>
+               null;
+            when Handshake_Done =>
+               null;  --  shouldn't recur after first time
+            when Shutdown =>
+               exit Echo_Loop;
+            when Error_Alert =>
+               Send_Pending;
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               return;
+         end case;
+      end loop Echo_Loop;
+
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (Exit_Success));
    end Run_Handshake;
 

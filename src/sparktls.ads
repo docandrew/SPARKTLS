@@ -34,8 +34,17 @@ is
    subtype Wire_Small_Ext_Len is N32 range 1 .. 512;
    --  Small extensions (ALPN, supported_groups, supported_versions)
 
-   subtype Wire_Key_Share_Len is N32 range 1 .. 256;
-   --  Single key share entry (max P-384 = 101 bytes)
+   subtype Wire_Key_Share_Len is N32 range 1 .. 16384;
+   --  Total key_share extension body. RFC 8446 §4.2.8 allows the
+   --  client to offer multiple `KeyShareEntry` values, and modern
+   --  clients (Go default, Chrome) include PQ hybrids — each
+   --  X25519MLKEM768 entry alone is 1220 bytes, X25519Kyber768 is
+   --  1188 bytes, ML-KEM-1024 is 1572 bytes. With ~7 default
+   --  entries the body easily reaches several KB. The upper bound
+   --  is set to 16 KB: large enough to accept legitimate multi-PQ
+   --  key_share extensions while still bounding heap allocation
+   --  in Parse_KS_Extension. Was 256 — matched a single P-384
+   --  entry only and silently dropped real-world TLS 1.3 clients.
 
    --  Handshake message length (3 bytes on wire, max 2^24 - 1).
    --  Bounded to Max_HS_Msg (128 KB) for reassembled messages.
@@ -1065,6 +1074,11 @@ is
       Reasm_Buf  : Byte_Seq_Access := null;
       Reasm_Len  : N32 := 0;   --  bytes accumulated so far
       Reasm_Need : N32 := 0;   --  total bytes needed (type+length+body)
+      --  When fragmentation splits the 4-byte handshake header itself
+      --  (BoGo MaxHandshakeRecordLength=1), Reasm_Need is initialized
+      --  to 4 with this flag set; the reassembly path decodes the
+      --  real HS_Total once 4 bytes are present and clears the flag.
+      Reasm_Hdr_Pending : Boolean := False;
 
       --  Heap budget: total bytes allocated for extensions/reassembly.
       --  Prevents DoS via large extensions in ClientHello/ServerHello.

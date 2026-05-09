@@ -108,12 +108,15 @@ fi
     -idle-timeout 3s \
     "$@" 2>&1 | tee "$CACHE/last_results.log" | tail -3
 
-#  Stats line is "passed/failed/done/started/total".
+#  Stats line is "failed/unimplemented/done/started/total"
+#  (per ssl/test/runner/runner.go:2244).
 LAST=$(grep -oE "[0-9]+/[0-9]+/[0-9]+/[0-9]+/[0-9]+" "$CACHE/last_results.log" \
        | tail -1)
-PASSED=$(echo "$LAST" | cut -d/ -f1)
-FAILED=$(echo "$LAST" | cut -d/ -f2)
+FAILED=$(echo "$LAST" | cut -d/ -f1)
+UNIMPL=$(echo "$LAST" | cut -d/ -f2)
+DONE=$(echo "$LAST" | cut -d/ -f3)
 TOTAL=$(echo "$LAST" | cut -d/ -f5)
+PASSED=$(( DONE - FAILED - UNIMPL ))
 
 if [ -z "$LAST" ]; then
     echo
@@ -122,4 +125,4 @@ if [ -z "$LAST" ]; then
 fi
 
 echo
-echo "=== BoGo: $PASSED/$TOTAL passed, $FAILED failed ==="
+echo "=== BoGo: $PASSED/$TOTAL passed, $FAILED failed, $UNIMPL unimplemented ==="
