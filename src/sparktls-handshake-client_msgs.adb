@@ -674,6 +674,64 @@ is
          return;
       end if;
 
+      --  RFC 8446 §4.2 duplicate-extension check, performed BEFORE
+      --  RFLX parse so that even SH bytes RFLX rejects (e.g. one
+      --  of the duplicates is a tag RFLX treats as malformed)
+      --  still reach decode_error rather than the TLS-1.2 fallback.
+      --  Walk the SH structure: legacy_version(2) + random(32) +
+      --  sid_len(1) + sid(0..32) + cipher(2) + comp(1) + ext_len(2)
+      --  + extensions. Each extension: tag(2) + len(2) + data(len).
+      declare
+         B   : constant N32 := Data'First + 4;  --  body start
+         P   : N32;
+         Sid_Len, Ext_Total : N32;
+         Seen : Ext_Tag_Array := (others => 0);
+         SC   : Natural := 0;
+      begin
+         --  Need at least: version(2)+random(32)+sid_len(1) = 35
+         if N32 (Data'Length) - 4 >= 35 then
+            Sid_Len := N32 (Data (B + 34));
+            P := B + 35 + Sid_Len + 2 + 1;  --  past sid + cipher + comp
+            if P + 2 <= Data'Last then
+               Ext_Total :=
+                  N32 (Data (P)) * 256 + N32 (Data (P + 1));
+               P := P + 2;  --  P now at start of first extension
+               --  Loop while we can read tag(2)+len(2) and stay
+               --  within the declared extensions block.
+               declare
+                  Ext_End : constant N32 := P + Ext_Total;
+               begin
+                  while P + 4 <= Data'Last + 1
+                    and then P + 4 <= Ext_End + 1
+                  loop
+                  declare
+                     Tag_Code : constant Unsigned_32 :=
+                        Unsigned_32 (Data (P)) * 256
+                        + Unsigned_32 (Data (P + 1));
+                     E_Len : constant N32 :=
+                        N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
+                  begin
+                     for I in 1 .. SC loop
+                        if Seen (I) = Tag_Code then
+                           --  Duplicate found. Buf and Ctx are still
+                           --  fresh (RFLX init not yet done); just
+                           --  set the error and return.
+                           S.Last_Error := Decode_Error;
+                           return;
+                        end if;
+                     end loop;
+                     if SC < Seen'Last then
+                        SC := SC + 1;
+                        Seen (SC) := Tag_Code;
+                     end if;
+                     P := P + 4 + E_Len;
+                  end;
+               end loop;
+               end;
+            end if;
+         end if;
+      end;
+
       --  Skip 4-byte handshake header, pass body to Server_Hello context
       Body_Len := N32 (Data'Length) - 4;
 
@@ -732,6 +790,13 @@ is
       if Well_Formed (Ctx, F_Extensions_TLS) then
          declare
             Exts_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
+            --  RFC 8446 §4.2 duplicate-extension check, mirror of
+            --  the CH-side cap (HC.Seen_Ext_Tags). Local because
+            --  SH parsing happens once and we don't need cross-call
+            --  state.
+            SH_Seen_Tags  : Ext_Tag_Array := (others => 0);
+            SH_Seen_Count : Natural := 0;
+            Saw_Dup       : Boolean := False;
          begin
             Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
@@ -755,7 +820,20 @@ is
                               .TLS_ExtensionType_Values :=
                            RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
                              (Ext_Ctx);
+                        Code : constant Unsigned_32 :=
+                           Unsigned_32
+                             (RFLX.Tls_Extensiontype_Values
+                                .To_Base_Integer (Tag));
                      begin
+                        for I in 1 .. SH_Seen_Count loop
+                           if SH_Seen_Tags (I) = Code then
+                              Saw_Dup := True;
+                           end if;
+                        end loop;
+                        if SH_Seen_Count < SH_Seen_Tags'Last then
+                           SH_Seen_Count := SH_Seen_Count + 1;
+                           SH_Seen_Tags (SH_Seen_Count) := Code;
+                        end if;
                         --  Check for supported_versions extension
                         if Tag.Known and then
                            Tag.Enum =
@@ -914,6 +992,16 @@ is
             end loop;
 
             Update_Extensions_TLS (Ctx, Exts_Ctx);
+
+            if Saw_Dup then
+               --  RFC 8446 §4.2: duplicate extensions in the
+               --  ServerHello are a fatal protocol violation.
+               --  BoGo DuplicateExtensionClient-* exercises this.
+               Take_Buffer (Ctx, Buf);
+               RFLX_Free (Buf);
+               S.Last_Error := Decode_Error;
+               return;
+            end if;
          end;
       end if;
 

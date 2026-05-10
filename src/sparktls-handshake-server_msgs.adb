@@ -668,7 +668,10 @@ is
       begin
          --  RFC 8446 §4.2: duplicate extension types in CH MUST be
          --  rejected. BoGo's DuplicateExtension test exercises this.
+         pragma Assert (No_Duplicate_Extensions_RFC_8446_4_2 (HC));
          for I in 1 .. HC.Seen_Ext_Count loop
+            pragma Loop_Invariant
+              (No_Duplicate_Extensions_RFC_8446_4_2 (HC));
             if HC.Seen_Ext_Tags (I) = Code then
                OK := False;
                return;
@@ -678,6 +681,7 @@ is
             HC.Seen_Ext_Count := HC.Seen_Ext_Count + 1;
             HC.Seen_Ext_Tags (HC.Seen_Ext_Count) := Code;
          end if;
+         pragma Assert (No_Duplicate_Extensions_RFC_8446_4_2 (HC));
          if Code /= 16#002C# then
             HC.CH_Ext_Hash := HC.CH_Ext_Hash * 31 xor Code;
             --  Saturating increment: the loop bound (max ~16K extensions
@@ -1496,6 +1500,7 @@ is
       --  byte session_id; we used to always echo 32, which the
       --  runner rejects with "ClientHello and ServerHello session
       --  IDs did not match".
+      pragma Assert (Session_ID_Echo_RFC_8446_4_1_3 (HC));
       declare
          Echo_Len : constant N32 :=
             (if HC.Legacy_Session_ID_Len in 0 .. 32

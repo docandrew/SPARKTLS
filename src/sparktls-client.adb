@@ -202,6 +202,29 @@ is
             --  after the server's Finished message.
             Append_Transcript (HC, Data);
             HC.Cert_Request_Received := True;
+            --  Pick the signature algorithm we'll use in our
+            --  CertificateVerify. Without this, Negotiated_Sig_Algo
+            --  stays 0 and Build_Certificate_Verify produces a CV
+            --  with a malformed sig-algo field — runner sees no
+            --  CV at all in the encrypted flight and rejects with
+            --  "expected CertificateVerify, got Finished".
+            --  TODO: parse the CR's signature_algorithms extension
+            --  and pick one the server actually accepts. For now,
+            --  default to the canonical algo for our cert key type.
+            if HC.Cfg.Local /= null then
+               case HC.Cfg.Local.Sign_Algo is
+                  when Sign_RSA_PSS =>
+                     HC.Negotiated_Sig_Algo := 16#0804#;  --  rsa_pss_rsae_sha256
+                  when Sign_ECDSA_P256 =>
+                     HC.Negotiated_Sig_Algo := 16#0403#;  --  ecdsa_secp256r1_sha256
+                  when Sign_ECDSA_P384 =>
+                     HC.Negotiated_Sig_Algo := 16#0503#;  --  ecdsa_secp384r1_sha384
+                  when Sign_Ed25519 =>
+                     HC.Negotiated_Sig_Algo := 16#0807#;  --  ed25519
+                  when Sign_None =>
+                     null;
+               end case;
+            end if;
             --  Stay in Wait_Certificate (server Certificate comes next)
 
          when Handshake.HT_Certificate =>
@@ -705,13 +728,23 @@ is
       Scratch   : IO_Buffer;
       Saved_Ctr : constant Unsigned_64 := HC.Client_HS.Counter;
       Pre_CCS_Out : N32;
+      --  RFC 8446 §7.1: client_application_traffic_secret_0 uses
+      --  the transcript hash through SERVER's Finished — NOT
+      --  including any subsequent client Cert/CV. Snapshot the
+      --  hash BEFORE Send_Client_Certificate appends our Cert,
+      --  so App keys match what the peer derives. Was: re-hashed
+      --  AFTER Send_Client_Certificate had appended the empty Cert,
+      --  producing keys that diverged from the peer's, leading to
+      --  "bad record MAC" on the first post-handshake record.
+      App_TS_Hash_256 : constant Digest := Transcript_Hash_256 (HC);
+      App_TS_Hash_384 : constant Key_Schedule.Digest_384 :=
+                          Transcript_Hash_384 (HC);
    begin
       --  RFC 8446 §D.4: middlebox-compatibility CCS goes FIRST
       --  in the client's post-server-Finished flight, BEFORE any
-      --  encrypted record. Used to be emitted between Certificate
-      --  and Finished in the mTLS case, which the runner-side Go
-      --  TLS stack rejects with "invalid TLS 1.3 ChangeCipherSpec"
-      --  because it expects a CCS where it sees an app_data record.
+      --  encrypted record. Otherwise the runner-side Go TLS stack
+      --  rejects with "invalid TLS 1.3 ChangeCipherSpec" because
+      --  it expects a CCS where it sees an app_data record.
       Records.Build_CCS_Record (Scratch, Pre_CCS_Out);
       if Pre_CCS_Out = 0 then
          S.Last_Error := Insufficient_Buffer;
@@ -761,8 +794,7 @@ is
                Big_Finished (3) := 16#30#;  --  48
                Big_Finished (4 .. 51) := Verify_48;
 
-               --  CCS already emitted at the top of the flight
-               --  (RFC 8446 §D.4); CCS_Out is unused here.
+               --  CCS already emitted at top of flight (RFC 8446 §D.4).
                CCS_Out := 1;
 
                Records.Build_Encrypted_Record
@@ -784,8 +816,13 @@ is
             Key_Schedule.Derive_Master_Secret_384
               (Master, Key_Schedule.Digest_384 (HC.Handshake_Secret));
 
+            --  RFC 8446 §7.1: app traffic secrets use the
+            --  Server-Finished snapshot (App_TS_Hash_384), NOT
+            --  the current TS_Hash which would include any
+            --  client Cert/CV appended by Send_Client_Certificate.
             Key_Schedule.Derive_App_Traffic_Secrets_384
-              (Client_App_Sec, Server_App_Sec, Master, TS_Hash);
+              (Client_App_Sec, Server_App_Sec, Master,
+               App_TS_Hash_384);
 
             HC.Master_Secret := Bytes_48 (Master);
 
@@ -840,9 +877,13 @@ is
             Key_Schedule.Derive_Master_Secret
               (Master, Digest (HC.Handshake_Secret (0 .. 31)));
 
+            --  RFC 8446 §7.1: app traffic secrets use the
+            --  Server-Finished snapshot (App_TS_Hash_256), NOT
+            --  the current TS_Hash which would include any
+            --  client Cert/CV appended by Send_Client_Certificate.
             Key_Schedule.Derive_App_Traffic_Secrets
               (Client_App_Sec, Server_App_Sec,
-               Master, TS_Hash);
+               Master, App_TS_Hash_256);
 
             HC.Master_Secret := (others => 0);
             HC.Master_Secret (0 .. 31) := Bytes_32 (Digest (Master));
@@ -933,15 +974,31 @@ is
                      begin
                         Handshake.Client_Msgs.Parse_Server_Hello (S, HC, Frag, Parse_OK);
 
-                        if not Parse_OK then
+                        if not Parse_OK
+                          and then S.Last_Error = No_Error
+                        then
                            --  RFLX parser may fail on TLS 1.2 ServerHello
-                           --  (empty session_id). Try manual parse.
+                           --  (empty session_id). Try manual parse,
+                           --  but only when no specific error was
+                           --  recorded — a deliberate Decode_Error
+                           --  (e.g. RFC 8446 §4.2 dup-ext detection)
+                           --  must not be papered over by the TLS 1.2
+                           --  fallback.
                            Handshake.TLS12.Parse_Server_Hello_12
                              (S, HC, Frag, Parse_OK);
                         end if;
 
                         if not Parse_OK then
-                           S.Last_Error := Handshake_Failure;
+                           --  Send the alert that matches the
+                           --  recorded error, defaulting to
+                           --  Handshake_Failure. Decode_Error from
+                           --  the TLS 1.3 path (e.g. dup-ext) MUST
+                           --  surface as decode_error, not the
+                           --  generic handshake_failure — runners
+                           --  match on the specific alert.
+                           if S.Last_Error = No_Error then
+                              S.Last_Error := Handshake_Failure;
+                           end if;
                            Set_State (S, Error_State);
                            Result := Error_Alert;
                            S.Input.Read_Pos :=
@@ -1380,6 +1437,8 @@ is
                   Set_State (S, Error_State);
                   Result := (if Output_Pending (S) > 0
                              then Has_Output else Error_Alert);
+                  pragma Assert
+                    (AEAD_Failure_Alert_Queued_RFC_8446_5_2 (S));
                   return;
                end if;
 
@@ -1596,6 +1655,8 @@ is
             Set_State (S, Error_State);
             Result := (if Output_Pending (S) > 0
                        then Has_Output else Error_Alert);
+            pragma Assert
+              (AEAD_Failure_Alert_Queued_RFC_8446_5_2 (S));
             return;
          end if;
 
@@ -1635,6 +1696,10 @@ is
                   else
                      Result := OK;
                   end if;
+                  --  RFC 8446 §5.2 cap: ≤ 32 in live state, > 32
+                  --  only after the alert is queued.
+                  pragma Assert
+                    (Empty_Records_Bounded_RFC_8446_5_2 (S));
                end if;
 
             when 16#16# =>
@@ -1816,6 +1881,12 @@ is
                      else
                         Result := OK;
                      end if;
+                     --  RFC 8446 §6.1 cap: invariant must hold on
+                     --  every exit path. Either ≤ 4 (still tolerable)
+                     --  or > 4 with State already advanced to
+                     --  Error_State by the if-branch above.
+                     pragma Assert
+                       (Warning_Alerts_Bounded_RFC_8446_6_1 (S));
                   else
                      declare
                         A : N32;

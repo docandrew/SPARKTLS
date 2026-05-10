@@ -99,6 +99,10 @@ is
          Result.Bad_Version := True;
          return;
       end if;
+      --  Pin the field-level invariant for downstream proofs.
+      pragma Assert
+        (Record_Version_Valid_RFC_8446_5_1
+           (Data (B + 1), Data (B + 2)));
 
       --  Parse 2-byte fragment length (big-endian) from bytes 3..4
       Frag_Len := N32 (Data (B + 3)) * 256 + N32 (Data (B + 4));

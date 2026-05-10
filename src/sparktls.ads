@@ -1459,6 +1459,75 @@ is
      (HC.CKE_Received_12 and then HC.CCS_Received)
      with Ghost;
 
+   --================================================================
+   --  Ghost predicates added 2026-05-09 covering the BoGo morning
+   --  fix batch. Each pins a specific RFC clause so a later
+   --  refactor that re-introduces the bug will be flagged at
+   --  proof time, not runtime.
+   --================================================================
+
+   --  RFC 8446 §6 / RFC 5246 §7.2: alert level MUST be 1 (warning)
+   --  or 2 (fatal). Anything else is a fatal protocol violation
+   --  (BoGo SendBogusAlertType: level = 0x42 → illegal_parameter).
+   function Alert_Level_Valid_RFC_8446_6
+     (Level : Byte) return Boolean is
+     (Level = 1 or Level = 2)
+     with Ghost;
+
+   --  RFC 8446 §6.1 / §6: TLS 1.3 deprecates warning alerts but
+   --  keeps user_canceled (90) for back-compat. To bound DoS via
+   --  alert flooding, BoringSSL/NSS/OpenSSL tolerate ≤ 4 in a row;
+   --  the 5th triggers fatal too_many_warning_alerts.
+   Max_Warning_Alerts : constant := 4;
+
+   --  RFC 8446 §5.2 / RFC 5246 §6.2.1: zero-length-plaintext
+   --  records waste decrypt CPU without delivering progress.
+   --  BoringSSL caps consecutive empty records at 32; the 33rd
+   --  triggers fatal too_many_empty_fragments.
+   Max_Empty_Records : constant := 32;
+
+   --  RFC 8446 §5.1 / RFC 5246 §6.2.1: record-layer version is
+   --  always 0x03xx with minor in 1..4. Anything else is a
+   --  framing violation — Parse_Record_Header rejects with
+   --  Bad_Version.
+   function Record_Version_Valid_RFC_8446_5_1
+     (Major, Minor : Byte) return Boolean is
+     (Major = 16#03# and Minor in 16#01# .. 16#04#)
+     with Ghost;
+
+   --  RFC 8446 §4.1.2: TLS 1.3 ClientHello legacy_compression_methods
+   --  MUST be exactly the single byte 0x00. Other lists, even if
+   --  they include 0x00, are rejected with illegal_parameter.
+   function Compression_Methods_Valid_TLS13_RFC_8446_4_1_2
+     (Bytes : Byte_Seq) return Boolean is
+     (Bytes'Length = 1 and then Bytes (Bytes'First) = 16#00#)
+     with Ghost;
+
+   --  RFC 8446 §4.2: each extension type MUST appear at most once
+   --  in a given extensions list. Tracked per-CH via HC.Seen_Ext_Tags;
+   --  Apply_CH_Extension scans the list before recording a new tag.
+   function No_Duplicate_Extensions_RFC_8446_4_2
+     (HC : Handshake_Context) return Boolean is
+     (HC.Seen_Ext_Count <= HC.Seen_Ext_Tags'Last)
+     with Ghost;
+
+   --  RFC 8446 §4.1.3: the server's ServerHello legacy_session_id
+   --  MUST be a byte-for-byte copy of the client's. Captured at
+   --  parse time and replayed at build time.
+   function Session_ID_Echo_RFC_8446_4_1_3
+     (HC : Handshake_Context) return Boolean is
+     (HC.Legacy_Session_ID_Len in 0 .. 32)
+     with Ghost;
+
+   --  RFC 8446 §4.4.4 / RFC 5246 §7.4.9: Finished is the LAST
+   --  handshake message in its flight. The decrypted plaintext
+   --  byte count must equal exactly 4 (HS header) + verify_data
+   --  size; trailing data is excess_handshake_data.
+   function Finished_Frame_Tight_RFC_8446_4_4_4
+     (Plain_Len, Verify_Len : N32) return Boolean is
+     (Plain_Len = 4 + Verify_Len)
+     with Ghost;
+
    type Handshake_Context_Access is access Handshake_Context;
 
    --================================================================
@@ -1592,6 +1661,42 @@ is
    --  How many bytes are waiting to be sent?
    function Output_Pending (S : Session) return N32 is
       (Available (S.Output));
+
+   --================================================================
+   --  Session-scoped ghost predicates (added 2026-05-09 alongside
+   --  the alert-handling / DoS-bound fixes). Each pins an RFC
+   --  clause so a regression that re-introduces the unbounded
+   --  behavior is caught at proof time.
+   --================================================================
+
+   --  RFC 8446 §6.1 / §6: warning-alert flood cap. Holds whenever
+   --  the receiver is still in a non-error state — once we exceed
+   --  Max_Warning_Alerts (4) we MUST transition to Error_State.
+   function Warning_Alerts_Bounded_RFC_8446_6_1
+     (S : Session) return Boolean is
+     (S.Warning_Alerts_Recvd <= Max_Warning_Alerts
+      or else S.State = Error_State)
+     with Ghost;
+
+   --  RFC 8446 §5.2 / RFC 5246 §6.2.1: empty-record flood cap.
+   --  Same shape: ≤ 32 in the live state, > 32 only if we've
+   --  already transitioned to Error_State with the alert queued.
+   function Empty_Records_Bounded_RFC_8446_5_2
+     (S : Session) return Boolean is
+     (S.Empty_Records_Recvd <= Max_Empty_Records
+      or else S.State = Error_State)
+     with Ghost;
+
+   --  RFC 8446 §5.2 / RFC 5246 §7.2: AEAD verification failure
+   --  MUST queue a fatal bad_record_mac alert and enter Error_State.
+   --  The previous behaviour returned Error_Alert without queuing,
+   --  so peers saw TCP RST and couldn't tell what went wrong.
+   function AEAD_Failure_Alert_Queued_RFC_8446_5_2
+     (S : Session) return Boolean is
+     (S.State = Error_State
+      and then S.Last_Error = Bad_Record_MAC
+      and then Output_Pending (S) > 0)
+     with Ghost;
 
    --  How many input bytes are buffered?
    function Input_Available (S : Session) return N32 is

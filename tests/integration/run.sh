@@ -233,6 +233,79 @@ else
 fi
 cleanup
 
+# ===================================================================
+# Client mTLS — SPARKTLS client → openssl s_server with --Verify.
+# Was missing entirely; client mTLS code path had no integration
+# test coverage, which let a Wait_Server_Finished →
+# client_app_secret_0 transcript-hash bug ship in
+# (Send_Client_Certificate Append_Transcript'd our cert before
+# TS_Hash was sampled, so client_app_secret diverged from peer →
+# bad_record_mac on the first encrypted record after Finished).
+# Each scenario MUST send app data after the handshake — the bug
+# only manifests on the first encrypted record after Finished.
+# ===================================================================
+echo ""
+echo "--- Client mTLS: SPARKTLS client → OpenSSL s_server ---"
+
+CLIENT="$REPO_ROOT/bin/examples/mtls_test_client"
+
+if [ ! -x "$CLIENT" ]; then
+    echo "  (skipped — mtls_test_client not built)"
+else
+    # Loop cert + suite to exercise each AEAD path with mTLS.
+    for cred in "p256" "rsa" "ed25519"; do
+        for suite in TLS_AES_128_GCM_SHA256 \
+                     TLS_CHACHA20_POLY1305_SHA256 \
+                     TLS_AES_256_GCM_SHA384; do
+            cleanup
+            openssl s_server -accept 0:$PORT \
+                -cert "$CERT_DIR/${cred}.crt" -key "$CERT_DIR/${cred}.key" \
+                -CAfile "$CERT_DIR/${cred}.crt" -Verify 1 -tls1_3 \
+                -ciphersuites "$suite" -no_ticket -quiet \
+                > /tmp/mtls_srv.log 2>&1 &
+            sleep 0.5
+
+            output=$(timeout 5 "$CLIENT" \
+                --port $PORT --host localhost \
+                --cert-file "$CERT_DIR/${cred}.crt" \
+                --key-file "$CERT_DIR/${cred}.key" \
+                --trust-cert "$CERT_DIR/${cred}.crt" \
+                --message "hello-from-sparktls" 2>&1)
+            rc=$?
+            cleanup
+
+            if [ $rc -eq 0 ]; then
+                pass "client mTLS $cred + $suite"
+            else
+                fail "client mTLS $cred + $suite"
+                echo "    $(echo "$output" | head -2)"
+            fi
+        done
+    done
+
+    # NoCertificate path: server requests but doesn't require, our
+    # client offers no cert and sends empty Certificate.
+    cleanup
+    openssl s_server -accept 0:$PORT \
+        -cert "$CERT_DIR/p256.crt" -key "$CERT_DIR/p256.key" \
+        -CAfile "$CERT_DIR/p256.crt" -verify 1 -tls1_3 \
+        -ciphersuites TLS_AES_128_GCM_SHA256 -no_ticket -quiet \
+        > /tmp/mtls_srv.log 2>&1 &
+    sleep 0.5
+    output=$(timeout 5 "$CLIENT" \
+        --port $PORT --host localhost \
+        --trust-cert "$CERT_DIR/p256.crt" \
+        --message "hello" 2>&1)
+    rc=$?
+    cleanup
+    if [ $rc -eq 0 ]; then
+        pass "client mTLS NoCert (CR optional, empty Cert reply)"
+    else
+        fail "client mTLS NoCert"
+        echo "    $(echo "$output" | head -2)"
+    fi
+fi
+
 # --- Summary ---
 cleanup
 echo ""
