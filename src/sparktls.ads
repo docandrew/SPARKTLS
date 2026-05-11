@@ -1054,6 +1054,13 @@ is
       --  these signals is present (RFC 5746 §3.6).
       Saw_Reneg_Info : Boolean := False;
 
+      --  Per-extension parse error surface. Apply_CH_Extension only
+      --  has access to HC, not S — so when an extension's contents
+      --  violate its RFC (e.g. RFC 7301 §3.1 empty ALPN protocol_name),
+      --  the parser stores the alert code here and the caller of
+      --  Parse_Client_Hello propagates it to S.Last_Error.
+      Ext_Parse_Err : Error_Code := No_Error;
+
       --  Client's offered ALPN protocol (parsed from ClientHello)
       Client_ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
 
@@ -1113,6 +1120,48 @@ is
      (HC : Handshake_Context; Size : N32) return Boolean
    is (Size <= Max_Handshake_Heap
        and then HC.Heap_Used <= Max_Handshake_Heap - Size);
+
+   --  ----- Reasm_Buf coherence invariant ---------------------------
+   --  Implementation invariant maintained by the handshake reassembly
+   --  paths (Process_Server_Flight, Process_Server_Finished, the
+   --  Wait_Server_Hello SH handler, etc.). Used as Pre/Post to give
+   --  the prover enough information to discharge the array-index and
+   --  slice-bound checks in the byte-level dispatch loop without a
+   --  full Type_Invariant on Handshake_Context (which would force
+   --  proof coupling across the entire package).
+   --
+   --  Either no reassembly is in flight (Reasm_Buf null), or:
+   --    - the buffer is 0-indexed (every allocation uses
+   --      `new Byte_Seq'(0 .. N - 1 => 0)`)
+   --    - its length fits in N32 and is at most Max_HS_Msg
+   --    - Reasm_Need and Reasm_Len are both within the buffer
+   --    - if there is a current message (Reasm_Need > 0) the message
+   --      size is at least 4 (the HS header)
+   --    - the Hdr_Pending sentinel implies Reasm_Need = 4 and we have
+   --      strictly fewer than 4 header bytes accumulated
+   function Reasm_Coherent (HC : Handshake_Context) return Boolean is
+     (HC.Reasm_Buf = null
+      or else (HC.Reasm_Buf'First = 0
+               and then HC.Reasm_Buf'Length <= Max_HS_Msg
+               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+               and then (if HC.Reasm_Need > 0 then HC.Reasm_Need >= 4)
+               and then (if HC.Reasm_Hdr_Pending
+                         then HC.Reasm_Need = 4
+                              and then HC.Reasm_Len < 4)))
+     with Ghost;
+
+   --  Stricter variant: like Reasm_Coherent, but additionally
+   --  Reasm_Len <= Reasm_Need (we're in build mode, not in the
+   --  PackHandshake leftover-dispatch state where Reasm_Len can
+   --  temporarily exceed Reasm_Need). Used by Process_Server_Finished
+   --  which only ever accumulates plaintext (one Finished message
+   --  build per handshake) and never sees packed messages.
+   function Reasm_Building (HC : Handshake_Context) return Boolean is
+     (Reasm_Coherent (HC)
+      and then (HC.Reasm_Buf = null
+                or else HC.Reasm_Len <= HC.Reasm_Need))
+     with Ghost;
 
    --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------
    --  TLS 1.2 §7.4.7: the client sends exactly one ClientKeyExchange

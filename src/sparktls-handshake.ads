@@ -77,4 +77,29 @@ is
                and DER_Out'Last >= Max_ECDSA_DER_Len - 1,
         Post => DER_Len <= Max_ECDSA_DER_Len;
 
+   --  Pick a TLS sig-algo wire code that is (a) acceptable to the
+   --  server (appears in Sig_Algs as a 2-byte big-endian list) and
+   --  (b) compatible with our cert key type. Walks the server's list
+   --  in order and returns the first match. Returns 0 if no match —
+   --  caller should treat that as a CertificateVerify-impossible
+   --  situation and either send an empty Cert or fail the handshake.
+   --
+   --  Sig_Algs layout: a flat byte buffer of (count*2) bytes where
+   --  each pair is a 2-byte big-endian sig algo code (RFC 8446
+   --  §4.2.3 / RFC 5246 §7.4.1.4.1).
+   --
+   --  Used by TLS 1.3 client (CertReq's signature_algorithms
+   --  extension body) and TLS 1.2 client (CertReq's
+   --  supported_signature_algorithms field).
+   --  Allow_PKCS1_v1_5: True only for TLS 1.2 callers. RFC 8446
+   --  §4.2.3 forbids RSA-PKCS1-v1_5 codes from being selected for
+   --  TLS 1.3 CertificateVerify even though servers may list them
+   --  in `signature_algorithms` for back-compat.
+   function Pick_Sig_Algo
+     (Sig_Algs           : Byte_Seq;
+      Cert               : Signing_Algorithm;
+      Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
+   with Pre => Sig_Algs'First = 0
+               and then Sig_Algs'Last < N32'Last;
+
 end SPARKTLS.Handshake;

@@ -62,11 +62,17 @@ is
       Random   : Random_Bytes_Fn;
       Clock    : Get_Time_Fn;
       Local    : Identity_Access := null;
-      Mode     : Validation_Mode := Mode_WebPKI)
+      Mode     : Validation_Mode := Mode_WebPKI;
+      ALPN     : String := "")
    with Pre  => Random /= null and Clock /= null,
         Post => S.State = Client_Hello_Sent and
                 S.Role = Role_Client and
                 Output_Pending (S) > 0;
+   --  ALPN (RFC 7301): the protocol name to offer in the
+   --  application_layer_protocol_negotiation extension. Empty
+   --  string means no ALPN extension is sent. Single protocol
+   --  only — for multi-protocol advertisement use Init with a
+   --  manually-built Config.
 
    --  Initialize a client session with full control over Config.
    --  After Init, the caller should drain and send the ClientHello.

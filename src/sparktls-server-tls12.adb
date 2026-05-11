@@ -745,7 +745,13 @@ is
                Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result); return;
             end if;
             if Msg_Len /= Finished_Verify_Len then
-               Send_Encrypted_Alert_12 (S, HC, Decode_Error, Result); return;
+               --  Finished length mismatch — RFC 8446 §6.2:
+               --  decrypt_error (alert 51). BoGo
+               --  TrailingMessageData-ClientFinished expects this
+               --  rather than decode_error.
+               Send_Encrypted_Alert_12
+                 (S, HC, Certificate_Verify_Failed, Result);
+               return;
             end if;
             --  RFC 5246 §7.4.9: Finished is the last handshake
             --  message in the client's flight. Any plaintext bytes

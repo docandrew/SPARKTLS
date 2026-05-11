@@ -76,6 +76,10 @@ is
       PSK_Data_Len : constant N32 := 2;
       --  supported_versions data: list_len(1) + version(2) * 2
       SV_Data_Len  : constant N32 := 5;
+      --  ec_point_formats data (RFC 8422 §5.1.2): list_len(1) +
+      --  format(1)=uncompressed. Required by BoGo for any TLS 1.2
+      --  ECDHE suite (server's `ellipticOk` is false without it).
+      EPF_Data_Len : constant N32 := 2;
 
       --  ALPN data: protocol_list_len(2) + proto_len(1) + proto(N)
       ALPN_Len : constant Natural := HC.Cfg.ALPN.Len;
@@ -88,12 +92,13 @@ is
       Ext_Total : constant N32 :=
          (4 + SNI_Data_Len) + (4 + SG_Data_Len) + (4 + SA_Data_Len) +
          (4 + KS_Data_Len) + (4 + PSK_Data_Len) + (4 + SV_Data_Len) +
+         (4 + EPF_Data_Len) +
          ALPN_Ext_Len;
 
       --  ClientHello body: version(2) + random(32) + sid_len(1) + sid(32)
-      --  + suites_len(2) + suites(12) + comp_len(1) + comp(1)
+      --  + suites_len(2) + suites(18) + comp_len(1) + comp(1)
       --  + ext_len(2) + extensions
-      CH_Body_Len : constant N32 := 85 + Ext_Total;
+      CH_Body_Len : constant N32 := 91 + Ext_Total;
       CH_Msg_Len  : constant N32 := 4 + CH_Body_Len;
 
       Buf      : RBT.Bytes_Ptr;
@@ -170,9 +175,10 @@ is
       Set_Legacy_Session_ID_Length (Ctx, 32);
       Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       --  TLS version routes past cookie fields to cipher_suites_length
-      --  6 suites: 3 TLS 1.3 + 3 TLS 1.2 ECDHE-AEAD = 12 bytes
+      --  9 suites: 3 TLS 1.3 + 3 TLS 1.2 ECDHE-RSA + 3 TLS 1.2
+      --  ECDHE-ECDSA = 18 bytes
       Set_Cipher_Suites_Length
-        (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (12));
+        (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (18));
 
       --  Build cipher suite sequence
       declare
@@ -264,6 +270,51 @@ is
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
               (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
+            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
+              (Suites_Ctx, S_Ctx);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
+         end;
+
+         --  Suite 7: TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (0xC02B)
+         declare
+            S_Buf : RBT.Bytes_Ptr;
+            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+         begin
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
+              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
+            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
+              (Suites_Ctx, S_Ctx);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
+         end;
+
+         --  Suite 8: TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 (0xC02C)
+         declare
+            S_Buf : RBT.Bytes_Ptr;
+            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+         begin
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
+              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384);
+            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
+              (Suites_Ctx, S_Ctx);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+            RFLX_Free (S_Buf);
+         end;
+
+         --  Suite 9: TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 (0xCCA9)
+         declare
+            S_Buf : RBT.Bytes_Ptr;
+            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+         begin
+            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
+            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
+              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
             RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
               (Suites_Ctx, S_Ctx);
             RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
@@ -462,7 +513,33 @@ is
             RFLX_Free (Ext_Buf);
          end;
 
-         --  Extension 7: ALPN (0x0010) — if configured
+         --  Extension 7: ec_point_formats (0x000B) — RFC 8422 §5.1.2.
+         --  Required by BoGo for TLS 1.2 ECDHE; OpenSSL is lax. Body:
+         --  format_list_len(1)=1 + uncompressed(1)=0.
+         declare
+            Ext_Buf : RBT.Bytes_Ptr;
+            Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
+            EPF_Raw : constant Byte_Seq (0 .. EPF_Data_Len - 1) :=
+               (16#01#, 16#00#);
+         begin
+            Ext_Buf := new RBT.Bytes'
+               (1 .. RBT.Index (4 + EPF_Data_Len) => 0);
+            RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
+               (Ext_Ctx, Ext_Buf);
+            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
+               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Ec_Point_Formats);
+            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
+               (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (EPF_Data_Len));
+            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
+               (Ext_Ctx, To_RFLX (EPF_Raw));
+            RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
+               (Exts_Ctx, Ext_Ctx);
+            RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
+               (Ext_Ctx, Ext_Buf);
+            RFLX_Free (Ext_Buf);
+         end;
+
+         --  Extension 8: ALPN (0x0010) — if configured
          if ALPN_Len > 0 then
             declare
                Ext_Buf : RBT.Bytes_Ptr;
@@ -701,6 +778,14 @@ is
                declare
                   Ext_End : constant N32 := P + Ext_Total;
                begin
+                  --  RFC 8446 §4: a handshake message MUST end exactly
+                  --  at its declared length. Reject trailing bytes
+                  --  beyond the extensions block (BoGo
+                  --  TrailingMessageData-ServerHello tests this).
+                  if Ext_End /= Data'Last + 1 then
+                     S.Last_Error := Decode_Error;
+                     return;
+                  end if;
                   while P + 4 <= Data'Last + 1
                     and then P + 4 <= Ext_End + 1
                   loop
@@ -965,7 +1050,19 @@ is
                                        PL : constant Natural :=
                                           Natural (ALPN_Buf (3));
                                     begin
-                                       if PL > 0
+                                       --  RFC 7301 §3.2: server MUST
+                                       --  echo a single non-empty
+                                       --  protocol_name. PL=0 means
+                                       --  the server selected an
+                                       --  empty name — fatal. Stash
+                                       --  the alert in HC for the
+                                       --  caller of Parse_Server_Hello
+                                       --  (it bails on OK=False below).
+                                       if PL = 0 then
+                                          S.Last_Error := Illegal_Parameter;
+                                          HC.Ext_Parse_Err :=
+                                             Illegal_Parameter;
+                                       elsif PL > 0
                                           and PL <= Max_Hostname_Len
                                           and N32 (PL + 3) <= DLen
                                        then
@@ -1120,6 +1217,14 @@ is
 
       Take_Buffer (Ctx, Buf);
       RFLX_Free (Buf);
+
+      --  Bubble up extension-specific protocol errors (e.g. RFC 7301
+      --  empty ALPN name → illegal_parameter). The caller's `if not
+      --  Parse_OK` arm reads S.Last_Error to pick the alert.
+      if HC.Ext_Parse_Err /= No_Error then
+         OK := False;
+         return;
+      end if;
 
       OK := True;
    end Parse_Server_Hello;

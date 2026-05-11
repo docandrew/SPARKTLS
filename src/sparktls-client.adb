@@ -23,10 +23,106 @@ with X509;
 package body SPARKTLS.Client with
    SPARK_Mode => On
 is
+   --  RFC 8446 §6.2: alert-code mapping for our Error_Code enum.
+   function Alert_Desc (E : Error_Code) return Byte is
+     (case E is
+         when Unexpected_Message       => 10,
+         when Bad_Record_MAC           => 20,
+         when Record_Overflow          => 22,
+         when Handshake_Failure        => 40,
+         when Bad_Certificate          => 42,
+         when Certificate_Expired      => 45,
+         when Illegal_Parameter        => 47,
+         when Decode_Error             => 50,
+         when Certificate_Verify_Failed => 51,
+         when Protocol_Version         => 70,
+         when Certificate_Required     => 116,
+         when Internal_Error
+            | Insufficient_Buffer
+            | No_Error                 => 80,
+         when Unsupported_Cipher_Suite => 40);
+
+   --  Send a fatal alert encrypted under the client_handshake_
+   --  traffic_secret, then transition to Error_State. Prepends the
+   --  legacy CCS record (RFC 8446 §D.4 / "middlebox-compat") because
+   --  BoGo's runner parses any plaintext-looking record from the
+   --  client as a CCS and rejects subsequent traffic if it wasn't.
+   --  Used by every TLS 1.3 client reject path that fires AFTER
+   --  HC.Client_HS is derived (i.e. anything after we receive the
+   --  ServerHello). The legacy CCS we emit here is the ONLY one
+   --  the client sends in a TLS 1.3 connection, so duplicate-CCS
+   --  rules in the peer are not violated.
+   procedure Send_HS_Encrypted_Alert
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Err    : Error_Code;
+      Result :    out Action)
+   is
+      A1, A2 : N32;
+   begin
+      Records.Build_CCS_Record (S.Output, A1);
+      Records.Build_Alert_Record
+        (Level     => 2,
+         Desc      => Alert_Desc (Err),
+         Keys      => HC.Client_HS,
+         Output    => S.Output,
+         Bytes_Out => A2);
+      S.Last_Error := Err;
+      Set_State (S, Error_State);
+      Result := (if Output_Pending (S) > 0
+                 then Has_Output else Error_Alert);
+   end Send_HS_Encrypted_Alert;
+
+   --  Send a fatal alert encrypted under the client_application_
+   --  traffic_secret. Used on every TLS 1.3 client reject path that
+   --  fires AFTER the handshake completes (post-handshake messages,
+   --  AEAD-failure on app records, bogus peer alerts). No CCS prefix
+   --  — the legacy middlebox-compat CCS was already emitted as part
+   --  of the client flight, and a duplicate would be a protocol
+   --  violation per RFC 8446 §D.4.
+   procedure Send_App_Encrypted_Alert
+     (S      : in out Session;
+      Err    : Error_Code;
+      Result :    out Action)
+   is
+      A : N32;
+   begin
+      Records.Build_Alert_Record
+        (Level     => 2,
+         Desc      => Alert_Desc (Err),
+         Keys      => S.Client_App,
+         Output    => S.Output,
+         Bytes_Out => A);
+      S.Last_Error := Err;
+      Set_State (S, Error_State);
+      Result := (if Output_Pending (S) > 0
+                 then Has_Output else Error_Alert);
+   end Send_App_Encrypted_Alert;
+
    --  Forward declarations for internal procedures
    procedure Derive_Handshake_Keys
      (S  : in     Session;
       HC : in out Handshake_Context);
+
+   --  RFC 8446 §4.3.1 / RFC 7301: scan a TLS 1.3 EncryptedExtensions
+   --  message for an application_layer_protocol_negotiation entry.
+   --  On a well-formed entry, copy the protocol name into
+   --  S.Negotiated_ALPN. On a malformed entry (empty protocol_name,
+   --  list-length mismatch, truncated bytes), set OK=False so the
+   --  caller can send an illegal_parameter alert. Absent ALPN ext
+   --  is fine (OK=True, S.Negotiated_ALPN unchanged).
+   --
+   --  EE wire shape: HS_hdr(4) + ext_total_len(2) + extensions
+   --  Each extension: tag(2) + len(2) + body(len)
+   --  ALPN body: list_len(2) + (proto_len(1) + name)*
+   procedure Extract_ALPN_From_EE
+     (Data : in     Byte_Seq;
+      HC   : in     Handshake_Context;
+      S    : in out Session;
+      OK   :    out Boolean)
+   with Pre => Data'Length >= 4
+               and Data'Last < N32'Last
+               and Data'First >= 0;
    procedure Send_Client_Certificate
      (S       : in out Session;
       HC      : in out Handshake_Context;
@@ -97,6 +193,129 @@ is
       return H;
    end Transcript_Hash_384;
 
+   --================================================================
+   --  Extract_ALPN_From_EE — see forward decl above for contract.
+   --
+   --  All offsets are computed against P, kept invariant by the
+   --  outer guard `P + 4 <= Ext_End and P + 4 + E_Len <= Ext_End`
+   --  before the inner read. Ext_End is the absolute index just
+   --  past the last extension byte; computed once from the 2-byte
+   --  ext_total_len read at fixed offset Body+0..1.
+   --================================================================
+   procedure Extract_ALPN_From_EE
+     (Data : in     Byte_Seq;
+      HC   : in     Handshake_Context;
+      S    : in out Session;
+      OK   :    out Boolean)
+   is
+      ALPN_Tag : constant N32 := 16#0010#;
+      Body_Start : constant N32 := Data'First + 4;
+   begin
+      OK := True;
+
+      --  Need at least HS hdr + 2-byte ext_total_len = 6 bytes.
+      if N32 (Data'Length) < 6 then
+         return;
+      end if;
+
+      declare
+         Ext_Total : constant N32 :=
+            N32 (Data (Body_Start)) * 256
+            + N32 (Data (Body_Start + 1));
+         Ext_End : constant N32 := Body_Start + 2 + Ext_Total;
+         P : N32 := Body_Start + 2;
+      begin
+         --  Bound: extensions fit within the EE message.
+         if Ext_End > Data'Last + 1 then
+            return;
+         end if;
+
+         while P + 4 <= Ext_End loop
+            pragma Loop_Invariant
+              (P >= Body_Start + 2
+               and P + 4 <= Ext_End
+               and Ext_End <= Data'Last + 1);
+            declare
+               Tag : constant N32 :=
+                  N32 (Data (P)) * 256 + N32 (Data (P + 1));
+               E_Len : constant N32 :=
+                  N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
+            begin
+               --  Skip if extension overflows what's left.
+               exit when P + 4 + E_Len > Ext_End;
+
+               if Tag = ALPN_Tag then
+                  --  ALPN extension body shape (RFC 7301 §3.1):
+                  --    list_len(2) + protocol_name_list(list_len)
+                  --  Each protocol_name: proto_len(1) + name
+                  --  Server selects exactly one protocol, so
+                  --  list_len = 1 + proto_len, and the extension
+                  --  body length = 2 + list_len. Smallest valid
+                  --  body is 4 bytes (single 1-byte protocol name).
+                  if E_Len < 4 then
+                     OK := False;
+                     return;
+                  end if;
+                  declare
+                     List_Len : constant N32 :=
+                        N32 (Data (P + 4)) * 256
+                        + N32 (Data (P + 5));
+                     Proto_Len : constant N32 := N32 (Data (P + 6));
+                  begin
+                     --  RFC 7301 §3.2: server echoes a single
+                     --  non-empty protocol_name. Anything else =
+                     --  fatal illegal_parameter.
+                     if Proto_Len = 0
+                       or List_Len /= 1 + Proto_Len
+                       or 2 + List_Len /= E_Len
+                     then
+                        OK := False;
+                        return;
+                     end if;
+                     --  RFC 7301 §3.1: server MUST NOT send an ALPN
+                     --  extension if the client did not send one.
+                     --  RFC 7301 §3.2: the server's selected protocol
+                     --  MUST be one the client offered. We only ever
+                     --  offer a single protocol today (Cfg.ALPN), so
+                     --  the chosen proto must equal Cfg.ALPN bytewise.
+                     if HC.Cfg.ALPN.Len = 0
+                       or else Natural (Proto_Len) /= HC.Cfg.ALPN.Len
+                     then
+                        OK := False;
+                        return;
+                     end if;
+                     if Proto_Len <= N32 (Max_Hostname_Len) then
+                        for I in 1 .. Natural (Proto_Len) loop
+                           pragma Loop_Invariant
+                             (Proto_Len <= N32 (Max_Hostname_Len)
+                              and Natural (Proto_Len) = HC.Cfg.ALPN.Len);
+                           if Character'Val (Data (P + 6 + N32 (I)))
+                             /= HC.Cfg.ALPN.Data (I)
+                           then
+                              OK := False;
+                              return;
+                           end if;
+                        end loop;
+                        S.Negotiated_ALPN.Len :=
+                           Natural (Proto_Len);
+                        for I in 1 .. Natural (Proto_Len) loop
+                           pragma Loop_Invariant
+                             (S.Negotiated_ALPN.Len = Natural (Proto_Len)
+                              and Proto_Len <= N32 (Max_Hostname_Len));
+                           S.Negotiated_ALPN.Data (I) :=
+                              Character'Val
+                                (Data (P + 6 + N32 (I)));
+                        end loop;
+                     end if;
+                  end;
+               end if;
+
+               P := P + 4 + E_Len;
+            end;
+         end loop;
+      end;
+   end Extract_ALPN_From_EE;
+
    procedure Configure
      (S        : out Session;
       Hostname : String;
@@ -104,7 +323,8 @@ is
       Random   : Random_Bytes_Fn;
       Clock    : Get_Time_Fn;
       Local    : Identity_Access := null;
-      Mode     : Validation_Mode := Mode_WebPKI)
+      Mode     : Validation_Mode := Mode_WebPKI;
+      ALPN     : String := "")
    is
       Cfg : Config;
    begin
@@ -119,6 +339,10 @@ is
       then
          Cfg.Server_Name.Data (1 .. Hostname'Length) := Hostname;
          Cfg.Server_Name.Len := Hostname'Length;
+      end if;
+      if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
+         Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
+         Cfg.ALPN.Len := ALPN'Length;
       end if;
       Init (S, Cfg);
    end Configure;
@@ -156,7 +380,10 @@ is
 
       Append_Transcript (S.HC_Ptr.all, CH_Buf (0 .. CH_Len - 1));
 
-      Records.Build_Handshake_Record
+      --  RFC 8446 §5.1: initial ClientHello uses record version 0x0301
+      --  (TLS 1.0) for middlebox compatibility, even though the actual
+      --  protocol is negotiated via supported_versions.
+      Records.Build_Initial_ClientHello_Record
         (Fragment  => CH_Buf (0 .. CH_Len - 1),
          Output    => S.Output,
          Bytes_Out => Rec_Out);
@@ -183,51 +410,234 @@ is
 
       Handshake.Parse_Handshake_Header (Data, Msg_Type, Msg_Len, Parse_OK);
       if not Parse_OK then
-         S.Last_Error := Decode_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
+         --  Distinguish "unknown message type" (BoGo WrongMessageType
+         --  injects type+42) from "malformed length / shape" so we
+         --  emit the right alert. Pre-condition: handshake records
+         --  are decrypted under HC.Client_HS — we're post-SH.
+         declare
+            Raw_Type : constant Byte :=
+               (if Data'Length >= 1 then Data (Data'First) else 0);
+            Is_Known : constant Boolean :=
+               Raw_Type in 16#01# | 16#02# | 16#04# | 16#08# |
+                           16#0B# | 16#0C# | 16#0D# | 16#0E# |
+                           16#0F# | 16#10# | 16#14#;
+         begin
+            Send_HS_Encrypted_Alert
+              (S, HC,
+               (if Is_Known then Decode_Error else Unexpected_Message),
+               Result);
+         end;
          return;
       end if;
 
       case Msg_Type is
          when Handshake.HT_Encrypted_Extensions =>
-            --  For now, just record in transcript and move on.
-            --  TODO: parse and validate extensions
+            --  RFC 8446 §4: every handshake message ends exactly at
+            --  its declared length. EE body = ext_len(2) + exts(N),
+            --  so total HS body = 2 + N. Catch trailing bytes
+            --  (BoGo TrailingMessageData-TLS13-EncryptedExtensions).
+            if Data'Length >= 6
+              and then Data'First >= 0
+              and then Data'Last < N32'Last
+            then
+               declare
+                  Ext_Tot_Decl : constant N32 :=
+                     N32 (Data (Data'First + 4)) * 256
+                     + N32 (Data (Data'First + 5));
+                  Expected_Body : constant N32 := 2 + Ext_Tot_Decl;
+               begin
+                  if N32 (Data'Length) - 4 /= Expected_Body then
+                     Send_HS_Encrypted_Alert (S, HC, Decode_Error, Result);
+                     return;
+                  end if;
+               end;
+            end if;
             Append_Transcript (HC, Data);
+            --  RFC 8446 §4.3.1 / RFC 7301: TLS 1.3 ALPN is in EE,
+            --  not ServerHello. Extract_ALPN_From_EE walks the
+            --  extensions list and writes S.Negotiated_ALPN if a
+            --  well-formed ALPN entry is present. OK=False signals
+            --  RFC 7301 §3.2 violation (empty protocol_name etc.).
+            if Data'Length >= 4
+              and then Data'Last < N32'Last
+              and then Data'First >= 0
+            then
+               declare
+                  ALPN_OK : Boolean;
+               begin
+                  Extract_ALPN_From_EE (Data, HC, S, ALPN_OK);
+                  if not ALPN_OK then
+                     --  RFC 8446 §6.2 + RFC 7301 §3.2: fatal alert
+                     --  encrypted under HC.Client_HS via the helper.
+                     Send_HS_Encrypted_Alert
+                       (S, HC, Illegal_Parameter, Result);
+                     return;
+                  end if;
+               end;
+            end if;
             Set_State (S, Wait_Certificate);
 
          when Handshake.HT_Certificate_Request =>
-            --  mTLS: server requests a client certificate.
-            --  Record in transcript and set flag; we'll send our cert
-            --  after the server's Finished message.
+            --  RFC 8446 §4.3.2: CertReq body = ctx_len(1) + ctx(N)
+            --  + ext_len(2) + extensions(M). Catch trailing bytes
+            --  before any parsing (BoGo TrailingMessageData-TLS13-
+            --  CertificateRequest).
+            if Data'Length >= 7 then
+               declare
+                  Ctx_Len_Decl : constant N32 :=
+                     N32 (Data (Data'First + 4));
+                  Ext_Off_Decl : constant N32 :=
+                     Data'First + 5 + Ctx_Len_Decl;
+                  Body_OK : Boolean := False;
+               begin
+                  if Ext_Off_Decl + 1 <= Data'Last then
+                     declare
+                        Ext_Tot : constant N32 :=
+                           N32 (Data (Ext_Off_Decl)) * 256
+                           + N32 (Data (Ext_Off_Decl + 1));
+                        Expected : constant N32 :=
+                           1 + Ctx_Len_Decl + 2 + Ext_Tot;
+                     begin
+                        Body_OK := N32 (Data'Length) - 4 = Expected;
+                     end;
+                  end if;
+                  if not Body_OK then
+                     Send_HS_Encrypted_Alert
+                       (S, HC, Decode_Error, Result);
+                     return;
+                  end if;
+               end;
+            end if;
+            --  mTLS: server requests a client certificate. RFC 8446
+            --  §4.3.2: CertReq body is cert_request_context<0..255>
+            --  + extensions<2..2^16-1>; the signature_algorithms
+            --  extension MUST be present and non-empty. Walk the
+            --  extensions for tag 0x000D and pick the first
+            --  server-offered algo we can produce with our cert key;
+            --  reject with decode_error if the extension is absent
+            --  or its list is empty.
             Append_Transcript (HC, Data);
             HC.Cert_Request_Received := True;
-            --  Pick the signature algorithm we'll use in our
-            --  CertificateVerify. Without this, Negotiated_Sig_Algo
-            --  stays 0 and Build_Certificate_Verify produces a CV
-            --  with a malformed sig-algo field — runner sees no
-            --  CV at all in the encrypted flight and rejects with
-            --  "expected CertificateVerify, got Finished".
-            --  TODO: parse the CR's signature_algorithms extension
-            --  and pick one the server actually accepts. For now,
-            --  default to the canonical algo for our cert key type.
-            if HC.Cfg.Local /= null then
-               case HC.Cfg.Local.Sign_Algo is
-                  when Sign_RSA_PSS =>
-                     HC.Negotiated_Sig_Algo := 16#0804#;  --  rsa_pss_rsae_sha256
-                  when Sign_ECDSA_P256 =>
-                     HC.Negotiated_Sig_Algo := 16#0403#;  --  ecdsa_secp256r1_sha256
-                  when Sign_ECDSA_P384 =>
-                     HC.Negotiated_Sig_Algo := 16#0503#;  --  ecdsa_secp384r1_sha384
-                  when Sign_Ed25519 =>
-                     HC.Negotiated_Sig_Algo := 16#0807#;  --  ed25519
-                  when Sign_None =>
-                     null;
-               end case;
-            end if;
+            declare
+               Picked     : Unsigned_16 := 0;
+               Sig_Found  : Boolean := False;
+            begin
+               if Data'Length >= 7 then
+                  declare
+                     Ctx_Len  : constant N32 := N32 (Data (Data'First + 4));
+                     Ext_Off  : constant N32 := Data'First + 5 + Ctx_Len;
+                  begin
+                     if Ext_Off + 1 <= Data'Last then
+                        declare
+                           Ext_Tot : constant N32 :=
+                              N32 (Data (Ext_Off)) * 256
+                              + N32 (Data (Ext_Off + 1));
+                           Ext_End : constant N32 :=
+                              Ext_Off + 2 + Ext_Tot;
+                           P : N32 := Ext_Off + 2;
+                        begin
+                           if Ext_End <= Data'Last + 1 then
+                              while P + 4 <= Ext_End loop
+                                 pragma Loop_Invariant
+                                   (P >= Ext_Off + 2
+                                    and P + 4 <= Ext_End
+                                    and Ext_End <= Data'Last + 1);
+                                 declare
+                                    Tag : constant N32 :=
+                                       N32 (Data (P)) * 256
+                                       + N32 (Data (P + 1));
+                                    E_Len : constant N32 :=
+                                       N32 (Data (P + 2)) * 256
+                                       + N32 (Data (P + 3));
+                                 begin
+                                    exit when P + 4 + E_Len > Ext_End;
+                                    if Tag = 16#000D# and E_Len >= 4 then
+                                       declare
+                                          List_Len : constant N32 :=
+                                             N32 (Data (P + 4)) * 256
+                                             + N32 (Data (P + 5));
+                                       begin
+                                          if List_Len + 2 = E_Len
+                                            and List_Len >= 2
+                                          then
+                                             Sig_Found := True;
+                                             if HC.Cfg.Local /= null then
+                                                Picked :=
+                                                  Handshake.Pick_Sig_Algo
+                                                    (Data (P + 6 ..
+                                                           P + 5 + List_Len),
+                                                     HC.Cfg.Local.Sign_Algo);
+                                             end if;
+                                          end if;
+                                       end;
+                                       exit;
+                                    end if;
+                                    P := P + 4 + E_Len;
+                                 end;
+                              end loop;
+                           end if;
+                        end;
+                     end if;
+                  end;
+               end if;
+
+               if not Sig_Found then
+                  --  RFC 8446 §4.3.2: signature_algorithms is REQUIRED.
+                  Send_HS_Encrypted_Alert (S, HC, Decode_Error, Result);
+                  return;
+               end if;
+
+               if HC.Cfg.Local /= null then
+                  if Picked /= 0 then
+                     HC.Negotiated_Sig_Algo := Picked;
+                  else
+                     case HC.Cfg.Local.Sign_Algo is
+                        when Sign_RSA_PSS =>
+                           HC.Negotiated_Sig_Algo := 16#0804#;
+                        when Sign_ECDSA_P256 =>
+                           HC.Negotiated_Sig_Algo := 16#0403#;
+                        when Sign_ECDSA_P384 =>
+                           HC.Negotiated_Sig_Algo := 16#0503#;
+                        when Sign_Ed25519 =>
+                           HC.Negotiated_Sig_Algo := 16#0807#;
+                        when Sign_None =>
+                           null;
+                     end case;
+                  end if;
+               end if;
+            end;
             --  Stay in Wait_Certificate (server Certificate comes next)
 
          when Handshake.HT_Certificate =>
+            --  RFC 8446 §4: every handshake message ends exactly at
+            --  its declared length. Certificate body =
+            --  ctx_len(1) + ctx(N) + cert_list_len(3) + entries(M).
+            --  Trailing bytes past the cert list are decode_error
+            --  (BoGo TrailingMessageData-TLS13-ServerCertificate).
+            if Data'Length >= 8 then
+               declare
+                  Ctx_Len_D : constant N32 := N32 (Data (Data'First + 4));
+                  List_Off  : constant N32 := Data'First + 5 + Ctx_Len_D;
+                  Body_OK   : Boolean := False;
+               begin
+                  if List_Off + 2 <= Data'Last then
+                     declare
+                        List_Len_D : constant N32 :=
+                           N32 (Data (List_Off)) * 65536
+                           + N32 (Data (List_Off + 1)) * 256
+                           + N32 (Data (List_Off + 2));
+                        Expected : constant N32 :=
+                           1 + Ctx_Len_D + 3 + List_Len_D;
+                     begin
+                        Body_OK := N32 (Data'Length) - 4 = Expected;
+                     end;
+                  end if;
+                  if not Body_OK then
+                     Send_HS_Encrypted_Alert (S, HC, Decode_Error, Result);
+                     return;
+                  end if;
+               end;
+            end if;
             Append_Transcript (HC, Data);
 
             --  Parse Certificate message: extract leaf + intermediates.
@@ -380,7 +790,21 @@ is
             Set_State (S, Wait_Certificate_Verify);
 
          when Handshake.HT_Certificate_Verify =>
-            --  Verify CertificateVerify (RFC 8446 Section 4.4.3)
+            --  Verify CertificateVerify (RFC 8446 Section 4.4.3).
+            --  Body = sig_algo(2) + sig_len(2) + sig(sig_len). Total
+            --  body = 4 + sig_len. Catch trailing bytes.
+            if Data'Length >= 8 then
+               declare
+                  Sig_Len : constant N32 :=
+                     N32 (Data (Data'First + 6)) * 256
+                     + N32 (Data (Data'First + 7));
+               begin
+                  if N32 (Data'Length) - 4 /= 4 + Sig_Len then
+                     Send_HS_Encrypted_Alert (S, HC, Decode_Error, Result);
+                     return;
+                  end if;
+               end;
+            end if;
             declare
                --  Hash length depends on suite: 32 for SHA-256, 48 for SHA-384
                H_Len : constant N32 := HC.Hash_Len;
@@ -503,8 +927,19 @@ is
             Set_State (S, Wait_Server_Finished);
 
          when Handshake.HT_Finished =>
-            --  Verify server Finished (RFC 8446 Section 4.4.4)
-            --  verify_data length = Hash.length (32 for SHA-256, 48 for SHA-384)
+            --  Verify server Finished (RFC 8446 Section 4.4.4).
+            --  verify_data length = Hash.length (32 for SHA-256,
+            --  48 for SHA-384). A wrong-length Finished is rejected
+            --  with decrypt_error (alert 51, RFC 8446 §6.2: any
+            --  handshake cryptographic operation failure, including
+            --  failure to verify Finished). BoGo's runner expects
+            --  this specific code for TrailingMessageData-Finished.
+            if Msg_Len /= HC.Hash_Len then
+               --  RFC 8446 §6.2: Finished length mismatch → decrypt_error.
+               Send_HS_Encrypted_Alert
+                 (S, HC, Certificate_Verify_Failed, Result);
+               return;
+            end if;
             declare
                H_Len : constant N32 := HC.Hash_Len;
                Verified : Boolean := False;
@@ -573,8 +1008,10 @@ is
             Derive_App_Keys_And_Send_Finished (S, HC, Result);
 
          when others =>
-            --  Unknown handshake message, skip
-            Append_Transcript (HC, Data);
+            --  RFC 8446 §4: unknown handshake type → unexpected_message.
+            --  BoGo's WrongMessageType-TLS13-* injects `type + 42` here.
+            Send_HS_Encrypted_Alert
+              (S, HC, Unexpected_Message, Result);
       end case;
    end Process_Handshake_Message;
 
@@ -967,60 +1404,258 @@ is
                         Frag_Len : constant N32 := Rec.Fragment_Len;
                         Frag_Start : constant N32 :=
                            S.Input.Read_Pos + Rec.Fragment_Pos;
-                        Frag : constant Byte_Seq :=
-                           S.Input.Data (Frag_Start ..
-                                          Frag_Start + Frag_Len - 1);
-                        Parse_OK : Boolean;
+                        Max_HS_Msg : constant N32 := 131072;
                      begin
-                        Handshake.Client_Msgs.Parse_Server_Hello (S, HC, Frag, Parse_OK);
+                        --  Reassemble across records (BoGo's
+                        --  SplitHandshakeRecords with
+                        --  MaxHandshakeRecordLength=1 fragments
+                        --  ServerHello into ~80 single-byte records).
+                        --  HC.Reasm_Hdr_Pending is the sentinel for
+                        --  "still gathering the 4-byte HS header".
 
-                        if not Parse_OK
-                          and then S.Last_Error = No_Error
+                        --  Continuation: append to existing reassembly.
+                        if HC.Reasm_Need > 0
+                          and then HC.Reasm_Buf /= null
                         then
-                           --  RFLX parser may fail on TLS 1.2 ServerHello
-                           --  (empty session_id). Try manual parse,
-                           --  but only when no specific error was
-                           --  recorded — a deliberate Decode_Error
-                           --  (e.g. RFC 8446 §4.2 dup-ext detection)
-                           --  must not be papered over by the TLS 1.2
-                           --  fallback.
-                           Handshake.TLS12.Parse_Server_Hello_12
-                             (S, HC, Frag, Parse_OK);
-                        end if;
-
-                        if not Parse_OK then
-                           --  Send the alert that matches the
-                           --  recorded error, defaulting to
-                           --  Handshake_Failure. Decode_Error from
-                           --  the TLS 1.3 path (e.g. dup-ext) MUST
-                           --  surface as decode_error, not the
-                           --  generic handshake_failure — runners
-                           --  match on the specific alert.
-                           if S.Last_Error = No_Error then
-                              S.Last_Error := Handshake_Failure;
-                           end if;
-                           Set_State (S, Error_State);
-                           Result := Error_Alert;
+                           declare
+                              Need : constant N32 :=
+                                 HC.Reasm_Need - HC.Reasm_Len;
+                              Take : constant N32 :=
+                                 N32'Min (Frag_Len, Need);
+                           begin
+                              if HC.Reasm_Len + Take <=
+                                    N32 (HC.Reasm_Buf'Length)
+                              then
+                                 HC.Reasm_Buf
+                                   (HC.Reasm_Len ..
+                                    HC.Reasm_Len + Take - 1) :=
+                                    S.Input.Data
+                                      (Frag_Start ..
+                                       Frag_Start + Take - 1);
+                                 HC.Reasm_Len := HC.Reasm_Len + Take;
+                              end if;
+                           end;
                            S.Input.Read_Pos :=
                               S.Input.Read_Pos + Rec.Record_Len;
-                           return;
+
+                           --  Header just arrived: decode HS_Total.
+                           if HC.Reasm_Hdr_Pending
+                             and then HC.Reasm_Len >= 4
+                           then
+                              declare
+                                 HS_Total : constant N32 :=
+                                    N32 (HC.Reasm_Buf (1)) * 65536
+                                    + N32 (HC.Reasm_Buf (2)) * 256
+                                    + N32 (HC.Reasm_Buf (3)) + 4;
+                              begin
+                                 HC.Reasm_Hdr_Pending := False;
+                                 if HS_Total < 4
+                                   or HS_Total > Max_HS_Msg
+                                 then
+                                    Free_Byte_Seq (HC.Reasm_Buf);
+                                    HC.Reasm_Len := 0;
+                                    HC.Reasm_Need := 0;
+                                    S.Last_Error := Decode_Error;
+                                    Set_State (S, Error_State);
+                                    Result := Error_Alert;
+                                    return;
+                                 end if;
+                                 HC.Reasm_Need := HS_Total;
+                              end;
+                           end if;
+
+                           if HC.Reasm_Len < HC.Reasm_Need then
+                              Result := OK;
+                              return;  --  need more fragments
+                           end if;
+                        else
+                           --  Fresh record. Frag_Len < 4 → start
+                           --  reassembly with Hdr_Pending sentinel.
+                           if Frag_Len < 4 then
+                              if Frag_Len = 0 then
+                                 S.Input.Read_Pos :=
+                                    S.Input.Read_Pos + Rec.Record_Len;
+                                 S.Last_Error := Decode_Error;
+                                 Set_State (S, Error_State);
+                                 Result := Error_Alert;
+                                 return;
+                              end if;
+                              HC.Reasm_Buf := new Byte_Seq'
+                                 (0 .. Max_HS_Msg - 1 => 0);
+                              HC.Reasm_Need := 4;
+                              HC.Reasm_Hdr_Pending := True;
+                              HC.Reasm_Len := Frag_Len;
+                              HC.Reasm_Buf (0 .. Frag_Len - 1) :=
+                                 S.Input.Data
+                                   (Frag_Start ..
+                                    Frag_Start + Frag_Len - 1);
+                              S.Input.Read_Pos :=
+                                 S.Input.Read_Pos + Rec.Record_Len;
+                              Result := OK;
+                              return;
+                           end if;
+
+                           --  Header is in this fragment. Decode
+                           --  HS_Total; if msg spans, start reassembly.
+                           declare
+                              HS_Len : constant N32 :=
+                                 N32 (S.Input.Data (Frag_Start + 1))
+                                   * 65536 +
+                                 N32 (S.Input.Data (Frag_Start + 2))
+                                   * 256 +
+                                 N32 (S.Input.Data (Frag_Start + 3));
+                              HS_Total : constant N32 := HS_Len + 4;
+                           begin
+                              if HS_Total > Max_HS_Msg then
+                                 S.Input.Read_Pos :=
+                                    S.Input.Read_Pos + Rec.Record_Len;
+                                 S.Last_Error := Decode_Error;
+                                 Set_State (S, Error_State);
+                                 Result := Error_Alert;
+                                 return;
+                              end if;
+                              if HS_Total > Frag_Len then
+                                 HC.Reasm_Buf := new Byte_Seq'
+                                    (0 .. HS_Total - 1 => 0);
+                                 HC.Reasm_Need := HS_Total;
+                                 HC.Reasm_Len := Frag_Len;
+                                 HC.Reasm_Buf (0 .. Frag_Len - 1) :=
+                                    S.Input.Data
+                                      (Frag_Start ..
+                                       Frag_Start + Frag_Len - 1);
+                                 S.Input.Read_Pos :=
+                                    S.Input.Read_Pos + Rec.Record_Len;
+                                 Result := OK;
+                                 return;
+                              end if;
+                              --  Single-record happy path: copy the
+                              --  WHOLE record fragment (could include
+                              --  trailing packed messages per BoGo's
+                              --  PackHandshakeFlight) into Reasm_Buf.
+                              --  Set Reasm_Need to just the SH size so
+                              --  dispatch sees one message; the
+                              --  TLS 1.2 Process_Server_Flight will
+                              --  drain trailing leftover bytes.
+                              HC.Reasm_Buf := new Byte_Seq'
+                                 (0 .. Frag_Len - 1 => 0);
+                              HC.Reasm_Need := HS_Total;
+                              HC.Reasm_Len := Frag_Len;
+                              HC.Reasm_Buf.all :=
+                                 S.Input.Data
+                                   (Frag_Start ..
+                                    Frag_Start + Frag_Len - 1);
+                              S.Input.Read_Pos :=
+                                 S.Input.Read_Pos + Rec.Record_Len;
+                           end;
                         end if;
 
-                        --  Add ServerHello to transcript
-                        Append_Transcript (HC, Frag);
+                        --  Full ServerHello reassembled in HC.Reasm_Buf.
+                        declare
+                           Frag : constant Byte_Seq :=
+                              HC.Reasm_Buf (0 .. HC.Reasm_Need - 1);
+                           Parse_OK : Boolean;
+                        begin
+                           --  RFC 8446 §4 / RFC 5246 §7.4: the first
+                           --  message in this state MUST be ServerHello
+                           --  (type 2). Any other handshake type is an
+                           --  unexpected_message — BoGo
+                           --  WrongMessageType-ServerHello tests this.
+                           if Frag (Frag'First)
+                              /= Handshake.HT_Server_Hello
+                           then
+                              S.Last_Error := Unexpected_Message;
+                           end if;
+                           Handshake.Client_Msgs.Parse_Server_Hello
+                             (S, HC, Frag, Parse_OK);
 
-                        S.Input.Read_Pos :=
-                           S.Input.Read_Pos + Rec.Record_Len;
+                           if not Parse_OK
+                             and then S.Last_Error = No_Error
+                           then
+                              Handshake.TLS12.Parse_Server_Hello_12
+                                (S, HC, Frag, Parse_OK);
+                           end if;
+
+                           if not Parse_OK then
+                              if S.Last_Error = No_Error then
+                                 S.Last_Error := Handshake_Failure;
+                              end if;
+                              --  Queue a plaintext alert on the wire so
+                              --  the peer sees a real :DECODE_ERROR: /
+                              --  :ILLEGAL_PARAMETER: rather than TCP RST.
+                              --  Pre-key state — alert is unencrypted.
+                              declare
+                                 A : N32;
+                              begin
+                                 Records.Build_Plaintext_Alert
+                                   (Level     => 2,
+                                    Desc      =>
+                                      (case S.Last_Error is
+                                        when Decode_Error      => 50,
+                                        when Illegal_Parameter => 47,
+                                        when Protocol_Version  => 70,
+                                        when Unexpected_Message => 10,
+                                        when others            => 40),
+                                    Output    => S.Output,
+                                    Bytes_Out => A);
+                              end;
+                              Set_State (S, Error_State);
+                              Result := (if Output_Pending (S) > 0
+                                         then Has_Output else Error_Alert);
+                              Free_Byte_Seq (HC.Reasm_Buf);
+                              HC.Reasm_Len := 0;
+                              HC.Reasm_Need := 0;
+                              HC.Reasm_Hdr_Pending := False;
+                              return;
+                           end if;
+
+                           Append_Transcript (HC, Frag);
+                        end;
+
+                        --  PackHandshake (TLS 1.2 PackHandshakeFlight):
+                        --  the record may pack SH + Cert + SKE + ... +
+                        --  SHD. Preserve trailing bytes so the next
+                        --  Process_Server_Flight call drains them via
+                        --  its in-progress reassembly path; otherwise
+                        --  free the buffer.
+                        if HC.Version /= TLS_1_3
+                          and then HC.Reasm_Buf /= null
+                          and then HC.Reasm_Len > HC.Reasm_Need
+                        then
+                           declare
+                              Old_Need : constant N32 := HC.Reasm_Need;
+                              Leftover : constant N32 :=
+                                 HC.Reasm_Len - Old_Need;
+                           begin
+                              HC.Reasm_Buf (0 .. Leftover - 1) :=
+                                 HC.Reasm_Buf
+                                   (Old_Need .. HC.Reasm_Len - 1);
+                              HC.Reasm_Len := Leftover;
+                              if Leftover < 4 then
+                                 HC.Reasm_Need := 4;
+                                 HC.Reasm_Hdr_Pending := True;
+                              else
+                                 declare
+                                    Next_Len : constant N32 :=
+                                       N32 (HC.Reasm_Buf (1)) * 65536
+                                       + N32 (HC.Reasm_Buf (2)) * 256
+                                       + N32 (HC.Reasm_Buf (3));
+                                 begin
+                                    HC.Reasm_Need := Next_Len + 4;
+                                    HC.Reasm_Hdr_Pending := False;
+                                 end;
+                              end if;
+                           end;
+                        else
+                           Free_Byte_Seq (HC.Reasm_Buf);
+                           HC.Reasm_Len := 0;
+                           HC.Reasm_Need := 0;
+                           HC.Reasm_Hdr_Pending := False;
+                        end if;
 
                         if HC.Version = TLS_1_3 then
-                           --  TLS 1.3: derive handshake keys
                            Derive_Handshake_Keys (S, HC);
                            Set_State (S, Wait_Encrypted_Extensions);
                         else
-                           --  TLS 1.2: move to Wait_Server_Finished
-                           --  which will be dispatched to
-                           --  Client.TLS12.Advance_Handshake_12
-                           --  on the next Advance call.
                            Set_State (S, Wait_Server_Finished);
                         end if;
                         Result := OK;
@@ -1414,29 +2049,11 @@ is
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
                if not Dec_Valid then
-                  --  RFC 8446 §5.2: AEAD decryption failure MUST
-                  --  trigger a fatal bad_record_mac alert. The
-                  --  alert is sent under our handshake write key
-                  --  (we have it the moment we derived
-                  --  client_handshake_traffic_secret). Was missing
-                  --  the alert entirely (peer saw TCP RST). BoGo's
-                  --  AppDataBeforeTLS13KeyChange exercises this:
-                  --  server sends app_data with the wrong key after
-                  --  our key-change point.
-                  declare
-                     A : N32;
-                  begin
-                     Records.Build_Alert_Record
-                       (Level     => 2,
-                        Desc      => 20,  --  bad_record_mac
-                        Keys      => HC.Client_HS,
-                        Output    => S.Output,
-                        Bytes_Out => A);
-                  end;
-                  S.Last_Error := Bad_Record_MAC;
-                  Set_State (S, Error_State);
-                  Result := (if Output_Pending (S) > 0
-                             then Has_Output else Error_Alert);
+                  --  RFC 8446 §5.2: AEAD decryption failure MUST emit
+                  --  a fatal bad_record_mac alert. Encrypted under
+                  --  HC.Client_HS via the helper.
+                  Send_HS_Encrypted_Alert
+                    (S, HC, Bad_Record_MAC, Result);
                   pragma Assert
                     (AEAD_Failure_Alert_Queued_RFC_8446_5_2 (S));
                   return;
@@ -1472,6 +2089,56 @@ is
                            end if;
                            Pos := Copy_Len;
                         end;
+
+                        --  Header-pending sentinel: once 4 bytes are
+                        --  in, decode the real HS_Total. BoGo's
+                        --  SplitHandshakeRecords (1-byte fragments)
+                        --  exercises this.
+                        if HC.Reasm_Hdr_Pending
+                          and then HC.Reasm_Len >= 4
+                        then
+                           declare
+                              HS_Total : constant N32 :=
+                                 N32 (HC.Reasm_Buf (1)) * 65536
+                                 + N32 (HC.Reasm_Buf (2)) * 256
+                                 + N32 (HC.Reasm_Buf (3)) + 4;
+                           begin
+                              HC.Reasm_Hdr_Pending := False;
+                              if HS_Total > Max_HS_Msg then
+                                 Free_Byte_Seq (HC.Reasm_Buf);
+                                 HC.Reasm_Len := 0;
+                                 HC.Reasm_Need := 0;
+                                 S.Last_Error := Decode_Error;
+                                 Set_State (S, Error_State);
+                                 Result := Error_Alert;
+                                 return;
+                              end if;
+                              HC.Reasm_Need := HS_Total;
+                           end;
+                           --  Now that Reasm_Need is real, drain more
+                           --  body bytes from this same record if any.
+                           if HC.Reasm_Len < HC.Reasm_Need
+                             and Pos < Plain_Len
+                           then
+                              declare
+                                 Need2 : constant N32 :=
+                                    HC.Reasm_Need - HC.Reasm_Len;
+                                 Take2 : constant N32 :=
+                                    N32'Min (Need2, Plain_Len - Pos);
+                              begin
+                                 if HC.Reasm_Len + Take2 <=
+                                       N32 (HC.Reasm_Buf'Length)
+                                 then
+                                    HC.Reasm_Buf
+                                      (HC.Reasm_Len ..
+                                       HC.Reasm_Len + Take2 - 1) :=
+                                       Plaintext (Pos .. Pos + Take2 - 1);
+                                    HC.Reasm_Len := HC.Reasm_Len + Take2;
+                                 end if;
+                                 Pos := Pos + Take2;
+                              end;
+                           end if;
+                        end if;
 
                         if HC.Reasm_Len >= HC.Reasm_Need then
                            --  Full message reassembled
@@ -1543,8 +2210,53 @@ is
                               exit;
                            end if;
                            Pos := Msg_End;
+                           --  RFC 8446 §4.4.4: server Finished is the
+                           --  last server handshake message. After we
+                           --  dispatch it (state transitions out of
+                           --  Wait_Server_Finished), any plaintext
+                           --  remaining in this record is excess
+                           --  handshake data → fatal unexpected_message
+                           --  (BoGo TrailingDataWithFinished).
+                           if S.State /= Wait_Server_Finished
+                             and S.State /= Wait_Certificate
+                             and S.State /= Wait_Certificate_Verify
+                             and S.State /= Wait_Encrypted_Extensions
+                             and S.State /= Wait_Certificate_Request
+                             and Pos < Plain_Len
+                           then
+                              --  BoGo TrailingDataWithFinished: stray
+                              --  bytes after server's Finished →
+                              --  fatal unexpected_message.
+                              Send_HS_Encrypted_Alert
+                                (S, HC, Unexpected_Message, Result);
+                              exit;
+                           end if;
                         end;
                      end loop;
+
+                     --  Tail handling: 1..3 stray bytes left in this
+                     --  record (server fragmented the 4-byte HS header
+                     --  itself, e.g. BoGo MaxHandshakeRecordLength=1).
+                     --  Start reassembly with the header-pending
+                     --  sentinel; the next record will fill it.
+                     if Result /= Error_Alert
+                       and Result /= Has_Output
+                       and HC.Reasm_Need = 0
+                       and Pos < Plain_Len
+                       and Plain_Len - Pos < 4
+                     then
+                        declare
+                           Avail : constant N32 := Plain_Len - Pos;
+                        begin
+                           HC.Reasm_Buf := new Byte_Seq'
+                              (0 .. Max_HS_Msg - 1 => 0);
+                           HC.Reasm_Need := 4;
+                           HC.Reasm_Hdr_Pending := True;
+                           HC.Reasm_Len := Avail;
+                           HC.Reasm_Buf (0 .. Avail - 1) :=
+                              Plaintext (Pos .. Pos + Avail - 1);
+                        end;
+                     end if;
                   end;
                elsif Inner_Type = 16#15# then
                   --  Alert
@@ -1638,23 +2350,9 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not Dec_Valid then
-            --  RFC 8446 §5.2: send fatal bad_record_mac alert on
-            --  AEAD verification failure. Post-handshake we use
-            --  the client application traffic key.
-            declare
-               A : N32;
-            begin
-               Records.Build_Alert_Record
-                 (Level     => 2,
-                  Desc      => 20,  --  bad_record_mac
-                  Keys      => S.Client_App,
-                  Output    => S.Output,
-                  Bytes_Out => A);
-            end;
-            S.Last_Error := Bad_Record_MAC;
-            Set_State (S, Error_State);
-            Result := (if Output_Pending (S) > 0
-                       then Has_Output else Error_Alert);
+            --  RFC 8446 §5.2: post-handshake AEAD failure → fatal
+            --  bad_record_mac under client_application_traffic_secret.
+            Send_App_Encrypted_Alert (S, Bad_Record_MAC, Result);
             pragma Assert
               (AEAD_Failure_Alert_Queued_RFC_8446_5_2 (S));
             return;
@@ -1679,20 +2377,8 @@ is
                   S.Empty_Records_Recvd :=
                      S.Empty_Records_Recvd + 1;
                   if S.Empty_Records_Recvd > 32 then
-                     declare
-                        A : N32;
-                     begin
-                        Records.Build_Alert_Record
-                          (Level     => 2,
-                           Desc      => 10,  --  unexpected_message
-                           Keys      => S.Client_App,
-                           Output    => S.Output,
-                           Bytes_Out => A);
-                     end;
-                     S.Last_Error := Unexpected_Message;
-                     Set_State (S, Error_State);
-                     Result := (if Output_Pending (S) > 0
-                                then Has_Output else Error_Alert);
+                     Send_App_Encrypted_Alert
+                       (S, Unexpected_Message, Result);
                   else
                      Result := OK;
                   end if;
@@ -1803,36 +2489,10 @@ is
                --  fatal illegal_parameter alert (47).
                if Plain_Len < 2 then
                   --  Truncated alert.
-                  declare
-                     A : N32;
-                  begin
-                     Records.Build_Alert_Record
-                       (Level     => 2,
-                        Desc      => 50,  --  decode_error
-                        Keys      => S.Client_App,
-                        Output    => S.Output,
-                        Bytes_Out => A);
-                  end;
-                  S.Last_Error := Decode_Error;
-                  Set_State (S, Error_State);
-                  Result := (if Output_Pending (S) > 0
-                             then Has_Output else Error_Alert);
+                  Send_App_Encrypted_Alert (S, Decode_Error, Result);
                elsif Plaintext (0) /= 1 and Plaintext (0) /= 2 then
                   --  Bogus alert level → fatal illegal_parameter.
-                  declare
-                     A : N32;
-                  begin
-                     Records.Build_Alert_Record
-                       (Level     => 2,
-                        Desc      => 47,  --  illegal_parameter
-                        Keys      => S.Client_App,
-                        Output    => S.Output,
-                        Bytes_Out => A);
-                  end;
-                  S.Last_Error := Illegal_Parameter;
-                  Set_State (S, Error_State);
-                  Result := (if Output_Pending (S) > 0
-                             then Has_Output else Error_Alert);
+                  Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
                elsif Plaintext (1) = 0 then
                   --  close_notify (warning, desc=0). Reply in kind.
                   declare
@@ -1864,20 +2524,7 @@ is
                      S.Warning_Alerts_Recvd :=
                         S.Warning_Alerts_Recvd + 1;
                      if S.Warning_Alerts_Recvd >= 5 then
-                        declare
-                           A : N32;
-                        begin
-                           Records.Build_Alert_Record
-                             (Level     => 2,
-                              Desc      => 50,  --  decode_error
-                              Keys      => S.Client_App,
-                              Output    => S.Output,
-                              Bytes_Out => A);
-                        end;
-                        S.Last_Error := Decode_Error;
-                        Set_State (S, Error_State);
-                        Result := (if Output_Pending (S) > 0
-                                   then Has_Output else Error_Alert);
+                        Send_App_Encrypted_Alert (S, Decode_Error, Result);
                      else
                         Result := OK;
                      end if;
@@ -1888,20 +2535,7 @@ is
                      pragma Assert
                        (Warning_Alerts_Bounded_RFC_8446_6_1 (S));
                   else
-                     declare
-                        A : N32;
-                     begin
-                        Records.Build_Alert_Record
-                          (Level     => 2,
-                           Desc      => 50,  --  decode_error
-                           Keys      => S.Client_App,
-                           Output    => S.Output,
-                           Bytes_Out => A);
-                     end;
-                     S.Last_Error := Decode_Error;
-                     Set_State (S, Error_State);
-                     Result := (if Output_Pending (S) > 0
-                                then Has_Output else Error_Alert);
+                     Send_App_Encrypted_Alert (S, Decode_Error, Result);
                   end if;
                else
                   --  Fatal alert from peer: close without replying

@@ -572,6 +572,10 @@ is
       end if;
 
       if Data'Last < Pt_Len then return; end if;  --  need 1 + Pt_Len bytes
+      --  RFC 5246 §7.4.7: body ends exactly at 1 + Pt_Len bytes.
+      --  Trailing bytes (BoGo TrailingMessageData-ClientKeyExchange)
+      --  are a protocol error.
+      if Data'Length /= 1 + Pt_Len then return; end if;
 
       --  Store the peer's public key
       case HC.Selected_Group is
@@ -677,6 +681,42 @@ is
                   Sig_Len   => Sig_Len,
                   OK        => Sig_OK);
             end;
+
+         when 16#0401# =>  --  rsa_pkcs1_sha256
+            Hash_Algo := 4; Sig_Algo := 1;
+            if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
+               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+               or else Transcript_Hash'Length /= 32
+            then return; end if;
+            SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
+              (M_Hash    => Transcript_Hash (0 .. 31),
+               Hash_Len  => 32,
+               Modulus   => Id.RSA_Modulus,
+               Mod_Len   => Id.RSA_Mod_Len,
+               Priv_Exp  => Id.RSA_Priv_Exp,
+               Signature => Sig,
+               Sig_Len   => Sig_Len,
+               OK        => Sig_OK);
+
+         when 16#0501# =>  --  rsa_pkcs1_sha384
+            Hash_Algo := 5; Sig_Algo := 1;
+            if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
+               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+               or else Transcript_Hash'Length /= 48
+            then return; end if;
+            SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
+              (M_Hash    => Transcript_Hash (0 .. 47),
+               Hash_Len  => 48,
+               Modulus   => Id.RSA_Modulus,
+               Mod_Len   => Id.RSA_Mod_Len,
+               Priv_Exp  => Id.RSA_Priv_Exp,
+               Signature => Sig,
+               Sig_Len   => Sig_Len,
+               OK        => Sig_OK);
 
          when 16#0403# =>  --  ecdsa_secp256r1_sha256
             Hash_Algo := 4; Sig_Algo := 3;

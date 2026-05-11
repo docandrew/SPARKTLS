@@ -304,6 +304,84 @@ else
         fail "client mTLS NoCert"
         echo "    $(echo "$output" | head -2)"
     fi
+
+    # TLS 1.2 client mTLS: server forces TLS 1.2 with -tls1_2;
+    # our client falls back from TLS 1.3 to 1.2 via supported_versions.
+    # Only RSA suites today (no ECDSA TLS 1.2 in the offered list).
+    cleanup
+    openssl s_server -accept 0:$PORT \
+        -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" \
+        -CAfile "$CERT_DIR/rsa.crt" -Verify 1 -tls1_2 \
+        -cipher ECDHE-RSA-AES128-GCM-SHA256 -no_ticket -quiet \
+        > /tmp/mtls_srv.log 2>&1 &
+    sleep 0.5
+    output=$(timeout 5 "$CLIENT" \
+        --port $PORT --host localhost \
+        --cert-file "$CERT_DIR/rsa.crt" \
+        --key-file "$CERT_DIR/rsa.key" \
+        --trust-cert "$CERT_DIR/rsa.crt" \
+        --message "hello-tls12-mtls" 2>&1)
+    rc=$?
+    cleanup
+    if [ $rc -eq 0 ]; then
+        pass "client mTLS TLS 1.2 + ECDHE-RSA-AES128-GCM-SHA256"
+    else
+        fail "client mTLS TLS 1.2"
+        echo "    $(echo "$output" | head -2)"
+    fi
+
+    # TLS 1.2 client NoCert: server requests but doesn't require.
+    cleanup
+    openssl s_server -accept 0:$PORT \
+        -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" \
+        -CAfile "$CERT_DIR/rsa.crt" -verify 1 -tls1_2 \
+        -cipher ECDHE-RSA-AES128-GCM-SHA256 -no_ticket -quiet \
+        > /tmp/mtls_srv.log 2>&1 &
+    sleep 0.5
+    output=$(timeout 5 "$CLIENT" \
+        --port $PORT --host localhost \
+        --trust-cert "$CERT_DIR/rsa.crt" \
+        --message "hello-tls12-nocert" 2>&1)
+    rc=$?
+    cleanup
+    if [ $rc -eq 0 ]; then
+        pass "client mTLS TLS 1.2 NoCert (empty Cert reply)"
+    else
+        fail "client mTLS TLS 1.2 NoCert"
+        echo "    $(echo "$output" | head -2)"
+    fi
+fi
+
+# ===================================================================
+# ALPN — RFC 7301. Client offers a protocol; server selects it (or
+# something compatible) and echoes in EE/SH. Round-trip then app
+# data to validate the post-handshake key derivation isn't perturbed.
+# ===================================================================
+echo ""
+echo "--- ALPN: SPARKTLS client → OpenSSL s_server ---"
+if [ ! -x "$CLIENT" ]; then
+    echo "  (skipped — mtls_test_client not built)"
+else
+    cleanup
+    openssl s_server -accept 0:$PORT \
+        -cert "$CERT_DIR/p256.crt" -key "$CERT_DIR/p256.key" \
+        -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256 \
+        -alpn h2,http/1.1 -no_ticket -quiet \
+        > /tmp/alpn_srv.log 2>&1 &
+    sleep 0.5
+    output=$(timeout 5 "$CLIENT" \
+        --port $PORT --host localhost \
+        --trust-cert "$CERT_DIR/p256.crt" \
+        --alpn h2 --expect-alpn h2 \
+        --message "alpn-test" 2>&1)
+    rc=$?
+    cleanup
+    if [ $rc -eq 0 ]; then
+        pass "ALPN client offers h2, server echoes h2"
+    else
+        fail "ALPN client offers h2, server echoes h2"
+        echo "    $(echo "$output" | head -2)"
+    fi
 fi
 
 # --- Summary ---

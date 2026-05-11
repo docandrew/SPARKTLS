@@ -187,4 +187,60 @@ is
                   else Max_ECDSA_DER_Len);
    end ECDSA_To_DER;
 
+   --================================================================
+   --  Pick_Sig_Algo
+   --
+   --  RFC 8446 §4.2.3 sig algos we support per cert key type:
+   --    Sign_Ed25519     -> ed25519 (0x0807)
+   --    Sign_ECDSA_P256  -> ecdsa_secp256r1_sha256 (0x0403)
+   --    Sign_ECDSA_P384  -> ecdsa_secp384r1_sha384 (0x0503)
+   --    Sign_RSA_PSS     -> rsa_pss_rsae_sha256/384/512
+   --                        (0x0804 / 0x0805 / 0x0806)
+   --================================================================
+   function Pick_Sig_Algo
+     (Sig_Algs           : Byte_Seq;
+      Cert               : Signing_Algorithm;
+      Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
+   is
+      Pos : N32 := Sig_Algs'First;
+   begin
+      if Cert = Sign_None or Sig_Algs'Length < 2 then
+         return 0;
+      end if;
+      while Pos + 1 <= Sig_Algs'Last loop
+         pragma Loop_Invariant
+           (Pos >= Sig_Algs'First and Pos + 1 <= Sig_Algs'Last);
+         declare
+            A : constant Unsigned_16 :=
+              Unsigned_16 (Sig_Algs (Pos)) * 256
+              + Unsigned_16 (Sig_Algs (Pos + 1));
+         begin
+            case Cert is
+               when Sign_Ed25519 =>
+                  if A = 16#0807# then return A; end if;
+               when Sign_ECDSA_P256 =>
+                  if A = 16#0403# then return A; end if;
+               when Sign_ECDSA_P384 =>
+                  if A = 16#0503# then return A; end if;
+               when Sign_RSA_PSS =>
+                  --  RSA private key handles both PSS and PKCS1 v1.5.
+                  --  Sign_RSA_PSS is the storage type, not the wire
+                  --  algorithm choice. Server's offer drives selection.
+                  if A = 16#0804# or A = 16#0805# or A = 16#0806# then
+                     return A;
+                  end if;
+                  if Allow_PKCS1_v1_5
+                    and (A = 16#0401# or A = 16#0501#)
+                  then
+                     return A;
+                  end if;
+               when Sign_None =>
+                  null;
+            end case;
+         end;
+         Pos := Pos + 2;
+      end loop;
+      return 0;
+   end Pick_Sig_Algo;
+
 end SPARKTLS.Handshake;

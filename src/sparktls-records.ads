@@ -72,6 +72,21 @@ is
                and Fragment'Length > 0
                and Fragment'Length <= Max_Fragment;  --  RFC 8446 §5.1
 
+   --  RFC 8446 §5.1: Build the initial ClientHello record with the
+   --  legacy_record_version = TLS 1.0 (0x0301). The RFC permits both
+   --  0x0301 and 0x0303 for the initial ClientHello, but middleboxes
+   --  and version-strict peers (e.g. BoGo's VersionNegotiation tests)
+   --  expect 0x0301 for maximum compatibility. All subsequent
+   --  client-side plaintext handshake records use 0x0303 via
+   --  Build_Handshake_Record above.
+   procedure Build_Initial_ClientHello_Record
+     (Fragment   : in     Byte_Seq;
+      Output     : in out IO_Buffer;
+      Bytes_Out  :    out N32)
+   with Pre => Fragment'First = 0
+               and Fragment'Length > 0
+               and Fragment'Length <= Max_Fragment;
+
    --  RFC 8446 §5.2: Build an encrypted TLS record.
    --  Inner_Type: 0x15 (alert), 0x16 (handshake), 0x17 (application_data).
    --  The nonce counter is incremented for each record.

@@ -45,8 +45,14 @@ is
       Trust               : Trust_Store_Access := null;
       Request_Client_Cert : Boolean := False;
       Require_Client_Cert : Boolean := False;
-      Tickets             : Ticket_Store_Access := null)
+      Tickets             : Ticket_Store_Access := null;
+      ALPN                : String := "")
    with SPARK_Mode => Off;
+   --  ALPN (RFC 7301): the protocol name we'll select when a
+   --  client offers it in the application_layer_protocol_negotiation
+   --  extension. Empty string means we don't echo ALPN even if
+   --  the client offered something. Single-protocol only — for
+   --  multi-protocol selection use Init with a built Config.
    --  SPARK_Mode Off: Ticket_Store_Access is access-all (shared mutable
    --  cache). SPARK's ownership model treats it as a move, but the pointer
    --  is intentionally shared between caller and Config.

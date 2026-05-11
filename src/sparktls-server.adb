@@ -195,7 +195,8 @@ is
       Trust               : Trust_Store_Access := null;
       Request_Client_Cert : Boolean := False;
       Require_Client_Cert : Boolean := False;
-      Tickets             : Ticket_Store_Access := null)
+      Tickets             : Ticket_Store_Access := null;
+      ALPN                : String := "")
    with SPARK_Mode => Off
    is
       Cfg : Config;
@@ -206,6 +207,10 @@ is
       Cfg.Request_Client_Cert := Request_Client_Cert;
       Cfg.Require_Client_Cert := Require_Client_Cert;
       Cfg.Ticket_Store        := Tickets;
+      if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
+         Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
+         Cfg.ALPN.Len := ALPN'Length;
+      end if;
       Init (S, Cfg);
    end Configure;
 
@@ -2375,14 +2380,28 @@ is
                      Msg_Type, Msg_Len, Parse_OK);
 
                   if not Parse_OK then
-                     --  Malformed handshake header: decode_error (50)
+                     --  Distinguish unknown-type (BoGo
+                     --  WrongMessageType injects type+42) from
+                     --  malformed shape. Unknown type →
+                     --  unexpected_message; otherwise decode_error.
                      declare
+                        Raw_Type : constant Byte :=
+                           (if Plain_Len >= 1 then Plaintext (0)
+                            else 0);
+                        Is_Known : constant Boolean :=
+                           Raw_Type in 16#01# | 16#02# | 16#04# |
+                                       16#08# | 16#0B# | 16#0C# |
+                                       16#0D# | 16#0E# | 16#0F# |
+                                       16#10# | 16#14#;
                         A : N32;
                      begin
                         Records.Build_Alert_Record
-                          (2, 50, S.Server_App, S.Output, A);
+                          (2, (if Is_Known then 50 else 10),
+                           S.Server_App, S.Output, A);
+                        S.Last_Error :=
+                          (if Is_Known then Decode_Error
+                           else Unexpected_Message);
                      end;
-                     S.Last_Error := Decode_Error;
                      Set_State (S, Error_State);
                      if Output_Pending (S) > 0 then
                         Result := Has_Output;
@@ -2427,15 +2446,19 @@ is
                      --  TrailingDataWithFinished, expected error
                      --  ":EXCESS_HANDSHAKE_DATA:" / "remote error:
                      --  unexpected message"). Wrong inner Msg_Len
-                     --  is malformed → decode_error.
+                     --  (length declared in handshake header is too
+                     --  big due to trailing bytes in the message)
+                     --  is a Finished-verify failure → decrypt_error
+                     --  (BoGo TrailingMessageData-TLS13-ClientFinished
+                     --  expects ":DIGEST_CHECK_FAILED:" → alert 51).
                      if Msg_Len /= Expected_Len then
                         declare
                            A : N32;
                         begin
                            Records.Build_Alert_Record
-                             (2, 50, S.Server_App, S.Output, A);
+                             (2, 51, S.Server_App, S.Output, A);
                         end;
-                        S.Last_Error := Decode_Error;
+                        S.Last_Error := Certificate_Verify_Failed;
                         Set_State (S, Error_State);
                         if Output_Pending (S) > 0 then
                            Result := Has_Output;

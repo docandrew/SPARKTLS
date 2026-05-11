@@ -398,11 +398,15 @@ is
 
    --  Parse the ALPN extension data: 2-byte list_len followed by
    --  pascal-style protocol strings (1-byte length + bytes). Stores
-   --  the FIRST protocol in HC.Client_ALPN.
+   --  the FIRST protocol in HC.Client_ALPN. RFC 7301 §3.1: each
+   --  protocol_name MUST have length >= 1; an empty entry anywhere
+   --  in the list is a fatal protocol violation. Sets OK=False and
+   --  HC.Last_ALPN_Error so the caller can surface illegal_parameter.
    procedure Parse_ALPN_Extension
      (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
       DLen    : in     Wire_Small_Ext_Len;
-      HC      : in out Handshake_Context)
+      HC      : in out Handshake_Context;
+      OK      :    out Boolean)
    with Pre => DLen >= 4
               and then RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer
                          (Ext_Ctx)
@@ -415,24 +419,53 @@ is
    procedure Parse_ALPN_Extension
      (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
       DLen    : in     Wire_Small_Ext_Len;
-      HC      : in out Handshake_Context)
+      HC      : in out Handshake_Context;
+      OK      :    out Boolean)
    is
       AB : RBT.Bytes_Ptr :=
              new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
+      List_Len : N32;
+      P : N32;
+      Saw_First : Boolean := False;
    begin
+      OK := True;
       RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, AB.all);
-      declare
-         PL : constant Natural := Natural (AB (3));
-      begin
-         if PL > 0 and PL <= Max_Hostname_Len and N32 (PL + 3) <= DLen
-         then
-            HC.Client_ALPN.Len := PL;
-            for I in 1 .. PL loop
-               HC.Client_ALPN.Data (I) :=
-                 Character'Val (AB (RBT.Index (3 + I)));
-            end loop;
-         end if;
-      end;
+      List_Len := N32 (AB (1)) * 256 + N32 (AB (2));
+      if List_Len = 0 or N32 (DLen) /= 2 + List_Len then
+         OK := False;
+         RFLX_Free (AB);
+         return;
+      end if;
+      --  Walk every protocol entry. The first non-empty one is also
+      --  recorded into HC.Client_ALPN for the per-protocol matcher.
+      P := 3;  --  AB index of first proto_len byte (1-indexed)
+      while P <= 2 + List_Len loop
+         declare
+            PL : constant N32 := N32 (AB (RBT.Index (P)));
+         begin
+            if PL = 0 then
+               --  RFC 7301 §3.1: empty protocol_name forbidden.
+               OK := False;
+               RFLX_Free (AB);
+               return;
+            end if;
+            if P + PL > 2 + List_Len then
+               --  Truncated entry.
+               OK := False;
+               RFLX_Free (AB);
+               return;
+            end if;
+            if not Saw_First and PL <= N32 (Max_Hostname_Len) then
+               HC.Client_ALPN.Len := Natural (PL);
+               for I in 1 .. Natural (PL) loop
+                  HC.Client_ALPN.Data (I) :=
+                     Character'Val (AB (RBT.Index (P + N32 (I))));
+               end loop;
+               Saw_First := True;
+            end if;
+            P := P + 1 + PL;
+         end;
+      end loop;
       RFLX_Free (AB);
    end Parse_ALPN_Extension;
 
@@ -738,7 +771,19 @@ is
          when RFLX.Tls_Extensiontype_Values
                 .Application_Layer_Protocol_Negotiation =>
             if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
-               Parse_ALPN_Extension (Ext_Ctx, DLen, HC);
+               declare
+                  ALPN_OK : Boolean;
+               begin
+                  Parse_ALPN_Extension (Ext_Ctx, DLen, HC, ALPN_OK);
+                  if not ALPN_OK then
+                     --  RFC 7301 §3.1: malformed protocol_name_list
+                     --  (empty entry, truncated, list_len mismatch).
+                     --  Stash for Parse_Client_Hello to surface.
+                     HC.Ext_Parse_Err := Illegal_Parameter;
+                     OK := False;
+                     return;
+                  end if;
+               end;
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Renegotiation_Info =>
@@ -1115,11 +1160,18 @@ is
          begin
             Parse_CH_Extensions (Ctx, HC, Ext_OK);
             if not Ext_OK then
-               --  Sig_algs malformed. Parse_CH_Extensions has already
-               --  closed Exts_Ctx back to Ctx, so Take_Buffer is safe.
+               --  Some extension's contents were malformed.
+               --  Most paths default to decode_error; specific
+               --  extensions can stash a more accurate alert in
+               --  HC.Ext_Parse_Err (e.g. RFC 7301 ALPN empty
+               --  protocol_name → illegal_parameter).
                Take_Buffer (Ctx, Buf);
                RFLX_Free (Buf);
-               S.Last_Error := Decode_Error;
+               if HC.Ext_Parse_Err /= No_Error then
+                  S.Last_Error := HC.Ext_Parse_Err;
+               else
+                  S.Last_Error := Decode_Error;
+               end if;
                return;
             end if;
          end;

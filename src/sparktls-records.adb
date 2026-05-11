@@ -187,6 +187,35 @@ is
       Bytes_Out := Record_Header_Size + Frag_Len;
    end Build_Handshake_Record;
 
+   procedure Build_Initial_ClientHello_Record
+     (Fragment   : in     Byte_Seq;
+      Output     : in out IO_Buffer;
+      Bytes_Out  :    out N32)
+   is
+      Frag_Len : constant N32 := N32 (Fragment'Length);
+      Hdr      : Byte_Seq (0 .. 4) := (others => 0);
+      OK       : Boolean;
+   begin
+      Bytes_Out := 0;
+
+      --  RFC 8446 §5.1: legacy_record_version = 0x0301 (TLS 1.0) for
+      --  the initial ClientHello. Middleboxes more reliably forward
+      --  the record when it claims TLS 1.0 than TLS 1.2.
+      Hdr (0) := 16#16#;  --  handshake
+      Hdr (1) := 16#03#;
+      Hdr (2) := 16#01#;  --  TLS 1.0 record version (compat)
+      Hdr (3) := Byte (Frag_Len / 256);
+      Hdr (4) := Byte (Frag_Len mod 256);
+
+      Write_To_Output (Output, Hdr, OK);
+      if not OK then return; end if;
+
+      Write_To_Output (Output, Fragment, OK);
+      if not OK then return; end if;
+
+      Bytes_Out := Record_Header_Size + Frag_Len;
+   end Build_Initial_ClientHello_Record;
+
    procedure Build_Encrypted_Record
      (Plaintext    : in     Byte_Seq;
       Inner_Type   : in     Byte;

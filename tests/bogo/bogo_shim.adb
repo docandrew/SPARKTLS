@@ -55,6 +55,14 @@ procedure Bogo_Shim is
       Shim_Writes_First    : Boolean := False;
       Expect_Hs_Fails      : Boolean := False;
       Resume_Count         : Natural := 0;
+      --  ALPN (RFC 7301). BoGo wire-encodes -advertise-alpn already
+      --  (e.g. "\x03foo"); we strip the 1-byte length prefix and store
+      --  the bare protocol name. Multi-protocol lists pick the FIRST.
+      ALPN_Proto           : Unbounded_Text := (others => Character'Val (0));
+      ALPN_Proto_Len       : Natural := 0;
+      Expect_ALPN          : Unbounded_Text := (others => Character'Val (0));
+      Expect_ALPN_Len      : Natural := 0;
+      Decline_ALPN         : Boolean := False;
    end record;
 
    Cfg : Config_T;
@@ -169,6 +177,60 @@ procedure Bogo_Shim is
                begin
                   null;
                end;
+            elsif A = "-advertise-alpn"
+              or else A = "-select-alpn"
+              or else A = "-expect-advertised-alpn"
+            then
+               --  RFC 7301 ALPN. BoGo's wire form for these flags is
+               --  the bytes that go directly in the protocol_name_list
+               --  for `-advertise-alpn` (each protocol prefixed by a
+               --  1-byte length, e.g. "\x03foo\x08http/1.1"). For
+               --  `-select-alpn` the value is the bare protocol name.
+               --  We only support a single ALPN protocol today, so for
+               --  the multi-proto advertise lists we pick the FIRST.
+               declare
+                  V : constant String := Next_Arg;
+                  Proto : String (1 .. 255);
+                  Plen  : Natural := 0;
+               begin
+                  if A = "-advertise-alpn" or A = "-expect-advertised-alpn"
+                  then
+                     --  Length-prefix-delimited; first protocol only.
+                     if V'Length >= 1 then
+                        declare
+                           N : constant Natural := Character'Pos (V (V'First));
+                        begin
+                           if N > 0 and N <= 255
+                             and V'Length >= 1 + N
+                           then
+                              Plen := N;
+                              Proto (1 .. N) := V (V'First + 1 .. V'First + N);
+                           end if;
+                        end;
+                     end if;
+                  else
+                     --  -select-alpn: bare protocol name.
+                     if V'Length <= 255 then
+                        Plen := V'Length;
+                        Proto (1 .. Plen) := V;
+                     end if;
+                  end if;
+                  if Plen > 0 then
+                     Cfg.ALPN_Proto (1 .. Plen) := Proto (1 .. Plen);
+                     Cfg.ALPN_Proto_Len := Plen;
+                  end if;
+               end;
+            elsif A = "-expect-alpn" then
+               declare
+                  V : constant String := Next_Arg;
+               begin
+                  if V'Length > 0 and V'Length <= 255 then
+                     Cfg.Expect_ALPN (1 .. V'Length) := V;
+                     Cfg.Expect_ALPN_Len := V'Length;
+                  end if;
+               end;
+            elsif A = "-decline-alpn" then
+               Cfg.Decline_ALPN := True;
             else
                Err ("bogo_shim: unimplemented flag: " & A);
                Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
@@ -293,11 +355,21 @@ procedure Bogo_Shim is
                  (Ada.Command_Line.Exit_Status (Exit_Failure));
                return;
             end if;
-            SPARKTLS.Server.Configure
-              (S       => S,
-               Local   => Id'Unchecked_Access,
-               Random  => Entropy_Random.Random'Access,
-               Tickets => Tickets'Unchecked_Access);
+            declare
+               --  ALPN protocol the server will select if a client
+               --  offered it. -decline-alpn forces empty (don't echo).
+               Server_ALPN : constant String :=
+                  (if Cfg.Decline_ALPN or Cfg.ALPN_Proto_Len = 0
+                   then ""
+                   else Cfg.ALPN_Proto (1 .. Cfg.ALPN_Proto_Len));
+            begin
+               SPARKTLS.Server.Configure
+                 (S       => S,
+                  Local   => Id'Unchecked_Access,
+                  Random  => Entropy_Random.Random'Access,
+                  Tickets => Tickets'Unchecked_Access,
+                  ALPN    => Server_ALPN);
+            end;
          end;
       else
          declare
@@ -326,13 +398,23 @@ procedure Bogo_Shim is
                end if;
                Have_Local := True;
             end if;
-            SPARKTLS.Client.Configure
-              (S        => S,
-               Hostname => "localhost",
-               Trust    => (if Trust /= "" then Roots'Unchecked_Access else null),
-               Random   => Entropy_Random.Random'Access,
-               Clock    => null,
-               Local    => (if Have_Local then Id'Unchecked_Access else null));
+            declare
+               --  Client ALPN: advertise this single protocol in CH.
+               Client_ALPN : constant String :=
+                  (if Cfg.ALPN_Proto_Len = 0 then ""
+                   else Cfg.ALPN_Proto (1 .. Cfg.ALPN_Proto_Len));
+            begin
+               SPARKTLS.Client.Configure
+                 (S        => S,
+                  Hostname => "localhost",
+                  Trust    => (if Trust /= ""
+                               then Roots'Unchecked_Access else null),
+                  Random   => Entropy_Random.Random'Access,
+                  Clock    => null,
+                  Local    => (if Have_Local
+                               then Id'Unchecked_Access else null),
+                  ALPN     => Client_ALPN);
+            end;
          end;
       end if;
 
@@ -380,6 +462,24 @@ procedure Bogo_Shim is
          --  Got here = handshake succeeded but test expected failure.
          Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (Exit_Failure));
          return;
+      end if;
+
+      --  -expect-alpn STR: after handshake the negotiated protocol
+      --  must equal STR. Mismatch = test failure.
+      if Cfg.Expect_ALPN_Len > 0 then
+         declare
+            Got : constant String := SPARKTLS.Get_ALPN (S);
+            Want : constant String :=
+               Cfg.Expect_ALPN (1 .. Cfg.Expect_ALPN_Len);
+         begin
+            if Got /= Want then
+               Err ("expect-alpn mismatch: got='" & Got
+                    & "' want='" & Want & "'");
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               return;
+            end if;
+         end;
       end if;
 
       --  ----- Phase-2 application-data echo loop ---------------------
