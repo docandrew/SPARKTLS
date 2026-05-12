@@ -114,6 +114,20 @@ procedure Bogo_Shim is
          return V;
       end Hex_To_U16;
 
+      --  BoGo passes -min-version / -max-version as DECIMAL wire
+      --  values (e.g. "769" for TLS 1.0, "772" for TLS 1.3), not hex.
+      --  See runner.go shimFlag() = strconv.Itoa(version).
+      function Dec_To_U16 (S : String) return Unsigned_16 is
+         V : Unsigned_16 := 0;
+      begin
+         for C of S loop
+            exit when C not in '0' .. '9';
+            V := V * 10 +
+                 Unsigned_16 (Character'Pos (C) - Character'Pos ('0'));
+         end loop;
+         return V;
+      end Dec_To_U16;
+
    begin
       while I <= Argument_Count loop
          declare
@@ -160,9 +174,25 @@ procedure Bogo_Shim is
                     := (others => Character'Val (0));
                end;
             elsif A = "-min-version" then
-               Cfg.Min_Version := Hex_To_U16 (Next_Arg);
+               Cfg.Min_Version := Dec_To_U16 (Next_Arg);
             elsif A = "-max-version" then
-               Cfg.Max_Version := Hex_To_U16 (Next_Arg);
+               Cfg.Max_Version := Dec_To_U16 (Next_Arg);
+            elsif A = "-no-tls13" then
+               --  Equivalent to capping max-version at TLS 1.2.
+               if Cfg.Max_Version > 16#0303# then
+                  Cfg.Max_Version := 16#0303#;
+               end if;
+            elsif A = "-no-tls12" then
+               --  Equivalent to raising min-version to TLS 1.3.
+               if Cfg.Min_Version < 16#0304# then
+                  Cfg.Min_Version := 16#0304#;
+               end if;
+            --  -no-tls11 and -no-tls1 fall through to the
+            --  "unimplemented" branch below. We don't implement
+            --  TLS 1.0/1.1 at all, so any test whose configuration
+            --  references those versions can't be evaluated by us.
+            --  Exiting 89 keeps these tests SKIPped rather than
+            --  running them through paths that will fail anyway.
             elsif A = "-shim-writes-first" then
                Cfg.Shim_Writes_First := True;
             elsif A = "-expect-handshake-fails" then
@@ -343,6 +373,38 @@ procedure Bogo_Shim is
       end Recv_Once;
 
    begin
+      --  Map (-min-version, -max-version) to a Version_Policy. TLS 1.0
+      --  and 1.1 are deliberately not supported: tests that require
+      --  a max below 0x0303 exit 89 (unimplemented). Tests with min
+      --  above 0x0304 also exit 89.
+      if Cfg.Max_Version < 16#0303# then
+         Err ("bogo_shim: TLS 1.0/1.1 not supported (max < 0x0303)");
+         Ada.Command_Line.Set_Exit_Status
+           (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
+         return;
+      end if;
+      if Cfg.Min_Version > 16#0304# then
+         Err ("bogo_shim: min-version > 0x0304 unsupported");
+         Ada.Command_Line.Set_Exit_Status
+           (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
+         return;
+      end if;
+      --  -no-tls12 + -no-tls13 together leave nothing we can speak —
+      --  treat as unimplemented rather than letting the handshake
+      --  fail in an unrelated way.
+      if Cfg.Min_Version > Cfg.Max_Version then
+         Err ("bogo_shim: empty version range — unimplemented");
+         Ada.Command_Line.Set_Exit_Status
+           (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
+         return;
+      end if;
+
+      declare
+         Policy : constant Version_Policy :=
+           (if Cfg.Min_Version >= 16#0304# then TLS_1_3_Only
+            elsif Cfg.Max_Version <= 16#0303# then TLS_1_2_Only
+            else Allow_Both);
+      begin
       if Cfg.Is_Server then
          declare
             Cert : constant String := Trim_Path (Cfg.Cert_File);
@@ -364,11 +426,12 @@ procedure Bogo_Shim is
                    else Cfg.ALPN_Proto (1 .. Cfg.ALPN_Proto_Len));
             begin
                SPARKTLS.Server.Configure
-                 (S       => S,
-                  Local   => Id'Unchecked_Access,
-                  Random  => Entropy_Random.Random'Access,
-                  Tickets => Tickets'Unchecked_Access,
-                  ALPN    => Server_ALPN);
+                 (S        => S,
+                  Local    => Id'Unchecked_Access,
+                  Random   => Entropy_Random.Random'Access,
+                  Tickets  => Tickets'Unchecked_Access,
+                  ALPN     => Server_ALPN,
+                  Versions => Policy);
             end;
          end;
       else
@@ -413,10 +476,12 @@ procedure Bogo_Shim is
                   Clock    => null,
                   Local    => (if Have_Local
                                then Id'Unchecked_Access else null),
-                  ALPN     => Client_ALPN);
+                  ALPN     => Client_ALPN,
+                  Versions => Policy);
             end;
          end;
       end if;
+      end;  --  declare Policy
 
       --  Drive Advance until handshake completes or fails.
       loop

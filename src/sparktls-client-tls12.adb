@@ -1288,8 +1288,42 @@ is
                            HC.Reasm_Len + Take2 - 1) :=
                           Plaintext (P_Pos .. P_Pos + Take2 - 1);
                         HC.Reasm_Len := HC.Reasm_Len + Take2;
+                        P_Pos := P_Pos + Take2;
                      end if;
                   end;
+               end if;
+
+               --  RFC 5246 §7.4.9: server Finished is the last server
+               --  handshake message and must be the last thing in its
+               --  TLS record. Any leftover plaintext after the Finished
+               --  body is fatal unexpected_message (BoGo
+               --  TrailingDataWithFinished-Client-TLS12). The alert is
+               --  encrypted under client_write_key since we're post-CCS.
+               if HC.Reasm_Len = HC.Reasm_Need and P_Pos < PL then
+                  declare
+                     Saved_Seq : constant Unsigned_64 :=
+                        HC.Client_Seq_12;
+                     Dummy : N32;
+                  begin
+                     Records.TLS12.Build_Alert_Record_12
+                       (Level       => 2,
+                        Desc        => 10,  --  unexpected_message
+                        Keys        => S.Client_App,
+                        Implicit_IV => HC.Client_Write_IV_12,
+                        Seq_Num     => HC.Client_Seq_12,
+                        Output      => S.Output,
+                        Bytes_Out   => Dummy);
+                     if Dummy = 0 then
+                        HC.Client_Seq_12 := Saved_Seq;
+                     end if;
+                  end;
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                  S.Last_Error := Unexpected_Message;
+                  Set_State (S, Error_State);
+                  Result := (if Output_Pending (S) > 0
+                             then Has_Output else Error_Alert);
+                  return;
                end if;
             end if;
          end;
@@ -1505,10 +1539,13 @@ is
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
       begin
-         --  Reject records exceeding the TLS 1.2 max ciphertext size
-         --  (matches Decrypt_Record_12's Pre); Parse_Record_Header allows
-         --  larger via the looser Max_Record_Overhead bound.
-         if Frag_Len >= Max_Record_Plaintext + TLS12_Record_Overhead then
+         --  Reject records exceeding the TLS 1.2 max ciphertext size.
+         --  A 16384-byte plaintext encrypts to exactly 16408 bytes
+         --  (16384 + 8 explicit nonce + 16 tag), so the bound is
+         --  strict-greater-than, not greater-or-equal — and matches
+         --  Decrypt_Record_12's Pre (`Encrypted'Last <
+         --  Max_Record_Plaintext + TLS12_Record_Overhead`).
+         if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Record_Overflow, Result);
             return;

@@ -324,7 +324,8 @@ is
       Clock    : Get_Time_Fn;
       Local    : Identity_Access := null;
       Mode     : Validation_Mode := Mode_WebPKI;
-      ALPN     : String := "")
+      ALPN     : String := "";
+      Versions : Version_Policy := Allow_Both)
    is
       Cfg : Config;
    begin
@@ -334,6 +335,7 @@ is
       Cfg.Skip_Verify := Trust = null;
       Cfg.Get_Time    := Clock;
       Cfg.Verify_Mode := Mode;
+      Cfg.Versions    := Versions;
       if Hostname'Length > 0
          and then Hostname'Length <= Max_Hostname_Len
       then

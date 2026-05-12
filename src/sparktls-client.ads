@@ -63,7 +63,8 @@ is
       Clock    : Get_Time_Fn;
       Local    : Identity_Access := null;
       Mode     : Validation_Mode := Mode_WebPKI;
-      ALPN     : String := "")
+      ALPN     : String := "";
+      Versions : Version_Policy := Allow_Both)
    with Pre  => Random /= null and Clock /= null,
         Post => S.State = Client_Hello_Sent and
                 S.Role = Role_Client and

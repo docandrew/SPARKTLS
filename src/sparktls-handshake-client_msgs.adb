@@ -74,8 +74,16 @@ is
       KS_Data_Len  : constant N32 := 208;
       --  psk_key_exchange_modes data: list_len(1) + mode(1)
       PSK_Data_Len : constant N32 := 2;
-      --  supported_versions data: list_len(1) + version(2) * 2
-      SV_Data_Len  : constant N32 := 5;
+      --  supported_versions data: list_len(1) + version(2) * N.
+      --  RFC 8446 §4.2.1 / RFC 5246: branch on Cfg.Versions so we
+      --  only offer the versions our policy permits. Otherwise
+      --  servers honoring our offer can negotiate a version we
+      --  refuse later.
+      SV_Data_Len  : constant N32 :=
+        (case HC.Cfg.Versions is
+            when Allow_Both => 5,   --  list_len + 2 versions
+            when TLS_1_3_Only
+               | TLS_1_2_Only => 3);  --  list_len + 1 version
       --  ec_point_formats data (RFC 8422 §5.1.2): list_len(1) +
       --  format(1)=uncompressed. Required by BoGo for any TLS 1.2
       --  ECDHE suite (server's `ellipticOk` is false without it).
@@ -489,14 +497,23 @@ is
             RFLX_Free (Ext_Buf);
          end;
 
-         --  Extension 6: supported_versions (0x002B)
+         --  Extension 6: supported_versions (0x002B).
+         --  Body shape matches SV_Data_Len above — branched on policy.
          declare
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             SV_Raw  : constant Byte_Seq (0 .. SV_Data_Len - 1) :=
-               (16#04#,                  --  list_len=4 (2 versions)
-                16#03#, 16#04#,          --  TLS 1.3 (preferred)
-                16#03#, 16#03#);         --  TLS 1.2 (fallback)
+              (case HC.Cfg.Versions is
+                  when Allow_Both =>
+                     Byte_Seq'(16#04#,             -- list_len = 4
+                               16#03#, 16#04#,     -- TLS 1.3 preferred
+                               16#03#, 16#03#),    -- TLS 1.2 fallback
+                  when TLS_1_3_Only =>
+                     Byte_Seq'(16#02#,             -- list_len = 2
+                               16#03#, 16#04#),    -- TLS 1.3 only
+                  when TLS_1_2_Only =>
+                     Byte_Seq'(16#02#,             -- list_len = 2
+                               16#03#, 16#03#));   -- TLS 1.2 only
          begin
             Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SV_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);

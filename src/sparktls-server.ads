@@ -46,7 +46,8 @@ is
       Request_Client_Cert : Boolean := False;
       Require_Client_Cert : Boolean := False;
       Tickets             : Ticket_Store_Access := null;
-      ALPN                : String := "")
+      ALPN                : String := "";
+      Versions            : Version_Policy := Allow_Both)
    with SPARK_Mode => Off;
    --  ALPN (RFC 7301): the protocol name we'll select when a
    --  client offers it in the application_layer_protocol_negotiation

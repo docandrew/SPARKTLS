@@ -196,7 +196,8 @@ is
       Request_Client_Cert : Boolean := False;
       Require_Client_Cert : Boolean := False;
       Tickets             : Ticket_Store_Access := null;
-      ALPN                : String := "")
+      ALPN                : String := "";
+      Versions            : Version_Policy := Allow_Both)
    with SPARK_Mode => Off
    is
       Cfg : Config;
@@ -207,6 +208,7 @@ is
       Cfg.Request_Client_Cert := Request_Client_Cert;
       Cfg.Require_Client_Cert := Require_Client_Cert;
       Cfg.Ticket_Store        := Tickets;
+      Cfg.Versions            := Versions;
       if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
          Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
          Cfg.ALPN.Len := ALPN'Length;
