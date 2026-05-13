@@ -295,6 +295,9 @@ is
                      | 16#0804#  --  RSA-PSS-256
                      | 16#0805#  --  RSA-PSS-384
                      | 16#0806#  --  RSA-PSS-512
+                     | 16#0401#  --  RSA-PKCS1-SHA256
+                     | 16#0501#  --  RSA-PKCS1-SHA384
+                     | 16#0601#  --  RSA-PKCS1-SHA512
               and then HC.Peer_Sig_Algo_Count < Max_Sig_Algos
             then
                HC.Peer_Sig_Algos (HC.Peer_Sig_Algo_Count) := Algo;
@@ -597,10 +600,14 @@ is
       --  the client side ("ECDHE_ECDSA requires ECDSA / Ed25519
       --  server public key" or equivalent). Was: any TLS 1.2 suite
       --  in the offered list was accepted, regardless of cert.
+      --  RFC 8422 §5.4: Ed25519 server certs negotiate via the
+      --  ECDHE_ECDSA cipher suites even though the suite name says
+      --  "ECDSA" — the suite identifies key exchange + AEAD; the
+      --  cert algorithm comes from the certificate itself.
       Cert_Is_ECDSA : constant Boolean :=
          HC.Cfg.Local /= null
          and then HC.Cfg.Local.Sign_Algo in
-                    Sign_ECDSA_P256 | Sign_ECDSA_P384;
+                    Sign_ECDSA_P256 | Sign_ECDSA_P384 | Sign_Ed25519;
       Cert_Is_RSA : constant Boolean :=
          HC.Cfg.Local /= null
          and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS;
@@ -804,6 +811,62 @@ is
             --  combinations).
             if DLen = 0 then
                HC.Use_EMS := True;
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values.Server_Name =>
+            --  RFC 6066 §3: server_name body shape =
+            --    server_name_list_length(2) +
+            --    {name_type(1) + host_name<2..2^16-1>}*
+            --  Validate the wire-level length sum so trailing bytes
+            --  after the list (BoGo's
+            --  ExtensionTrailingData-ServerName-Server) get rejected
+            --  with decode_error. We don't actually use the host_name
+            --  yet; this is purely a malformed-input gate.
+            if DLen >= 2 and then DLen in Wire_Small_Ext_Len then
+               declare
+                  ED       : RBT.Bytes (1 .. RBT.Index (DLen));
+                  Ext_Data : Byte_Seq (0 .. DLen - 1);
+                  List_Len : N32;
+               begin
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
+                  Ext_Data := To_NaCl (ED);
+                  List_Len := N32 (Ext_Data (0)) * 256
+                              + N32 (Ext_Data (1));
+                  --  Outer list length must consume exactly the
+                  --  extension body past the 2-byte length field.
+                  if 2 + List_Len /= DLen then
+                     OK := False;
+                     return;
+                  end if;
+                  --  Walk the entries (name_type[1] + name_len[2]+name).
+                  declare
+                     P : N32 := 2;
+                  begin
+                     while P + 3 <= DLen loop
+                        pragma Loop_Invariant
+                          (P >= 2 and P + 3 <= DLen);
+                        declare
+                           Name_Len : constant N32 :=
+                              N32 (Ext_Data (P + 1)) * 256
+                              + N32 (Ext_Data (P + 2));
+                        begin
+                           if P + 3 + Name_Len > DLen then
+                              OK := False;
+                              return;
+                           end if;
+                           P := P + 3 + Name_Len;
+                        end;
+                     end loop;
+                     if P /= DLen then
+                        OK := False;
+                        return;
+                     end if;
+                  end;
+               end;
+            elsif DLen /= 0 then
+               --  Non-zero body shorter than minimum framing.
+               OK := False;
+               return;
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Ec_Point_Formats =>

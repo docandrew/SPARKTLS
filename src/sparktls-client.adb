@@ -23,25 +23,6 @@ with X509;
 package body SPARKTLS.Client with
    SPARK_Mode => On
 is
-   --  RFC 8446 §6.2: alert-code mapping for our Error_Code enum.
-   function Alert_Desc (E : Error_Code) return Byte is
-     (case E is
-         when Unexpected_Message       => 10,
-         when Bad_Record_MAC           => 20,
-         when Record_Overflow          => 22,
-         when Handshake_Failure        => 40,
-         when Bad_Certificate          => 42,
-         when Certificate_Expired      => 45,
-         when Illegal_Parameter        => 47,
-         when Decode_Error             => 50,
-         when Certificate_Verify_Failed => 51,
-         when Protocol_Version         => 70,
-         when Certificate_Required     => 116,
-         when Internal_Error
-            | Insufficient_Buffer
-            | No_Error                 => 80,
-         when Unsupported_Cipher_Suite => 40);
-
    --  Send a fatal alert encrypted under the client_handshake_
    --  traffic_secret, then transition to Error_State. Prepends the
    --  legacy CCS record (RFC 8446 §D.4 / "middlebox-compat") because
@@ -119,10 +100,17 @@ is
      (Data : in     Byte_Seq;
       HC   : in     Handshake_Context;
       S    : in out Session;
-      OK   :    out Boolean)
+      OK   :    out Boolean;
+      Err  :    out Error_Code)
    with Pre => Data'Length >= 4
                and Data'Last < N32'Last
                and Data'First >= 0;
+   --  OK = False signals a fatal protocol error. `Err` discriminates
+   --  the alert kind so the caller picks the right alert code:
+   --    Unsupported_Extension : server sent an EE extension we did
+   --                            not offer in CH.
+   --    Illegal_Parameter     : ALPN body malformed / doesn't match
+   --                            offered protocol (RFC 7301 §3.2).
    procedure Send_Client_Certificate
      (S       : in out Session;
       HC      : in out Handshake_Context;
@@ -206,12 +194,14 @@ is
      (Data : in     Byte_Seq;
       HC   : in     Handshake_Context;
       S    : in out Session;
-      OK   :    out Boolean)
+      OK   :    out Boolean;
+      Err  :    out Error_Code)
    is
       ALPN_Tag : constant N32 := 16#0010#;
       Body_Start : constant N32 := Data'First + 4;
    begin
-      OK := True;
+      OK  := True;
+      Err := Illegal_Parameter;  --  default for ALPN-shape failures
 
       --  Need at least HS hdr + 2-byte ext_total_len = 6 bytes.
       if N32 (Data'Length) < 6 then
@@ -243,6 +233,19 @@ is
             begin
                --  Skip if extension overflows what's left.
                exit when P + 4 + E_Len > Ext_End;
+
+               --  RFC 8446 §4.2: the server may only send EE
+               --  extensions the client offered in its ClientHello.
+               --  Our offered set is the public Offered_Extension_Tags
+               --  array in SPARKTLS; anything outside it is fatal
+               --  `unsupported_extension`. BoGo's
+               --  UnknownExtension-Client-TLS13 and
+               --  UnofferedExtension-Client-TLS13 exercise this.
+               if not Is_Offered_Extension (Unsigned_16 (Tag)) then
+                  OK  := False;
+                  Err := Unsupported_Extension;
+                  return;
+               end if;
 
                if Tag = ALPN_Tag then
                   --  ALPN extension body shape (RFC 7301 §3.1):
@@ -278,11 +281,20 @@ is
                      --  MUST be one the client offered. We only ever
                      --  offer a single protocol today (Cfg.ALPN), so
                      --  the chosen proto must equal Cfg.ALPN bytewise.
-                     if HC.Cfg.ALPN.Len = 0
-                       or else Natural (Proto_Len) /= HC.Cfg.ALPN.Len
-                     then
-                        OK := False;
+                     if HC.Cfg.ALPN.Len = 0 then
+                        --  ALPN is a conditional CH extension — we
+                        --  only emit it when Cfg.ALPN is set. Server
+                        --  sending ALPN here means it sent an
+                        --  extension we did not offer (RFC 8446 §4.2
+                        --  → unsupported_extension, not the more
+                        --  generic illegal_parameter).
+                        OK  := False;
+                        Err := Unsupported_Extension;
                         return;
+                     end if;
+                     if Natural (Proto_Len) /= HC.Cfg.ALPN.Len then
+                        OK := False;
+                        return;  --  Err stays Illegal_Parameter
                      end if;
                      if Proto_Len <= N32 (Max_Hostname_Len) then
                         for I in 1 .. Natural (Proto_Len) loop
@@ -465,14 +477,16 @@ is
               and then Data'First >= 0
             then
                declare
-                  ALPN_OK : Boolean;
+                  ALPN_OK  : Boolean;
+                  ALPN_Err : Error_Code;
                begin
-                  Extract_ALPN_From_EE (Data, HC, S, ALPN_OK);
+                  Extract_ALPN_From_EE (Data, HC, S, ALPN_OK, ALPN_Err);
                   if not ALPN_OK then
-                     --  RFC 8446 §6.2 + RFC 7301 §3.2: fatal alert
-                     --  encrypted under HC.Client_HS via the helper.
-                     Send_HS_Encrypted_Alert
-                       (S, HC, Illegal_Parameter, Result);
+                     --  Err discriminates: Unsupported_Extension for
+                     --  an EE extension we did not offer, or
+                     --  Illegal_Parameter for an ALPN body that's
+                     --  malformed / doesn't match our offer.
+                     Send_HS_Encrypted_Alert (S, HC, ALPN_Err, Result);
                      return;
                   end if;
                end;
@@ -590,22 +604,15 @@ is
                end if;
 
                if HC.Cfg.Local /= null then
-                  if Picked /= 0 then
-                     HC.Negotiated_Sig_Algo := Picked;
-                  else
-                     case HC.Cfg.Local.Sign_Algo is
-                        when Sign_RSA_PSS =>
-                           HC.Negotiated_Sig_Algo := 16#0804#;
-                        when Sign_ECDSA_P256 =>
-                           HC.Negotiated_Sig_Algo := 16#0403#;
-                        when Sign_ECDSA_P384 =>
-                           HC.Negotiated_Sig_Algo := 16#0503#;
-                        when Sign_Ed25519 =>
-                           HC.Negotiated_Sig_Algo := 16#0807#;
-                        when Sign_None =>
-                           null;
-                     end case;
-                  end if;
+                  --  RFC 8446 §4.4.2: if our identity can't sign with
+                  --  any algorithm in the server's offered list, we
+                  --  send an empty Certificate (and no CV). Leaving
+                  --  Negotiated_Sig_Algo = 0 signals Send_Client_
+                  --  Certificate to take the empty-cert path. Falling
+                  --  back to a default algo (the prior behaviour)
+                  --  produced a CV the server didn't ask for and
+                  --  earned an `:UNSUPPORTED_SIGNATURE_ALGORITHM:`.
+                  HC.Negotiated_Sig_Algo := Picked;
                end if;
             end;
             --  Stay in Wait_Certificate (server Certificate comes next)
@@ -1030,6 +1037,20 @@ is
       Result := OK;
 
       if not HC.Cert_Request_Received then
+         return;
+      end if;
+
+      --  RFC 8446 §4.4.2: when we have NO identity, send an empty
+      --  Certificate. When we DO have an identity but it can't sign
+      --  with any algorithm in the server's offered list, send a
+      --  fatal handshake_failure alert — BoringSSL emits
+      --  `:NO_COMMON_SIGNATURE_ALGORITHMS:` here, which BoGo's
+      --  Client-SignDefault tests use as the expected outcome.
+      if HC.Cfg.Local /= null
+        and then HC.Cfg.Local.Has_Identity
+        and then HC.Negotiated_Sig_Algo = 0
+      then
+         Send_HS_Encrypted_Alert (S, HC, Handshake_Failure, Result);
          return;
       end if;
 
@@ -1591,12 +1612,7 @@ is
                                  Records.Build_Plaintext_Alert
                                    (Level     => 2,
                                     Desc      =>
-                                      (case S.Last_Error is
-                                        when Decode_Error      => 50,
-                                        when Illegal_Parameter => 47,
-                                        when Protocol_Version  => 70,
-                                        when Unexpected_Message => 10,
-                                        when others            => 40),
+                                       Alert_Desc (S.Last_Error),
                                     Output    => S.Output,
                                     Bytes_Out => A);
                               end;

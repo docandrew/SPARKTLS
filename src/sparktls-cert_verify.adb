@@ -751,6 +751,20 @@ is
 
       end if;
 
+      --  RFC 8446 §4.4.2.2 + RFC 5246 §7.4.2 + RFC 5280 §4.2.1.3:
+      --  for server-auth purposes the leaf's keyUsage extension (if
+      --  present) MUST include digitalSignature. We use the cert to
+      --  sign SKE/CV in every suite we negotiate (TLS 1.3 + TLS 1.2
+      --  ECDHE), so keyEncipherment-only certs are unusable. BoGo's
+      --  RSAKeyUsage-Client-WantSignature-GotEncipherment exercises
+      --  this.
+      if Purpose = Purpose_Server
+        and then X509.Has_Key_Usage (Leaf)
+        and then not X509.KU_Digital_Signature (Leaf)
+      then
+         return Err_Wrong_EKU;
+      end if;
+
       --  3. Hostname matching
       if Hostname'Length > 0 then
          if not X509.Matches_Hostname (Leaf, Leaf_DER, Hostname) then

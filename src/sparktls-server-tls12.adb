@@ -18,18 +18,6 @@ package body SPARKTLS.Server.TLS12 with
 is
    use Handshake.TLS12;
 
-   function Alert_Desc (E : Error_Code) return Byte is
-     (case E is
-         when Unexpected_Message    => 10, when Bad_Record_MAC   => 20,
-         when Record_Overflow       => 22, when Handshake_Failure => 40,
-         when Bad_Certificate       => 42, when Certificate_Expired => 45,
-         when Certificate_Verify_Failed => 51, when Decode_Error  => 50,
-         when Illegal_Parameter     => 47, when Protocol_Version  => 70,
-         when Certificate_Required  => 116,
-         when Internal_Error    => 80,
-         when Insufficient_Buffer   => 80, when Unsupported_Cipher_Suite => 40,
-         when No_Error              => 80);
-
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
@@ -220,8 +208,18 @@ is
                begin
                   case HC.Cfg.Local.Sign_Algo is
                      when Sign_RSA_PSS =>
+                        --  An RSA key can sign with either PSS or
+                        --  PKCS#1 v1.5 padding. RFC 5246 §7.4.1.4.1 +
+                        --  RFC 8446 §4.2.3 — accept any RSA scheme the
+                        --  client offered. PSS preferred where both
+                        --  are offered (the picking loop selects the
+                        --  first match, so client ordering wins).
+                        --  PKCS#1-SHA1 (0x0201) intentionally not
+                        --  accepted — SHA-1 is deprecated.
                         if Scheme = 16#0804# or Scheme = 16#0805#
                            or Scheme = 16#0806#
+                           or Scheme = 16#0401# or Scheme = 16#0501#
+                           or Scheme = 16#0601#
                         then
                            Negotiated := Scheme;
                            exit;
@@ -360,10 +358,16 @@ is
          (if S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
                                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
           then 16 else 32);
+      --  RFC 5288 §3: AES-GCM IV salt is 4 bytes.
+      --  RFC 7905 §2: ChaCha20-Poly1305 IV is 12 bytes.
+      IV_Len : constant N32 :=
+         (if S.Negotiated_Suite in Suite_ECDHE_RSA_CHACHA20_SHA256
+                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+          then 12 else 4);
       CK : Byte_Seq (0 .. Key_Len - 1);
       SK : Byte_Seq (0 .. Key_Len - 1);
-      CI : Byte_Seq (0 .. 3);
-      SI : Byte_Seq (0 .. 3);
+      CI : Byte_Seq (0 .. 11) := (others => 0);
+      SI : Byte_Seq (0 .. 11) := (others => 0);
       Shared_Len : constant N32 :=
          (if HC.Selected_Group = Group_Secp384r1 then 48 else 32);
    begin
@@ -423,7 +427,8 @@ is
       end if;
 
       Expand_Keys_12 (CK, SK, CI, SI, HC.Master_Secret_12,
-                       HC.Server_Random, HC.Client_Random, Key_Len, Use_384);
+                       HC.Server_Random, HC.Client_Random,
+                       Key_Len, IV_Len, Use_384);
 
       declare
          Int_Suite : constant Unsigned_16 :=
@@ -687,11 +692,14 @@ is
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Available (S.Input), Rec);
       if not Rec.OK then
-         --  RFC 5246 §7.2.1: post-CCS alerts MUST be encrypted.
+         --  RFC 5246 §7.2.1: alerts are under the current write
+         --  state. We're past the client's CCS (READ side encrypted)
+         --  but before our own CCS (WRITE side still plaintext), so
+         --  the alert MUST be plaintext.
          if Rec.Bad_Version then
-            Send_Encrypted_Alert_12 (S, HC, Protocol_Version, Result);
+            Send_Alert_And_Error (S, Protocol_Version, Result);
          elsif Rec.Overflow then
-            Send_Encrypted_Alert_12 (S, HC, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Record_Overflow, Result);
          else
             Result := Need_Input;
          end if;
@@ -700,7 +708,7 @@ is
 
       if Rec.Content /= Records.Content_Handshake then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result); return;
+         Send_Alert_And_Error (S, Unexpected_Message, Result); return;
       end if;
 
       declare
@@ -718,10 +726,17 @@ is
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Encrypted_Alert_12 (S, HC, Decode_Error, Result); return;
-         end if;
+         declare
+            Min_Frag : constant N32 :=
+              (if S.Client_App.Suite = Suite_CHACHA20_POLY1305_SHA256
+               then GCM_Tag_Len + 1
+               else Explicit_Nonce_Len + GCM_Tag_Len + 1);
+         begin
+            if Frag_Len < Min_Frag then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Decode_Error, Result); return;
+            end if;
+         end;
 
          Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
                             HC.Client_Write_IV_12, HC.Client_Seq_12,
@@ -729,10 +744,10 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not DV then
-            Send_Encrypted_Alert_12 (S, HC, Bad_Record_MAC, Result); return;
+            Send_Alert_And_Error (S, Bad_Record_MAC, Result); return;
          end if;
          if PL < 4 then
-            Send_Encrypted_Alert_12 (S, HC, Decode_Error, Result); return;
+            Send_Alert_And_Error (S, Decode_Error, Result); return;
          end if;
 
          declare
@@ -742,24 +757,27 @@ is
                                  N32 (Plaintext (3));
          begin
             if Msg_Type /= HT_Finished then
-               Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result); return;
+               Send_Alert_And_Error (S, Unexpected_Message, Result); return;
             end if;
             if Msg_Len /= Finished_Verify_Len then
                --  Finished length mismatch — RFC 8446 §6.2:
                --  decrypt_error (alert 51). BoGo
                --  TrailingMessageData-ClientFinished expects this
                --  rather than decode_error.
-               Send_Encrypted_Alert_12
-                 (S, HC, Certificate_Verify_Failed, Result);
+               Send_Alert_And_Error
+                 (S, Certificate_Verify_Failed, Result);
                return;
             end if;
             --  RFC 5246 §7.4.9: Finished is the last handshake
             --  message in the client's flight. Any plaintext bytes
             --  in the same record beyond `4 + Finished_Verify_Len`
             --  is excess data → fatal unexpected_message
-            --  (BoGo TrailingDataWithFinished).
+            --  (BoGo TrailingDataWithFinished). Server's WRITE state
+            --  is still plaintext at this point (CCS not yet sent),
+            --  so the alert MUST be plaintext — sending it encrypted
+            --  leaves Go's TLS stack seeing garbage on the wire.
             if PL /= 4 + Finished_Verify_Len then
-               Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result);
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
                return;
             end if;
 
@@ -789,14 +807,12 @@ is
                        (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
                begin
                   if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
-                     --  RFC 5246 §7.4.9 / §7.2.1 / RFC 8446 §4.4.4:
-                     --  Finished verify mismatch → fatal encrypted
-                     --  alert + Error_State. Post-CCS so MUST be
-                     --  encrypted. Send_Encrypted_Alert_12's Post
-                     --  guarantees the state; the bridging asserts
-                     --  collapse Error_Has_Alert to Pending > 0.
-                     Send_Encrypted_Alert_12
-                       (S, HC, Handshake_Failure, Result);
+                     --  RFC 5246 §7.4.9 / §7.2.1: Finished verify
+                     --  mismatch → fatal alert. Server WRITE state
+                     --  is still plaintext (no CCS sent yet) so the
+                     --  alert MUST be plaintext, not encrypted.
+                     Send_Alert_And_Error
+                       (S, Handshake_Failure, Result);
                      pragma Assert
                        (S.Last_Error /= Unexpected_Message);
                      pragma Assert (Output_Pending (S) > 0);
@@ -966,10 +982,19 @@ is
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Unexpected_Message, Result); return;
-         end if;
+         declare
+            --  ChaCha20-Poly1305 (RFC 7905) omits the on-wire
+            --  explicit_nonce; AES-GCM (RFC 5288) includes it.
+            Min_Frag : constant N32 :=
+              (if S.Client_App.Suite = Suite_CHACHA20_POLY1305_SHA256
+               then GCM_Tag_Len + 1
+               else Explicit_Nonce_Len + GCM_Tag_Len + 1);
+         begin
+            if Frag_Len < Min_Frag then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Unexpected_Message, Result); return;
+            end if;
+         end;
 
          Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
                             S.Client_IV_12, S.Client_Seq_12,

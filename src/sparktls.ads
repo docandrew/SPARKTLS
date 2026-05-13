@@ -362,9 +362,47 @@ is
       Decode_Error,
       Illegal_Parameter,
       Protocol_Version,
+      Unsupported_Extension,       --  RFC 8446 §6 alert 110
       Internal_Error,
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
+
+   --  IANA-assigned TLS extension type codes that our ClientHello
+   --  builder emits (see Handshake.Client_Msgs.Build_Client_Hello).
+   --  RFC 8446 §4.2: a TLS 1.3 server may only echo / respond with
+   --  extensions the client offered, so this array is also the
+   --  allow-list for SH / EncryptedExtensions / Certificate
+   --  extension validation on the client side.
+   --
+   --  Update this list when adding a new extension to the CH
+   --  builder; otherwise the server's echo will be rejected.
+   Offered_Extension_Tags : constant array (Positive range <>) of
+                              Interfaces.Unsigned_16 :=
+     (16#0000#,  --  server_name (RFC 6066)
+      16#000A#,  --  supported_groups (RFC 8422)
+      16#000B#,  --  ec_point_formats (RFC 8422 §5.1.2)
+      16#000D#,  --  signature_algorithms (RFC 8446 §4.2.3)
+      16#0010#,  --  application_layer_protocol_negotiation (RFC 7301)
+      16#002B#,  --  supported_versions (RFC 8446 §4.2.1)
+      16#002D#,  --  psk_key_exchange_modes (RFC 8446 §4.2.9)
+      16#0033#); --  key_share (RFC 8446 §4.2.8)
+
+   function Is_Offered_Extension
+     (Tag : Interfaces.Unsigned_16) return Boolean is
+     (for some E of Offered_Extension_Tags => E = Tag);
+
+   --  Extensions the server may legitimately put in a ServerHello
+   --  (TLS 1.3 §4.1.3 + RFC 5246 §7.4.1.4 echo set). Narrower than
+   --  Offered_Extension_Tags — most extensions move to
+   --  EncryptedExtensions in TLS 1.3, and SH only carries
+   --  version-negotiation + key-exchange replies plus renegotiation
+   --  info for TLS 1.2.
+   Allowed_SH_Extension_Tags : constant array (Positive range <>) of
+                                  Interfaces.Unsigned_16 :=
+     (16#002B#,  --  supported_versions
+      16#0033#,  --  key_share
+      16#0029#,  --  pre_shared_key (TLS 1.3 PSK selection)
+      16#FF01#); --  renegotiation_info (TLS 1.2)
 
    --  RFC 5246 §8.1 / RFC 7627: Master secret derivation invariant.
    --  The derivation label MUST match the EMS negotiation.
@@ -610,8 +648,12 @@ is
         Pending > 0 or else Err = Unexpected_Message)
    with Ghost;
 
-   --  RFC 8446 §6.2: Alert description MUST match the error condition.
-   function Expected_Alert_Desc (E : Error_Code) return Byte is
+   --  RFC 8446 §6.2 / RFC 5246 §7.2: map an Error_Code to its on-wire
+   --  AlertDescription byte. Single source of truth — used both at
+   --  runtime (by Send_*_Alert helpers across client / server, TLS 1.2
+   --  and TLS 1.3 paths) and as a Ghost in proof contracts via the
+   --  Expected_Alert_Desc rename below.
+   function Alert_Desc (E : Error_Code) return Byte is
      (case E is
          when Unexpected_Message       => 10,
          when Bad_Record_MAC           => 20,
@@ -623,12 +665,16 @@ is
          when Decode_Error             => 50,
          when Certificate_Verify_Failed => 51,
          when Protocol_Version         => 70,
+         when Unsupported_Extension    => 110,
          when Certificate_Required     => 116,
          when Internal_Error
             | Insufficient_Buffer
             | No_Error                 => 80,
-         when Unsupported_Cipher_Suite => 40)
-   with Ghost;
+         when Unsupported_Cipher_Suite => 40);
+
+   function Expected_Alert_Desc (E : Error_Code) return Byte
+     renames Alert_Desc;
+   --  Ghost-callable alias — proof contracts use this name.
 
    --================================================================
    --  I/O Buffer
@@ -1066,8 +1112,12 @@ is
 
       --  TLS 1.2 key material (set during Derive_Keys_12)
       Master_Secret_12   : Bytes_48 := (others => 0);
-      Client_Write_IV_12 : Byte_Seq (0 .. 3) := (others => 0);
-      Server_Write_IV_12 : Byte_Seq (0 .. 3) := (others => 0);
+      --  TLS 1.2 implicit IV. AES-GCM (RFC 5288 §3) uses the first
+      --  4 bytes as `salt`; ChaCha20-Poly1305 (RFC 7905 §2) uses the
+      --  full 12 bytes XOR'd with the padded sequence number. Sized
+      --  for the larger usage and zero-padded on the AES-GCM side.
+      Client_Write_IV_12 : Byte_Seq (0 .. 11) := (others => 0);
+      Server_Write_IV_12 : Byte_Seq (0 .. 11) := (others => 0);
       Client_Seq_12      : Unsigned_64 := 0;
       Server_Seq_12      : Unsigned_64 := 0;
 
@@ -1652,8 +1702,8 @@ is
       --  (persist past handshake for Connected-state encrypt/decrypt)
       Negotiated_Version  : TLS_Version := TLS_1_3;
       Negotiated_ALPN     : Hostname_Buf := (Len => 0, Data => (others => ' '));
-      Client_IV_12        : Byte_Seq (0 .. 3) := (others => 0);
-      Server_IV_12        : Byte_Seq (0 .. 3) := (others => 0);
+      Client_IV_12        : Byte_Seq (0 .. 11) := (others => 0);
+      Server_IV_12        : Byte_Seq (0 .. 11) := (others => 0);
       Client_Seq_12       : Unsigned_64 := 0;
       Server_Seq_12       : Unsigned_64 := 0;
 

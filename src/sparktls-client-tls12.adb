@@ -2,6 +2,7 @@ with Interfaces;                 use Interfaces;
 with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
+with SPARKNaCl.Hashing.SHA512;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
 with SPARKTLS.Records;           use SPARKTLS.Records;
@@ -20,18 +21,6 @@ package body SPARKTLS.Client.TLS12 with
    SPARK_Mode => On
 is
    use Handshake.TLS12;
-
-   function Alert_Desc (E : Error_Code) return Byte is
-     (case E is
-         when Unexpected_Message    => 10, when Bad_Record_MAC   => 20,
-         when Record_Overflow       => 22, when Handshake_Failure => 40,
-         when Bad_Certificate       => 42, when Certificate_Expired => 45,
-         when Certificate_Verify_Failed => 51, when Decode_Error  => 50,
-         when Illegal_Parameter     => 47, when Protocol_Version  => 70,
-         when Certificate_Required  => 116,
-         when Internal_Error    => 80,
-         when Insufficient_Buffer   => 80, when Unsupported_Cipher_Suite => 40,
-         when No_Error              => 80);
 
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
@@ -70,10 +59,16 @@ is
          (if S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
                                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
           then 16 else 32);
+      --  RFC 5288 §3: AES-GCM IV salt is 4 bytes.
+      --  RFC 7905 §2: ChaCha20-Poly1305 IV is 12 bytes.
+      IV_Len : constant N32 :=
+         (if S.Negotiated_Suite in Suite_ECDHE_RSA_CHACHA20_SHA256
+                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+          then 12 else 4);
       CK : Byte_Seq (0 .. Key_Len - 1);
       SK : Byte_Seq (0 .. Key_Len - 1);
-      CI : Byte_Seq (0 .. 3);
-      SI : Byte_Seq (0 .. 3);
+      CI : Byte_Seq (0 .. 11) := (others => 0);
+      SI : Byte_Seq (0 .. 11) := (others => 0);
       Shared_Len : constant N32 :=
          (if HC.Selected_Group = Group_Secp384r1 then 48 else 32);
    begin
@@ -116,7 +111,8 @@ is
       end if;
 
       Expand_Keys_12 (CK, SK, CI, SI, HC.Master_Secret_12,
-                       HC.Server_Random, HC.Client_Random, Key_Len, Use_384);
+                       HC.Server_Random, HC.Client_Random,
+                       Key_Len, IV_Len, Use_384);
 
       declare
          Int_Suite : constant Unsigned_16 :=
@@ -881,18 +877,44 @@ is
                         CV_Len : N32;
                         TH_CV  : Digest;
                         TH4_CV : SPARKNaCl.Hashing.SHA384.Digest;
+                        TH5_CV : SPARKNaCl.Hashing.SHA512.Digest;
                         --  RFC 5246 §7.4.8: hash for CV is per the
-                        --  chosen signature algorithm, not the cipher
-                        --  suite's PRF hash. SHA-384 sig algos
-                        --  (0x0503 ecdsa_p384, 0x0805 rsa_pss_sha384,
-                        --  0x0501 rsa_pkcs1_sha384) need SHA-384 of
-                        --  the transcript; everything else uses
-                        --  SHA-256.
+                        --  chosen signature algorithm. The hash family
+                        --  picked here must match the case in
+                        --  Build_Certificate_Verify_12. For Ed25519
+                        --  (0x0807) we pass the RAW transcript — the
+                        --  Ed25519 primitive does SHA-512 internally
+                        --  over (dom2 || prefix || message).
                         Use_384_For_CV : constant Boolean :=
                            HC.Negotiated_Sig_Algo in
                              16#0503# | 16#0805# | 16#0501#;
+                        Use_512_For_CV : constant Boolean :=
+                           HC.Negotiated_Sig_Algo in 16#0806# | 16#0601#;
+                        Use_Raw_For_CV : constant Boolean :=
+                           HC.Negotiated_Sig_Algo = 16#0807#;
                      begin
-                        if Use_384_For_CV then
+                        if Use_Raw_For_CV then
+                           Build_Certificate_Verify_12
+                             (Transcript_Hash =>
+                                HC.Transcript (0 .. HC.Transcript_Len - 1),
+                              Id              => HC.Cfg.Local.all,
+                              Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
+                              Random          => HC.Cfg.Random,
+                              Result          => CV_Buf,
+                              Len             => CV_Len);
+                        elsif Use_512_For_CV then
+                           SPARKNaCl.Hashing.SHA512.Hash
+                             (TH5_CV,
+                              HC.Transcript
+                                (0 .. HC.Transcript_Len - 1));
+                           Build_Certificate_Verify_12
+                             (Transcript_Hash => Byte_Seq (TH5_CV),
+                              Id              => HC.Cfg.Local.all,
+                              Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
+                              Random          => HC.Cfg.Random,
+                              Result          => CV_Buf,
+                              Len             => CV_Len);
+                        elsif Use_384_For_CV then
                            SPARKNaCl.Hashing.SHA384.Hash
                              (TH4_CV,
                               HC.Transcript
@@ -1207,10 +1229,17 @@ is
             Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
          end loop;
 
-         if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Decode_Error, Result); return;
-         end if;
+         declare
+            Min_Frag : constant N32 :=
+              (if S.Server_App.Suite = Suite_CHACHA20_POLY1305_SHA256
+               then GCM_Tag_Len + 1
+               else Explicit_Nonce_Len + GCM_Tag_Len + 1);
+         begin
+            if Frag_Len < Min_Frag then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Decode_Error, Result); return;
+            end if;
+         end;
 
          Decrypt_Record_12 (Encrypted, Hdr, S.Server_App,
                             HC.Server_Write_IV_12, HC.Server_Seq_12,
@@ -1570,10 +1599,17 @@ is
                Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
             end loop;
 
-            if Frag_Len < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Result := OK; return;
-            end if;
+            declare
+               Min_Frag : constant N32 :=
+                 (if S.Server_App.Suite = Suite_CHACHA20_POLY1305_SHA256
+                  then GCM_Tag_Len + 1
+                  else Explicit_Nonce_Len + GCM_Tag_Len + 1);
+            begin
+               if Frag_Len < Min_Frag then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Result := OK; return;
+               end if;
+            end;
 
             --  RFC 5246 §6.1: "If a TLS implementation would need to
             --  wrap a sequence number, it must renegotiate instead."

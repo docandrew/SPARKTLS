@@ -87,6 +87,27 @@ is
       return Nonce;
    end Make_Nonce_12;
 
+   --  RFC 7905 §2 (ChaCha20-Poly1305 in TLS 1.2):
+   --    pad seq_num to 96 bits on the left, XOR with the 12-byte
+   --    implicit IV. No on-wire `explicit_nonce` field.
+   function Make_Nonce_ChaCha20
+     (Implicit_IV : Byte_Seq;
+      Seq_Num     : Unsigned_64) return Bytes_12
+   is
+      Nonce : Bytes_12 := (others => 0);
+   begin
+      --  Padded seq starts at byte 4 (bytes 0..3 stay 0).
+      for I in 0 .. 7 loop
+         Nonce (N32 (4 + I)) :=
+            Byte (Shift_Right (Seq_Num, (7 - I) * 8) and 16#FF#);
+      end loop;
+      --  XOR with the 12-byte IV.
+      for I in N32 range 0 .. 11 loop
+         Nonce (I) := Nonce (I) xor Implicit_IV (Implicit_IV'First + I);
+      end loop;
+      return Nonce;
+   end Make_Nonce_ChaCha20;
+
    --  RFC 5246 §6.2.3.3: Build the 13-byte AAD for AEAD.
    --  additional_data = seq_num[8] || type[1] || version[2] || length[2]
    --  where length = PLAINTEXT length (not ciphertext)
@@ -151,12 +172,21 @@ is
       pragma Assert (Plaintext'Last < Max_Record_Plaintext);
       PT_Len : constant N32 := N32 (Plaintext'Length);
 
-      --  Output = header[5] + explicit_nonce[8] + ciphertext[PT_Len] + tag[16]
-      Total  : constant N32 :=
-         Record_Header_Size + Explicit_Nonce_Len + PT_Len + GCM_Tag_Len;
+      --  RFC 7905 §2: ChaCha20-Poly1305 omits the on-wire explicit
+      --  nonce. AES-GCM (RFC 5288 §3) includes it.
+      Is_ChaCha20 : constant Boolean :=
+         Keys.Suite = Suite_CHACHA20_POLY1305_SHA256;
+      Wire_Exp_Nonce_Len : constant N32 :=
+         (if Is_ChaCha20 then 0 else Explicit_Nonce_Len);
 
-      --  Record header: fragment_length = explicit_nonce + ciphertext + tag
-      Frag_Len : constant N32 := Explicit_Nonce_Len + PT_Len + GCM_Tag_Len;
+      --  Output = header[5] + [explicit_nonce[8] for GCM] +
+      --           ciphertext[PT_Len] + tag[16]
+      Total  : constant N32 :=
+         Record_Header_Size + Wire_Exp_Nonce_Len + PT_Len + GCM_Tag_Len;
+
+      --  Record header: fragment_length = [explicit_nonce] + cipher + tag
+      Frag_Len : constant N32 :=
+         Wire_Exp_Nonce_Len + PT_Len + GCM_Tag_Len;
 
       Nonce      : Bytes_12;
       AAD        : Byte_Seq (0 .. AAD_Len - 1);
@@ -168,8 +198,12 @@ is
    begin
       Bytes_Out := 0;
 
-      --  Build 12-byte nonce: implicit_IV[4] || seq_num[8]
-      Nonce := Make_Nonce_12 (Implicit_IV, Seq_Num);
+      --  Construct the AEAD nonce per suite (see helpers above).
+      if Is_ChaCha20 then
+         Nonce := Make_Nonce_ChaCha20 (Implicit_IV, Seq_Num);
+      else
+         Nonce := Make_Nonce_12 (Implicit_IV, Seq_Num);
+      end if;
 
       --  Build 13-byte AAD with PLAINTEXT length (not ciphertext!)
       AAD := Build_AAD (Seq_Num, Content_Type, PT_Len);
@@ -233,13 +267,15 @@ is
         (SPARKTLS.Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
       Hdr (3 .. 4) := TS16 (Unsigned_16 (Frag_Len));
 
-      --  Write: header || explicit_nonce || ciphertext || tag
+      --  Write: header || [explicit_nonce for GCM] || ciphertext || tag
       Write_To_Output (Output, Hdr, OK);
       if not OK then return; end if;
 
-      Exp_Nonce := Seq_To_Bytes (Seq_Num - 1);  --  the seq we just used
-      Write_To_Output (Output, Exp_Nonce, OK);
-      if not OK then return; end if;
+      if not Is_ChaCha20 then
+         Exp_Nonce := Seq_To_Bytes (Seq_Num - 1);  --  the seq we just used
+         Write_To_Output (Output, Exp_Nonce, OK);
+         if not OK then return; end if;
+      end if;
 
       Write_To_Output (Output, Ciphertext, OK);
       if not OK then return; end if;
@@ -264,13 +300,18 @@ is
       Plain_Len   :    out N32;
       Valid       :    out Boolean)
    is
-      --  Encrypted layout: explicit_nonce[8] || ciphertext[N] || tag[16]
-      --  Ciphertext length = total - 8 (nonce) - 16 (tag)
-      CT_Len : constant N32 :=
-         N32 (Encrypted'Length) - Explicit_Nonce_Len - GCM_Tag_Len;
+      --  RFC 5288 §3 (AES-GCM): record body = explicit_nonce[8] +
+      --  ciphertext + tag[16]. RFC 7905 §2 (ChaCha20-Poly1305): no
+      --  explicit nonce, record body = ciphertext + tag[16].
+      Is_ChaCha20 : constant Boolean :=
+         Keys.Suite = Suite_CHACHA20_POLY1305_SHA256;
+      Wire_Exp_Nonce_Len : constant N32 :=
+         (if Is_ChaCha20 then 0 else Explicit_Nonce_Len);
 
-      --  Extract explicit nonce (first 8 bytes) into 0-based buffer
-      Exp_Nonce : Byte_Seq (0 .. 7);
+      CT_Len : constant N32 :=
+         N32 (Encrypted'Length) - Wire_Exp_Nonce_Len - GCM_Tag_Len;
+
+      Exp_Nonce : Byte_Seq (0 .. 7) := (others => 0);
 
       Nonce : Bytes_12 := (others => 0);
       AAD   : Byte_Seq (0 .. AAD_Len - 1);
@@ -284,31 +325,37 @@ is
       Plain_Len := 0;
       Valid := False;
 
-      --  Defense-in-depth: verify input is large enough for nonce + tag
-      if N32 (Encrypted'Length) < Explicit_Nonce_Len + GCM_Tag_Len + 1 then
+      --  Defense-in-depth: verify input is large enough for [nonce] + tag
+      if N32 (Encrypted'Length) < Wire_Exp_Nonce_Len + GCM_Tag_Len + 1 then
          return;
       end if;
 
-      --  Extract explicit nonce, ciphertext, and tag into 0-based buffers
-      for I in N32 range 0 .. 7 loop
-         Exp_Nonce (I) := Encrypted (I);
-      end loop;
+      --  Extract explicit nonce (GCM only), ciphertext, and tag.
+      if not Is_ChaCha20 then
+         for I in N32 range 0 .. 7 loop
+            Exp_Nonce (I) := Encrypted (I);
+         end loop;
+      end if;
       for I in N32 range 0 .. CT_Len - 1 loop
-         CT_Copy (I) := Encrypted (Explicit_Nonce_Len + I);
+         CT_Copy (I) := Encrypted (Wire_Exp_Nonce_Len + I);
       end loop;
       for I in N32 range 0 .. 15 loop
-         Tag (I) := Encrypted (Explicit_Nonce_Len + CT_Len + I);
+         Tag (I) := Encrypted (Wire_Exp_Nonce_Len + CT_Len + I);
       end loop;
 
-      --  Build nonce: implicit_IV[4] || explicit_nonce[8]
-      --  MUST be after Exp_Nonce extraction above!
-      Nonce (0) := Implicit_IV (Implicit_IV'First);
-      Nonce (1) := Implicit_IV (Implicit_IV'First + 1);
-      Nonce (2) := Implicit_IV (Implicit_IV'First + 2);
-      Nonce (3) := Implicit_IV (Implicit_IV'First + 3);
-      for I in N32 range 0 .. 7 loop
-         Nonce (4 + I) := Exp_Nonce (I);
-      end loop;
+      --  Build the AEAD nonce per suite.
+      if Is_ChaCha20 then
+         Nonce := Make_Nonce_ChaCha20 (Implicit_IV, Seq_Num);
+      else
+         --  GCM nonce: implicit_IV[4] || explicit_nonce[8]
+         Nonce (0) := Implicit_IV (Implicit_IV'First);
+         Nonce (1) := Implicit_IV (Implicit_IV'First + 1);
+         Nonce (2) := Implicit_IV (Implicit_IV'First + 2);
+         Nonce (3) := Implicit_IV (Implicit_IV'First + 3);
+         for I in N32 range 0 .. 7 loop
+            Nonce (4 + I) := Exp_Nonce (I);
+         end loop;
+      end if;
 
       --  Build AAD: seq_num || content_type || version || plaintext_length
       --  Content type from record header byte 0

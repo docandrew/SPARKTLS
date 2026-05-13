@@ -899,6 +899,14 @@ is
             SH_Seen_Tags  : Ext_Tag_Array := (others => 0);
             SH_Seen_Count : Natural := 0;
             Saw_Dup       : Boolean := False;
+            --  RFC 8446 §4.2: track whether the server's ServerHello
+            --  included an extension we didn't request. We send a
+            --  known, fixed CH extension set, so the allowed-in-SH
+            --  set is also fixed. Anything outside is reason to
+            --  abort with unsupported_extension. BoGo's
+            --  UnknownExtension-Client / UnofferedExtension-Client
+            --  exercises this.
+            Saw_Unoffered : Boolean := False;
          begin
             Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
@@ -935,6 +943,17 @@ is
                         if SH_Seen_Count < SH_Seen_Tags'Last then
                            SH_Seen_Count := SH_Seen_Count + 1;
                            SH_Seen_Tags (SH_Seen_Count) := Code;
+                        end if;
+                        --  RFC 8446 §4.2 / RFC 5246 §7.4.1.4: SH may
+                        --  carry only the echo / negotiation-reply
+                        --  subset (see Allowed_SH_Extension_Tags in
+                        --  the parent SPARKTLS package). Anything
+                        --  else is unsupported_extension.
+                        if not (for some Allowed of
+                                Allowed_SH_Extension_Tags =>
+                                  Allowed = Unsigned_16 (Code))
+                        then
+                           Saw_Unoffered := True;
                         end if;
                         --  Check for supported_versions extension
                         if Tag.Known and then
@@ -1116,6 +1135,17 @@ is
                S.Last_Error := Decode_Error;
                return;
             end if;
+            if Saw_Unoffered then
+               --  RFC 8446 §4.2 / RFC 5246 §7.4.1.4: server returned
+               --  a ServerHello extension that's neither one we sent
+               --  in our ClientHello nor a permitted SH-only echo
+               --  (supported_versions / key_share / pre_shared_key /
+               --  renegotiation_info). Fatal `unsupported_extension`.
+               Take_Buffer (Ctx, Buf);
+               RFLX_Free (Buf);
+               S.Last_Error := Unsupported_Extension;
+               return;
+            end if;
          end;
       end if;
 
@@ -1124,6 +1154,29 @@ is
          HC.Version := TLS_1_3;
       else
          HC.Version := TLS_1_2;
+      end if;
+
+      --  RFC 8446 §4.2.1: enforce our Cfg.Versions policy on the
+      --  server's choice. -min-version / -max-version / -no-tlsN may
+      --  have constrained the policy below what's in the supported_
+      --  versions extension we sent; if the server still picks a
+      --  version outside our allowed set, reject with
+      --  protocol_version (alert 70). BoGo's MinimumVersion-Client2-
+      --  TLS13-TLS12 / -Server2-TLS13-TLS12 exercise this.
+      if (HC.Version = TLS_1_2 and HC.Cfg.Versions = TLS_1_3_Only)
+        or else
+         (HC.Version = TLS_1_3 and HC.Cfg.Versions = TLS_1_2_Only)
+      then
+         Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
+         S.Last_Error := Protocol_Version;
+         OK := False;
+         return;
+      end if;
+
+      if HC.Version = TLS_1_3 then
+         null;  --  drop into TLS 1.3 path below
+      else
 
          --  RFC 8446 §4.1.3: Check downgrade sentinel.
          --  If server doesn't offer TLS 1.3 but its random ends with the

@@ -77,12 +77,12 @@ is
    --  RFC 5246 §6.3: Key block partitioning for AEAD ciphers.
    --  For AEAD, MAC keys are zero-length, so the key block is:
    --    client_write_key [Key_Len] || server_write_key [Key_Len] ||
-   --    client_write_IV [4]        || server_write_IV [4]
-   --  Total: 2 * Key_Len + 8 bytes.
-   function Key_Block_Len (Key_Len : N32) return N32 is
-     (2 * Key_Len + 2 * Fixed_IV_Len)
+   --    client_write_IV [IV_Len]   || server_write_IV [IV_Len]
+   --  IV_Len = 4 for AES-GCM, 12 for ChaCha20-Poly1305.
+   function Key_Block_Len (Key_Len, IV_Len : N32) return N32 is
+     (2 * Key_Len + 2 * IV_Len)
    with Ghost,
-        Pre => Key_Len in 16 | 32;
+        Pre => Key_Len in 16 | 32 and IV_Len in 4 | 12;
 
    --  RFC 5246 §7.4.9: Valid finished labels.
    function Valid_Finished_Label (Label : String) return Boolean is
@@ -168,7 +168,14 @@ is
    --
    --  For AEAD ciphers, MAC keys are zero-length, so key_block contains:
    --    client_write_key [Key_Len] || server_write_key [Key_Len] ||
-   --    client_write_IV [4]        || server_write_IV [4]
+   --    client_write_IV [IV_Len]   || server_write_IV [IV_Len]
+   --
+   --  IV_Len is 4 for AES-GCM (RFC 5288 §3: salt is 4 bytes, prepended
+   --  to the on-wire explicit_nonce[8] to form the 12-byte nonce) and
+   --  12 for ChaCha20-Poly1305 (RFC 7905 §2: the entire 12-byte IV is
+   --  XOR'd with the padded sequence number; no on-wire explicit nonce).
+   --  Output IV buffers are always 12 bytes; bytes beyond IV_Len are
+   --  zero-padded so the caller can use a uniform 12-byte type.
    --
    --  RFC 5246 §6.1: The derived keys MUST be used with sequence
    --  numbers starting at zero.
@@ -181,16 +188,18 @@ is
       Server_Random : in     Bytes_32;
       Client_Random : in     Bytes_32;
       Key_Len       : in     N32;
+      IV_Len        : in     N32;
       Use_SHA384    : in     Boolean)
    with Pre  => Key_Len in 16 | 32             --  AES-128 or AES-256/ChaCha20
+                and IV_Len in 4 | 12           --  AES-GCM salt or ChaCha20 IV
                 and Client_Key'First = 0
                 and Client_Key'Last = Key_Len - 1
                 and Server_Key'First = 0
                 and Server_Key'Last = Key_Len - 1
                 and Client_IV'First = 0
-                and Client_IV'Last = Fixed_IV_Len - 1
+                and Client_IV'Last = 11
                 and Server_IV'First = 0
-                and Server_IV'Last = Fixed_IV_Len - 1;
+                and Server_IV'Last = 11;
 
    --  RFC 5246 §7.4.9: Compute the 12-byte Finished verify_data.
    --

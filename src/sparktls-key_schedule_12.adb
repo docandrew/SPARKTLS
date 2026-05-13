@@ -172,17 +172,21 @@ is
       Server_Random : in     Bytes_32;
       Client_Random : in     Bytes_32;
       Key_Len       : in     N32;
+      IV_Len        : in     N32;
       Use_SHA384    : in     Boolean)
    is
       --  RFC 5246 §6.3: seed = server_random || client_random
       --  (OPPOSITE order from master secret derivation!)
       Seed      : Seed_64 := (others => 0);
-      Block_Len : constant N32 := 2 * Key_Len + 2 * Fixed_IV_Len;
+      Block_Len : constant N32 := 2 * Key_Len + 2 * IV_Len;
       Key_Block : Byte_Seq (0 .. Block_Len - 1);
       Pos       : N32 := 0;
    begin
       Seed (0 .. 31)  := Server_Random;
       Seed (32 .. 63) := Client_Random;
+
+      Client_IV := (others => 0);
+      Server_IV := (others => 0);
 
       if Use_SHA384 then
          PRF_SHA384 (Key_Block, Byte_Seq (Master),
@@ -192,19 +196,19 @@ is
                      Label_Key_Expansion, Byte_Seq (Seed));
       end if;
 
-      --  Partition key_block (RFC 5246 §6.3):
-      --  For AEAD ciphers, MAC keys are zero-length, so:
+      --  Partition key_block (RFC 5246 §6.3 + RFC 5288 §3 / RFC 7905 §2):
       --    client_write_key [Key_Len]
       --    server_write_key [Key_Len]
-      --    client_write_IV  [4]
-      --    server_write_IV  [4]
+      --    client_write_IV  [IV_Len]   ← 4 (AES-GCM) or 12 (ChaCha20)
+      --    server_write_IV  [IV_Len]
+      --  The out IVs are always 12 bytes; bytes [IV_Len..11] stay zero.
       Client_Key := Key_Block (Pos .. Pos + Key_Len - 1);
       Pos := Pos + Key_Len;
       Server_Key := Key_Block (Pos .. Pos + Key_Len - 1);
       Pos := Pos + Key_Len;
-      Client_IV := Key_Block (Pos .. Pos + Fixed_IV_Len - 1);
-      Pos := Pos + Fixed_IV_Len;
-      Server_IV := Key_Block (Pos .. Pos + Fixed_IV_Len - 1);
+      Client_IV (0 .. IV_Len - 1) := Key_Block (Pos .. Pos + IV_Len - 1);
+      Pos := Pos + IV_Len;
+      Server_IV (0 .. IV_Len - 1) := Key_Block (Pos .. Pos + IV_Len - 1);
    end Expand_Keys_12;
 
    procedure Compute_Finished_12

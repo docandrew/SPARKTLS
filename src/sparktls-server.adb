@@ -69,24 +69,8 @@ is
       Secret : in     Bytes_48;
       Suite  : in     Unsigned_16);
 
-   --  Map Error_Code to TLS alert description byte
-   function Alert_Desc (E : Error_Code) return Byte is
-     (case E is
-         when Unexpected_Message    => 10,
-         when Bad_Record_MAC        => 20,
-         when Record_Overflow       => 22,
-         when Handshake_Failure     => 40,
-         when Bad_Certificate       => 42,
-         when Certificate_Expired   => 45,
-         when Certificate_Verify_Failed => 51,
-         when Certificate_Required  => 116,
-         when Decode_Error          => 50,
-         when Illegal_Parameter     => 47,
-         when Protocol_Version     => 70,
-         when Internal_Error        => 80,
-         when Insufficient_Buffer   => 80,
-         when Unsupported_Cipher_Suite => 40,
-         when No_Error              => 80);
+   --  Alert_Desc / Error_Code mapping is in the parent SPARKTLS
+   --  package — child-unit visibility resolves call sites here.
 
    --  Send a fatal alert and set error state
    procedure Send_Alert_And_Error
@@ -667,9 +651,25 @@ is
                         SPARKTLS.Server.TLS12.Build_Server_Flight_12
                           (S, HC, Result);
                      else
-                        --  No matching version/suite
-                        Send_Alert_And_Error
-                          (S, Handshake_Failure, Result);
+                        --  No matching version/suite. Distinguish a
+                        --  pure version-policy violation (the client
+                        --  offered a version outside our allowed set)
+                        --  from "no shared cipher": when our Cfg.
+                        --  Versions excludes the client's negotiated
+                        --  version, RFC 5246 §7.2.2 / RFC 8446 §6 say
+                        --  emit protocol_version (alert 70), not
+                        --  handshake_failure (40). BoGo's MinimumVersion-
+                        --  Server2-TLS13-TLS12 expects 70.
+                        if (HC.Version = TLS_1_2 and Policy = TLS_1_3_Only)
+                          or else
+                           (HC.Version = TLS_1_3 and Policy = TLS_1_2_Only)
+                        then
+                           Send_Alert_And_Error
+                             (S, Protocol_Version, Result);
+                        else
+                           Send_Alert_And_Error
+                             (S, Handshake_Failure, Result);
+                        end if;
                      end if;
                   end;
                end;

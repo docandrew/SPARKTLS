@@ -28,13 +28,16 @@ is
    --  Constants from RFC 5288 and RFC 5246
    --================================================================
 
-   Explicit_Nonce_Len : constant := 8;   --  RFC 5288 §3
-   Implicit_IV_Len    : constant := 4;   --  RFC 5288 §3
+   Explicit_Nonce_Len : constant := 8;   --  RFC 5288 §3 (AES-GCM only)
+   --  Implicit_IV storage is sized for ChaCha20-Poly1305's 12-byte IV
+   --  (RFC 7905 §2). AES-GCM uses only the first 4 bytes as the salt
+   --  (RFC 5288 §3); the remaining bytes are zero-padded.
+   Implicit_IV_Len    : constant := 12;
    GCM_Tag_Len        : constant := 16;  --  NIST SP 800-38D
    AAD_Len            : constant := 13;  --  RFC 5246 §6.2.3.3
 
-   --  Record overhead for TLS 1.2 GCM:
-   --  explicit_nonce(8) + tag(16) = 24 bytes
+   --  Maximum record overhead for TLS 1.2 AEAD:
+   --  explicit_nonce(8 for GCM, 0 for ChaCha20) + tag(16) ≤ 24 bytes.
    TLS12_Record_Overhead : constant := Explicit_Nonce_Len + GCM_Tag_Len;
 
    --  TLS 1.2 version bytes in record headers and AAD
@@ -45,10 +48,12 @@ is
    --  Ghost functions: RFC behavioral invariants
    --================================================================
 
-   --  RFC 5288 §3: GCM nonce = implicit_IV[4] || explicit_nonce[8].
+   --  RFC 5288 §3: GCM nonce = implicit_IV[0..3] || explicit_nonce[8].
    --  The nonce MUST be unique for each record under the same key.
    --  Using the sequence number as the explicit nonce guarantees
    --  uniqueness since sequence numbers never repeat (RFC 5246 §6.1).
+   --  Implicit_IV storage is sized for the larger ChaCha20-Poly1305
+   --  IV (RFC 7905); AES-GCM uses only the first 4 bytes (the salt).
    function Valid_GCM_Nonce
      (Implicit_IV : Byte_Seq;
       Seq_Num     : Unsigned_64) return Boolean is
@@ -103,10 +108,12 @@ is
                 and Implicit_IV'Length = Implicit_IV_Len
                 and Nonce_Space_Available_12 (Seq_Num),
         Post => Seq_Num = Seq_Num'Old + 1  --  RFC 5246 §6.1
-                and (Bytes_Out = 0  --  buffer full
-                     or else Bytes_Out =
-                        Record_Header_Size + Explicit_Nonce_Len +
-                        N32 (Plaintext'Length) + GCM_Tag_Len);
+                and Bytes_Out <=
+                       Record_Header_Size + Explicit_Nonce_Len +
+                       N32 (Plaintext'Length) + GCM_Tag_Len;
+                --  Exact size depends on suite: AES-GCM includes an
+                --  on-wire explicit_nonce[8], ChaCha20 (RFC 7905 §2)
+                --  does not. Either is bounded above by the GCM size.
 
    --  RFC 5246 §6.2.3.3 + RFC 5288: Decrypt a TLS 1.2 AEAD record.
    --
@@ -134,7 +141,7 @@ is
       Plain_Len   :    out N32;
       Valid       :    out Boolean)
    with Pre  => Encrypted'First = 0
-                and Encrypted'Last >= Explicit_Nonce_Len + GCM_Tag_Len
+                and Encrypted'Last >= GCM_Tag_Len
                 and Encrypted'Last < Max_Record_Plaintext + TLS12_Record_Overhead
                 and Record_Hdr'First = 0
                 and Record_Hdr'Length = Record_Header_Size
@@ -167,9 +174,9 @@ is
                 and Implicit_IV'Length = Implicit_IV_Len
                 and Nonce_Space_Available_12 (Seq_Num),
         Post => Seq_Num = Seq_Num'Old + 1
-                and (Bytes_Out = 0
-                     or else Bytes_Out =
-                        Record_Header_Size + Explicit_Nonce_Len +
-                        2 + GCM_Tag_Len);  --  alert is exactly 2 bytes plaintext
+                and Bytes_Out <=
+                       Record_Header_Size + Explicit_Nonce_Len +
+                       2 + GCM_Tag_Len;  --  upper bound (GCM); ChaCha
+                                         --  omits the 8-byte exp nonce
 
 end SPARKTLS.Records.TLS12;

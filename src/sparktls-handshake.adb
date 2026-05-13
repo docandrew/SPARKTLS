@@ -230,7 +230,7 @@ is
                      return A;
                   end if;
                   if Allow_PKCS1_v1_5
-                    and (A = 16#0401# or A = 16#0501#)
+                    and (A = 16#0401# or A = 16#0501# or A = 16#0601#)
                   then
                      return A;
                   end if;
