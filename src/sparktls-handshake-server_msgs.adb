@@ -95,7 +95,16 @@ is
       if not Grp.Known then
          return;
       end if;
+      --  RFC 8446 §4.2.8: "Clients MUST NOT offer multiple KeyShare
+      --  entries for the same group." Track repeats via the per-
+      --  group Client_Has_* flag and surface them as Illegal_Parameter
+      --  for the outer CH dispatcher. BoGo's DuplicateKeyShares-TLS13
+      --  exercises this.
       if Grp.Enum = RFLX.Tls_Parameters.X25519 then
+         if HC.Client_Has_X25519 then
+            HC.Ext_Parse_Err := Illegal_Parameter;
+            return;
+         end if;
          declare
             KLen : constant N32 := N32 (Get_Length (E_Ctx));
          begin
@@ -110,6 +119,10 @@ is
             end if;
          end;
       elsif Grp.Enum = RFLX.Tls_Parameters.Secp256r1 then
+         if HC.Client_Has_P256 then
+            HC.Ext_Parse_Err := Illegal_Parameter;
+            return;
+         end if;
          declare
             KLen : constant N32 := N32 (Get_Length (E_Ctx));
          begin
@@ -126,6 +139,10 @@ is
             end if;
          end;
       elsif Grp.Enum = RFLX.Tls_Parameters.Secp384r1 then
+         if HC.Client_Has_P384 then
+            HC.Ext_Parse_Err := Illegal_Parameter;
+            return;
+         end if;
          declare
             KLen : constant N32 := N32 (Get_Length (E_Ctx));
          begin
@@ -741,6 +758,14 @@ is
          when RFLX.Tls_Extensiontype_Values.Key_Share =>
             if DLen in Wire_Key_Share_Len then
                Parse_KS_Extension (Ext_Ctx, DLen, HC);
+               --  Parse_KS_Extension → Apply_KS_Entry stashes
+               --  Illegal_Parameter in HC.Ext_Parse_Err on duplicate-
+               --  group violations (RFC 8446 §4.2.8). Surface to the
+               --  Parse_Client_Hello caller as a parse failure.
+               if HC.Ext_Parse_Err /= No_Error then
+                  OK := False;
+                  return;
+               end if;
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Signature_Algorithms =>

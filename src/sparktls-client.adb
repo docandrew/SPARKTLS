@@ -446,14 +446,17 @@ is
 
       case Msg_Type is
          when Handshake.HT_Encrypted_Extensions =>
-            --  RFC 8446 §4: every handshake message ends exactly at
-            --  its declared length. EE body = ext_len(2) + exts(N),
-            --  so total HS body = 2 + N. Catch trailing bytes
-            --  (BoGo TrailingMessageData-TLS13-EncryptedExtensions).
-            if Data'Length >= 6
-              and then Data'First >= 0
-              and then Data'Last < N32'Last
-            then
+            --  RFC 8446 §4.3.1: EE body is `extensions<0..2^16-1>`,
+            --  i.e. a 2-byte length prefix is always required even
+            --  for an empty extension list. Anything shorter is a
+            --  decode_error (BoGo's EmptyEncryptedExtensions-TLS13
+            --  truncates the message entirely). The trailing-bytes
+            --  check below covers the over-long case.
+            if N32 (Data'Length) < 6 then
+               Send_HS_Encrypted_Alert (S, HC, Decode_Error, Result);
+               return;
+            end if;
+            if Data'First >= 0 and then Data'Last < N32'Last then
                declare
                   Ext_Tot_Decl : constant N32 :=
                      N32 (Data (Data'First + 4)) * 256
@@ -740,13 +743,29 @@ is
                            Pos := Pos + C_Len;
                            Cert_Idx := Cert_Idx + 1;
 
-                           --  Skip per-cert extensions (2-byte length)
+                           --  RFC 8446 §4.4.2: each cert entry is
+                           --  followed by a CertificateEntry-scoped
+                           --  extensions block. The only ext the
+                           --  server is allowed to put here is one
+                           --  the client requested via the matching
+                           --  CH extension (status_request,
+                           --  signed_certificate_timestamp, etc.).
+                           --  We don't request any per-cert
+                           --  extensions, so any non-empty entry is
+                           --  fatal `unsupported_extension`. BoGo's
+                           --  SendUnknownExtensionOnCertificate-TLS13
+                           --  exercises this.
                            exit when Pos + 2 > N32 (Data'Length);
                            declare
                               Ext_Len : constant N32 :=
                                  N32 (Data (Pos)) * 256 +
                                  N32 (Data (Pos + 1));
                            begin
+                              if Ext_Len > 0 then
+                                 Send_HS_Encrypted_Alert
+                                   (S, HC, Unsupported_Extension, Result);
+                                 return;
+                              end if;
                               Pos := Pos + 2 + Ext_Len;
                            end;
                         end;
@@ -832,16 +851,39 @@ is
 
                Append_Transcript (HC, Data);
 
-               if HC.Cfg.Skip_Verify then
-                  --  -k mode: skip all signature verification
-                  Set_State (S, Wait_Server_Finished);
+               --  Leaf parseability is a wire-format requirement and
+               --  doesn't depend on Skip_Verify (which only relaxes
+               --  chain validation). Check first so we reject malformed
+               --  certs even in -k / Skip_Verify mode.
+               if not HC.Peer_Cert_Valid then
+                  --  BoringSSL emits `decode_error` here; BoGo's
+                  --  GarbageCertificate-Client-{TLS12,TLS13} look for
+                  --  ":CANNOT_PARSE_LEAF_CERT:" which maps to Go's
+                  --  "remote error: error decoding message".
+                  Send_HS_Encrypted_Alert
+                    (S, HC, Decode_Error, Result);
                   return;
                end if;
 
-               if not HC.Peer_Cert_Valid then
-                  S.Last_Error := Certificate_Verify_Failed;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
+               --  RFC 8446 §4.4.2.2 / RFC 5246 §7.4.2: the leaf cert
+               --  must carry keyUsage=digitalSignature for handshake
+               --  signing (every modern suite we negotiate). This
+               --  check is independent of chain validation — it's a
+               --  property of the leaf alone — so run it even with
+               --  Skip_Verify. BoGo's {RSA,ECDSA}KeyUsage-Client-*
+               --  exercises this.
+               if X509.Has_Key_Usage (HC.Peer_Cert)
+                 and then not X509.KU_Digital_Signature (HC.Peer_Cert)
+               then
+                  Send_HS_Encrypted_Alert
+                    (S, HC, Bad_Certificate, Result);
+                  return;
+               end if;
+
+               if HC.Cfg.Skip_Verify then
+                  --  -k mode: skip signature verification (but the
+                  --  cert was still required to parse).
+                  Set_State (S, Wait_Server_Finished);
                   return;
                end if;
 
@@ -936,6 +978,19 @@ is
             Set_State (S, Wait_Server_Finished);
 
          when Handshake.HT_Finished =>
+            --  RFC 8446 §4.4 ordering: Finished must follow
+            --  CertificateVerify when the server is authenticated
+            --  with a cert. If we got here in Wait_Certificate or
+            --  Wait_Certificate_Verify (the server skipped Cert or
+            --  CV entirely), that's unexpected_message. BoGo's
+            --  ClientSkipCertificateVerify-TLS13 exercises this.
+            if S.State = Wait_Certificate
+              or else S.State = Wait_Certificate_Verify
+            then
+               Send_HS_Encrypted_Alert
+                 (S, HC, Unexpected_Message, Result);
+               return;
+            end if;
             --  Verify server Finished (RFC 8446 Section 4.4.4).
             --  verify_data length = Hash.length (32 for SHA-256,
             --  48 for SHA-384). A wrong-length Finished is rejected
@@ -2224,7 +2279,14 @@ is
                               Process_Handshake_Message
                                 (S, HC, Msg_Copy, Result);
                            end;
-                           if Result = Error_Alert then
+                           --  Bail on any terminal state — even if
+                           --  Process_Handshake_Message returned
+                           --  Has_Output (alert queued, output pending)
+                           --  we must not keep processing further
+                           --  packed messages from this same record.
+                           if Result = Error_Alert
+                             or else S.State = Error_State
+                           then
                               exit;
                            end if;
                            Pos := Msg_End;

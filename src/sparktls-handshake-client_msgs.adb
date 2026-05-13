@@ -768,6 +768,20 @@ is
          return;
       end if;
 
+      --  RFC 5246 §7.4.1.2 / RFC 8446 §4.1.3: legacy_session_id
+      --  length field is 0..32. The full ServerHello body is
+      --  version(2) + random(32) + sid_len(1) + sid(0..32) + ...
+      --  Catch over-long sid early — RFLX rejects the message but
+      --  we'd otherwise fall through to the TLS 1.2 parser and emit
+      --  Handshake_Failure instead of the correct Decode_Error
+      --  (BoGo's Client-TooLongSessionID test).
+      if N32 (Data'Length) - 4 >= 35
+        and then N32 (Data (Data'First + 4 + 34)) > 32
+      then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+
       --  RFC 8446 §4.2 duplicate-extension check, performed BEFORE
       --  RFLX parse so that even SH bytes RFLX rejects (e.g. one
       --  of the duplicates is a tag RFLX treats as malformed)
@@ -907,6 +921,14 @@ is
             --  UnknownExtension-Client / UnofferedExtension-Client
             --  exercises this.
             Saw_Unoffered : Boolean := False;
+            --  RFLX's SH_Extension_TLS schema only models the strict
+            --  TLS 1.3 SH-allowed subset. For TLS 1.2 the server may
+            --  legitimately echo extensions RFLX rejects (e.g.
+            --  ec_point_formats, supported_groups). Track here and
+            --  only escalate to Saw_Unoffered after we know the
+            --  negotiated version (Has_TLS_1_3 is set inside the
+            --  loop when we see supported_versions).
+            Saw_Rflx_Rejected : Boolean := False;
          begin
             Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
@@ -921,6 +943,17 @@ is
                   RFLX.TLS_Handshake.SH_Extension_TLS.Verify_Message
                     (Ext_Ctx);
 
+                  if not RFLX.TLS_Handshake.SH_Extension_TLS
+                          .Well_Formed_Message (Ext_Ctx)
+                  then
+                     --  RFLX's strict TLS 1.3 SH schema rejected
+                     --  this extension. Stash; we'll decide whether
+                     --  to escalate to Saw_Unoffered after the loop
+                     --  once we know the negotiated version (RFLX
+                     --  rejects ec_point_formats, supported_groups
+                     --  etc. that TLS 1.2 legitimately allows in SH).
+                     Saw_Rflx_Rejected := True;
+                  end if;
                   if RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message
                        (Ext_Ctx)
                   then
@@ -1134,6 +1167,15 @@ is
                RFLX_Free (Buf);
                S.Last_Error := Decode_Error;
                return;
+            end if;
+            --  RFLX rejected one or more extensions. If this is a
+            --  TLS 1.3 SH (supported_versions present →
+            --  HC.Has_TLS_1_3) the strict allowed set applies and
+            --  any RFLX-rejected ext is unsupported_extension. For
+            --  TLS 1.2 SH the server may echo a broader set RFLX
+            --  doesn't model — leave the legacy permissive behavior.
+            if Saw_Rflx_Rejected and HC.Has_TLS_1_3 then
+               Saw_Unoffered := True;
             end if;
             if Saw_Unoffered then
                --  RFC 8446 §4.2 / RFC 5246 §7.4.1.4: server returned

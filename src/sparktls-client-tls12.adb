@@ -487,6 +487,28 @@ is
                   end if;
                end;
 
+               --  Wire-format gate: the leaf must parse cleanly even
+               --  in Skip_Verify mode (parseability is independent
+               --  of chain validation). BoGo's
+               --  GarbageCertificate-Client-TLS12 sends "GARBAGE" as
+               --  the cert and expects decode_error.
+               if not HC.Peer_Cert_Valid then
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+                  return;
+               end if;
+
+               --  RFC 5246 §7.4.2: leaf keyUsage must include
+               --  digitalSignature for ECDHE-* suites (we sign SKE
+               --  with it). Run independently of chain validation
+               --  for the same reasons noted on the TLS 1.3 side.
+               --  BoGo's {RSA,ECDSA}KeyUsage-Client-TLS12 cluster.
+               if X509.Has_Key_Usage (HC.Peer_Cert)
+                 and then not X509.KU_Digital_Signature (HC.Peer_Cert)
+               then
+                  Send_Alert_And_Error (S, Bad_Certificate, Result);
+                  return;
+               end if;
+
                --  Chain validation (if trust store is configured)
                if not HC.Cfg.Skip_Verify
                   and then HC.Cfg.Trust /= null
