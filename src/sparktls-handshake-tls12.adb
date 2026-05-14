@@ -1355,53 +1355,43 @@ is
       end;
       Pos := Pos + 2;
 
-      --  Compression method (must be 0)
-      if Data (Pos) /= 0 then return; end if;
+      --  RFC 5246 §6.2.2 / §7.4.1.4: server's chosen compression
+      --  method MUST be null (0x00). BoGo InvalidCompressionMethod
+      --  expects illegal_parameter (not handshake_failure).
+      if Data (Pos) /= 0 then
+         S.Last_Error := Illegal_Parameter;
+         return;
+      end if;
       Pos := Pos + 1;
 
-      --  Parse extensions (look for extended_master_secret = 0x0017)
+      --  Extension parsing (policy + ALPN extraction) was already
+      --  done by Pre_Scan_SH_Extensions in the caller's
+      --  Parse_Server_Hello pass. Walk only to extract HC.Use_EMS —
+      --  the one piece of state this fallback owns. RFC 7627 §5.1:
+      --  EMS in SH means the server agreed to derive the master
+      --  secret via the EMS PRF.
       HC.Use_EMS := False;
       if Pos + 1 <= Data'Last then
          declare
             Ext_Len : constant N32 :=
                N32 (Data (Pos)) * 256 + N32 (Data (Pos + 1));
-            --  Bound Ext_End to Data'Last to prevent out-of-bounds
             Ext_End : constant N32 :=
                N32'Min (Pos + 2 + Ext_Len, Data'Last + 1);
             Ext_Pos : N32 := Pos + 2;
          begin
-            while Ext_Pos + 3 <= Data'Last and then Ext_Pos + 4 <= Ext_End loop
+            while Ext_Pos + 3 <= Data'Last
+              and then Ext_Pos + 4 <= Ext_End
+            loop
                declare
                   Ext_Type : constant Unsigned_16 :=
                      Unsigned_16 (Data (Ext_Pos)) * 256 +
                      Unsigned_16 (Data (Ext_Pos + 1));
                   Ext_DLen : constant N32 :=
-                     N32 (Data (Ext_Pos + 2)) * 256 + N32 (Data (Ext_Pos + 3));
+                     N32 (Data (Ext_Pos + 2)) * 256
+                     + N32 (Data (Ext_Pos + 3));
                begin
                   if Ext_Type = 16#0017# then
-                     --  extended_master_secret (RFC 7627)
                      HC.Use_EMS := True;
-
-                  elsif Ext_Type = 16#0010# and then Ext_DLen >= 4
-                     and then Ext_Pos + 6 <= Data'Last
-                  then
-                     --  ALPN (RFC 7301)
-                     --  Format: list_len(2) + proto_len(1) + proto(N)
-                     declare
-                        Proto_Len : constant Natural :=
-                           Natural (Data (Ext_Pos + 6));
-                     begin
-                        if Proto_Len > 0 and then Proto_Len <= Max_Hostname_Len
-                           and then N32 (Proto_Len + 3) <= Ext_DLen
-                           and then Ext_Pos + N32 (7 + Proto_Len) - 1 <= Data'Last
-                        then
-                           S.Negotiated_ALPN.Len := Proto_Len;
-                           for I in 1 .. Proto_Len loop
-                              S.Negotiated_ALPN.Data (I) :=
-                                 Character'Val (Data (Ext_Pos + N32 (6 + I)));
-                           end loop;
-                        end if;
-                     end;
                   end if;
                   Ext_Pos := Ext_Pos + 4 + Ext_DLen;
                end;

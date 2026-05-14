@@ -220,11 +220,14 @@ is
             return;
          end if;
 
-         --  Pre-pass: RFC 8446 §4.2 forbids duplicate extension types
-         --  in the EE block — decode_error takes precedence over
-         --  unsupported_extension since the structural check is
-         --  performed before semantic checks. BoGo
-         --  DuplicateExtensionClient-* expects decode_error.
+         --  RFC 8446 §4.2 priority: structural checks (duplicates)
+         --  take precedence over semantic checks (matrix policy).
+         --  BoGo DuplicateExtensionClient-* expects decode_error
+         --  even when the duplicated tag is also not in
+         --  Allowed_EE. We must therefore detect ALL duplicates
+         --  before running ANY policy validation — single-pass
+         --  merging would short-circuit on the first instance with
+         --  unsupported_extension before its duplicate is reached.
          declare
             subtype Seen_Range is N32 range 1 .. 32;
             Seen_Tags  : array (Seen_Range) of N32 := (others => 0);
@@ -275,118 +278,50 @@ is
                --  Skip if extension overflows what's left.
                exit when P + 4 + E_Len > Ext_End;
 
-               --  RFC 8446 §4.2: server's EE may only contain
-               --  extensions that are (a) on RFC 8446 §4.2's
-               --  EE-permitted list AND (b) ones the client offered
-               --  in CH. We pre-intersect those two sets into
-               --  Allowed_EE_Extension_Tags. Anything outside is
-               --  fatal `unsupported_extension`. BoGo's
+               --  RFC 8446 §4.2 matrix policy: rejects extensions
+               --  not allowed in EE, ones we didn't offer in CH, and
+               --  ones with non-empty body where RFC mandates empty
+               --  (RFC 6066 §3 server_name ack). BoGo
                --  UnknownExtension-Client-TLS13,
-               --  UnofferedExtension-Client-TLS13, and
-               --  EncryptedExtensionsWithKeyShare-TLS13 exercise this.
+               --  UnofferedExtension-Client-TLS13,
+               --  EncryptedExtensionsWithKeyShare-TLS13,
+               --  UnsolicitedServerNameAck-TLS13,
+               --  ExtensionTrailingData-ServerName-Client-TLS13.
                declare
-                  Allowed_Here : Boolean := False;
+                  V_OK  : Boolean;
+                  V_Err : Error_Code;
                begin
-                  for E of Allowed_EE_Extension_Tags loop
-                     if E = Unsigned_16 (Tag) then
-                        Allowed_Here := True;
-                     end if;
-                  end loop;
-                  if not Allowed_Here then
+                  Validate_Server_Ext
+                    (Where    => E_EE,
+                     Tag      => Unsigned_16 (Tag),
+                     Body_Len => E_Len,
+                     HC       => HC,
+                     OK       => V_OK,
+                     Err      => V_Err);
+                  if not V_OK then
                      OK  := False;
-                     Err := Unsupported_Extension;
+                     Err := V_Err;
                      return;
                   end if;
                end;
 
-               --  RFC 6066 §3 / RFC 8446 §4.2: server_name ack in EE
-               --  may only appear if client offered SNI in CH. BoGo
-               --  UnsolicitedServerNameAck-TLS13 exercises this.
-               if Tag = 16#0000# and then HC.Cfg.Server_Name.Len = 0 then
-                  OK  := False;
-                  Err := Unsupported_Extension;
-                  return;
-               end if;
-               --  RFC 6066 §3: server's server_name ack body MUST be
-               --  empty. BoGo ExtensionTrailingData-ServerName-Client
-               --  appends a stray byte → decode_error.
-               if Tag = 16#0000# and then E_Len /= 0 then
-                  OK  := False;
-                  Err := Decode_Error;
-                  return;
-               end if;
-
                if Tag = ALPN_Tag then
-                  --  ALPN extension body shape (RFC 7301 §3.1):
-                  --    list_len(2) + protocol_name_list(list_len)
-                  --  Each protocol_name: proto_len(1) + name
-                  --  Server selects exactly one protocol, so
-                  --  list_len = 1 + proto_len, and the extension
-                  --  body length = 2 + list_len. Smallest valid
-                  --  body is 4 bytes (single 1-byte protocol name).
-                  if E_Len < 4 then
-                     OK := False;
-                     return;
-                  end if;
                   declare
-                     List_Len : constant N32 :=
-                        N32 (Data (P + 4)) * 256
-                        + N32 (Data (P + 5));
-                     Proto_Len : constant N32 := N32 (Data (P + 6));
+                     A_OK  : Boolean;
+                     A_Err : Error_Code;
                   begin
-                     --  RFC 7301 §3.2: server echoes a single
-                     --  non-empty protocol_name. Anything else =
-                     --  fatal illegal_parameter.
-                     if Proto_Len = 0
-                       or List_Len /= 1 + Proto_Len
-                       or 2 + List_Len /= E_Len
-                     then
-                        OK := False;
-                        return;
-                     end if;
-                     --  RFC 7301 §3.1: server MUST NOT send an ALPN
-                     --  extension if the client did not send one.
-                     --  RFC 7301 §3.2: the server's selected protocol
-                     --  MUST be one the client offered. We only ever
-                     --  offer a single protocol today (Cfg.ALPN), so
-                     --  the chosen proto must equal Cfg.ALPN bytewise.
-                     if HC.Cfg.ALPN.Len = 0 then
-                        --  ALPN is a conditional CH extension — we
-                        --  only emit it when Cfg.ALPN is set. Server
-                        --  sending ALPN here means it sent an
-                        --  extension we did not offer (RFC 8446 §4.2
-                        --  → unsupported_extension, not the more
-                        --  generic illegal_parameter).
+                     Validate_ALPN_Echo_Body
+                       (Data       => Data,
+                        Body_Start => P + 4,
+                        E_Len      => E_Len,
+                        HC         => HC,
+                        S          => S,
+                        OK         => A_OK,
+                        Err        => A_Err);
+                     if not A_OK then
                         OK  := False;
-                        Err := Unsupported_Extension;
+                        Err := A_Err;
                         return;
-                     end if;
-                     if Natural (Proto_Len) /= HC.Cfg.ALPN.Len then
-                        OK := False;
-                        return;  --  Err stays Illegal_Parameter
-                     end if;
-                     if Proto_Len <= N32 (Max_Hostname_Len) then
-                        for I in 1 .. Natural (Proto_Len) loop
-                           pragma Loop_Invariant
-                             (Proto_Len <= N32 (Max_Hostname_Len)
-                              and Natural (Proto_Len) = HC.Cfg.ALPN.Len);
-                           if Character'Val (Data (P + 6 + N32 (I)))
-                             /= HC.Cfg.ALPN.Data (I)
-                           then
-                              OK := False;
-                              return;
-                           end if;
-                        end loop;
-                        S.Negotiated_ALPN.Len :=
-                           Natural (Proto_Len);
-                        for I in 1 .. Natural (Proto_Len) loop
-                           pragma Loop_Invariant
-                             (S.Negotiated_ALPN.Len = Natural (Proto_Len)
-                              and Proto_Len <= N32 (Max_Hostname_Len));
-                           S.Negotiated_ALPN.Data (I) :=
-                              Character'Val
-                                (Data (P + 6 + N32 (I)));
-                        end loop;
                      end if;
                   end;
                end if;
@@ -637,8 +572,29 @@ is
                                     E_Len : constant N32 :=
                                        N32 (Data (P + 2)) * 256
                                        + N32 (Data (P + 3));
+                                    V_OK  : Boolean;
+                                    V_Err : Error_Code;
                                  begin
                                     exit when P + 4 + E_Len > Ext_End;
+                                    --  RFC 8446 §4.2 — matrix-driven
+                                    --  policy check: rejects CR
+                                    --  extensions that aren't on the
+                                    --  RFC 8446 §4.2 CR-permitted
+                                    --  list, BoGo
+                                    --  CertReqDuplicateExtension-* /
+                                    --  Unsolicited-extension-in-CR.
+                                    Validate_Server_Ext
+                                      (Where    => E_CR,
+                                       Tag      => Unsigned_16 (Tag),
+                                       Body_Len => E_Len,
+                                       HC       => HC,
+                                       OK       => V_OK,
+                                       Err      => V_Err);
+                                    if not V_OK then
+                                       Send_HS_Encrypted_Alert
+                                         (S, HC, V_Err, Result);
+                                       return;
+                                    end if;
                                     if Tag = 16#000D# and E_Len >= 4 then
                                        declare
                                           List_Len : constant N32 :=
@@ -658,7 +614,61 @@ is
                                              end if;
                                           end if;
                                        end;
-                                       exit;
+                                    elsif Tag = 16#002F# and E_Len >= 2 then
+                                       --  RFC 8446 §4.2.4 cert_authorities:
+                                       --  outer length(2) + DN[] each
+                                       --  length-prefixed. Body must tile
+                                       --  exactly. BoGo ExtensionTrailing
+                                       --  Data-CertificateAuthorities-
+                                       --  Client.
+                                       declare
+                                          Outer_Len : constant N32 :=
+                                             N32 (Data (P + 4)) * 256
+                                             + N32 (Data (P + 5));
+                                          DN_P : N32 := P + 6;
+                                          DN_End : constant N32 :=
+                                             P + 6 + Outer_Len;
+                                          Bad : Boolean := False;
+                                       begin
+                                          if 2 + Outer_Len /= E_Len
+                                            or DN_End > Ext_End
+                                            or Outer_Len = 0
+                                          then
+                                             Bad := True;
+                                          else
+                                             while not Bad
+                                               and then DN_P < DN_End
+                                             loop
+                                                pragma Loop_Invariant
+                                                  (DN_P <= DN_End);
+                                                pragma Loop_Variant
+                                                  (Increases => DN_P);
+                                                if DN_P + 2 > DN_End then
+                                                   Bad := True;
+                                                else
+                                                   declare
+                                                      DN_Len : constant N32 :=
+                                                         N32 (Data (DN_P)) * 256
+                                                         + N32 (Data (DN_P + 1));
+                                                   begin
+                                                      if DN_P + 2 + DN_Len
+                                                          > DN_End
+                                                        or DN_Len = 0
+                                                      then
+                                                         Bad := True;
+                                                      else
+                                                         DN_P := DN_P + 2 + DN_Len;
+                                                      end if;
+                                                   end;
+                                                end if;
+                                             end loop;
+                                          end if;
+                                          if Bad then
+                                             Send_HS_Encrypted_Alert
+                                               (S, HC, Decode_Error, Result);
+                                             return;
+                                          end if;
+                                       end;
                                     end if;
                                     P := P + 4 + E_Len;
                                  end;
@@ -2503,6 +2513,20 @@ is
          return;
       end if;
 
+      --  RFC 8446 §5: in the Connected (post-handshake) TLS 1.3
+      --  state, the only valid record content type is
+      --  application_data (the outer type). Encrypted handshake
+      --  records (post-handshake messages like NewSessionTicket,
+      --  KeyUpdate) also arrive as outer type application_data —
+      --  the inner type after AEAD decrypt is what distinguishes
+      --  them. Anything else (CCS, alert, raw handshake) post-
+      --  handshake is a state-machine violation. BoGo
+      --  SendPostHandshakeChangeCipherSpec-TLS13.
+      if Rec.Content = Records.Content_Change_Cipher_Spec then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+         return;
+      end if;
       if Rec.Content /= Records.Content_Application_Data then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Result := OK;

@@ -103,10 +103,16 @@ is
          (4 + EPF_Data_Len) +
          ALPN_Ext_Len;
 
-      --  ClientHello body: version(2) + random(32) + sid_len(1) + sid(32)
-      --  + suites_len(2) + suites(18) + comp_len(1) + comp(1)
-      --  + ext_len(2) + extensions
-      CH_Body_Len : constant N32 := 91 + Ext_Total;
+      --  ClientHello body: version(2) + random(32) + sid_len(1) +
+      --  sid(0 | 32) + suites_len(2) + suites(18) + comp_len(1) +
+      --  comp(1) + ext_len(2) + extensions. TLS_1_2_Only sends an
+      --  empty session_id (RFC 8446 §D.4 middlebox-compat trick is
+      --  TLS 1.3-specific; sending the random 32 bytes from a TLS
+      --  1.2-only client leaks "speaks TLS 1.3"). BoGo
+      --  TLS12NoSessionID-TLS13.
+      Session_ID_Len : constant N32 :=
+        (if HC.Cfg.Versions = TLS_1_2_Only then 0 else 32);
+      CH_Body_Len : constant N32 := 59 + Session_ID_Len + Ext_Total;
       CH_Msg_Len  : constant N32 := 4 + CH_Body_Len;
 
       Buf      : RBT.Bytes_Ptr;
@@ -164,10 +170,18 @@ is
       end;
 
       --  Generate 32-byte legacy session ID for middlebox compatibility
+      --  (RFC 8446 §D.4 / §4.1.2). TLS-1.2-only clients have no
+      --  middlebox concern, so they SHOULD send an empty session_id;
+      --  doing otherwise leaks "client speaks TLS 1.3" to a real
+      --  TLS 1.2 server. BoGo TLS12NoSessionID-TLS13 exercises this.
       declare
          Legacy_Session_ID : Byte_Seq (0 .. 31);
       begin
-         Gen_Random (Legacy_Session_ID);
+         if HC.Cfg.Versions = TLS_1_2_Only then
+            Legacy_Session_ID := (others => 0);
+         else
+            Gen_Random (Legacy_Session_ID);
+         end if;
          HC.Legacy_Session_ID := Legacy_Session_ID;
       end;
 
@@ -180,8 +194,14 @@ is
       --  Set ClientHello fields via RFLX
       Set_Legacy_Version (Ctx, TLS_1_2);  --  0x0303 per RFC 8446
       Set_Random (Ctx, To_RFLX (HC.Client_Random));
-      Set_Legacy_Session_ID_Length (Ctx, 32);
-      Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
+      if HC.Cfg.Versions = TLS_1_2_Only then
+         Set_Legacy_Session_ID_Length (Ctx, 0);
+         Set_Legacy_Session_ID
+           (Ctx, To_RFLX (Byte_Seq'(1 .. 0 => 0)));
+      else
+         Set_Legacy_Session_ID_Length (Ctx, 32);
+         Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
+      end if;
       --  TLS version routes past cookie fields to cipher_suites_length
       --  9 suites: 3 TLS 1.3 + 3 TLS 1.2 ECDHE-RSA + 3 TLS 1.2
       --  ECDHE-ECDSA = 18 bytes
@@ -763,21 +783,27 @@ is
    --    RFC 7301 §3.1    ALPN body = list_len(2)+proto_len(1)+proto
    procedure Pre_Scan_SH_Extensions
      (Data : in     Byte_Seq;
-      HC   : in     Handshake_Context;
+      HC   : in out Handshake_Context;
       S    : in out Session;
       OK   :    out Boolean);
 
    procedure Pre_Scan_SH_Extensions
      (Data : in     Byte_Seq;
-      HC   : in     Handshake_Context;
+      HC   : in out Handshake_Context;
       S    : in out Session;
       OK   :    out Boolean)
    is
       B    : constant N32 := Data'First + 4;  --  body start
       P    : N32;
       Sid_Len, Ext_Total : N32;
-      Seen : Ext_Tag_Array := (others => 0);
-      SC   : Natural := 0;
+      type SH_Ext_Entry is record
+         Tag    : Unsigned_16;
+         E_Len  : N32;
+         Offset : N32;          --  start of body bytes in Data
+      end record;
+      Exts  : array (1 .. 32) of SH_Ext_Entry :=
+                (others => (0, 0, 0));
+      N_Ext : Natural := 0;
    begin
       OK := True;
 
@@ -808,102 +834,81 @@ is
             return;
          end if;
 
+         --  Pass 1: walk bytes, dup-check, collect (tag, len, off)
+         --  into Exts, decide TLS-1.3-vs-1.2 from supported_versions.
          while P + 4 <= Ext_End loop
             declare
-               Tag_Code : constant Unsigned_32 :=
-                  Unsigned_32 (Data (P)) * 256
-                  + Unsigned_32 (Data (P + 1));
+               Tag_U16 : constant Unsigned_16 :=
+                  Unsigned_16 (Data (P)) * 256
+                  + Unsigned_16 (Data (P + 1));
                E_Len : constant N32 :=
                   N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
             begin
-               for I in 1 .. SC loop
-                  if Seen (I) = Tag_Code then
+               for I in 1 .. N_Ext loop
+                  if Exts (I).Tag = Tag_U16 then
                      S.Last_Error := Decode_Error;
                      OK := False;
                      return;
                   end if;
                end loop;
-               if SC < Seen'Last then
-                  SC := SC + 1;
-                  Seen (SC) := Tag_Code;
+               if N_Ext < Exts'Last then
+                  N_Ext := N_Ext + 1;
+                  Exts (N_Ext) := (Tag_U16, E_Len, P + 4);
+               end if;
+               if Tag_U16 = 16#002B# then
+                  HC.Has_TLS_1_3 := True;
+               end if;
+               P := P + 4 + E_Len;
+            end;
+         end loop;
+      end;
+
+      --  Pass 2: matrix policy + per-tag body validation. Single
+      --  loop over the collected Exts. Matrix runs first
+      --  (unsupported_extension / decode_error for empty-echo
+      --  violations); body validators run only on matrix-OK entries.
+      declare
+         Where : constant Ext_Where :=
+           (if HC.Has_TLS_1_3 then E_SH13 else E_SH12);
+      begin
+         for I in 1 .. N_Ext loop
+            declare
+               V_OK  : Boolean;
+               V_Err : Error_Code;
+            begin
+               Validate_Server_Ext
+                 (Where    => Where,
+                  Tag      => Exts (I).Tag,
+                  Body_Len => Exts (I).E_Len,
+                  HC       => HC,
+                  OK       => V_OK,
+                  Err      => V_Err);
+               if not V_OK then
+                  S.Last_Error := V_Err;
+                  OK := False;
+                  return;
                end if;
 
-               case Tag_Code is
-                  when 16#0000# =>  --  server_name (RFC 6066)
-                     if HC.Cfg.Server_Name.Len = 0 then
-                        S.Last_Error := Unsupported_Extension;
-                        OK := False;
-                        return;
-                     end if;
-                     if E_Len /= 0 then
-                        S.Last_Error := Decode_Error;
-                        OK := False;
-                        return;
-                     end if;
-
-                  when 16#0010# =>  --  ALPN (RFC 7301)
-                     if HC.Cfg.ALPN.Len = 0 then
-                        S.Last_Error := Unsupported_Extension;
-                        OK := False;
-                        return;
-                     end if;
-                     if P + 4 + E_Len <= Data'Last + 1
-                       and then E_Len >= 3
-                     then
-                        declare
-                           LL : constant N32 :=
-                              N32 (Data (P + 4)) * 256
-                              + N32 (Data (P + 5));
-                           PL : constant N32 := N32 (Data (P + 6));
-                        begin
-                           if PL = 0
-                             or LL /= 1 + PL
-                             or 2 + LL /= E_Len
-                           then
-                              S.Last_Error := Decode_Error;
-                              OK := False;
-                              return;
-                           end if;
-                           --  RFC 7301 §3.2: chosen proto MUST be one
-                           --  the client offered. Single-proto offer
-                           --  today — bytewise compare against
-                           --  HC.Cfg.ALPN. BoGo
-                           --  ALPNClient-RejectUnknown-TLS-TLS12 sends
-                           --  "baz" when we offered "foo".
-                           if PL /= N32 (HC.Cfg.ALPN.Len) then
-                              S.Last_Error := Illegal_Parameter;
-                              OK := False;
-                              return;
-                           end if;
-                           declare
-                              Match : Boolean := True;
-                           begin
-                              for I in 1 .. Natural (PL) loop
-                                 if Character'Val (Data (P + 6 + N32 (I)))
-                                   /= HC.Cfg.ALPN.Data (I)
-                                 then
-                                    Match := False;
-                                 end if;
-                              end loop;
-                              if not Match then
-                                 S.Last_Error := Illegal_Parameter;
-                                 OK := False;
-                                 return;
-                              end if;
-                           end;
-                        end;
-                     end if;
-
-                  when 16#0029# =>  --  pre_shared_key (we never offer)
-                     S.Last_Error := Unsupported_Extension;
+               --  Per-tag body validation (RFC 7301 ALPN — shared
+               --  helper, same wire shape used in TLS 1.3 EE).
+               if Exts (I).Tag = 16#0010#
+                 and then Exts (I).Offset + Exts (I).E_Len <=
+                            Data'Last + 1
+               then
+                  Validate_ALPN_Echo_Body
+                    (Data       => Data,
+                     Body_Start => Exts (I).Offset,
+                     E_Len      => Exts (I).E_Len,
+                     HC         => HC,
+                     S          => S,
+                     OK         => V_OK,
+                     Err        => V_Err);
+                  if not V_OK then
+                     S.Last_Error := V_Err;
                      OK := False;
                      return;
-
-                  when others =>
-                     null;
-               end case;
-
-               P := P + 4 + E_Len;
+                  end if;
+               end if;
             end;
          end loop;
       end;
@@ -1017,78 +1022,6 @@ is
       end;
    end Apply_SH_Key_Share;
 
-   --  RFC 7301 §3.2: validate the server's ALPN ack body in a TLS 1.2
-   --  SH extension. Body shape:
-   --    list_len(2) + proto_len(1) + proto_name(proto_len)
-   --  On failure stash the alert in HC.Ext_Parse_Err and S.Last_Error
-   --  for the caller. On success copy the proto into
-   --  S.Negotiated_ALPN. BoGo ALPNClient-EmptyProtocolName-* /
-   --  ALPNClient-RejectUnknown-*.
-   procedure Apply_SH_ALPN
-     (ALPN_Buf : in     RBT.Bytes;
-      HC       : in out Handshake_Context;
-      S        : in out Session);
-
-   procedure Apply_SH_ALPN
-     (ALPN_Buf : in     RBT.Bytes;
-      HC       : in out Handshake_Context;
-      S        : in out Session)
-   is
-      DLen : constant N32 := N32 (ALPN_Buf'Length);
-      PL   : Natural;
-   begin
-      --  Caller has already guaranteed DLen >= 4.
-      PL := Natural (ALPN_Buf (3));
-
-      if PL = 0 then
-         S.Last_Error := Illegal_Parameter;
-         HC.Ext_Parse_Err := Illegal_Parameter;
-         return;
-      end if;
-
-      if PL > Max_Hostname_Len or N32 (PL + 3) > DLen then
-         return;  --  silently drop overlong / truncated; not fatal
-      end if;
-
-      if HC.Cfg.ALPN.Len = 0 then
-         --  Server echoed ALPN we didn't offer. (Pre-RFLX scan
-         --  catches this for empty Cfg.ALPN already; this is the
-         --  defense-in-depth fallback for the RFLX-accepted path.)
-         S.Last_Error := Unsupported_Extension;
-         HC.Ext_Parse_Err := Unsupported_Extension;
-         return;
-      end if;
-
-      if PL /= HC.Cfg.ALPN.Len then
-         S.Last_Error := Illegal_Parameter;
-         HC.Ext_Parse_Err := Illegal_Parameter;
-         return;
-      end if;
-
-      declare
-         Match : Boolean := True;
-      begin
-         for I in 1 .. PL loop
-            if Character'Val (ALPN_Buf (RBT.Index (3 + I)))
-              /= HC.Cfg.ALPN.Data (I)
-            then
-               Match := False;
-            end if;
-         end loop;
-         if not Match then
-            S.Last_Error := Illegal_Parameter;
-            HC.Ext_Parse_Err := Illegal_Parameter;
-            return;
-         end if;
-      end;
-
-      S.Negotiated_ALPN.Len := PL;
-      for I in 1 .. PL loop
-         S.Negotiated_ALPN.Data (I) :=
-            Character'Val (ALPN_Buf (RBT.Index (3 + I)));
-      end loop;
-   end Apply_SH_ALPN;
-
    procedure Parse_Server_Hello
      (S    : in out Session;
       HC   : in out Handshake_Context;
@@ -1192,34 +1125,6 @@ is
       if Well_Formed (Ctx, F_Extensions_TLS) then
          declare
             Exts_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
-            --  RFC 8446 §4.2 duplicate-extension check, mirror of
-            --  the CH-side cap (HC.Seen_Ext_Tags). Local because
-            --  SH parsing happens once and we don't need cross-call
-            --  state.
-            SH_Seen_Tags  : Ext_Tag_Array := (others => 0);
-            SH_Seen_Count : Natural := 0;
-            Saw_Dup       : Boolean := False;
-            --  RFC 8446 §4.2: track whether the server's ServerHello
-            --  included an extension we didn't request. We send a
-            --  known, fixed CH extension set, so the allowed-in-SH
-            --  set is also fixed. Anything outside is reason to
-            --  abort with unsupported_extension. BoGo's
-            --  UnknownExtension-Client / UnofferedExtension-Client
-            --  exercises this.
-            Saw_Unoffered : Boolean := False;
-            --  RFLX's SH_Extension_TLS schema only models the strict
-            --  TLS 1.3 SH-allowed subset. For TLS 1.2 the server may
-            --  legitimately echo extensions RFLX rejects (e.g.
-            --  ec_point_formats, supported_groups). Track here and
-            --  only escalate to Saw_Unoffered after we know the
-            --  negotiated version (Has_TLS_1_3 is set inside the
-            --  loop when we see supported_versions).
-            Saw_Rflx_Rejected : Boolean := False;
-            --  RFC 8446 §4.2: renegotiation_info (0xFF01) is permitted
-            --  in TLS 1.2 SH (and we track it via Allowed_SH_Extension_
-            --  Tags above) but forbidden in TLS 1.3 SH. Stash and
-            --  escalate post-loop, same shape as Saw_Rflx_Rejected.
-            Saw_Reneg_Info_In_SH : Boolean := False;
          begin
             Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
@@ -1234,99 +1139,25 @@ is
                   RFLX.TLS_Handshake.SH_Extension_TLS.Verify_Message
                     (Ext_Ctx);
 
-                  if not RFLX.TLS_Handshake.SH_Extension_TLS
-                          .Well_Formed_Message (Ext_Ctx)
-                  then
-                     --  RFLX's strict TLS 1.3 SH schema rejected
-                     --  this extension. Stash; we'll decide whether
-                     --  to escalate to Saw_Unoffered after the loop
-                     --  once we know the negotiated version (RFLX
-                     --  rejects ec_point_formats, supported_groups
-                     --  etc. that TLS 1.2 legitimately allows in SH).
-                     --  Unsolicited-extension detection happens in
-                     --  the pre-RFLX byte scan above.
-                     Saw_Rflx_Rejected := True;
-                  end if;
+                  --  Policy (Where_Allowed, Requires_Offer, body
+                  --  empty) and structural checks (duplicates, ALPN
+                  --  body shape + proto match, SNI body empty,
+                  --  Has_TLS_1_3 detection, Negotiated_ALPN copy) all
+                  --  ran in Pre_Scan_SH_Extensions. This loop is the
+                  --  only RFLX-backed step that remains: key_share
+                  --  body decoding (group dispatch +
+                  --  Get_Key_Exchange). ALPN body extraction stays in
+                  --  Pre_Scan (TLS 1.2) / Extract_ALPN_From_EE (TLS
+                  --  1.3 EE); the TLS 1.3 SH itself carries no ALPN.
                   if RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message
                        (Ext_Ctx)
+                    and then RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
+                              (Ext_Ctx).Known
+                    and then RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
+                              (Ext_Ctx).Enum =
+                               RFLX.Tls_Extensiontype_Values.Key_Share
                   then
-                     declare
-                        Tag : constant
-                           RFLX.Tls_Extensiontype_Values
-                              .TLS_ExtensionType_Values :=
-                           RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
-                             (Ext_Ctx);
-                        Code : constant Unsigned_32 :=
-                           Unsigned_32
-                             (RFLX.Tls_Extensiontype_Values
-                                .To_Base_Integer (Tag));
-                     begin
-                        for I in 1 .. SH_Seen_Count loop
-                           if SH_Seen_Tags (I) = Code then
-                              Saw_Dup := True;
-                           end if;
-                        end loop;
-                        if SH_Seen_Count < SH_Seen_Tags'Last then
-                           SH_Seen_Count := SH_Seen_Count + 1;
-                           SH_Seen_Tags (SH_Seen_Count) := Code;
-                        end if;
-                        --  RFC 8446 §4.2 / RFC 5246 §7.4.1.4: SH may
-                        --  carry only the echo / negotiation-reply
-                        --  subset (see Allowed_SH_Extension_Tags in
-                        --  the parent SPARKTLS package). Anything
-                        --  else is unsupported_extension.
-                        if not (for some Allowed of
-                                Allowed_SH_Extension_Tags =>
-                                  Allowed = Unsigned_16 (Code))
-                        then
-                           Saw_Unoffered := True;
-                        end if;
-                        --  Track renegotiation_info specifically —
-                        --  legal in TLS 1.2 SH but forbidden in TLS
-                        --  1.3 SH (RFC 8446 §4.2). Escalated
-                        --  post-loop once HC.Has_TLS_1_3 is known.
-                        if Code = 16#FF01# then
-                           Saw_Reneg_Info_In_SH := True;
-                        end if;
-                        --  Check for supported_versions extension
-                        if Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values.Supported_Versions
-                        then
-                           --  ServerHello has supported_versions → TLS 1.3
-                           HC.Has_TLS_1_3 := True;
-
-                        elsif Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values.Key_Share
-                        then
-                           Apply_SH_Key_Share (Ext_Ctx, HC);
-
-                        --  ALPN extension (0x0010)
-                        elsif Tag.Known and then
-                           Tag.Enum =
-                              RFLX.Tls_Extensiontype_Values
-                                .Application_Layer_Protocol_Negotiation
-                        then
-                           declare
-                              DLen : constant N32 := N32
-                                 (RFLX.TLS_Handshake.SH_Extension_TLS
-                                    .Get_Data_Length (Ext_Ctx));
-                           begin
-                              if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
-                                 declare
-                                    VLen     : constant Wire_Small_Ext_Len := DLen;
-                                    ALPN_Buf : RBT.Bytes (1 .. RBT.Index (VLen));
-                                 begin
-                                    RFLX.TLS_Handshake.SH_Extension_TLS
-                                      .Get_Data (Ext_Ctx, ALPN_Buf);
-                                    Apply_SH_ALPN (ALPN_Buf, HC, S);
-                                 end;
-                              end if;
-                           end;
-
-                        end if;
-                     end;
+                     Apply_SH_Key_Share (Ext_Ctx, HC);
                   end if;
 
                   RFLX.TLS_Handshake.SH_Extensions_TLS.Update
@@ -1336,41 +1167,9 @@ is
 
             Update_Extensions_TLS (Ctx, Exts_Ctx);
 
-            if Saw_Dup then
-               --  RFC 8446 §4.2: duplicate extensions in the
-               --  ServerHello are a fatal protocol violation.
-               --  BoGo DuplicateExtensionClient-* exercises this.
-               Take_Buffer (Ctx, Buf);
-               RFLX_Free (Buf);
-               S.Last_Error := Decode_Error;
-               return;
-            end if;
-            --  RFLX rejected one or more extensions. If this is a
-            --  TLS 1.3 SH (supported_versions present →
-            --  HC.Has_TLS_1_3) the strict allowed set applies and
-            --  any RFLX-rejected ext is unsupported_extension. For
-            --  TLS 1.2 SH the server may echo a broader set RFLX
-            --  doesn't model — leave the legacy permissive behavior.
-            if Saw_Rflx_Rejected and HC.Has_TLS_1_3 then
-               Saw_Unoffered := True;
-            end if;
-            --  RFC 8446 §4.2: renegotiation_info MUST NOT appear in
-            --  TLS 1.3 SH. Allowed in TLS 1.2 SH where the server is
-            --  ack-ing our secure-renegotiation marker.
-            if Saw_Reneg_Info_In_SH and HC.Has_TLS_1_3 then
-               Saw_Unoffered := True;
-            end if;
-            if Saw_Unoffered then
-               --  RFC 8446 §4.2 / RFC 5246 §7.4.1.4: server returned
-               --  a ServerHello extension that's neither one we sent
-               --  in our ClientHello nor a permitted SH-only echo
-               --  (supported_versions / key_share / pre_shared_key /
-               --  renegotiation_info). Fatal `unsupported_extension`.
-               Take_Buffer (Ctx, Buf);
-               RFLX_Free (Buf);
-               S.Last_Error := Unsupported_Extension;
-               return;
-            end if;
+            --  All dup / unsolicited / body-empty / ALPN-shape checks
+            --  ran in Pre_Scan_SH_Extensions above; any failure there
+            --  short-circuited the parse. Nothing else to do here.
          end;
       end if;
 

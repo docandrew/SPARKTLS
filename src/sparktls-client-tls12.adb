@@ -509,6 +509,46 @@ is
                   return;
                end if;
 
+               --  RFC 5246 §7.4.2 / RFC 8422 §5.4: the leaf cert's
+               --  key type must match the cipher suite's expected
+               --  signing algorithm. BoGo CertificateCipherMismatch-*
+               --  sends e.g. an RSA cert with TLS_ECDHE_ECDSA suite
+               --  advertised; we reject with bad_certificate.
+               declare
+                  PK : constant X509.Algorithm_ID :=
+                     X509.PK_Algorithm (HC.Peer_Cert);
+                  Suite_Needs_ECDSA : constant Boolean :=
+                     S.Negotiated_Suite in
+                       Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
+                  Suite_Needs_RSA   : constant Boolean :=
+                     S.Negotiated_Suite in
+                       Suite_ECDHE_RSA_AES128_GCM_SHA256
+                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                     | Suite_ECDHE_RSA_CHACHA20_SHA256;
+                  Cert_Is_ECDSA : constant Boolean :=
+                     PK = X509.Algo_EC_P256
+                     or PK = X509.Algo_EC_P384;
+                  Cert_Is_RSA : constant Boolean :=
+                     PK = X509.Algo_RSA;
+                  Cert_Is_Ed25519 : constant Boolean :=
+                     PK = X509.Algo_EC_Ed25519;
+               begin
+                  if Suite_Needs_ECDSA
+                    and then not (Cert_Is_ECDSA or Cert_Is_Ed25519)
+                  then
+                     Send_Alert_And_Error
+                       (S, Bad_Certificate, Result);
+                     return;
+                  end if;
+                  if Suite_Needs_RSA and then not Cert_Is_RSA then
+                     Send_Alert_And_Error
+                       (S, Bad_Certificate, Result);
+                     return;
+                  end if;
+               end;
+
                --  Chain validation (if trust store is configured)
                if not HC.Cfg.Skip_Verify
                   and then HC.Cfg.Trust /= null

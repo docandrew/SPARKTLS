@@ -214,4 +214,324 @@ is
       S.Server_Seq_12 := 0;
    end Sanitize_Keys;
 
+   --================================================================
+   --  RFC 8446 §4.2 extension policy table
+   --
+   --  One row per known IANA extension type. Where_Allowed is the
+   --  set of message types the extension MAY appear in (server-side;
+   --  CH coverage is via Tag_Is_Offered_Static). Requires_Offer is
+   --  True for everything that's a server "echo / reply" — i.e. the
+   --  server may only include it if the client offered it. Empty_Echo
+   --  is True for extensions whose echoed body must be zero bytes
+   --  (RFC 6066 §3 SNI ack, RFC 7627 EMS, etc.).
+   --================================================================
+   function Ext_Policy_For (Tag : Interfaces.Unsigned_16)
+      return Ext_Policy is
+   begin
+      case Tag is
+         when 16#0000# =>  --  server_name (RFC 6066)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH12 | E_EE => True,
+                                  others => False),
+               Requires_Offer => True,
+               Empty_Echo     => True,
+               Always_In_CH   => False);
+
+         when 16#000A# =>  --  supported_groups (RFC 7919, RFC 8446)
+            --  Strictly RFC 8446 §4.2 only lists CH/EE, but in
+            --  practice some TLS 1.2 servers echo supported_groups
+            --  in SH for client-preference signaling — clients must
+            --  tolerate. BoGo SupportedCurves-ServerHello-TLS12.
+            return
+              (Known => True,
+               Where_Allowed  =>
+                 (E_CH | E_EE | E_SH12 => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => True);
+
+         when 16#000B# =>  --  ec_point_formats (RFC 4492 / 8422)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH12 => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => True);
+
+         when 16#000D# =>  --  signature_algorithms (RFC 8446 §4.2.3)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_CR => True, others => False),
+               Requires_Offer => False,
+               Empty_Echo     => False,
+               Always_In_CH   => True);
+
+         when 16#000F# =>  --  heartbeat (RFC 6520)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_EE => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#0010# =>  --  ALPN (RFC 7301)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH12 | E_EE => True,
+                                  others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#0012# =>  --  signed_certificate_timestamp (RFC 6962)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH12 | E_CR | E_CT => True,
+                                  others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#0017# =>  --  extended_master_secret (RFC 7627)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH12 => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => True,
+               Always_In_CH   => False);
+
+         when 16#001B# =>  --  compress_certificate (RFC 8879)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_CR => True, others => False),
+               Requires_Offer => False,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#001C# =>  --  record_size_limit (RFC 8449)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH12 | E_EE => True,
+                                  others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#0023# =>  --  session_ticket (RFC 5077)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH12 => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#0029# =>  --  pre_shared_key (RFC 8446 §4.2.11)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH13 => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#002A# =>  --  early_data (RFC 8446 §4.2.10)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_EE | E_NST => True,
+                                  others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#002B# =>  --  supported_versions (RFC 8446 §4.2.1)
+            return
+              (Known => True,
+               Where_Allowed  =>
+                 (E_CH | E_SH13 | E_HRR => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => True);
+
+         when 16#002C# =>  --  cookie (RFC 8446 §4.2.2)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_HRR => True, others => False),
+               Requires_Offer => False,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#002D# =>  --  psk_key_exchange_modes (RFC 8446 §4.2.9)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH => True, others => False),
+               Requires_Offer => False,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#002F# =>  --  certificate_authorities (RFC 8446 §4.2.4)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_CR => True, others => False),
+               Requires_Offer => False,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#0032# =>  --  signature_algorithms_cert (RFC 8446 §4.2.3)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_CR => True, others => False),
+               Requires_Offer => False,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+
+         when 16#0033# =>  --  key_share (RFC 8446 §4.2.8)
+            return
+              (Known => True,
+               Where_Allowed  =>
+                 (E_CH | E_SH13 | E_HRR => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => True);
+
+         when 16#FF01# =>  --  renegotiation_info (RFC 5746)
+            return
+              (Known => True,
+               Where_Allowed  => (E_CH | E_SH12 => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => True);
+
+         when others =>
+            --  Unknown / unsupported extension. Where_Allowed empty,
+            --  so any appearance in a server-generated message will
+            --  reject as unsupported_extension. Requires_Offer is
+            --  irrelevant (default).
+            return
+              (Known => False,
+               Where_Allowed  => (others => False),
+               Requires_Offer => True,
+               Empty_Echo     => False,
+               Always_In_CH   => False);
+      end case;
+   end Ext_Policy_For;
+
+   procedure Validate_Server_Ext
+     (Where    : in     Ext_Where;
+      Tag      : in     Interfaces.Unsigned_16;
+      Body_Len : in     N32;
+      HC       : in     Handshake_Context;
+      OK       :    out Boolean;
+      Err      :    out Error_Code)
+   is
+      Policy : constant Ext_Policy := Ext_Policy_For (Tag);
+   begin
+      OK  := True;
+      Err := No_Error;
+
+      --  Unknown extension tag. RFC 8446 §4.3.2 / §4.4: clients MUST
+      --  ignore unrecognised extensions in CR / CT / NST (extension
+      --  points designed for forward extensibility). Elsewhere — SH,
+      --  EE, HRR — unknown tags are forbidden because the server can
+      --  only echo extensions the client offered, and we don't offer
+      --  unknown tags. BoGo
+      --  UnknownExtensionInCertificateRequest-TLS13 confirms the CR
+      --  ignore behaviour.
+      if not Policy.Known then
+         if Where = E_CR or Where = E_CT or Where = E_NST then
+            return;
+         end if;
+         OK  := False;
+         Err := Unsupported_Extension;
+         return;
+      end if;
+
+      if not Policy.Where_Allowed (Where) then
+         OK  := False;
+         Err := Unsupported_Extension;
+         return;
+      end if;
+
+      if Policy.Requires_Offer and then not Tag_Is_Offered (Tag, HC) then
+         OK  := False;
+         Err := Unsupported_Extension;
+         return;
+      end if;
+
+      if Policy.Empty_Echo and then Body_Len /= 0 then
+         OK  := False;
+         Err := Decode_Error;
+         return;
+      end if;
+   end Validate_Server_Ext;
+
+   procedure Validate_ALPN_Echo_Body
+     (Data       : in     Byte_Seq;
+      Body_Start : in     N32;
+      E_Len      : in     N32;
+      HC         : in     Handshake_Context;
+      S          : in out Session;
+      OK         :    out Boolean;
+      Err        :    out Error_Code)
+   is
+   begin
+      OK  := True;
+      Err := No_Error;
+
+      --  Smallest valid body is 4: list_len(2)+proto_len(1)+1 byte.
+      if E_Len < 4 then
+         OK  := False;
+         Err := Decode_Error;
+         return;
+      end if;
+
+      declare
+         List_Len  : constant N32 :=
+            N32 (Data (Body_Start)) * 256
+            + N32 (Data (Body_Start + 1));
+         Proto_Len : constant N32 := N32 (Data (Body_Start + 2));
+      begin
+         if Proto_Len = 0
+           or List_Len /= 1 + Proto_Len
+           or 2 + List_Len /= E_Len
+         then
+            OK  := False;
+            Err := Decode_Error;
+            return;
+         end if;
+
+         --  RFC 7301 §3.2: chosen proto MUST be one we offered.
+         --  Single-proto offer today (Cfg.ALPN).
+         if Proto_Len /= N32 (HC.Cfg.ALPN.Len)
+           or Proto_Len > N32 (Max_Hostname_Len)
+         then
+            OK  := False;
+            Err := Illegal_Parameter;
+            return;
+         end if;
+
+         for I in 1 .. Natural (Proto_Len) loop
+            pragma Loop_Invariant
+              (Proto_Len <= N32 (Max_Hostname_Len)
+               and Natural (Proto_Len) = HC.Cfg.ALPN.Len);
+            if Character'Val (Data (Body_Start + 2 + N32 (I)))
+              /= HC.Cfg.ALPN.Data (I)
+            then
+               OK  := False;
+               Err := Illegal_Parameter;
+               return;
+            end if;
+         end loop;
+
+         --  Match — copy into Negotiated_ALPN.
+         S.Negotiated_ALPN.Len := Natural (Proto_Len);
+         for I in 1 .. Natural (Proto_Len) loop
+            pragma Loop_Invariant
+              (S.Negotiated_ALPN.Len = Natural (Proto_Len)
+               and Proto_Len <= N32 (Max_Hostname_Len));
+            S.Negotiated_ALPN.Data (I) :=
+               Character'Val (Data (Body_Start + 2 + N32 (I)));
+         end loop;
+      end;
+   end Validate_ALPN_Echo_Body;
+
 end SPARKTLS;

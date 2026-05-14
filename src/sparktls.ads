@@ -367,54 +367,81 @@ is
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
 
-   --  IANA-assigned TLS extension type codes that our ClientHello
-   --  builder emits (see Handshake.Client_Msgs.Build_Client_Hello).
-   --  RFC 8446 §4.2: a TLS 1.3 server may only echo / respond with
-   --  extensions the client offered, so this array is also the
-   --  allow-list for SH / EncryptedExtensions / Certificate
-   --  extension validation on the client side.
+   --================================================================
+   --  TLS extension policy table (RFC 8446 §4.2)
    --
-   --  Update this list when adding a new extension to the CH
-   --  builder; otherwise the server's echo will be rejected.
-   Offered_Extension_Tags : constant array (Positive range <>) of
-                              Interfaces.Unsigned_16 :=
-     (16#0000#,  --  server_name (RFC 6066)
-      16#000A#,  --  supported_groups (RFC 8422)
-      16#000B#,  --  ec_point_formats (RFC 8422 §5.1.2)
-      16#000D#,  --  signature_algorithms (RFC 8446 §4.2.3)
-      16#0010#,  --  application_layer_protocol_negotiation (RFC 7301)
-      16#002B#,  --  supported_versions (RFC 8446 §4.2.1)
-      16#002D#,  --  psk_key_exchange_modes (RFC 8446 §4.2.9)
-      16#0033#); --  key_share (RFC 8446 §4.2.8)
+   --  Single source of truth for every TLS extension we recognise.
+   --  Each entry says (a) which message types the extension may
+   --  appear in, (b) whether a server may include it only after the
+   --  client offered it in CH, and (c) whether the server's echo
+   --  body must be empty (RFC 6066 §3 server_name ack, etc.).
+   --
+   --  All client-side server-extension validation goes through
+   --  Validate_Server_Ext below — adding a new extension means
+   --  adding one row to Ext_Policy_For, not peppering checks at
+   --  every parse site.
+   --================================================================
 
-   function Is_Offered_Extension
+   --  TLS messages that can carry extensions. The split SH13/SH12 is
+   --  necessary because RFC 8446 §4.2 says key_share, pre_shared_key,
+   --  supported_versions are SH-only-in-TLS-1.3 while RFC 6066 / 7301
+   --  / 5746 / etc. let TLS 1.2 SH echo server_name, ALPN,
+   --  ec_point_formats, renegotiation_info, EMS, status_request, etc.
+   type Ext_Where is
+     (E_CH,      --  ClientHello
+      E_SH13,    --  TLS 1.3 ServerHello
+      E_SH12,    --  TLS 1.2 ServerHello
+      E_HRR,     --  HelloRetryRequest
+      E_EE,      --  EncryptedExtensions
+      E_CR,      --  CertificateRequest
+      E_CT,      --  Certificate (per-cert extensions)
+      E_NST);    --  NewSessionTicket
+
+   type Ext_Where_Set is array (Ext_Where) of Boolean
+     with Default_Component_Value => False;
+
+   type Ext_Policy is record
+      --  False for tags not in the IANA registry / not modelled
+      --  here. Per RFC 8446 §4.2: "If an implementation receives
+      --  an extension which it recognizes and which is not
+      --  specified for the message in which it appears, it MUST
+      --  abort..." — recognition matters. Unknown extensions are
+      --  ignored where the RFC says to (e.g. RFC 8446 §4.3.2 CR);
+      --  rejected where the RFC forbids unsolicited extensions
+      --  (RFC 8446 §4.2 SH/EE).
+      Known          : Boolean       := False;
+      --  Set of message types where this extension MAY appear.
+      Where_Allowed  : Ext_Where_Set := (others => False);
+      --  When True, the extension MAY only appear in a server-
+      --  generated message if the client offered the same tag in
+      --  CH. RFC 8446 §4.2.
+      Requires_Offer : Boolean       := True;
+      --  When True, the server's echo body MUST be exactly zero
+      --  bytes (RFC 6066 §3 server_name ack, RFC 7627 EMS, etc.).
+      Empty_Echo     : Boolean       := False;
+      --  When True, our CH builder always emits this extension
+      --  regardless of Cfg state. Used by Tag_Is_Offered to answer
+      --  "did we offer this?" for the matrix Requires_Offer check.
+      --  Conditional offerings (SNI iff Cfg.Server_Name set, ALPN
+      --  iff Cfg.ALPN set) override this via the HC-aware overload.
+      Always_In_CH   : Boolean       := False;
+   end record;
+
+   --  Returns the policy row for a given extension type tag.
+   --  Unknown tags get an empty Where_Allowed set, so any appearance
+   --  in a server-generated message rejects as unsupported_extension.
+   --  Add a `when` arm here to register a new extension; nothing
+   --  else needs to change.
+   function Ext_Policy_For (Tag : Interfaces.Unsigned_16) return Ext_Policy;
+
+   --  "Did our CH builder always emit this extension?" — derived
+   --  from `Ext_Policy_For (Tag).Always_In_CH`. Update by setting
+   --  Always_In_CH on the matrix row, not by editing this function.
+   --  Conditional offerings (SNI, ALPN, mTLS) are answered by the
+   --  HC-aware overload below.
+   function Tag_Is_Offered_Static
      (Tag : Interfaces.Unsigned_16) return Boolean is
-     (for some E of Offered_Extension_Tags => E = Tag);
-
-   --  Extensions the server may legitimately put in a ServerHello
-   --  (TLS 1.3 §4.1.3 + RFC 5246 §7.4.1.4 echo set). Narrower than
-   --  Offered_Extension_Tags — most extensions move to
-   --  EncryptedExtensions in TLS 1.3, and SH only carries
-   --  version-negotiation + key-exchange replies plus renegotiation
-   --  info for TLS 1.2.
-   Allowed_SH_Extension_Tags : constant array (Positive range <>) of
-                                  Interfaces.Unsigned_16 :=
-     (16#002B#,  --  supported_versions
-      16#0033#,  --  key_share
-      16#0029#,  --  pre_shared_key (TLS 1.3 PSK selection)
-      16#FF01#); --  renegotiation_info (TLS 1.2)
-
-   --  Extensions the server may put in a TLS 1.3 EncryptedExtensions
-   --  message — intersection of RFC 8446 §4.2 EE-permitted set with
-   --  our Offered_Extension_Tags. Notably key_share / supported_
-   --  versions belong in SH (and HRR), not EE. BoGo's
-   --  EncryptedExtensionsWithKeyShare-TLS13 sends key_share-in-EE
-   --  to exercise this.
-   Allowed_EE_Extension_Tags : constant array (Positive range <>) of
-                                  Interfaces.Unsigned_16 :=
-     (16#0000#,  --  server_name (RFC 6066 ack)
-      16#000A#,  --  supported_groups (rare informational echo)
-      16#0010#); --  ALPN-selected protocol
+     (Ext_Policy_For (Tag).Always_In_CH);
 
    --  RFC 5246 §8.1 / RFC 7627: Master secret derivation invariant.
    --  The derivation label MUST match the EMS negotiation.
@@ -1099,6 +1126,14 @@ is
       --  True if the client's supported_versions extension contains 0x0304.
       --  If False, we negotiate TLS 1.2 (if legacy_version = 0x0303).
       Has_TLS_1_3 : Boolean := False;
+      --  RFC 8446 §4.2.1: client sent supported_versions extension.
+      Saw_Supported_Versions : Boolean := False;
+      --  RFC 8446 §4.2.1: supported_versions listed at least one
+      --  version we can negotiate (TLS 1.2 or TLS 1.3). When the
+      --  client sent the extension but none of the listed versions
+      --  match our policy, the server MUST reply with
+      --  protocol_version. BoGo NoSupportedVersions.
+      SV_Has_Acceptable : Boolean := False;
 
       --  TLS 1.2: ClientKeyExchange already received
       CKE_Received_12 : Boolean := False;
@@ -1642,6 +1677,40 @@ is
    type Handshake_Context_Access is access Handshake_Context;
 
    --================================================================
+   --  TLS extension policy: HC-aware Tag_Is_Offered + Validate_Server_Ext
+   --================================================================
+
+   --  Combines Tag_Is_Offered_Static with the conditional CH
+   --  offerings: server_name (iff Cfg.Server_Name.Len > 0), ALPN
+   --  (iff Cfg.ALPN.Len > 0). We don't currently offer
+   --  pre_shared_key (0x0029) under any circumstance.
+   function Tag_Is_Offered
+     (Tag : Interfaces.Unsigned_16;
+      HC  : Handshake_Context) return Boolean is
+     (Tag_Is_Offered_Static (Tag)
+      or else (Tag = 16#0000# and then HC.Cfg.Server_Name.Len > 0)
+      or else (Tag = 16#0010# and then HC.Cfg.ALPN.Len > 0));
+
+   --  RFC 8446 §4.2 single-call validator for any server-generated
+   --  extension. Returns OK = True on success; otherwise sets
+   --  Err to the alert that should be raised:
+   --   * Unsupported_Extension — extension type not allowed in this
+   --     message, or not offered when Requires_Offer is True
+   --   * Decode_Error          — body present where it must be empty
+   --
+   --  Caller is responsible for body-shape / content validation
+   --  beyond the empty-or-not boundary (RFC 7301 §3.2 ALPN proto
+   --  match, RFC 8446 §4.2.8 key_share single-entry tile, etc.) —
+   --  those need per-tag knowledge.
+   procedure Validate_Server_Ext
+     (Where    : in     Ext_Where;
+      Tag      : in     Interfaces.Unsigned_16;
+      Body_Len : in     N32;
+      HC       : in     Handshake_Context;
+      OK       :    out Boolean;
+      Err      :    out Error_Code);
+
+   --================================================================
    --  Session Ticket (for resumption)
    --================================================================
 
@@ -1722,6 +1791,33 @@ is
       --  Handshake context (heap-allocated, freed after handshake)
       HC_Ptr : Handshake_Context_Access := null;
    end record;
+
+   --  RFC 7301 §3.1/§3.2: validate the server's ALPN-echo body in a
+   --  SH or EE extension and (on success) copy the chosen protocol
+   --  name into S.Negotiated_ALPN. Body shape:
+   --     list_len(2) + proto_len(1) + proto_name(proto_len)
+   --
+   --  Body_Start is the index of the list_len byte in Data; E_Len is
+   --  the declared extension body length. Caller must guarantee
+   --  Body_Start + E_Len <= Data'Last + 1.
+   --
+   --  On failure:
+   --    Decode_Error      — body too short, empty proto, list/body
+   --                        length mismatch
+   --    Illegal_Parameter — chosen proto doesn't match the one we
+   --                        offered in CH (RFC 7301 §3.2)
+   procedure Validate_ALPN_Echo_Body
+     (Data       : in     Byte_Seq;
+      Body_Start : in     N32;
+      E_Len      : in     N32;
+      HC         : in     Handshake_Context;
+      S          : in out Session;
+      OK         :    out Boolean;
+      Err        :    out Error_Code)
+   with Pre  => Data'Length > 0
+                and then Body_Start >= Data'First
+                and then E_Len >= 0
+                and then Body_Start + E_Len <= Data'Last + 1;
 
    --================================================================
    --  Buffer operations (transport layer interface)

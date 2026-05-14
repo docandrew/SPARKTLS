@@ -448,6 +448,7 @@ is
       Pos      : N32;
    begin
       RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, SV_Buf.all);
+      HC.Saw_Supported_Versions := True;
       List_Len := N32 (SV_Buf (1));
       Pos := 2;
       while Pos + 1 <= N32 (DLen) and then Pos < 2 + List_Len loop
@@ -456,6 +457,11 @@ is
            and then N32 (SV_Buf (RBT.Index (Pos + 1))) = 4
          then
             HC.Has_TLS_1_3 := True;
+            HC.SV_Has_Acceptable := True;
+         elsif N32 (SV_Buf (RBT.Index (Pos))) = 3
+           and then N32 (SV_Buf (RBT.Index (Pos + 1))) = 3
+         then
+            HC.SV_Has_Acceptable := True;
          end if;
          Pos := Pos + 2;
       end loop;
@@ -1020,6 +1026,60 @@ is
                end;
             end if;
 
+         when RFLX.Tls_Extensiontype_Values.Certificate_Authorities =>
+            --  RFC 8446 §4.2.4 CertificateAuthoritiesExtension body:
+            --    authorities_length(2) + DistinguishedName[]
+            --    each DN = name_length(2) + DER bytes
+            --  Validate that the outer length tiles the body exactly,
+            --  each DN consumes its declared length, and the DN list
+            --  is non-empty. BoGo ExtensionTrailingData-
+            --  CertificateAuthorities-Server + RejectEmpty
+            --  CertificateAuthorities-Server.
+            if DLen >= 2 and then DLen in Wire_Ext_Len then
+               declare
+                  ED       : RBT.Bytes (1 .. RBT.Index (DLen));
+                  Ext_Data : Byte_Seq (0 .. DLen - 1);
+                  List_Len : N32;
+                  P        : N32 := 2;
+                  Bad      : Boolean := False;
+               begin
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
+                  Ext_Data := To_NaCl (ED);
+                  List_Len :=
+                     N32 (Ext_Data (0)) * 256 + N32 (Ext_Data (1));
+                  if 2 + List_Len /= DLen or List_Len = 0 then
+                     Bad := True;
+                  else
+                     while not Bad and then P < DLen loop
+                        pragma Loop_Invariant
+                          (P >= 2 and then P <= DLen);
+                        pragma Loop_Variant (Increases => P);
+                        if P + 2 > DLen then
+                           Bad := True;
+                        else
+                           declare
+                              DN_Len : constant N32 :=
+                                 N32 (Ext_Data (P)) * 256
+                                 + N32 (Ext_Data (P + 1));
+                           begin
+                              if P + 2 + DN_Len > DLen
+                                or DN_Len = 0
+                              then
+                                 Bad := True;
+                              else
+                                 P := P + 2 + DN_Len;
+                              end if;
+                           end;
+                        end if;
+                     end loop;
+                  end if;
+                  if Bad then
+                     OK := False;
+                     return;
+                  end if;
+               end;
+            end if;
+
          when others =>
             null;
       end case;
@@ -1367,6 +1427,16 @@ is
 
       Take_Buffer (Ctx, Buf);
       RFLX_Free (Buf);
+
+      --  RFC 8446 §4.2.1: if the client sent supported_versions but
+      --  did not list any version we can negotiate, reject with
+      --  protocol_version (instead of silently falling back to the
+      --  legacy_version path). BoGo NoSupportedVersions.
+      if HC.Saw_Supported_Versions and then not HC.SV_Has_Acceptable then
+         S.Last_Error := Protocol_Version;
+         OK := False;
+         return;
+      end if;
 
       --  Set version based on supported_versions parsing.
       --  If the client offered TLS 1.3 (0x0304), use it.
