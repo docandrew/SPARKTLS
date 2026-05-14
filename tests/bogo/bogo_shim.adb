@@ -365,6 +365,8 @@ procedure Bogo_Shim is
          end loop;
       end Send_Pending;
 
+      First_Server_Bytes_Seen : Boolean := False;
+
       procedure Recv_Once (Done : out Boolean) is
          SE   : Stream_Element_Array (1 .. 16384);
          Last : Stream_Element_Offset;
@@ -382,6 +384,43 @@ procedure Bogo_Shim is
             for K in 0 .. Avail - 1 loop
                Net_In (K) := Byte (SE (SE'First + Stream_Element_Offset (K)));
             end loop;
+            --  Client-mode peek: examine the first server message.
+            --  TLS 1.0/1.1 servers send ServerHello with body
+            --  legacy_version < 0x0303. Our client only speaks
+            --  TLS 1.2/1.3, so these tests are not runnable for
+            --  us. Exit 89 so the BoGo runner treats it as
+            --  UNIMPLEMENTED rather than a fail.
+            --
+            --  Layout: record_hdr(5) || hs_hdr(4) || legacy_version(2)
+            --  Net_In (0)        = content_type (expect 0x16 handshake)
+            --  Net_In (5)        = handshake_type (expect 0x02 SH)
+            --  Net_In (9..10)    = ServerHello.legacy_version
+            --
+            --  record_version (Net_In 1..2) is NOT a reliable signal:
+            --  some TLS 1.2/1.3 servers send their first record with
+            --  record_version=0x0301 (TLS 1.0) for middlebox compat.
+            --  Only the SH body's legacy_version is authoritative.
+            if not First_Server_Bytes_Seen
+              and then not Cfg.Is_Server
+              and then Avail >= 11
+              and then Net_In (0) = 16#16#  --  handshake record
+              and then Net_In (5) = 16#02#  --  ServerHello type
+            then
+               First_Server_Bytes_Seen := True;
+               declare
+                  Lv : constant Unsigned_16 :=
+                    Unsigned_16 (Net_In (9)) * 256 +
+                    Unsigned_16 (Net_In (10));
+               begin
+                  if Lv < 16#0303# then
+                     Err ("bogo_shim: server speaks TLS 1.0/1.1 — "
+                          & "unimplemented");
+                     Ada.Command_Line.Set_Exit_Status
+                       (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
+                     raise Program_Error;
+                  end if;
+               end;
+            end if;
             Feed_Ciphertext (S, Net_In (0 .. Avail - 1), Fed);
          end;
       end Recv_Once;

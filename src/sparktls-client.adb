@@ -1912,11 +1912,14 @@ is
                      end;
 
                   when Records.Content_Change_Cipher_Spec =>
-                     --  RFC 8446 §5: a TLS 1.3 client may receive
-                     --  CCS for middlebox-compat at any point after
-                     --  the first ClientHello — drain and continue.
-                     --  RFC 5246 §7.1: payload MUST be the single byte
-                     --  0x01. BoGo BadChangeCipherSpec-* asserts this.
+                     --  RFC 8446 §5: a TLS 1.3 client may receive at
+                     --  most ONE CCS for middlebox-compat between
+                     --  ServerHello and the encrypted handshake.
+                     --  Subsequent CCS records are unexpected. BoGo
+                     --  TooManyChangeCipherSpec-Client-TLS13 forces 33
+                     --  CCS records and expects rejection
+                     --  (:TOO_MANY_EMPTY_FRAGMENTS:). Payload MUST be
+                     --  the single byte 0x01 (BoGo BadChangeCipherSpec).
                      declare
                         CCS_Pos : constant N32 :=
                            S.Input.Read_Pos + Rec.Fragment_Pos;
@@ -1926,7 +1929,8 @@ is
                      begin
                         S.Input.Read_Pos :=
                            S.Input.Read_Pos + Rec.Record_Len;
-                        if CCS_OK then
+                        if CCS_OK and then not HC.CCS_Received then
+                           HC.CCS_Received := True;
                            Result := OK;
                         else
                            --  Pre-key state: plaintext alert.
@@ -2283,7 +2287,9 @@ is
       case Rec.Content is
          when Records.Content_Change_Cipher_Spec =>
             --  CCS for middlebox compatibility. RFC 5246 §7.1: the
-            --  payload MUST be the single byte 0x01.
+            --  payload MUST be the single byte 0x01. RFC 8446 §5
+            --  permits exactly one server CCS per connection (the
+            --  middlebox-compat dummy); a second one is unexpected.
             declare
                CCS_Pos : constant N32 :=
                   S.Input.Read_Pos + Rec.Fragment_Pos;
@@ -2292,7 +2298,7 @@ is
                   and then S.Input.Data (CCS_Pos) = 16#01#;
             begin
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               if CCS_OK then
+               if CCS_OK and then not HC.CCS_Received then
                   HC.CCS_Received := True;
                   Result := OK;
                else
@@ -2525,8 +2531,18 @@ is
                               --  BoGo TrailingDataWithFinished: stray
                               --  bytes after server's Finished →
                               --  fatal unexpected_message.
-                              Send_HS_Encrypted_Alert
-                                (S, HC, Unexpected_Message, Result);
+                              --
+                              --  Derive_App_Keys_And_Send_Finished has
+                              --  already run (state = Client_Finished_
+                              --  _Sent), so the server's read key has
+                              --  switched from server_handshake_traffic_
+                              --  secret to client_application_traffic_
+                              --  secret. Encrypting this alert under
+                              --  HC.Client_HS would now be rejected as
+                              --  bad_record_mac. Use the app-secret
+                              --  helper.
+                              Send_App_Encrypted_Alert
+                                (S, Unexpected_Message, Result);
                               exit;
                            end if;
                         end;

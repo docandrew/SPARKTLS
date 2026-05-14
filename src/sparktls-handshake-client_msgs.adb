@@ -937,6 +937,22 @@ is
          return;
       end if;
 
+      --  RFC 8446 §4.1.4 / §4.1.3: in TLS 1.3 ServerHello + HRR,
+      --  legacy_compression_method MUST be 0. The TLS 1.2 parser
+      --  enforces this for SH12 with `illegal_parameter`. For HRR we
+      --  need decode_error per BoGo
+      --  TLS13-HRR-InvalidCompressionMethod. We only have the
+      --  Is_HRR_Msg signal here; the SH13/SH12 dispatch happens
+      --  later, so apply the HRR check up-front and let TLS 1.2
+      --  handle SH compression as before.
+      if Is_HRR_Msg
+        and then Data (B + 35 + Sid_Len + 2) /= 0
+      then
+         S.Last_Error := Decode_Error;
+         OK := False;
+         return;
+      end if;
+
       Ext_Total := N32 (Data (P)) * 256 + N32 (Data (P + 1));
       P := P + 2;
 
