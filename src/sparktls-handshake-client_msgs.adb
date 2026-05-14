@@ -30,6 +30,15 @@ is
    use type RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values_Enum;
    use type RFLX.Tls_Parameters.TLS_Supported_Groups_Enum;
 
+   --  RFC 8446 §4.1.4: SHA-256("HelloRetryRequest") — the magic
+   --  ServerHello.random value that marks a record as a
+   --  HelloRetryRequest rather than a real ServerHello.
+   HRR_Sentinel : constant Byte_Seq (0 .. 31) :=
+     (16#CF#, 16#21#, 16#AD#, 16#74#, 16#E5#, 16#9A#, 16#61#, 16#11#,
+      16#BE#, 16#1D#, 16#8C#, 16#02#, 16#1E#, 16#65#, 16#B8#, 16#91#,
+      16#C2#, 16#A2#, 16#11#, 16#16#, 16#7A#, 16#BB#, 16#8C#, 16#5E#,
+      16#07#, 16#9E#, 16#09#, 16#E2#, 16#C8#, 16#A8#, 16#33#, 16#9C#);
+
    --  Deallocate an RFLX buffer.
    --  Body is SPARK_Mode Off (Unchecked_Deallocation of 'access all').
    --  Spec is On so SPARK can verify call sites.
@@ -52,15 +61,31 @@ is
    --================================================================
 
    procedure Build_Client_Hello
-     (S      : in     Session;
-      HC     : in out Handshake_Context;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
+     (S          : in     Session;
+      HC         : in out Handshake_Context;
+      Result     :    out Byte_Seq;
+      Len        :    out N32;
+      Retry_Mode : in     Boolean := False)
    is
       use RFLX.TLS_Handshake.Client_Hello;
       use RFLX.TLS_Common;
 
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
+
+      --  Retry CH2 with a server-selected group: only that group's
+      --  share goes in key_share. Server-chose-no-group ⇒
+      --  HC.HRR_Selected_Group = 0 ⇒ same key_share as CH1.
+      Retry_KS_Single : constant Boolean :=
+         Retry_Mode and then HC.HRR_Selected_Group /= 0;
+      --  Single-entry shares_len, in bytes:
+      --   X25519:   group(2)+key_len(2)+key(32) = 36
+      --   secp256r1: group(2)+key_len(2)+key(65) = 69
+      --   secp384r1: group(2)+key_len(2)+key(97) = 101
+      Retry_KS_Entry : constant N32 :=
+        (if HC.HRR_Selected_Group = 16#001D# then 36
+         elsif HC.HRR_Selected_Group = 16#0017# then 69
+         elsif HC.HRR_Selected_Group = 16#0018# then 101
+         else 0);
 
       --  Extension data sizes
       Host_Len : constant N32 := N32 (HC.Cfg.Server_Name.Len);
@@ -70,8 +95,22 @@ is
       SG_Data_Len  : constant N32 := 8;
       --  signature_algorithms data: list_len(2) + alg(2) * 6
       SA_Data_Len  : constant N32 := 14;
-      --  key_share data: shares_len(2) + x25519(36) + secp256r1(69) + secp384r1(101)
-      KS_Data_Len  : constant N32 := 208;
+      --  key_share data: shares_len(2) + entries.
+      --
+      --  CH1 strategy (RFC 8446 §9.1 + standard browser practice):
+      --  send key_share only for X25519. supported_groups still
+      --  advertises all three (X25519, secp256r1, secp384r1) so the
+      --  server can request HRR to switch to another curve. This
+      --  matches Chrome/Firefox/curl: it keeps CH1 small (38 vs 208
+      --  bytes), skips two ECC scalar-mults, and triggers proper HRR
+      --  flow when the server prefers a non-X25519 group. BoGo tests
+      --  with `ExpectMissingKeyShare: true` rely on this behavior.
+      --
+      --  Retry with selected group: 2 + Retry_KS_Entry (36/69/101).
+      --  Retry with no curve change (cookie-only HRR): same as CH1
+      --  = X25519 single share = 38 bytes.
+      KS_Data_Len  : constant N32 :=
+        (if Retry_KS_Single then 2 + Retry_KS_Entry else 38);
       --  psk_key_exchange_modes data: list_len(1) + mode(1)
       PSK_Data_Len : constant N32 := 2;
       --  supported_versions data: list_len(1) + version(2) * N.
@@ -96,12 +135,23 @@ is
       ALPN_Ext_Len : constant N32 :=
          (if ALPN_Len > 0 then 4 + ALPN_Data_Len else 0);
 
+      --  Cookie extension (RFC 8446 §4.2.2) — only in CH2 when the
+      --  HRR carried one. Body: cookie_len(2) + cookie<cookie_len>.
+      Cookie_Bytes_Len : constant N32 :=
+        (if Retry_Mode and then HC.HRR_Cookie_Len > 0
+         then HC.HRR_Cookie_Len else 0);
+      Cookie_Data_Len  : constant N32 :=
+        (if Cookie_Bytes_Len > 0 then 2 + Cookie_Bytes_Len else 0);
+      Cookie_Ext_Len   : constant N32 :=
+        (if Cookie_Bytes_Len > 0 then 4 + Cookie_Data_Len else 0);
+
       --  Each extension: tag(2) + data_length(2) + data
       Ext_Total : constant N32 :=
          (4 + SNI_Data_Len) + (4 + SG_Data_Len) + (4 + SA_Data_Len) +
          (4 + KS_Data_Len) + (4 + PSK_Data_Len) + (4 + SV_Data_Len) +
          (4 + EPF_Data_Len) +
-         ALPN_Ext_Len;
+         ALPN_Ext_Len +
+         Cookie_Ext_Len;
 
       --  ClientHello body: version(2) + random(32) + sid_len(1) +
       --  sid(0 | 32) + suites_len(2) + suites(18) + comp_len(1) +
@@ -125,13 +175,15 @@ is
       Len    := 0;
 
       --  Generate ephemeral X25519 keypair (Fiat X25519).
-      --  Use temporaries to avoid SPARK aliasing between Gen_Random's out
-      --  parameter and HC's globals (HC is in-out global to this proc).
+      --  In retry mode (CH2 for HRR), reuse the CH1 SK so the server
+      --  still recognises the share if the selected_group matches.
       declare
          Tmp_X25519 : Bytes_32;
       begin
-         Gen_Random (Byte_Seq (Tmp_X25519));
-         HC.Local_SK := Tmp_X25519;
+         if not Retry_Mode then
+            Gen_Random (Byte_Seq (Tmp_X25519));
+            HC.Local_SK := Tmp_X25519;
+         end if;
          declare
             Basepoint : constant Bytes_32 := (9, others => 0);
          begin
@@ -139,34 +191,40 @@ is
          end;
       end;
 
-      --  Generate ephemeral P-256 keypair
+      --  Generate ephemeral P-256 keypair (reused in retry mode).
       declare
          P256_Pt    : SPARKTLSCrypto.P256.Point.P256_Jacobian;
          Tmp_P256   : Bytes_32;
       begin
-         Gen_Random (Byte_Seq (Tmp_P256));
-         HC.P256_Local_SK := Tmp_P256;
+         if not Retry_Mode then
+            Gen_Random (Byte_Seq (Tmp_P256));
+            HC.P256_Local_SK := Tmp_P256;
+         end if;
          SPARKTLSCrypto.P256.Point.P256_Mulgen
            (P256_Pt, HC.P256_Local_SK, 32);
          SPARKTLSCrypto.P256.Point.P256_To_Affine (P256_Pt);
          SPARKTLSCrypto.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
       end;
 
-      --  Generate ephemeral P-384 keypair
+      --  Generate ephemeral P-384 keypair (reused in retry mode).
       declare
          Tmp_P384 : Bytes_48;
       begin
-         Gen_Random (Byte_Seq (Tmp_P384));
-         HC.P384_Local_SK := Tmp_P384;
+         if not Retry_Mode then
+            Gen_Random (Byte_Seq (Tmp_P384));
+            HC.P384_Local_SK := Tmp_P384;
+         end if;
          SPARKTLSCrypto.P384.Point.P384_Mulgen (P384_PK_Enc, HC.P384_Local_SK);
       end;
 
-      --  Generate client random
+      --  Generate client random (retain CH1's random across HRR).
       declare
          Tmp_CR : Bytes_32;
       begin
-         Gen_Random (Byte_Seq (Tmp_CR));
-         HC.Client_Random := Tmp_CR;
+         if not Retry_Mode then
+            Gen_Random (Byte_Seq (Tmp_CR));
+            HC.Client_Random := Tmp_CR;
+         end if;
       end;
 
       --  Generate 32-byte legacy session ID for middlebox compatibility
@@ -174,15 +232,18 @@ is
       --  middlebox concern, so they SHOULD send an empty session_id;
       --  doing otherwise leaks "client speaks TLS 1.3" to a real
       --  TLS 1.2 server. BoGo TLS12NoSessionID-TLS13 exercises this.
+      --  In retry mode, reuse the CH1 session_id verbatim.
       declare
          Legacy_Session_ID : Byte_Seq (0 .. 31);
       begin
-         if HC.Cfg.Versions = TLS_1_2_Only then
-            Legacy_Session_ID := (others => 0);
-         else
-            Gen_Random (Legacy_Session_ID);
+         if not Retry_Mode then
+            if HC.Cfg.Versions = TLS_1_2_Only then
+               Legacy_Session_ID := (others => 0);
+            else
+               Gen_Random (Legacy_Session_ID);
+            end if;
+            HC.Legacy_Session_ID := Legacy_Session_ID;
          end if;
-         HC.Legacy_Session_ID := Legacy_Session_ID;
       end;
 
       --  PK_Bytes already set by X25519.Scalar_Mult above
@@ -449,36 +510,51 @@ is
             RFLX_Free (Ext_Buf);
          end;
 
-         --  Extension 4: key_share (0x0033)
-         --  Contains two key shares: X25519 (36 bytes) + secp256r1 (69 bytes)
+         --  Extension 4: key_share (0x0033).
+         --  CH1 / retry-no-group-change: three KeyShareEntry (X25519
+         --  36, secp256r1 69, secp384r1 101). Retry with selected
+         --  group: a single entry for that group only.
          declare
             Ext_Buf : RBT.Bytes_Ptr;
             Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             KS_Raw  : Byte_Seq (0 .. KS_Data_Len - 1);
-            --  shares_len = 36 + 69 + 101 = 206
          begin
             KS_Raw := (others => 0);
-            --  shares_len(2)
-            KS_Raw (0) := 16#00#;
-            KS_Raw (1) := 16#CE#;  --  206 bytes total
-            --  X25519 key share: group(2) + key_len(2) + key(32)
-            KS_Raw (2) := 16#00#;
-            KS_Raw (3) := 16#1D#;  --  X25519
-            KS_Raw (4) := 16#00#;
-            KS_Raw (5) := 16#20#;  --  32 bytes
-            KS_Raw (6 .. 37) := PK_Bytes;
-            --  secp256r1 key share: group(2) + key_len(2) + key(65)
-            KS_Raw (38) := 16#00#;
-            KS_Raw (39) := 16#17#;  --  secp256r1
-            KS_Raw (40) := 16#00#;
-            KS_Raw (41) := 16#41#;  --  65 bytes
-            KS_Raw (42 .. 106) := P256_PK_Enc;
-            --  secp384r1 key share: group(2) + key_len(2) + key(97)
-            KS_Raw (107) := 16#00#;
-            KS_Raw (108) := 16#18#;  --  secp384r1
-            KS_Raw (109) := 16#00#;
-            KS_Raw (110) := 16#61#;  --  97 bytes
-            KS_Raw (111 .. 207) := P384_PK_Enc;
+            if Retry_KS_Single then
+               --  Single-entry retry key_share.
+               KS_Raw (0) := Byte (Retry_KS_Entry / 256);
+               KS_Raw (1) := Byte (Retry_KS_Entry mod 256);
+               if HC.HRR_Selected_Group = 16#001D# then
+                  KS_Raw (2) := 16#00#;
+                  KS_Raw (3) := 16#1D#;  --  X25519
+                  KS_Raw (4) := 16#00#;
+                  KS_Raw (5) := 16#20#;
+                  KS_Raw (6 .. 37) := PK_Bytes;
+               elsif HC.HRR_Selected_Group = 16#0017# then
+                  KS_Raw (2) := 16#00#;
+                  KS_Raw (3) := 16#17#;  --  secp256r1
+                  KS_Raw (4) := 16#00#;
+                  KS_Raw (5) := 16#41#;
+                  KS_Raw (6 .. 70) := P256_PK_Enc;
+               elsif HC.HRR_Selected_Group = 16#0018# then
+                  KS_Raw (2) := 16#00#;
+                  KS_Raw (3) := 16#18#;  --  secp384r1
+                  KS_Raw (4) := 16#00#;
+                  KS_Raw (5) := 16#61#;
+                  KS_Raw (6 .. 102) := P384_PK_Enc;
+               end if;
+            else
+               --  CH1 / cookie-only retry: single X25519 entry.
+               --  shares_len(2) = 36
+               KS_Raw (0) := 16#00#;
+               KS_Raw (1) := 16#24#;
+               --  X25519 key share: group(2) + key_len(2) + key(32)
+               KS_Raw (2) := 16#00#;
+               KS_Raw (3) := 16#1D#;  --  X25519
+               KS_Raw (4) := 16#00#;
+               KS_Raw (5) := 16#20#;  --  32 bytes
+               KS_Raw (6 .. 37) := PK_Bytes;
+            end if;
 
             Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + KS_Data_Len) => 0);
             RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
@@ -494,6 +570,38 @@ is
               (Ext_Ctx, Ext_Buf);
             RFLX_Free (Ext_Buf);
          end;
+
+         --  Extension 4.5 (retry only): cookie (0x002C) — echo back
+         --  the cookie the server sent in HRR. RFC 8446 §4.2.2.
+         if Cookie_Bytes_Len > 0 then
+            declare
+               Ext_Buf  : RBT.Bytes_Ptr;
+               Ext_Ctx  : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
+               Cookie_Raw : Byte_Seq (0 .. Cookie_Data_Len - 1);
+            begin
+               Cookie_Raw (0) := Byte (Cookie_Bytes_Len / 256);
+               Cookie_Raw (1) := Byte (Cookie_Bytes_Len mod 256);
+               for I in 0 .. Cookie_Bytes_Len - 1 loop
+                  Cookie_Raw (2 + I) := HC.HRR_Cookie (I);
+               end loop;
+               Ext_Buf := new RBT.Bytes'
+                 (1 .. RBT.Index (4 + Cookie_Data_Len) => 0);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
+                 (Ext_Ctx, Ext_Buf);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
+                 (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Cookie);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
+                 (Ext_Ctx,
+                  RFLX.TLS_Handshake.Data_Length (Cookie_Data_Len));
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
+                 (Ext_Ctx, To_RFLX (Cookie_Raw));
+               RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
+                 (Exts_Ctx, Ext_Ctx);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
+                 (Ext_Ctx, Ext_Buf);
+               RFLX_Free (Ext_Buf);
+            end;
+         end if;
 
          --  Extension 5: psk_key_exchange_modes (0x002D)
          declare
@@ -781,17 +889,26 @@ is
    --    RFC 6066 §3      SNI ack body MUST be empty
    --    RFC 8446 §4.2.11 pre_shared_key in SH iff client offered PSK
    --    RFC 7301 §3.1    ALPN body = list_len(2)+proto_len(1)+proto
+   --  Is_HRR_Msg: True when the SH currently being parsed is itself
+   --  an HelloRetryRequest (sentinel matches). Distinct from
+   --  HC.Got_HRR which latches across the SH1+SH2 pair (used only for
+   --  double-HRR rejection in the second SH). Pre_Scan uses
+   --  Is_HRR_Msg for: extension-Where dispatch (E_HRR vs E_SH13),
+   --  duplicate-ext error (illegal_parameter vs decode_error), and
+   --  HRR-specific body extraction (selected_group / cookie).
    procedure Pre_Scan_SH_Extensions
-     (Data : in     Byte_Seq;
-      HC   : in out Handshake_Context;
-      S    : in out Session;
-      OK   :    out Boolean);
+     (Data       : in     Byte_Seq;
+      HC         : in out Handshake_Context;
+      S          : in out Session;
+      Is_HRR_Msg : in     Boolean;
+      OK         :    out Boolean);
 
    procedure Pre_Scan_SH_Extensions
-     (Data : in     Byte_Seq;
-      HC   : in out Handshake_Context;
-      S    : in out Session;
-      OK   :    out Boolean)
+     (Data       : in     Byte_Seq;
+      HC         : in out Handshake_Context;
+      S          : in out Session;
+      Is_HRR_Msg : in     Boolean;
+      OK         :    out Boolean)
    is
       B    : constant N32 := Data'First + 4;  --  body start
       P    : N32;
@@ -846,7 +963,14 @@ is
             begin
                for I in 1 .. N_Ext loop
                   if Exts (I).Tag = Tag_U16 then
-                     S.Last_Error := Decode_Error;
+                     --  RFC 8446 §4.2: duplicate ext in SH/EE →
+                     --  decode_error. In HRR specifically BoringSSL
+                     --  expects illegal_parameter
+                     --  (HelloRetryRequest-DuplicateCookie /
+                     --  DuplicateCurve).
+                     S.Last_Error :=
+                        (if Is_HRR_Msg then Illegal_Parameter
+                         else Decode_Error);
                      OK := False;
                      return;
                   end if;
@@ -869,7 +993,9 @@ is
       --  violations); body validators run only on matrix-OK entries.
       declare
          Where : constant Ext_Where :=
-           (if HC.Has_TLS_1_3 then E_SH13 else E_SH12);
+           (if Is_HRR_Msg then E_HRR
+            elsif HC.Has_TLS_1_3 then E_SH13
+            else E_SH12);
       begin
          for I in 1 .. N_Ext loop
             declare
@@ -908,6 +1034,52 @@ is
                      OK := False;
                      return;
                   end if;
+               end if;
+
+               --  RFC 8446 §4.1.4 HRR-specific body extraction.
+               --  In HRR, key_share body is just `selected_group(2)`
+               --  (no key_exchange); cookie body is `cookie_len(2) +
+               --  cookie<cookie_len>` (RFC 8446 §4.2.2). Stash both
+               --  in HC for the caller's CH2-rebuild step.
+               if Is_HRR_Msg
+                 and then Exts (I).Tag = 16#0033#  --  key_share
+                 and then Exts (I).Offset + 1 <= Data'Last
+                 and then Exts (I).E_Len = 2
+               then
+                  HC.HRR_Selected_Group :=
+                     Unsigned_16 (Data (Exts (I).Offset)) * 256
+                     + Unsigned_16 (Data (Exts (I).Offset + 1));
+               end if;
+               if Is_HRR_Msg
+                 and then Exts (I).Tag = 16#002C#  --  cookie
+                 and then Exts (I).E_Len >= 2
+                 and then Exts (I).Offset + Exts (I).E_Len
+                            <= Data'Last + 1
+               then
+                  declare
+                     C_Len : constant N32 :=
+                        N32 (Data (Exts (I).Offset)) * 256
+                        + N32 (Data (Exts (I).Offset + 1));
+                  begin
+                     --  RFC 8446 §4.2.2: cookie is the wire shape
+                     --  cookie<1..2^16-1>, so empty cookie body is
+                     --  illegal_parameter. BoGo
+                     --  HelloRetryRequest-EmptyCookie-TLS13.
+                     if C_Len = 0
+                       or else 2 + C_Len /= Exts (I).E_Len
+                     then
+                        S.Last_Error := Illegal_Parameter;
+                        OK := False;
+                        return;
+                     end if;
+                     if C_Len <= N32 (HC.HRR_Cookie'Length) then
+                        HC.HRR_Cookie_Len := C_Len;
+                        for K in 0 .. C_Len - 1 loop
+                           HC.HRR_Cookie (K) :=
+                              Data (Exts (I).Offset + 2 + K);
+                        end loop;
+                     end if;
+                  end;
                end if;
             end;
          end loop;
@@ -1032,6 +1204,13 @@ is
       Body_Len : N32;
       Buf      : RBT.Bytes_Ptr;
       Ctx      : Context;
+      --  True iff the SH currently being parsed has the HRR sentinel
+      --  random. Distinct from HC.Got_HRR, which latches across the
+      --  CH1/HRR/CH2/SH2 pair. Used to gate HRR-specific code paths
+      --  in this single call (Pre_Scan dispatch, body extraction,
+      --  early return) so the same Parse_Server_Hello body handles
+      --  both HRR and the post-HRR SH2 correctly.
+      Curr_Is_HRR : Boolean := False;
    begin
       OK := False;
 
@@ -1058,14 +1237,94 @@ is
          return;
       end if;
 
+      --  RFC 8446 §4.1.4: HelloRetryRequest is on-wire a ServerHello
+      --  with a magic random value. Compare here so the SH parser
+      --  can apply HRR-specific extension policy
+      --  (Where_Allowed = E_HRR, dup → illegal_parameter not
+      --  decode_error, must contain key_share or cookie). Random is
+      --  at offset 6..37 in Data (4-byte HS hdr + 2-byte
+      --  legacy_version).
+      if N32 (Data'Length) >= 38 then
+         declare
+            Sentinel_Match : Boolean := True;
+         begin
+            for I in N32 range 0 .. 31 loop
+               if Data (Data'First + 6 + I) /= HRR_Sentinel (I) then
+                  Sentinel_Match := False;
+                  exit;
+               end if;
+            end loop;
+            if Sentinel_Match then
+               --  RFC 8446 §4.1.4: a server MUST send at most one
+               --  HRR. A second HRR is unexpected_message.
+               if HC.Got_HRR then
+                  S.Last_Error := Unexpected_Message;
+                  return;
+               end if;
+               HC.Got_HRR  := True;
+               Curr_Is_HRR := True;
+            end if;
+         end;
+      end if;
+
       declare
          Pre_OK : Boolean;
       begin
-         Pre_Scan_SH_Extensions (Data, HC, S, Pre_OK);
+         Pre_Scan_SH_Extensions
+           (Data, HC, S, Is_HRR_Msg => Curr_Is_HRR, OK => Pre_OK);
          if not Pre_OK then
             return;
          end if;
       end;
+
+      --  RFC 8446 §4.1.4: a valid HRR must contain at least one of
+      --  key_share or cookie. An HRR with neither is empty →
+      --  illegal_parameter. BoGo HelloRetryRequest-Empty-TLS13.
+      if Curr_Is_HRR
+        and then HC.HRR_Selected_Group = 0
+        and then HC.HRR_Cookie_Len = 0
+      then
+         S.Last_Error := Illegal_Parameter;
+         return;
+      end if;
+
+      --  RFC 8446 §4.1.4: "Clients MUST abort the handshake with an
+      --  'illegal_parameter' alert if the HelloRetryRequest would
+      --  not result in any change in the ClientHello." Concretely,
+      --  if HRR.selected_group names a group we already offered in
+      --  CH1's key_share, the HRR is unnecessary. CH1 carries only
+      --  X25519 (0x001D), so a HRR selecting X25519 is rejected.
+      --  BoGo UnnecessaryHelloRetryRequest-TLS13.
+      if Curr_Is_HRR
+        and then HC.HRR_Selected_Group = 16#001D#
+      then
+         S.Last_Error := Illegal_Parameter;
+         return;
+      end if;
+
+      --  HRR is well-formed. Return OK := True; the caller in
+      --  sparktls-client.adb sees HC.Got_HRR and runs the retry
+      --  flow (transcript message_hash replacement → CH2 build →
+      --  send → wait for the real ServerHello).
+      if Curr_Is_HRR then
+         --  Stash HRR cipher suite for the CH2 build's transcript
+         --  + the cipher-mismatch check on the second SH (RFC
+         --  8446 §4.1.4: cipher_suite from HRR and SH MUST match).
+         if Data'Length >= 4 + 35 + Data (Data'First + 4 + 34) + 2 then
+            declare
+               Sid_Len : constant N32 :=
+                  N32 (Data (Data'First + 4 + 34));
+               Cs_Off  : constant N32 :=
+                  Data'First + 4 + 35 + Sid_Len;
+            begin
+               HC.HRR_Cipher_Suite :=
+                  Unsigned_16 (Data (Cs_Off)) * 256
+                  + Unsigned_16 (Data (Cs_Off + 1));
+            end;
+         end if;
+         OK := True;
+         return;
+      end if;
 
       --  Skip 4-byte handshake header, pass body to Server_Hello context
       Body_Len := N32 (Data'Length) - 4;
@@ -1116,6 +1375,18 @@ is
          then
             Take_Buffer (Ctx, Buf);
             RFLX_Free (Buf);
+            return;
+         end if;
+         --  RFC 8446 §4.1.4: after HRR, the cipher_suite in SH2 MUST
+         --  match the cipher_suite the server chose in HRR. BoGo
+         --  HelloRetryRequest-CipherChange-TLS13.
+         if HC.Got_HRR
+           and then HC.HRR_Cipher_Suite /= 0
+           and then Suite_Val /= HC.HRR_Cipher_Suite
+         then
+            Take_Buffer (Ctx, Buf);
+            RFLX_Free (Buf);
+            S.Last_Error := Illegal_Parameter;
             return;
          end if;
          S.Negotiated_Suite := Suite_Val;

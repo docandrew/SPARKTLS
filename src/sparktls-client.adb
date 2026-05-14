@@ -1339,12 +1339,21 @@ is
       --  encrypted record. Otherwise the runner-side Go TLS stack
       --  rejects with "invalid TLS 1.3 ChangeCipherSpec" because
       --  it expects a CCS where it sees an app_data record.
-      Records.Build_CCS_Record (Scratch, Pre_CCS_Out);
-      if Pre_CCS_Out = 0 then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
+      --
+      --  If we already emitted the dummy CCS between HRR and CH2
+      --  (HC.Sent_HRR_CCS), skip — the server's
+      --  expectChangeCipherSpec was cleared by that one and a
+      --  second CCS would be rejected as unexpected.
+      if not HC.Sent_HRR_CCS then
+         Records.Build_CCS_Record (Scratch, Pre_CCS_Out);
+         if Pre_CCS_Out = 0 then
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
+      else
+         Pre_CCS_Out := 0;
       end if;
 
       --  mTLS: send client certificate before Finished if requested
@@ -1757,6 +1766,95 @@ is
                               HC.Reasm_Len := 0;
                               HC.Reasm_Need := 0;
                               HC.Reasm_Hdr_Pending := False;
+                              return;
+                           end if;
+
+                           --  RFC 8446 §4.1.4 HelloRetryRequest: if
+                           --  the SH was actually an HRR (sentinel
+                           --  random recognised by Parse_Server_Hello),
+                           --  replace the CH1 transcript with a
+                           --  synthetic `message_hash` (§4.4.1):
+                           --
+                           --    Transcript-Hash(CH1) → 32 bytes
+                           --    Transcript becomes 0xFE 00 00 20 || hash
+                           --
+                           --  Then append the HRR bytes and build &
+                           --  send CH2. Stay in Wait_Server_Hello to
+                           --  receive the real SH.
+                           if HC.Got_HRR and then not HC.Sent_HRR_CCS then
+                              declare
+                                 H : SPARKTLSCrypto.Hashing.SHA256.Digest;
+                              begin
+                                 SPARKTLSCrypto.Hashing.SHA256.Hash
+                                   (H,
+                                    HC.Transcript
+                                      (0 .. HC.Transcript_Len - 1));
+                                 HC.Transcript_Len := 0;
+                                 HC.Transcript (0) := 16#FE#;
+                                 HC.Transcript (1) := 16#00#;
+                                 HC.Transcript (2) := 16#00#;
+                                 HC.Transcript (3) := 16#20#;
+                                 for I in N32 range 0 .. 31 loop
+                                    HC.Transcript (4 + I) :=
+                                       Byte (H (I));
+                                 end loop;
+                                 HC.Transcript_Len := 36;
+                              end;
+                              Append_Transcript (HC, Frag);
+                              --  Build and send CH2.
+                              declare
+                                 CH2_Buf : Byte_Seq
+                                   (0 .. Handshake.Client_Msgs
+                                            .Max_Client_Hello - 1);
+                                 CH2_Len : N32;
+                                 Rec_Out : N32;
+                              begin
+                                 Handshake.Client_Msgs.Build_Client_Hello
+                                   (S, HC, CH2_Buf, CH2_Len,
+                                    Retry_Mode => True);
+                                 if CH2_Len = 0 then
+                                    S.Last_Error := Internal_Error;
+                                    Set_State (S, Error_State);
+                                    Result := Error_Alert;
+                                    Free_Byte_Seq (HC.Reasm_Buf);
+                                    HC.Reasm_Len := 0;
+                                    HC.Reasm_Need := 0;
+                                    HC.Reasm_Hdr_Pending := False;
+                                    return;
+                                 end if;
+                                 Append_Transcript
+                                   (HC, CH2_Buf (0 .. CH2_Len - 1));
+                                 --  RFC 8446 §D.4 middlebox-compat:
+                                 --  emit dummy CCS between HRR and
+                                 --  CH2 so the server's
+                                 --  expectChangeCipherSpec is
+                                 --  satisfied. This is the only CCS
+                                 --  the client sends in the HRR
+                                 --  flow; the post-SH flight skips
+                                 --  the CCS emission it would
+                                 --  normally do (handled below).
+                                 declare
+                                    CCS_Bytes : N32;
+                                 begin
+                                    Records.Build_CCS_Record
+                                      (S.Output, CCS_Bytes);
+                                 end;
+                                 HC.Sent_HRR_CCS := True;
+                                 Records.Build_Handshake_Record
+                                   (CH2_Buf (0 .. CH2_Len - 1),
+                                    S.Output, Rec_Out);
+                              end;
+                              Free_Byte_Seq (HC.Reasm_Buf);
+                              HC.Reasm_Len := 0;
+                              HC.Reasm_Need := 0;
+                              HC.Reasm_Hdr_Pending := False;
+                              --  Reset Has_TLS_1_3 so the next SH
+                              --  parse re-derives it; without this,
+                              --  the second SH's matrix lookup uses
+                              --  a stale Where.
+                              HC.Has_TLS_1_3 := False;
+                              Result := (if Output_Pending (S) > 0
+                                         then Has_Output else OK);
                               return;
                            end if;
 

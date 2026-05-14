@@ -7,16 +7,29 @@ package SPARKTLS.Handshake.Client_Msgs with
    SPARK_Mode => On
 is
    --  Maximum ClientHello size
-   Max_Client_Hello : constant := 816;
+   Max_Client_Hello : constant := 1024;
 
    --  Build a TLS 1.3 ClientHello handshake message.
    --  Returns the complete handshake message (type + length + body)
    --  ready to be wrapped in a TLS record.
+   --
+   --  Retry_Mode=False (default): build the initial CH (CH1) —
+   --  fresh random, session_id, ephemeral X25519/P-256/P-384
+   --  keypairs, all three key_share entries, no cookie extension.
+   --
+   --  Retry_Mode=True (RFC 8446 §4.1.4 HRR retry, CH2):
+   --   * reuse HC.Client_Random, HC.Legacy_Session_ID, and the
+   --     ephemeral SKs from CH1 (key_share PKs are re-derived).
+   --   * if HC.HRR_Selected_Group is set (X25519/P-256/P-384),
+   --     emit only that group's key_share.
+   --   * if HC.HRR_Cookie_Len > 0, append the cookie extension
+   --     (RFC 8446 §4.2.2).
    procedure Build_Client_Hello
-     (S      : in     Session;
-      HC     : in out Handshake_Context;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
+     (S          : in     Session;
+      HC         : in out Handshake_Context;
+      Result     :    out Byte_Seq;
+      Len        :    out N32;
+      Retry_Mode : in     Boolean := False)
    with Pre  => Result'First = 0
                 and N32 (Result'Length) >= Max_Client_Hello
                 and HC.Cfg.Random /= null;

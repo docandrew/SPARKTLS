@@ -1054,8 +1054,29 @@ is
       Client_Supports_P256   : Boolean := False;
       Client_Supports_P384   : Boolean := False;
       Selected_Group    : Unsigned_16 := 0;
-      --  HelloRetryRequest state
+      --  HelloRetryRequest state (server-side: we sent HRR)
       HRR_Sent          : Boolean := False;
+      --  HelloRetryRequest state (client-side: we received HRR)
+      --  RFC 8446 §4.1.4: at most one HRR per connection; a second
+      --  HRR is an unexpected_message. Got_HRR latches the first
+      --  reception so the SH handler rejects subsequent HRRs.
+      Got_HRR              : Boolean := False;
+      --  RFC 8446 §4.1.4: HRR carries (cipher_suite + supported_versions)
+      --  and (key_share with selected_group OR cookie OR both). When
+      --  the second SH arrives, its cipher_suite MUST match the HRR's
+      --  (BoGo HelloRetryRequest-CipherChange-TLS13). Stash for
+      --  comparison.
+      HRR_Cipher_Suite     : Unsigned_16 := 0;
+      HRR_Selected_Group   : Unsigned_16 := 0;
+      HRR_Cookie_Len       : N32 := 0;
+      HRR_Cookie           : Byte_Seq (0 .. 1023) := (others => 0);
+      --  RFC 8446 §D.4: the dummy CCS is emitted exactly once per
+      --  connection. On the HRR retry path we emit it between HRR
+      --  and CH2 (server's `expectChangeCipherSpec` then fires on
+      --  the CCS, not on CH2). If we then emitted another CCS in
+      --  the post-SH client flight, the server would reject it as
+      --  `received unexpected ChangeCipherSpec`. Track to gate.
+      Sent_HRR_CCS         : Boolean := False;
       --  RFC 8446 §4.1.2: CH extension order fingerprint.
       --  Rolling polynomial hash of extension type codes in order.
       --  CH2 must produce the same hash as CH1 (modulo cookie).
