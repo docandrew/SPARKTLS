@@ -36,10 +36,18 @@ is
 
    --  RFC 8446 §5.1: Parse a TLS record header (5 bytes).
    --  Validates content type and fragment length bounds.
+   --
+   --  Loose_Initial: when True, the minor record-version byte is
+   --  unconstrained (only major must be 0x03). RFC 5246 §E.1 / RFC
+   --  8446 §5.1 tell servers to tolerate any record version on the
+   --  very first ClientHello — BoGo LooseInitialRecordVersion. All
+   --  other call sites leave the default False so mid-handshake junk
+   --  versions still trip Bad_Version (BoGo CheckRecordVersion).
    procedure Parse_Record_Header
-     (Data   : in     Byte_Seq;
-      Avail  : in     N32;
-      Result :    out Parse_Result)
+     (Data         : in     Byte_Seq;
+      Avail        : in     N32;
+      Result       :    out Parse_Result;
+      Loose_Initial : in     Boolean := False)
    --  Body indexes via Data'First + offset, so no First = 0 needed.
    --  Data'Last bounded by IO_Buffer_Capacity so all callers (slices
    --  into S.Input.Data, which is itself bounded) satisfy the Pre.

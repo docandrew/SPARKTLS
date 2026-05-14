@@ -185,6 +185,52 @@ is
       KS_Ctx : RFLX.TLS_Handshake.Key_Share_CH.Context;
    begin
       RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, KS_Buf.all);
+
+      --  RFC 8446 §4.2.8 CH key_share is KeyShareClientHello: 2-byte
+      --  client_shares_length + exactly that many bytes of
+      --  KeyShareEntry list (each entry = group(2) + key_len(2) +
+      --  key(key_len)). Reject any layout mismatch (list_len not
+      --  matching DLen, or entries that don't tile the list exactly)
+      --  with decode_error — BoGo TrailingKeyShareData-TLS13.
+      if DLen >= 2 then
+         declare
+            LL  : constant N32 :=
+               N32 (KS_Buf (1)) * 256 + N32 (KS_Buf (2));
+            Pos : N32 := 2;
+            Bad : Boolean := False;
+         begin
+            if 2 + LL /= N32 (DLen) then
+               Bad := True;
+            else
+               while not Bad and then Pos < N32 (DLen) loop
+                  pragma Loop_Invariant
+                    (Pos >= 2 and then Pos <= N32 (DLen));
+                  pragma Loop_Variant (Increases => Pos);
+                  if Pos + 4 > N32 (DLen) then
+                     Bad := True;
+                  else
+                     declare
+                        KL : constant N32 :=
+                           N32 (KS_Buf (RBT.Index (Pos + 3))) * 256 +
+                           N32 (KS_Buf (RBT.Index (Pos + 4)));
+                     begin
+                        if Pos + 4 + KL > N32 (DLen) then
+                           Bad := True;
+                        else
+                           Pos := Pos + 4 + KL;
+                        end if;
+                     end;
+                  end if;
+               end loop;
+            end if;
+            if Bad then
+               HC.Ext_Parse_Err := Decode_Error;
+               RFLX_Free (KS_Buf);
+               return;
+            end if;
+         end;
+      end if;
+
       RFLX.TLS_Handshake.Key_Share_CH.Initialize
         (KS_Ctx, KS_Buf,
          Written_Last => RBT.Bit_Length (RBT.Length (DLen) * 8));
@@ -917,6 +963,60 @@ is
                         return;
                      end if;
                   end if;
+               end;
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values.Compress_Certificate =>
+            --  RFC 8879 §3 CertificateCompressionAlgorithms body:
+            --    algorithms_len(1) + algorithms<algorithms_len>
+            --    each algorithm = u16, so algorithms_len must be even
+            --    and 2..254. Validate the length AND reject duplicate
+            --    algorithm IDs (BoGo DuplicateCertCompressionExt).
+            if DLen >= 1 and then DLen in Wire_Small_Ext_Len then
+               declare
+                  ED        : RBT.Bytes (1 .. RBT.Index (DLen));
+                  Ext_Data  : Byte_Seq (0 .. DLen - 1);
+                  Algs_Len  : N32;
+               begin
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, ED);
+                  Ext_Data := To_NaCl (ED);
+                  Algs_Len := N32 (Ext_Data (0));
+                  if 1 + Algs_Len /= DLen
+                    or else Algs_Len = 0
+                    or else Algs_Len mod 2 /= 0
+                  then
+                     OK := False;
+                     return;
+                  end if;
+                  declare
+                     N_Algs    : constant N32 := Algs_Len / 2;
+                     subtype Seen_Range is N32 range 1 .. 64;
+                     Seen      : array (Seen_Range) of N32 :=
+                                    (others => 0);
+                     Seen_Cnt  : N32 := 0;
+                  begin
+                     for I in N32 range 0 .. N_Algs - 1 loop
+                        pragma Loop_Invariant (Seen_Cnt <= 64);
+                        declare
+                           Off : constant N32 := 1 + I * 2;
+                           Alg : constant N32 :=
+                              N32 (Ext_Data (Off)) * 256
+                              + N32 (Ext_Data (Off + 1));
+                        begin
+                           for J in N32 range 1 .. Seen_Cnt loop
+                              pragma Loop_Invariant (Seen_Cnt <= 64);
+                              if Seen (J) = Alg then
+                                 OK := False;
+                                 return;
+                              end if;
+                           end loop;
+                           if Seen_Cnt < 64 then
+                              Seen_Cnt := Seen_Cnt + 1;
+                              Seen (Seen_Cnt) := Alg;
+                           end if;
+                        end;
+                     end loop;
+                  end;
                end;
             end if;
 

@@ -1178,13 +1178,23 @@ is
       if not Rec.OK then Result := Need_Input; return; end if;
 
       if Rec.Content = Records.Content_Change_Cipher_Spec then
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         if Rec.Fragment_Len = 1 then
-            HC.CCS_Received := True;
-            Result := OK;
-         else
-            Send_Alert_And_Error (S, Unexpected_Message, Result);
-         end if;
+         declare
+            CCS_Pos    : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+            CCS_Byte_OK : constant Boolean :=
+               Rec.Fragment_Len = 1
+               and then S.Input.Data (CCS_Pos) = 16#01#;
+         begin
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if CCS_Byte_OK then
+               HC.CCS_Received := True;
+               Result := OK;
+            else
+               --  RFC 5246 §7.1: ChangeCipherSpec payload MUST be the
+               --  single byte 0x01. BoGo BadChangeCipherSpec-* sends
+               --  other bytes / lengths → unexpected_message.
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+            end if;
+         end;
       else
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);

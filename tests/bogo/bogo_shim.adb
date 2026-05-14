@@ -63,6 +63,11 @@ procedure Bogo_Shim is
       Expect_ALPN          : Unbounded_Text := (others => Character'Val (0));
       Expect_ALPN_Len      : Natural := 0;
       Decline_ALPN         : Boolean := False;
+      --  RFC 6066 SNI: only offer the hostname if -host-name was set.
+      --  BoGo UnsolicitedServerNameAck-* relies on us not sending SNI
+      --  when no -host-name flag was given.
+      Host_Name            : Unbounded_Text := (others => Character'Val (0));
+      Host_Name_Len        : Natural := 0;
    end record;
 
    Cfg : Config_T;
@@ -261,6 +266,15 @@ procedure Bogo_Shim is
                end;
             elsif A = "-decline-alpn" then
                Cfg.Decline_ALPN := True;
+            elsif A = "-host-name" then
+               declare
+                  V : constant String := Next_Arg;
+               begin
+                  if V'Length > 0 and V'Length <= 255 then
+                     Cfg.Host_Name (1 .. V'Length) := V;
+                     Cfg.Host_Name_Len := V'Length;
+                  end if;
+               end;
             else
                Err ("bogo_shim: unimplemented flag: " & A);
                Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
@@ -398,6 +412,16 @@ procedure Bogo_Shim is
            (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
          return;
       end if;
+      --  Session resumption isn't implemented — exit 89 (SKIP)
+      --  for any test that uses -resume-count rather than running a
+      --  single handshake and tripping the runner's "didResume"
+      --  expectation.
+      if Cfg.Resume_Count > 0 then
+         Err ("bogo_shim: session resumption not implemented");
+         Ada.Command_Line.Set_Exit_Status
+           (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
+         return;
+      end if;
 
       declare
          Policy : constant Version_Policy :=
@@ -469,7 +493,10 @@ procedure Bogo_Shim is
             begin
                SPARKTLS.Client.Configure
                  (S        => S,
-                  Hostname => "localhost",
+                  Hostname =>
+                    (if Cfg.Host_Name_Len > 0
+                     then Cfg.Host_Name (1 .. Cfg.Host_Name_Len)
+                     else ""),
                   Trust    => (if Trust /= ""
                                then Roots'Unchecked_Access else null),
                   Random   => Entropy_Random.Random'Access,

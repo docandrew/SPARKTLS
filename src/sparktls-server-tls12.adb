@@ -484,16 +484,28 @@ is
       end if;
 
       if Rec.Content = Records.Content_Change_Cipher_Spec then
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         if Rec.Fragment_Len = 1 and then not HC.CCS_Received then
-            HC.CCS_Received := True; Result := OK;
-            --  RFC 5246 §7.1 single-CCS invariant: after this
-            --  assignment the server's view records that the client
-            --  has signaled switch-to-encrypted exactly once. Future
-            --  CCS records on this connection MUST be rejected via
-            --  the `not HC.CCS_Received` guard above.
-            pragma Assert (Single_CCS_RFC_5246_7_1 (HC));
-         else Send_Alert_And_Error (S, Unexpected_Message, Result); end if;
+         declare
+            CCS_Pos    : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+            CCS_OK     : constant Boolean :=
+               Rec.Fragment_Len = 1
+               and then S.Input.Data (CCS_Pos) = 16#01#
+               and then not HC.CCS_Received;
+         begin
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if CCS_OK then
+               HC.CCS_Received := True; Result := OK;
+               --  RFC 5246 §7.1 single-CCS invariant: after this
+               --  assignment the server's view records that the client
+               --  has signaled switch-to-encrypted exactly once. Future
+               --  CCS records on this connection MUST be rejected via
+               --  the `not HC.CCS_Received` guard above.
+               pragma Assert (Single_CCS_RFC_5246_7_1 (HC));
+            else
+               --  RFC 5246 §7.1: CCS payload MUST be the single byte
+               --  0x01 (BoGo BadChangeCipherSpec-*).
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+            end if;
+         end;
          return;
       end if;
 

@@ -746,6 +746,349 @@ is
    --  Parse procedures (using RecordFlux-generated parsers)
    --================================================================
 
+   --  Pre-RFLX byte walk of the SH extensions block. Detects
+   --  duplicates, unsolicited extensions, and malformed SNI / ALPN
+   --  bodies that RFLX's strict TLS-1.3 schema either silently
+   --  rejects (Saw_Rflx_Rejected branch, never escalated for TLS 1.2)
+   --  or accepts without per-RFC body validation.
+   --
+   --  Sets S.Last_Error and OK := False on rejection; OK := True
+   --  means the caller may continue with the RFLX parse.
+   --
+   --  RFC anchors:
+   --    RFC 8446 §4.2    duplicate extensions → decode_error
+   --    RFC 5246 §7.4.1.4 / RFC 8446 §4.2 SH may only echo offered
+   --    RFC 6066 §3      SNI ack body MUST be empty
+   --    RFC 8446 §4.2.11 pre_shared_key in SH iff client offered PSK
+   --    RFC 7301 §3.1    ALPN body = list_len(2)+proto_len(1)+proto
+   procedure Pre_Scan_SH_Extensions
+     (Data : in     Byte_Seq;
+      HC   : in     Handshake_Context;
+      S    : in out Session;
+      OK   :    out Boolean);
+
+   procedure Pre_Scan_SH_Extensions
+     (Data : in     Byte_Seq;
+      HC   : in     Handshake_Context;
+      S    : in out Session;
+      OK   :    out Boolean)
+   is
+      B    : constant N32 := Data'First + 4;  --  body start
+      P    : N32;
+      Sid_Len, Ext_Total : N32;
+      Seen : Ext_Tag_Array := (others => 0);
+      SC   : Natural := 0;
+   begin
+      OK := True;
+
+      --  Caller has already verified Data'Length >= 39. SH body
+      --  minimum is version(2)+random(32)+sid_len(1) = 35 bytes
+      --  past the 4-byte handshake header.
+      if N32 (Data'Length) - 4 < 35 then
+         return;
+      end if;
+
+      Sid_Len := N32 (Data (B + 34));
+      P := B + 35 + Sid_Len + 2 + 1;  --  past sid + cipher + comp
+      if P + 2 > Data'Last then
+         return;
+      end if;
+
+      Ext_Total := N32 (Data (P)) * 256 + N32 (Data (P + 1));
+      P := P + 2;
+
+      declare
+         Ext_End : constant N32 := P + Ext_Total;
+      begin
+         --  RFC 8446 §4: HS message MUST end exactly at its declared
+         --  length. BoGo TrailingMessageData-ServerHello.
+         if Ext_End /= Data'Last + 1 then
+            S.Last_Error := Decode_Error;
+            OK := False;
+            return;
+         end if;
+
+         while P + 4 <= Ext_End loop
+            declare
+               Tag_Code : constant Unsigned_32 :=
+                  Unsigned_32 (Data (P)) * 256
+                  + Unsigned_32 (Data (P + 1));
+               E_Len : constant N32 :=
+                  N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
+            begin
+               for I in 1 .. SC loop
+                  if Seen (I) = Tag_Code then
+                     S.Last_Error := Decode_Error;
+                     OK := False;
+                     return;
+                  end if;
+               end loop;
+               if SC < Seen'Last then
+                  SC := SC + 1;
+                  Seen (SC) := Tag_Code;
+               end if;
+
+               case Tag_Code is
+                  when 16#0000# =>  --  server_name (RFC 6066)
+                     if HC.Cfg.Server_Name.Len = 0 then
+                        S.Last_Error := Unsupported_Extension;
+                        OK := False;
+                        return;
+                     end if;
+                     if E_Len /= 0 then
+                        S.Last_Error := Decode_Error;
+                        OK := False;
+                        return;
+                     end if;
+
+                  when 16#0010# =>  --  ALPN (RFC 7301)
+                     if HC.Cfg.ALPN.Len = 0 then
+                        S.Last_Error := Unsupported_Extension;
+                        OK := False;
+                        return;
+                     end if;
+                     if P + 4 + E_Len <= Data'Last + 1
+                       and then E_Len >= 3
+                     then
+                        declare
+                           LL : constant N32 :=
+                              N32 (Data (P + 4)) * 256
+                              + N32 (Data (P + 5));
+                           PL : constant N32 := N32 (Data (P + 6));
+                        begin
+                           if PL = 0
+                             or LL /= 1 + PL
+                             or 2 + LL /= E_Len
+                           then
+                              S.Last_Error := Decode_Error;
+                              OK := False;
+                              return;
+                           end if;
+                           --  RFC 7301 §3.2: chosen proto MUST be one
+                           --  the client offered. Single-proto offer
+                           --  today — bytewise compare against
+                           --  HC.Cfg.ALPN. BoGo
+                           --  ALPNClient-RejectUnknown-TLS-TLS12 sends
+                           --  "baz" when we offered "foo".
+                           if PL /= N32 (HC.Cfg.ALPN.Len) then
+                              S.Last_Error := Illegal_Parameter;
+                              OK := False;
+                              return;
+                           end if;
+                           declare
+                              Match : Boolean := True;
+                           begin
+                              for I in 1 .. Natural (PL) loop
+                                 if Character'Val (Data (P + 6 + N32 (I)))
+                                   /= HC.Cfg.ALPN.Data (I)
+                                 then
+                                    Match := False;
+                                 end if;
+                              end loop;
+                              if not Match then
+                                 S.Last_Error := Illegal_Parameter;
+                                 OK := False;
+                                 return;
+                              end if;
+                           end;
+                        end;
+                     end if;
+
+                  when 16#0029# =>  --  pre_shared_key (we never offer)
+                     S.Last_Error := Unsupported_Extension;
+                     OK := False;
+                     return;
+
+                  when others =>
+                     null;
+               end case;
+
+               P := P + 4 + E_Len;
+            end;
+         end loop;
+      end;
+   end Pre_Scan_SH_Extensions;
+
+   --  RFC 8446 §4.2.8 ServerHello key_share: a single KeyShareEntry
+   --     group(2) + key_exchange_length(2) + key_exchange(key_exchange_length)
+   --  Allocates a scratch buffer, copies the SH_Extension_TLS body,
+   --  validates the wire-length, runs RFLX Verify_Message, dispatches
+   --  on group to populate HC.Peer_PK / HC.P256_Peer_PK / HC.P384_Peer_PK
+   --  and the Use_*_KE flags. On length mismatch the routine sets
+   --  HC.Ext_Parse_Err := Decode_Error.
+   --
+   --  BoGo TrailingKeyShareData / unknown-group cases are exercised
+   --  through this path.
+   procedure Apply_SH_Key_Share
+     (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+      HC      : in out Handshake_Context);
+
+   procedure Apply_SH_Key_Share
+     (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+      HC      : in out Handshake_Context)
+   is
+      DLen : constant N32 := N32
+        (RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data_Length (Ext_Ctx));
+      KS_Buf : RBT.Bytes_Ptr;
+      KS_Ctx : RFLX.TLS_Handshake.Key_Share_SH.Context;
+   begin
+      if DLen not in Wire_Key_Share_Len then
+         return;  --  silently skip malformed; never fatal
+      end if;
+
+      declare
+         VLen : constant Wire_Key_Share_Len := DLen;
+      begin
+         KS_Buf := new RBT.Bytes'(1 .. RBT.Index (VLen) => 0);
+         RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data (Ext_Ctx, KS_Buf.all);
+
+         --  Reject trailing bytes after the key_exchange field. RFC
+         --  8446 §4.2.8: extension_data == 4 + key_exchange_length.
+         if VLen >= 4 then
+            declare
+               KL : constant N32 :=
+                  N32 (KS_Buf (3)) * 256 + N32 (KS_Buf (4));
+            begin
+               if 4 + KL /= N32 (VLen) then
+                  HC.Ext_Parse_Err := Decode_Error;
+               end if;
+            end;
+         end if;
+
+         RFLX.TLS_Handshake.Key_Share_SH.Initialize
+           (KS_Ctx, KS_Buf,
+            Written_Last => RBT.Bit_Length (RBT.Length (DLen) * 8));
+         RFLX.TLS_Handshake.Key_Share_SH.Verify_Message (KS_Ctx);
+
+         if HC.Ext_Parse_Err = No_Error and then
+            RFLX.TLS_Handshake.Key_Share_SH.Well_Formed_Message (KS_Ctx)
+         then
+            declare
+               Grp : constant RFLX.Tls_Parameters.TLS_Supported_Groups :=
+                  RFLX.TLS_Handshake.Key_Share_SH.Get_Group (KS_Ctx);
+            begin
+               if Grp.Known and then
+                  Grp.Enum = RFLX.Tls_Parameters.X25519
+               then
+                  declare
+                     KB : RBT.Bytes (1 .. 32);
+                  begin
+                     RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange
+                       (KS_Ctx, KB);
+                     HC.Peer_PK := To_NaCl (KB);
+                     HC.Use_P256_KE := False;
+                  end;
+               elsif Grp.Known and then
+                  Grp.Enum = RFLX.Tls_Parameters.Secp256r1
+               then
+                  declare
+                     KB : RBT.Bytes (1 .. 65);
+                  begin
+                     RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange
+                       (KS_Ctx, KB);
+                     for I in 0 .. 64 loop
+                        HC.P256_Peer_PK (N32 (I)) :=
+                           Byte (KB (RBT.Index (I + 1)));
+                     end loop;
+                     HC.Use_P256_KE := True;
+                     HC.Use_P384_KE := False;
+                  end;
+               elsif Grp.Known and then
+                  Grp.Enum = RFLX.Tls_Parameters.Secp384r1
+               then
+                  declare
+                     KB : RBT.Bytes (1 .. 97);
+                  begin
+                     RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange
+                       (KS_Ctx, KB);
+                     for I in 0 .. 96 loop
+                        HC.P384_Peer_PK (N32 (I)) :=
+                           Byte (KB (RBT.Index (I + 1)));
+                     end loop;
+                     HC.Use_P384_KE := True;
+                     HC.Use_P256_KE := False;
+                  end;
+               end if;
+            end;
+         end if;
+
+         RFLX.TLS_Handshake.Key_Share_SH.Take_Buffer (KS_Ctx, KS_Buf);
+         RFLX_Free (KS_Buf);
+      end;
+   end Apply_SH_Key_Share;
+
+   --  RFC 7301 §3.2: validate the server's ALPN ack body in a TLS 1.2
+   --  SH extension. Body shape:
+   --    list_len(2) + proto_len(1) + proto_name(proto_len)
+   --  On failure stash the alert in HC.Ext_Parse_Err and S.Last_Error
+   --  for the caller. On success copy the proto into
+   --  S.Negotiated_ALPN. BoGo ALPNClient-EmptyProtocolName-* /
+   --  ALPNClient-RejectUnknown-*.
+   procedure Apply_SH_ALPN
+     (ALPN_Buf : in     RBT.Bytes;
+      HC       : in out Handshake_Context;
+      S        : in out Session);
+
+   procedure Apply_SH_ALPN
+     (ALPN_Buf : in     RBT.Bytes;
+      HC       : in out Handshake_Context;
+      S        : in out Session)
+   is
+      DLen : constant N32 := N32 (ALPN_Buf'Length);
+      PL   : Natural;
+   begin
+      --  Caller has already guaranteed DLen >= 4.
+      PL := Natural (ALPN_Buf (3));
+
+      if PL = 0 then
+         S.Last_Error := Illegal_Parameter;
+         HC.Ext_Parse_Err := Illegal_Parameter;
+         return;
+      end if;
+
+      if PL > Max_Hostname_Len or N32 (PL + 3) > DLen then
+         return;  --  silently drop overlong / truncated; not fatal
+      end if;
+
+      if HC.Cfg.ALPN.Len = 0 then
+         --  Server echoed ALPN we didn't offer. (Pre-RFLX scan
+         --  catches this for empty Cfg.ALPN already; this is the
+         --  defense-in-depth fallback for the RFLX-accepted path.)
+         S.Last_Error := Unsupported_Extension;
+         HC.Ext_Parse_Err := Unsupported_Extension;
+         return;
+      end if;
+
+      if PL /= HC.Cfg.ALPN.Len then
+         S.Last_Error := Illegal_Parameter;
+         HC.Ext_Parse_Err := Illegal_Parameter;
+         return;
+      end if;
+
+      declare
+         Match : Boolean := True;
+      begin
+         for I in 1 .. PL loop
+            if Character'Val (ALPN_Buf (RBT.Index (3 + I)))
+              /= HC.Cfg.ALPN.Data (I)
+            then
+               Match := False;
+            end if;
+         end loop;
+         if not Match then
+            S.Last_Error := Illegal_Parameter;
+            HC.Ext_Parse_Err := Illegal_Parameter;
+            return;
+         end if;
+      end;
+
+      S.Negotiated_ALPN.Len := PL;
+      for I in 1 .. PL loop
+         S.Negotiated_ALPN.Data (I) :=
+            Character'Val (ALPN_Buf (RBT.Index (3 + I)));
+      end loop;
+   end Apply_SH_ALPN;
+
    procedure Parse_Server_Hello
      (S    : in out Session;
       HC   : in out Handshake_Context;
@@ -782,69 +1125,12 @@ is
          return;
       end if;
 
-      --  RFC 8446 §4.2 duplicate-extension check, performed BEFORE
-      --  RFLX parse so that even SH bytes RFLX rejects (e.g. one
-      --  of the duplicates is a tag RFLX treats as malformed)
-      --  still reach decode_error rather than the TLS-1.2 fallback.
-      --  Walk the SH structure: legacy_version(2) + random(32) +
-      --  sid_len(1) + sid(0..32) + cipher(2) + comp(1) + ext_len(2)
-      --  + extensions. Each extension: tag(2) + len(2) + data(len).
       declare
-         B   : constant N32 := Data'First + 4;  --  body start
-         P   : N32;
-         Sid_Len, Ext_Total : N32;
-         Seen : Ext_Tag_Array := (others => 0);
-         SC   : Natural := 0;
+         Pre_OK : Boolean;
       begin
-         --  Need at least: version(2)+random(32)+sid_len(1) = 35
-         if N32 (Data'Length) - 4 >= 35 then
-            Sid_Len := N32 (Data (B + 34));
-            P := B + 35 + Sid_Len + 2 + 1;  --  past sid + cipher + comp
-            if P + 2 <= Data'Last then
-               Ext_Total :=
-                  N32 (Data (P)) * 256 + N32 (Data (P + 1));
-               P := P + 2;  --  P now at start of first extension
-               --  Loop while we can read tag(2)+len(2) and stay
-               --  within the declared extensions block.
-               declare
-                  Ext_End : constant N32 := P + Ext_Total;
-               begin
-                  --  RFC 8446 §4: a handshake message MUST end exactly
-                  --  at its declared length. Reject trailing bytes
-                  --  beyond the extensions block (BoGo
-                  --  TrailingMessageData-ServerHello tests this).
-                  if Ext_End /= Data'Last + 1 then
-                     S.Last_Error := Decode_Error;
-                     return;
-                  end if;
-                  while P + 4 <= Data'Last + 1
-                    and then P + 4 <= Ext_End + 1
-                  loop
-                  declare
-                     Tag_Code : constant Unsigned_32 :=
-                        Unsigned_32 (Data (P)) * 256
-                        + Unsigned_32 (Data (P + 1));
-                     E_Len : constant N32 :=
-                        N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
-                  begin
-                     for I in 1 .. SC loop
-                        if Seen (I) = Tag_Code then
-                           --  Duplicate found. Buf and Ctx are still
-                           --  fresh (RFLX init not yet done); just
-                           --  set the error and return.
-                           S.Last_Error := Decode_Error;
-                           return;
-                        end if;
-                     end loop;
-                     if SC < Seen'Last then
-                        SC := SC + 1;
-                        Seen (SC) := Tag_Code;
-                     end if;
-                     P := P + 4 + E_Len;
-                  end;
-               end loop;
-               end;
-            end if;
+         Pre_Scan_SH_Extensions (Data, HC, S, Pre_OK);
+         if not Pre_OK then
+            return;
          end if;
       end;
 
@@ -929,6 +1215,11 @@ is
             --  negotiated version (Has_TLS_1_3 is set inside the
             --  loop when we see supported_versions).
             Saw_Rflx_Rejected : Boolean := False;
+            --  RFC 8446 §4.2: renegotiation_info (0xFF01) is permitted
+            --  in TLS 1.2 SH (and we track it via Allowed_SH_Extension_
+            --  Tags above) but forbidden in TLS 1.3 SH. Stash and
+            --  escalate post-loop, same shape as Saw_Rflx_Rejected.
+            Saw_Reneg_Info_In_SH : Boolean := False;
          begin
             Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
@@ -952,6 +1243,8 @@ is
                      --  once we know the negotiated version (RFLX
                      --  rejects ec_point_formats, supported_groups
                      --  etc. that TLS 1.2 legitimately allows in SH).
+                     --  Unsolicited-extension detection happens in
+                     --  the pre-RFLX byte scan above.
                      Saw_Rflx_Rejected := True;
                   end if;
                   if RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message
@@ -988,6 +1281,13 @@ is
                         then
                            Saw_Unoffered := True;
                         end if;
+                        --  Track renegotiation_info specifically —
+                        --  legal in TLS 1.2 SH but forbidden in TLS
+                        --  1.3 SH (RFC 8446 §4.2). Escalated
+                        --  post-loop once HC.Has_TLS_1_3 is known.
+                        if Code = 16#FF01# then
+                           Saw_Reneg_Info_In_SH := True;
+                        end if;
                         --  Check for supported_versions extension
                         if Tag.Known and then
                            Tag.Enum =
@@ -1000,99 +1300,7 @@ is
                            Tag.Enum =
                               RFLX.Tls_Extensiontype_Values.Key_Share
                         then
-                           --  Parse key share via Key_Share_SH
-                           declare
-                              DLen    : constant N32 := N32
-                                 (RFLX.TLS_Handshake.SH_Extension_TLS
-                                    .Get_Data_Length (Ext_Ctx));
-                              KS_Buf  : RBT.Bytes_Ptr;
-                              KS_Ctx  : RFLX.TLS_Handshake
-                                           .Key_Share_SH.Context;
-                           begin
-                              if DLen not in Wire_Key_Share_Len then
-                                 null;  --  skip malformed key_share
-                              else
-                              declare
-                                 VLen : constant Wire_Key_Share_Len := DLen;
-                              begin
-                              KS_Buf := new RBT.Bytes'(1 .. RBT.Index (VLen) => 0);
-                              RFLX.TLS_Handshake.SH_Extension_TLS
-                                .Get_Data (Ext_Ctx, KS_Buf.all);
-                              RFLX.TLS_Handshake.Key_Share_SH.Initialize
-                                (KS_Ctx, KS_Buf,
-                                 Written_Last =>
-                                    RBT.Bit_Length
-                                       (RBT.Length (DLen) * 8));
-                              RFLX.TLS_Handshake.Key_Share_SH
-                                .Verify_Message (KS_Ctx);
-
-                              if RFLX.TLS_Handshake.Key_Share_SH
-                                   .Well_Formed_Message (KS_Ctx)
-                              then
-                                 declare
-                                    Grp : constant
-                                       RFLX.Tls_Parameters
-                                          .TLS_Supported_Groups :=
-                                       RFLX.TLS_Handshake.Key_Share_SH
-                                          .Get_Group (KS_Ctx);
-                                 begin
-                                    if Grp.Known and then
-                                       Grp.Enum =
-                                          RFLX.Tls_Parameters.X25519
-                                    then
-                                       declare
-                                          KB : RBT.Bytes (1 .. 32);
-                                       begin
-                                          RFLX.TLS_Handshake.Key_Share_SH
-                                            .Get_Key_Exchange
-                                              (KS_Ctx, KB);
-                                          HC.Peer_PK := To_NaCl (KB);
-                                          HC.Use_P256_KE := False;
-                                       end;
-                                    elsif Grp.Known and then
-                                       Grp.Enum =
-                                          RFLX.Tls_Parameters.Secp256r1
-                                    then
-                                       declare
-                                          KB : RBT.Bytes (1 .. 65);
-                                       begin
-                                          RFLX.TLS_Handshake.Key_Share_SH
-                                            .Get_Key_Exchange
-                                              (KS_Ctx, KB);
-                                          for I in 0 .. 64 loop
-                                             HC.P256_Peer_PK (N32 (I)) :=
-                                                Byte (KB (RBT.Index (I + 1)));
-                                          end loop;
-                                          HC.Use_P256_KE := True;
-                                          HC.Use_P384_KE := False;
-                                       end;
-                                    elsif Grp.Known and then
-                                       Grp.Enum =
-                                          RFLX.Tls_Parameters.Secp384r1
-                                    then
-                                       declare
-                                          KB : RBT.Bytes (1 .. 97);
-                                       begin
-                                          RFLX.TLS_Handshake.Key_Share_SH
-                                            .Get_Key_Exchange
-                                              (KS_Ctx, KB);
-                                          for I in 0 .. 96 loop
-                                             HC.P384_Peer_PK (N32 (I)) :=
-                                                Byte (KB (RBT.Index (I + 1)));
-                                          end loop;
-                                          HC.Use_P384_KE := True;
-                                          HC.Use_P256_KE := False;
-                                       end;
-                                    end if;
-                                 end;
-                              end if;
-
-                              RFLX.TLS_Handshake.Key_Share_SH
-                                .Take_Buffer (KS_Ctx, KS_Buf);
-                              RFLX_Free (KS_Buf);
-                              end;  --  VLen declare
-                              end if;  --  DLen validation
-                           end;
+                           Apply_SH_Key_Share (Ext_Ctx, HC);
 
                         --  ALPN extension (0x0010)
                         elsif Tag.Known and then
@@ -1105,45 +1313,14 @@ is
                                  (RFLX.TLS_Handshake.SH_Extension_TLS
                                     .Get_Data_Length (Ext_Ctx));
                            begin
-                              --  ALPN data: list_len(2)+proto_len(1)+proto.
-                              --  Max useful: 2 + 1 + 255 = 258.
                               if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
                                  declare
                                     VLen     : constant Wire_Small_Ext_Len := DLen;
-                                    ALPN_Buf : RBT.Bytes
-                                       (1 .. RBT.Index (VLen));
+                                    ALPN_Buf : RBT.Bytes (1 .. RBT.Index (VLen));
                                  begin
                                     RFLX.TLS_Handshake.SH_Extension_TLS
                                       .Get_Data (Ext_Ctx, ALPN_Buf);
-                                    declare
-                                       PL : constant Natural :=
-                                          Natural (ALPN_Buf (3));
-                                    begin
-                                       --  RFC 7301 §3.2: server MUST
-                                       --  echo a single non-empty
-                                       --  protocol_name. PL=0 means
-                                       --  the server selected an
-                                       --  empty name — fatal. Stash
-                                       --  the alert in HC for the
-                                       --  caller of Parse_Server_Hello
-                                       --  (it bails on OK=False below).
-                                       if PL = 0 then
-                                          S.Last_Error := Illegal_Parameter;
-                                          HC.Ext_Parse_Err :=
-                                             Illegal_Parameter;
-                                       elsif PL > 0
-                                          and PL <= Max_Hostname_Len
-                                          and N32 (PL + 3) <= DLen
-                                       then
-                                          S.Negotiated_ALPN.Len := PL;
-                                          for I in 1 .. PL loop
-                                             S.Negotiated_ALPN.Data (I) :=
-                                                Character'Val
-                                                  (ALPN_Buf
-                                                     (RBT.Index (3 + I)));
-                                          end loop;
-                                       end if;
-                                    end;
+                                    Apply_SH_ALPN (ALPN_Buf, HC, S);
                                  end;
                               end if;
                            end;
@@ -1175,6 +1352,12 @@ is
             --  TLS 1.2 SH the server may echo a broader set RFLX
             --  doesn't model — leave the legacy permissive behavior.
             if Saw_Rflx_Rejected and HC.Has_TLS_1_3 then
+               Saw_Unoffered := True;
+            end if;
+            --  RFC 8446 §4.2: renegotiation_info MUST NOT appear in
+            --  TLS 1.3 SH. Allowed in TLS 1.2 SH where the server is
+            --  ack-ing our secure-renegotiation marker.
+            if Saw_Reneg_Info_In_SH and HC.Has_TLS_1_3 then
                Saw_Unoffered := True;
             end if;
             if Saw_Unoffered then
@@ -1334,6 +1517,7 @@ is
       --  empty ALPN name → illegal_parameter). The caller's `if not
       --  Parse_OK` arm reads S.Last_Error to pick the alert.
       if HC.Ext_Parse_Err /= No_Error then
+         S.Last_Error := HC.Ext_Parse_Err;
          OK := False;
          return;
       end if;

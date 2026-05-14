@@ -404,6 +404,18 @@ is
       16#0029#,  --  pre_shared_key (TLS 1.3 PSK selection)
       16#FF01#); --  renegotiation_info (TLS 1.2)
 
+   --  Extensions the server may put in a TLS 1.3 EncryptedExtensions
+   --  message — intersection of RFC 8446 §4.2 EE-permitted set with
+   --  our Offered_Extension_Tags. Notably key_share / supported_
+   --  versions belong in SH (and HRR), not EE. BoGo's
+   --  EncryptedExtensionsWithKeyShare-TLS13 sends key_share-in-EE
+   --  to exercise this.
+   Allowed_EE_Extension_Tags : constant array (Positive range <>) of
+                                  Interfaces.Unsigned_16 :=
+     (16#0000#,  --  server_name (RFC 6066 ack)
+      16#000A#,  --  supported_groups (rare informational echo)
+      16#0010#); --  ALPN-selected protocol
+
    --  RFC 5246 §8.1 / RFC 7627: Master secret derivation invariant.
    --  The derivation label MUST match the EMS negotiation.
    --  Using "extended master secret" without EMS extension, or

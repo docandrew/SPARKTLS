@@ -324,15 +324,21 @@ is
                return;
             end if;
 
-            --  Parse ClientHello from input
+            --  Parse ClientHello from input. RFC 8446 §5.1 / RFC 5246
+            --  §E.1: tolerate any record version on the initial CH —
+            --  BoGo LooseInitialRecordVersion sends 0x03ff and expects
+            --  the server to accept it. Major byte must still be 0x03
+            --  (GarbageInitialRecordVersion sends 0xffff and expects
+            --  WRONG_VERSION_NUMBER).
             declare
                Rec : Records.Parse_Result;
             begin
                Records.Parse_Record_Header
-                 (Data   => S.Input.Data (S.Input.Read_Pos ..
-                                           S.Input.Write_Pos - 1),
-                  Avail  => Available (S.Input),
-                  Result => Rec);
+                 (Data         => S.Input.Data (S.Input.Read_Pos ..
+                                                  S.Input.Write_Pos - 1),
+                  Avail        => Available (S.Input),
+                  Result       => Rec,
+                  Loose_Initial => True);
 
                if Rec.Overflow then
                   Send_Alert_And_Error (S, Record_Overflow, Result);
@@ -734,12 +740,24 @@ is
                end if;
 
                if Rec.Content = Records.Content_Change_Cipher_Spec then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  if Rec.Fragment_Len = 1 then
-                     Result := OK;
-                  else
-                     Send_Alert_And_Error (S, Unexpected_Message, Result);
-                  end if;
+                  declare
+                     CCS_Pos : constant N32 :=
+                        S.Input.Read_Pos + Rec.Fragment_Pos;
+                     CCS_OK : constant Boolean :=
+                        Rec.Fragment_Len = 1
+                        and then S.Input.Data (CCS_Pos) = 16#01#;
+                  begin
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     if CCS_OK then
+                        Result := OK;
+                     else
+                        --  RFC 5246 §7.1 / RFC 8446 §5: CCS payload MUST
+                        --  be the single byte 0x01 (BoGo
+                        --  BadChangeCipherSpec-*).
+                        Send_Alert_And_Error
+                          (S, Unexpected_Message, Result);
+                     end if;
+                  end;
                   return;
                end if;
 

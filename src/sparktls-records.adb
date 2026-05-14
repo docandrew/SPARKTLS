@@ -70,9 +70,10 @@ is
    end Write_To_Output;
 
    procedure Parse_Record_Header
-     (Data   : in     Byte_Seq;
-      Avail  : in     N32;
-      Result :    out Parse_Result)
+     (Data         : in     Byte_Seq;
+      Avail        : in     N32;
+      Result       :    out Parse_Result;
+      Loose_Initial : in     Boolean := False)
    is
       --  TLS record header: content_type(1) + version(2) + length(2) = 5 bytes
       --  Manual parsing replaces RFLX to eliminate 'Unrestricted_Access.
@@ -88,21 +89,26 @@ is
       B := Data'First;
 
       --  RFC 8446 §5.1 / RFC 5246 §6.2.1: the record-layer version
-      --  must encode some TLS version. The major byte must be 0x03,
-      --  and the minor byte one of 0x01 (TLS 1.0) .. 0x04 (TLS 1.3).
-      --  Anything outside this band — e.g. BoGo's
-      --  CheckRecordVersion test sending 0x03FF — is a record-layer
-      --  framing violation: reject without trying to parse further.
-      if Data (B + 1) /= 16#03#
-        or else Data (B + 2) not in 16#01# .. 16#04#
+      --  must encode some TLS version. The major byte must be 0x03;
+      --  the minor byte one of 0x01 (TLS 1.0) .. 0x04 (TLS 1.3) for
+      --  every record except the very first ClientHello (where
+      --  Loose_Initial relaxes the minor-byte check — RFC 8446 §5.1
+      --  / RFC 5246 §E.1 / BoGo LooseInitialRecordVersion).
+      if Data (B + 1) /= 16#03# then
+         Result.Bad_Version := True;
+         return;
+      end if;
+      if not Loose_Initial
+        and then Data (B + 2) not in 16#01# .. 16#04#
       then
          Result.Bad_Version := True;
          return;
       end if;
       --  Pin the field-level invariant for downstream proofs.
       pragma Assert
-        (Record_Version_Valid_RFC_8446_5_1
-           (Data (B + 1), Data (B + 2)));
+        (Loose_Initial
+         or else Record_Version_Valid_RFC_8446_5_1
+                   (Data (B + 1), Data (B + 2)));
 
       --  Parse 2-byte fragment length (big-endian) from bytes 3..4
       Frag_Len := N32 (Data (B + 3)) * 256 + N32 (Data (B + 4));

@@ -220,6 +220,47 @@ is
             return;
          end if;
 
+         --  Pre-pass: RFC 8446 §4.2 forbids duplicate extension types
+         --  in the EE block — decode_error takes precedence over
+         --  unsupported_extension since the structural check is
+         --  performed before semantic checks. BoGo
+         --  DuplicateExtensionClient-* expects decode_error.
+         declare
+            subtype Seen_Range is N32 range 1 .. 32;
+            Seen_Tags  : array (Seen_Range) of N32 := (others => 0);
+            Seen_Count : N32 := 0;
+            Q          : N32 := P;
+         begin
+            while Q + 4 <= Ext_End loop
+               pragma Loop_Invariant
+                 (Q >= Body_Start + 2
+                  and Q + 4 <= Ext_End
+                  and Ext_End <= Data'Last + 1
+                  and Seen_Count <= 32);
+               declare
+                  T : constant N32 :=
+                     N32 (Data (Q)) * 256 + N32 (Data (Q + 1));
+                  L : constant N32 :=
+                     N32 (Data (Q + 2)) * 256 + N32 (Data (Q + 3));
+               begin
+                  exit when Q + 4 + L > Ext_End;
+                  for I in N32 range 1 .. Seen_Count loop
+                     pragma Loop_Invariant (Seen_Count <= 32);
+                     if Seen_Tags (I) = T then
+                        OK  := False;
+                        Err := Decode_Error;
+                        return;
+                     end if;
+                  end loop;
+                  if Seen_Count < 32 then
+                     Seen_Count := Seen_Count + 1;
+                     Seen_Tags (Seen_Count) := T;
+                  end if;
+                  Q := Q + 4 + L;
+               end;
+            end loop;
+         end;
+
          while P + 4 <= Ext_End loop
             pragma Loop_Invariant
               (P >= Body_Start + 2
@@ -234,16 +275,44 @@ is
                --  Skip if extension overflows what's left.
                exit when P + 4 + E_Len > Ext_End;
 
-               --  RFC 8446 §4.2: the server may only send EE
-               --  extensions the client offered in its ClientHello.
-               --  Our offered set is the public Offered_Extension_Tags
-               --  array in SPARKTLS; anything outside it is fatal
-               --  `unsupported_extension`. BoGo's
-               --  UnknownExtension-Client-TLS13 and
-               --  UnofferedExtension-Client-TLS13 exercise this.
-               if not Is_Offered_Extension (Unsigned_16 (Tag)) then
+               --  RFC 8446 §4.2: server's EE may only contain
+               --  extensions that are (a) on RFC 8446 §4.2's
+               --  EE-permitted list AND (b) ones the client offered
+               --  in CH. We pre-intersect those two sets into
+               --  Allowed_EE_Extension_Tags. Anything outside is
+               --  fatal `unsupported_extension`. BoGo's
+               --  UnknownExtension-Client-TLS13,
+               --  UnofferedExtension-Client-TLS13, and
+               --  EncryptedExtensionsWithKeyShare-TLS13 exercise this.
+               declare
+                  Allowed_Here : Boolean := False;
+               begin
+                  for E of Allowed_EE_Extension_Tags loop
+                     if E = Unsigned_16 (Tag) then
+                        Allowed_Here := True;
+                     end if;
+                  end loop;
+                  if not Allowed_Here then
+                     OK  := False;
+                     Err := Unsupported_Extension;
+                     return;
+                  end if;
+               end;
+
+               --  RFC 6066 §3 / RFC 8446 §4.2: server_name ack in EE
+               --  may only appear if client offered SNI in CH. BoGo
+               --  UnsolicitedServerNameAck-TLS13 exercises this.
+               if Tag = 16#0000# and then HC.Cfg.Server_Name.Len = 0 then
                   OK  := False;
                   Err := Unsupported_Extension;
+                  return;
+               end if;
+               --  RFC 6066 §3: server's server_name ack body MUST be
+               --  empty. BoGo ExtensionTrailingData-ServerName-Client
+               --  appends a stray byte → decode_error.
+               if Tag = 16#0000# and then E_Len /= 0 then
+                  OK  := False;
+                  Err := Decode_Error;
                   return;
                end if;
 
@@ -1738,9 +1807,36 @@ is
                      --  RFC 8446 §5: a TLS 1.3 client may receive
                      --  CCS for middlebox-compat at any point after
                      --  the first ClientHello — drain and continue.
-                     S.Input.Read_Pos :=
-                        S.Input.Read_Pos + Rec.Record_Len;
-                     Result := OK;
+                     --  RFC 5246 §7.1: payload MUST be the single byte
+                     --  0x01. BoGo BadChangeCipherSpec-* asserts this.
+                     declare
+                        CCS_Pos : constant N32 :=
+                           S.Input.Read_Pos + Rec.Fragment_Pos;
+                        CCS_OK  : constant Boolean :=
+                           Rec.Fragment_Len = 1
+                           and then S.Input.Data (CCS_Pos) = 16#01#;
+                     begin
+                        S.Input.Read_Pos :=
+                           S.Input.Read_Pos + Rec.Record_Len;
+                        if CCS_OK then
+                           Result := OK;
+                        else
+                           --  Pre-key state: plaintext alert.
+                           declare
+                              A : N32;
+                           begin
+                              Records.Build_Plaintext_Alert
+                                (Level     => 2,
+                                 Desc      => Alert_Desc (Unexpected_Message),
+                                 Output    => S.Output,
+                                 Bytes_Out => A);
+                           end;
+                           S.Last_Error := Unexpected_Message;
+                           Set_State (S, Error_State);
+                           Result := (if Output_Pending (S) > 0
+                                      then Has_Output else Error_Alert);
+                        end if;
+                     end;
 
                   when Records.Content_Alert =>
                      --  Plaintext alert before keys are established
@@ -2078,10 +2174,24 @@ is
 
       case Rec.Content is
          when Records.Content_Change_Cipher_Spec =>
-            --  CCS for middlebox compatibility, ignore
-            HC.CCS_Received := True;
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
+            --  CCS for middlebox compatibility. RFC 5246 §7.1: the
+            --  payload MUST be the single byte 0x01.
+            declare
+               CCS_Pos : constant N32 :=
+                  S.Input.Read_Pos + Rec.Fragment_Pos;
+               CCS_OK  : constant Boolean :=
+                  Rec.Fragment_Len = 1
+                  and then S.Input.Data (CCS_Pos) = 16#01#;
+            begin
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               if CCS_OK then
+                  HC.CCS_Received := True;
+                  Result := OK;
+               else
+                  Send_HS_Encrypted_Alert
+                    (S, HC, Unexpected_Message, Result);
+               end if;
+            end;
 
          when Records.Content_Application_Data =>
             --  This is an encrypted handshake record
