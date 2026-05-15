@@ -384,6 +384,37 @@ else
     fi
 fi
 
+# ===================================================================
+# Session resumption — RFC 8446 §4.6.1 PSK. Two-connection round
+# trip: SPARKTLS client connects, server issues NST, client
+# disconnects, then reconnects with the cached ticket. The shim
+# (tls_resume_test) reports PASS only when the second handshake
+# uses PSK (S.HC_Ptr.Using_PSK = True at Handshake_Done).
+# ===================================================================
+RESUME_CLIENT="$REPO_ROOT/bin/examples/tls_resume_test"
+echo ""
+echo "--- Resumption: SPARKTLS client → OpenSSL s_server ---"
+if [ ! -x "$RESUME_CLIENT" ]; then
+    echo "  (skipped — tls_resume_test not built)"
+else
+    cleanup
+    openssl s_server -accept 0:$PORT \
+        -cert "$CERT_DIR/p256.crt" -key "$CERT_DIR/p256.key" \
+        -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256 \
+        -num_tickets 1 -quiet \
+        > /tmp/resume_srv.log 2>&1 &
+    sleep 0.5
+    output=$(timeout 10 "$RESUME_CLIENT" -port $PORT -host localhost 2>&1)
+    rc=$?
+    cleanup
+    if [ $rc -eq 0 ] && echo "$output" | grep -q "PASS: resumption succeeded"; then
+        pass "TLS 1.3 PSK resumption (two connections)"
+    else
+        fail "TLS 1.3 PSK resumption (two connections)"
+        echo "$output" | sed 's/^/    /' | head -10
+    fi
+fi
+
 # --- Summary ---
 cleanup
 echo ""

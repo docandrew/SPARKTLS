@@ -129,6 +129,9 @@ begin
       Cfg.Server_Name.Len := H'Length;
    end;
    Cfg.Resume_Ticket := Make_Ticket;
+   --  Also flag the ticket as 0-RTT capable so the second Init
+   --  test below can exercise early_data emission.
+   Cfg.Resume_Ticket.Max_Early_Data := 16384;
 
    --  Init builds CH and queues it in S.Output.
    SPARKTLS.Client.Init (S, Cfg);
@@ -184,6 +187,33 @@ begin
    --  echo pre_shared_key).
    Check ("HC.PSK_Offered = True after Init with valid ticket",
           S.HC_Ptr /= null and then S.HC_Ptr.PSK_Offered);
+
+   --  0-RTT path: a separate Init with Allow_0RTT + Max_Early_Data
+   --  should emit the early_data extension (0x002A) in CH.
+   declare
+      S2   : Session;
+      Cfg2 : Config := Cfg;
+      Net  : Byte_Seq (0 .. 16383);
+      Drained : N32;
+   begin
+      Cfg2.Allow_0RTT := True;
+      Cfg2.Resume_Ticket.Max_Early_Data := 16384;
+      SPARKTLS.Client.Init (S2, Cfg2);
+      Drain_Ciphertext (S2, Net, Drained);
+      Check ("0-RTT CH drained", Drained > 5);
+      if Drained > 5 then
+         declare
+            CH : Byte_Seq (0 .. Drained - 6) := Net (5 .. Drained - 1);
+         begin
+            Check ("0-RTT CH contains early_data ext (0x002A)",
+                   Find_Ext (CH, 16#002A#) /= Not_Found);
+            Check ("0-RTT CH still contains pre_shared_key (0x0029)",
+                   Find_Ext (CH, 16#0029#) /= Not_Found);
+         end;
+      end if;
+      Check ("HC.Early_Data_Offered = True after 0-RTT Init",
+             S2.HC_Ptr /= null and then S2.HC_Ptr.Early_Data_Offered);
+   end;
 
    Put_Line ("");
    Put_Line ("=== Total:" & Total'Image &

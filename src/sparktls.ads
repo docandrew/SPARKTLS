@@ -938,7 +938,13 @@ is
       PSK          : Bytes_48 := (others => 0);  --  derived PSK
       PSK_Len      : N32 := 0;              --  32 (SHA-256) or 48 (SHA-384)
       Suite        : Unsigned_16 := 0;       --  cipher suite
-      Valid        : Boolean := False;
+      --  RFC 8446 §4.2.10 / §4.6.1: the NST may include an
+      --  early_data extension whose body is the uint32
+      --  max_early_data_size. >0 means the server permits 0-RTT
+      --  data on a future resumption with this ticket. 0 means
+      --  full-handshake-only.
+      Max_Early_Data : Unsigned_32 := 0;
+      Valid          : Boolean := False;
    end record;
 
    --================================================================
@@ -1006,6 +1012,17 @@ is
       --  building CH so the pre_shared_key extension is offered.
       --  Default-init (Valid=False) means a fresh full handshake.
       Resume_Ticket : Session_Ticket;
+
+      --  Client: opt-in to RFC 8446 §2.3 / §4.2.10 0-RTT (early data).
+      --  Only meaningful when Resume_Ticket.Valid AND its
+      --  Max_Early_Data > 0. When True, CH carries the early_data
+      --  extension and Init derives client_early_traffic_secret;
+      --  the caller may then call Write_Plaintext to send 0-RTT
+      --  application data BEFORE the handshake completes. The
+      --  server may accept (data delivered) or reject (data
+      --  silently dropped; caller MUST be idempotent or check
+      --  Was_0RTT_Accepted before relying on side effects).
+      Allow_0RTT : Boolean := False;
    end record;
 
    --================================================================
@@ -1235,6 +1252,17 @@ is
       PSK_Binder    : Bytes_48 := (others => 0);  --  received binder
       PSK_Binder_Len : N32 := 0;
       PSK_Binders_Offset : N32 := 0;              --  offset of binders in ClientHello
+
+      --  RFC 8446 §2.3 / §4.2.10 0-RTT (early data).
+      --
+      --  Early_Data_Offered  : we put the early_data extension in CH
+      --                        (and intend to send early app data).
+      --  Early_Data_Accepted : server echoed early_data in EE; the
+      --                        early app data we sent was delivered.
+      --                        Until we see EE, this stays False so
+      --                        a missing EE → rejection by default.
+      Early_Data_Offered  : Boolean := False;
+      Early_Data_Accepted : Boolean := False;
 
       --  Handshake message reassembly (multi-record handshake messages).
       --  When a handshake record fragment contains only part of a
@@ -1738,7 +1766,8 @@ is
      (Tag_Is_Offered_Static (Tag)
       or else (Tag = 16#0000# and then HC.Cfg.Server_Name.Len > 0)
       or else (Tag = 16#0010# and then HC.Cfg.ALPN.Len > 0)
-      or else (Tag = 16#0029# and then HC.PSK_Offered));
+      or else (Tag = 16#0029# and then HC.PSK_Offered)
+      or else (Tag = 16#002A# and then HC.Early_Data_Offered));
 
    --  RFC 8446 §4.2 single-call validator for any server-generated
    --  extension. Returns OK = True on success; otherwise sets
@@ -1779,6 +1808,16 @@ is
       Client_App    : Traffic_Keys;
       Server_App    : Traffic_Keys;
 
+      --  RFC 8446 §7.1 client_early_traffic_secret keys. Derived
+      --  by Init when 0-RTT is offered; used by Write_Plaintext to
+      --  encrypt 0-RTT app data BEFORE Handshake_Done. After the
+      --  handshake completes the client side rotates to Client_App;
+      --  if the server rejected 0-RTT, any data we sent under these
+      --  keys was silently dropped by the server, but the keys
+      --  themselves remain valid (for the end_of_early_data
+      --  message).
+      Client_Early  : Traffic_Keys;
+
       --  Decrypted application data staging area
       App_Data     : Byte_Seq (0 .. Max_Record_Plaintext - 1)
                        := (others => 0);
@@ -1793,6 +1832,19 @@ is
 
       --  Resumption: cached session ticket (client side)
       Ticket : Session_Ticket;
+
+      --  Resumption: snapshot of HC.Using_PSK / HC.Early_Data_Accepted
+      --  captured before the handshake context is freed. The
+      --  Advance loop nulls HC_Ptr at state→Connected so callers
+      --  who want to know "did we resume?" / "did the server
+      --  accept 0-RTT?" need a Session-level mirror.
+      Resumed_From_PSK   : Boolean := False;
+      Early_Data_Was_Accepted : Boolean := False;
+
+      --  Total bytes the caller has handed to Write_Early_Data.
+      --  Enforced against S.Ticket.Max_Early_Data so we don't
+      --  exceed the server's advertised budget (RFC 8446 §4.6.1).
+      Early_Data_Bytes_Sent : N32 := 0;
 
       --  Resumption master secret (copied from HC before free,
       --  needed to derive PSK when NewSessionTicket arrives post-handshake)

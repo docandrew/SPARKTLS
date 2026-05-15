@@ -157,6 +157,46 @@ is
    function Has_Session_Ticket (S : Session) return Boolean is
       (S.Ticket.Valid);
 
+   --  True iff the current connection's handshake completed
+   --  using the PSK supplied via Cfg.Resume_Ticket (server
+   --  accepted resumption). Cleared on every Init/Configure.
+   --  Stable across the freeing of the handshake context — the
+   --  flag is mirrored from HC into S at handshake completion.
+   function Was_Resumed (S : Session) return Boolean is
+      (S.Resumed_From_PSK);
+
+   --  True iff this connection was resumed AND the server
+   --  accepted 0-RTT early data. Meaningful only when the caller
+   --  set Cfg.Allow_0RTT.
+   function Was_0RTT_Accepted (S : Session) return Boolean is
+      (S.Early_Data_Was_Accepted);
+
+   --  RFC 8446 §2.3 / §4.2.10: send 0-RTT (early) data BEFORE
+   --  the handshake completes, encrypted under
+   --  client_early_traffic_secret. Caller must have set
+   --  Cfg.Allow_0RTT and provided a Resume_Ticket with
+   --  Max_Early_Data > 0; Init then queues the first record.
+   --
+   --  The server may reject 0-RTT — see Was_0RTT_Accepted post-
+   --  handshake. If rejected, the server silently discards the
+   --  data the client sent. Callers MUST therefore either:
+   --    (a) replay-safe: only send idempotent data via 0-RTT, or
+   --    (b) gate the 0-RTT payload on Was_0RTT_Accepted before
+   --        relying on the side effects.
+   --
+   --  Returns 0 bytes written if the caller didn't enable 0-RTT
+   --  or if Max_Early_Data would be exceeded. State doesn't
+   --  transition — the caller continues Advance-ing until
+   --  Handshake_Done as normal.
+   procedure Write_Early_Data
+     (S              : in out Session;
+      Plaintext      : in     Byte_Seq;
+      Bytes_Written  :    out N32)
+   with Pre  => S.Role = Role_Client
+                and Plaintext'First = 0
+                and Plaintext'Length > 0,
+        Post => Bytes_Written <= N32 (Plaintext'Length);
+
    --  Snapshot the current resumption ticket. Returns the empty
    --  ticket (Valid=False) if none. The returned record is
    --  self-contained and can be persisted to disk / passed to

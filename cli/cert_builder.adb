@@ -331,24 +331,34 @@ package body Cert_Builder is
             End_Sequence (TBS_Buf, TBS_Pos, Ext_S);
          end;
 
-         --  Key Usage (critical)
-         if Params.Is_CA then
-            declare
-               Ext_S : X509.N32;
-               --  keyCertSign (bit 5) + cRLSign (bit 6) = 0x06, 1 unused bit
-               KU_Value : constant X509.Byte_Seq (0 .. 3) :=
-                 (16#03#, 16#02#, 16#01#, 16#06#);
-                 --  BIT STRING: tag=03, len=02, unused=01, bits=06
-            begin
-               Start_Sequence (TBS_Buf, TBS_Pos, Ext_S);
-               Put_OID (TBS_Buf, TBS_Pos, X509.Byte_Seq (OID_Key_Usage));
-               Put_Byte (TBS_Buf, TBS_Pos, 16#01#);  --  BOOLEAN tag
-               Put_Byte (TBS_Buf, TBS_Pos, 16#01#);  --  length 1
-               Put_Byte (TBS_Buf, TBS_Pos, 16#FF#);  --  critical = TRUE
-               Put_Octet_String (TBS_Buf, TBS_Pos, KU_Value);
-               End_Sequence (TBS_Buf, TBS_Pos, Ext_S);
-            end;
-         end if;
+         --  Key Usage (critical) — always present.
+         --  RFC 5280 §4.2.1.3 BIT STRING bit positions (MSB first):
+         --    bit 0 = digitalSignature
+         --    bit 5 = keyCertSign
+         --    bit 6 = cRLSign
+         --  Self-signed dev cert (Is_CA): digitalSignature +
+         --  keyCertSign + cRLSign → byte 0x86, 1 unused bit. The
+         --  leaf bit (digitalSignature) is required for TLS 1.3
+         --  CertificateVerify; without it our own client rejects
+         --  the cert with bad_certificate even with --skip-verify
+         --  (RFC 8446 §4.4.2.4 / §9.4 mandates the check).
+         --  Non-CA leaf: digitalSignature only → byte 0x80, 7
+         --  unused bits.
+         declare
+            Ext_S    : X509.N32;
+            KU_Value : constant X509.Byte_Seq (0 .. 3) :=
+              (if Params.Is_CA
+               then (16#03#, 16#02#, 16#01#, 16#86#)
+               else (16#03#, 16#02#, 16#07#, 16#80#));
+         begin
+            Start_Sequence (TBS_Buf, TBS_Pos, Ext_S);
+            Put_OID (TBS_Buf, TBS_Pos, X509.Byte_Seq (OID_Key_Usage));
+            Put_Byte (TBS_Buf, TBS_Pos, 16#01#);  --  BOOLEAN tag
+            Put_Byte (TBS_Buf, TBS_Pos, 16#01#);  --  length 1
+            Put_Byte (TBS_Buf, TBS_Pos, 16#FF#);  --  critical = TRUE
+            Put_Octet_String (TBS_Buf, TBS_Pos, KU_Value);
+            End_Sequence (TBS_Buf, TBS_Pos, Ext_S);
+         end;
 
          --  Subject Alternative Names (if any)
          if Params.SAN_Count > 0 then
