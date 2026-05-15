@@ -133,4 +133,39 @@ is
    function Has_Peer_Certificate (S : Session) return Boolean is
       (S.Peer_Cert_Valid);
 
+   --================================================================
+   --  Session resumption (RFC 8446 §4.6.1 / §2.2)
+   --
+   --  Workflow:
+   --    1. Connect normally. After Handshake_Done (or after any
+   --       Advance call), check Has_Session_Ticket; if True,
+   --       persist Get_Session_Ticket's return value.
+   --    2. On the next connection, place the saved ticket in
+   --       Cfg.Resume_Ticket BEFORE Init / Configure. Init copies
+   --       it into the session before building CH, which then
+   --       carries the pre_shared_key extension.
+   --
+   --  The Cfg-driven path is required because Init constructs and
+   --  queues CH atomically — there is no post-Init injection point
+   --  for the ticket.
+   --================================================================
+
+   --  True iff a usable resumption PSK has been derived from a
+   --  NewSessionTicket. Servers may send NSTs at any point after
+   --  Handshake_Done; callers should re-check (and resnapshot)
+   --  whenever they return to their event loop.
+   function Has_Session_Ticket (S : Session) return Boolean is
+      (S.Ticket.Valid);
+
+   --  Snapshot the current resumption ticket. Returns the empty
+   --  ticket (Valid=False) if none. The returned record is
+   --  self-contained and can be persisted to disk / passed to
+   --  another process; placing it in a future Cfg.Resume_Ticket
+   --  enables PSK resumption.
+   --
+   --  RFC 8446 §4.6.1: tickets MUST NOT be reused; the caller is
+   --  responsible for using each persisted ticket at most once.
+   function Get_Session_Ticket (S : Session) return Session_Ticket is
+      (S.Ticket);
+
 end SPARKTLS.Client;

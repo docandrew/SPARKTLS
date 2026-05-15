@@ -921,6 +921,27 @@ is
    type Ticket_Store_Access is access all Ticket_Store;
 
    --================================================================
+   --  Session Ticket (RFC 8446 §4.6.1)
+   --
+   --  Stand-alone, copyable record so the caller can persist it
+   --  across connections. Defined here (before Config) because
+   --  Cfg.Resume_Ticket embeds it.
+   --================================================================
+
+   Max_Ticket_Len : constant := 256;
+
+   type Session_Ticket is record
+      Ticket       : Byte_Seq (0 .. Max_Ticket_Len - 1) := (others => 0);
+      Ticket_Len   : N32 := 0;
+      Lifetime     : Unsigned_32 := 0;       --  seconds
+      Age_Add      : Unsigned_32 := 0;       --  obfuscation value
+      PSK          : Bytes_48 := (others => 0);  --  derived PSK
+      PSK_Len      : N32 := 0;              --  32 (SHA-256) or 48 (SHA-384)
+      Suite        : Unsigned_16 := 0;       --  cipher suite
+      Valid        : Boolean := False;
+   end record;
+
+   --================================================================
    --  Validation modes (used by Config and Cert_Verify)
    --================================================================
 
@@ -979,6 +1000,12 @@ is
       --  Server: ticket cache for session resumption.
       --  If non-null, server sends NewSessionTicket after handshake.
       Ticket_Store : Ticket_Store_Access := null;
+
+      --  Client: previously-saved resumption ticket (RFC 8446
+      --  §4.6.1). When Valid, Init copies this into S.Ticket before
+      --  building CH so the pre_shared_key extension is offered.
+      --  Default-init (Valid=False) means a fresh full handshake.
+      Resume_Ticket : Session_Ticket;
    end record;
 
    --================================================================
@@ -1710,7 +1737,8 @@ is
       HC  : Handshake_Context) return Boolean is
      (Tag_Is_Offered_Static (Tag)
       or else (Tag = 16#0000# and then HC.Cfg.Server_Name.Len > 0)
-      or else (Tag = 16#0010# and then HC.Cfg.ALPN.Len > 0));
+      or else (Tag = 16#0010# and then HC.Cfg.ALPN.Len > 0)
+      or else (Tag = 16#0029# and then HC.PSK_Offered));
 
    --  RFC 8446 §4.2 single-call validator for any server-generated
    --  extension. Returns OK = True on success; otherwise sets
@@ -1733,20 +1761,9 @@ is
 
    --================================================================
    --  Session Ticket (for resumption)
+   --  Definition was moved earlier (before Config) so Config can
+   --  embed a Resume_Ticket.
    --================================================================
-
-   Max_Ticket_Len : constant := 256;
-
-   type Session_Ticket is record
-      Ticket       : Byte_Seq (0 .. Max_Ticket_Len - 1) := (others => 0);
-      Ticket_Len   : N32 := 0;
-      Lifetime     : Unsigned_32 := 0;       --  seconds
-      Age_Add      : Unsigned_32 := 0;       --  obfuscation value
-      PSK          : Bytes_48 := (others => 0);  --  derived PSK
-      PSK_Len      : N32 := 0;              --  32 (SHA-256) or 48 (SHA-384)
-      Suite        : Unsigned_16 := 0;       --  cipher suite
-      Valid        : Boolean := False;
-   end record;
 
    type Session is record
       --  State

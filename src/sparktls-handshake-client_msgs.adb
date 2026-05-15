@@ -748,7 +748,18 @@ is
       --  If we have a cached session ticket, append pre_shared_key extension.
       --  This MUST be the last extension per RFC 8446 Section 4.2.11.
       --  We patch the extensions list length and handshake length after.
-      if S.Ticket.Valid and then Len > 0 then
+      --
+      --  The binder code below is currently SHA-256-only (Digest +
+      --  HMAC_SHA_256 + 32-byte write). A SHA-384 PSK (PSK_Len=48,
+      --  binder_size=48) needs a parallel SHA-384 path. Until then,
+      --  only offer PSK resumption when the cached ticket was bound
+      --  to a SHA-256 cipher suite. Drops resumption for
+      --  AES-256-GCM-SHA384 sessions; full handshake still works.
+      if S.Ticket.Valid
+        and then S.Ticket.PSK_Len = 32
+        and then Len > 0
+      then
+         HC.PSK_Offered := True;
          declare
             use SPARKTLSCrypto.Hashing.SHA256;
             Tick_Len : constant N32 := S.Ticket.Ticket_Len;
@@ -768,10 +779,27 @@ is
             New_Len     : constant N32 := Len + PSK_Ext_Len;
             P : N32;
 
-            --  Location of the extensions_length field in the ClientHello
-            --  After handshake header(4) + version(2) + random(32) + sid_len(1)
-            --  + sid(32) + suites_len(2) + suites(6) + comp_len(1) + comp(1)
-            Ext_Len_Offset : constant N32 := 4 + 2 + 32 + 1 + 32 + 2 + 6 + 1 + 1;
+            --  Location of the extensions_length field in the
+            --  ClientHello. CH body layout:
+            --    hs_hdr(4) + version(2) + random(32) + sid_len(1)
+            --    + sid(0..32) + suites_len(2) + suites(N) +
+            --    comp_len(1) + comp(N) + ext_len(2) + extensions(M)
+            --  Read sid_len, suites_len, comp_len from the CH we
+            --  just built so the offset is correct for any number
+            --  of cipher suites or session-id length.
+            Sid_Len_Off    : constant N32 := 4 + 2 + 32;  --  to sid_len byte
+            Sid_Len_Read   : constant N32 := N32 (Result (Sid_Len_Off));
+            Suites_Len_Off : constant N32 :=
+              Sid_Len_Off + 1 + Sid_Len_Read;
+            Suites_Len_Read : constant N32 :=
+              N32 (Result (Suites_Len_Off)) * 256 +
+              N32 (Result (Suites_Len_Off + 1));
+            Comp_Len_Off   : constant N32 :=
+              Suites_Len_Off + 2 + Suites_Len_Read;
+            Comp_Len_Read  : constant N32 :=
+              N32 (Result (Comp_Len_Off));
+            Ext_Len_Offset : constant N32 :=
+              Comp_Len_Off + 1 + Comp_Len_Read;
             Old_Ext_Len : N32;
             New_Ext_Len : N32;
          begin
@@ -1065,6 +1093,31 @@ is
                   HC.HRR_Selected_Group :=
                      Unsigned_16 (Data (Exts (I).Offset)) * 256
                      + Unsigned_16 (Data (Exts (I).Offset + 1));
+               end if;
+               --  RFC 8446 §4.2.11: pre_shared_key in SH (not HRR)
+               --  carries `selected_identity` (uint16). We offer
+               --  exactly one PSK identity (S.Ticket), so the only
+               --  valid selected_identity value is 0; anything else
+               --  is illegal_parameter. The matrix has already
+               --  rejected pre_shared_key in SH if we did not
+               --  offer it (Requires_Offer => True).
+               if not Is_HRR_Msg
+                 and then Exts (I).Tag = 16#0029#  --  pre_shared_key
+                 and then Exts (I).Offset + 1 <= Data'Last
+                 and then Exts (I).E_Len = 2
+               then
+                  declare
+                     Sel : constant Unsigned_16 :=
+                       Unsigned_16 (Data (Exts (I).Offset)) * 256 +
+                       Unsigned_16 (Data (Exts (I).Offset + 1));
+                  begin
+                     if Sel /= 0 then
+                        S.Last_Error := Illegal_Parameter;
+                        OK := False;
+                        return;
+                     end if;
+                     HC.Using_PSK := True;
+                  end;
                end if;
                if Is_HRR_Msg
                  and then Exts (I).Tag = 16#002C#  --  cookie

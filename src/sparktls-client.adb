@@ -387,6 +387,17 @@ is
 
       S.HC_Ptr.Cfg := Cfg;
 
+      --  RFC 8446 §4.6.1: if the caller passed a previously-saved
+      --  resumption ticket via Cfg, copy it into S.Ticket before
+      --  Build_Client_Hello so the CH carries the pre_shared_key
+      --  extension and the binder is computed from the ticket's PSK.
+      if Cfg.Resume_Ticket.Valid
+        and then Cfg.Resume_Ticket.PSK_Len > 0
+        and then Cfg.Resume_Ticket.Ticket_Len > 0
+      then
+         S.Ticket := Cfg.Resume_Ticket;
+      end if;
+
       Handshake.Client_Msgs.Build_Client_Hello (S, S.HC_Ptr.all, CH_Buf, CH_Len);
 
       if CH_Len = 0 then
@@ -498,7 +509,17 @@ is
                   end if;
                end;
             end if;
-            Set_State (S, Wait_Certificate);
+            --  RFC 8446 §4.3.1 / §4.4.4: when the server selected
+            --  our PSK (HC.Using_PSK), the cert + cert_verify
+            --  messages are skipped — server's flight is just
+            --  EE → Finished. Jump straight to Wait_Server_Finished
+            --  to avoid mis-classifying the encrypted Finished as
+            --  an unexpected_message in Wait_Certificate.
+            if HC.Using_PSK then
+               Set_State (S, Wait_Server_Finished);
+            else
+               Set_State (S, Wait_Certificate);
+            end if;
 
          when Handshake.HT_Certificate_Request =>
             --  RFC 8446 §4.3.2: CertReq body = ctx_len(1) + ctx(N)
@@ -2190,11 +2211,20 @@ is
                Transcript_Hash_384 (HC);
             Early      : Key_Schedule.Digest_384;
             HS_Secret  : Key_Schedule.Digest_384;
-            No_PSK     : Bytes_48 := (others => 0);
+            --  RFC 8446 §7.1: Early_Secret = HKDF-Extract(0, PSK).
+            --  PSK = ticket-derived secret iff the server actually
+            --  selected our PSK (HC.Using_PSK) AND the ticket was
+            --  bound to the same suite (PSK_Len matches the hash
+            --  output size). Otherwise PSK = all-zeros, which is
+            --  the §7.1 "fresh full handshake" sentinel.
+            PSK_Bytes  : Bytes_48 :=
+              (if HC.Using_PSK and then S.Ticket.PSK_Len = 48
+               then S.Ticket.PSK
+               else (others => 0));
             Client_Sec : OKM384_Seq (0 .. 47);
             Server_Sec : OKM384_Seq (0 .. 47);
          begin
-            Key_Schedule.Derive_Early_Secret_384 (Early, No_PSK);
+            Key_Schedule.Derive_Early_Secret_384 (Early, PSK_Bytes);
             --  Use full 48 bytes if P-384 ECDHE, else first 32
             if HC.Use_P384_KE then
                Key_Schedule.Derive_Handshake_Secret_384
@@ -2224,11 +2254,15 @@ is
             Hello_Hash : Digest := Transcript_Hash_256 (HC);
             Early      : Digest;
             HS_Secret  : Digest;
-            No_PSK     : Bytes_32 := (others => 0);
+            --  See SHA-384 branch above for PSK rationale.
+            PSK_Bytes  : Bytes_32 :=
+              (if HC.Using_PSK and then S.Ticket.PSK_Len = 32
+               then Bytes_32 (S.Ticket.PSK (0 .. 31))
+               else (others => 0));
             Client_Sec : OKM_Seq (0 .. 31);
             Server_Sec : OKM_Seq (0 .. 31);
          begin
-            Key_Schedule.Derive_Early_Secret (Early, No_PSK);
+            Key_Schedule.Derive_Early_Secret (Early, PSK_Bytes);
             --  Pass full shared secret: 48 bytes for P-384, 32 for others
             if HC.Use_P384_KE then
                Key_Schedule.Derive_Handshake_Secret

@@ -786,6 +786,21 @@ is
                   Send_Alert_And_Error (S, Decode_Error, Result);
                   return;
                end if;
+               --  RFC 5246 §7.4: ServerHelloDone is the last
+               --  pre-CCS server handshake message in its record,
+               --  so any partial/extra bytes after it are excess
+               --  handshake data. BoGo
+               --  PartialFinishedWithServerHelloDone /
+               --  PartialNewSessionTicketWithServerHelloDone append
+               --  one stray byte (typeFinished / typeNewSessionTicket)
+               --  to the SHD record; reject as unexpected_message.
+               if HC.Reasm_Len > HC.Reasm_Need then
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                  HC.Reasm_Hdr_Pending := False;
+                  Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  return;
+               end if;
                --  End of server flight. Now:
                --  1. Compute ECDHE shared secret
                --  2. Derive keys
@@ -1720,17 +1735,31 @@ is
                      Result := OK;
                   end if;
                when Records.Content_Alert =>
+                  --  RFC 5246 §7.2: alerts have (level, description).
+                  --  - close_notify (desc=0): peer is closing — initiate
+                  --    Closing. Required regardless of level by §7.2.1.
+                  --  - level=warning (1): MAY ignore. We ignore so BoGo
+                  --    SendWarningAlerts-Pass /
+                  --    AlternateEmptyRecordsAndWarningAlerts complete.
+                  --  - level=fatal (2): connection MUST close. We just
+                  --    record the error and stop reading; sending an
+                  --    alert back would loop on every fatal we receive.
                   if PL >= 2 and then Plaintext (1) = 0 then
-                     --  Runtime check: prover can't carry S.State through
-                     --  the prior S-field updates without a much heavier
-                     --  contract. Connected→Closing is the only valid
-                     --  transition we expect here.
+                     --  close_notify
                      if S.State = Connected then
                         Set_State (S, Closing);
                      end if;
                      Result := Shutdown;
+                  elsif PL >= 1 and then Plaintext (0) = 1 then
+                     --  warning — ignore, keep connection up.
+                     Result := OK;
                   else
-                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                     --  fatal alert from peer — record + close.
+                     S.Last_Error := Unexpected_Message;
+                     if S.State = Connected then
+                        Set_State (S, Closing);
+                     end if;
+                     Result := Shutdown;
                   end if;
                when others =>
                   Result := OK;
