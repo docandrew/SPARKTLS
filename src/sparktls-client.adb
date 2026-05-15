@@ -1559,6 +1559,18 @@ is
                   return;
                end if;
 
+               --  RFC 8446 §5.1 / §5.2: a record whose declared
+               --  fragment length exceeds the per-type cap must be
+               --  rejected with `record_overflow`. Without this
+               --  check the parser would loop on Need_Input
+               --  forever. BoGo LargePlaintext sends maxPlaintext+1.
+               if Rec.Overflow then
+                  S.Last_Error := Record_Overflow;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
+
                if not Rec.OK then
                   Result := Need_Input;
                   return;
@@ -2279,6 +2291,13 @@ is
          return;
       end if;
 
+      if Rec.Overflow then
+         S.Last_Error := Record_Overflow;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
       if not Rec.OK then
          Result := Need_Input;
          return;
@@ -2622,6 +2641,11 @@ is
          return;
       end if;
 
+      if Rec.Overflow then
+         Send_App_Encrypted_Alert (S, Record_Overflow, Result);
+         return;
+      end if;
+
       if not Rec.OK then
          Result := Need_Input;
          return;
@@ -2666,6 +2690,19 @@ is
             return;
          end if;
 
+         --  RFC 8446 §5.4: "the full encoded TLSInnerPlaintext MUST
+         --  NOT exceed 2^14 + 1 octets". TLSInnerPlaintext = content
+         --  + type + zero pad. After AEAD this becomes the ciphertext
+         --  minus the AEAD tag. Reject early to avoid even attempting
+         --  the AEAD on an oversized record. BoGo
+         --  LargePlaintext-TLS13-Padded-* sends e.g. 8192 plaintext +
+         --  8193 padding => inner length 16386 > 16385.
+         if Frag_Len - Records.Tag_Size > Max_Record_Plaintext + 1 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_App_Encrypted_Alert (S, Record_Overflow, Result);
+            return;
+         end if;
+
          Records.Decrypt_Record
            (Encrypted  => Encrypted,
             Record_Hdr => Hdr,
@@ -2683,6 +2720,13 @@ is
             Send_App_Encrypted_Alert (S, Bad_Record_MAC, Result);
             pragma Assert
               (AEAD_Failure_Alert_Queued_RFC_8446_5_2 (S));
+            return;
+         end if;
+
+         --  RFC 8446 §5.4: TLSPlaintext.content after type+pad strip
+         --  is at most 2^14 bytes.
+         if Plain_Len > Max_Record_Plaintext then
+            Send_App_Encrypted_Alert (S, Record_Overflow, Result);
             return;
          end if;
 
