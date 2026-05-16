@@ -802,59 +802,10 @@ is
       RFLX_Free (Buf);
       Len := CH_Msg_Len;
 
-      --  RFC 8446 §4.2.10 0-RTT: when the caller opted in
-      --  (Cfg.Allow_0RTT) AND the cached ticket allows 0-RTT
-      --  (Max_Early_Data > 0), inject an empty-body early_data
-      --  extension. Must appear BEFORE pre_shared_key (which RFC
-      --  8446 §4.2.11 mandates as the last extension), so we do
-      --  it here, just ahead of the PSK block below. Patches the
-      --  extensions_length and handshake_length fields by +4.
-      if HC.Cfg.Allow_0RTT
-        and then S.Ticket.Valid
-        and then S.Ticket.Max_Early_Data > 0
-        and then S.Ticket.PSK_Len = 32
-        and then Len + 4 <= N32 (Result'Length)
-      then
-         declare
-            --  Same dynamic-offset trick used in the PSK block.
-            Sid_Len_Off    : constant N32 := 4 + 2 + 32;
-            Sid_Len_Read   : constant N32 := N32 (Result (Sid_Len_Off));
-            Suites_Len_Off : constant N32 :=
-              Sid_Len_Off + 1 + Sid_Len_Read;
-            Suites_Len_Read : constant N32 :=
-              N32 (Result (Suites_Len_Off)) * 256 +
-              N32 (Result (Suites_Len_Off + 1));
-            Comp_Len_Off   : constant N32 :=
-              Suites_Len_Off + 2 + Suites_Len_Read;
-            Comp_Len_Read  : constant N32 :=
-              N32 (Result (Comp_Len_Off));
-            Ext_Len_Offset : constant N32 :=
-              Comp_Len_Off + 1 + Comp_Len_Read;
-            Old_Ext : constant N32 :=
-              N32 (Result (Ext_Len_Offset)) * 256 +
-              N32 (Result (Ext_Len_Offset + 1));
-            New_Ext : constant N32 := Old_Ext + 4;
-            New_Body_Len : constant N32 := Len + 4 - 4;  --  Len was 4+body
-         begin
-            --  Append the extension: tag (0x002A) + len (0x0000).
-            Result (Len)     := 16#00#;
-            Result (Len + 1) := 16#2A#;
-            Result (Len + 2) := 16#00#;
-            Result (Len + 3) := 16#00#;
-            Len := Len + 4;
-
-            --  Patch the extensions_length field in place.
-            Result (Ext_Len_Offset)     := Byte (New_Ext / 256);
-            Result (Ext_Len_Offset + 1) := Byte (New_Ext mod 256);
-
-            --  Patch the 3-byte handshake length.
-            Result (1) := Byte (New_Body_Len / 65536);
-            Result (2) := Byte ((New_Body_Len / 256) mod 256);
-            Result (3) := Byte (New_Body_Len mod 256);
-
-            HC.Early_Data_Offered := True;
-         end;
-      end if;
+      --  0-RTT (RFC 8446 §4.2.10) intentionally not offered — see
+      --  the Cfg.Resume_Ticket comment in sparktls.ads for the
+      --  rationale. We never write the early_data extension into
+      --  CH; HC.Early_Data_Offered on the client side stays False.
 
       --  If we have a cached session ticket, append pre_shared_key
       --  extension. This MUST be the last extension per RFC 8446
@@ -1882,10 +1833,13 @@ is
            (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
          --  RFC 7748 §6.1: small-subgroup defence. The helper has
          --  a SPARK-proven Post that ties its result to the byte-
-         --  sequence existential.
+         --  sequence existential. RFC 8446 §6.2: invalid peer share
+         --  is illegal_parameter, not the generic handshake_failure
+         --  the caller would otherwise pick.
          if not Shared_Secret_Is_Acceptable_X25519
                   (HC.Shared_Secret (0 .. 31))
          then
+            S.Last_Error := Illegal_Parameter;
             Take_Buffer (Ctx, Buf);
             RFLX_Free (Buf);
             OK := False;

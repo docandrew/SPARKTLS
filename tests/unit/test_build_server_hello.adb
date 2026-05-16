@@ -231,6 +231,38 @@ procedure Test_Build_Server_Hello is
       Check ("No common group → Len = 0", Len = 0);
    end Test_No_Common_Group;
 
+   --  RFC 7748 §6.1 / RFC 8422 §5.10: the X25519 contributory check.
+   --  Eight specific 32-byte peer-pubkey values produce an all-zero
+   --  shared secret. Generate_KS_X25519 must (a) detect via
+   --  Shared_Secret_Is_Acceptable_X25519, (b) abort with KS_Raw_Len=0,
+   --  (c) zero HC.Shared_Secret, (d) plumb Illegal_Parameter via
+   --  HC.Ext_Parse_Err so Build_Server_Flight emits the RFC-correct
+   --  alert instead of generic handshake_failure.
+   --
+   --  Two complementary tests below:
+   --   (1) Helper-direct: confirm Shared_Secret_Is_Acceptable_X25519
+   --       returns False for an all-zero shared-secret input. This
+   --       is the security predicate itself; the rest of the
+   --       Generate_KS_X25519 logic is wired around it via SPARK
+   --       contract.
+   --   (2) Sanity: the post-helper assignments in Generate_KS_X25519
+   --       (Ext_Parse_Err := Illegal_Parameter; KS_Raw_Len := 0)
+   --       run unconditionally on helper=False, so confirming the
+   --       helper itself is the load-bearing check.
+   procedure Test_X25519_Small_Subgroup_Helper is
+      All_Zero  : constant Byte_Seq (0 .. 31) := (others => 0);
+      One_Set   : Byte_Seq (0 .. 31) := (others => 0);
+      All_Ones  : constant Byte_Seq (0 .. 31) := (others => 16#FF#);
+   begin
+      One_Set (15) := 1;  --  single non-zero byte
+      Check ("Acceptable_X25519 rejects all-zero shared secret",
+             not Shared_Secret_Is_Acceptable_X25519 (All_Zero));
+      Check ("Acceptable_X25519 accepts shared secret with one set byte",
+             Shared_Secret_Is_Acceptable_X25519 (One_Set));
+      Check ("Acceptable_X25519 accepts all-ones shared secret",
+             Shared_Secret_Is_Acceptable_X25519 (All_Ones));
+   end Test_X25519_Small_Subgroup_Helper;
+
    procedure Test_Idempotent_Two_Calls is
       S1, S2   : Session;
       HC1, HC2 : Handshake_Context;
@@ -258,6 +290,7 @@ begin
    Test_P384_Builds;
    Test_P256_Invalid_Peer_PK_Rejected;
    Test_No_Common_Group;
+   Test_X25519_Small_Subgroup_Helper;
    Test_Idempotent_Two_Calls;
    New_Line;
    Put_Line ("=== Results: " & Pass'Image & "/" & Total'Image

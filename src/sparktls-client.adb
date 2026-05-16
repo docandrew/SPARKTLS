@@ -342,8 +342,7 @@ is
       Mode     : Validation_Mode := Mode_WebPKI;
       ALPN     : String := "";
       Versions : Version_Policy := Allow_Both;
-      Resume   : Session_Ticket := (others => <>);
-      Use_0RTT : Boolean := False)
+      Resume   : Session_Ticket := (others => <>))
    is
       Cfg : Config;
    begin
@@ -355,7 +354,6 @@ is
       Cfg.Verify_Mode := Mode;
       Cfg.Versions    := Versions;
       Cfg.Resume_Ticket := Resume;
-      Cfg.Allow_0RTT    := Use_0RTT;
       if Hostname'Length > 0
          and then Hostname'Length <= Max_Hostname_Len
       then
@@ -412,41 +410,6 @@ is
       end if;
 
       Append_Transcript (S.HC_Ptr.all, CH_Buf (0 .. CH_Len - 1));
-
-      --  RFC 8446 §7.1: when offering 0-RTT, derive
-      --  client_early_traffic_secret = HKDF-Expand-Label(
-      --    Early_Secret = HKDF-Extract(0, PSK),
-      --    "c e traffic", Hash(ClientHello), Hash.length).
-      --  This is done after Append_Transcript so Hash(ClientHello)
-      --  is well-defined (binders included). SHA-256 only — the
-      --  CH builder only emits early_data for 32-byte PSK tickets.
-      --  The early-data cipher comes from the ticket
-      --  (S.Ticket.Suite); per RFC 8446 §4.6.1 the resumed
-      --  connection MUST use the ticket's cipher.
-      if S.HC_Ptr.Early_Data_Offered then
-         declare
-            use Key_Schedule;
-            Hello_Hash   : constant Digest :=
-               Transcript_Hash_256 (S.HC_Ptr.all);
-            Early_Secret : Digest;
-            CES          : OKM_Seq (0 .. 31);
-            PSK_Bytes    : Bytes_32 :=
-               Bytes_32 (S.Ticket.PSK (0 .. 31));
-            Secret_48    : Bytes_48 := (others => 0);
-         begin
-            Derive_Early_Secret (Early_Secret, PSK_Bytes);
-            Derive_Client_Early_Traffic_Secret
-              (Client_Early_Secret => CES,
-               Early_Secret        => Early_Secret,
-               Hello_Hash          => Hello_Hash);
-            Secret_48 (0 .. 31) := Bytes_32 (Byte_Seq (CES));
-            Set_Traffic_Keys
-              (TK     => S.Client_Early,
-               Secret => Secret_48,
-               Suite  => S.Ticket.Suite);
-            S.Client_Early.Suite := S.Ticket.Suite;
-         end;
-      end if;
 
       --  RFC 8446 §5.1: initial ClientHello uses record version 0x0301
       --  (TLS 1.0) for middlebox compatibility, even though the actual
@@ -524,51 +487,6 @@ is
                end;
             end if;
             Append_Transcript (HC, Data);
-
-            --  RFC 8446 §4.2.10 0-RTT accept/reject signal.
-            --  When we offered early_data, the server's response
-            --  is binary:
-            --    * EE contains early_data ext (empty body)
-            --      → server accepted; the early app data we sent
-            --        was delivered.
-            --    * EE does NOT contain early_data ext → rejected;
-            --      the server silently discarded our 0-RTT data.
-            --  HC.Early_Data_Accepted defaults to False so absence
-            --  is correctly read as rejection. The matrix already
-            --  permits 0x002A in EE (Where_Allowed includes E_EE)
-            --  iff we offered it (Tag_Is_Offered checks
-            --  HC.Early_Data_Offered).
-            if HC.Early_Data_Offered
-              and then Data'Length >= 6
-              and then Data'First >= 0
-              and then Data'Last < N32'Last
-            then
-               declare
-                  Ext_Tot : constant N32 :=
-                     N32 (Data (Data'First + 4)) * 256
-                     + N32 (Data (Data'First + 5));
-                  Ext_End : constant N32 :=
-                     Data'First + 6 + Ext_Tot;
-                  P : N32 := Data'First + 6;
-               begin
-                  while P + 4 <= Ext_End and then P + 4 <= Data'Last + 1
-                  loop
-                     declare
-                        Tag : constant Unsigned_16 :=
-                           Unsigned_16 (Data (P)) * 256
-                           + Unsigned_16 (Data (P + 1));
-                        E_Len : constant N32 :=
-                           N32 (Data (P + 2)) * 256
-                           + N32 (Data (P + 3));
-                     begin
-                        if Tag = 16#002A# then
-                           HC.Early_Data_Accepted := True;
-                        end if;
-                        P := P + 4 + E_Len;
-                     end;
-                  end loop;
-               end;
-            end if;
 
             --  RFC 8446 §4.3.1 / RFC 7301: TLS 1.3 ALPN is in EE,
             --  not ServerHello. Extract_ALPN_From_EE walks the
@@ -1490,38 +1408,6 @@ is
          Pre_CCS_Out := 0;
       end if;
 
-      --  RFC 8446 §4.5: when 0-RTT was offered AND the server
-      --  accepted (EE echoed early_data), the client signals end
-      --  of early data with an end_of_early_data handshake message
-      --  (HS type 5, empty body, 4 bytes total) encrypted under
-      --  the client_early_traffic_secret. After that record we
-      --  switch outgoing keys to client_handshake_traffic_secret
-      --  (HC.Client_HS) for everything below — that switch is
-      --  implicit because Build_Encrypted_Record below uses
-      --  HC.Client_HS, not S.Client_Early.
-      if HC.Early_Data_Accepted then
-         declare
-            EOED : constant Byte_Seq (0 .. 3) :=
-              (Handshake.HT_End_Of_Early_Data, 0, 0, 0);
-            EOED_Out : N32;
-         begin
-            Append_Transcript (HC, EOED);
-            Records.Build_Encrypted_Record
-              (Plaintext  => EOED,
-               Inner_Type => 16#16#,  --  handshake
-               Keys       => S.Client_Early,
-               Output     => Scratch,
-               Bytes_Out  => EOED_Out);
-            if EOED_Out = 0 then
-               HC.Client_HS.Counter := Saved_Ctr;
-               S.Last_Error := Insufficient_Buffer;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-         end;
-      end if;
-
       --  mTLS: send client certificate before Finished if requested
       Send_Client_Certificate (S, HC, Scratch, Cert_Result);
       if Cert_Result = Error_Alert then
@@ -2276,8 +2162,6 @@ is
                S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
                --  Persist resumption flags out of HC before free.
                S.Resumed_From_PSK := S.HC_Ptr.Using_PSK;
-               S.Early_Data_Was_Accepted :=
-                 S.HC_Ptr.Early_Data_Accepted;
                --  Zero traffic keys on error (Connected path keeps them)
                if S.State = Error_State then
                   S.Server_App.Key := (others => 0);
@@ -2827,26 +2711,23 @@ is
    --  NST_Illegal_Param → caller sends Illegal_Parameter alert.
 
    procedure Walk_NST_Extensions
-     (Plaintext       : in     Byte_Seq;
-      Plain_Len       : in     N32;
-      Start_Off       : in     N32;
-      Max_Early_Data  :    out Unsigned_32;
-      Status          :    out NST_Status);
+     (Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Start_Off : in     N32;
+      Status    :    out NST_Status);
 
    procedure Walk_NST_Extensions
-     (Plaintext       : in     Byte_Seq;
-      Plain_Len       : in     N32;
-      Start_Off       : in     N32;
-      Max_Early_Data  :    out Unsigned_32;
-      Status          :    out NST_Status)
+     (Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Start_Off : in     N32;
+      Status    :    out NST_Status)
    is
       type Tag_Array is array (1 .. 16) of Unsigned_16;
       Seen_Tags : Tag_Array := (others => 0);
       Seen_N    : Natural   := 0;
       EP        : N32       := Start_Off;
    begin
-      Max_Early_Data := 0;
-      Status         := NST_OK;
+      Status := NST_OK;
 
       if EP + 2 > Plain_Len then
          return;
@@ -2896,17 +2777,10 @@ is
                   return;
                end if;
 
-               --  early_data (0x002A): body is uint32 max_early_data_size.
-               if Tag = 16#002A#
-                 and then E_Len = 4
-                 and then EP + 4 + 4 <= Ext_End
-               then
-                  Max_Early_Data :=
-                     Unsigned_32 (Plaintext (EP + 4)) * 2**24
-                   + Unsigned_32 (Plaintext (EP + 5)) * 2**16
-                   + Unsigned_32 (Plaintext (EP + 6)) * 2**8
-                   + Unsigned_32 (Plaintext (EP + 7));
-               end if;
+               --  early_data ext (0x002A) in NST signals server
+               --  willingness to accept 0-RTT on a future resume.
+               --  We never offer 0-RTT (out of scope), so we just
+               --  walk past the body without recording the limit.
 
                EP := EP + 4 + E_Len;
             end;
@@ -3013,22 +2887,22 @@ is
 
             S.Ticket.Valid := True;
 
-            --  Walk the NST extension list (early_data, ticket_flags,
+            --  Walk the NST extension list (ticket_flags, early_data,
             --  …). Errors (dup ext / malformed flags) un-install the
-            --  ticket and emit the right alert.
+            --  ticket and emit the right alert. early_data ext bodies
+            --  are walked-past — we don't offer 0-RTT, so the
+            --  advertised limit is irrelevant.
             declare
-               Med    : Unsigned_32;
                Status : NST_Status;
             begin
                Walk_NST_Extensions
-                 (Plaintext      => Plaintext,
-                  Plain_Len      => Plain_Len,
-                  Start_Off      => P + Tick_Len,
-                  Max_Early_Data => Med,
-                  Status         => Status);
+                 (Plaintext => Plaintext,
+                  Plain_Len => Plain_Len,
+                  Start_Off => P + Tick_Len,
+                  Status    => Status);
                case Status is
                   when NST_OK =>
-                     S.Ticket.Max_Early_Data := Med;
+                     null;
                   when NST_Decode_Err =>
                      S.Ticket.Valid := False;
                      Send_App_Encrypted_Alert
@@ -3310,58 +3184,6 @@ is
          Bytes_Written := 0;
       end if;
    end Write_Plaintext;
-
-   procedure Write_Early_Data
-     (S              : in out Session;
-      Plaintext      : in     Byte_Seq;
-      Bytes_Written  :    out N32)
-   is
-      Enc_Out : N32;
-   begin
-      Bytes_Written := 0;
-
-      --  Pre-conditions: must be a TLS 1.3 client that opted into
-      --  0-RTT and has a usable early traffic secret installed.
-      --  Init derives S.Client_Early only when
-      --  HC.Early_Data_Offered, so a zero Key field is the
-      --  sentinel for "0-RTT not in effect".
-      if S.HC_Ptr = null
-        or else not S.HC_Ptr.Early_Data_Offered
-        or else S.Client_Early.Key = Bytes_32'(others => 0)
-      then
-         return;
-      end if;
-
-      --  Caller must call before Handshake_Done. After Connected
-      --  we route through the regular client_application_traffic
-      --  _secret keys via Write_Plaintext.
-      if S.State = Connected or else S.State = Closing
-        or else S.State = Closed or else S.State = Error_State
-      then
-         return;
-      end if;
-
-      --  Enforce the ticket's max_early_data_size advertised by
-      --  the server in NST. Tracked in S.Early_Data_Bytes_Sent.
-      if N32 (Plaintext'Length) >
-         N32 (S.Ticket.Max_Early_Data) - S.Early_Data_Bytes_Sent
-      then
-         return;
-      end if;
-
-      Records.Build_Encrypted_Record
-        (Plaintext  => Plaintext,
-         Inner_Type => 16#17#,  --  application_data
-         Keys       => S.Client_Early,
-         Output     => S.Output,
-         Bytes_Out  => Enc_Out);
-
-      if Enc_Out > 0 then
-         Bytes_Written := N32 (Plaintext'Length);
-         S.Early_Data_Bytes_Sent :=
-            S.Early_Data_Bytes_Sent + Bytes_Written;
-      end if;
-   end Write_Early_Data;
 
    procedure Close_Notify (S : in out Session) is
       Alert_Out : N32;

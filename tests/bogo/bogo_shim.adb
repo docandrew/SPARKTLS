@@ -55,23 +55,6 @@ procedure Bogo_Shim is
       Shim_Writes_First    : Boolean := False;
       Expect_Hs_Fails      : Boolean := False;
       Resume_Count         : Natural := 0;
-      --  RFC 8446 §4.2.10 / §4.6.1 server-side 0-RTT controls.
-      --  Enable_Early_Data: from -enable-early-data; turns on the
-      --  early_data ext in NST and lets the server decrypt 0-RTT
-      --  records on resume.
-      --  Expect_Early_Data_Reason / -On_{Initial,Resume}: BoGo
-      --  per-iteration assertions about why 0-RTT was accepted or
-      --  rejected. Empty == "don't check".
-      Enable_Early_Data           : Boolean := False;
-      Expect_ED_Reason            : Unbounded_Text :=
-         (others => Character'Val (0));
-      Expect_ED_Reason_Len        : Natural := 0;
-      Expect_ED_Reason_Initial    : Unbounded_Text :=
-         (others => Character'Val (0));
-      Expect_ED_Reason_Initial_Len : Natural := 0;
-      Expect_ED_Reason_Resume     : Unbounded_Text :=
-         (others => Character'Val (0));
-      Expect_ED_Reason_Resume_Len : Natural := 0;
       --  ALPN (RFC 7301). BoGo wire-encodes -advertise-alpn already
       --  (e.g. "\x03foo"); we strip the 1-byte length prefix and store
       --  the bare protocol name. Multi-protocol lists pick the FIRST.
@@ -241,26 +224,6 @@ procedure Bogo_Shim is
                Cfg.Expect_Hs_Fails := True;
             elsif A = "-resume-count" then
                Cfg.Resume_Count := Natural'Value (Next_Arg);
-            elsif A = "-enable-early-data" then
-               Cfg.Enable_Early_Data := True;
-            elsif A = "-expect-early-data-reason" then
-               declare V : constant String := Next_Arg;
-               begin
-                  Cfg.Expect_ED_Reason (1 .. V'Length) := V;
-                  Cfg.Expect_ED_Reason_Len := V'Length;
-               end;
-            elsif A = "-on-initial-expect-early-data-reason" then
-               declare V : constant String := Next_Arg;
-               begin
-                  Cfg.Expect_ED_Reason_Initial (1 .. V'Length) := V;
-                  Cfg.Expect_ED_Reason_Initial_Len := V'Length;
-               end;
-            elsif A = "-on-resume-expect-early-data-reason" then
-               declare V : constant String := Next_Arg;
-               begin
-                  Cfg.Expect_ED_Reason_Resume (1 .. V'Length) := V;
-                  Cfg.Expect_ED_Reason_Resume_Len := V'Length;
-               end;
             elsif A = "-shim-config" then
                --  No JSON config support yet — ignore the file path.
                declare
@@ -582,14 +545,12 @@ procedure Bogo_Shim is
                    else Cfg.ALPN_Proto (1 .. Cfg.ALPN_Proto_Len));
             begin
                SPARKTLS.Server.Configure
-                 (S                   => S,
-                  Local               => Id'Unchecked_Access,
-                  Random              => Entropy_Random.Random'Access,
-                  Tickets             => Tickets,
-                  ALPN                => Server_ALPN,
-                  Versions            => Policy,
-                  Max_Early_Data_Size =>
-                     (if Cfg.Enable_Early_Data then 14336 else 0));
+                 (S        => S,
+                  Local    => Id'Unchecked_Access,
+                  Random   => Entropy_Random.Random'Access,
+                  Tickets  => Tickets,
+                  ALPN     => Server_ALPN,
+                  Versions => Policy);
             end;
          end;
       else

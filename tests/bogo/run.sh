@@ -100,12 +100,56 @@ fi
 #                         returns 89 on (unsupported flags)
 #  -loose-errors : map every un-mapped error to "" (we don't yet
 #                  produce BoringSSL-specific error strings)
+#
+#  -skip BY_DESIGN_SKIPS : drop BoGo tests for features SPARKTLS
+#                          deliberately doesn't ship, so the
+#                          remaining FAIL count reflects real bugs
+#                          worth fixing. See SKIPPED.md for the
+#                          full design rationale per bucket.
+#
+#  Pattern syntax: semicolon-separated globs (Go path.Match), no
+#  comma support. `*` matches anything except `-`.
+BY_DESIGN_SKIPS=(
+  # TLS 1.0 / 1.1 (we ship 1.2 + 1.3 only)
+  '*-TLS11-*' '*-TLS1-*' '*-TLS11' '*-TLS1'
+  'TLS1-*' 'TLS11-*'
+  # CBC ciphers (AEAD-only by design — RFC 7366 / Lucky13)
+  '*_CBC_*' 'MaxCBCPadding'
+  # Pure-RSA key exchange (we offer only ECDHE_RSA)
+  '*RSA_WITH_AES_*' '*RSA_WITH_3DES_*'
+  # TLS-ECH (draft, not implemented)
+  'TLS-ECH-*'
+  # 0-RTT / EarlyData (removed by design — see no_0rtt memory)
+  '*EarlyData*'
+  # Renegotiation (TLS 1.2 reneg intentionally rejected)
+  'Renegotiat*'
+  # KeyUpdate (post-handshake rekey not implemented)
+  'KeyUpdate*'
+  # PQ signatures (ML-DSA not in scope)
+  '*ML-DSA*'
+  # SHA-1 / legacy RSA-PKCS1 sig schemes (deprecated)
+  '*RSA_PKCS1_SHA1*' '*RSA_PKCS1_SHA256_LEGACY*' '*SHA1-Fallback*'
+  # P-521 (not supported — we offer P-256/P-384/X25519)
+  '*ECDSA_P521*' '*P521*'
+  # PAKE (RFC 8773 draft, not implemented)
+  'PAKE*'
+  # TrustAnchors extension (RFC 9450 draft, not implemented)
+  '*TrustAnchors*'
+  # Server certificate type (RFC 7250 raw public key, not implemented)
+  'ServerCertificateType*'
+  # SSL 3.0 (not supported)
+  'NoSSL3*'
+)
+# Join with ';' for the runner.
+SKIPS=$(IFS=';'; echo "${BY_DESIGN_SKIPS[*]}")
+
 "$RUNNER" \
     -shim-path "$SHIM" \
     -allow-unimplemented \
     -loose-errors \
     -num-workers "$WORKERS" \
     -idle-timeout 3s \
+    -skip "$SKIPS" \
     "$@" 2>&1 | tee "$CACHE/last_results.log" | tail -3
 
 #  Stats line is "failed/unimplemented/done/started/total"

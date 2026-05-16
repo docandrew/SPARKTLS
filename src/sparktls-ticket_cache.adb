@@ -73,29 +73,4 @@ is
       end loop;
    end Lookup;
 
-   procedure Consume
-     (Cache : in out Ticket_Store;
-      ID    : Byte_Seq)
-   is
-   begin
-      for I in Cache.Entries'Range loop
-         if Cache.Entries (I).Valid then
-            declare
-               Match : Boolean := True;
-            begin
-               for J in Ticket_ID'Range loop
-                  if Cache.Entries (I).ID (J) /= ID (J) then
-                     Match := False;
-                     exit;
-                  end if;
-               end loop;
-               if Match then
-                  Cache.Entries (I).Valid := False;
-                  return;
-               end if;
-            end;
-         end if;
-      end loop;
-   end Consume;
-
 end SPARKTLS.Ticket_Cache;

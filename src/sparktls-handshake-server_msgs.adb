@@ -1722,10 +1722,14 @@ is
       --  2, 4, 8 — eight specific 32-byte strings). Without this
       --  check, an attacker who feeds such a point can predict
       --  the master secret. The helper's Post is formally proven.
+      --  RFC 8446 §6.2: invalid peer share is illegal_parameter.
+      --  Bubble up via HC.Ext_Parse_Err so Build_Server_Flight
+      --  picks the specific alert instead of handshake_failure.
       if not Shared_Secret_Is_Acceptable_X25519
                (HC.Shared_Secret (0 .. 31))
       then
          HC.Shared_Secret := (others => 0);
+         HC.Ext_Parse_Err := Illegal_Parameter;
          KS_Raw_Len := 0;
          OK := False;
          return;
@@ -2251,13 +2255,7 @@ is
       ALPN_Ext_Len : constant N32 :=
          (if ALPN_Match then N32 (7 + ALPN_PL) else 0);
 
-      --  RFC 8446 §4.2.10: server signals 0-RTT acceptance by echoing
-      --  an empty early_data extension in EE. Decided in Build_Server_
-      --  Flight (phase 3); we only emit here.
-      ED_Ext_Len : constant N32 :=
-         (if HC.Early_Data_Accepted then 4 else 0);
-
-      Ext_Len : constant N32 := ALPN_Ext_Len + ED_Ext_Len;
+      Ext_Len : constant N32 := ALPN_Ext_Len;
       Body_Len : constant N32 := 2 + Ext_Len;  --  ext_list_len(2) + exts
       Msg_Len  : constant N32 := 4 + Body_Len;
       Pos : N32;
@@ -2303,16 +2301,7 @@ is
          Pos := Pos + ALPN_Ext_Len;
       end if;
 
-      --  early_data extension (0x002A), empty body — acknowledges
-      --  0-RTT acceptance.
-      if HC.Early_Data_Accepted then
-         Result (Pos)     := 16#00#;
-         Result (Pos + 1) := 16#2A#;
-         Result (Pos + 2) := 16#00#;
-         Result (Pos + 3) := 16#00#;
-         Pos := Pos + ED_Ext_Len;
-      end if;
-
+      pragma Unreferenced (Pos);
       Len := Msg_Len;
    end Build_Encrypted_Extensions;
 

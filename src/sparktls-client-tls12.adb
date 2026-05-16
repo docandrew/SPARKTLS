@@ -848,7 +848,11 @@ is
                --  Generate ECDHE keypair + compute shared secret
                declare
                   Gen : constant Random_Bytes_Fn := HC.Cfg.Random;
-                  SS_OK : Boolean := False;
+                  SS_OK  : Boolean    := False;
+                  --  RFC 5246 §7.2.2 / RFC 8446 §6.2: invalid peer
+                  --  share is illegal_parameter; unknown group is
+                  --  handshake_failure.
+                  SS_Err : Error_Code := Handshake_Failure;
                begin
                   case HC.Selected_Group is
                      when Group_X25519 =>
@@ -859,6 +863,9 @@ is
                         --  Post-condition formally proven by SPARK.
                         SS_OK := Shared_Secret_Is_Acceptable_X25519
                                    (HC.Shared_Secret (0 .. 31));
+                        if not SS_OK then
+                           SS_Err := Illegal_Parameter;
+                        end if;
                      when Group_Secp256r1 =>
                         Gen (Byte_Seq (HC.P256_Local_SK));
                         declare
@@ -876,6 +883,8 @@ is
                                  HC.Shared_Secret (0 .. 31) := E (1 .. 32);
                               end;
                               SS_OK := True;
+                           else
+                              SS_Err := Illegal_Parameter;
                            end if;
                         end;
                      when Group_Secp384r1 =>
@@ -886,6 +895,8 @@ is
                              (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
                            if OK384 then
                               HC.Shared_Secret := SS; SS_OK := True;
+                           else
+                              SS_Err := Illegal_Parameter;
                            end if;
                         end;
                      when others => null;
@@ -894,7 +905,7 @@ is
                   if not SS_OK then
                      Free_Byte_Seq (HC.Reasm_Buf);
                      HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error (S, Handshake_Failure, Result);
+                     Send_Alert_And_Error (S, SS_Err, Result);
                      return;
                   end if;
                end;

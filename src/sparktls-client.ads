@@ -65,8 +65,7 @@ is
       Mode     : Validation_Mode := Mode_WebPKI;
       ALPN     : String := "";
       Versions : Version_Policy := Allow_Both;
-      Resume   : Session_Ticket := (others => <>);
-      Use_0RTT : Boolean := False)
+      Resume   : Session_Ticket := (others => <>))
    with Pre  => Random /= null and Clock /= null,
         Post => S.State = Client_Hello_Sent and
                 S.Role = Role_Client and
@@ -167,37 +166,11 @@ is
    function Was_Resumed (S : Session) return Boolean is
       (S.Resumed_From_PSK);
 
-   --  True iff this connection was resumed AND the server
-   --  accepted 0-RTT early data. Meaningful only when the caller
-   --  set Cfg.Allow_0RTT.
-   function Was_0RTT_Accepted (S : Session) return Boolean is
-      (S.Early_Data_Was_Accepted);
-
-   --  RFC 8446 §2.3 / §4.2.10: send 0-RTT (early) data BEFORE
-   --  the handshake completes, encrypted under
-   --  client_early_traffic_secret. Caller must have set
-   --  Cfg.Allow_0RTT and provided a Resume_Ticket with
-   --  Max_Early_Data > 0; Init then queues the first record.
-   --
-   --  The server may reject 0-RTT — see Was_0RTT_Accepted post-
-   --  handshake. If rejected, the server silently discards the
-   --  data the client sent. Callers MUST therefore either:
-   --    (a) replay-safe: only send idempotent data via 0-RTT, or
-   --    (b) gate the 0-RTT payload on Was_0RTT_Accepted before
-   --        relying on the side effects.
-   --
-   --  Returns 0 bytes written if the caller didn't enable 0-RTT
-   --  or if Max_Early_Data would be exceeded. State doesn't
-   --  transition — the caller continues Advance-ing until
-   --  Handshake_Done as normal.
-   procedure Write_Early_Data
-     (S              : in out Session;
-      Plaintext      : in     Byte_Seq;
-      Bytes_Written  :    out N32)
-   with Pre  => S.Role = Role_Client
-                and Plaintext'First = 0
-                and Plaintext'Length > 0,
-        Post => Bytes_Written <= N32 (Plaintext'Length);
+   --  Note: 0-RTT (RFC 8446 §2.3 / §4.2.10) is intentionally
+   --  not exposed. There is no Write_Early_Data / Was_0RTT_Accepted
+   --  API on this stack — the replay + lack-of-forward-secrecy
+   --  trade-off is incompatible with the project's threat model.
+   --  Resumption (Was_Resumed above) is 1-RTT and fully supported.
 
    --  Snapshot the current resumption ticket. Returns the empty
    --  ticket (Valid=False) if none. The returned record is

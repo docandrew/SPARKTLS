@@ -95,6 +95,33 @@ is
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_12;
 
+   --  Post-handshake encrypted fatal alert. Mirrors
+   --  Send_Encrypted_Alert_12 but reads IV/seq from S-level state
+   --  (HC has been freed once we entered Connected). For use in
+   --  Process_Connected_12. Same "alerts after CCS MUST be
+   --  encrypted" RFC 5246 §7.2.1 / §7.2.2 constraint that the §2.8
+   --  TLS 1.3 mTLS bypass exposed: a plaintext alert here lands as
+   --  a bad record type on the peer and is silently dropped.
+   procedure Send_Encrypted_Alert_Connected_12
+     (S      : in out Session;
+      Err    : Error_Code;
+      Result : out Action)
+   is
+      Dummy : N32;
+   begin
+      Set_State (S, Error_State);
+      S.Last_Error := Err;
+      Records.TLS12.Build_Alert_Record_12
+        (Level       => 2,
+         Desc        => Alert_Desc (Err),
+         Keys        => S.Server_App,
+         Implicit_IV => S.Server_IV_12,
+         Seq_Num     => S.Server_Seq_12,
+         Output      => S.Output,
+         Bytes_Out   => Dummy);
+      Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
+   end Send_Encrypted_Alert_Connected_12;
+
    procedure Append_Transcript (HC : in out Handshake_Context; Data : Byte_Seq)
    --  Body uses Ada slide-assignment, which works for any Data'First.
    --  Frame: only writes HC.Transcript / HC.Transcript_Len. The Cfg
@@ -623,7 +650,11 @@ is
 
       --  Compute ECDHE shared secret
       declare
-         SS_OK : Boolean := False;
+         SS_OK  : Boolean    := False;
+         --  RFC 5246 §7.2.2 / RFC 8446 §6.2: invalid peer share is
+         --  illegal_parameter; an unselectable group is the generic
+         --  handshake_failure.
+         SS_Err : Error_Code := Handshake_Failure;
       begin
          case HC.Selected_Group is
             when Group_X25519 =>
@@ -634,6 +665,9 @@ is
                --  helper's Post is formally proven by SPARK.
                SS_OK := Shared_Secret_Is_Acceptable_X25519
                           (HC.Shared_Secret (0 .. 31));
+               if not SS_OK then
+                  SS_Err := Illegal_Parameter;
+               end if;
             when Group_Secp256r1 =>
                declare
                   use SPARKTLSCrypto.P256.Point;
@@ -650,6 +684,8 @@ is
                         HC.Shared_Secret (0 .. 31) := E (1 .. 32);
                      end;
                      SS_OK := True;
+                  else
+                     SS_Err := Illegal_Parameter;
                   end if;
                end;
             when Group_Secp384r1 =>
@@ -657,12 +693,16 @@ is
                begin
                   SPARKTLSCrypto.P384.Point.P384_ECDHE
                     (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
-                  if OK384 then HC.Shared_Secret := SS; SS_OK := True; end if;
+                  if OK384 then
+                     HC.Shared_Secret := SS; SS_OK := True;
+                  else
+                     SS_Err := Illegal_Parameter;
+                  end if;
                end;
             when others => null;
          end case;
          if not SS_OK then
-            Send_Alert_And_Error (S, Handshake_Failure, Result); return;
+            Send_Alert_And_Error (S, SS_Err, Result); return;
          end if;
       end;
 
@@ -926,16 +966,20 @@ is
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Available (S.Input), Rec);
 
+      --  RFC 5246 §7.2.1 / §7.2.2: post-Finished alerts MUST be
+      --  encrypted under the app keys; a plaintext alert lands as a
+      --  bad record type on the peer (same root cause as the §2.8
+      --  TLS 1.3 mTLS bypass).
       if Rec.Overflow then
-         Send_Alert_And_Error (S, Record_Overflow, Result); return;
+         Send_Encrypted_Alert_Connected_12 (S, Record_Overflow, Result); return;
       end if;
       if Rec.Bad_Version then
-         Send_Alert_And_Error (S, Protocol_Version, Result); return;
+         Send_Encrypted_Alert_Connected_12 (S, Protocol_Version, Result); return;
       end if;
       if not Rec.OK then
          if Rec.Record_Len > 0 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Unexpected_Message, Result);
+            Send_Encrypted_Alert_Connected_12 (S, Unexpected_Message, Result);
          else Result := Need_Input; end if;
          return;
       end if;
@@ -976,7 +1020,8 @@ is
                           | Records.Content_Alert
       then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Send_Alert_And_Error (S, Unexpected_Message, Result); return;
+         Send_Encrypted_Alert_Connected_12 (S, Unexpected_Message, Result);
+         return;
       end if;
 
       declare
@@ -1004,7 +1049,8 @@ is
          begin
             if Frag_Len < Min_Frag then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Unexpected_Message, Result); return;
+               Send_Encrypted_Alert_Connected_12 (S, Unexpected_Message, Result);
+               return;
             end if;
          end;
 
@@ -1014,7 +1060,8 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not DV then
-            Send_Alert_And_Error (S, Bad_Record_MAC, Result); return;
+            Send_Encrypted_Alert_Connected_12 (S, Bad_Record_MAC, Result);
+            return;
          end if;
 
          case Rec.Content is

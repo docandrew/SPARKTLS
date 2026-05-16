@@ -40,17 +40,4 @@ is
    with Pre  => ID'First = 0 and ID'Length = Ticket_ID_Len,
         Post => (if Found then Suite = Want_Suite);
 
-   --  RFC 8446 §8.2: 0-RTT replay protection. Mark the entry for ID
-   --  as no-longer-valid so a subsequent Lookup with the same ID
-   --  returns Found => False. Called once the server commits to
-   --  accepting 0-RTT on this ticket — single-use semantics make
-   --  replay impossible at the cost of forbidding legitimate
-   --  retries on the same ticket (the server issues new tickets in
-   --  the post-handshake NST so the client can resume future
-   --  connections regardless).
-   procedure Consume
-     (Cache : in out Ticket_Store;
-      ID    : Byte_Seq)
-   with Pre => ID'First = 0 and ID'Length = Ticket_ID_Len;
-
 end SPARKTLS.Ticket_Cache;

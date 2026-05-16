@@ -124,23 +124,6 @@ is
                     Context => Hello_Hash);
    end Derive_HS_Traffic_Secrets;
 
-   --  RFC 8446 §7.1: client_early_traffic_secret =
-   --    HKDF-Expand-Label(Early_Secret, "c e traffic",
-   --                      Hash(ClientHello), Hash.length).
-   --  Used by the client to encrypt 0-RTT data sent immediately
-   --  after the ClientHello (before any server response).
-   procedure Derive_Client_Early_Traffic_Secret
-     (Client_Early_Secret :    out OKM_Seq;
-      Early_Secret        : in     Digest;
-      Hello_Hash          : in     Digest)
-   is
-   begin
-      Expand_Label (OKM     => Client_Early_Secret,
-                    PRK     => Early_Secret,
-                    Label   => "c e traffic",
-                    Context => Hello_Hash);
-   end Derive_Client_Early_Traffic_Secret;
-
    procedure Derive_Traffic_Key_IV
      (Key    :    out OKM_Seq;
       IV     :    out OKM_Seq;

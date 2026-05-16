@@ -17,7 +17,8 @@ project Unit_Tests is
                  "test_rsa_pkcs1_kat.adb",
                  "test_aes_gcm_inplace.adb",
                  "test_aes_gcm_seq.adb",
-                 "test_psk_resume.adb");
+                 "test_psk_resume.adb",
+                 "test_tickets_12.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use ("-O2", "-gnatn", "-gnatp");

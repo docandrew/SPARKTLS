@@ -940,13 +940,52 @@ is
       PSK          : Bytes_48 := (others => 0);  --  derived PSK
       PSK_Len      : N32 := 0;              --  32 (SHA-256) or 48 (SHA-384)
       Suite        : Unsigned_16 := 0;       --  cipher suite
-      --  RFC 8446 §4.2.10 / §4.6.1: the NST may include an
-      --  early_data extension whose body is the uint32
-      --  max_early_data_size. >0 means the server permits 0-RTT
-      --  data on a future resumption with this ticket. 0 means
-      --  full-handshake-only.
-      Max_Early_Data : Unsigned_32 := 0;
-      Valid          : Boolean := False;
+      Valid        : Boolean := False;
+   end record;
+
+   --================================================================
+   --  TLS 1.2 ticket encryption key (RFC 5077 §4)
+   --
+   --  Caller-supplied 32-byte AES-256 key plus a 4-byte Key_ID for
+   --  rotation. Up to TLS12_Max_Keys keys can be active at once; the
+   --  server tries each in turn when decrypting a peer-supplied
+   --  ticket (rotation = add new key, drop oldest). Server encrypts
+   --  outgoing tickets with key at TLS12_Active_TEK_Idx. A ticket
+   --  carries the Key_ID in its header so decryption is O(1) lookup.
+   --================================================================
+
+   TLS12_Max_Keys : constant := 4;
+
+   type TLS12_Ticket_Key is record
+      Key_ID : Byte_Seq (0 .. 3) := (others => 0);    --  4-byte ident
+      TEK    : Byte_Seq (0 .. 31) := (others => 0);   --  AES-256 raw
+      Valid  : Boolean := False;
+   end record;
+
+   type TLS12_Ticket_Key_Array is array (Natural range 0 .. TLS12_Max_Keys - 1)
+      of TLS12_Ticket_Key;
+
+   type TLS12_Ticket_Keys_Access is access all TLS12_Ticket_Key_Array;
+
+   --================================================================
+   --  TLS 1.2 cached session ticket (client side, RFC 5077 §3.4)
+   --
+   --  Stand-alone copyable record so the caller can persist it
+   --  across processes. The ticket bytes are opaque blobs; the
+   --  meaningful state for resumption is Master_Secret + Suite.
+   --================================================================
+
+   Max_TLS12_Ticket_Len : constant := 512;
+
+   type Session_Ticket_12 is record
+      Ticket        : Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1)
+                         := (others => 0);
+      Ticket_Len    : N32 := 0;
+      Master_Secret : Byte_Seq (0 .. 47) := (others => 0);
+      Suite         : Unsigned_16 := 0;
+      Lifetime_Hint : Unsigned_32 := 0;   --  seconds (from server)
+      Server_Name   : Hostname_Buf := (Len => 0, Data => (others => ' '));
+      Valid         : Boolean := False;
    end record;
 
    --================================================================
@@ -1009,32 +1048,41 @@ is
       --  If non-null, server sends NewSessionTicket after handshake.
       Ticket_Store : Ticket_Store_Access := null;
 
-      --  Server: max bytes of 0-RTT (early data) we will accept on a
-      --  resumed handshake. 0 disables 0-RTT entirely; the NST then
-      --  omits the early_data extension and any client offering 0-RTT
-      --  gets rejected. Non-zero advertises this limit in NST per RFC
-      --  8446 §4.2.10 / §4.6.1, and we will decrypt up to that many
-      --  bytes of TLSPlaintext before end_of_early_data switches keys.
-      --  Replay-protection note (RFC 8446 §8.2): when we accept, the
-      --  PSK identity is consumed (single-use) — see Ticket_Store.
-      Server_Max_Early_Data_Size : Unsigned_32 := 0;
+      --  Server: TLS 1.2 ticket encryption keys (RFC 5077).
+      --  When non-null and at least one key has Valid=True, the server
+      --  parses session_ticket extension on CH and emits a stateless
+      --  NewSessionTicket after the first server Finished. Caller is
+      --  responsible for generating + rotating the keys. The active
+      --  key index is the one used for outgoing tickets; all valid
+      --  keys are tried in turn for inbound ticket decryption (via the
+      --  embedded Key_ID).
+      TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
+      TLS12_Active_TEK_Idx  : Natural := 0;
+
+      --  Server: lifetime hint (seconds) sent in NewSessionTicket.
+      --  The server itself also enforces this as a hard expiry on
+      --  decrypted tickets (RFC 5077 §5.6 advises ≤7 days). Default
+      --  3600 seconds (1 hour) — refreshes ticket-derived forward
+      --  secrecy hourly. Set 0 to disable issuing tickets entirely.
+      TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
+
+      --  Client: previously-cached TLS 1.2 session ticket. When
+      --  Valid, sent in the session_ticket extension on CH; on
+      --  server-side resume, the cached Master_Secret is reused
+      --  via the abbreviated TLS 1.2 flight (RFC 5077 §3.4).
+      TLS12_Resume_Ticket   : Session_Ticket_12;
 
       --  Client: previously-saved resumption ticket (RFC 8446
       --  §4.6.1). When Valid, Init copies this into S.Ticket before
       --  building CH so the pre_shared_key extension is offered.
       --  Default-init (Valid=False) means a fresh full handshake.
+      --
+      --  Note: 0-RTT (RFC 8446 §2.3 / §4.2.10) is intentionally not
+      --  supported. The replay + forward-secrecy trade-off is
+      --  incompatible with a high-integrity stack; resumption (this
+      --  field) is forward-secret + replay-safe because we require
+      --  psk_dhe_ke mode (fresh DH mixed into the handshake secret).
       Resume_Ticket : Session_Ticket;
-
-      --  Client: opt-in to RFC 8446 §2.3 / §4.2.10 0-RTT (early data).
-      --  Only meaningful when Resume_Ticket.Valid AND its
-      --  Max_Early_Data > 0. When True, CH carries the early_data
-      --  extension and Init derives client_early_traffic_secret;
-      --  the caller may then call Write_Plaintext to send 0-RTT
-      --  application data BEFORE the handshake completes. The
-      --  server may accept (data delivered) or reject (data
-      --  silently dropped; caller MUST be idempotent or check
-      --  Was_0RTT_Accepted before relying on side effects).
-      Allow_0RTT : Boolean := False;
    end record;
 
    --================================================================
@@ -1273,31 +1321,22 @@ is
 
       --  RFC 8446 §2.3 / §4.2.10 0-RTT (early data).
       --
-      --  Early_Data_Offered  : we put the early_data extension in CH
-      --                        (and intend to send early app data).
-      --  Early_Data_Accepted : server echoed early_data in EE; the
-      --                        early app data we sent was delivered.
-      --                        Until we see EE, this stays False so
-      --                        a missing EE → rejection by default.
+      --  We do NOT support 0-RTT — replay + lack of forward secrecy
+      --  is incompatible with the project's high-integrity posture.
+      --  The two fields below are the minimal residual defense:
+      --
+      --  Early_Data_Offered : set when the client's CH carried an
+      --                       early_data extension. We never echo it
+      --                       in EE (= rejection per §4.2.10), but
+      --                       the client may still send 0-RTT records
+      --                       on the wire encrypted with a key we
+      --                       never derived; the flag gates the
+      --                       silent-drop loop below.
+      --  Skipped_Early_Data_Records : counts dropped records when
+      --                       Early_Data_Offered. Capped to defend
+      --                       against a peer pinning us in skip mode
+      --                       indefinitely. RFC 8446 §4.6.1.
       Early_Data_Offered  : Boolean := False;
-      Early_Data_Accepted : Boolean := False;
-
-      --  Server-side 0-RTT receive state. When Early_Data_Accepted,
-      --  the server decrypts incoming records with S.Client_Early
-      --  until it sees the EndOfEarlyData handshake message (HS type
-      --  0x05) — also encrypted under client_early_traffic_secret per
-      --  RFC 8446 §4.5. From that point Client_HS is used for the
-      --  client Finished and beyond.
-      EOED_Received       : Boolean := False;
-
-      --  Server-side: when the client offered 0-RTT but we rejected
-      --  it (e.g. ticket corrupted, suite mismatch, or HRR fired),
-      --  the client still sends some records encrypted with a key
-      --  we never derived. RFC 8446 §4.2.10 / §4.6.1 says the server
-      --  MUST drop those records silently and keep waiting for the
-      --  client Finished (which uses Client_HS keys we do have).
-      --  We cap the count to defend against a malicious peer
-      --  pinning us in skip mode indefinitely.
       Skipped_Early_Data_Records : Natural := 0;
 
       --  Handshake message reassembly (multi-record handshake messages).
@@ -1844,16 +1883,6 @@ is
       Client_App    : Traffic_Keys;
       Server_App    : Traffic_Keys;
 
-      --  RFC 8446 §7.1 client_early_traffic_secret keys. Derived
-      --  by Init when 0-RTT is offered; used by Write_Plaintext to
-      --  encrypt 0-RTT app data BEFORE Handshake_Done. After the
-      --  handshake completes the client side rotates to Client_App;
-      --  if the server rejected 0-RTT, any data we sent under these
-      --  keys was silently dropped by the server, but the keys
-      --  themselves remain valid (for the end_of_early_data
-      --  message).
-      Client_Early  : Traffic_Keys;
-
       --  Decrypted application data staging area
       App_Data     : Byte_Seq (0 .. Max_Record_Plaintext - 1)
                        := (others => 0);
@@ -1869,18 +1898,11 @@ is
       --  Resumption: cached session ticket (client side)
       Ticket : Session_Ticket;
 
-      --  Resumption: snapshot of HC.Using_PSK / HC.Early_Data_Accepted
-      --  captured before the handshake context is freed. The
-      --  Advance loop nulls HC_Ptr at state→Connected so callers
-      --  who want to know "did we resume?" / "did the server
-      --  accept 0-RTT?" need a Session-level mirror.
+      --  Resumption: snapshot of HC.Using_PSK captured before the
+      --  handshake context is freed. The Advance loop nulls HC_Ptr
+      --  at state→Connected so callers who want to know "did we
+      --  resume?" need a Session-level mirror.
       Resumed_From_PSK   : Boolean := False;
-      Early_Data_Was_Accepted : Boolean := False;
-
-      --  Total bytes the caller has handed to Write_Early_Data.
-      --  Enforced against S.Ticket.Max_Early_Data so we don't
-      --  exceed the server's advertised budget (RFC 8446 §4.6.1).
-      Early_Data_Bytes_Sent : N32 := 0;
 
       --  Resumption master secret (copied from HC before free,
       --  needed to derive PSK when NewSessionTicket arrives post-handshake)

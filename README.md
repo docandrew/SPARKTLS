@@ -7,14 +7,41 @@ designed for formal verification.
 
 ## Features
 
-- TLS 1.3 client handshake (full flight)
+- TLS 1.3 client + server handshake (full flight, HelloRetryRequest)
+- TLS 1.2 client + server (mTLS, ECDHE, RSA + ECDSA suites, ChaCha20-Poly1305 per RFC 7905)
 - Key exchange: X25519, secp256r1 (P-256), secp384r1 (P-384) ECDHE
 - Cipher suites: ChaCha20-Poly1305-SHA256, AES-128-GCM-SHA256, AES-256-GCM-SHA384
-- Signature verification: Ed25519, ECDSA P-256/P-384, RSA-PSS (SHA-256/384/512)
-- X.509 certificate parsing via SPARKx509
+- Signature verification: Ed25519, ECDSA P-256/P-384, RSA-PSS + RSA-PKCS1 v1.5 (SHA-256/384/512)
+- X.509 certificate parsing + chain validation via SPARKx509
+- TLS 1.3 PSK session resumption (psk_dhe_ke mode, forward-secret)
+- ALPN with strict echo-check (RFC 7301 §3.1/§3.2)
 - Zero heap allocation — all buffers are stack or session-owned
 - RecordFlux-generated message serialization/parsing with SPARK contracts
-- Crypto provided by SPARKNaCl (formally verified)
+- Crypto provided by SPARKNaCl + SPARKTLSCrypto (formally verified, AES-NI / VAES / VPCLMULQDQ / AVX-512 ChaCha20 fast paths)
+
+## Not Supported (By Design)
+
+- **TLS 1.3 0-RTT / early data.** Intentionally not implemented on
+  either side. The `early_data` extension is never emitted or
+  accepted; `client_early_traffic_secret` is never derived; the
+  `end_of_early_data` message is never produced or consumed.
+  Reason: 0-RTT records have no forward secrecy, are replayable by
+  on-path attackers (pushing replay-safety into every caller), and
+  the single-use-ticket "defense" is stateful and best-effort —
+  collectively at odds with the project's high-integrity posture.
+  PSK resumption (without early data) is fully supported.
+
+  A peer that *offers* 0-RTT is interoperable: the server silently
+  drops up to 32 undecryptable early-data records during the
+  CH→client-Finished window, then proceeds with a normal 1-RTT
+  handshake. The client never offers 0-RTT.
+
+## Not Yet Supported
+
+- TLS 1.2 session ticket resumption (RFC 5077) — TLS 1.3 PSK only
+- Post-quantum key exchange (ML-KEM hybrid) — see `mlkem_roadmap`
+- AES-CCM cipher suites (gating item for a FIPS-conformant profile)
+- TLS 1.3 server-side 0-RTT (see "Not Supported" above — by design)
 
 ## Dependencies
 

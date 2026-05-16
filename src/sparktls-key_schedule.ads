@@ -58,14 +58,6 @@ is
                and Server_HS_Secret'First = 0
                and Server_HS_Secret'Last = 31;
 
-   --  RFC 8446 §7.1: client_early_traffic_secret for 0-RTT.
-   procedure Derive_Client_Early_Traffic_Secret
-     (Client_Early_Secret :    out OKM_Seq;
-      Early_Secret        : in     Digest;
-      Hello_Hash          : in     Digest)
-   with Pre => Client_Early_Secret'First = 0
-               and Client_Early_Secret'Last = 31;
-
    --  RFC 8446 §7.3: Derive traffic key and IV from a traffic secret.
    --  Key = 32 bytes for ChaCha20-Poly1305.
    --  IV = 12 bytes (nonce base).

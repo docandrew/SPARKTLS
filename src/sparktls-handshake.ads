@@ -18,7 +18,6 @@ is
    HT_Client_Hello        : constant Byte := 16#01#;
    HT_Server_Hello        : constant Byte := 16#02#;
    HT_New_Session_Ticket   : constant Byte := 16#04#;
-   HT_End_Of_Early_Data   : constant Byte := 16#05#;  --  RFC 8446 §4.5
    HT_Encrypted_Extensions : constant Byte := 16#08#;
    HT_Certificate         : constant Byte := 16#0B#;
    HT_Certificate_Request : constant Byte := 16#0D#;

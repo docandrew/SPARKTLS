@@ -415,6 +415,47 @@ else
     fi
 fi
 
+# ===================================================================
+# HelloRetryRequest — RFC 8446 §4.1.4. SPARKTLS server, openssl
+# client offers key_share for an unsupported group (secp521r1) but
+# lists X25519 in supported_groups. Server MUST respond with HRR
+# requesting X25519, then complete the handshake on CH2.
+# ===================================================================
+echo ""
+echo "--- HRR: SPARKTLS server → OpenSSL s_client ---"
+if [ ! -x "$SERVER" ]; then
+    echo "  (skipped — tls_blocking_server not built)"
+else
+    cleanup
+    "$SERVER" "$CERT_DIR/ed25519.crt" "$CERT_DIR/ed25519.key" \
+        > /tmp/hrr_srv.log 2>&1 &
+    sleep 0.5
+
+    # -groups secp521r1:X25519 sends supported_groups=secp521r1,X25519
+    # and key_share=secp521r1 only → server must HRR for X25519.
+    # openssl 3.x's -msg displays HRR as a plain ServerHello (the SH
+    # with HRR sentinel random is the wire encoding), so we detect
+    # HRR by: TWO ClientHello records on the wire (CH1 then CH2 after
+    # HRR) AND successful Verify. A non-HRR handshake has exactly one
+    # ClientHello. -tlsextdebug also shows HRR via "supported_versions"
+    # in the SH but only on receive — count CHs is the simplest signal.
+    output=$(echo "x" | timeout 5 openssl s_client \
+        -connect localhost:$PORT -tls1_3 \
+        -CAfile "$CERT_DIR/ed25519.crt" \
+        -groups secp521r1:X25519 -msg 2>&1)
+    cleanup
+    ch_count=$(echo "$output" | grep -c "ClientHello" || true)
+    if [ "$ch_count" -ge 2 ] \
+       && echo "$output" | grep -q "Verify return code: 0 (ok)"; then
+        pass "HRR fires on group mismatch (sparktls server → openssl)"
+    else
+        fail "HRR fires on group mismatch (sparktls server → openssl)"
+        echo "    CH count: $ch_count"
+        echo "$output" | grep -E "Hello|alert|Verify|error" \
+                       | sed 's/^/    /' | head -10
+    fi
+fi
+
 # --- Summary ---
 cleanup
 echo ""
