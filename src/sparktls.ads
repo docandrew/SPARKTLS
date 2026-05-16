@@ -363,6 +363,7 @@ is
       Illegal_Parameter,
       Protocol_Version,
       Unsupported_Extension,       --  RFC 8446 §6 alert 110
+      Missing_Extension,           --  RFC 8446 §6 alert 109
       Internal_Error,
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
@@ -705,6 +706,7 @@ is
          when Certificate_Verify_Failed => 51,
          when Protocol_Version         => 70,
          when Unsupported_Extension    => 110,
+         when Missing_Extension        => 109,
          when Certificate_Required     => 116,
          when Internal_Error
             | Insufficient_Buffer
@@ -1007,6 +1009,16 @@ is
       --  If non-null, server sends NewSessionTicket after handshake.
       Ticket_Store : Ticket_Store_Access := null;
 
+      --  Server: max bytes of 0-RTT (early data) we will accept on a
+      --  resumed handshake. 0 disables 0-RTT entirely; the NST then
+      --  omits the early_data extension and any client offering 0-RTT
+      --  gets rejected. Non-zero advertises this limit in NST per RFC
+      --  8446 §4.2.10 / §4.6.1, and we will decrypt up to that many
+      --  bytes of TLSPlaintext before end_of_early_data switches keys.
+      --  Replay-protection note (RFC 8446 §8.2): when we accept, the
+      --  PSK identity is consumed (single-use) — see Ticket_Store.
+      Server_Max_Early_Data_Size : Unsigned_32 := 0;
+
       --  Client: previously-saved resumption ticket (RFC 8446
       --  §4.6.1). When Valid, Init copies this into S.Ticket before
       --  building CH so the pre_shared_key extension is offered.
@@ -1212,6 +1224,12 @@ is
       --  these signals is present (RFC 5746 §3.6).
       Saw_Reneg_Info : Boolean := False;
 
+      --  RFC 8446 §4.2.9: client offered psk_key_exchange_modes with
+      --  the psk_dhe_ke (0x01) mode. Required before the server may
+      --  issue a NewSessionTicket on this connection (RFC 8446 §4.6.1
+      --  / BoGo TLS13-ExpectNoSessionTicketOnBadKEMode-Server).
+      Has_PSK_DHE_KE : Boolean := False;
+
       --  Per-extension parse error surface. Apply_CH_Extension only
       --  has access to HC, not S — so when an extension's contents
       --  violate its RFC (e.g. RFC 7301 §3.1 empty ALPN protocol_name),
@@ -1263,6 +1281,24 @@ is
       --                        a missing EE → rejection by default.
       Early_Data_Offered  : Boolean := False;
       Early_Data_Accepted : Boolean := False;
+
+      --  Server-side 0-RTT receive state. When Early_Data_Accepted,
+      --  the server decrypts incoming records with S.Client_Early
+      --  until it sees the EndOfEarlyData handshake message (HS type
+      --  0x05) — also encrypted under client_early_traffic_secret per
+      --  RFC 8446 §4.5. From that point Client_HS is used for the
+      --  client Finished and beyond.
+      EOED_Received       : Boolean := False;
+
+      --  Server-side: when the client offered 0-RTT but we rejected
+      --  it (e.g. ticket corrupted, suite mismatch, or HRR fired),
+      --  the client still sends some records encrypted with a key
+      --  we never derived. RFC 8446 §4.2.10 / §4.6.1 says the server
+      --  MUST drop those records silently and keep waiting for the
+      --  client Finished (which uses Client_HS keys we do have).
+      --  We cap the count to defend against a malicious peer
+      --  pinning us in skip mode indefinitely.
+      Skipped_Early_Data_Records : Natural := 0;
 
       --  Handshake message reassembly (multi-record handshake messages).
       --  When a handshake record fragment contains only part of a

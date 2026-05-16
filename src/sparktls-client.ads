@@ -64,7 +64,9 @@ is
       Local    : Identity_Access := null;
       Mode     : Validation_Mode := Mode_WebPKI;
       ALPN     : String := "";
-      Versions : Version_Policy := Allow_Both)
+      Versions : Version_Policy := Allow_Both;
+      Resume   : Session_Ticket := (others => <>);
+      Use_0RTT : Boolean := False)
    with Pre  => Random /= null and Clock /= null,
         Post => S.State = Client_Hello_Sent and
                 S.Role = Role_Client and

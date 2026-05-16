@@ -97,6 +97,37 @@ is
       end if;
    end Send_Alert_And_Error;
 
+   --  Map S.Last_Error (set by Parse_Client_Hello) to the right
+   --  fatal-alert code and queue it. Centralises the per-error
+   --  mapping for the CH-parse failure paths in Process_Server so
+   --  adding a new surface-able Error_Code only requires one new
+   --  arm in this table, not edits at every parse-dispatch site.
+   --  Errors not in the known set fall back to Handshake_Failure
+   --  (alert 40) per RFC 8446 §6.
+   procedure Dispatch_CH_Parse_Error_Alert
+     (S      : in out Session;
+      Result :    out Action)
+   with Pre => S.State not in Idle | Closed | Closing | Error_State;
+
+   procedure Dispatch_CH_Parse_Error_Alert
+     (S      : in out Session;
+      Result :    out Action)
+   is
+   begin
+      case S.Last_Error is
+         when Decode_Error
+            | Unexpected_Message
+            | Protocol_Version
+            | Illegal_Parameter
+            | Certificate_Verify_Failed  --  RFC 8446 §4.2.11.2 PSK binder
+            | Missing_Extension          --  RFC 8446 §4.2.9 PSK without KE_modes
+         =>
+            Send_Alert_And_Error (S, S.Last_Error, Result);
+         when others =>
+            Send_Alert_And_Error (S, Handshake_Failure, Result);
+      end case;
+   end Dispatch_CH_Parse_Error_Alert;
+
    --  Send an encrypted fatal alert and set error state.
    --  Used when application/handshake keys are established.
    --  RFC 8446 §6.2 / RFC 5246 §7.2.2: encrypted fatal alert is
@@ -181,18 +212,20 @@ is
       Require_Client_Cert : Boolean := False;
       Tickets             : Ticket_Store_Access := null;
       ALPN                : String := "";
-      Versions            : Version_Policy := Allow_Both)
+      Versions            : Version_Policy := Allow_Both;
+      Max_Early_Data_Size : Unsigned_32 := 0)
    with SPARK_Mode => Off
    is
       Cfg : Config;
    begin
-      Cfg.Random              := Random;
-      Cfg.Local               := Local;
-      Cfg.Trust               := Trust;
-      Cfg.Request_Client_Cert := Request_Client_Cert;
-      Cfg.Require_Client_Cert := Require_Client_Cert;
-      Cfg.Ticket_Store        := Tickets;
-      Cfg.Versions            := Versions;
+      Cfg.Random                     := Random;
+      Cfg.Local                      := Local;
+      Cfg.Trust                      := Trust;
+      Cfg.Request_Client_Cert        := Request_Client_Cert;
+      Cfg.Require_Client_Cert        := Require_Client_Cert;
+      Cfg.Ticket_Store               := Tickets;
+      Cfg.Versions                   := Versions;
+      Cfg.Server_Max_Early_Data_Size := Max_Early_Data_Size;
       if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
          Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
          Cfg.ALPN.Len := ALPN'Length;
@@ -489,22 +522,7 @@ is
                      Free_Reasm;
 
                      if not Parse_OK then
-                        if S.Last_Error = Decode_Error then
-                           Send_Alert_And_Error (S, Decode_Error, Result);
-                        elsif S.Last_Error = Unexpected_Message then
-                           --  Wrong handshake type — RFC 8446 §6
-                           Send_Alert_And_Error
-                             (S, Unexpected_Message, Result);
-                        elsif S.Last_Error = Protocol_Version then
-                           Send_Alert_And_Error
-                             (S, Protocol_Version, Result);
-                        elsif S.Last_Error = Illegal_Parameter then
-                           Send_Alert_And_Error
-                             (S, Illegal_Parameter, Result);
-                        else
-                           Send_Alert_And_Error
-                             (S, Handshake_Failure, Result);
-                        end if;
+                        Dispatch_CH_Parse_Error_Alert (S, Result);
                         return;
                      end if;
 
@@ -584,25 +602,7 @@ is
                           (S, HC, Frag, Parse_OK);
 
                         if not Parse_OK then
-                           if S.Last_Error = Decode_Error then
-                              Send_Alert_And_Error
-                                (S, Decode_Error, Result);
-                           elsif S.Last_Error = Unexpected_Message then
-                              --  Wrong handshake type — RFC 8446 §6
-                              Send_Alert_And_Error
-                                (S, Unexpected_Message, Result);
-                           elsif S.Last_Error = Protocol_Version then
-                              Send_Alert_And_Error
-                                (S, Protocol_Version, Result);
-                           elsif S.Last_Error = Illegal_Parameter then
-                              --  RFC 8446 §4.1.2 / §6.2.1: malformed
-                              --  legacy_compression_methods.
-                              Send_Alert_And_Error
-                                (S, Illegal_Parameter, Result);
-                           else
-                              Send_Alert_And_Error
-                                (S, Handshake_Failure, Result);
-                           end if;
+                           Dispatch_CH_Parse_Error_Alert (S, Result);
                            S.Input.Read_Pos :=
                               S.Input.Read_Pos + Rec.Record_Len;
                            return;
@@ -1162,6 +1162,20 @@ is
                      HC.Using_PSK := True;
                      HC.PSK_Value := PSK;
                      HC.PSK_Value_Len := PSK_Len;
+                  else
+                     --  RFC 8446 §4.2.11.2 mandates a fatal alert
+                     --  on binder verification failure. The RFC
+                     --  text says `illegal_parameter`, but
+                     --  BoringSSL emits `decrypt_error` (alert 51
+                     --  = our Certificate_Verify_Failed code) and
+                     --  the BoGo tests verify that. Match the
+                     --  de-facto convention so cross-impl tests
+                     --  pass; the SECURITY property — refuse the
+                     --  PSK and emit a fatal alert — is identical.
+                     --  BoGo Resume-Server-InvalidPSKBinder.
+                     Send_Alert_And_Error
+                       (S, Certificate_Verify_Failed, Result);
+                     return;
                   end if;
                end;
             end if;
@@ -1262,6 +1276,64 @@ is
                pragma Assert (HRR_Sent_At_Most_Once_RFC_8446_4_1_4 (HC));
                Result := Has_Output;
                return;
+            end if;
+         end;
+      end if;
+
+      --  RFC 8446 §4.2.10 server-side 0-RTT decision. We've now
+      --  committed to a non-HRR ServerHello, so the early_data offer
+      --  in this CH is the one we'd be accepting. Conditions:
+      --    * client offered early_data extension (HC.Early_Data_Offered)
+      --    * we accepted the PSK (HC.Using_PSK)
+      --    * client signalled psk_dhe_ke (HC.Has_PSK_DHE_KE)
+      --    * server config enabled it (Cfg.Server_Max_Early_Data_Size > 0)
+      --    * negotiated suite is SHA-256 (SHA-384 0-RTT key schedule
+      --      isn't wired yet; we omit Derive_Client_Early_Traffic_
+      --      Secret_384 and silently reject).
+      --
+      --  When all hold, derive client_early_traffic_secret and stash
+      --  it in S.Client_Early so Process_Wait_Client_Flight can
+      --  decrypt incoming 0-RTT records before end_of_early_data
+      --  switches us back to client_handshake_traffic_secret. The
+      --  HC.Early_Data_Accepted flag drives EE-emit (phase 4) and
+      --  the read state machine (phase 5).
+      if HC.Using_PSK
+        and then HC.Early_Data_Offered
+        and then HC.Has_PSK_DHE_KE
+        and then HC.Cfg.Server_Max_Early_Data_Size > 0
+        and then S.Negotiated_Suite /= Suite_AES_256_GCM_SHA384
+      then
+         declare
+            use Key_Schedule;
+            Hello_Hash   : constant Digest :=
+               Transcript_Hash_256 (HC);
+            Early_Secret : Digest;
+            CES          : OKM_Seq (0 .. 31);
+            PSK_Bytes    : Bytes_32 :=
+               Bytes_32 (HC.PSK_Value (0 .. 31));
+            Secret_48    : Bytes_48 := (others => 0);
+         begin
+            Derive_Early_Secret (Early_Secret, PSK_Bytes);
+            Derive_Client_Early_Traffic_Secret
+              (Client_Early_Secret => CES,
+               Early_Secret        => Early_Secret,
+               Hello_Hash          => Hello_Hash);
+            Secret_48 (0 .. 31) := Bytes_32 (Byte_Seq (CES));
+            Set_Traffic_Keys
+              (TK     => S.Client_Early,
+               Secret => Secret_48,
+               Suite  => S.Negotiated_Suite);
+            S.Client_Early.Suite := S.Negotiated_Suite;
+            HC.Early_Data_Accepted := True;
+            --  RFC 8446 §8.2: single-use replay protection. Once we
+            --  commit to 0-RTT acceptance, retire the ticket from the
+            --  cache so a replay attempt finds nothing. The server
+            --  will issue a fresh ticket in the post-handshake NST,
+            --  so legitimate future resumptions are unaffected.
+            if HC.Cfg.Ticket_Store /= null then
+               Ticket_Cache.Consume
+                 (HC.Cfg.Ticket_Store.all,
+                  HC.PSK_Ticket_ID);
             end if;
          end;
       end if;
@@ -2314,6 +2386,15 @@ is
                Plain_Len  : N32;
                Inner_Type : Byte;
                Dec_Valid  : Boolean;
+               --  RFC 8446 §4.5: while early data is in flight (we
+               --  accepted 0-RTT and haven't yet seen the client's
+               --  EndOfEarlyData), records — both app-data AND
+               --  EndOfEarlyData itself — are encrypted with
+               --  client_early_traffic_secret. After EoED, the next
+               --  records are encrypted with client_handshake_
+               --  traffic_secret.
+               Use_Early_Keys : constant Boolean :=
+                  HC.Early_Data_Accepted and then not HC.EOED_Received;
             begin
                if Frag_Len < Records.Tag_Size + 1 then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2331,18 +2412,48 @@ is
                   return;
                end if;
 
-               Records.Decrypt_Record
-                 (Encrypted  => Encrypted,
-                  Record_Hdr => Hdr,
-                  Keys       => HC.Client_HS,
-                  Plaintext  => Plaintext,
-                  Plain_Len  => Plain_Len,
-                  Inner_Type => Inner_Type,
-                  Valid      => Dec_Valid);
+               if Use_Early_Keys then
+                  Records.Decrypt_Record
+                    (Encrypted  => Encrypted,
+                     Record_Hdr => Hdr,
+                     Keys       => S.Client_Early,
+                     Plaintext  => Plaintext,
+                     Plain_Len  => Plain_Len,
+                     Inner_Type => Inner_Type,
+                     Valid      => Dec_Valid);
+               else
+                  Records.Decrypt_Record
+                    (Encrypted  => Encrypted,
+                     Record_Hdr => Hdr,
+                     Keys       => HC.Client_HS,
+                     Plaintext  => Plaintext,
+                     Plain_Len  => Plain_Len,
+                     Inner_Type => Inner_Type,
+                     Valid      => Dec_Valid);
+               end if;
 
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
                if not Dec_Valid then
+                  --  RFC 8446 §4.2.10 / §4.6.1: if the client offered
+                  --  0-RTT and we rejected (Early_Data_Offered but
+                  --  not Early_Data_Accepted), it sent some records
+                  --  encrypted with a client_early_traffic_secret
+                  --  we never derived; those records won't decrypt
+                  --  with Client_HS. The server MUST silently drop
+                  --  them and keep listening — the client switches
+                  --  to handshake keys for its own Finished. Bound
+                  --  the skip count so a buggy/malicious peer can't
+                  --  hold the connection open by streaming garbage.
+                  if HC.Early_Data_Offered
+                    and then not HC.Early_Data_Accepted
+                    and then HC.Skipped_Early_Data_Records < 32
+                  then
+                     HC.Skipped_Early_Data_Records :=
+                        HC.Skipped_Early_Data_Records + 1;
+                     Result := OK;
+                     return;
+                  end if;
                   --  MAC failure or empty inner plaintext.
                   --  Send alert with app keys (client switched to app
                   --  keys after receiving our Finished).
@@ -2371,6 +2482,23 @@ is
                   Set_State (S, Error_State);
                   Result := Error_Alert;
                   return;
+               elsif Inner_Type = 16#17# and Use_Early_Keys then
+                  --  0-RTT application data: buffer into S.App_Data so
+                  --  the caller can read it via Read_Plaintext. Stay
+                  --  in this state — more early data or EoED next.
+                  if Plain_Len > 0 and then
+                     S.App_Data_Len + Plain_Len <= S.App_Data'Length
+                  then
+                     S.App_Data
+                       (S.App_Data_Len ..
+                        S.App_Data_Len + Plain_Len - 1) :=
+                        Plaintext (0 .. Plain_Len - 1);
+                     S.App_Data_Len := S.App_Data_Len + Plain_Len;
+                     Result := Plaintext_Ready;
+                  else
+                     Result := OK;
+                  end if;
+                  return;
                elsif Inner_Type /= 16#16# then
                   --  Unexpected inner type during handshake
                   declare
@@ -2387,6 +2515,47 @@ is
                      Result := Error_Alert;
                   end if;
                   return;
+               end if;
+
+               --  Handshake-typed inner. While early data is in
+               --  flight, the only legal HS message here is
+               --  EndOfEarlyData (HS type 0x05); RFC 8446 §4.5 says
+               --  it MUST be encrypted under client_early_traffic_
+               --  secret and signals "I'm switching to handshake
+               --  keys, my next encrypted record is the client
+               --  Finished." Append to transcript (§4.4.1) and flip
+               --  EOED_Received so subsequent records decrypt with
+               --  HC.Client_HS.
+               if Use_Early_Keys then
+                  if Plain_Len >= 4
+                    and then Plaintext (0) = Handshake.HT_End_Of_Early_Data
+                    and then Plaintext (1) = 0
+                    and then Plaintext (2) = 0
+                    and then Plaintext (3) = 0
+                  then
+                     Append_Transcript (HC, Plaintext (0 .. Plain_Len - 1));
+                     HC.EOED_Received := True;
+                     Result := OK;
+                     return;
+                  else
+                     --  Any other handshake message during early data
+                     --  (including a premature client Finished) is a
+                     --  state-machine violation.
+                     declare
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (2, 10, S.Server_App, S.Output, A);
+                     end;
+                     S.Last_Error := Unexpected_Message;
+                     Set_State (S, Error_State);
+                     if Output_Pending (S) > 0 then
+                        Result := Has_Output;
+                     else
+                        Result := Error_Alert;
+                     end if;
+                     return;
+                  end if;
                end if;
 
                --  Parse handshake header
@@ -2644,18 +2813,43 @@ is
                               end;
                         end case;
 
-                        --  Build and send NewSessionTicket if we have a cache
-                        if HC.Cfg.Ticket_Store /= null then
+                        --  Build and send NewSessionTicket only if the
+                        --  client signalled psk_dhe_ke in psk_key_
+                        --  exchange_modes (RFC 8446 §4.6.1 + §4.2.9).
+                        --  BoGo TLS13-ExpectNoSessionTicketOnBadKE
+                        --  Mode-Server checks that we DON'T issue NST
+                        --  when the client only offered psk_ke.
+                        if HC.Cfg.Ticket_Store /= null
+                          and then HC.Has_PSK_DHE_KE
+                        then
                            declare
-                              --  NST format: type(1) + len(3) + lifetime(4) +
-                              --  age_add(4) + nonce_len(1) + nonce(2) +
-                              --  ticket_len(2) + ticket(16) + ext_len(2) = 35
-                              NST : Byte_Seq (0 .. 34) := (others => 0);
+                              --  NST shape: type(1)+len(3)+lifetime(4)+
+                              --  age_add(4)+nonce_len(1)+nonce(2)+
+                              --  ticket_len(2)+ticket(16)+ext_len(2)+
+                              --  exts(ED_Ext_Len). RFC 8446 §4.6.1 says
+                              --  the early_data extension MUST be
+                              --  present iff the server is willing to
+                              --  accept 0-RTT on a resumption with
+                              --  this ticket.
+                              ED_Ext_Len : constant N32 :=
+                                (if HC.Cfg.Server_Max_Early_Data_Size > 0
+                                 then 8  --  tag(2)+len(2)+max(4)
+                                 else 0);
+                              Fixed_Len : constant := 35;
+                              NST_Len : constant N32 :=
+                                Fixed_Len + ED_Ext_Len;
+                              Body_Len : constant N32 := NST_Len - 4;
+                              NST : Byte_Seq (0 .. NST_Len - 1) :=
+                                 (others => 0);
+                              Med : constant Unsigned_32 :=
+                                 HC.Cfg.Server_Max_Early_Data_Size;
                            begin
-                              --  Handshake type: NewSessionTicket (0x04)
+                              --  Handshake type + length
                               NST (0) := 16#04#;
-                              --  Length: 31 bytes
-                              NST (1) := 0; NST (2) := 0; NST (3) := 31;
+                              NST (1) := Byte (Body_Len / 65536);
+                              NST (2) :=
+                                 Byte ((Body_Len / 256) mod 256);
+                              NST (3) := Byte (Body_Len mod 256);
                               --  ticket_lifetime: 3600 seconds (1 hour)
                               NST (4) := 0; NST (5) := 0;
                               NST (6) := 16#0E#; NST (7) := 16#10#;
@@ -2671,8 +2865,23 @@ is
                               NST (15) := 0; NST (16) := 16;
                               --  ticket (the cache ID)
                               NST (17 .. 32) := TID;
-                              --  extensions_length: 0
-                              NST (33) := 0; NST (34) := 0;
+                              --  extensions_length
+                              NST (33) := Byte (ED_Ext_Len / 256);
+                              NST (34) := Byte (ED_Ext_Len mod 256);
+                              if ED_Ext_Len > 0 then
+                                 --  early_data extension (0x002A): body
+                                 --  is uint32 max_early_data_size.
+                                 NST (35) := 16#00#;
+                                 NST (36) := 16#2A#;
+                                 NST (37) := 16#00#;
+                                 NST (38) := 16#04#;
+                                 NST (39) := Byte (Med / 2**24);
+                                 NST (40) :=
+                                    Byte ((Med / 2**16) mod 256);
+                                 NST (41) :=
+                                    Byte ((Med / 2**8) mod 256);
+                                 NST (42) := Byte (Med mod 256);
+                              end if;
 
                               --  NewSessionTicket is a post-handshake
                               --  optimisation (RFC 8446 §4.6.1); it is

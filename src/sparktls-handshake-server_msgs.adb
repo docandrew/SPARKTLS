@@ -575,63 +575,137 @@ is
          IDs_Len : constant N32 :=
                      N32 (Ext_Data (0)) * 256 + N32 (Ext_Data (1));
          P : N32 := 2;
-         --  Single-identity wire size: tick_len(2) + ticket + age(4).
-         Single_ID_Size : constant N32 := 2 + N32 (Ticket_ID_Len) + 4;
       begin
          if P + 2 > DLen or else IDs_Len = 0 then
             return;
          end if;
-         --  Reject multi-identity PSK extensions. RFC 8446 §4.2.11
-         --  permits multiple identities (server picks one) but our
-         --  parser handles only the single-identity / single-binder
-         --  shape today. Mis-parsing a multi-identity offer would
-         --  bind the wrong binder to the wrong identity, which is a
-         --  protocol-correctness issue (Bug #1 class). Bailing out
-         --  silently here causes the server to fall back to a full
-         --  handshake — safe, just no resumption.
-         if IDs_Len /= Single_ID_Size then
-            return;
-         end if;
-         --  First identity: len(2) + ticket + age(4)
+         --  First identity: len(2) + ticket + age(4).
+         --  Note: we only PARSE the first identity (RFC 8446 §4.2.11
+         --  allows server to pick any one), but we still walk the
+         --  rest of the identities list to find the binders.
          declare
             Tick_Len : constant N32 :=
                          N32 (Ext_Data (P)) * 256 + N32 (Ext_Data (P + 1));
          begin
             P := P + 2;
-            if P + Tick_Len + 4 > DLen or else Tick_Len /= Ticket_ID_Len then
+            --  Ticket length sanity:
+            --   * must fit in the extension data
+            --   * must be at most 16 bytes (Ticket_ID), which is
+            --     what our server issues. A longer ticket means the
+            --     client is offering some other server's ticket
+            --     that we have no way to look up — silently fall
+            --     back to full handshake (no alert: RFC 8446
+            --     §4.2.11 says servers MAY ignore unknown PSKs).
+            if P + Tick_Len + 4 > DLen
+              or else Tick_Len = 0
+              or else Tick_Len > N32 (Ticket_ID_Len)
+            then
                return;
             end if;
-            HC.PSK_Ticket_ID := Ext_Data (P .. P + Tick_Len - 1);
+            --  Zero-pad the lookup key to Ticket_ID_Len so the cache
+            --  comparison works regardless of the on-wire length.
+            HC.PSK_Ticket_ID := (others => 0);
+            HC.PSK_Ticket_ID (0 .. Tick_Len - 1) :=
+              Ext_Data (P .. P + Tick_Len - 1);
             HC.PSK_Offered := True;
 
-            --  Skip to binders list (past all identities: 2 + IDs_Len)
+            --  Count identities. We only USE identity[0], but the
+            --  count is needed to validate that binder-count
+            --  matches (RFC 8446 §4.2.11.2: each PSK identity
+            --  has one corresponding PskBinderEntry).
             declare
-               Binders_Start : constant N32 := 2 + IDs_Len;
+               Q : N32 := 2;  --  past identities_len field
+               Ident_Count : N32 := 0;
             begin
-               if Binders_Start + 2 >= DLen then
-                  return;
-               end if;
+               while Q + 2 <= 2 + IDs_Len loop
+                  declare
+                     TL : constant N32 :=
+                            N32 (Ext_Data (Q)) * 256
+                          + N32 (Ext_Data (Q + 1));
+                  begin
+                     if Q + 2 + TL + 4 > 2 + IDs_Len then
+                        --  Truncated identity in list.
+                        HC.Ext_Parse_Err := Decode_Error;
+                        return;
+                     end if;
+                     Ident_Count := Ident_Count + 1;
+                     Q := Q + 2 + TL + 4;
+                     --  Cap to avoid silly loops on attacker input.
+                     exit when Ident_Count > 16;
+                  end;
+               end loop;
+
+               --  Skip to binders list (past all identities).
                declare
-                  B_Pos : constant N32 := Binders_Start + 2;
+                  Binders_Start : constant N32 := 2 + IDs_Len;
+                  Binders_Len   : N32;
+                  BP            : N32;
+                  Binder_Count  : N32 := 0;
                begin
-                  if B_Pos >= DLen then
+                  --  RFC 8446 §4.2.11: pre_shared_key extension's
+                  --  binders list MUST be present. Missing or
+                  --  zero-length binders is a decode_error. BoGo
+                  --  Resume-Server-NoPSKBinder.
+                  if Binders_Start + 2 > DLen then
+                     HC.Ext_Parse_Err := Decode_Error;
                      return;
                   end if;
-                  declare
-                     B_Len : constant N32 := N32 (Ext_Data (B_Pos));
-                  begin
-                     if B_Len in 32 | 48
-                       and then B_Pos + 1 + B_Len <= DLen
-                     then
-                        for I in N32 range 0 .. B_Len - 1 loop
-                           HC.PSK_Binder (I) := Ext_Data (B_Pos + 1 + I);
-                        end loop;
-                        HC.PSK_Binder_Len := B_Len;
-                        --  Binders offset relative to the extension
-                        --  data start (used later by HMAC computation).
-                        HC.PSK_Binders_Offset := Binders_Start;
-                     end if;
-                  end;
+                  Binders_Len :=
+                    N32 (Ext_Data (Binders_Start)) * 256
+                  + N32 (Ext_Data (Binders_Start + 1));
+                  if Binders_Len = 0
+                    or else Binders_Start + 2 + Binders_Len > DLen
+                  then
+                     HC.Ext_Parse_Err := Decode_Error;
+                     return;
+                  end if;
+                  --  Walk binder entries to count them and capture
+                  --  binder[0] (the one matching identity[0]).
+                  BP := Binders_Start + 2;
+                  while BP < Binders_Start + 2 + Binders_Len loop
+                     declare
+                        BL : constant N32 := N32 (Ext_Data (BP));
+                     begin
+                        --  RFC 8446 §4.2.11.2: binder length MUST
+                        --  match the hash of the associated PSK
+                        --  (32 for SHA-256, 48 for SHA-384).
+                        --  BoringSSL emits `decrypt_error`
+                        --  (Certificate_Verify_Failed = alert 51)
+                        --  for any binder shape/verification
+                        --  failure, including this length check.
+                        --  BoGo Resume-Server-BinderWrongLength.
+                        if BL not in 32 | 48
+                          or else BP + 1 + BL >
+                                    Binders_Start + 2 + Binders_Len
+                        then
+                           HC.Ext_Parse_Err :=
+                             Certificate_Verify_Failed;
+                           return;
+                        end if;
+                        if Binder_Count = 0 then
+                           for I in N32 range 0 .. BL - 1 loop
+                              HC.PSK_Binder (I) :=
+                                Ext_Data (BP + 1 + I);
+                           end loop;
+                           HC.PSK_Binder_Len := BL;
+                           HC.PSK_Binders_Offset := Binders_Start;
+                        end if;
+                        Binder_Count := Binder_Count + 1;
+                        BP := BP + 1 + BL;
+                        exit when Binder_Count > 16;
+                     end;
+                  end loop;
+
+                  --  RFC 8446 §4.2.11.2: identities and binders
+                  --  MUST be in 1:1 correspondence. BoGo
+                  --  Resume-Server-ExtraIdentityNoBinder and
+                  --  Resume-Server-ExtraPSKBinder exercise the
+                  --  identity_count != binder_count case.
+                  if Ident_Count /= Binder_Count then
+                     HC.Ext_Parse_Err := Illegal_Parameter;
+                     HC.PSK_Binder_Len := 0;  --  invalidate
+                     return;
+                  end if;
                end;
             end;
          end;
@@ -681,6 +755,15 @@ is
          HC.Cfg.Local /= null
          and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS;
    begin
+      --  RFC 5746 §3.6: TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF)
+      --  is a *signaling* cipher suite value, not a real suite, so
+      --  RFLX's TLS_Cipher_Suites enum (which only models negotiable
+      --  suites) rejects it via Valid_TLS_Cipher_Suites — we detect
+      --  it ourselves before falling through.
+      if Unsigned_16 (Suite_Code) = 16#00FF# then
+         HC.Saw_Reneg_Info := True;
+         return;
+      end if;
       if not RFLX.Tls_Parameters.Valid_TLS_Cipher_Suites (Suite_Code) then
          return;
       end if;
@@ -845,6 +928,16 @@ is
          when RFLX.Tls_Extensiontype_Values.Pre_Shared_Key =>
             if DLen in Wire_PSK_Ext_Len then
                Parse_PSK_Extension (Ext_Ctx, DLen, HC);
+               --  RFC 8446 §4.2.11: PSK shape errors (missing
+               --  binders, identity/binder count mismatch,
+               --  wrong-length binder) are surfaced via
+               --  HC.Ext_Parse_Err so the CH parser aborts with
+               --  the right alert. BoGo Resume-Server-NoPSKBinder
+               --  / -BinderWrongLength / -ExtraIdentityNoBinder.
+               if HC.Ext_Parse_Err /= No_Error then
+                  OK := False;
+                  return;
+               end if;
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Supported_Versions =>
@@ -875,6 +968,47 @@ is
             --  extension. We echo it in ServerHello only when this
             --  flag (or the SCSV signal) is set.
             HC.Saw_Reneg_Info := True;
+
+         when RFLX.Tls_Extensiontype_Values.Early_Data =>
+            --  RFC 8446 §4.2.10: presence (empty body) in CH means
+            --  the client wants to send 0-RTT data. Server decides
+            --  acceptance later (Build_Server_Flight) when the PSK
+            --  resume + DHE_KE + ticket-most-recent conditions are
+            --  evaluated; here we just record the offer.
+            if DLen = 0 then
+               HC.Early_Data_Offered := True;
+            end if;
+
+         when RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes =>
+            --  RFC 8446 §4.2.9: body is list_len(1) + N modes(1 each).
+            --  psk_dhe_ke = 0x01 is the only mode we support; presence
+            --  is required before we may issue a NewSessionTicket on
+            --  this connection (BoGo TLS13-ExpectNoSessionTicketOn
+            --  BadKEMode-Server).
+            if DLen >= 2 then
+               declare
+                  Body_Buf : RBT.Bytes (1 .. RBT.Index (DLen)) :=
+                     (others => 0);
+               begin
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data
+                    (Ext_Ctx, Body_Buf);
+                  declare
+                     List_Len : constant N32 := N32 (Body_Buf (1));
+                  begin
+                     if List_Len > 0
+                       and then 1 + List_Len <= DLen
+                     then
+                        for I in N32 range 0 .. List_Len - 1 loop
+                           if N32 (Body_Buf (RBT.Index (2 + I)))
+                                = 16#01#
+                           then
+                              HC.Has_PSK_DHE_KE := True;
+                           end if;
+                        end loop;
+                     end if;
+                  end;
+               end;
+            end if;
 
          when RFLX.Tls_Extensiontype_Values.Extended_Master_Secret =>
             --  RFC 7627: extended_master_secret extension. Empty body
@@ -1116,6 +1250,12 @@ is
    is
       use RFLX.TLS_Handshake.Client_Hello;
       Aborting : Boolean := False;
+      --  RFC 8446 §4.2.11: pre_shared_key MUST be the last
+      --  extension in the ClientHello. Track whether we saw it on
+      --  a previous iteration; any subsequent extension is an
+      --  illegal_parameter.  BoGo Resume-Server-PSKBinderFirst-
+      --  Extension exercises this.
+      Saw_PSK : Boolean := False;
    begin
       OK := True;
       if Field_Size (Ctx, F_Extensions_TLS) = 0 then
@@ -1151,14 +1291,33 @@ is
                  and then RFLX.TLS_Handshake.CH_Extension_TLS
                             .Well_Formed_Message (Ext_Ctx)
                then
-                  declare
-                     Sub_OK : Boolean;
-                  begin
-                     Apply_CH_Extension (Ext_Ctx, HC, Sub_OK);
-                     if not Sub_OK then
-                        Aborting := True;
-                     end if;
-                  end;
+                  --  PSK-must-be-last enforcement BEFORE applying.
+                  if Saw_PSK then
+                     HC.Ext_Parse_Err := Illegal_Parameter;
+                     Aborting := True;
+                  end if;
+
+                  if not Aborting then
+                     declare
+                        Sub_OK   : Boolean;
+                        Tag_Hdr  : constant
+                          RFLX.Tls_Extensiontype_Values
+                            .TLS_ExtensionType_Values :=
+                              RFLX.TLS_Handshake.CH_Extension_TLS.Get_Tag
+                                (Ext_Ctx);
+                     begin
+                        Apply_CH_Extension (Ext_Ctx, HC, Sub_OK);
+                        if not Sub_OK then
+                           Aborting := True;
+                        end if;
+                        if Tag_Hdr.Known
+                          and then Tag_Hdr.Enum =
+                            RFLX.Tls_Extensiontype_Values.Pre_Shared_Key
+                        then
+                           Saw_PSK := True;
+                        end if;
+                     end;
+                  end if;
                end if;
 
                RFLX.TLS_Handshake.CH_Extensions_TLS.Update
@@ -1273,11 +1432,62 @@ is
          return;
       end if;
 
+      --  Detect "CH + trailing bytes from a next handshake message in
+      --  the same record". The HS header (bytes 1..3 of Data, after
+      --  the type byte at 0) declares this message's body length. If
+      --  the record fragment carries more than (4 + declared), the
+      --  extra bytes are the start of another HS message — and since
+      --  the caller invoked us expecting exactly one CH in this
+      --  state, that's unexpected_message, not decode_error. BoGo
+      --  PartialSecondClientHelloAfterFirst, PartialClientKey
+      --  ExchangeWithClientHello.
+      declare
+         HS_Body_Len : constant N32 :=
+            N32 (Data (Data'First + 1)) * 65536
+          + N32 (Data (Data'First + 2)) * 256
+          + N32 (Data (Data'First + 3));
+      begin
+         if HS_Body_Len + 4 < N32 (Data'Length) then
+            S.Last_Error := Unexpected_Message;
+            return;
+         end if;
+      end;
+
       --  Skip 4-byte handshake header, pass body to Client_Hello context
       Body_Len := N32 (Data'Length) - 4;
 
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
+
+      --  RFC 8446 §4.1.2: TLS 1.3 clients MUST set CH.legacy_version
+      --  to 0x0303, but TLS 1.3 servers MUST tolerate other values
+      --  (the real version comes from supported_versions). Our RFLX
+      --  TLS_Version enum only accepts 0x0301..0x0304 + DTLS — any
+      --  TLS 1.3-tolerant high value (e.g. 0x0304 from buggy clients
+      --  or 0x0400 from forward-version probes) makes Verify_Message
+      --  fail. Pre-normalise to 0x0303 before parse for any value
+      --  > 0x0303; this preserves the genuine-old-client rejection
+      --  for TLS 1.0/1.1 (legacy_version < 0x0303). BoGo
+      --  ClientHelloVersionTooHigh, VersionTolerance-TLS13.
+      --
+      --  ##  WARNING — buffer mutation
+      --
+      --  This rewrites the local RFLX parse buffer. Anyone later
+      --  reading the field via Get_Legacy_Version (Ctx) will see
+      --  0x0303 instead of the wire bytes. Version negotiation
+      --  therefore MUST come from HC.Has_TLS_1_3 (set by the
+      --  supported_versions parse), not from legacy_version. The
+      --  transcript hash is computed over the unmodified `Data`
+      --  parameter (Append_Transcript runs in the caller), so the
+      --  rewrite never leaks into the transcript.
+      if Buf.all'Length >= 2
+        and then (N32 (Buf.all (1)) * 256
+                  + N32 (Buf.all (2))) > 16#0303#
+      then
+         Buf.all (1) := 16#03#;
+         Buf.all (2) := 16#03#;
+      end if;
+
       Initialize (Ctx, Buf,
                   Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       Verify_Message (Ctx);
@@ -1445,6 +1655,20 @@ is
          HC.Version := TLS_1_3;
       else
          HC.Version := TLS_1_2;
+      end if;
+
+      --  RFC 8446 §4.2.9: a TLS 1.3 ClientHello with pre_shared_key
+      --  MUST also include psk_key_exchange_modes with at least one
+      --  mode the server recognises. We support only psk_dhe_ke
+      --  (0x01), so require HC.Has_PSK_DHE_KE whenever a PSK binder
+      --  is present. BoGo TLS13-SendNoKEMModesWithPSK-Server.
+      if HC.Version = TLS_1_3
+        and then HC.PSK_Binder_Len > 0
+        and then not HC.Has_PSK_DHE_KE
+      then
+         S.Last_Error := Missing_Extension;
+         OK := False;
+         return;
       end if;
 
       --  Shared secret computation deferred to Build_Server_Hello
@@ -1791,7 +2015,20 @@ is
 
       KS_Data_Len := KS_Raw_Len;
       Ext_Total := (4 + KS_Data_Len) + (4 + SV_Data_Len);
-      SH_Body_Len := 72 + Ext_Total;  --  version(2)+random(32)+sid_len(1)+sid(32)+suite(2)+comp(1)+ext_len(2)
+      --  Actual body bytes RFLX will encode depend on the echoed
+      --  session_id length. ver(2)+random(32)+sid_len(1)+sid(N)+
+      --  suite(2)+comp(1)+ext_len(2) = 40 + N. Was hardcoded to
+      --  72 (assuming N=32); when the client sent a shorter SID
+      --  (BoGo Resume-Server-TLS13 with SendBothTickets sends 16),
+      --  the HS header overstated the body length, causing the
+      --  peer to fail SH parse with trailing-garbage bytes.
+      declare
+         SID_Echo : constant N32 :=
+            (if HC.Legacy_Session_ID_Len in 0 .. 32
+             then HC.Legacy_Session_ID_Len else 0);
+      begin
+         SH_Body_Len := 40 + SID_Echo + Ext_Total;
+      end;
       SH_Msg_Len := 4 + SH_Body_Len;
 
       --  Allocate buffer for ServerHello body
@@ -1938,10 +2175,19 @@ is
          declare
             PSK_Ext_Len : constant N32 := 6;
             New_Len     : constant N32 := Len + PSK_Ext_Len;
-            --  Extension list length offset: after handshake header(4) +
-            --  version(2) + random(32) + sid_len(1) + sid(32) + suite(2) +
-            --  comp(1) = 74
-            Ext_Len_Offset : constant N32 := 4 + 2 + 32 + 1 + 32 + 2 + 1;
+            --  Extension list length offset depends on the echoed
+            --  session_id length (the client's, capped to 0..32). The
+            --  SH layout is hs_hdr(4) + ver(2) + random(32) + sid_len(1)
+            --  + sid(SID_Len) + suite(2) + comp(1). The 2-byte ext_total
+            --  length immediately follows. Hardcoding SID_Len=32 mangled
+            --  the SH when the client sent a shorter SID (e.g.
+            --  Resume-Server-TLS13-TLS13-TLS with SendBothTickets sends
+            --  a 16-byte SID per BoringSSL convention).
+            SID_Echo : constant N32 :=
+               (if HC.Legacy_Session_ID_Len in 0 .. 32
+                then HC.Legacy_Session_ID_Len else 0);
+            Ext_Len_Offset : constant N32 :=
+               4 + 2 + 32 + 1 + SID_Echo + 2 + 1;
             Old_Ext_Len : N32;
             P : N32;
          begin
@@ -2005,7 +2251,13 @@ is
       ALPN_Ext_Len : constant N32 :=
          (if ALPN_Match then N32 (7 + ALPN_PL) else 0);
 
-      Ext_Len : constant N32 := ALPN_Ext_Len;
+      --  RFC 8446 §4.2.10: server signals 0-RTT acceptance by echoing
+      --  an empty early_data extension in EE. Decided in Build_Server_
+      --  Flight (phase 3); we only emit here.
+      ED_Ext_Len : constant N32 :=
+         (if HC.Early_Data_Accepted then 4 else 0);
+
+      Ext_Len : constant N32 := ALPN_Ext_Len + ED_Ext_Len;
       Body_Len : constant N32 := 2 + Ext_Len;  --  ext_list_len(2) + exts
       Msg_Len  : constant N32 := 4 + Body_Len;
       Pos : N32;
@@ -2048,6 +2300,17 @@ is
          end loop;
 
          S.Negotiated_ALPN := HC.Cfg.ALPN;
+         Pos := Pos + ALPN_Ext_Len;
+      end if;
+
+      --  early_data extension (0x002A), empty body — acknowledges
+      --  0-RTT acceptance.
+      if HC.Early_Data_Accepted then
+         Result (Pos)     := 16#00#;
+         Result (Pos + 1) := 16#2A#;
+         Result (Pos + 2) := 16#00#;
+         Result (Pos + 3) := 16#00#;
+         Pos := Pos + ED_Ext_Len;
       end if;
 
       Len := Msg_Len;

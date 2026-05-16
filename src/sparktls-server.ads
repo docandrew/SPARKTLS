@@ -47,8 +47,16 @@ is
       Require_Client_Cert : Boolean := False;
       Tickets             : Ticket_Store_Access := null;
       ALPN                : String := "";
-      Versions            : Version_Policy := Allow_Both)
+      Versions            : Version_Policy := Allow_Both;
+      Max_Early_Data_Size : Unsigned_32 := 0)
    with SPARK_Mode => Off;
+   --  Max_Early_Data_Size: RFC 8446 §4.2.10 server-side 0-RTT (early
+   --  data). 0 (default) disables 0-RTT — NST will omit the
+   --  early_data extension and any client offering early data on
+   --  resume is silently rejected. Non-zero advertises this byte
+   --  cap in NST and accepts up to that many plaintext bytes of
+   --  0-RTT data on resumed handshakes (replay protection: single-
+   --  use tickets per RFC §8.2).
    --  ALPN (RFC 7301): the protocol name we'll select when a
    --  client offers it in the application_layer_protocol_negotiation
    --  extension. Empty string means we don't echo ALPN even if

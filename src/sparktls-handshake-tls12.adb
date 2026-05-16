@@ -1056,7 +1056,14 @@ is
       --  echoing it. Pragmatic: ALWAYS emit (no security risk —
       --  the empty initial-handshake form binds the connection).
       RI_Data_Len : constant := 1;
-      RI_Ext_Len : constant N32 := 4 + RI_Data_Len;
+      --  RFC 5746 §3.6: server emits renegotiation_info only when
+      --  the client signalled support — either by sending the
+      --  extension itself or by including the TLS_EMPTY_RENEGOTIATION_
+      --  INFO_SCSV (0x00FF) signaling cipher suite. BoGo
+      --  Renegotiate-Server-NoExt verifies we DON'T echo it when
+      --  neither signal is present.
+      Emit_RI    : constant Boolean := HC.Saw_Reneg_Info;
+      RI_Ext_Len : constant N32 := (if Emit_RI then 4 + RI_Data_Len else 0);
 
       --  Extended master secret (0x0017): no data (empty extension)
       EMS_Data_Len : constant := 0;
@@ -1136,40 +1143,43 @@ is
       begin
          Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
-         --  renegotiation_info (0xFF01). Always emit empty form for
-         --  initial handshake: tests rely on this and clients that
-         --  signalled support (extension or SCSV) require it. RFC 5746
-         --  §3.6 says only emit if client signalled, but in practice
-         --  always emitting is safe and aligns with most TLS stacks.
-         declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-            RI_Raw  : constant Byte_Seq (0 .. 0) := (0 => 0);
-         begin
-            --  RFC 5746 §3.5: initial-handshake renegotiation_info
-            --  carries an empty renegotiated_connection field — on
-            --  the wire that's a single 0x00 length-prefix byte.
-            pragma Assert (RI_Empty_Initial_RFC_5746_3_5 (RI_Raw));
-            Ext_Buf := new RBT.Bytes'
-              (1 .. RBT.Index (4 + RI_Data_Len) => 0);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
-              (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
-              (Ext_Ctx,
-               RFLX.Tls_Extensiontype_Values.Renegotiation_Info);
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx,
-               RFLX.TLS_Handshake.Data_Length (RI_Data_Len));
-            RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (RI_Raw));
+         --  renegotiation_info (0xFF01). RFC 5746 §3.6: emit only when
+         --  the client signalled support — via the extension itself or
+         --  the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) cipher
+         --  suite. Both signals land in HC.Saw_Reneg_Info during CH
+         --  parsing. BoGo Renegotiate-Server-NoExt verifies we DON'T
+         --  echo it when the client offered neither.
+         if Emit_RI then
+            declare
+               Ext_Buf : RBT.Bytes_Ptr;
+               Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+               RI_Raw  : constant Byte_Seq (0 .. 0) := (0 => 0);
+            begin
+               --  RFC 5746 §3.5: initial-handshake renegotiation_info
+               --  carries an empty renegotiated_connection field — on
+               --  the wire that's a single 0x00 length-prefix byte.
+               pragma Assert (RI_Empty_Initial_RFC_5746_3_5 (RI_Raw));
+               Ext_Buf := new RBT.Bytes'
+                 (1 .. RBT.Index (4 + RI_Data_Len) => 0);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
+                 (Ext_Ctx, Ext_Buf);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
+                 (Ext_Ctx,
+                  RFLX.Tls_Extensiontype_Values.Renegotiation_Info);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
+                 (Ext_Ctx,
+                  RFLX.TLS_Handshake.Data_Length (RI_Data_Len));
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
+                 (Ext_Ctx, To_RFLX (RI_Raw));
 
-            RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
+               RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
+                 (Exts_Ctx, Ext_Ctx);
 
-            RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free_SH (Ext_Buf);
-         end;
+               RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
+                 (Ext_Ctx, Ext_Buf);
+               RFLX_Free_SH (Ext_Buf);
+            end;
+         end if;
 
          --  extended_master_secret (0x0017, RFC 7627). RFC 7627 §5.1:
          --  echo the extension only if the client offered it.

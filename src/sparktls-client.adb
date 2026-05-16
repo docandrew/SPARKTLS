@@ -341,7 +341,9 @@ is
       Local    : Identity_Access := null;
       Mode     : Validation_Mode := Mode_WebPKI;
       ALPN     : String := "";
-      Versions : Version_Policy := Allow_Both)
+      Versions : Version_Policy := Allow_Both;
+      Resume   : Session_Ticket := (others => <>);
+      Use_0RTT : Boolean := False)
    is
       Cfg : Config;
    begin
@@ -352,6 +354,8 @@ is
       Cfg.Get_Time    := Clock;
       Cfg.Verify_Mode := Mode;
       Cfg.Versions    := Versions;
+      Cfg.Resume_Ticket := Resume;
+      Cfg.Allow_0RTT    := Use_0RTT;
       if Hostname'Length > 0
          and then Hostname'Length <= Max_Hostname_Len
       then
@@ -603,6 +607,14 @@ is
             end if;
 
          when Handshake.HT_Certificate_Request =>
+            --  RFC 8446 §4.4.2: CertReq is not sent during a
+            --  resumed handshake. BoGo
+            --  CertificateRequestInResumption-TLS13.
+            if HC.Using_PSK then
+               Send_HS_Encrypted_Alert
+                 (S, HC, Unexpected_Message, Result);
+               return;
+            end if;
             --  RFC 8446 §4.3.2: CertReq body = ctx_len(1) + ctx(N)
             --  + ext_len(2) + extensions(M). Catch trailing bytes
             --  before any parsing (BoGo TrailingMessageData-TLS13-
@@ -615,6 +627,16 @@ is
                      Data'First + 5 + Ctx_Len_Decl;
                   Body_OK : Boolean := False;
                begin
+                  --  RFC 8446 §4.3.2: certificate_request_context MUST
+                  --  be empty in the initial-handshake CertReq (post-
+                  --  handshake auth, which uses a non-empty context,
+                  --  is not implemented). BoGo RequestContextIn
+                  --  Handshake-TLS13.
+                  if Ctx_Len_Decl /= 0 then
+                     Send_HS_Encrypted_Alert
+                       (S, HC, Decode_Error, Result);
+                     return;
+                  end if;
                   if Ext_Off_Decl + 1 <= Data'Last then
                      declare
                         Ext_Tot : constant N32 :=
@@ -802,6 +824,16 @@ is
             --  Stay in Wait_Certificate (server Certificate comes next)
 
          when Handshake.HT_Certificate =>
+            --  RFC 8446 §4.4.2: when PSK was selected, the server's
+            --  flight is EE → Finished; no Cert, no CV. A
+            --  Certificate (or CertificateRequest) arriving here is
+            --  unexpected_message. BoGo
+            --  CertificateInResumption-TLS13.
+            if HC.Using_PSK then
+               Send_HS_Encrypted_Alert
+                 (S, HC, Unexpected_Message, Result);
+               return;
+            end if;
             --  RFC 8446 §4: every handshake message ends exactly at
             --  its declared length. Certificate body =
             --  ctx_len(1) + ctx(N) + cert_list_len(3) + entries(M).
@@ -2774,6 +2806,243 @@ is
       end case;
    end Process_Encrypted_Handshake;
 
+   --  NST helpers (extracted from Process_Connected/16#16# handler).
+   --  RFC 8446 §4.6.1 NewSessionTicket parsing is structurally deep
+   --  (header → fixed prefix → nonce → ticket → extensions); keeping
+   --  it as nested if/declare in the connected-state loop made every
+   --  small RFC nit (zero-length ticket, dup ext, malformed flags ext)
+   --  cost two indent levels. Split into:
+   --   * Walk_NST_Extensions  – iterate ext list, extract max_early_
+   --                            data, detect duplicates / malformed
+   --                            flags ext, return a status enum.
+   --   * Process_NST_Message  – parse fixed prefix + nonce + ticket,
+   --                            derive PSK, then call Walk_NST_Exts.
+   --  The Process_Connected case branch reduces to a single call.
+
+   type NST_Status is
+     (NST_OK,
+      NST_Decode_Err,
+      NST_Illegal_Param);
+   --  NST_Decode_Err  → caller sends Decode_Error alert.
+   --  NST_Illegal_Param → caller sends Illegal_Parameter alert.
+
+   procedure Walk_NST_Extensions
+     (Plaintext       : in     Byte_Seq;
+      Plain_Len       : in     N32;
+      Start_Off       : in     N32;
+      Max_Early_Data  :    out Unsigned_32;
+      Status          :    out NST_Status);
+
+   procedure Walk_NST_Extensions
+     (Plaintext       : in     Byte_Seq;
+      Plain_Len       : in     N32;
+      Start_Off       : in     N32;
+      Max_Early_Data  :    out Unsigned_32;
+      Status          :    out NST_Status)
+   is
+      type Tag_Array is array (1 .. 16) of Unsigned_16;
+      Seen_Tags : Tag_Array := (others => 0);
+      Seen_N    : Natural   := 0;
+      EP        : N32       := Start_Off;
+   begin
+      Max_Early_Data := 0;
+      Status         := NST_OK;
+
+      if EP + 2 > Plain_Len then
+         return;
+      end if;
+
+      declare
+         Ext_Total : constant N32 :=
+            N32 (Plaintext (EP)) * 256 + N32 (Plaintext (EP + 1));
+         Ext_End   : constant N32 :=
+            N32'Min (EP + 2 + Ext_Total, Plain_Len);
+      begin
+         EP := EP + 2;
+         while EP + 4 <= Ext_End loop
+            declare
+               Tag : constant Unsigned_16 :=
+                  Unsigned_16 (Plaintext (EP)) * 256
+                  + Unsigned_16 (Plaintext (EP + 1));
+               E_Len : constant N32 :=
+                  N32 (Plaintext (EP + 2)) * 256
+                  + N32 (Plaintext (EP + 3));
+            begin
+               --  RFC 8446 §4.2: duplicate extension types in any HS
+               --  message are forbidden (BoGo TLS13-DuplicateTicket
+               --  EarlyDataSupport).
+               for K in 1 .. Seen_N loop
+                  if Seen_Tags (K) = Tag then
+                     Status := NST_Illegal_Param;
+                     return;
+                  end if;
+               end loop;
+               if Seen_N < Seen_Tags'Last then
+                  Seen_N := Seen_N + 1;
+                  Seen_Tags (Seen_N) := Tag;
+               end if;
+
+               --  draft-ietf-tls-tlsflags: flags ext (0x003E) body is
+               --  `opaque flags<1..2^8-1>` — outer ext_data is
+               --  inner_len(1) + inner_bytes with inner_len >= 1. So
+               --  ext_data_len < 2, or inner_len = 0, is decode_error
+               --  (BoGo TLS13-Client-EmptyTicketFlags).
+               if Tag = 16#003E#
+                 and then (E_Len < 2
+                           or else (EP + 4 < Ext_End
+                                    and then N32 (Plaintext (EP + 4)) = 0))
+               then
+                  Status := NST_Decode_Err;
+                  return;
+               end if;
+
+               --  early_data (0x002A): body is uint32 max_early_data_size.
+               if Tag = 16#002A#
+                 and then E_Len = 4
+                 and then EP + 4 + 4 <= Ext_End
+               then
+                  Max_Early_Data :=
+                     Unsigned_32 (Plaintext (EP + 4)) * 2**24
+                   + Unsigned_32 (Plaintext (EP + 5)) * 2**16
+                   + Unsigned_32 (Plaintext (EP + 6)) * 2**8
+                   + Unsigned_32 (Plaintext (EP + 7));
+               end if;
+
+               EP := EP + 4 + E_Len;
+            end;
+         end loop;
+      end;
+   end Walk_NST_Extensions;
+
+   procedure Process_NST_Message
+     (S         : in out Session;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Result    :    out Action);
+
+   procedure Process_NST_Message
+     (S         : in out Session;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Result    :    out Action)
+   is
+      P : N32 := 4;  --  skip handshake header (type + 3-byte len)
+   begin
+      Result := OK;
+
+      --  RFC 8446 §4.6.1: NST = type(1)+len(3)+lifetime(4)+age_add(4)
+      --  +nonce_len(1)+nonce(var)+ticket_len(2)+ticket(var)+exts.
+      --  Need at least the fixed prefix: 4+4+1 = 9 past the HS header.
+      if Plain_Len < 4 + 9 then
+         return;
+      end if;
+
+      declare
+         Lifetime : constant Unsigned_32 :=
+            Unsigned_32 (Plaintext (P))     * 2**24
+          + Unsigned_32 (Plaintext (P + 1)) * 2**16
+          + Unsigned_32 (Plaintext (P + 2)) * 2**8
+          + Unsigned_32 (Plaintext (P + 3));
+         Age_Add : constant Unsigned_32 :=
+            Unsigned_32 (Plaintext (P + 4)) * 2**24
+          + Unsigned_32 (Plaintext (P + 5)) * 2**16
+          + Unsigned_32 (Plaintext (P + 6)) * 2**8
+          + Unsigned_32 (Plaintext (P + 7));
+         Nonce_Len : constant N32 := N32 (Plaintext (P + 8));
+      begin
+         P := P + 9;
+         if Nonce_Len = 0 or else P + Nonce_Len + 2 > Plain_Len then
+            return;
+         end if;
+
+         declare
+            Nonce    : constant Byte_Seq (0 .. Nonce_Len - 1) :=
+               Plaintext (P .. P + Nonce_Len - 1);
+            Tick_Len : N32;
+         begin
+            P := P + Nonce_Len;
+            Tick_Len :=
+               N32 (Plaintext (P)) * 256 + N32 (Plaintext (P + 1));
+            P := P + 2;
+
+            --  RFC 8446 §4.6.1: ticket field is opaque ticket<1..
+            --  2^16-1>; a zero-length ticket is decode_error (BoGo
+            --  SendEmptySessionTicket-TLS13).
+            if Tick_Len = 0 then
+               Send_App_Encrypted_Alert (S, Decode_Error, Result);
+               return;
+            end if;
+
+            if P + Tick_Len > Plain_Len
+              or else Tick_Len > Max_Ticket_Len
+            then
+               return;
+            end if;
+
+            S.Ticket.Ticket (0 .. Tick_Len - 1) :=
+               Plaintext (P .. P + Tick_Len - 1);
+            S.Ticket.Ticket_Len := Tick_Len;
+            S.Ticket.Lifetime   := Lifetime;
+            S.Ticket.Age_Add    := Age_Add;
+            S.Ticket.Suite      := S.Negotiated_Suite;
+
+            case S.Negotiated_Suite is
+               when Suite_AES_256_GCM_SHA384 =>
+                  declare
+                     use SPARKTLSCrypto.HKDF384;
+                     PSK_Out : OKM384_Seq (0 .. 47);
+                  begin
+                     Key_Schedule.Derive_PSK_384
+                       (PSK_Out, S.Res_Master, Nonce);
+                     S.Ticket.PSK     := Bytes_48 (PSK_Out);
+                     S.Ticket.PSK_Len := 48;
+                  end;
+               when others =>
+                  declare
+                     PSK_Out : OKM_Seq (0 .. 31);
+                  begin
+                     Key_Schedule.Derive_PSK
+                       (PSK_Out, S.Res_Master (0 .. 31), Nonce);
+                     S.Ticket.PSK := (others => 0);
+                     for I in N32 range 0 .. 31 loop
+                        S.Ticket.PSK (I) := PSK_Out (I);
+                     end loop;
+                     S.Ticket.PSK_Len := 32;
+                  end;
+            end case;
+
+            S.Ticket.Valid := True;
+
+            --  Walk the NST extension list (early_data, ticket_flags,
+            --  …). Errors (dup ext / malformed flags) un-install the
+            --  ticket and emit the right alert.
+            declare
+               Med    : Unsigned_32;
+               Status : NST_Status;
+            begin
+               Walk_NST_Extensions
+                 (Plaintext      => Plaintext,
+                  Plain_Len      => Plain_Len,
+                  Start_Off      => P + Tick_Len,
+                  Max_Early_Data => Med,
+                  Status         => Status);
+               case Status is
+                  when NST_OK =>
+                     S.Ticket.Max_Early_Data := Med;
+                  when NST_Decode_Err =>
+                     S.Ticket.Valid := False;
+                     Send_App_Encrypted_Alert
+                       (S, Decode_Error, Result);
+                  when NST_Illegal_Param =>
+                     S.Ticket.Valid := False;
+                     Send_App_Encrypted_Alert
+                       (S, Illegal_Parameter, Result);
+               end case;
+            end;
+         end;
+      end;
+   end Process_NST_Message;
+
    --  Process records in Connected state
    procedure Process_Connected
      (S      : in out Session;
@@ -2927,161 +3196,15 @@ is
                end if;
 
             when 16#16# =>
-               --  Post-handshake message
+               --  Post-handshake handshake-record: today only NST is
+               --  expected here (KeyUpdate not yet implemented). Hand
+               --  off to Process_NST_Message which parses, installs
+               --  the ticket, and queues the right alert on failure.
                if Plain_Len >= 4
                   and then Plaintext (0) = 16#04#  --  NewSessionTicket
                then
-                  --  Parse NewSessionTicket:
-                  --    type(1) + len(3) + lifetime(4) + age_add(4) +
-                  --    nonce_len(1) + nonce(var) + ticket_len(2) + ticket(var)
-                  declare
-                     P : N32 := 4;  --  skip handshake header
-                  begin
-                     if Plain_Len >= 15 then
-                        declare
-                           Lifetime : constant Unsigned_32 :=
-                              Unsigned_32 (Plaintext (P)) * 2**24 +
-                              Unsigned_32 (Plaintext (P + 1)) * 2**16 +
-                              Unsigned_32 (Plaintext (P + 2)) * 2**8 +
-                              Unsigned_32 (Plaintext (P + 3));
-                           Age_Add  : constant Unsigned_32 :=
-                              Unsigned_32 (Plaintext (P + 4)) * 2**24 +
-                              Unsigned_32 (Plaintext (P + 5)) * 2**16 +
-                              Unsigned_32 (Plaintext (P + 6)) * 2**8 +
-                              Unsigned_32 (Plaintext (P + 7));
-                           Nonce_Len : constant N32 :=
-                              N32 (Plaintext (P + 8));
-                        begin
-                           P := P + 9;
-                           if Nonce_Len > 0
-                              and then P + Nonce_Len + 2 <= Plain_Len
-                           then
-                              declare
-                                 Nonce : Byte_Seq (0 .. Nonce_Len - 1);
-                                 Tick_Len : N32;
-                              begin
-                                 Nonce := Plaintext (P .. P + Nonce_Len - 1);
-                                 P := P + Nonce_Len;
-                                 Tick_Len :=
-                                    N32 (Plaintext (P)) * 256 +
-                                    N32 (Plaintext (P + 1));
-                                 P := P + 2;
-                                 if P + Tick_Len <= Plain_Len
-                                    and then Tick_Len <= Max_Ticket_Len
-                                 then
-                                    --  Derive PSK from res_master + nonce
-                                    S.Ticket.Ticket (0 .. Tick_Len - 1) :=
-                                       Plaintext (P .. P + Tick_Len - 1);
-                                    S.Ticket.Ticket_Len := Tick_Len;
-                                    S.Ticket.Lifetime := Lifetime;
-                                    S.Ticket.Age_Add := Age_Add;
-                                    S.Ticket.Suite := S.Negotiated_Suite;
-
-                                    case S.Negotiated_Suite is
-                                       when Suite_AES_256_GCM_SHA384 =>
-                                          declare
-                                             use SPARKTLSCrypto.HKDF384;
-                                             PSK_Out : OKM384_Seq (0 .. 47);
-                                          begin
-                                             Key_Schedule.Derive_PSK_384
-                                               (PSK_Out,
-                                                S.Res_Master,
-                                                Nonce);
-                                             S.Ticket.PSK :=
-                                                Bytes_48 (PSK_Out);
-                                             S.Ticket.PSK_Len := 48;
-                                          end;
-                                       when others =>
-                                          declare
-                                             PSK_Out : OKM_Seq (0 .. 31);
-                                          begin
-                                             Key_Schedule.Derive_PSK
-                                               (PSK_Out,
-                                                S.Res_Master (0 .. 31),
-                                                Nonce);
-                                             S.Ticket.PSK := (others => 0);
-                                             for I in N32 range 0 .. 31 loop
-                                                S.Ticket.PSK (I) :=
-                                                   PSK_Out (I);
-                                             end loop;
-                                             S.Ticket.PSK_Len := 32;
-                                          end;
-                                    end case;
-
-                                    S.Ticket.Valid := True;
-
-                                    --  RFC 8446 §4.6.1: NST is
-                                    --    type+len+lifetime+age_add+
-                                    --    nonce_len+nonce+ticket_len+
-                                    --    ticket+extensions<0..2^16-1>.
-                                    --  Walk extensions looking for
-                                    --  early_data (0x002A), whose body
-                                    --  is the uint32 max_early_data_size.
-                                    --  Other extensions (signed_cert_
-                                    --  timestamp, …) are ignored.
-                                    declare
-                                       EP : N32 := P + Tick_Len;
-                                    begin
-                                       if EP + 2 <= Plain_Len then
-                                          declare
-                                             Ext_Total : constant N32 :=
-                                                N32 (Plaintext (EP)) * 256
-                                              + N32 (Plaintext (EP + 1));
-                                             Ext_End : constant N32 :=
-                                                N32'Min
-                                                  (EP + 2 + Ext_Total,
-                                                   Plain_Len);
-                                          begin
-                                             EP := EP + 2;
-                                             while EP + 4 <= Ext_End loop
-                                                declare
-                                                   Tag : constant Unsigned_16 :=
-                                                      Unsigned_16
-                                                        (Plaintext (EP))
-                                                      * 256
-                                                      + Unsigned_16
-                                                          (Plaintext
-                                                             (EP + 1));
-                                                   E_Len : constant N32 :=
-                                                      N32 (Plaintext
-                                                             (EP + 2)) * 256
-                                                      + N32 (Plaintext
-                                                               (EP + 3));
-                                                begin
-                                                   if Tag = 16#002A#
-                                                     and then E_Len = 4
-                                                     and then EP + 4 + 4
-                                                                <= Ext_End
-                                                   then
-                                                      S.Ticket.Max_Early_Data :=
-                                                         Unsigned_32
-                                                           (Plaintext
-                                                              (EP + 4))
-                                                         * 2**24
-                                                       + Unsigned_32
-                                                           (Plaintext
-                                                              (EP + 5))
-                                                         * 2**16
-                                                       + Unsigned_32
-                                                           (Plaintext
-                                                              (EP + 6))
-                                                         * 2**8
-                                                       + Unsigned_32
-                                                           (Plaintext
-                                                              (EP + 7));
-                                                   end if;
-                                                   EP := EP + 4 + E_Len;
-                                                end;
-                                             end loop;
-                                          end;
-                                       end if;
-                                    end;
-                                 end if;
-                              end;
-                           end if;
-                        end;
-                     end if;
-                  end;
+                  Process_NST_Message (S, Plaintext, Plain_Len, Result);
+                  return;
                end if;
                Result := OK;
 

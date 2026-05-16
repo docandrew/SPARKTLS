@@ -183,6 +183,44 @@ is
             Result := Need_Input; return;
          end if;
 
+         if Rec.Content = Records.Content_Alert then
+            --  Handshake-time alerts (plaintext, before keys derived).
+            --  Warning-level (1) other than close_notify (desc 0) is
+            --  ignorable (RFC 5246 §7.2.2), but RFC 8446 §6.1 caps
+            --  the rate to defend against DoS: more than 4 warnings
+            --  during a handshake → fatal decode_error (BoGo
+            --  SendWarningAlerts-TooMany). Fatal alerts close the
+            --  connection.
+            declare
+               AS  : constant N32 :=
+                  S.Input.Read_Pos + Rec.Fragment_Pos;
+               ALen : constant N32 := Rec.Fragment_Len;
+               Lvl : constant Byte :=
+                  (if ALen >= 1 then S.Input.Data (AS) else 0);
+               Dsc : constant Byte :=
+                  (if ALen >= 2 then S.Input.Data (AS + 1) else 0);
+            begin
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               if Lvl = 1 and Dsc /= 0 then
+                  S.Warning_Alerts_Recvd :=
+                     S.Warning_Alerts_Recvd + 1;
+                  if S.Warning_Alerts_Recvd >= 5 then
+                     Send_Alert_And_Error (S, Decode_Error, Result);
+                     return;
+                  end if;
+                  Result := OK; return;
+               elsif Lvl = 2 then
+                  --  Peer-fatal: close without reply.
+                  S.Last_Error := Unexpected_Message;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert; return;
+               else
+                  --  close_notify or malformed: shutdown / skip.
+                  Result := OK; return;
+               end if;
+            end;
+         end if;
+
          if Rec.Content /= Records.Content_Handshake then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Result := OK; return;
@@ -1751,8 +1789,19 @@ is
                      end if;
                      Result := Shutdown;
                   elsif PL >= 1 and then Plaintext (0) = 1 then
-                     --  warning — ignore, keep connection up.
-                     Result := OK;
+                     --  warning (non-close_notify) — count + cap.
+                     --  RFC 8446 §6.1 / BoGo SendWarningAlerts-TooMany:
+                     --  more than 4 in a connection → fatal
+                     --  decode_error.
+                     S.Warning_Alerts_Recvd :=
+                        S.Warning_Alerts_Recvd + 1;
+                     if S.Warning_Alerts_Recvd >= 5 then
+                        S.Last_Error := Decode_Error;
+                        Set_State (S, Error_State);
+                        Result := Error_Alert;
+                     else
+                        Result := OK;
+                     end if;
                   else
                      --  fatal alert from peer — record + close.
                      S.Last_Error := Unexpected_Message;

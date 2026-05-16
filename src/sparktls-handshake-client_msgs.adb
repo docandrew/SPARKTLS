@@ -165,7 +165,29 @@ is
       --  TLS12NoSessionID-TLS13.
       Session_ID_Len : constant N32 :=
         (if HC.Cfg.Versions = TLS_1_2_Only then 0 else 32);
-      CH_Body_Len : constant N32 := 59 + Session_ID_Len + Ext_Total;
+
+      --  RFC 7685: F5 firewall workaround. If the CH would otherwise
+      --  land in the 256..511 "danger zone", append a padding
+      --  extension (tag 0x0015) to push it to >= 512 bytes. BoGo
+      --  ClientHelloPadding sets RequireClientHelloSize=512.
+      Pre_Pad_Msg_Len : constant N32 :=
+        4 + 59 + Session_ID_Len + Ext_Total;
+      Need_Pad : constant Boolean := Pre_Pad_Msg_Len in 256 .. 511;
+      --  Inside the danger zone, pad to exactly 512 when possible
+      --  (Pre_Pad_Msg_Len <= 508 leaves >= 4 bytes for the ext
+      --  header). For 509..511 the minimum-size 4-byte ext header
+      --  alone pushes us past 512 — acceptable.
+      Pad_Ext_Total : constant N32 :=
+        (if Need_Pad
+         then (if Pre_Pad_Msg_Len <= 508
+               then 512 - Pre_Pad_Msg_Len
+               else 4)
+         else 0);
+      Pad_Data_Len : constant N32 :=
+        (if Pad_Ext_Total >= 4 then Pad_Ext_Total - 4 else 0);
+
+      Ext_Total_All : constant N32 := Ext_Total + Pad_Ext_Total;
+      CH_Body_Len : constant N32 := 59 + Session_ID_Len + Ext_Total_All;
       CH_Msg_Len  : constant N32 := 4 + CH_Body_Len;
 
       Buf      : RBT.Bytes_Ptr;
@@ -420,7 +442,8 @@ is
       Set_Legacy_Compression_Methods
         (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
       Set_Extensions_Length
-        (Ctx, RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total));
+        (Ctx,
+         RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
 
       --  Build extensions sequence
       declare
@@ -727,6 +750,37 @@ is
             end;
          end if;
 
+         --  Extension 9 (conditional): padding (RFC 7685, tag 0x0015).
+         --  Inserted last in the RFLX-built chain (the post-build PSK
+         --  append still legally trails it — PSK ext must be last per
+         --  RFC 8446 §4.2.11 only when actually present). Body is all
+         --  zeros; only its length matters.
+         if Pad_Ext_Total > 0 then
+            declare
+               Ext_Buf : RBT.Bytes_Ptr;
+               Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
+               Pad_Raw : constant Byte_Seq (0 .. Pad_Data_Len - 1) :=
+                 (others => 0);
+            begin
+               Ext_Buf := new RBT.Bytes'
+                 (1 .. RBT.Index (4 + Pad_Data_Len) => 0);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
+                 (Ext_Ctx, Ext_Buf);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
+                 (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Padding);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
+                 (Ext_Ctx,
+                  RFLX.TLS_Handshake.Data_Length (Pad_Data_Len));
+               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
+                 (Ext_Ctx, To_RFLX (Pad_Raw));
+               RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
+                 (Exts_Ctx, Ext_Ctx);
+               RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
+                 (Ext_Ctx, Ext_Buf);
+               RFLX_Free (Ext_Buf);
+            end;
+         end if;
+
          Update_Extensions_TLS (Ctx, Exts_Ctx);
       end;
 
@@ -946,8 +1000,25 @@ is
                   --  causing the server to reject every binder
                   --  with `tls_psk_do_binder: binder does not
                   --  verify`.
+                  --  RFC 8446 §4.2.11.2: binder = HMAC(finished_key,
+                  --  Transcript-Hash(Truncate(ClientHello1))) on the
+                  --  fresh-handshake path. After a HelloRetryRequest
+                  --  the transcript is `message_hash(CH1) || HRR ||
+                  --  Truncate(CH2)` — HC.Transcript already holds the
+                  --  first two pieces (Wait_Server_Hello's HRR branch
+                  --  replaces CH1 with its message_hash and appends
+                  --  HRR before re-entering Build_Client_Hello). The
+                  --  truncated CH2 = Result (0 .. Trunc_Len - 1).
+                  --  Hash the concatenation. BoGo CurveID-Resume-
+                  --  Client-TLS13.
                   declare
-                     Trunc_Len    : constant N32 := Binder_Offset - 3;
+                     Trunc_Len  : constant N32 := Binder_Offset - 3;
+                     Pre_Len    : constant N32 :=
+                       (if Retry_Mode then HC.Transcript_Len else 0);
+                     Trans_In   : constant Byte_Seq (0 .. Pre_Len
+                                                         + Trunc_Len - 1) :=
+                        HC.Transcript (0 .. Pre_Len - 1)
+                        & Result (0 .. Trunc_Len - 1);
                   begin
                      if S.Ticket.PSK_Len = 48 then
                         declare
@@ -959,8 +1030,7 @@ is
                            Binder_V48    : Bytes_48;
                         begin
                            SPARKNaCl.Hashing.SHA384.Hash
-                             (Trunc_Hash384,
-                              Result (0 .. Trunc_Len - 1));
+                             (Trunc_Hash384, Trans_In);
                            Key_Schedule.Derive_Binder_Key_384
                              (Binder_Key48, S.Ticket.PSK);
                            Key_Schedule.Derive_Finished_Key_384
@@ -979,8 +1049,7 @@ is
                            Finished_Key : OKM_Seq (0 .. 31);
                            Binder_Val   : Digest;
                         begin
-                           Hash (Trunc_Hash,
-                                 Result (0 .. Trunc_Len - 1));
+                           Hash (Trunc_Hash, Trans_In);
                            Key_Schedule.Derive_Binder_Key
                              (Binder_Key,
                               Bytes_32 (S.Ticket.PSK (0 .. 31)));
@@ -1129,7 +1198,19 @@ is
                   Exts (N_Ext) := (Tag_U16, E_Len, P + 4);
                end if;
                if Tag_U16 = 16#002B# then
-                  HC.Has_TLS_1_3 := True;
+                  --  RFC 8446 §4.2.1: in SH/HRR, body is exactly the
+                  --  selected_version (2 bytes), MUST be 0x0304 for
+                  --  TLS 1.3. Accept only that exact value as the
+                  --  TLS 1.3 marker so a corrupted body (BoGo
+                  --  SecondServerHelloWrongVersion-TLS13 sends 0x1234)
+                  --  doesn't get classified as TLS 1.3.
+                  if E_Len = 2
+                    and then P + 5 <= Ext_End
+                    and then Data (P + 4) = 16#03#
+                    and then Data (P + 5) = 16#04#
+                  then
+                     HC.Has_TLS_1_3 := True;
+                  end if;
                end if;
                P := P + 4 + E_Len;
             end;
@@ -1625,6 +1706,58 @@ is
          HC.Version := TLS_1_2;
       end if;
 
+      --  RFC 8446 §4.1.3: TLS 1.3 server's legacy_session_id_echo
+      --  MUST be byte-for-byte equal to the client's
+      --  legacy_session_id. We always send a 32-byte SID (unless
+      --  TLS_1_2_Only), so when the server picked TLS 1.3 the echo
+      --  must also be 32 bytes and match. In TLS 1.2, by contrast,
+      --  the server may assign a new SID for a full handshake, so
+      --  this check is gated on HC.Has_TLS_1_3. BoGo
+      --  EchoTLS13CompatibilitySessionID-style mismatches that
+      --  reach a TLS 1.3 SH (e.g. via supported_versions).
+      if HC.Has_TLS_1_3
+        and then HC.Cfg.Versions /= TLS_1_2_Only
+        and then Data'Length >= 4 + 35 + 32
+      then
+         declare
+            SH_SID_Off : constant N32 := Data'First + 4 + 35;
+            SH_SID_Len : constant N32 :=
+               N32 (Data (Data'First + 4 + 34));
+            Mismatch : Boolean := SH_SID_Len /= 32;
+         begin
+            if not Mismatch then
+               for I in N32 range 0 .. 31 loop
+                  if Data (SH_SID_Off + I)
+                       /= HC.Legacy_Session_ID (I)
+                  then
+                     Mismatch := True;
+                  end if;
+               end loop;
+            end if;
+            if Mismatch then
+               Take_Buffer (Ctx, Buf);
+               RFLX_Free (Buf);
+               S.Last_Error := Illegal_Parameter;
+               OK := False;
+               return;
+            end if;
+         end;
+      end if;
+
+      --  RFC 8446 §4.1.4: after a HelloRetryRequest, the second SH
+      --  MUST select the same version as the HRR (TLS 1.3, indicated
+      --  by supported_versions). A 2nd SH without TLS 1.3 in supported
+      --  _versions is a SECOND_SERVERHELLO_VERSION_MISMATCH and MUST
+      --  trigger an illegal_parameter alert. BoGo
+      --  SecondServerHelloWrongVersion-TLS13.
+      if HC.Got_HRR and then not HC.Has_TLS_1_3 then
+         Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
+         S.Last_Error := Illegal_Parameter;
+         OK := False;
+         return;
+      end if;
+
       --  RFC 8446 §4.2.1: enforce our Cfg.Versions policy on the
       --  server's choice. -min-version / -max-version / -no-tlsN may
       --  have constrained the policy below what's in the supported_
@@ -1643,40 +1776,46 @@ is
          return;
       end if;
 
-      if HC.Version = TLS_1_3 then
-         null;  --  drop into TLS 1.3 path below
-      else
-
-         --  RFC 8446 §4.1.3: Check downgrade sentinel.
-         --  If server doesn't offer TLS 1.3 but its random ends with the
-         --  sentinel, a MITM is stripping supported_versions. Abort.
-         declare
-            R : Byte_Seq renames HC.Server_Random;
-            --  TLS 1.3→1.2 sentinel: "DOWNGRD" + 0x01
-            Sentinel : constant Byte_Seq (0 .. 7) :=
-              (16#44#, 16#4F#, 16#57#, 16#4E#,
-               16#47#, 16#52#, 16#44#, 16#01#);
-            Match : Boolean := True;
-         begin
-            for I in N32 range 0 .. 7 loop
-               if R (24 + I) /= Sentinel (I) then
-                  Match := False;
-                  exit;
-               end if;
-            end loop;
-            if Match then
-               --  Downgrade detected — MITM stripping TLS 1.3.
-               --  Pin the sentinel pattern: any future edit that
-               --  loosens the literal bytes would let MITMs through.
-               pragma Assert
-                 (TLS13_Downgrade_Sentinel_RFC_8446_4_1_3
-                    (R (24 .. 31)));
-               Take_Buffer (Ctx, Buf);
-               RFLX_Free (Buf);
-               return;
-            end if;
-         end;
-      end if;
+      --  RFC 8446 §4.1.3: Downgrade-sentinel check, independent of
+      --  the negotiated version. The server MUST NOT set these
+      --  markers when negotiating TLS 1.3, so a marker on a TLS 1.3
+      --  SH is itself a signal to abort (BoringSSL convention; BoGo
+      --  Client-RejectJDK11DowngradeRandom). On a TLS 1.2 SH the
+      --  marker is the canonical RFC 8446 downgrade indicator.
+      --
+      --  Three sentinels:
+      --   * "DOWNGRD" + 0x01 — TLS 1.3 → TLS 1.2 (RFC 8446 §4.1.3)
+      --   * "DOWNGRD" + 0x00 — TLS 1.3 → TLS 1.0/1.1 (same RFC)
+      --   * 0xED 0xBF 0xB4 0xA8 0xC2 0x47 0x10 0xFF — JDK 11 marker.
+      declare
+         R : Byte_Seq renames HC.Server_Random;
+         type Sentinel_T is array (N32 range 0 .. 7) of Byte;
+         S13 : constant Sentinel_T :=
+           (16#44#, 16#4F#, 16#57#, 16#4E#,
+            16#47#, 16#52#, 16#44#, 16#01#);
+         S12 : constant Sentinel_T :=
+           (16#44#, 16#4F#, 16#57#, 16#4E#,
+            16#47#, 16#52#, 16#44#, 16#00#);
+         S_JDK : constant Sentinel_T :=
+           (16#ED#, 16#BF#, 16#B4#, 16#A8#,
+            16#C2#, 16#47#, 16#10#, 16#FF#);
+         M13, M12, MJ : Boolean := True;
+      begin
+         for I in N32 range 0 .. 7 loop
+            if R (24 + I) /= S13 (I)   then M13 := False; end if;
+            if R (24 + I) /= S12 (I)   then M12 := False; end if;
+            if R (24 + I) /= S_JDK (I) then MJ  := False; end if;
+         end loop;
+         if M13 or M12 or MJ then
+            pragma Assert
+              (TLS13_Downgrade_Sentinel_RFC_8446_4_1_3
+                 (R (24 .. 31)));
+            S.Last_Error := Illegal_Parameter;
+            Take_Buffer (Ctx, Buf);
+            RFLX_Free (Buf);
+            return;
+         end if;
+      end;
 
       --  For TLS 1.2, skip ECDHE shared secret here
       --  (it's computed after ServerKeyExchange)
