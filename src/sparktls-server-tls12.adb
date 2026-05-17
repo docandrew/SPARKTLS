@@ -9,6 +9,7 @@ with SPARKTLS.Records.TLS12;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule_12;
+with SPARKTLS.Tickets_12;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
 use SPARKTLSCrypto;
@@ -155,7 +156,65 @@ is
    end Append_Transcript;
 
    ------------------------------------------------------------------
+   --  Forward decl: full handshake state machine entry that the resume
+   --  attempt may fall through to.
+   procedure Build_Server_Flight_12_Full
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action);
+
+   --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
+   --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
+   --  S.Negotiated_Suite from the decrypted ticket. Emits
+   --  SH → NST → CCS → encrypted Finished as one atomic flight,
+   --  then transitions to Wait_Client_Finished to receive the
+   --  client's CCS + Finished.
+   procedure Build_Abbreviated_Server_Flight_12
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action);
+
    procedure Build_Server_Flight_12
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   is
+   begin
+      --  RFC 5077 §3.4: if the client offered a non-empty session_ticket
+      --  extension AND we have configured ticket-encryption keys, try
+      --  to decrypt + resume. On success we run the abbreviated flight;
+      --  on any failure (unknown Key_ID, tag mismatch, expiry, suite
+      --  mismatch, etc.) we silently fall through to the full handshake
+      --  — RFC 5077 §3.4 requires this: "If the server refuses to use
+      --  the ticket, it SHOULD proceed with a full handshake."
+      if HC.TLS12_Ticket_Offered
+        and then HC.TLS12_Peer_Ticket_Len > 0
+        and then HC.Cfg.TLS12_Ticket_Keys /= null
+      then
+         declare
+            Plain : SPARKTLS.Tickets_12.Ticket_Plain;
+            OK    : Boolean;
+         begin
+            SPARKTLS.Tickets_12.Decrypt_Ticket
+              (Ticket  => HC.TLS12_Peer_Ticket
+                            (0 .. HC.TLS12_Peer_Ticket_Len - 1),
+               Keys    => HC.Cfg.TLS12_Ticket_Keys.all,
+               Now     => 0,    --  TODO: wire Cfg.Get_Time → Unix
+               Max_Age => 0,    --  0 = no expiry check (paired with Now=0)
+               Plain   => Plain,
+               Status  => OK);
+            if OK
+              and then S.Negotiated_Suite_12 /= 0
+              and then Plain.Suite = S.Negotiated_Suite_12
+            then
+               --  Resume: install ticket's master_secret + force suite.
+               HC.Master_Secret_12 := Plain.Master_Secret;
+               S.Negotiated_Suite := Plain.Suite;
+               HC.TLS12_Resuming := True;
+               Build_Abbreviated_Server_Flight_12 (S, HC, Result);
+               return;
+            end if;
+         end;
+      end if;
+
+      Build_Server_Flight_12_Full (S, HC, Result);
+   end Build_Server_Flight_12;
+
+   procedure Build_Server_Flight_12_Full
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    is
       Gen_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
@@ -372,9 +431,251 @@ is
 
       Set_State (S, Server_Hello_Sent);
       Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
-   end Build_Server_Flight_12;
+   end Build_Server_Flight_12_Full;
 
    ------------------------------------------------------------------
+   --  Derive AEAD keys / IVs from an already-set HC.Master_Secret_12.
+   --  Used by the abbreviated (resumed) TLS 1.2 handshake: master_secret
+   --  comes from the RFC 5077 ticket plaintext, not from ECDHE. Mirrors
+   --  the back half of Derive_Keys_12 (the Expand_Keys + S.Server_App
+   --  assignments) without the master-secret PRF step.
+   procedure Derive_Keys_Resumed_12
+     (S : in out Session; HC : in out Handshake_Context)
+   is
+      use Key_Schedule_12;
+      Use_384 : constant Boolean :=
+         S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
+                             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+      Key_Len : constant N32 :=
+         (if S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+          then 16 else 32);
+      IV_Len : constant N32 :=
+         (if S.Negotiated_Suite in Suite_ECDHE_RSA_CHACHA20_SHA256
+                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+          then 12 else 4);
+      CK : Byte_Seq (0 .. Key_Len - 1);
+      SK : Byte_Seq (0 .. Key_Len - 1);
+      CI : Byte_Seq (0 .. 11) := (others => 0);
+      SI : Byte_Seq (0 .. 11) := (others => 0);
+   begin
+      Expand_Keys_12 (CK, SK, CI, SI, HC.Master_Secret_12,
+                       HC.Server_Random, HC.Client_Random,
+                       Key_Len, IV_Len, Use_384);
+      declare
+         Int_Suite : constant Unsigned_16 :=
+           (case S.Negotiated_Suite is
+               when Suite_ECDHE_RSA_AES128_GCM_SHA256
+                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
+                     Suite_AES_128_GCM_SHA256,
+               when Suite_ECDHE_RSA_AES256_GCM_SHA384
+                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384 =>
+                     Suite_AES_256_GCM_SHA384,
+               when others => Suite_CHACHA20_POLY1305_SHA256);
+      begin
+         S.Client_App := (Key => (others => 0), IV => (others => 0),
+                          Counter => 0, Suite => Int_Suite);
+         S.Client_App.Key (0 .. Key_Len - 1) := CK;
+         S.Server_App := (Key => (others => 0), IV => (others => 0),
+                          Counter => 0, Suite => Int_Suite);
+         S.Server_App.Key (0 .. Key_Len - 1) := SK;
+      end;
+      HC.Client_Write_IV_12 := CI;
+      HC.Server_Write_IV_12 := SI;
+      HC.Client_Seq_12 := 0;
+      HC.Server_Seq_12 := 0;
+   end Derive_Keys_Resumed_12;
+
+   ------------------------------------------------------------------
+   --  Build the abbreviated (resumed) server flight: SH → NST →
+   --  CCS → encrypted Finished. Caller has already restored
+   --  HC.Master_Secret_12 + forced S.Negotiated_Suite from the ticket.
+   ------------------------------------------------------------------
+   procedure Build_Abbreviated_Server_Flight_12
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   is
+      use Key_Schedule_12;
+      use type SPARKTLS.Tickets_12.Bytes_4;
+      Gen_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
+      Rec_Out    : N32;
+      Scratch    : IO_Buffer;
+      Saved_Seq  : Unsigned_64;
+      Use_384    : constant Boolean :=
+         S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
+                             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+   begin
+      --  Mirror the full-flight setup that Build_Server_Flight_12_Full
+      --  did before we diverted. We don't pick a group (no ECDHE), we
+      --  don't pick a signature scheme (no SKE), but we DO need the
+      --  Negotiated_Sig_Algo to be cleared so Build_Server_Hello_12
+      --  doesn't try to echo a stale value.
+      HC.Negotiated_Sig_Algo := 0;
+
+      --  Fresh server random (32 bytes).
+      Gen_Random (Byte_Seq (HC.Server_Random));
+
+      --  1. ServerHello (with empty session_ticket ext, since
+      --     TLS12_Ticket_Offered + TLS12_Ticket_Keys are set).
+      declare
+         Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1);
+         Hello_Len : N32;
+      begin
+         Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+         if Hello_Len = 0 then
+            Send_Alert_And_Error (S, Internal_Error, Result); return;
+         end if;
+         Append_Transcript (HC, Hello_Buf (0 .. Hello_Len - 1));
+         Records.Build_Handshake_Record
+           (Hello_Buf (0 .. Hello_Len - 1), Scratch, Rec_Out);
+         if Rec_Out = 0 then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+      end;
+
+      --  2. Derive AEAD keys (no master-secret PRF — restored from
+      --     ticket; just expand to traffic keys + IVs).
+      Derive_Keys_Resumed_12 (S, HC);
+
+      --  3. NewSessionTicket (re-issued under our active TEK with a
+      --     fresh nonce). RFC 5077 §3.3: the server MUST send NST in
+      --     the resumed flight if it advertised session_ticket in SH.
+      declare
+         Active_Key : TLS12_Ticket_Key
+            renames HC.Cfg.TLS12_Ticket_Keys
+                      (HC.Cfg.TLS12_Active_TEK_Idx);
+         Nonce_Buf  : Byte_Seq (0 .. 11) := (others => 0);
+         Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
+         Ticket_Buf : Byte_Seq (0 .. 255) := (others => 0);
+         Ticket_Len : N32;
+         NST_Buf    : Byte_Seq (0 .. 271) := (others => 0);
+         NST_Total  : N32;
+         NST_Rec_Out : N32;
+         NST_Hdr_Len : constant N32 := 4 + 4 + 2;
+      begin
+         Gen_Random (Nonce_Buf);
+         Plain.Master_Secret := HC.Master_Secret_12;
+         Plain.Suite         := S.Negotiated_Suite;
+         Plain.Created_At    := 0;
+         Plain.SID_Len       := 0;
+         Plain.SID           := (others => 0);
+         SPARKTLS.Tickets_12.Encrypt_Ticket
+           (Plain      => Plain,
+            Key_ID     =>
+              SPARKTLS.Tickets_12.Bytes_4 (Active_Key.Key_ID),
+            TEK        =>
+              SPARKTLS.Tickets_12.Bytes_32 (Active_Key.TEK),
+            Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
+            Ticket     => Ticket_Buf,
+            Ticket_Len => Ticket_Len);
+
+         NST_Total := NST_Hdr_Len + Ticket_Len;
+         NST_Buf (0) := 16#04#;
+         declare
+            Body_Len : constant N32 := 4 + 2 + Ticket_Len;
+         begin
+            NST_Buf (1) := Byte (Body_Len / 65536);
+            NST_Buf (2) := Byte ((Body_Len / 256) mod 256);
+            NST_Buf (3) := Byte (Body_Len mod 256);
+         end;
+         NST_Buf (4) :=
+            Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 24)
+                  and 16#FF#);
+         NST_Buf (5) :=
+            Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 16)
+                  and 16#FF#);
+         NST_Buf (6) :=
+            Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 8)
+                  and 16#FF#);
+         NST_Buf (7) :=
+            Byte (HC.Cfg.TLS12_Ticket_Lifetime and 16#FF#);
+         NST_Buf (8) := Byte (Ticket_Len / 256);
+         NST_Buf (9) := Byte (Ticket_Len mod 256);
+         NST_Buf (10 .. 10 + Ticket_Len - 1) :=
+            Ticket_Buf (0 .. Ticket_Len - 1);
+
+         Append_Transcript (HC, NST_Buf (0 .. NST_Total - 1));
+
+         Records.Build_Handshake_Record
+           (NST_Buf (0 .. NST_Total - 1), Scratch, NST_Rec_Out);
+         if NST_Rec_Out = 0 then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+      end;
+
+      --  4. ChangeCipherSpec (plaintext, content type 20).
+      declare
+         CCS_Out : N32;
+      begin
+         Records.Build_CCS_Record (Scratch, CCS_Out);
+         if CCS_Out = 0 then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+      end;
+
+      --  5. Server Finished (encrypted with the just-derived app keys).
+      Saved_Seq := HC.Server_Seq_12;
+      declare
+         FB : Byte_Seq (0 .. Finished_12_Total_Len - 1); FL : N32;
+         TH : Digest; TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
+         EO : N32;
+      begin
+         if Use_384 then
+            SPARKNaCl.Hashing.SHA384.Hash
+              (TH_384, HC.Transcript (0 .. HC.Transcript_Len - 1));
+            Build_Finished_12 (HC.Master_Secret_12, Label_Server_Finished,
+                               Byte_Seq (TH_384), True, FB, FL);
+         else
+            Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+            Build_Finished_12 (HC.Master_Secret_12, Label_Server_Finished,
+                               Byte_Seq (TH), False, FB, FL);
+         end if;
+
+         --  Append server Finished plaintext to transcript so the
+         --  client's expected Finished hash (which covers up to
+         --  server Finished) matches.
+         Append_Transcript (HC, FB (0 .. FL - 1));
+
+         Records.TLS12.Build_Encrypted_Record_12
+           (FB (0 .. FL - 1), 16#16#, S.Server_App,
+            HC.Server_Write_IV_12, HC.Server_Seq_12, Scratch, EO);
+         if EO = 0 then
+            HC.Server_Seq_12 := Saved_Seq;
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+      end;
+
+      --  Atomic commit.
+      if Free_Space (S.Output) < Scratch.Write_Pos then
+         HC.Server_Seq_12 := Saved_Seq;
+         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+         return;
+      end if;
+      S.Output.Data (S.Output.Write_Pos ..
+                     S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+         Scratch.Data (0 .. Scratch.Write_Pos - 1);
+      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+
+      --  Mirror state into Session record.
+      S.Negotiated_Version := TLS_1_2;
+      S.Client_IV_12  := HC.Client_Write_IV_12;
+      S.Server_IV_12  := HC.Server_Write_IV_12;
+      S.Client_Seq_12 := HC.Client_Seq_12;
+      S.Server_Seq_12 := HC.Server_Seq_12;
+
+      --  Mark CKE-received so the existing Process_Client_CCS_12 /
+      --  Process_Client_Finished_12 state-check predicates don't
+      --  trip on the missing ClientKeyExchange (abbreviated flow).
+      HC.CKE_Received_12 := True;
+
+      --  Server flight is on the wire; await client CCS + Finished.
+      Set_State (S, Wait_Client_Finished);
+      Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
+   end Build_Abbreviated_Server_Flight_12;
+
    procedure Derive_Keys_12 (S : in out Session; HC : in out Handshake_Context)
    is
       use Key_Schedule_12;
@@ -880,11 +1181,22 @@ is
          end;
       end;
 
-      --  Atomic flight assembly: build CCS + encrypted Finished into a
-      --  scratch buffer; commit only if the whole flight fits in
+      --  Atomic flight assembly: build [NST?] + CCS + encrypted Finished
+      --  into a scratch buffer; commit only if the whole flight fits in
       --  S.Output. The Finished encryption advances HC.Server_Seq_12, so
       --  we save it and roll back on commit failure to keep AEAD nonces
       --  in sync with what the peer actually sees.
+      --
+      --  NST goes BEFORE CCS (RFC 5077 §3.3): server's WRITE state is
+      --  still plaintext until CCS, so NST is a plaintext handshake
+      --  record (content type 22). NST is appended to the transcript
+      --  before the server's Finished hash is computed (RFC 5077 §3.5).
+      --
+      --  SKIPPED in the resumed (abbreviated) handshake: the server
+      --  already sent SH+NST+CCS+Finished before the client's
+      --  Finished. RFC 5077 §3.3 — the abbreviated flight inverts
+      --  the order so this code path must NOT re-emit.
+      if not HC.TLS12_Resuming then
       declare
          Scratch       : IO_Buffer;
          CCS_Out       : N32;
@@ -893,6 +1205,105 @@ is
          FB : Byte_Seq (0 .. Finished_12_Total_Len - 1); FL : N32;
          TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
       begin
+         --  RFC 5077 §3.3 NewSessionTicket (full handshake): issued iff
+         --  the client offered the session_ticket extension AND we have
+         --  configured ticket-encryption keys. Resumed-flight NSTs (the
+         --  abbreviated case) are emitted from a different code path.
+         if HC.TLS12_Ticket_Offered
+           and then HC.Cfg.TLS12_Ticket_Keys /= null
+           and then HC.Cfg.Random /= null
+           and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+           and then HC.Cfg.TLS12_Ticket_Keys
+                      (HC.Cfg.TLS12_Active_TEK_Idx).Valid
+         then
+            declare
+               use type SPARKTLS.Tickets_12.Bytes_4;
+               Active_Key : TLS12_Ticket_Key
+                  renames HC.Cfg.TLS12_Ticket_Keys
+                            (HC.Cfg.TLS12_Active_TEK_Idx);
+               Nonce_Buf  : Byte_Seq (0 .. 11) := (others => 0);
+               Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
+               Ticket_Buf : Byte_Seq (0 .. 255) := (others => 0);
+               Ticket_Len : N32;
+               NST_Hdr_Len : constant N32 := 4 + 4 + 2;  --  hs+life+tlen
+               NST_Buf    : Byte_Seq (0 .. 271) := (others => 0);
+               NST_Total  : N32;
+               NST_Rec_Out : N32;
+            begin
+               HC.Cfg.Random.all (Nonce_Buf);
+
+               --  Ticket plaintext = master_secret + suite + 0 (no
+               --  time source) + sid_len=0 (we don't encode the SID
+               --  in the encrypted state; clients echo their own SID
+               --  on resumption attempts).
+               Plain.Master_Secret := HC.Master_Secret_12;
+               Plain.Suite         := S.Negotiated_Suite_12;
+               Plain.Created_At    := 0;
+               Plain.SID_Len       := 0;
+               Plain.SID           := (others => 0);
+
+               SPARKTLS.Tickets_12.Encrypt_Ticket
+                 (Plain      => Plain,
+                  Key_ID     =>
+                    SPARKTLS.Tickets_12.Bytes_4
+                      (Active_Key.Key_ID),
+                  TEK        =>
+                    SPARKTLS.Tickets_12.Bytes_32
+                      (Active_Key.TEK),
+                  Nonce      =>
+                    SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
+                  Ticket     => Ticket_Buf,
+                  Ticket_Len => Ticket_Len);
+
+               --  Build NewSessionTicket handshake message:
+               --    type(1)=4 + len(3) + lifetime_hint(4) +
+               --    ticket_len(2) + ticket(N)
+               NST_Total := NST_Hdr_Len + Ticket_Len;
+               NST_Buf (0) := 16#04#;
+               --  body length = lifetime(4) + ticket_len(2) + ticket(N)
+               declare
+                  Body_Len : constant N32 := 4 + 2 + Ticket_Len;
+               begin
+                  NST_Buf (1) := Byte (Body_Len / 65536);
+                  NST_Buf (2) := Byte ((Body_Len / 256) mod 256);
+                  NST_Buf (3) := Byte (Body_Len mod 256);
+               end;
+               --  lifetime_hint (4 bytes, big-endian seconds)
+               NST_Buf (4) :=
+                  Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 24)
+                        and 16#FF#);
+               NST_Buf (5) :=
+                  Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 16)
+                        and 16#FF#);
+               NST_Buf (6) :=
+                  Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 8)
+                        and 16#FF#);
+               NST_Buf (7) :=
+                  Byte (HC.Cfg.TLS12_Ticket_Lifetime and 16#FF#);
+               --  ticket_len (2 bytes)
+               NST_Buf (8) := Byte (Ticket_Len / 256);
+               NST_Buf (9) := Byte (Ticket_Len mod 256);
+               --  ticket bytes
+               NST_Buf (10 .. 10 + Ticket_Len - 1) :=
+                  Ticket_Buf (0 .. Ticket_Len - 1);
+
+               --  Append to transcript BEFORE server Finished hash.
+               Append_Transcript (HC, NST_Buf (0 .. NST_Total - 1));
+
+               --  Emit as plaintext handshake record (server WRITE
+               --  state still pre-CCS).
+               Records.Build_Handshake_Record
+                 (NST_Buf (0 .. NST_Total - 1),
+                  Scratch, NST_Rec_Out);
+               if NST_Rec_Out = 0 then
+                  S.Last_Error := Insufficient_Buffer;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
+            end;
+         end if;
+
          Records.Build_CCS_Record (Scratch, CCS_Out);
          if CCS_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
@@ -937,6 +1348,7 @@ is
             Scratch.Data (0 .. Scratch.Write_Pos - 1);
          S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
       end;
+      end if;  --  end "if not HC.TLS12_Resuming"
 
       --  Copy TLS 1.2 state to Session
       S.Negotiated_Version := TLS_1_2;

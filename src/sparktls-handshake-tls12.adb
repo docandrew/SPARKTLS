@@ -1085,9 +1085,22 @@ is
       EMS_Ext_Len : constant N32 :=
          (if HC.Use_EMS then 4 + EMS_Data_Len else 0);
 
+      --  RFC 5077 §3.3: empty session_ticket ext in SH signals to the
+      --  client that a NewSessionTicket message will follow. Echoed
+      --  iff (a) client offered the extension and (b) we have ticket-
+      --  encryption keys configured. The actual NST message is built
+      --  by Process_Client_Finished_12 in the full-handshake path.
+      Emit_ST_Ext : constant Boolean :=
+         HC.TLS12_Ticket_Offered
+         and then HC.Cfg.TLS12_Ticket_Keys /= null
+         and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+         and then HC.Cfg.TLS12_Ticket_Keys
+                    (HC.Cfg.TLS12_Active_TEK_Idx).Valid;
+      ST_Ext_Len : constant N32 := (if Emit_ST_Ext then 4 else 0);
+
       --  Extensions total
       Ext_Total   : constant N32 :=
-         RI_Ext_Len + EMS_Ext_Len + ALPN_Ext_Len;
+         RI_Ext_Len + EMS_Ext_Len + ALPN_Ext_Len + ST_Ext_Len;
 
       --  ServerHello body size:
       --  version(2) + random(32) + sid_len(1) + sid(32) + suite(2) + comp(1) + ext_len(2)
@@ -1108,8 +1121,15 @@ is
       begin
          Gen_Random (Byte_Seq (Tmp_SR));
          HC.Server_Random := Tmp_SR;
-         Gen_Random (Byte_Seq (Tmp_SID));
-         HC.Legacy_Session_ID := Tmp_SID;
+         --  RFC 5246 §7.4.1.3 / RFC 5077 §3.4: when resuming a session
+         --  the server MUST echo the client's offered session_id in SH.
+         --  HC.Legacy_Session_ID was populated from the client's CH; do
+         --  NOT overwrite it on the resume path. For a fresh handshake
+         --  generate a new SID as before.
+         if not HC.TLS12_Resuming then
+            Gen_Random (Byte_Seq (Tmp_SID));
+            HC.Legacy_Session_ID := Tmp_SID;
+         end if;
       end;
 
       --  Allocate RFLX buffer and initialize context
@@ -1207,6 +1227,32 @@ is
                RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
                  (Exts_Ctx, Ext_Ctx);
 
+               RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
+                 (Ext_Ctx, Ext_Buf);
+               RFLX_Free_SH (Ext_Buf);
+            end;
+         end if;
+
+         --  RFC 5077 §3.3 session_ticket (0x0023) — empty body.
+         --  Signals "I will send a NewSessionTicket later". Issued iff
+         --  the client offered the extension and we have TEK config.
+         if Emit_ST_Ext then
+            declare
+               Ext_Buf : RBT.Bytes_Ptr;
+               Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+            begin
+               Ext_Buf := new RBT.Bytes'(1 .. 4 => 0);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
+                 (Ext_Ctx, Ext_Buf);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
+                 (Ext_Ctx,
+                  RFLX.Tls_Extensiontype_Values.Session_Ticket);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
+                 (Ext_Ctx, 0);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Empty
+                 (Ext_Ctx);
+               RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
+                 (Exts_Ctx, Ext_Ctx);
                RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
                  (Ext_Ctx, Ext_Buf);
                RFLX_Free_SH (Ext_Buf);
@@ -1402,6 +1448,14 @@ is
                begin
                   if Ext_Type = 16#0017# then
                      HC.Use_EMS := True;
+                  end if;
+                  --  RFC 5077 §3.3 session_ticket (0x0023): empty
+                  --  body in SH signals the server will send a
+                  --  NewSessionTicket later in the flight. We
+                  --  record the flag; the actual receive happens
+                  --  in the post-Finished / abbreviated flow.
+                  if Ext_Type = 16#0023# and Ext_DLen = 0 then
+                     HC.TLS12_Server_Will_Issue := True;
                   end if;
                   Ext_Pos := Ext_Pos + 4 + Ext_DLen;
                end;

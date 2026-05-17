@@ -250,6 +250,26 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # TLS 1.2 session ticket round-trip (RFC 5077)
+    if [ -f bin/tests/test_tickets_12 ]; then
+        output=$(bin/tests/test_tickets_12 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_tickets_12: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
+    # TLS 1.3 PSK resumption wiring (mirror existing pattern)
+    if [ -f bin/tests/test_psk_resume ]; then
+        output=$(bin/tests/test_psk_resume 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_psk_resume: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # AES-NI hardware path: FIPS 197 KAT + 1024 random equivalence cases
     # vs SPARKNaCl software AES (skipped on non-AES-NI CPUs)
     if [ -f bin/tests/test_aes_ni ]; then

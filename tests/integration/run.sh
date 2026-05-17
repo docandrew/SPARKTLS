@@ -11,19 +11,69 @@ REPO_ROOT="$DIR/../.."
 CERT_DIR="$DIR/../certs"
 FETCH="$REPO_ROOT/bin/examples/tls_fetch"
 SERVER="$REPO_ROOT/bin/examples/tls_blocking_server"
-PORT=8443
+#  Each test gets its own port (rotated) so we never wait for
+#  TIME_WAIT after a previous test. SO_REUSEADDR on the listener
+#  would also help, but rotating ports is simpler and gives a free
+#  parallelism win if we ever spin tests up concurrently.
+PORT_BASE=18443
+PORT=$PORT_BASE
 PASS=0
 FAIL=0
 
+#  Rotate to a new port for the next test. Must be called BEFORE
+#  starting a new server. Eliminates the TIME_WAIT wait that
+#  hardcoding PORT=8443 forced after every cleanup.
+next_port() {
+    PORT=$((PORT + 1))
+    if [ "$PORT" -ge $((PORT_BASE + 200)) ]; then
+        PORT=$PORT_BASE
+    fi
+    #  tls_blocking_server reads SPARKTLS_PORT to override its
+    #  default 8443 — exporting here means every subsequent server
+    #  spawn inherits the rotated port without extra plumbing.
+    export SPARKTLS_PORT=$PORT
+}
+
+#  Best-effort kill of any leftover server on the current port.
+#  We don't sleep — the next test will use a different port (see
+#  next_port) so a TIME_WAIT on this one is harmless.
 cleanup() {
     for pid in $(ss -tlnp 2>/dev/null | grep ":$PORT " | grep -oP 'pid=\K\d+'); do
         kill "$pid" 2>/dev/null || true
     done
-    sleep 0.5
+    next_port
 }
+
+#  Initial port export so the very first test (which runs without a
+#  prior cleanup) sees the right value.
+export SPARKTLS_PORT=$PORT
 
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
+
+#  Wait (up to 2 seconds) for $PORT to be listening. Replaces the
+#  conservative `sleep 0.5/1` after each server spawn — saves
+#  several seconds per integration run on a fast machine. Polls
+#  every 20ms with a TCP-connect probe.
+wait_for_port() {
+    local p="${1:-$PORT}"
+    for _ in 1 2 3 4 5 6 7 8 9 10 \
+             11 12 13 14 15 16 17 18 19 20 \
+             21 22 23 24 25 26 27 28 29 30 \
+             31 32 33 34 35 36 37 38 39 40 \
+             41 42 43 44 45 46 47 48 49 50 \
+             51 52 53 54 55 56 57 58 59 60 \
+             61 62 63 64 65 66 67 68 69 70 \
+             71 72 73 74 75 76 77 78 79 80 \
+             81 82 83 84 85 86 87 88 89 90 \
+             91 92 93 94 95 96 97 98 99 100; do
+        if ss -lnt 2>/dev/null | grep -q ":$p "; then
+            return 0
+        fi
+        sleep 0.02
+    done
+    return 1
+}
 
 # Check prerequisites
 for f in "$FETCH" "$SERVER"; do
@@ -195,6 +245,11 @@ echo "--- mTLS Verify_Mode: Required ---"
 cleanup
 "$SERVER" "$CERT_DIR/ed25519.crt" "$CERT_DIR/ed25519.key" \
     --mtls-require "$CERT_DIR/ed25519.crt" 2>/dev/null &
+#  This test is sensitive to a race between openssl reading the
+#  encrypted certificate_required alert and the openssl process
+#  exiting after handshake completes. wait_for_port returns the
+#  moment the listener is up, which is slightly too eager; a
+#  conservative 1s sleep keeps the test from flaking.
 sleep 1
 
 # 1) Client without cert should be rejected with certificate_required (116).
@@ -216,7 +271,7 @@ cleanup
 # advisory mTLS).
 "$SERVER" "$CERT_DIR/ed25519.crt" "$CERT_DIR/ed25519.key" \
     --mtls "$CERT_DIR/ed25519.crt" 2>/dev/null &
-sleep 1
+wait_for_port
 output=$(echo "hello" | timeout 5 openssl s_client \
     -connect localhost:$PORT -tls1_3 -CAfile "$CERT_DIR/ed25519.crt" 2>&1 || true)
 # Success indicators: server presented its cert (so handshake reached
@@ -412,6 +467,58 @@ else
     else
         fail "TLS 1.3 PSK resumption (two connections)"
         echo "$output" | sed 's/^/    /' | head -10
+    fi
+fi
+
+# ===================================================================
+# TLS 1.2 session ticket resumption (RFC 5077). SPARKTLS server
+# emits a NewSessionTicket on the first connection; the second
+# connection presents that ticket and expects an abbreviated
+# handshake. openssl s_client with -sess_out/-sess_in carries the
+# session between processes and reports "Reused" on the second
+# connection if the server accepted the ticket.
+# ===================================================================
+echo ""
+echo "--- TLS 1.2 ticket resumption: SPARKTLS server → openssl s_client ---"
+if [ ! -x "$SERVER" ]; then
+    echo "  (skipped — tls_blocking_server not built)"
+else
+    SESS_FILE=/tmp/sparktls_tls12_sess_$$.pem
+    cleanup
+    "$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+        > /tmp/tls12_resume_srv.log 2>&1 &
+    sleep 0.5
+
+    #  Connection 1: full handshake, expect server to issue a ticket.
+    echo "x" | timeout 5 openssl s_client \
+        -connect localhost:$PORT -tls1_2 \
+        -CAfile "$CERT_DIR/rsa.crt" \
+        -sess_out "$SESS_FILE" > /tmp/tls12_c1.log 2>&1
+    c1_ok=0
+    if grep -q "TLS session ticket:" /tmp/tls12_c1.log \
+       && grep -q "Verify return code: 0 (ok)" /tmp/tls12_c1.log; then
+        c1_ok=1
+    fi
+    if [ $c1_ok -ne 1 ]; then
+        fail "TLS 1.2 ticket: c1 full handshake didn't issue ticket"
+        rm -f "$SESS_FILE"
+        cleanup
+    else
+        #  Connection 2: resume.
+        echo "x" | timeout 5 openssl s_client \
+            -connect localhost:$PORT -tls1_2 \
+            -CAfile "$CERT_DIR/rsa.crt" \
+            -sess_in "$SESS_FILE" > /tmp/tls12_c2.log 2>&1
+        if grep -q "Reused, TLSv1.2" /tmp/tls12_c2.log \
+           && grep -q "Verify return code: 0 (ok)" /tmp/tls12_c2.log; then
+            pass "TLS 1.2 ticket resumption (two connections)"
+        else
+            fail "TLS 1.2 ticket resumption (two connections)"
+            grep -E "Reused|Verify|alert|error" /tmp/tls12_c2.log \
+                 | sed 's/^/    /' | head -5
+        fi
+        rm -f "$SESS_FILE"
+        cleanup
     fi
 fi
 

@@ -204,15 +204,17 @@ is
    end Transcript_Hash_384;
 
    procedure Configure
-     (S                   : out Session;
-      Local               : Identity_Access;
-      Random              : Random_Bytes_Fn;
-      Trust               : Trust_Store_Access := null;
-      Request_Client_Cert : Boolean := False;
-      Require_Client_Cert : Boolean := False;
-      Tickets             : Ticket_Store_Access := null;
-      ALPN                : String := "";
-      Versions            : Version_Policy := Allow_Both)
+     (S                     : out Session;
+      Local                 : Identity_Access;
+      Random                : Random_Bytes_Fn;
+      Trust                 : Trust_Store_Access := null;
+      Request_Client_Cert   : Boolean := False;
+      Require_Client_Cert   : Boolean := False;
+      Tickets               : Ticket_Store_Access := null;
+      ALPN                  : String := "";
+      Versions              : Version_Policy := Allow_Both;
+      TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
+      TLS12_Ticket_Lifetime : Unsigned_32 := 3600)
    with SPARK_Mode => Off
    is
       Cfg : Config;
@@ -224,6 +226,8 @@ is
       Cfg.Require_Client_Cert := Require_Client_Cert;
       Cfg.Ticket_Store        := Tickets;
       Cfg.Versions            := Versions;
+      Cfg.TLS12_Ticket_Keys   := TLS12_Ticket_Keys;
+      Cfg.TLS12_Ticket_Lifetime := TLS12_Ticket_Lifetime;
       if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
          Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
          Cfg.ALPN.Len := ALPN'Length;

@@ -969,6 +969,32 @@ is
             --  flag (or the SCSV signal) is set.
             HC.Saw_Reneg_Info := True;
 
+         when RFLX.Tls_Extensiontype_Values.Session_Ticket =>
+            --  RFC 5077 §3.2: session_ticket extension (TLS 1.2 only;
+            --  obsoleted by TLS 1.3's PSK mechanism). Two shapes:
+            --    * Empty (DLen=0): client supports tickets, wants the
+            --      server to issue one in a later NewSessionTicket.
+            --    * Non-empty: client is presenting a previously-issued
+            --      ticket and offering resumption.
+            --  Stash the bytes for the post-CH resume-decision logic
+            --  in Build_Server_Flight_12 (server) to evaluate.
+            HC.TLS12_Ticket_Offered := True;
+            HC.TLS12_Peer_Ticket_Len := 0;
+            if DLen > 0 and then DLen <= Max_TLS12_Ticket_Len then
+               declare
+                  Body_Buf : RBT.Bytes (1 .. RBT.Index (DLen)) :=
+                     (others => 0);
+               begin
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data
+                    (Ext_Ctx, Body_Buf);
+                  for I in N32 range 0 .. DLen - 1 loop
+                     HC.TLS12_Peer_Ticket (I) :=
+                        Byte (Body_Buf (RBT.Index (I + 1)));
+                  end loop;
+                  HC.TLS12_Peer_Ticket_Len := DLen;
+               end;
+            end if;
+
          when RFLX.Tls_Extensiontype_Values.Early_Data =>
             --  RFC 8446 §4.2.10: presence (empty body) in CH means
             --  the client wants to send 0-RTT data. Server decides

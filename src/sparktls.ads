@@ -1263,6 +1263,43 @@ is
       --  TLS 1.2: ClientKeyExchange already received
       CKE_Received_12 : Boolean := False;
 
+      --  TLS 1.2 session-ticket (RFC 5077) state.
+      --
+      --  Client side:
+      --    * TLS12_Sent_Ticket_Ext  — we offered session_ticket ext
+      --      in CH (so we accept a server-issued NST).
+      --    * TLS12_Server_Will_Issue — server echoed the empty
+      --      session_ticket ext in SH; expect a NewSessionTicket
+      --      message after server CCS+Finished (full HS) or before
+      --      server CCS+Finished (abbreviated HS — and we use the
+      --      cached master_secret).
+      --    * TLS12_Resuming — server elected to resume; skip Cert/
+      --      SKE/CKE/CertVerify, jump straight to CCS+Finished.
+      --
+      --  Server side:
+      --    * TLS12_Ticket_Offered — client sent session_ticket ext
+      --      (empty or with ticket bytes).
+      --    * TLS12_Ticket_Resume_OK — client-provided ticket
+      --      decrypted + validated; we'll abbreviate.
+      --    * TLS12_Ticket_Will_Issue — we'll emit a NewSessionTicket
+      --      after first client Finished (full handshake) or before
+      --      our own CCS+Finished (abbreviated).
+      --    * TLS12_Resumed_Master_Secret — restored MS from a valid
+      --      peer ticket (overrides the freshly-derived MS path).
+      --    * TLS12_Resumed_Suite — cipher suite we MUST use in SH
+      --      when resuming (peer's original).
+      TLS12_Sent_Ticket_Ext     : Boolean := False;
+      TLS12_Server_Will_Issue   : Boolean := False;
+      TLS12_Resuming            : Boolean := False;
+      TLS12_Ticket_Offered      : Boolean := False;
+      TLS12_Ticket_Resume_OK    : Boolean := False;
+      TLS12_Ticket_Will_Issue   : Boolean := False;
+      TLS12_Resumed_Master_Secret : Byte_Seq (0 .. 47) := (others => 0);
+      TLS12_Resumed_Suite       : Unsigned_16 := 0;
+      TLS12_Peer_Ticket_Len     : N32 := 0;
+      TLS12_Peer_Ticket         : Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1)
+                                    := (others => 0);
+
       --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
       Use_EMS : Boolean := False;
 

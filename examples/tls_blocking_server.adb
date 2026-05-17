@@ -5,6 +5,7 @@
 --  Usage: tls_blocking_server <cert.pem> <key.pem>
 
 with Ada.Command_Line;
+with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Streams;                use Ada.Streams;
 with Ada.Text_IO;                use Ada.Text_IO;
@@ -28,8 +29,23 @@ procedure TLS_Blocking_Server is
    MTLS    : Boolean := False;
    MTLS_Require : Boolean := False;
 
+   --  TLS 1.2 ticket encryption keys (RFC 5077). One TEK generated
+   --  at startup with a fixed Key_ID; rotates only on restart.
+   TLS12_Keys : aliased SPARKTLS.TLS12_Ticket_Key_Array;
+
    Server_Sock : Socket_Type;
-   Port        : constant := 8443;
+   --  Port: env var SPARKTLS_PORT overrides the 8443 default. Lets
+   --  the integration runner rotate ports per test so a TIME_WAIT
+   --  from the previous test doesn't force a sleep before the next.
+   function Get_Port return Port_Type is
+   begin
+      if Ada.Environment_Variables.Exists ("SPARKTLS_PORT") then
+         return Port_Type'Value
+           (Ada.Environment_Variables.Value ("SPARKTLS_PORT"));
+      end if;
+      return 8443;
+   end Get_Port;
+   Port : constant Port_Type := Get_Port;
 
    procedure Handle_Connection (Client_Sock : Socket_Type) is
       S         : SPARKTLS.Session;
@@ -92,7 +108,8 @@ procedure TLS_Blocking_Server is
                                  else null),
          Request_Client_Cert => MTLS,
          Require_Client_Cert => MTLS_Require,
-         Tickets             => Tickets'Unchecked_Access);
+         Tickets             => Tickets'Unchecked_Access,
+         TLS12_Ticket_Keys   => TLS12_Keys'Unchecked_Access);
 
       --  Handshake + data loop
       loop
@@ -174,6 +191,24 @@ procedure TLS_Blocking_Server is
 
 begin
    Entropy_Random.Init;
+
+   --  Generate a single TLS 1.2 ticket-encryption key at startup.
+   --  Rotates on restart only. Real production code should rotate
+   --  out-of-band and carry the old key for some grace window.
+   declare
+      Key_ID  : Byte_Seq (0 .. 3) := (others => 0);
+      TEK_Buf : Byte_Seq (0 .. 31) := (others => 0);
+   begin
+      Entropy_Random.Random (Key_ID);
+      Entropy_Random.Random (TEK_Buf);
+      TLS12_Keys (0) := (Key_ID => Key_ID, TEK => TEK_Buf, Valid => True);
+      TLS12_Keys (1) := (Key_ID => (others => 0), TEK => (others => 0),
+                         Valid => False);
+      TLS12_Keys (2) := (Key_ID => (others => 0), TEK => (others => 0),
+                         Valid => False);
+      TLS12_Keys (3) := (Key_ID => (others => 0), TEK => (others => 0),
+                         Valid => False);
+   end;
 
    if Ada.Command_Line.Argument_Count < 2 then
       Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>" &

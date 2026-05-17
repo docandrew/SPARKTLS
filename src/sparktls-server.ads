@@ -39,15 +39,17 @@ is
    --  Sets Mode_WebPKI and the default cipher suite.
    --  Optionally provide a Trust store and Request_Client_Cert for mTLS.
    procedure Configure
-     (S                   : out Session;
-      Local               : Identity_Access;
-      Random              : Random_Bytes_Fn;
-      Trust               : Trust_Store_Access := null;
-      Request_Client_Cert : Boolean := False;
-      Require_Client_Cert : Boolean := False;
-      Tickets             : Ticket_Store_Access := null;
-      ALPN                : String := "";
-      Versions            : Version_Policy := Allow_Both)
+     (S                     : out Session;
+      Local                 : Identity_Access;
+      Random                : Random_Bytes_Fn;
+      Trust                 : Trust_Store_Access := null;
+      Request_Client_Cert   : Boolean := False;
+      Require_Client_Cert   : Boolean := False;
+      Tickets               : Ticket_Store_Access := null;
+      ALPN                  : String := "";
+      Versions              : Version_Policy := Allow_Both;
+      TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
+      TLS12_Ticket_Lifetime : Unsigned_32 := 3600)
    with SPARK_Mode => Off;
    --  Note: 0-RTT (RFC 8446 §2.3 / §4.2.10) is intentionally not
    --  supported on either side. NST omits the early_data extension,
