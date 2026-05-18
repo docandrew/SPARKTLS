@@ -9,6 +9,7 @@ project SPARKTLS_Examples is
                   "tls_test_client.adb", "tls_test_server.adb",
                   "tls_blocking_server.adb",
                   "tls_bench_server.adb",
+                  "tls_sni_server.adb",
                   "mtls_test_client.adb",
                   "tls_resume_test.adb",
                   "tls12_resume_test.adb",

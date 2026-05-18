@@ -215,7 +215,8 @@ is
       Versions              : Version_Policy := Allow_Both;
       TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
-      Get_Time              : Get_Time_Fn := null)
+      Get_Time              : Get_Time_Fn := null;
+      Select_Identity       : SNI_Cert_Selector := null)
    with SPARK_Mode => Off
    is
       Cfg : Config;
@@ -230,6 +231,7 @@ is
       Cfg.TLS12_Ticket_Keys   := TLS12_Ticket_Keys;
       Cfg.TLS12_Ticket_Lifetime := TLS12_Ticket_Lifetime;
       Cfg.Get_Time            := Get_Time;
+      Cfg.Select_Identity     := Select_Identity;
       if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
          Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
          Cfg.ALPN.Len := ALPN'Length;
@@ -616,6 +618,34 @@ is
                      end;
                      S.Input.Read_Pos :=
                         S.Input.Read_Pos + Rec.Record_Len;
+                  end if;
+
+                  --  RFC 6066 §3 + RFC 8446 §4.4.2.4: SNI-based
+                  --  certificate selection. When a Select_Identity
+                  --  callback is installed and the client sent a
+                  --  non-empty server_name, ask the callback to map
+                  --  the hostname to an Identity. A non-null result
+                  --  replaces HC.Cfg.Local for this session — all
+                  --  subsequent cert chain build / signing uses it.
+                  --  A null result means "no match"; we fall back to
+                  --  HC.Cfg.Local (the default identity), matching
+                  --  openssl's permissive behaviour rather than
+                  --  raising `unrecognized_name`.
+                  if HC.Cfg.Select_Identity /= null
+                    and then HC.Peer_SNI.Len > 0
+                  then
+                     declare
+                        Picked : constant Identity_Access :=
+                           HC.Cfg.Select_Identity
+                             (HC.Peer_SNI.Data
+                                (HC.Peer_SNI.Data'First ..
+                                 HC.Peer_SNI.Data'First
+                                   + HC.Peer_SNI.Len - 1));
+                     begin
+                        if Picked /= null then
+                           HC.Cfg.Local := Picked;
+                        end if;
+                     end;
                   end if;
 
                   --  Version negotiation: dispatch based on HC.Version

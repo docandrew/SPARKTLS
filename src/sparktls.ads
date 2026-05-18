@@ -894,6 +894,33 @@ is
    type Identity_Access is access constant Identity;
 
    --================================================================
+   --  SNI-based certificate selection (RFC 6066 §3, RFC 8446 §4.4.2.4)
+   --
+   --  Servers that host multiple virtual hosts on one listener install
+   --  a Select_Identity callback in Config. The callback receives the
+   --  hostname from the client's server_name extension and returns the
+   --  matching Identity_Access. Returning null means "no match" —
+   --  per RFC 6066, the server MAY proceed with the default identity
+   --  (the more permissive choice, matches openssl). Strict-SNI mode
+   --  (alert on no-match) is not supported today but can be added by
+   --  having the callback raise an alert via a side channel.
+   --
+   --  The callback runs after CH-extension parsing and BEFORE the
+   --  cert chain / SKE / Finished are built. The hostname passed in
+   --  is the raw bytes the client sent (RFC 6066 §3 says ASCII; the
+   --  caller is responsible for any case-folding / Punycode
+   --  normalization).
+   --
+   --  Safety: the callback MUST be pure (no side effects) and MUST
+   --  return either null or an Identity_Access that remains valid for
+   --  the lifetime of the session. Identities returned here are
+   --  typically allocated once at server startup and immutable.
+   --================================================================
+
+   type SNI_Cert_Selector is access function
+     (Server_Name : in String) return Identity_Access;
+
+   --================================================================
    --  Ticket Store (for session resumption)
    --  Defined here so Config can reference it. Implementation in
    --  SPARKTLS.Ticket_Cache child package.
@@ -1004,6 +1031,59 @@ is
    type Validation_Purpose is (Purpose_Server, Purpose_Client, Purpose_Any);
 
    --================================================================
+   --  DoS resource limits (§2.13 in ROADMAP)
+   --
+   --  Policy caps on per-handshake parser work, defending against
+   --  malicious peers that send valid-looking but pathologically
+   --  large CHs (thousands of cipher suites, sig_algs, etc.). Each
+   --  cap bounds the iteration count: entries beyond the cap are
+   --  silently dropped from consideration; the handshake continues
+   --  with whatever was processed in-cap (cipher suites and other
+   --  list-typed fields are prioritized by the client, so picking
+   --  from the leading N entries still negotiates the best mutual
+   --  choice). The defaults are 5-10x typical real-world client
+   --  populations so legitimate peers never hit them.
+   --
+   --  These caps are PER-CONNECTION; cross-connection budgets
+   --  (accept rate, concurrent half-open) are the caller's
+   --  responsibility (see ROADMAP §2.13).
+   --================================================================
+
+   type DoS_Caps is record
+      --  Max cipher_suite entries consumed from a CH. Wire allows
+      --  ~32767. Real clients send 5-30; cap of 256 is comfortably
+      --  above any legitimate peer.
+      Max_Cipher_Suites    : N32 := 256;
+
+      --  Max supported_groups entries consumed from the named-group
+      --  extension. Real clients send 4-12; cap of 64.
+      Max_Supported_Groups : N32 := 64;
+
+      --  Max signature_algorithms entries CONSUMED from the wire
+      --  (distinct from Max_Sig_Algos which caps how many we STORE
+      --  in HC.Peer_Sig_Algos). Wire allows ~32767. Real clients
+      --  send 6-15; cap of 64.
+      Max_Sig_Algs_Wire    : N32 := 64;
+
+      --  Max ALPN protocol entries in the client's offer. Real
+      --  clients send 1-5 (typically just "h2" or "http/1.1"+"h2").
+      --  Cap of 32.
+      Max_ALPN_Protocols   : N32 := 32;
+
+      --  Max warning-level alerts the server will tolerate during
+      --  a single handshake before treating the next as fatal
+      --  decode_error (BoGo SendWarningAlerts-TooMany).
+      Max_Warning_Alerts   : N32 := 4;
+   end record;
+
+   Default_DoS_Caps : constant DoS_Caps :=
+     (Max_Cipher_Suites    => 256,
+      Max_Supported_Groups => 64,
+      Max_Sig_Algs_Wire    => 64,
+      Max_ALPN_Protocols   => 32,
+      Max_Warning_Alerts   => 4);
+
+   --================================================================
    --  Configuration (set once before Init)
    --================================================================
 
@@ -1012,6 +1092,26 @@ is
       Random       : Random_Bytes_Fn := null;
       Server_Name  : Hostname_Buf;
       Skip_Verify  : Boolean         := False;  --  accept any cert
+
+      --  Client-side hostname verification opt-out (RFC 6125 §6.4).
+      --  When Server_Name is non-empty AND this is False (default),
+      --  the client checks that the server's leaf cert contains a
+      --  matching SAN dNSName or iPAddress (or Subject CN as a
+      --  fallback per the prevailing CN-in-SAN rules). On mismatch
+      --  the handshake is aborted with `bad_certificate`. This check
+      --  runs INDEPENDENTLY of `Skip_Verify` / `Trust` / `Get_Time`
+      --  — those gate full chain validation; hostname binding stays
+      --  on so dev mode (Skip_Verify=True) doesn't silently accept a
+      --  cert for the wrong host. Set this to True only when you
+      --  explicitly do not want hostname binding (rare; usually
+      --  better to leave Server_Name empty instead).
+      Skip_Hostname_Verify : Boolean := False;
+
+      --  Server-side DoS resource limits (RFC-defensive caps on
+      --  parser iteration counts). See DoS_Caps documentation for
+      --  rationale. Tunable for high-trust environments (raise
+      --  caps) or extra-paranoid servers (lower them).
+      DoS_Caps : SPARKTLS.DoS_Caps := Default_DoS_Caps;
       Versions     : Version_Policy  := Allow_Both;  --  TLS version control
 
       --  Validation settings
@@ -1026,7 +1126,17 @@ is
 
       --  Local identity (certificate + signing key).
       --  Required for server.  Optional for client (mTLS only).
+      --  On the server side, this is the default identity used when
+      --  Select_Identity is null OR when Select_Identity returns null
+      --  for the client's SNI hostname.
       Local : Identity_Access := null;
+
+      --  Server-side SNI-based identity selector. When non-null AND
+      --  the client sent a non-empty server_name extension, the
+      --  callback fires after CH parse and the returned identity
+      --  (if non-null) overrides Local for this session. See the
+      --  SNI_Cert_Selector type comments above for the contract.
+      Select_Identity : SNI_Cert_Selector := null;
 
       --  ALPN: Application-Layer Protocol Negotiation (RFC 7301).
       --  Set to e.g. "h2" for HTTP/2 or "http/1.1" for HTTP/1.1.
@@ -1133,6 +1243,14 @@ is
 
       --  Configuration (callbacks, trust store, identity)
       Cfg : Config;
+
+      --  Server-side: SNI hostname received in the client's
+      --  server_name extension (RFC 6066 §3). Captured during
+      --  CH-extension parsing in `Apply_CH_Extension` and consumed
+      --  by the SNI cert-selection step. Empty (Len = 0) if the
+      --  client didn't send a server_name extension or sent one with
+      --  no host_name entries.
+      Peer_SNI : Hostname_Buf := (Len => 0, Data => (others => ' '));
 
       --  Ephemeral key exchange (X25519, P-256, or P-384 ECDHE)
       Local_SK      : Bytes_32 := (others => 0);

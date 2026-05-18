@@ -50,8 +50,16 @@ is
       Versions              : Version_Policy := Allow_Both;
       TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
-      Get_Time              : Get_Time_Fn := null)
+      Get_Time              : Get_Time_Fn := null;
+      Select_Identity       : SNI_Cert_Selector := null)
    with SPARK_Mode => Off;
+   --  Select_Identity: optional SNI-based identity selector
+   --  (RFC 6066 §3 / RFC 8446 §4.4.2.4). When non-null and the client
+   --  sent a non-empty server_name extension, the callback receives
+   --  the hostname and returns the matching Identity_Access. A
+   --  non-null result overrides `Local` for this session. A null
+   --  result causes fallback to `Local` (permissive default; openssl-
+   --  compatible behaviour rather than `unrecognized_name` alert).
    --  Get_Time: optional UTC wall-clock callback. Required for
    --  TLS 1.2 session-ticket expiry enforcement (without it the
    --  Decrypt_Ticket path skips the age window check). Also used

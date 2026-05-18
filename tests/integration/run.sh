@@ -523,6 +523,159 @@ else
 fi
 
 # ===================================================================
+# SNI-based certificate selection (RFC 6066 §3 / RFC 8446 §4.4.2.4).
+# tls_sni_server loads two identities (RSA default, Ed25519 alt) +
+# installs a Select_Identity callback that returns the alt identity
+# for any hostname containing "alt". We verify by inspecting the
+# server certificate openssl s_client receives for two different
+# -servername values; check the Public Key Algorithm field of the
+# leaf cert (rsaEncryption vs ED25519). Four sub-tests:
+#   1. default SNI (localhost)               → RSA cert
+#   2. alt SNI (alt.example.com)             → Ed25519 cert
+#   3. uppercase alt (case-fold check)       → Ed25519 cert
+#   4. NO SNI (openssl -noservername)        → RSA cert (falls back
+#      to Cfg.Local since HC.Peer_SNI.Len = 0; selector not called).
+# ===================================================================
+echo ""
+echo "--- SNI: cert selection by hostname ---"
+SNI_SERVER=/home/doc/git/tls_proj/sparktls/bin/examples/tls_sni_server
+if [ ! -x "$SNI_SERVER" ]; then
+    echo "  (skipped — tls_sni_server not built)"
+else
+    cleanup
+    "$SNI_SERVER" \
+        "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+        "$CERT_DIR/ed25519.crt" "$CERT_DIR/ed25519.key" \
+        > /tmp/sni_srv.log 2>&1 &
+    wait_for_port
+
+    #  Helper: dump the leaf cert's Public Key Algorithm for a given
+    #  SNI value. Echoes "rsa", "ed25519", or "?" (failed to extract).
+    sni_pkalg() {
+        local sni_arg="$1"
+        echo "x" | timeout 5 openssl s_client \
+            -connect 127.0.0.1:$PORT $sni_arg -showcerts 2>/dev/null \
+            | awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' \
+            | head -200 \
+            | openssl x509 -noout -text 2>/dev/null \
+            | awk '/Public Key Algorithm:/ {
+                if ($4 == "rsaEncryption")        print "rsa";
+                else if ($4 == "ED25519")          print "ed25519";
+                else                                print "?";
+                exit
+              }'
+    }
+
+    pk=$(sni_pkalg "-servername localhost")
+    if [ "$pk" = "rsa" ]; then
+        pass "SNI: default hostname → RSA cert"
+    else
+        fail "SNI: default hostname → expected RSA, got '$pk'"
+    fi
+
+    pk=$(sni_pkalg "-servername alt.example.com")
+    if [ "$pk" = "ed25519" ]; then
+        pass "SNI: alt hostname → Ed25519 cert"
+    else
+        fail "SNI: alt hostname → expected Ed25519, got '$pk'"
+    fi
+
+    pk=$(sni_pkalg "-servername ALT.EXAMPLE.COM")
+    if [ "$pk" = "ed25519" ]; then
+        pass "SNI: uppercase alt → Ed25519 cert (case-fold check)"
+    else
+        fail "SNI: uppercase alt → expected Ed25519, got '$pk'"
+    fi
+
+    pk=$(sni_pkalg "-noservername")
+    if [ "$pk" = "rsa" ]; then
+        pass "SNI: no SNI → falls back to default RSA cert"
+    else
+        fail "SNI: no SNI → expected RSA, got '$pk'"
+    fi
+
+    cleanup
+fi
+
+# ===================================================================
+# Hostname validation (RFC 6125 §6.4). The client-side cert chain
+# always checks that the leaf's SAN dNSName / iPAddress entries
+# (with RFC 6125 wildcard rules) match Cfg.Server_Name. This check
+# runs INDEPENDENTLY of full chain validation — a caller using
+# Skip_Verify=True (dev mode against self-signed certs) still gets
+# hostname binding. Explicit opt-out via Skip_Hostname_Verify=True
+# for the rare TOFU-style use case.
+#
+# Test cert is CN=localhost + SAN=DNS:localhost,IP:127.0.0.1.
+# Tests:
+#   1. correct hostname + trust          → OK (sanity)
+#   2. wrong hostname + trust            → bad_certificate
+#   3. wrong hostname + Skip_Verify      → bad_certificate
+#      (KEY ASSERTION: dropping chain validation does NOT drop
+#       hostname binding)
+#   4. wrong hostname + Skip_Verify
+#       + Skip_Hostname_Verify           → OK (explicit opt-out)
+# ===================================================================
+echo ""
+echo "--- Hostname validation (client SAN/CN matching) ---"
+if [ ! -x "$CLIENT" ]; then
+    echo "  (skipped — mtls_test_client not built)"
+else
+    cleanup
+    openssl s_server -accept 0:$PORT \
+        -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" -tls1_3 \
+        -quiet > /tmp/hv_srv.log 2>&1 &
+    wait_for_port
+
+    #  1. correct hostname + trust → OK
+    output=$(timeout 5 "$CLIENT" --port $PORT --host localhost \
+                --trust-cert "$CERT_DIR/rsa.crt" \
+                --message "x" 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        pass "Hostname: correct + trust → handshake OK"
+    else
+        fail "Hostname: correct + trust → should have succeeded"
+    fi
+
+    #  2. wrong hostname + trust → bad_certificate
+    output=$(timeout 5 "$CLIENT" --port $PORT --host evil.example.com \
+                --trust-cert "$CERT_DIR/rsa.crt" \
+                --message "x" 2>&1)
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        pass "Hostname: wrong + trust → reject"
+    else
+        fail "Hostname: wrong + trust → should have failed"
+    fi
+
+    #  3. wrong hostname + Skip_Verify → STILL bad_certificate
+    output=$(timeout 5 "$CLIENT" --port $PORT --host evil.example.com \
+                --skip-verify \
+                --message "x" 2>&1)
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        pass "Hostname: wrong + skip-verify → still reject (decoupled)"
+    else
+        fail "Hostname: wrong + skip-verify → should have failed; \
+hostname binding was silently dropped"
+    fi
+
+    #  4. wrong hostname + skip-verify + skip-hostname-verify → OK
+    output=$(timeout 5 "$CLIENT" --port $PORT --host evil.example.com \
+                --skip-verify --skip-hostname-verify \
+                --message "x" 2>&1)
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        pass "Hostname: wrong + both skips → accept (explicit opt-out)"
+    else
+        fail "Hostname: wrong + both skips → opt-out failed"
+    fi
+
+    cleanup
+fi
+
+# ===================================================================
 # TLS 1.2 client-side ticket resumption (RFC 5077): two-connection
 # round-trip with SPARKTLS as the client and openssl s_server as the
 # peer. Connection 1 is a full handshake; we capture the issued

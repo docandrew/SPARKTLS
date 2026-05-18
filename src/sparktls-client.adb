@@ -333,23 +333,30 @@ is
    end Extract_ALPN_From_EE;
 
    procedure Configure
-     (S        : out Session;
-      Hostname : String;
-      Trust    : Trust_Store_Access;
-      Random   : Random_Bytes_Fn;
-      Clock    : Get_Time_Fn;
-      Local    : Identity_Access := null;
-      Mode     : Validation_Mode := Mode_WebPKI;
-      ALPN     : String := "";
-      Versions : Version_Policy := Allow_Both;
-      Resume   : Session_Ticket := (others => <>))
+     (S                    : out Session;
+      Hostname             : String;
+      Trust                : Trust_Store_Access;
+      Random               : Random_Bytes_Fn;
+      Clock                : Get_Time_Fn;
+      Local                : Identity_Access := null;
+      Mode                 : Validation_Mode := Mode_WebPKI;
+      ALPN                 : String := "";
+      Versions             : Version_Policy := Allow_Both;
+      Resume               : Session_Ticket := (others => <>);
+      Skip_Verify          : Boolean := False;
+      Skip_Hostname_Verify : Boolean := False)
    is
       Cfg : Config;
    begin
       Cfg.Random      := Random;
       Cfg.Trust       := Trust;
       Cfg.Local       := Local;
-      Cfg.Skip_Verify := Trust = null;
+      --  Skip_Verify defaults to True when no trust store is given
+      --  (otherwise the handshake would fail with a confusing
+      --  "missing trust store" rather than the intended "validation
+      --  off"). An explicit Skip_Verify=True overrides both cases.
+      Cfg.Skip_Verify := Trust = null or Skip_Verify;
+      Cfg.Skip_Hostname_Verify := Skip_Hostname_Verify;
       Cfg.Get_Time    := Clock;
       Cfg.Verify_Mode := Mode;
       Cfg.Versions    := Versions;
@@ -805,6 +812,39 @@ is
                   return;
                end if;
             end;
+
+            --  RFC 6125 §6.4 hostname binding. Runs INDEPENDENTLY of
+            --  chain validation (which is gated on Trust + Get_Time +
+            --  not Skip_Verify): even a dev-mode caller who skipped
+            --  full chain validation should still get hostname
+            --  binding so a cert valid for one host can't be silently
+            --  presented for another. Skip only when the caller
+            --  explicitly opts out via Skip_Hostname_Verify (rare;
+            --  the usual opt-out is leaving Server_Name empty).
+            if HC.Cfg.Server_Name.Len > 0
+              and then not HC.Cfg.Skip_Hostname_Verify
+              and then HC.Peer_Cert_Valid
+            then
+               declare
+                  Cert_DER_Len_C : constant N32 := HC.Peer_Cert_DER_Len;
+                  Cert_X : X509.Byte_Seq
+                     (0 .. X509.N32 (Cert_DER_Len_C) - 1) := (others => 0);
+               begin
+                  for I in N32 range 0 .. Cert_DER_Len_C - 1 loop
+                     Cert_X (X509.N32 (I)) :=
+                        X509.Byte (HC.Peer_Cert_DER (I));
+                  end loop;
+                  if not X509.Matches_Hostname
+                          (HC.Peer_Cert, Cert_X,
+                           HC.Cfg.Server_Name.Data
+                             (1 .. HC.Cfg.Server_Name.Len))
+                  then
+                     Send_HS_Encrypted_Alert
+                       (S, HC, Bad_Certificate, Result);
+                     return;
+                  end if;
+               end;
+            end if;
 
             --  Chain validation (if trust store is configured)
             if not HC.Cfg.Skip_Verify

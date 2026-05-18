@@ -62,6 +62,8 @@ procedure MTLS_Test_Client is
    Cfg_ALPN_Len  : Natural := 0;
    Cfg_Expect_ALPN : String (1 .. 255) := (others => Character'Val (0));
    Cfg_Expect_ALPN_Len : Natural := 0;
+   Cfg_Skip_Verify          : Boolean := False;
+   Cfg_Skip_Hostname_Verify : Boolean := False;
 
    procedure Err (M : String) is
    begin
@@ -138,6 +140,10 @@ procedure MTLS_Test_Client is
                Cfg_Expect_Echo := True;
             elsif A = "--expect-fail" then
                Cfg_Expect_Fail := True;
+            elsif A = "--skip-verify" then
+               Cfg_Skip_Verify := True;
+            elsif A = "--skip-hostname-verify" then
+               Cfg_Skip_Hostname_Verify := True;
             elsif A = "--alpn" then
                declare
                   V : constant String := Next_Arg;
@@ -312,14 +318,18 @@ begin
    --  CT/SCT/etc. enforcement. Test certs are self-signed; the
    --  WebPKI mode would reject them as untrusted.
    SPARKTLS.Client.Configure
-     (S        => S,
-      Hostname => Cfg_Host (1 .. Cfg_Host_Len),
-      Trust    => (if Have_Trust then Roots'Unchecked_Access else null),
-      Random   => Entropy_Random.Random'Access,
-      Clock    => Current_Time'Unrestricted_Access,
-      Local    => (if Have_Local then Id'Unchecked_Access else null),
-      Mode     => SPARKTLS.Mode_RFC5280,
-      ALPN     => Cfg_ALPN (1 .. Cfg_ALPN_Len));
+     (S                    => S,
+      Hostname             => Cfg_Host (1 .. Cfg_Host_Len),
+      Trust                =>
+         (if Have_Trust then Roots'Unchecked_Access else null),
+      Random               => Entropy_Random.Random'Access,
+      Clock                => Current_Time'Unrestricted_Access,
+      Local                =>
+         (if Have_Local then Id'Unchecked_Access else null),
+      Mode                 => SPARKTLS.Mode_RFC5280,
+      ALPN                 => Cfg_ALPN (1 .. Cfg_ALPN_Len),
+      Skip_Verify          => Cfg_Skip_Verify,
+      Skip_Hostname_Verify => Cfg_Skip_Hostname_Verify);
 
    --  Drive handshake to completion, then exchange app data, then close.
    Loop1 :

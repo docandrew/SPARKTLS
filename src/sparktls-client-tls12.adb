@@ -761,6 +761,34 @@ is
                   end if;
                end;
 
+               --  RFC 6125 §6.4 hostname binding. Runs INDEPENDENTLY
+               --  of chain validation — see the matching TLS 1.3
+               --  comment in sparktls-client.adb for the rationale.
+               if HC.Cfg.Server_Name.Len > 0
+                 and then not HC.Cfg.Skip_Hostname_Verify
+                 and then HC.Peer_Cert_Valid
+               then
+                  declare
+                     PCDL : constant N32 := HC.Peer_Cert_DER_Len;
+                     Cert_X : X509.Byte_Seq
+                        (0 .. X509.N32 (PCDL) - 1) := (others => 0);
+                  begin
+                     for I in N32 range 0 .. PCDL - 1 loop
+                        Cert_X (X509.N32 (I)) :=
+                           X509.Byte (HC.Peer_Cert_DER (I));
+                     end loop;
+                     if not X509.Matches_Hostname
+                             (HC.Peer_Cert, Cert_X,
+                              HC.Cfg.Server_Name.Data
+                                (1 .. HC.Cfg.Server_Name.Len))
+                     then
+                        Send_Alert_And_Error
+                          (S, Bad_Certificate, Result);
+                        return;
+                     end if;
+                  end;
+               end if;
+
                --  Chain validation (if trust store is configured)
                if not HC.Cfg.Skip_Verify
                   and then HC.Cfg.Trust /= null

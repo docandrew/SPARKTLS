@@ -346,29 +346,39 @@ is
          OK := False;
          return;
       end if;
-      while Pos + 1 <= RBT.Index (DLen) loop
-         declare
-            Algo : constant Unsigned_16 :=
-                     Unsigned_16 (SA_Buf (Pos)) * 256
-                     + Unsigned_16 (SA_Buf (Pos + 1));
-         begin
-            if Algo in 16#0807#  --  Ed25519
-                     | 16#0403#  --  ECDSA-P256
-                     | 16#0503#  --  ECDSA-P384
-                     | 16#0804#  --  RSA-PSS-256
-                     | 16#0805#  --  RSA-PSS-384
-                     | 16#0806#  --  RSA-PSS-512
-                     | 16#0401#  --  RSA-PKCS1-SHA256
-                     | 16#0501#  --  RSA-PKCS1-SHA384
-                     | 16#0601#  --  RSA-PKCS1-SHA512
-              and then HC.Peer_Sig_Algo_Count < Max_Sig_Algos
-            then
-               HC.Peer_Sig_Algos (HC.Peer_Sig_Algo_Count) := Algo;
-               HC.Peer_Sig_Algo_Count := HC.Peer_Sig_Algo_Count + 1;
-            end if;
-         end;
-         Pos := Pos + 2;
-      end loop;
+      declare
+         Iter_Count : N32 := 0;
+         Cap        : constant N32 :=
+            HC.Cfg.DoS_Caps.Max_Sig_Algs_Wire;
+      begin
+         while Pos + 1 <= RBT.Index (DLen) and then Iter_Count < Cap loop
+            declare
+               Algo : constant Unsigned_16 :=
+                        Unsigned_16 (SA_Buf (Pos)) * 256
+                        + Unsigned_16 (SA_Buf (Pos + 1));
+            begin
+               if Algo in 16#0807#  --  Ed25519
+                        | 16#0403#  --  ECDSA-P256
+                        | 16#0503#  --  ECDSA-P384
+                        | 16#0804#  --  RSA-PSS-256
+                        | 16#0805#  --  RSA-PSS-384
+                        | 16#0806#  --  RSA-PSS-512
+                        | 16#0401#  --  RSA-PKCS1-SHA256
+                        | 16#0501#  --  RSA-PKCS1-SHA384
+                        | 16#0601#  --  RSA-PKCS1-SHA512
+                 and then HC.Peer_Sig_Algo_Count < Max_Sig_Algos
+               then
+                  HC.Peer_Sig_Algos (HC.Peer_Sig_Algo_Count) := Algo;
+                  HC.Peer_Sig_Algo_Count := HC.Peer_Sig_Algo_Count + 1;
+               end if;
+            end;
+            Pos := Pos + 2;
+            Iter_Count := Iter_Count + 1;
+         end loop;
+      end;
+      --  Iteration cap: any entries past DoS_Caps.Max_Sig_Algs_Wire
+      --  are silently dropped (the cap is well above any legitimate
+      --  client; default 64 vs typical 6-15).
       RFLX_Free (SA_Buf);
    end Parse_Sig_Algs_Extension;
 
@@ -401,23 +411,34 @@ is
       RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, SG_Buf.all);
       List_Len := N32 (SG_Buf (1)) * 256 + N32 (SG_Buf (2));
       Pos := 3;
-      while Pos + 1 <= N32 (DLen) and then Pos < 3 + List_Len loop
-         pragma Loop_Invariant (Pos >= 3);
-         declare
-            Grp : constant Unsigned_16 :=
-                    Unsigned_16 (SG_Buf (RBT.Index (Pos))) * 256
-                    + Unsigned_16 (SG_Buf (RBT.Index (Pos + 1)));
-         begin
-            if Grp = 16#001D# then
-               HC.Client_Supports_X25519 := True;
-            elsif Grp = 16#0017# then
-               HC.Client_Supports_P256 := True;
-            elsif Grp = 16#0018# then
-               HC.Client_Supports_P384 := True;
-            end if;
-         end;
-         Pos := Pos + 2;
-      end loop;
+      declare
+         Iter_Count : N32 := 0;
+         Cap        : constant N32 :=
+            HC.Cfg.DoS_Caps.Max_Supported_Groups;
+      begin
+         while Pos + 1 <= N32 (DLen) and then Pos < 3 + List_Len
+           and then Iter_Count < Cap
+         loop
+            pragma Loop_Invariant (Pos >= 3);
+            declare
+               Grp : constant Unsigned_16 :=
+                       Unsigned_16 (SG_Buf (RBT.Index (Pos))) * 256
+                       + Unsigned_16 (SG_Buf (RBT.Index (Pos + 1)));
+            begin
+               if Grp = 16#001D# then
+                  HC.Client_Supports_X25519 := True;
+               elsif Grp = 16#0017# then
+                  HC.Client_Supports_P256 := True;
+               elsif Grp = 16#0018# then
+                  HC.Client_Supports_P384 := True;
+               end if;
+            end;
+            Pos := Pos + 2;
+            Iter_Count := Iter_Count + 1;
+         end loop;
+      end;
+      --  DoS_Caps.Max_Supported_Groups bounds the walk; entries past
+      --  the cap are silently dropped.
       RFLX_Free (SG_Buf);
    end Parse_Supported_Groups_Extension;
 
@@ -511,33 +532,44 @@ is
       --  Walk every protocol entry. The first non-empty one is also
       --  recorded into HC.Client_ALPN for the per-protocol matcher.
       P := 3;  --  AB index of first proto_len byte (1-indexed)
-      while P <= 2 + List_Len loop
-         declare
-            PL : constant N32 := N32 (AB (RBT.Index (P)));
-         begin
-            if PL = 0 then
-               --  RFC 7301 §3.1: empty protocol_name forbidden.
-               OK := False;
-               RFLX_Free (AB);
-               return;
-            end if;
-            if P + PL > 2 + List_Len then
-               --  Truncated entry.
-               OK := False;
-               RFLX_Free (AB);
-               return;
-            end if;
-            if not Saw_First and PL <= N32 (Max_Hostname_Len) then
-               HC.Client_ALPN.Len := Natural (PL);
-               for I in 1 .. Natural (PL) loop
-                  HC.Client_ALPN.Data (I) :=
-                     Character'Val (AB (RBT.Index (P + N32 (I))));
-               end loop;
-               Saw_First := True;
-            end if;
-            P := P + 1 + PL;
-         end;
-      end loop;
+      declare
+         Iter_Count : N32 := 0;
+         Cap        : constant N32 :=
+            HC.Cfg.DoS_Caps.Max_ALPN_Protocols;
+      begin
+         while P <= 2 + List_Len and then Iter_Count < Cap loop
+            declare
+               PL : constant N32 := N32 (AB (RBT.Index (P)));
+            begin
+               if PL = 0 then
+                  --  RFC 7301 §3.1: empty protocol_name forbidden.
+                  OK := False;
+                  RFLX_Free (AB);
+                  return;
+               end if;
+               if P + PL > 2 + List_Len then
+                  --  Truncated entry.
+                  OK := False;
+                  RFLX_Free (AB);
+                  return;
+               end if;
+               if not Saw_First and PL <= N32 (Max_Hostname_Len) then
+                  HC.Client_ALPN.Len := Natural (PL);
+                  for I in 1 .. Natural (PL) loop
+                     HC.Client_ALPN.Data (I) :=
+                        Character'Val (AB (RBT.Index (P + N32 (I))));
+                  end loop;
+                  Saw_First := True;
+               end if;
+               P := P + 1 + PL;
+            end;
+            Iter_Count := Iter_Count + 1;
+         end loop;
+      end;
+      --  DoS_Caps.Max_ALPN_Protocols bounds the walk. We already
+      --  captured the FIRST protocol name (which is what the
+      --  per-protocol matcher uses for echo), so entries past the
+      --  cap are silently dropped without losing primary semantics.
       RFLX_Free (AB);
    end Parse_ALPN_Extension;
 
@@ -1076,6 +1108,13 @@ is
                      return;
                   end if;
                   --  Walk the entries (name_type[1] + name_len[2]+name).
+                  --  Capture the first HostName (name_type=0 per RFC
+                  --  6066 §3) into HC.Peer_SNI for downstream SNI
+                  --  cert selection. RFC 6066 says future name_types
+                  --  may exist — we ignore anything that isn't
+                  --  HostName, and we record only the FIRST HostName
+                  --  even though the spec permits multiple (modern
+                  --  clients send exactly one).
                   declare
                      P : N32 := 2;
                   begin
@@ -1083,6 +1122,7 @@ is
                         pragma Loop_Invariant
                           (P >= 2 and P + 3 <= DLen);
                         declare
+                           Name_Type : constant Byte := Ext_Data (P);
                            Name_Len : constant N32 :=
                               N32 (Ext_Data (P + 1)) * 256
                               + N32 (Ext_Data (P + 2));
@@ -1090,6 +1130,20 @@ is
                            if P + 3 + Name_Len > DLen then
                               OK := False;
                               return;
+                           end if;
+                           --  RFC 6066 §3: HostName = 0.
+                           if Name_Type = 0
+                             and then HC.Peer_SNI.Len = 0
+                             and then Name_Len > 0
+                             and then Name_Len <= N32 (Max_Hostname_Len)
+                           then
+                              HC.Peer_SNI.Len := Natural (Name_Len);
+                              for I in N32 range 0 .. Name_Len - 1 loop
+                                 HC.Peer_SNI.Data
+                                   (HC.Peer_SNI.Data'First + Natural (I)) :=
+                                   Character'Val
+                                     (Natural (Ext_Data (P + 3 + I)));
+                              end loop;
                            end if;
                            P := P + 3 + Name_Len;
                         end;
@@ -1391,11 +1445,15 @@ is
 
       declare
          Suites_Ctx : RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
+         Iter_Count : N32 := 0;
+         Cap        : constant N32 :=
+            HC.Cfg.DoS_Caps.Max_Cipher_Suites;
       begin
          Switch_To_Cipher_Suites_TLS (Ctx, Suites_Ctx);
 
          while RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Element
                  (Suites_Ctx)
+           and then Iter_Count < Cap
          loop
             pragma Loop_Invariant
               (RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Buffer (Suites_Ctx)
@@ -1423,7 +1481,13 @@ is
                RFLX.TLS_Handshake.Cipher_Suites_TLS.Update
                  (Suites_Ctx, Suite_Ctx);
             end;
+            Iter_Count := Iter_Count + 1;
          end loop;
+
+         --  RFC-defensive cap (DoS_Caps.Max_Cipher_Suites): drop
+         --  further entries silently. Client sends suites in priority
+         --  order; selecting from the first N still picks the best
+         --  mutual suite for any legitimate client.
 
          Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
       end;

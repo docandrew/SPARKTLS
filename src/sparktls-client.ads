@@ -56,20 +56,32 @@ is
    --  Sets Mode_WebPKI, Purpose_Server, and the default cipher suite.
    --  After Configure, the caller should drain and send the ClientHello.
    procedure Configure
-     (S        : out Session;
-      Hostname : String;
-      Trust    : Trust_Store_Access;
-      Random   : Random_Bytes_Fn;
-      Clock    : Get_Time_Fn;
-      Local    : Identity_Access := null;
-      Mode     : Validation_Mode := Mode_WebPKI;
-      ALPN     : String := "";
-      Versions : Version_Policy := Allow_Both;
-      Resume   : Session_Ticket := (others => <>))
+     (S                    : out Session;
+      Hostname             : String;
+      Trust                : Trust_Store_Access;
+      Random               : Random_Bytes_Fn;
+      Clock                : Get_Time_Fn;
+      Local                : Identity_Access := null;
+      Mode                 : Validation_Mode := Mode_WebPKI;
+      ALPN                 : String := "";
+      Versions             : Version_Policy := Allow_Both;
+      Resume               : Session_Ticket := (others => <>);
+      Skip_Verify          : Boolean := False;
+      Skip_Hostname_Verify : Boolean := False)
    with Pre  => Random /= null and Clock /= null,
         Post => S.State = Client_Hello_Sent and
                 S.Role = Role_Client and
                 Output_Pending (S) > 0;
+   --  Skip_Verify: skip full X.509 chain validation against Trust
+   --  (development / self-signed certs). Hostname binding (§6.4) is
+   --  NOT affected by this flag — set Skip_Hostname_Verify to opt
+   --  out of hostname binding as well.
+   --
+   --  Skip_Hostname_Verify: skip RFC 6125 §6.4 SAN/CN matching even
+   --  when Hostname is non-empty. The usual opt-out is to pass
+   --  Hostname => ""; this flag is for callers that need SNI on the
+   --  wire (Hostname-derived) but explicitly don't want the cert
+   --  bound to it (rare; e.g. trust-on-first-use schemes).
    --  ALPN (RFC 7301): the protocol name to offer in the
    --  application_layer_protocol_negotiation extension. Empty
    --  string means no ALPN extension is sent. Single protocol
