@@ -280,6 +280,47 @@ is
             end;
          end if;
 
+         --  RFC 5077 §3.4 client-side resumption detection.
+         --  When ticket-based resumption is offered and the server
+         --  ACCEPTS it, the server's flight is SH → CCS → Finished —
+         --  no Cert / SKE / SHD. RFC 5077 mandates fresh session_ids
+         --  on both sides, so we cannot use the session_id match
+         --  signal from RFC 5246 §7.4.1.3. The only reliable detection
+         --  point is: CCS arrives right after SH (no intervening
+         --  Certificate). When we see that and the prerequisites
+         --  hold (we offered a ticket, have a cached master_secret,
+         --  and the suite matches), enter the resumed-handshake state:
+         --  derive AEAD keys from the cached master_secret + the new
+         --  randoms, mark CKE_Received_12 + CCS_Received so the
+         --  dispatcher advances to Process_Server_Finished.
+         if Rec.Content = Records.Content_Change_Cipher_Spec
+           and then not HC.TLS12_Resuming
+           and then HC.TLS12_Sent_Ticket_Ext
+           and then HC.Cfg.TLS12_Resume_Ticket.Valid
+           and then HC.Cfg.TLS12_Resume_Ticket.Suite = S.Negotiated_Suite_12
+         then
+            declare
+               CCS_Pos     : constant N32 :=
+                  S.Input.Read_Pos + Rec.Fragment_Pos;
+               CCS_Byte_OK : constant Boolean :=
+                  Rec.Fragment_Len = 1
+                  and then S.Input.Data (CCS_Pos) = 16#01#;
+            begin
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               if not CCS_Byte_OK then
+                  Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  return;
+               end if;
+            end;
+            HC.TLS12_Resuming := True;
+            HC.Master_Secret_12 :=
+               HC.Cfg.TLS12_Resume_Ticket.Master_Secret;
+            Derive_Keys_Resumed_12 (S, HC);
+            HC.CKE_Received_12 := True;
+            HC.CCS_Received    := True;
+            Result := OK; return;
+         end if;
+
          if Rec.Content /= Records.Content_Handshake then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Result := OK; return;

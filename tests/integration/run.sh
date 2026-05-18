@@ -523,6 +523,39 @@ else
 fi
 
 # ===================================================================
+# TLS 1.2 client-side ticket resumption (RFC 5077): two-connection
+# round-trip with SPARKTLS as the client and openssl s_server as the
+# peer. Connection 1 is a full handshake; we capture the issued
+# session_ticket via Client.Get_TLS12_Ticket. Connection 2 carries
+# that ticket back in the CH session_ticket extension; openssl
+# accepts and we complete the abbreviated handshake (SH → CCS →
+# Finished, no Cert/SKE/SHD).
+# ===================================================================
+echo ""
+echo "--- TLS 1.2 ticket resumption: SPARKTLS client → openssl s_server ---"
+RESUME_TEST=/home/doc/git/tls_proj/sparktls/bin/examples/tls12_resume_test
+if [ ! -x "$RESUME_TEST" ]; then
+    echo "  (skipped — tls12_resume_test not built)"
+else
+    cleanup
+    openssl s_server -accept 0:$PORT \
+        -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" -tls1_2 \
+        -cipher ECDHE-RSA-AES128-GCM-SHA256 -www -quiet \
+        > /tmp/tls12_cli_resume_srv.log 2>&1 &
+    wait_for_port
+
+    output=$(timeout 10 "$RESUME_TEST" \
+                -host 127.0.0.1 -port $PORT 2>&1)
+    cleanup
+    if echo "$output" | grep -q "PASS: resumption succeeded"; then
+        pass "TLS 1.2 ticket resumption (SPARKTLS client → openssl)"
+    else
+        fail "TLS 1.2 ticket resumption (SPARKTLS client → openssl)"
+        echo "$output" | sed 's/^/    /' | head -10
+    fi
+fi
+
+# ===================================================================
 # HelloRetryRequest — RFC 8446 §4.1.4. SPARKTLS server, openssl
 # client offers key_share for an unsupported group (secp521r1) but
 # lists X25519 in supported_groups. Server MUST respond with HRR

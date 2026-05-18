@@ -2037,7 +2037,19 @@ is
    begin
       case S.State is
          when Connected =>
-            if S.Negotiated_Version = TLS_1_2 then
+            if Output_Pending (S) > 0 then
+               --  Drain queued output (e.g. abbreviated TLS 1.2
+               --  resumption's CCS+Finished) before handing control
+               --  back to the caller.
+               Result := Has_Output;
+            elsif S.Handshake_Just_Done then
+               --  Deliver Handshake_Done exactly once after the
+               --  handshake finished AND all queued output is on the
+               --  wire. The caller relies on this signal to mark the
+               --  connection ready for app data.
+               S.Handshake_Just_Done := False;
+               Result := Handshake_Done;
+            elsif S.Negotiated_Version = TLS_1_2 then
                SPARKTLS.Client.TLS12.Process_Connected_12 (S, Result);
             else
                Process_Connected (S, Result);
