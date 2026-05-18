@@ -454,4 +454,174 @@ is
       end;
    end Build_Certificate_Verify;
 
+   ------------------------------------------------------------------
+   --  RFC 8446 §4.4.2 TLS 1.3 Certificate parser (via RFLX)
+   ------------------------------------------------------------------
+
+   procedure Parse_Certificate_Chain_13
+     (HC                     : in out Handshake_Context;
+      HS_Msg                 : in     Byte_Seq;
+      Reject_Cert_Extensions : in     Boolean;
+      OK                     :    out Boolean;
+      Err                    :    out Error_Code)
+   is
+      package C13 renames RFLX.TLS_Handshake.Certificate;
+      package C13_Entries renames RFLX.TLS_Handshake.Certificate_Entries;
+      package C13_Entry renames RFLX.TLS_Handshake.Certificate_Entry;
+      Body_Len : constant N32 := N32 (HS_Msg'Length) - 4;
+      Buf      : RBT.Bytes_Ptr;
+      Ctx      : C13.Context;
+      Cert_Idx : Natural := 0;
+      Ext_Reject : Boolean := False;
+   begin
+      HC.Peer_Cert_Valid := False;
+      HC.Peer_Int_Count := 0;
+      OK := False;
+      Err := Decode_Error;
+
+      --  Minimum body: ctx_len(1) + cert_list_len(3) = 4 bytes.
+      if Body_Len < 4 then
+         return;
+      end if;
+
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 ..
+                                   HS_Msg'First + 4 + Body_Len - 1));
+      C13.Initialize
+        (Ctx, Buf,
+         Written_Last => RBT.Bit_Length (Body_Len * 8));
+      C13.Verify_Message (Ctx);
+
+      if not C13.Well_Formed_Message (Ctx) then
+         C13.Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
+         return;
+      end if;
+
+      --  Walk certificate entries. Sequence iteration follows the
+      --  RFLX message-sequence pattern: Switch → loop Has_Element →
+      --  Switch / Verify_Message / Update.
+      declare
+         use type RBT.Bit_Length;
+      begin
+         if C13.Field_Size (Ctx, C13.F_Certificate_List) > 0 then
+            declare
+               Entries_Ctx : C13_Entries.Context;
+            begin
+               C13.Switch_To_Certificate_List (Ctx, Entries_Ctx);
+
+               while C13_Entries.Has_Element (Entries_Ctx)
+                 and then Cert_Idx <= Max_Pool_Size
+               loop
+                  declare
+                     E_Ctx : C13_Entry.Context;
+                  begin
+                     C13_Entries.Switch (Entries_Ctx, E_Ctx);
+                     C13_Entry.Verify_Message (E_Ctx);
+
+                     if C13_Entry.Well_Formed_Message (E_Ctx) then
+                        declare
+                           C_Len : constant N32 :=
+                             N32 (C13_Entry.Get_Cert_Data_Length (E_Ctx));
+                           Cert_RFLX : RBT.Bytes
+                                         (1 .. RBT.Index (C_Len));
+                        begin
+                           --  RFC 8446 §4.4.2 per-cert extensions
+                           --  policy check (client only).
+                           if Reject_Cert_Extensions
+                             and then N32
+                               (C13_Entry.Get_Extensions_Length (E_Ctx)) > 0
+                           then
+                              Ext_Reject := True;
+                           end if;
+                           if C_Len > 0
+                             and C_Len <= N32 (Max_Cert_DER)
+                           then
+                              C13_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
+
+                              if Cert_Idx = 0 then
+                                 --  Leaf cert
+                                 HC.Peer_Cert_DER_Len := C_Len;
+                                 for I in N32 range 0 .. C_Len - 1 loop
+                                    HC.Peer_Cert_DER (I) :=
+                                       Byte
+                                         (Cert_RFLX (RBT.Index (I + 1)));
+                                 end loop;
+                                 declare
+                                    Cert_X : X509.Byte_Seq
+                                      (0 .. X509.N32 (C_Len) - 1) :=
+                                        (others => 0);
+                                    P_OK : Boolean;
+                                 begin
+                                    for I in N32 range 0 .. C_Len - 1 loop
+                                       Cert_X (X509.N32 (I)) :=
+                                          X509.Byte
+                                            (Cert_RFLX (RBT.Index (I + 1)));
+                                    end loop;
+                                    X509.Parse
+                                      (Cert_X, HC.Peer_Cert, P_OK);
+                                    HC.Peer_Cert_Valid := P_OK
+                                       and then X509.Is_Valid (HC.Peer_Cert);
+                                 end;
+                              elsif HC.Peer_Int_Count < Max_Pool_Size then
+                                 --  Intermediate cert
+                                 declare
+                                    Idx : constant Natural :=
+                                      HC.Peer_Int_Count;
+                                    Int_X : X509.Byte_Seq
+                                      (0 .. X509.N32 (C_Len) - 1) :=
+                                        (others => 0);
+                                    C   : X509.Certificate;
+                                    P_OK : Boolean;
+                                 begin
+                                    for I in N32 range 0 .. C_Len - 1 loop
+                                       Int_X (X509.N32 (I)) :=
+                                          X509.Byte
+                                            (Cert_RFLX (RBT.Index (I + 1)));
+                                    end loop;
+                                    X509.Parse (Int_X, C, P_OK);
+                                    if P_OK and then X509.Is_Valid (C) then
+                                       HC.Peer_Ints (Idx).Cert := C;
+                                       for I in X509.N32 range
+                                         0 .. X509.N32 (C_Len) - 1
+                                       loop
+                                          HC.Peer_Ints (Idx).DER (I) :=
+                                             X509.Byte
+                                               (Cert_RFLX
+                                                  (RBT.Index (N32 (I) + 1)));
+                                       end loop;
+                                       HC.Peer_Ints (Idx).DER_Len :=
+                                         X509.N32 (C_Len);
+                                       HC.Peer_Ints (Idx).Present := True;
+                                       HC.Peer_Int_Count :=
+                                         HC.Peer_Int_Count + 1;
+                                    end if;
+                                 end;
+                              end if;
+                              Cert_Idx := Cert_Idx + 1;
+                           end if;
+                        end;
+                     end if;
+
+                     C13_Entries.Update (Entries_Ctx, E_Ctx);
+                  end;
+               end loop;
+
+               C13.Update_Certificate_List (Ctx, Entries_Ctx);
+            end;
+         end if;
+      end;
+
+      C13.Take_Buffer (Ctx, Buf);
+      RFLX_Free (Buf);
+
+      if Ext_Reject then
+         OK := False;
+         Err := Unsupported_Extension;
+      else
+         OK := True;
+         Err := No_Error;
+      end if;
+   end Parse_Certificate_Chain_13;
+
 end SPARKTLS.Handshake.Certs;

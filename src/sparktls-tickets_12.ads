@@ -14,8 +14,18 @@
 
 with Interfaces; use Interfaces;
 with SPARKNaCl; use SPARKNaCl;
+with X509;
 
 package SPARKTLS.Tickets_12 is
+
+   --  Convert an X509.Date_Time to seconds since the Unix epoch
+   --  (1970-01-01 00:00:00 UTC). Assumes the input is already UTC
+   --  (no timezone handling). Returns 0 for dates before the epoch.
+   --  Used as the Created_At / Now arguments to Encrypt_Ticket and
+   --  Decrypt_Ticket so the expiry window from Cfg.TLS12_Ticket_Lifetime
+   --  is enforced against real wall-clock time.
+   function To_Unix_Seconds (DT : X509.Date_Time) return Unsigned_64;
+
 
    subtype Bytes_48 is Byte_Seq (0 .. 47);
    subtype Bytes_32 is Byte_Seq (0 .. 31);

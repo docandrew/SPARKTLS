@@ -6,6 +6,7 @@ with Interfaces;           use Interfaces;
 with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Tickets_12;
+with X509;
 
 procedure Test_Tickets_12 is
 
@@ -177,6 +178,30 @@ begin
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), Keys,
                         1_600_000_000, 86400, P_Out, OK);
       Check ("Future-dated ticket → Decrypt fails", not OK);
+   end;
+
+   --  To_Unix_Seconds spot-checks.
+   declare
+      Epoch : constant X509.Date_Time :=
+        (1970, 1, 1, 0, 0, 0);
+      Y2K   : constant X509.Date_Time :=
+        (2000, 1, 1, 0, 0, 0);
+      Now   : constant X509.Date_Time :=
+        (2026, 5, 16, 12, 30, 45);
+      Before : constant X509.Date_Time :=
+        (1969, 12, 31, 23, 59, 59);
+   begin
+      Check ("To_Unix_Seconds: Epoch = 0",
+             T.To_Unix_Seconds (Epoch) = 0);
+      --  2000-01-01 00:00:00 UTC = 946684800 (well-known constant)
+      Check ("To_Unix_Seconds: Y2K = 946684800",
+             T.To_Unix_Seconds (Y2K) = 946_684_800);
+      --  2026-05-16 12:30:45 UTC = 1778934645
+      --  (= 20454 days for years 1970..2025 + 135 days Jan..mid-May)
+      Check ("To_Unix_Seconds: 2026-05-16 12:30:45",
+             T.To_Unix_Seconds (Now) = 1_778_934_645);
+      Check ("To_Unix_Seconds: pre-1970 → 0",
+             T.To_Unix_Seconds (Before) = 0);
    end;
 
    Put_Line ("");

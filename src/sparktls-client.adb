@@ -783,127 +783,28 @@ is
             end if;
             Append_Transcript (HC, Data);
 
-            --  Parse Certificate message: extract leaf + intermediates.
-            --  Format (past HS header at offset 4):
-            --    request_context_len(1) + context +
-            --    cert_list_len(3) + entries...
-            --  Each entry: cert_len(3) + cert_DER + ext_len(2) + exts
-            HC.Peer_Cert_Valid := False;
-            HC.Peer_Int_Count := 0;
-            if Msg_Len > 4 and then N32 (Data'Length) >= 4 + Msg_Len then
-               declare
-                  B   : constant N32 := 4;  --  past HS header
-                  --  Skip request_context (1-byte len + content)
-                  Ctx_Len : constant N32 := N32 (Data (B));
-                  List_Start : constant N32 := B + 1 + Ctx_Len;
-                  Pos : N32;
-                  Cert_Idx : Natural := 0;  --  0 = leaf, 1+ = intermediates
-               begin
-                  if List_Start + 3 <= N32 (Data'Length) then
-                     --  cert_list length (3 bytes)
-                     Pos := List_Start + 3;
-
-                     --  Walk each certificate entry
-                     while Pos + 3 <= N32 (Data'Length)
-                        and then Cert_Idx <= Max_Pool_Size
-                     loop
-                        declare
-                           C_Len : constant N32 :=
-                              N32 (Data (Pos)) * 65536 +
-                              N32 (Data (Pos + 1)) * 256 +
-                              N32 (Data (Pos + 2));
-                        begin
-                           Pos := Pos + 3;
-                           exit when C_Len = 0
-                              or else C_Len > N32 (Max_Cert_DER)
-                              or else Pos + C_Len > N32 (Data'Length);
-
-                           if Cert_Idx = 0 then
-                              --  First entry is the leaf
-                              HC.Peer_Cert_DER_Len := C_Len;
-                              HC.Peer_Cert_DER (0 .. C_Len - 1) :=
-                                 Data (Pos .. Pos + C_Len - 1);
-
-                              declare
-                                 Cert_X : X509.Byte_Seq
-                                    (0 .. X509.N32 (C_Len) - 1) := (others => 0);
-                                 P_OK : Boolean;
-                              begin
-                                 for I in N32 range 0 .. C_Len - 1 loop
-                                    Cert_X (X509.N32 (I)) :=
-                                       X509.Byte (Data (Pos + I));
-                                 end loop;
-                                 X509.Parse (Cert_X, HC.Peer_Cert, P_OK);
-                                 HC.Peer_Cert_Valid := P_OK
-                                    and then X509.Is_Valid (HC.Peer_Cert);
-                              end;
-                           else
-                              --  Subsequent entries are intermediates
-                              if HC.Peer_Int_Count < Max_Pool_Size then
-                                 declare
-                                    Idx : constant Natural :=
-                                       HC.Peer_Int_Count;
-                                    Int_X : X509.Byte_Seq
-                                       (0 .. X509.N32 (C_Len) - 1) := (others => 0);
-                                    C   : X509.Certificate;
-                                    P_OK : Boolean;
-                                 begin
-                                    for I in N32 range 0 .. C_Len - 1 loop
-                                       Int_X (X509.N32 (I)) :=
-                                          X509.Byte (Data (Pos + I));
-                                    end loop;
-                                    X509.Parse (Int_X, C, P_OK);
-                                    if P_OK and then X509.Is_Valid (C) then
-                                       HC.Peer_Ints (Idx).Cert := C;
-                                       for I in X509.N32 range
-                                          0 .. X509.N32 (C_Len) - 1
-                                       loop
-                                          HC.Peer_Ints (Idx).DER (I) :=
-                                             X509.Byte (Data (Pos + N32 (I)));
-                                       end loop;
-                                       HC.Peer_Ints (Idx).DER_Len :=
-                                          X509.N32 (C_Len);
-                                       HC.Peer_Ints (Idx).Present := True;
-                                       HC.Peer_Int_Count :=
-                                          HC.Peer_Int_Count + 1;
-                                    end if;
-                                 end;
-                              end if;
-                           end if;
-
-                           Pos := Pos + C_Len;
-                           Cert_Idx := Cert_Idx + 1;
-
-                           --  RFC 8446 §4.4.2: each cert entry is
-                           --  followed by a CertificateEntry-scoped
-                           --  extensions block. The only ext the
-                           --  server is allowed to put here is one
-                           --  the client requested via the matching
-                           --  CH extension (status_request,
-                           --  signed_certificate_timestamp, etc.).
-                           --  We don't request any per-cert
-                           --  extensions, so any non-empty entry is
-                           --  fatal `unsupported_extension`. BoGo's
-                           --  SendUnknownExtensionOnCertificate-TLS13
-                           --  exercises this.
-                           exit when Pos + 2 > N32 (Data'Length);
-                           declare
-                              Ext_Len : constant N32 :=
-                                 N32 (Data (Pos)) * 256 +
-                                 N32 (Data (Pos + 1));
-                           begin
-                              if Ext_Len > 0 then
-                                 Send_HS_Encrypted_Alert
-                                   (S, HC, Unsupported_Extension, Result);
-                                 return;
-                              end if;
-                              Pos := Pos + 2 + Ext_Len;
-                           end;
-                        end;
-                     end loop;
-                  end if;
-               end;
-            end if;
+            --  Parse Certificate message via the shared RFLX helper.
+            --  Reject_Cert_Extensions=True enforces RFC 8446 §4.4.2:
+            --  the server may only echo per-cert extensions the client
+            --  requested via the matching CH extension (status_request,
+            --  signed_certificate_timestamp, etc.); we request none,
+            --  so any non-empty entry is fatal `unsupported_extension`
+            --  (BoGo SendUnknownExtensionOnCertificate-TLS13).
+            declare
+               Parse_OK  : Boolean;
+               Parse_Err : Error_Code;
+            begin
+               Handshake.Certs.Parse_Certificate_Chain_13
+                 (HC                     => HC,
+                  HS_Msg                 => Data,
+                  Reject_Cert_Extensions => True,
+                  OK                     => Parse_OK,
+                  Err                    => Parse_Err);
+               if not Parse_OK then
+                  Send_HS_Encrypted_Alert (S, HC, Parse_Err, Result);
+                  return;
+               end if;
+            end;
 
             --  Chain validation (if trust store is configured)
             if not HC.Cfg.Skip_Verify
@@ -1985,6 +1886,25 @@ is
                            Derive_Handshake_Keys (S, HC);
                            Set_State (S, Wait_Encrypted_Extensions);
                         else
+                           --  RFC 5077 §3.4 client-side resume detection.
+                           --  If we sent a session_ticket ext AND the
+                           --  server echoed it AND we have a cached
+                           --  ticket AND the suites match — we're in
+                           --  the abbreviated handshake. Install the
+                           --  cached master_secret + flag for the
+                           --  TLS 1.2 flight machinery to skip Cert/
+                           --  SKE/Done waiting and route NST → server
+                           --  CCS+Finished → our CCS+Finished.
+                           if HC.TLS12_Sent_Ticket_Ext
+                             and then HC.TLS12_Server_Will_Issue
+                             and then HC.Cfg.TLS12_Resume_Ticket.Valid
+                             and then HC.Cfg.TLS12_Resume_Ticket.Suite
+                                        = S.Negotiated_Suite_12
+                           then
+                              HC.TLS12_Resuming := True;
+                              HC.Master_Secret_12 :=
+                                 HC.Cfg.TLS12_Resume_Ticket.Master_Secret;
+                           end if;
                            Set_State (S, Wait_Server_Finished);
                         end if;
                         Result := OK;

@@ -49,8 +49,13 @@ is
       ALPN                  : String := "";
       Versions              : Version_Policy := Allow_Both;
       TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
-      TLS12_Ticket_Lifetime : Unsigned_32 := 3600)
+      TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
+      Get_Time              : Get_Time_Fn := null)
    with SPARK_Mode => Off;
+   --  Get_Time: optional UTC wall-clock callback. Required for
+   --  TLS 1.2 session-ticket expiry enforcement (without it the
+   --  Decrypt_Ticket path skips the age window check). Also used
+   --  by X.509 chain validation for notBefore / notAfter.
    --  Note: 0-RTT (RFC 8446 §2.3 / §4.2.10) is intentionally not
    --  supported on either side. NST omits the early_data extension,
    --  EE never echoes it, and any client that speculatively sends

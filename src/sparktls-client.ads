@@ -183,4 +183,15 @@ is
    function Get_Session_Ticket (S : Session) return Session_Ticket is
       (S.Ticket);
 
+   --  RFC 5077 §3.3 TLS 1.2 session ticket extraction. Mirror of the
+   --  TLS 1.3 PSK pair above. The TLS 1.2 server populates this
+   --  field via NewSessionTicket; callers persist it across
+   --  connections and inject into the next Config.TLS12_Resume_Ticket
+   --  to attempt abbreviated resumption.
+   function Has_TLS12_Ticket (S : Session) return Boolean is
+      (S.TLS12_New_Ticket.Valid);
+
+   function Get_TLS12_Ticket (S : Session) return Session_Ticket_12 is
+      (S.TLS12_New_Ticket);
+
 end SPARKTLS.Client;

@@ -975,7 +975,11 @@ is
    --  meaningful state for resumption is Master_Secret + Suite.
    --================================================================
 
-   Max_TLS12_Ticket_Len : constant := 512;
+   Max_TLS12_Ticket_Len : constant := 2048;
+   --  RFC 5077 allows up to 2^16-1 bytes, but practical tickets are
+   --  much smaller. OpenSSL's default is 1024 bytes (full session
+   --  state + GCM tag); BoringSSL ~256 bytes. 2048 covers all
+   --  observed implementations with margin.
 
    type Session_Ticket_12 is record
       Ticket        : Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1)
@@ -1878,6 +1882,7 @@ is
      (Tag_Is_Offered_Static (Tag)
       or else (Tag = 16#0000# and then HC.Cfg.Server_Name.Len > 0)
       or else (Tag = 16#0010# and then HC.Cfg.ALPN.Len > 0)
+      or else (Tag = 16#0023# and then HC.TLS12_Sent_Ticket_Ext)
       or else (Tag = 16#0029# and then HC.PSK_Offered)
       or else (Tag = 16#002A# and then HC.Early_Data_Offered));
 
@@ -1932,8 +1937,16 @@ is
       --  Peer certificate valid (copied from HC before free)
       Peer_Cert_Valid : Boolean := False;
 
-      --  Resumption: cached session ticket (client side)
+      --  Resumption: cached session ticket (client side, TLS 1.3 PSK)
       Ticket : Session_Ticket;
+
+      --  Resumption: cached session ticket (client side, TLS 1.2 RFC 5077).
+      --  Populated by the TLS 1.2 client when it receives a
+      --  NewSessionTicket message. The caller extracts via
+      --  Client.Get_TLS12_Ticket / Client.Has_TLS12_Ticket and can
+      --  inject into the next Config.TLS12_Resume_Ticket for a
+      --  follow-up abbreviated handshake.
+      TLS12_New_Ticket : Session_Ticket_12;
 
       --  Resumption: snapshot of HC.Using_PSK captured before the
       --  handshake context is freed. The Advance loop nulls HC_Ptr

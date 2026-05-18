@@ -61,4 +61,52 @@ is
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
 
+   --  RFC 8446 §4.4.2 TLS 1.3 Certificate parser. Replaces the
+   --  hand-rolled cert chain walker that previously lived (in
+   --  near-identical form) at the TLS 1.3 server's Wait_Client_Certificate
+   --  arm and at the TLS 1.3 client's HT_Certificate dispatch.
+   --
+   --  Takes the COMPLETE handshake message bytes (4-byte HS header +
+   --  body). Validates the wire structure via
+   --  RFLX.TLS_Handshake.Certificate (cert_request_context length-prefixed
+   --  + cert_list_length + sequence of CertificateEntry, each
+   --  cert_data_length + cert_data + per-cert extensions). Each cert's
+   --  DER bytes are then passed to X509.Parse — the wire-parsing and
+   --  cert-content-parsing layers stay distinct.
+   --
+   --  On success: HC.Peer_Cert holds the leaf cert (if parseable),
+   --  HC.Peer_Cert_DER + HC.Peer_Cert_DER_Len hold its DER bytes,
+   --  HC.Peer_Ints (0 .. HC.Peer_Int_Count - 1) hold parseable
+   --  intermediates, HC.Peer_Cert_Valid reflects whether the leaf
+   --  parsed AND `X509.Is_Valid` is true. OK := True.
+   --
+   --  On any wire-format error (malformed RFLX message, length-field
+   --  mismatch): OK := False. HC.Peer_Cert_Valid := False.
+   --
+   --  Per-cert X509.Parse failures and intermediate-pool-overflow
+   --  do NOT set OK := False — that matches the prior hand-rolled
+   --  behavior (let the caller decide what to do with an unparseable
+   --  leaf based on HC.Peer_Cert_Valid + chain-validation policy).
+   --  Reject_Cert_Extensions: TLS 1.3 §4.4.2 / BoGo
+   --  SendUnknownExtensionOnCertificate-TLS13. Set True on the client
+   --  side: the server MAY echo only per-cert extensions the client
+   --  requested via the matching CH extension (status_request,
+   --  signed_certificate_timestamp, etc.); we request none, so any
+   --  non-empty entry is a fatal `unsupported_extension`. Set False
+   --  on the server side: we tolerate extensions the client may have
+   --  bundled (the server doesn't currently policy them).
+   --
+   --  Err is meaningful only when OK = False:
+   --    Decode_Error           — wire format malformed
+   --    Unsupported_Extension  — Reject_Cert_Extensions was True and
+   --                             a cert entry carried non-empty
+   --                             extensions.
+   procedure Parse_Certificate_Chain_13
+     (HC                     : in out Handshake_Context;
+      HS_Msg                 : in     Byte_Seq;
+      Reject_Cert_Extensions : in     Boolean;
+      OK                     :    out Boolean;
+      Err                    :    out Error_Code)
+   with Pre => HS_Msg'First = 0 and HS_Msg'Length >= 4;
+
 end SPARKTLS.Handshake.Certs;

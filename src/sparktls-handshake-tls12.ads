@@ -407,6 +407,43 @@ is
                    Valid_TLS12_Suite (S.Negotiated_Suite)
                    and HC.Version = TLS_1_2);
 
+   --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket builder.
+   --
+   --  Wire format (body, after the 4-byte HS header):
+   --    ticket_lifetime_hint : uint32  (4 bytes, big-endian seconds)
+   --    ticket               : opaque<0..2^16-1>  (2-byte length + bytes)
+   --
+   --  Emits the complete handshake message: HS header (type=0x04 +
+   --  3-byte length) followed by the body, using the RFLX
+   --  TLS_1_2_New_Session_Ticket builder for the body bytes. On
+   --  success returns the total wire length in Len; on
+   --  insufficient-buffer returns Len = 0.
+   procedure Build_New_Session_Ticket_12
+     (Lifetime_Hint : in     Interfaces.Unsigned_32;
+      Ticket        : in     Byte_Seq;
+      Result        :    out Byte_Seq;
+      Len           :    out N32)
+   with Pre  => Result'First = 0
+                and Ticket'Length <= 65535
+                and N32 (Result'Length) >= 10 + N32 (Ticket'Length),
+        Post => Len <= Result'Length;
+
+   --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket parser.
+   --
+   --  Takes the BODY bytes (HS header already stripped). On success,
+   --  OK := True; Lifetime_Hint and Ticket_Len out-params are set;
+   --  the caller copies Body (6 .. 6 + Ticket_Len - 1) for the ticket
+   --  bytes. On any structural error, OK := False (caller fails the
+   --  handshake with Decode_Error).
+   procedure Parse_New_Session_Ticket_12
+     (NST_Body      : in     Byte_Seq;
+      Lifetime_Hint :    out Interfaces.Unsigned_32;
+      Ticket_Len    :    out N32;
+      OK            :    out Boolean)
+   with Pre => NST_Body'First = 0,
+        Post => (if OK then Ticket_Len <= N32 (NST_Body'Length)
+                          and Ticket_Len + 6 = N32 (NST_Body'Length));
+
    --  RFC 5246 §7.4.2: Build TLS 1.2 Certificate message.
    --
    --  TLS 1.2 format (no certificate_request_context, no per-cert extensions):

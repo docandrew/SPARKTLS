@@ -5,7 +5,53 @@ AdaCore's [RecordFlux project](https://github.com/AdaCore/RecordFlux)
 (`examples/specs/`), which is licensed under Apache-2.0. See `../NOTICE`
 for the full attribution.
 
-All specs are **byte-identical** to upstream except for the change below.
+All specs are **byte-identical** to upstream except for the changes below.
+
+## tls_handshake.rflx — TLS 1.2 compatibility messages (added)
+
+**Upstream** models TLS 1.3 / DTLS 1.3 only. A complete TLS implementation
+also has to handle TLS 1.2 on the wire (RFC 8446 §D allows negotiation
+down from 1.3 to 1.2, and real-world peers still default to 1.2).
+
+**Our change**: a new "TLS 1.2 Compatibility Messages" section appended
+after the `Key_Update` refinements (before "Server Name Indication
+Extension"), declaring three standalone messages:
+
+- `TLS_1_2_New_Session_Ticket` — RFC 5077 §3.3 wire format. Distinct
+  from the existing TLS 1.3 `New_Session_Ticket` because the 1.2 form
+  has no `ticket_age_add`, no `ticket_nonce`, and no `extensions`
+  field. Shares Handshake tag 4 with the 1.3 form, so cannot use a
+  `for TLS_Handshake use (Payload => ...)` refinement (RFLX forbids
+  duplicate tag refinements); the caller dispatches on protocol
+  version.
+
+- `TLS_1_2_Server_Key_Exchange_ECDHE` — RFC 8422 §5.4 wire format for
+  the named-curve form. Models the `curve_type = named_curve` branch
+  only (a `then ... if Curve_Type = Named_Curve` clause excludes the
+  explicit-prime / explicit-char2 variants, which are MUST-NOT for
+  modern TLS 1.2). Uses `Tls_Parameters::TLS_SignatureScheme` for the
+  digitally-signed-struct algorithm field since the 1.2 {hash,sig}
+  pair and the 1.3 SignatureScheme uint16 share the same wire
+  encoding.
+
+- `TLS_1_2_Client_Key_Exchange_ECDHE` — RFC 5246 §7.4.7 + RFC 8422
+  §5.7 wire format. Only the ECDHE form is modelled; RSA-KX CKE
+  (`EncryptedPreMasterSecret`) is intentionally omitted because we
+  do not advertise rsa_static cipher suites.
+
+**Why**: extending the spec is preferable to hand-rolling these
+messages in SPARK Ada (which we previously did in
+`sparktls-handshake-tls12.adb`). RFLX gives us free length-bound
+proofs, dispatch-on-curve-type validation, and a single source of
+truth for the wire format.
+
+All three messages are declared standalone (no `for TLS_Handshake
+use (Payload => ...) if Tag = ...` clause) to keep this deviation
+contained to one file — adding the missing TLS 1.2 handshake-type
+literals (`Server_Key_Exchange => 12`, `Client_Key_Exchange => 16`)
+to `tls_parameters.rflx`'s `TLS_HandshakeType` would be required for
+refinements but is not strictly necessary; the caller handles
+dispatch already based on the parsed handshake header.
 
 ## tls_handshake.rflx — `Tls_Extension_TLS` Tag constraint
 

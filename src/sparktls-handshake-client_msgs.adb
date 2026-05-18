@@ -148,19 +148,17 @@ is
       Cookie_Ext_Len   : constant N32 :=
         (if Cookie_Bytes_Len > 0 then 4 + Cookie_Data_Len else 0);
 
-      --  RFC 5077 session_ticket extension (TLS 1.2 only — TLS 1.3
-      --  uses pre_shared_key instead). Three states:
-      --    * Versions = TLS_1_3_Only         → don't emit
-      --    * TLS 1.2 allowed, no cache       → emit empty body
-      --                                        ("I support tickets")
-      --    * TLS 1.2 allowed, valid cache    → emit with ticket bytes
-      --                                        ("resume this session")
+      --  RFC 5077 session_ticket (TLS 1.2) — emit on the wire.
+      --  CH_Extension_TLS is unconstrained on tag (see specs/
+      --  CHANGES_FROM_UPSTREAM.md), so Append_Element with tag 0x0023
+      --  produces the correct bytes. Empty data on initial CH
+      --  ("I support tickets but have none yet"); on resumption, the
+      --  previously-issued ticket bytes go in the data field.
       Offer_TLS12_Ticket : constant Boolean :=
-         HC.Cfg.Versions /= TLS_1_3_Only;
+        HC.Cfg.Versions in TLS_1_2_Only | Allow_Both;
       TLS12_Ticket_Data_Len : constant N32 :=
         (if Offer_TLS12_Ticket
            and then HC.Cfg.TLS12_Resume_Ticket.Valid
-           and then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len in 1 .. 512
          then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
          else 0);
       TLS12_Ticket_Ext_Len : constant N32 :=
@@ -182,16 +180,8 @@ is
       --  TLS 1.3-specific; sending the random 32 bytes from a TLS
       --  1.2-only client leaks "speaks TLS 1.3"). BoGo
       --  TLS12NoSessionID-TLS13.
-      --  RFC 5077 §3.4: a client offering a session_ticket resume
-      --  SHOULD send a non-empty session_id so the server can echo
-      --  it back as a resumption acknowledgement. For TLS_1_2_Only
-      --  without a cached ticket we still send empty SID (to avoid
-      --  the "speaks TLS 1.3" leak — see comment above).
       Session_ID_Len : constant N32 :=
-        (if HC.Cfg.Versions = TLS_1_2_Only
-           and then not HC.Cfg.TLS12_Resume_Ticket.Valid
-         then 0
-         else 32);
+        (if HC.Cfg.Versions = TLS_1_2_Only then 0 else 32);
 
       --  RFC 7685: F5 firewall workaround. If the CH would otherwise
       --  land in the 256..511 "danger zone", append a padding
@@ -778,9 +768,8 @@ is
          end if;
 
          --  Extension 8b (conditional): RFC 5077 session_ticket (0x0023).
-         --  TLS 1.2 only. Empty body advertises support; non-empty
-         --  body presents a cached ticket for resume attempt. Skip
-         --  entirely on TLS_1_3_Only since TLS 1.3 uses pre_shared_key.
+         --  TLS 1.2 only. Emitted via the RFLX CH_Extension_TLS API —
+         --  same pattern as the other extensions above.
          if Offer_TLS12_Ticket then
             declare
                Ext_Buf : RBT.Bytes_Ptr;
@@ -791,32 +780,26 @@ is
                RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
                  (Ext_Ctx, Ext_Buf);
                RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-                 (Ext_Ctx,
-                  RFLX.Tls_Extensiontype_Values.Session_Ticket);
+                 (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Session_Ticket);
                RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
                  (Ext_Ctx,
                   RFLX.TLS_Handshake.Data_Length (TLS12_Ticket_Data_Len));
                if TLS12_Ticket_Data_Len > 0 then
-                  declare
-                     Bytes : Byte_Seq (0 .. TLS12_Ticket_Data_Len - 1)
-                                := (others => 0);
-                  begin
-                     Bytes := HC.Cfg.TLS12_Resume_Ticket.Ticket
-                                (0 .. TLS12_Ticket_Data_Len - 1);
-                     RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-                       (Ext_Ctx, To_RFLX (Bytes));
-                  end;
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
+                    (Ext_Ctx,
+                     To_RFLX
+                       (HC.Cfg.TLS12_Resume_Ticket.Ticket
+                          (0 .. TLS12_Ticket_Data_Len - 1)));
                else
-                  RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Empty
-                    (Ext_Ctx);
+                  RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Empty (Ext_Ctx);
                end if;
                RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
                  (Exts_Ctx, Ext_Ctx);
                RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
                  (Ext_Ctx, Ext_Buf);
                RFLX_Free (Ext_Buf);
-               HC.TLS12_Sent_Ticket_Ext := True;
             end;
+            HC.TLS12_Sent_Ticket_Ext := True;
          end if;
 
          --  Extension 9 (conditional): padding (RFC 7685, tag 0x0015).

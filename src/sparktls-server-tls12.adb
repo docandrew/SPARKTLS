@@ -188,13 +188,27 @@ is
          declare
             Plain : SPARKTLS.Tickets_12.Ticket_Plain;
             OK    : Boolean;
+            --  RFC 5077 §5.6 expiry: with a clock callback we enforce
+            --  Cfg.TLS12_Ticket_Lifetime as the hard maximum age. No
+            --  clock → degrade to "no expiry check" (still safe
+            --  because the encrypted ticket integrity is unaffected,
+            --  but operators MUST supply Cfg.Get_Time in production).
+            Now : constant Unsigned_64 :=
+              (if HC.Cfg.Get_Time /= null
+               then SPARKTLS.Tickets_12.To_Unix_Seconds
+                      (HC.Cfg.Get_Time.all)
+               else 0);
+            Max_Age : constant Unsigned_32 :=
+              (if HC.Cfg.Get_Time /= null
+               then HC.Cfg.TLS12_Ticket_Lifetime
+               else 0);
          begin
             SPARKTLS.Tickets_12.Decrypt_Ticket
               (Ticket  => HC.TLS12_Peer_Ticket
                             (0 .. HC.TLS12_Peer_Ticket_Len - 1),
                Keys    => HC.Cfg.TLS12_Ticket_Keys.all,
-               Now     => 0,    --  TODO: wire Cfg.Get_Time → Unix
-               Max_Age => 0,    --  0 = no expiry check (paired with Now=0)
+               Now     => Now,
+               Max_Age => Max_Age,
                Plain   => Plain,
                Status  => OK);
             if OK
@@ -551,12 +565,15 @@ is
          NST_Buf    : Byte_Seq (0 .. 271) := (others => 0);
          NST_Total  : N32;
          NST_Rec_Out : N32;
-         NST_Hdr_Len : constant N32 := 4 + 4 + 2;
       begin
          Gen_Random (Nonce_Buf);
          Plain.Master_Secret := HC.Master_Secret_12;
          Plain.Suite         := S.Negotiated_Suite;
-         Plain.Created_At    := 0;
+         Plain.Created_At    :=
+           (if HC.Cfg.Get_Time /= null
+            then SPARKTLS.Tickets_12.To_Unix_Seconds
+                   (HC.Cfg.Get_Time.all)
+            else 0);
          Plain.SID_Len       := 0;
          Plain.SID           := (others => 0);
          SPARKTLS.Tickets_12.Encrypt_Ticket
@@ -569,30 +586,15 @@ is
             Ticket     => Ticket_Buf,
             Ticket_Len => Ticket_Len);
 
-         NST_Total := NST_Hdr_Len + Ticket_Len;
-         NST_Buf (0) := 16#04#;
-         declare
-            Body_Len : constant N32 := 4 + 2 + Ticket_Len;
-         begin
-            NST_Buf (1) := Byte (Body_Len / 65536);
-            NST_Buf (2) := Byte ((Body_Len / 256) mod 256);
-            NST_Buf (3) := Byte (Body_Len mod 256);
-         end;
-         NST_Buf (4) :=
-            Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 24)
-                  and 16#FF#);
-         NST_Buf (5) :=
-            Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 16)
-                  and 16#FF#);
-         NST_Buf (6) :=
-            Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 8)
-                  and 16#FF#);
-         NST_Buf (7) :=
-            Byte (HC.Cfg.TLS12_Ticket_Lifetime and 16#FF#);
-         NST_Buf (8) := Byte (Ticket_Len / 256);
-         NST_Buf (9) := Byte (Ticket_Len mod 256);
-         NST_Buf (10 .. 10 + Ticket_Len - 1) :=
-            Ticket_Buf (0 .. Ticket_Len - 1);
+         SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12
+           (Lifetime_Hint => HC.Cfg.TLS12_Ticket_Lifetime,
+            Ticket        => Ticket_Buf (0 .. Ticket_Len - 1),
+            Result        => NST_Buf,
+            Len           => NST_Total);
+         if NST_Total = 0 then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
 
          Append_Transcript (HC, NST_Buf (0 .. NST_Total - 1));
 
@@ -1225,20 +1227,26 @@ is
                Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
                Ticket_Buf : Byte_Seq (0 .. 255) := (others => 0);
                Ticket_Len : N32;
-               NST_Hdr_Len : constant N32 := 4 + 4 + 2;  --  hs+life+tlen
                NST_Buf    : Byte_Seq (0 .. 271) := (others => 0);
                NST_Total  : N32;
                NST_Rec_Out : N32;
             begin
                HC.Cfg.Random.all (Nonce_Buf);
 
-               --  Ticket plaintext = master_secret + suite + 0 (no
-               --  time source) + sid_len=0 (we don't encode the SID
-               --  in the encrypted state; clients echo their own SID
-               --  on resumption attempts).
+               --  Ticket plaintext = master_secret + suite + creation
+               --  time + sid_len=0 (we don't encode the SID in the
+               --  encrypted state; clients echo their own SID on
+               --  resumption attempts). Created_At drives the
+               --  expiry check on the decrypt side; without
+               --  Cfg.Get_Time we encode 0 and Decrypt_Ticket skips
+               --  the age window check (acceptable for dev / test).
                Plain.Master_Secret := HC.Master_Secret_12;
                Plain.Suite         := S.Negotiated_Suite_12;
-               Plain.Created_At    := 0;
+               Plain.Created_At    :=
+                 (if HC.Cfg.Get_Time /= null
+                  then SPARKTLS.Tickets_12.To_Unix_Seconds
+                         (HC.Cfg.Get_Time.all)
+                  else 0);
                Plain.SID_Len       := 0;
                Plain.SID           := (others => 0);
 
@@ -1255,37 +1263,18 @@ is
                   Ticket     => Ticket_Buf,
                   Ticket_Len => Ticket_Len);
 
-               --  Build NewSessionTicket handshake message:
-               --    type(1)=4 + len(3) + lifetime_hint(4) +
-               --    ticket_len(2) + ticket(N)
-               NST_Total := NST_Hdr_Len + Ticket_Len;
-               NST_Buf (0) := 16#04#;
-               --  body length = lifetime(4) + ticket_len(2) + ticket(N)
-               declare
-                  Body_Len : constant N32 := 4 + 2 + Ticket_Len;
-               begin
-                  NST_Buf (1) := Byte (Body_Len / 65536);
-                  NST_Buf (2) := Byte ((Body_Len / 256) mod 256);
-                  NST_Buf (3) := Byte (Body_Len mod 256);
-               end;
-               --  lifetime_hint (4 bytes, big-endian seconds)
-               NST_Buf (4) :=
-                  Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 24)
-                        and 16#FF#);
-               NST_Buf (5) :=
-                  Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 16)
-                        and 16#FF#);
-               NST_Buf (6) :=
-                  Byte (Shift_Right (HC.Cfg.TLS12_Ticket_Lifetime, 8)
-                        and 16#FF#);
-               NST_Buf (7) :=
-                  Byte (HC.Cfg.TLS12_Ticket_Lifetime and 16#FF#);
-               --  ticket_len (2 bytes)
-               NST_Buf (8) := Byte (Ticket_Len / 256);
-               NST_Buf (9) := Byte (Ticket_Len mod 256);
-               --  ticket bytes
-               NST_Buf (10 .. 10 + Ticket_Len - 1) :=
-                  Ticket_Buf (0 .. Ticket_Len - 1);
+               --  Build NewSessionTicket handshake message via RFLX.
+               SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12
+                 (Lifetime_Hint => HC.Cfg.TLS12_Ticket_Lifetime,
+                  Ticket        => Ticket_Buf (0 .. Ticket_Len - 1),
+                  Result        => NST_Buf,
+                  Len           => NST_Total);
+               if NST_Total = 0 then
+                  S.Last_Error := Insufficient_Buffer;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
 
                --  Append to transcript BEFORE server Finished hash.
                Append_Transcript (HC, NST_Buf (0 .. NST_Total - 1));

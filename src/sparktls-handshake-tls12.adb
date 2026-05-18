@@ -22,6 +22,9 @@ with RFLX.RFLX_Types;
 with RFLX.TLS_Handshake.Server_Hello;
 with RFLX.TLS_Handshake.SH_Extensions_TLS;
 with RFLX.TLS_Handshake.SH_Extension_TLS;
+with RFLX.TLS_Handshake.TLS_1_2_New_Session_Ticket;
+with RFLX.TLS_Handshake.TLS_1_2_Server_Key_Exchange_ECDHE;
+with RFLX.TLS_Handshake.TLS_1_2_Client_Key_Exchange_ECDHE;
 with RFLX.TLS_Common;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
@@ -513,119 +516,120 @@ is
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
-      B   : constant N32 := Data'First;
-      Pos : N32 := B;
-      Curve : Unsigned_16;
-      Pt_Len : N32;
+      package SKE renames RFLX.TLS_Handshake.TLS_1_2_Server_Key_Exchange_ECDHE;
+      procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
+        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      Buf : RBT.Bytes_Ptr;
+      Ctx : SKE.Context;
    begin
       OK := False;
 
-      --  Minimum: curve_type(1) + curve(2) + pt_len(1) + pt(1) +
-      --           sig_hash(1) + sig_alg(1) + sig_len(2) = 9
-      if Data'Length < 9 then return; end if;
+      --  Minimum body: curve_type(1) + curve(2) + pt_len(1) + pt(1) +
+      --                algo(2) + sig_len(2) + sig(1) = 10
+      if Data'Length < 10 then return; end if;
 
-      --  curve_type must be 0x03 (named_curve)
-      if Data (Pos) /= EC_Curve_Type_Named then return; end if;
-      Pos := Pos + 1;
+      --  RFLX parse. The TLS_1_2_Server_Key_Exchange_ECDHE message
+      --  enforces curve_type = Named_Curve (rejects explicit-prime /
+      --  explicit-char2 — those were never legal for modern TLS 1.2).
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Data'Length) => 0);
+      Buf.all := To_RFLX (Data);
+      SKE.Initialize
+        (Ctx, Buf,
+         Written_Last => RBT.Bit_Length (Data'Length * 8));
+      SKE.Verify_Message (Ctx);
+      if not SKE.Well_Formed_Message (Ctx) then
+         SKE.Take_Buffer (Ctx, Buf);
+         RFLX_Free_Local (Buf);
+         return;
+      end if;
 
-      --  named_curve (2 bytes)
-      Curve := Unsigned_16 (Data (Pos)) * 256 +
-               Unsigned_16 (Data (Pos + 1));
-      Pos := Pos + 2;
-
-      --  Validate curve is one we support
-      if not Valid_ECDHE_Group (Curve) then return; end if;
-      HC.Selected_Group := Curve;
-
-      --  point_len
-      Pt_Len := N32 (Data (Pos));
-      Pos := Pos + 1;
-
-      --  Validate point_len matches expected for this curve
-      if Pt_Len /= Point_Len_For_Group (Curve) then return; end if;
-
-      --  Check we have enough data for point + signature header
-      if Pos + Pt_Len + 3 > Data'Last then return; end if;
-
-      --  Extract server's ephemeral public key
-      case Curve is
-         when Group_X25519 =>
-            for I in N32 range 0 .. 31 loop
-               HC.Peer_PK (I) := Data (Pos + I);
-            end loop;
-
-         when Group_Secp256r1 =>
-            for I in N32 range 0 .. 64 loop
-               HC.P256_Peer_PK (I) := Data (Pos + I);
-            end loop;
-            HC.Use_P256_KE := True;
-
-         when Group_Secp384r1 =>
-            for I in N32 range 0 .. 96 loop
-               HC.P384_Peer_PK (I) := Data (Pos + I);
-            end loop;
-            HC.Use_P384_KE := True;
-
-         when others =>
-            return;
-      end case;
-
-      Pos := Pos + Pt_Len;
-
-      --  Parse signature: hash_alg[1] || sig_alg[1] || sig_len[2] || sig[N]
-      --  We store the sig algo for reference but skip full verification
-      --  for now (TODO: verify signature over client_random || server_random || params)
-      --  Verify signature over client_random || server_random || params
-      --  RFC 5246 §7.4.3: This prevents MITM substitution of the ECDHE pubkey.
       declare
-         Sig_Hash_Alg : constant Byte := Data (Pos);
-         Sig_Sig_Alg  : constant Byte := Data (Pos + 1);
-         Sig_Len      : constant N32 :=
-            N32 (Data (Pos + 2)) * 256 + N32 (Data (Pos + 3));
-
-         --  params = curve_type(1) + named_curve(2) + point_len(1) + point(N)
-         Params_Len : constant N32 := 4 + Pt_Len;
-
-         --  signed_data = client_random[32] || server_random[32] || params
-         Sig_Input_Len : constant N32 := 64 + Params_Len;
-         Sig_Input : Byte_Seq (0 .. Sig_Input_Len - 1) := (others => 0);
-
-         Sig_OK : Boolean;
+         NC : constant RFLX.Tls_Parameters.TLS_Supported_Groups :=
+                SKE.Get_Named_Curve (Ctx);
+         Curve : constant Unsigned_16 :=
+            (if NC.Known then
+               (case NC.Enum is
+                  when RFLX.Tls_Parameters.Secp256r1 => Group_Secp256r1,
+                  when RFLX.Tls_Parameters.Secp384r1 => Group_Secp384r1,
+                  when RFLX.Tls_Parameters.X25519    => Group_X25519,
+                  when others                        => 0)
+             else 0);
+         Pt_Len  : constant N32 := N32 (SKE.Get_Point_Length (Ctx));
+         Sig_Len : constant N32 := N32 (SKE.Get_Signature_Length (Ctx));
       begin
-         Pos := Pos + 4;
-
-         --  Verify we have enough data for the signature
-         if Sig_Len = 0
-            or else Pos + Sig_Len - 1 > Data'Last
+         if Curve = 0
+           or not Valid_ECDHE_Group (Curve)
+           or Pt_Len /= Point_Len_For_Group (Curve)
+           or Sig_Len = 0
          then
+            SKE.Take_Buffer (Ctx, Buf);
+            RFLX_Free_Local (Buf);
             return;
          end if;
+         HC.Selected_Group := Curve;
 
-         --  Build signed data: client_random || server_random || params
-         Sig_Input (0 .. 31)  := Byte_Seq (HC.Client_Random);
-         Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
-         --  params starts at Data(B) = curve_type
-         Sig_Input (64 .. 64 + Params_Len - 1) :=
-            Data (B .. B + Params_Len - 1);
-
-         --  Verify the signature using the server's certificate public key.
-         --  RFC 5246 §7.4.3: The signature covers
-         --    client_random || server_random || params
-         --  Not verifying allows MITM to substitute the ECDHE pubkey.
-         --
-         --  Map TLS 1.2 split hash/sig algorithm to SignatureScheme:
-         --    hash=4(SHA256), sig=1(RSA) → 0x0401 (rsa_pkcs1_sha256)
-         --    hash=4(SHA256), sig=3(ECDSA) → 0x0403 (ecdsa_secp256r1_sha256)
-         --    hash=8, sig=4 → 0x0804 (rsa_pss_rsae_sha256)
-         --    hash=5(SHA384), sig=3(ECDSA) → 0x0503 (ecdsa_secp384r1_sha384)
+         --  Extract server's ephemeral public key.
          declare
-            Scheme : constant Unsigned_16 :=
-               Unsigned_16 (Sig_Hash_Alg) * 256 +
-               Unsigned_16 (Sig_Sig_Alg);
-            Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
+            Pt_RFLX : RBT.Bytes (1 .. RBT.Index (Pt_Len));
          begin
+            SKE.Get_Point (Ctx, Pt_RFLX);
+            case Curve is
+               when Group_X25519 =>
+                  for I in N32 range 0 .. 31 loop
+                     HC.Peer_PK (I) :=
+                        Byte (Pt_RFLX (RBT.Index (I + 1)));
+                  end loop;
+
+               when Group_Secp256r1 =>
+                  for I in N32 range 0 .. 64 loop
+                     HC.P256_Peer_PK (I) :=
+                        Byte (Pt_RFLX (RBT.Index (I + 1)));
+                  end loop;
+                  HC.Use_P256_KE := True;
+
+               when Group_Secp384r1 =>
+                  for I in N32 range 0 .. 96 loop
+                     HC.P384_Peer_PK (I) :=
+                        Byte (Pt_RFLX (RBT.Index (I + 1)));
+                  end loop;
+                  HC.Use_P384_KE := True;
+
+               when others =>
+                  SKE.Take_Buffer (Ctx, Buf);
+                  RFLX_Free_Local (Buf);
+                  return;
+            end case;
+         end;
+
+         --  RFC 5246 §7.4.3: verify signature over
+         --  client_random || server_random || params
+         --  (params = curve_type(1) + named_curve(2) + point_len(1) + point).
+         --  Not verifying allows MITM to substitute the ECDHE pubkey.
+         declare
+            Params_Len    : constant N32 := 4 + Pt_Len;
+            Sig_Input_Len : constant N32 := 64 + Params_Len;
+            Sig_Input     : Byte_Seq (0 .. Sig_Input_Len - 1) :=
+                              (others => 0);
+            Sig_Bytes     : Byte_Seq (0 .. Sig_Len - 1);
+            Sig_RFLX      : RBT.Bytes
+                              (1 .. RBT.Index (Sig_Len));
+            Sig_OK        : Boolean;
+            Sig_Scheme    : constant Unsigned_16 :=
+               Unsigned_16
+                 (RFLX.Tls_Parameters.To_Base_Integer
+                    (SKE.Get_Algorithm (Ctx)));
+         begin
+            Sig_Input (0 .. 31)  := Byte_Seq (HC.Client_Random);
+            Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
+            --  params is the first Params_Len bytes of the input
+            --  (RFLX field order is curve_type then named_curve then
+            --  point_length then point — matches RFC 8422 §5.4 wire).
+            Sig_Input (64 .. 64 + Params_Len - 1) :=
+               Data (Data'First .. Data'First + Params_Len - 1);
+
+            SKE.Get_Signature (Ctx, Sig_RFLX);
             for I in N32 range 0 .. Sig_Len - 1 loop
-               Sig_Bytes (I) := Data (Pos + I);
+               Sig_Bytes (I) := Byte (Sig_RFLX (RBT.Index (I + 1)));
             end loop;
 
             if HC.Peer_Cert_Valid then
@@ -633,17 +637,21 @@ is
                  (Data       => Sig_Input,
                   Sig        => Sig_Bytes,
                   Cert       => HC.Peer_Cert,
-                  Sig_Scheme => Scheme);
+                  Sig_Scheme => Sig_Scheme);
             else
                Sig_OK := HC.Cfg.Skip_Verify;
             end if;
-         end;
 
-         if not Sig_OK and not HC.Cfg.Skip_Verify then
-            return;
-         end if;
+            if not Sig_OK and not HC.Cfg.Skip_Verify then
+               SKE.Take_Buffer (Ctx, Buf);
+               RFLX_Free_Local (Buf);
+               return;
+            end if;
+         end;
       end;
 
+      SKE.Take_Buffer (Ctx, Buf);
+      RFLX_Free_Local (Buf);
       OK := True;
    end Parse_Server_Key_Exchange;
 
@@ -660,48 +668,75 @@ is
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
-      Pt_Len : N32;
+      package CKE renames RFLX.TLS_Handshake.TLS_1_2_Client_Key_Exchange_ECDHE;
+      procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
+        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      Buf : RBT.Bytes_Ptr;
+      Ctx : CKE.Context;
    begin
       OK := False;
 
-      if Data'Last < 1 then return; end if;  --  need at least 2 bytes
+      --  Minimum: point_len(1) + point(1) = 2
+      if Data'Length < 2 then return; end if;
 
-      Pt_Len := N32 (Data (0));
-
-      --  Validate point length matches the negotiated group
-      if Pt_Len /= Point_Len_For_Group (HC.Selected_Group) then
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Data'Length) => 0);
+      Buf.all := To_RFLX (Data);
+      CKE.Initialize
+        (Ctx, Buf,
+         Written_Last => RBT.Bit_Length (Data'Length * 8));
+      CKE.Verify_Message (Ctx);
+      if not CKE.Well_Formed_Message (Ctx) then
+         CKE.Take_Buffer (Ctx, Buf);
+         RFLX_Free_Local (Buf);
          return;
       end if;
 
-      if Data'Last < Pt_Len then return; end if;  --  need 1 + Pt_Len bytes
-      --  RFC 5246 §7.4.7: body ends exactly at 1 + Pt_Len bytes.
-      --  Trailing bytes (BoGo TrailingMessageData-ClientKeyExchange)
-      --  are a protocol error.
-      if Data'Length /= 1 + Pt_Len then return; end if;
-
-      --  Store the peer's public key
-      case HC.Selected_Group is
-         when Group_X25519 =>
-            for I in N32 range 0 .. 31 loop
-               HC.Peer_PK (I) := Data (Data'First + 1 + I);
-            end loop;
-
-         when Group_Secp256r1 =>
-            for I in N32 range 0 .. 64 loop
-               HC.P256_Peer_PK (I) := Data (Data'First + 1 + I);
-            end loop;
-            HC.Use_P256_KE := True;
-
-         when Group_Secp384r1 =>
-            for I in N32 range 0 .. 96 loop
-               HC.P384_Peer_PK (I) := Data (Data'First + 1 + I);
-            end loop;
-            HC.Use_P384_KE := True;
-
-         when others =>
+      declare
+         Pt_Len  : constant N32 := N32 (CKE.Get_Point_Length (Ctx));
+         Pt_RFLX : RBT.Bytes (1 .. RBT.Index (Pt_Len));
+      begin
+         --  RFC 5246 §7.4.7: body ends exactly at 1 + Pt_Len bytes.
+         --  Trailing bytes (BoGo TrailingMessageData-ClientKeyExchange)
+         --  are a protocol error.
+         if Pt_Len /= Point_Len_For_Group (HC.Selected_Group)
+           or Data'Length /= 1 + Pt_Len
+         then
+            CKE.Take_Buffer (Ctx, Buf);
+            RFLX_Free_Local (Buf);
             return;
-      end case;
+         end if;
 
+         CKE.Get_Point (Ctx, Pt_RFLX);
+         case HC.Selected_Group is
+            when Group_X25519 =>
+               for I in N32 range 0 .. 31 loop
+                  HC.Peer_PK (I) :=
+                     Byte (Pt_RFLX (RBT.Index (I + 1)));
+               end loop;
+
+            when Group_Secp256r1 =>
+               for I in N32 range 0 .. 64 loop
+                  HC.P256_Peer_PK (I) :=
+                     Byte (Pt_RFLX (RBT.Index (I + 1)));
+               end loop;
+               HC.Use_P256_KE := True;
+
+            when Group_Secp384r1 =>
+               for I in N32 range 0 .. 96 loop
+                  HC.P384_Peer_PK (I) :=
+                     Byte (Pt_RFLX (RBT.Index (I + 1)));
+               end loop;
+               HC.Use_P384_KE := True;
+
+            when others =>
+               CKE.Take_Buffer (Ctx, Buf);
+               RFLX_Free_Local (Buf);
+               return;
+         end case;
+      end;
+
+      CKE.Take_Buffer (Ctx, Buf);
+      RFLX_Free_Local (Buf);
       OK := True;
    end Parse_Client_Key_Exchange;
 
@@ -1547,5 +1582,106 @@ is
 
       Len := Pos;
    end Build_Certificate_Chain_12;
+
+   ------------------------------------------------------------------
+   --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket build/parse via RFLX
+   ------------------------------------------------------------------
+
+   procedure Build_New_Session_Ticket_12
+     (Lifetime_Hint : in     Interfaces.Unsigned_32;
+      Ticket        : in     Byte_Seq;
+      Result        :    out Byte_Seq;
+      Len           :    out N32)
+   is
+      package NST renames RFLX.TLS_Handshake.TLS_1_2_New_Session_Ticket;
+      procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
+        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      Ticket_Len : constant N32 := N32 (Ticket'Length);
+      Body_Len   : constant N32 := 4 + 2 + Ticket_Len;
+      Total_Len  : constant N32 := 4 + Body_Len;
+      Buf        : RBT.Bytes_Ptr;
+      Ctx        : NST.Context;
+   begin
+      Result := (others => 0);
+      Len := 0;
+
+      if Total_Len > N32 (Result'Length) then
+         return;
+      end if;
+
+      --  Build the body via RFLX.
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      NST.Initialize (Ctx, Buf);
+      NST.Set_Ticket_Lifetime_Hint
+        (Ctx, RFLX.TLS_Handshake.Ticket_Lifetime (Lifetime_Hint));
+      NST.Set_Ticket_Length
+        (Ctx, RFLX.TLS_Handshake.TLS_1_2_NST_Ticket_Length (Ticket_Len));
+      if Ticket_Len > 0 then
+         NST.Set_Ticket (Ctx, To_RFLX (Ticket));
+      else
+         NST.Set_Ticket_Empty (Ctx);
+      end if;
+      NST.Take_Buffer (Ctx, Buf);
+
+      --  Prepend HS header (type=0x04, 3-byte body length).
+      Result (0) := 16#04#;
+      Result (1) := Byte (Body_Len / 65536);
+      Result (2) := Byte ((Body_Len / 256) mod 256);
+      Result (3) := Byte (Body_Len mod 256);
+      Result (4 .. 4 + Body_Len - 1) :=
+         To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+
+      RFLX_Free_Local (Buf);
+      Len := Total_Len;
+   end Build_New_Session_Ticket_12;
+
+   procedure Parse_New_Session_Ticket_12
+     (NST_Body      : in     Byte_Seq;
+      Lifetime_Hint :    out Interfaces.Unsigned_32;
+      Ticket_Len    :    out N32;
+      OK            :    out Boolean)
+   is
+      package NST renames RFLX.TLS_Handshake.TLS_1_2_New_Session_Ticket;
+      procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
+        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      Buf : RBT.Bytes_Ptr;
+      Ctx : NST.Context;
+   begin
+      Lifetime_Hint := 0;
+      Ticket_Len    := 0;
+      OK            := False;
+
+      --  Smallest body = lifetime(4) + ticket_len(2) = 6 bytes.
+      if N32 (NST_Body'Length) < 6 then
+         return;
+      end if;
+
+      Buf := new RBT.Bytes'(1 .. RBT.Index (NST_Body'Length) => 0);
+      Buf.all := To_RFLX (NST_Body);
+      NST.Initialize
+        (Ctx, Buf,
+         Written_Last => RBT.Bit_Length (NST_Body'Length * 8));
+      NST.Verify_Message (Ctx);
+      if not NST.Well_Formed_Message (Ctx) then
+         NST.Take_Buffer (Ctx, Buf);
+         RFLX_Free_Local (Buf);
+         return;
+      end if;
+
+      Lifetime_Hint := Interfaces.Unsigned_32
+                        (NST.Get_Ticket_Lifetime_Hint (Ctx));
+      Ticket_Len    := N32 (NST.Get_Ticket_Length (Ctx));
+
+      NST.Take_Buffer (Ctx, Buf);
+      RFLX_Free_Local (Buf);
+
+      --  Final structural sanity: declared sizes match wire length.
+      if Ticket_Len + 6 /= N32 (NST_Body'Length) then
+         Ticket_Len := 0;
+         return;
+      end if;
+
+      OK := True;
+   end Parse_New_Session_Ticket_12;
 
 end SPARKTLS.Handshake.TLS12;

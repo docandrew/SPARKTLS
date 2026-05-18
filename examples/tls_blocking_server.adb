@@ -4,12 +4,14 @@
 --
 --  Usage: tls_blocking_server <cert.pem> <key.pem>
 
+with Ada.Calendar;
 with Ada.Command_Line;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Streams;                use Ada.Streams;
 with Ada.Text_IO;                use Ada.Text_IO;
 with Interfaces;                 use Interfaces;
+with X509;
 
 with SPARKNaCl;                  use SPARKNaCl;
 
@@ -32,6 +34,27 @@ procedure TLS_Blocking_Server is
    --  TLS 1.2 ticket encryption keys (RFC 5077). One TEK generated
    --  at startup with a fixed Key_ID; rotates only on restart.
    TLS12_Keys : aliased SPARKTLS.TLS12_Ticket_Key_Array;
+
+   --  UTC wall-clock callback used by ticket expiry + cert validation.
+   --  Production code would centralise this (e.g. monotonic + UTC
+   --  delta from NTP); for the example, Ada.Calendar.Clock is fine
+   --  on a host with a reasonable system time.
+   function Now_UTC return X509.Date_Time is
+      use Ada.Calendar;
+      T  : constant Time := Clock;
+      Y  : Year_Number;
+      M  : Month_Number;
+      D  : Day_Number;
+      S  : Day_Duration;
+   begin
+      Split (T, Y, M, D, S);
+      return (Year   => Y,
+              Month  => M,
+              Day    => D,
+              Hour   => Natural (S) / 3600,
+              Minute => (Natural (S) mod 3600) / 60,
+              Second => Natural (S) mod 60);
+   end Now_UTC;
 
    Server_Sock : Socket_Type;
    --  Port: env var SPARKTLS_PORT overrides the 8443 default. Lets
@@ -109,7 +132,8 @@ procedure TLS_Blocking_Server is
          Request_Client_Cert => MTLS,
          Require_Client_Cert => MTLS_Require,
          Tickets             => Tickets'Unchecked_Access,
-         TLS12_Ticket_Keys   => TLS12_Keys'Unchecked_Access);
+         TLS12_Ticket_Keys   => TLS12_Keys'Unchecked_Access,
+         Get_Time            => Now_UTC'Unrestricted_Access);
 
       --  Handshake + data loop
       loop

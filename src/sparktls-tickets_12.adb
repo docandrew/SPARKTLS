@@ -3,6 +3,41 @@ with SPARKTLSCrypto.AES_GCM;
 
 package body SPARKTLS.Tickets_12 is
 
+   --  Cumulative days from Jan 1 to the start of each month, non-leap.
+   --  Index 1 = Jan (0), 2 = Feb (31), …, 12 = Dec (334).
+   Days_Before_Month : constant array (1 .. 12) of Unsigned_64 :=
+     (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334);
+
+   function Is_Leap (Y : Natural) return Boolean is
+     ((Y mod 4 = 0 and Y mod 100 /= 0) or Y mod 400 = 0);
+
+   function To_Unix_Seconds (DT : X509.Date_Time) return Unsigned_64 is
+      Y : constant Natural := DT.Year;
+      M : constant Natural := DT.Month;
+      D : constant Natural := DT.Day;
+      Days : Unsigned_64 := 0;
+   begin
+      if Y < 1970 or M not in 1 .. 12 or D < 1 or D > 31 then
+         return 0;
+      end if;
+      --  Whole years 1970 .. Y - 1
+      for Yr in 1970 .. Y - 1 loop
+         Days := Days + (if Is_Leap (Yr) then 366 else 365);
+      end loop;
+      --  Months in the current year
+      Days := Days + Days_Before_Month (M);
+      if M > 2 and Is_Leap (Y) then
+         Days := Days + 1;  --  Feb 29 happened this year
+      end if;
+      --  Days within the current month
+      Days := Days + Unsigned_64 (D - 1);
+      return Days * 86_400
+           + Unsigned_64 (DT.Hour) * 3600
+           + Unsigned_64 (DT.Minute) * 60
+           + Unsigned_64 (DT.Second);
+   end To_Unix_Seconds;
+
+
    --  Plaintext layout helpers.
    Plain_Master_Secret_Off : constant N32 := 0;
    Plain_Suite_Off         : constant N32 := 48;
