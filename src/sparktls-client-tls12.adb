@@ -220,6 +220,10 @@ is
         and then not HC.Reasm_Hdr_Pending
         and then HC.Reasm_Len >= HC.Reasm_Need;
    begin
+      --  Default-init: many exit paths set Result explicitly via
+      --  Send_Alert_And_Error / Result := <X>; this catches any
+      --  fallthrough that flow can't prove sets Result.
+      Result := OK;
       --  Fast path: leftover from a prior PackHandshake record already
       --  contains a complete HS message. Skip the record read and
       --  jump straight into dispatch.
@@ -534,13 +538,18 @@ is
                   Buf : RBT.Bytes_Ptr;
                   Ctx : C12.Context;
                   B   : constant N32 := Frag'First + 4;
-                  Body_Bytes : Byte_Seq (0 .. Msg_Len - 1);
+                  --  Msg_Len is a flow-mutable variable; SPARK E0007
+                  --  forbids subtype constraints on it directly. Pin
+                  --  it to a local constant so Body_Bytes' bounds are
+                  --  a constant input.
+                  Msg_Len_C : constant N32 := Msg_Len;
+                  Body_Bytes : Byte_Seq (0 .. Msg_Len_C - 1);
                   Cert_Idx : Natural := 0;
                begin
                   HC.Peer_Cert_Valid := False;
                   HC.Peer_Int_Count := 0;
 
-                  if Msg_Len < 3 then
+                  if Msg_Len_C < 3 then
                      Free_Byte_Seq (HC.Reasm_Buf);
                      HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                      HC.Reasm_Hdr_Pending := False;
@@ -548,14 +557,14 @@ is
                      return;
                   end if;
 
-                  Body_Bytes := Frag (B .. B + Msg_Len - 1);
+                  Body_Bytes := Frag (B .. B + Msg_Len_C - 1);
 
                   Buf := new RBT.Bytes'
-                          (1 .. RBT.Index (Msg_Len) => 0);
+                          (1 .. RBT.Index (Msg_Len_C) => 0);
                   Buf.all := To_RFLX (Body_Bytes);
                   C12.Initialize
                     (Ctx, Buf,
-                     Written_Last => RBT.Bit_Length (Msg_Len * 8));
+                     Written_Last => RBT.Bit_Length (Msg_Len_C * 8));
                   C12.Verify_Message (Ctx);
 
                   if not C12.Well_Formed_Message (Ctx) then
@@ -1369,8 +1378,12 @@ is
                --  Parse via RFLX TLS_1_2_New_Session_Ticket.
                declare
                   B          : constant N32 := Frag'First + 4;
-                  NST_Body   : constant Byte_Seq (0 .. Msg_Len - 1) :=
-                    Frag (B .. B + Msg_Len - 1);
+                  --  Same SPARK E0007 fix as the Certificate branch:
+                  --  pin Msg_Len to a constant so the slice subtype is
+                  --  not a variable input.
+                  Msg_Len_C  : constant N32 := Msg_Len;
+                  NST_Body   : constant Byte_Seq (0 .. Msg_Len_C - 1) :=
+                    Frag (B .. B + Msg_Len_C - 1);
                   Lifetime   : Unsigned_32;
                   Ticket_Len : N32;
                   Parse_OK   : Boolean;
@@ -1955,10 +1968,15 @@ is
 
          --  Append server Finished plaintext to transcript so the
          --  client's own Finished verify_data (computed below in the
-         --  abbreviated path) covers it.
-         Append_Transcript
-           (HC,
-            HC.Reasm_Buf (0 .. HC.Reasm_Need - 1));
+         --  abbreviated path) covers it. Copy into a local first —
+         --  passing a slice of HC.Reasm_Buf alongside `in out HC`
+         --  is a SPARK 6.4.2 aliasing violation.
+         declare
+            Fin_Snap : constant Byte_Seq :=
+               HC.Reasm_Buf (0 .. HC.Reasm_Need - 1);
+         begin
+            Append_Transcript (HC, Fin_Snap);
+         end;
 
          Free_Byte_Seq (HC.Reasm_Buf);
          HC.Reasm_Len := 0; HC.Reasm_Need := 0;

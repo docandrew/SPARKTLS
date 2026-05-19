@@ -620,7 +620,11 @@ is
             declare
                Ext_Buf  : RBT.Bytes_Ptr;
                Ext_Ctx  : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-               Cookie_Raw : Byte_Seq (0 .. Cookie_Data_Len - 1);
+               --  Flow can't see that the (0..1) prefix + the
+               --  (2..Cookie_Data_Len-1) loop cover the whole array;
+               --  the cheap fix is an explicit zero init.
+               Cookie_Raw : Byte_Seq (0 .. Cookie_Data_Len - 1) :=
+                  (others => 0);
             begin
                Cookie_Raw (0) := Byte (Cookie_Bytes_Len / 256);
                Cookie_Raw (1) := Byte (Cookie_Bytes_Len mod 256);

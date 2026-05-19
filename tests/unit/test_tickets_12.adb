@@ -58,14 +58,16 @@ procedure Test_Tickets_12 is
    begin
       K (0) := (Key_ID => Byte_Seq (Key_ID_A),
                 TEK    => Byte_Seq (TEK_A),
-                Valid  => True);
+                Valid  => True,
+                Created_At => 0);
       K (1) := (Key_ID => Byte_Seq (Key_ID_B),
                 TEK    => Byte_Seq (TEK_B),
-                Valid  => True);
+                Valid  => True,
+                Created_At => 0);
       K (2) := (Key_ID => (others => 0), TEK => (others => 0),
-                Valid  => False);
+                Valid  => False, Created_At => 0);
       K (3) := (Key_ID => (others => 0), TEK => (others => 0),
-                Valid  => False);
+                Valid  => False, Created_At => 0);
       return K;
    end Make_Keys;
 

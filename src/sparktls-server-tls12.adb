@@ -174,6 +174,49 @@ is
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    is
    begin
+      --  RFC 5077 §5.6 TEK auto-rotation. Cheap check (one
+      --  Get_Time call + one comparison) at the start of every
+      --  TLS 1.2 server handshake. Required preconditions: keys
+      --  exist, auto-rotate is on, Get_Time + Random are wired.
+      --  Without Get_Time we can't tell if the interval elapsed;
+      --  without Random we can't generate the new key.
+      if HC.Cfg.Auto_Rotate_TEK
+        and then HC.Cfg.TLS12_Ticket_Keys /= null
+        and then HC.Cfg.Get_Time /= null
+        and then HC.Cfg.Random /= null
+        and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+      then
+         declare
+            Now       : constant Unsigned_64 :=
+              SPARKTLS.Tickets_12.To_Unix_Seconds
+                (HC.Cfg.Get_Time.all);
+            Active    : constant Natural :=
+              HC.Cfg.TLS12_Active_TEK_Idx;
+            Last      : constant Unsigned_64 :=
+              HC.Cfg.TLS12_Ticket_Keys.all (Active).Created_At;
+            Interval  : constant Unsigned_64 :=
+              Unsigned_64 (HC.Cfg.TEK_Rotation_Interval_Secs);
+         begin
+            if Now >= Last + Interval then
+               declare
+                  New_Key_ID : Byte_Seq (0 .. 3) := (others => 0);
+                  New_TEK    : Byte_Seq (0 .. 31) := (others => 0);
+                  New_Active : Natural := Active;
+               begin
+                  HC.Cfg.Random.all (New_Key_ID);
+                  HC.Cfg.Random.all (New_TEK);
+                  SPARKTLS.Server.Rotate_TLS12_Ticket_Key
+                    (Keys       => HC.Cfg.TLS12_Ticket_Keys.all,
+                     Active_Idx => New_Active,
+                     New_Key_ID => New_Key_ID,
+                     New_TEK    => New_TEK,
+                     Now_Secs   => Now);
+                  HC.Cfg.TLS12_Active_TEK_Idx := New_Active;
+               end;
+            end if;
+         end;
+      end if;
+
       --  RFC 5077 §3.4: if the client offered a non-empty session_ticket
       --  extension AND we have configured ticket-encryption keys, try
       --  to decrypt + resume. On success we run the abbreviated flight;
@@ -555,9 +598,16 @@ is
       --     fresh nonce). RFC 5077 §3.3: the server MUST send NST in
       --     the resumed flight if it advertised session_ticket in SH.
       declare
-         Active_Key : TLS12_Ticket_Key
-            renames HC.Cfg.TLS12_Ticket_Keys
-                      (HC.Cfg.TLS12_Active_TEK_Idx);
+         --  Renaming a deref-and-index of HC.Cfg.* trips SPARK E0007
+         --  (renamed object depends on variable input). Copying the
+         --  Key_ID + TEK into local constants keeps the same shape
+         --  for the Encrypt_Ticket call below without the rename.
+         Active_Key_ID : constant Byte_Seq :=
+            HC.Cfg.TLS12_Ticket_Keys
+              (HC.Cfg.TLS12_Active_TEK_Idx).Key_ID;
+         Active_TEK    : constant Byte_Seq :=
+            HC.Cfg.TLS12_Ticket_Keys
+              (HC.Cfg.TLS12_Active_TEK_Idx).TEK;
          Nonce_Buf  : Byte_Seq (0 .. 11) := (others => 0);
          Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
          Ticket_Buf : Byte_Seq (0 .. 255) := (others => 0);
@@ -579,9 +629,9 @@ is
          SPARKTLS.Tickets_12.Encrypt_Ticket
            (Plain      => Plain,
             Key_ID     =>
-              SPARKTLS.Tickets_12.Bytes_4 (Active_Key.Key_ID),
+              SPARKTLS.Tickets_12.Bytes_4 (Active_Key_ID),
             TEK        =>
-              SPARKTLS.Tickets_12.Bytes_32 (Active_Key.TEK),
+              SPARKTLS.Tickets_12.Bytes_32 (Active_TEK),
             Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
             Ticket     => Ticket_Buf,
             Ticket_Len => Ticket_Len);
@@ -1220,9 +1270,14 @@ is
          then
             declare
                use type SPARKTLS.Tickets_12.Bytes_4;
-               Active_Key : TLS12_Ticket_Key
-                  renames HC.Cfg.TLS12_Ticket_Keys
-                            (HC.Cfg.TLS12_Active_TEK_Idx);
+               --  Renaming a deref-and-index of HC.Cfg.* trips SPARK
+               --  E0007; copy fields into local constants instead.
+               Active_Key_ID : constant Byte_Seq :=
+                  HC.Cfg.TLS12_Ticket_Keys
+                    (HC.Cfg.TLS12_Active_TEK_Idx).Key_ID;
+               Active_TEK    : constant Byte_Seq :=
+                  HC.Cfg.TLS12_Ticket_Keys
+                    (HC.Cfg.TLS12_Active_TEK_Idx).TEK;
                Nonce_Buf  : Byte_Seq (0 .. 11) := (others => 0);
                Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
                Ticket_Buf : Byte_Seq (0 .. 255) := (others => 0);
@@ -1254,10 +1309,10 @@ is
                  (Plain      => Plain,
                   Key_ID     =>
                     SPARKTLS.Tickets_12.Bytes_4
-                      (Active_Key.Key_ID),
+                      (Active_Key_ID),
                   TEK        =>
                     SPARKTLS.Tickets_12.Bytes_32
-                      (Active_Key.TEK),
+                      (Active_TEK),
                   Nonce      =>
                     SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
                   Ticket     => Ticket_Buf,

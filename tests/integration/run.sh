@@ -709,6 +709,82 @@ else
 fi
 
 # ===================================================================
+# TEK auto-rotation (ROADMAP §2.13b / §6.5). Runs the blocking
+# server with SPARKTLS_TEK_ROTATE_SECS=1 (1-second rotation
+# interval, vs the 24h default), then performs two handshakes ~3s
+# apart and confirms the TLS 1.2 session_ticket's Key_ID prefix
+# (the first 4 bytes of the ticket blob, per Tickets_12 wire format)
+# differs between the two — proof that the active TEK was rotated
+# in between.
+# ===================================================================
+echo ""
+echo "--- TEK auto-rotation (1-sec interval, observe Key_ID change) ---"
+if [ ! -x "$SERVER" ]; then
+    echo "  (skipped — tls_blocking_server not built)"
+else
+    cleanup
+    SPARKTLS_TEK_ROTATE_SECS=1 \
+        "$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+        > /tmp/tek_rotate_srv.log 2>&1 &
+    wait_for_port
+
+    get_keyid() {
+        echo "x" | timeout 5 openssl s_client \
+            -connect 127.0.0.1:$PORT -tls1_2 \
+            -CAfile "$CERT_DIR/rsa.crt" 2>/dev/null \
+            | awk '/TLS session ticket:/ {flag=1; next}
+                   flag && /^ *0000 -/ {print $3 $4 $5 $6; exit}'
+    }
+
+    K1=$(get_keyid)
+    sleep 3
+    K2=$(get_keyid)
+    cleanup
+
+    if [ -n "$K1" ] && [ -n "$K2" ] && [ "$K1" != "$K2" ]; then
+        pass "TEK auto-rotation: Key_ID changed across rotation interval"
+    else
+        fail "TEK auto-rotation: K1=$K1 K2=$K2 (expected different)"
+    fi
+fi
+
+# ===================================================================
+# DoS resource limit regression (ROADMAP §2.13). Sends a malicious
+# CH with 1000 cipher_suite entries (TLS_AES_128_GCM_SHA256 at
+# position 1, garbage values after). With the iteration cap
+# (Default_DoS_Caps.Max_Cipher_Suites = 256) the server processes
+# the leading 256 suites, finds the acceptable one, and responds
+# with a ServerHello — proving (a) no pathological parse cost
+# (response < 2s) and (b) correct negotiation despite the flood.
+#
+# Without the cap, the server would walk all 1000 entries every
+# handshake; not catastrophic at this scale but an attacker could
+# trivially push that to ~32K (the wire max) to amplify CPU.
+# ===================================================================
+echo ""
+echo "--- DoS: malicious CH with 1000 cipher_suites ---"
+if [ ! -x "$SERVER" ]; then
+    echo "  (skipped — tls_blocking_server not built)"
+else
+    cleanup
+    "$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+        > /tmp/dos_srv.log 2>&1 &
+    wait_for_port
+
+    output=$(python3 \
+        "$(dirname "$0")/dos_ch_flood.py" 127.0.0.1 $PORT 2>&1)
+    rc=$?
+    cleanup
+
+    if [ $rc -eq 0 ] && echo "$output" | grep -q "^PASS:"; then
+        pass "DoS: 1000-cipher-suite CH handled (cap engaged)"
+    else
+        fail "DoS: 1000-cipher-suite CH handling"
+        echo "$output" | sed 's/^/    /' | head -5
+    fi
+fi
+
+# ===================================================================
 # HelloRetryRequest — RFC 8446 §4.1.4. SPARKTLS server, openssl
 # client offers key_share for an unsupported group (secp521r1) but
 # lists X25519 in supported_groups. Server MUST respond with HRR

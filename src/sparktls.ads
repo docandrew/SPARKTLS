@@ -984,9 +984,15 @@ is
    TLS12_Max_Keys : constant := 4;
 
    type TLS12_Ticket_Key is record
-      Key_ID : Byte_Seq (0 .. 3) := (others => 0);    --  4-byte ident
-      TEK    : Byte_Seq (0 .. 31) := (others => 0);   --  AES-256 raw
-      Valid  : Boolean := False;
+      Key_ID     : Byte_Seq (0 .. 3) := (others => 0);    --  4-byte ident
+      TEK        : Byte_Seq (0 .. 31) := (others => 0);   --  AES-256 raw
+      Valid      : Boolean := False;
+      Created_At : Interfaces.Unsigned_64 := 0;
+      --  Unix seconds when this slot was last populated. Drives the
+      --  auto-rotation timer (`Now - Created_At >= Interval` →
+      --  rotate). Callers populating the array manually at startup
+      --  should set Created_At to the wall-clock time so the first
+      --  rotation fires Interval seconds later, not immediately.
    end record;
 
    type TLS12_Ticket_Key_Array is array (Natural range 0 .. TLS12_Max_Keys - 1)
@@ -1179,6 +1185,44 @@ is
       --  3600 seconds (1 hour) — refreshes ticket-derived forward
       --  secrecy hourly. Set 0 to disable issuing tickets entirely.
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
+
+      --  Server-side automatic TEK rotation. When True (default),
+      --  the server checks at the start of each incoming TLS 1.2
+      --  handshake whether the active key has exceeded
+      --  TEK_Rotation_Interval_Secs since its Created_At; if so,
+      --  generates a fresh Key_ID + TEK via Cfg.Random and rotates
+      --  it into the active slot via Rotate_TLS12_Ticket_Key
+      --  (oldest slot shifts out; previously-active slot keeps its
+      --  Valid=True so prior tickets still decrypt during the
+      --  grace window).
+      --
+      --  Set this to FALSE for multi-process / multi-host / HSM
+      --  deployments where the TEK is managed externally:
+      --    * Fork-inherit + worker recycling: parent generates one
+      --      TEK before fork(); workers inherit; rotation = recycle
+      --      workers. No library-level rotation needed.
+      --    * Shared file + SIGHUP: an orchestrator writes new keys
+      --      to disk; workers read on signal and call
+      --      Rotate_TLS12_Ticket_Key explicitly.
+      --    * KV store (Cloudflare model): each worker polls Redis /
+      --      etcd; on key change, calls Rotate_TLS12_Ticket_Key.
+      --    * HSM-backed: keys live in the HSM and the library must
+      --      not generate fresh ones in process memory.
+      --
+      --  Requires Cfg.Get_Time AND Cfg.Random to be non-null. If
+      --  either is null, auto-rotation silently does nothing
+      --  regardless of this flag.
+      Auto_Rotate_TEK : Boolean := True;
+
+      --  Interval (seconds) between automatic TEK rotations. Default
+      --  24 hours, matching Go crypto/tls and CABF guidance ("regular
+      --  schedule, such as daily"). Tighter intervals are defensible
+      --  for high-value deployments where a TEK leak's blast radius
+      --  must be smaller; the cost is more key-generation calls and
+      --  more clients hitting "old ticket, full handshake" right
+      --  after a rotation. The grace window is fixed at
+      --  TLS12_Max_Keys * Interval (default 4 days at 24h interval).
+      TEK_Rotation_Interval_Secs : Unsigned_32 := 24 * 3600;
 
       --  Client: previously-cached TLS 1.2 session ticket. When
       --  Valid, sent in the session_ticket extension on CH; on

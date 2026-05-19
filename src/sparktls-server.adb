@@ -216,7 +216,9 @@ is
       TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
       Get_Time              : Get_Time_Fn := null;
-      Select_Identity       : SNI_Cert_Selector := null)
+      Select_Identity       : SNI_Cert_Selector := null;
+      Auto_Rotate_TEK            : Boolean := True;
+      TEK_Rotation_Interval_Secs : Unsigned_32 := 24 * 3600)
    with SPARK_Mode => Off
    is
       Cfg : Config;
@@ -232,6 +234,8 @@ is
       Cfg.TLS12_Ticket_Lifetime := TLS12_Ticket_Lifetime;
       Cfg.Get_Time            := Get_Time;
       Cfg.Select_Identity     := Select_Identity;
+      Cfg.Auto_Rotate_TEK            := Auto_Rotate_TEK;
+      Cfg.TEK_Rotation_Interval_Secs := TEK_Rotation_Interval_Secs;
       if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
          Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
          Cfg.ALPN.Len := ALPN'Length;
@@ -257,6 +261,35 @@ is
       end if;
       S.HC_Ptr.Cfg := Cfg;
    end Init;
+
+   procedure Rotate_TLS12_Ticket_Key
+     (Keys       : in out TLS12_Ticket_Key_Array;
+      Active_Idx : in out Natural;
+      New_Key_ID : in     Byte_Seq;
+      New_TEK    : in     Byte_Seq;
+      Now_Secs   : in     Interfaces.Unsigned_64)
+   is
+      New_Idx : constant Natural :=
+         (Active_Idx + 1) mod TLS12_Max_Keys;
+   begin
+      --  Slot layout after rotation:
+      --    Active_Idx   = previously-active key (kept Valid for
+      --                   incoming-ticket decrypt during grace).
+      --    New_Idx      = newly-installed active key.
+      --    Other slots  = whatever they were (Valid or not).
+      --
+      --  The oldest key in the rotation is whichever slot New_Idx
+      --  was previously pointing at — it gets overwritten here. Its
+      --  decrypt grace ended at this moment; tickets issued under
+      --  it will no longer resume. After TLS12_Max_Keys rotations
+      --  the original key is fully purged.
+      Keys (New_Idx) :=
+        (Key_ID     => New_Key_ID,
+         TEK        => New_TEK,
+         Valid      => True,
+         Created_At => Now_Secs);
+      Active_Idx := New_Idx;
+   end Rotate_TLS12_Ticket_Key;
 
    procedure Advance
      (S      : in out Session;

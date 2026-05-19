@@ -210,6 +210,7 @@ is
       while Pos + 1 <= Sig_Algs'Last loop
          pragma Loop_Invariant
            (Pos >= Sig_Algs'First and Pos + 1 <= Sig_Algs'Last);
+         pragma Loop_Variant (Increases => Pos);
          declare
             A : constant Unsigned_16 :=
               Unsigned_16 (Sig_Algs (Pos)) * 256
