@@ -14,6 +14,8 @@ with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.Cert_Verify;       use SPARKTLS.Cert_Verify;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
+with SPARKTLSCrypto.P384.Field;
+with SPARKTLSCrypto.P384.ECDSA;
 use SPARKTLSCrypto;
 with X509;
 use type X509.Algorithm_ID;
@@ -31,6 +33,9 @@ is
 
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and Alert_Desc (Err) /= 0
+                and Alert_Desc (Err) /= 90
    is
       Dummy : N32;
    begin
@@ -209,6 +214,848 @@ is
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => Reasm_Coherent (HC),
         Post => Reasm_Coherent (HC);
+
+   --  RFC 5246 §7.4.2 Certificate (HS type 0x0B). Parses the on-wire
+   --  cert_list_len(3) || {cert_len(3) || cert_data[cert_len]}* via
+   --  RFLX TLS_1_2_Certificate, then runs the leaf through X509.Parse.
+   --  Intermediates beyond Max_Pool_Size are silently dropped — chain
+   --  validation will fail if the omitted entries were needed.
+   --
+   --  Mirrors Parse_Certificate_Chain_13 (TLS 1.3), but operates on
+   --  the TLS 1.2 RFLX package which lacks per-cert extensions.
+   procedure Parse_Cert_Chain_12
+     (HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      OK      :    out Boolean)
+   with Pre  => Msg_Len + 4 <= Frag'Length
+                and Frag'First >= 0
+                and Frag'Last < N32'Last - 4;
+
+   procedure Parse_Cert_Chain_12
+     (HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      OK      :    out Boolean)
+   is
+      package C12 renames RFLX.TLS_Handshake.TLS_1_2_Certificate;
+      package C12_Entries renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
+      package C12_Entry renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
+      package RBT renames RFLX.RFLX_Builtin_Types;
+      procedure RFLX_Free_Local is new
+        Ada.Unchecked_Deallocation
+          (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      Buf : RBT.Bytes_Ptr;
+      Ctx : C12.Context;
+      B   : constant N32 := Frag'First + 4;
+      Body_Bytes : Byte_Seq (0 .. Msg_Len - 1);
+      Cert_Idx : Natural := 0;
+   begin
+      HC.Peer_Cert_Valid := False;
+      HC.Peer_Int_Count := 0;
+      OK := False;
+
+      if Msg_Len < 3 then
+         return;
+      end if;
+
+      Body_Bytes := Frag (B .. B + Msg_Len - 1);
+
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Msg_Len) => 0);
+      Buf.all := To_RFLX (Body_Bytes);
+      C12.Initialize
+        (Ctx, Buf,
+         Written_Last => RBT.Bit_Length (Msg_Len * 8));
+      C12.Verify_Message (Ctx);
+
+      if not C12.Well_Formed_Message (Ctx) then
+         C12.Take_Buffer (Ctx, Buf);
+         RFLX_Free_Local (Buf);
+         return;
+      end if;
+
+      declare
+         use type RBT.Bit_Length;
+      begin
+         if C12.Field_Size (Ctx, C12.F_Certificate_List) > 0 then
+            declare
+               Entries_Ctx : C12_Entries.Context;
+            begin
+               C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
+               while C12_Entries.Has_Element (Entries_Ctx)
+                 and then Cert_Idx <= Max_Pool_Size
+               loop
+                  declare
+                     E_Ctx : C12_Entry.Context;
+                  begin
+                     C12_Entries.Switch (Entries_Ctx, E_Ctx);
+                     C12_Entry.Verify_Message (E_Ctx);
+                     if C12_Entry.Well_Formed_Message (E_Ctx) then
+                        declare
+                           C_Len : constant N32 :=
+                             N32 (C12_Entry.Get_Cert_Data_Length (E_Ctx));
+                           Cert_RFLX : RBT.Bytes (1 .. RBT.Index (C_Len));
+                        begin
+                           if C_Len > 0 and C_Len <= N32 (Max_Cert_DER) then
+                              C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
+                              if Cert_Idx = 0 then
+                                 HC.Peer_Cert_DER_Len := C_Len;
+                                 for I in N32 range 0 .. C_Len - 1 loop
+                                    HC.Peer_Cert_DER (I) :=
+                                       Byte (Cert_RFLX (RBT.Index (I + 1)));
+                                 end loop;
+                                 declare
+                                    Cert_X : X509.Byte_Seq
+                                      (0 .. X509.N32 (C_Len) - 1) :=
+                                        (others => 0);
+                                    P_OK : Boolean;
+                                 begin
+                                    for I in N32 range 0 .. C_Len - 1 loop
+                                       Cert_X (X509.N32 (I)) :=
+                                          X509.Byte
+                                            (Cert_RFLX (RBT.Index (I + 1)));
+                                    end loop;
+                                    X509.Parse (Cert_X, HC.Peer_Cert, P_OK);
+                                    HC.Peer_Cert_Valid := P_OK
+                                       and then X509.Is_Valid (HC.Peer_Cert);
+                                 end;
+                              elsif HC.Peer_Int_Count < Max_Pool_Size then
+                                 declare
+                                    Idx : constant Natural := HC.Peer_Int_Count;
+                                    Int_X : X509.Byte_Seq
+                                      (0 .. X509.N32 (C_Len) - 1) :=
+                                        (others => 0);
+                                    C    : X509.Certificate;
+                                    P_OK : Boolean;
+                                 begin
+                                    for I in N32 range 0 .. C_Len - 1 loop
+                                       Int_X (X509.N32 (I)) :=
+                                          X509.Byte
+                                            (Cert_RFLX (RBT.Index (I + 1)));
+                                    end loop;
+                                    X509.Parse (Int_X, C, P_OK);
+                                    if P_OK and then X509.Is_Valid (C) then
+                                       HC.Peer_Ints (Idx).Cert := C;
+                                       for I in X509.N32 range
+                                         0 .. X509.N32 (C_Len) - 1
+                                       loop
+                                          HC.Peer_Ints (Idx).DER (I) :=
+                                             X509.Byte
+                                               (Cert_RFLX
+                                                  (RBT.Index (N32 (I) + 1)));
+                                       end loop;
+                                       HC.Peer_Ints (Idx).DER_Len :=
+                                         X509.N32 (C_Len);
+                                       HC.Peer_Ints (Idx).Present := True;
+                                       HC.Peer_Int_Count :=
+                                         HC.Peer_Int_Count + 1;
+                                    end if;
+                                 end;
+                              end if;
+                              Cert_Idx := Cert_Idx + 1;
+                           end if;
+                        end;
+                     end if;
+                     C12_Entries.Update (Entries_Ctx, E_Ctx);
+                  end;
+               end loop;
+               C12.Update_Certificate_List (Ctx, Entries_Ctx);
+            end;
+         end if;
+      end;
+
+      C12.Take_Buffer (Ctx, Buf);
+      RFLX_Free_Local (Buf);
+      OK := True;
+   end Parse_Cert_Chain_12;
+
+   --  RFC 5246 §7.4.2 leaf-cert validation (TLS 1.2): keyUsage,
+   --  cipher-suite ↔ cert-algorithm match, hostname binding, chain
+   --  validation. Each gate emits its own alert and returns; on full
+   --  success Result is left untouched by the caller.
+   procedure Validate_Server_Cert_12
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action);
+
+   procedure Validate_Server_Cert_12
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action)
+   is
+   begin
+      Result := OK;
+      if not HC.Peer_Cert_Valid then
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+      if X509.Has_Key_Usage (HC.Peer_Cert)
+        and then not X509.KU_Digital_Signature (HC.Peer_Cert)
+      then
+         Send_Alert_And_Error (S, Bad_Certificate, Result);
+         return;
+      end if;
+      declare
+         PK : constant X509.Algorithm_ID := X509.PK_Algorithm (HC.Peer_Cert);
+         Suite_Needs_ECDSA : constant Boolean :=
+            S.Negotiated_Suite in Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                                | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
+         Suite_Needs_RSA   : constant Boolean :=
+            S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                                | Suite_ECDHE_RSA_CHACHA20_SHA256;
+         Cert_Is_ECDSA : constant Boolean :=
+            PK = X509.Algo_EC_P256 or PK = X509.Algo_EC_P384;
+         Cert_Is_RSA     : constant Boolean := PK = X509.Algo_RSA;
+         Cert_Is_Ed25519 : constant Boolean := PK = X509.Algo_EC_Ed25519;
+      begin
+         if Suite_Needs_ECDSA
+           and then not (Cert_Is_ECDSA or Cert_Is_Ed25519)
+         then
+            Send_Alert_And_Error (S, Bad_Certificate, Result);
+            return;
+         end if;
+         if Suite_Needs_RSA and then not Cert_Is_RSA then
+            Send_Alert_And_Error (S, Bad_Certificate, Result);
+            return;
+         end if;
+      end;
+
+      if HC.Cfg.Server_Name.Len > 0
+        and then not HC.Cfg.Skip_Hostname_Verify
+        and then HC.Peer_Cert_Valid
+      then
+         declare
+            PCDL : constant N32 := HC.Peer_Cert_DER_Len;
+            Cert_X : X509.Byte_Seq
+               (0 .. X509.N32 (PCDL) - 1) := (others => 0);
+         begin
+            for I in N32 range 0 .. PCDL - 1 loop
+               Cert_X (X509.N32 (I)) := X509.Byte (HC.Peer_Cert_DER (I));
+            end loop;
+            if not X509.Matches_Hostname
+                    (HC.Peer_Cert, Cert_X,
+                     HC.Cfg.Server_Name.Data
+                       (1 .. HC.Cfg.Server_Name.Len))
+            then
+               Send_Alert_And_Error (S, Bad_Certificate, Result);
+               return;
+            end if;
+         end;
+      end if;
+
+      if not HC.Cfg.Skip_Verify
+         and then HC.Cfg.Trust /= null
+         and then HC.Cfg.Get_Time /= null
+         and then HC.Peer_Cert_Valid
+      then
+         declare
+            PCDL : constant N32 := HC.Peer_Cert_DER_Len;
+            Cert_X : X509.Byte_Seq
+               (0 .. X509.N32 (PCDL) - 1) := (others => 0);
+            VR : Validation_Result;
+         begin
+            for I in N32 range 0 .. PCDL - 1 loop
+               Cert_X (X509.N32 (I)) := X509.Byte (HC.Peer_Cert_DER (I));
+            end loop;
+            VR := Validate_Chain
+              (Leaf_DER   => Cert_X,
+               Leaf       => HC.Peer_Cert,
+               Ints       => HC.Peer_Ints,
+               Int_Count  => HC.Peer_Int_Count,
+               Roots      => HC.Cfg.Trust.Roots,
+               Root_Count => HC.Cfg.Trust.Root_Count,
+               Now        => HC.Cfg.Get_Time.all,
+               Hostname   =>
+                  HC.Cfg.Server_Name.Data
+                    (1 .. HC.Cfg.Server_Name.Len),
+               Purpose    => HC.Cfg.Verify_Purpose,
+               Mode       => HC.Cfg.Verify_Mode);
+            if VR /= Valid then
+               Free_Byte_Seq (HC.Reasm_Buf);
+               HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+               Send_Alert_And_Error (S, Bad_Certificate, Result);
+               return;
+            end if;
+         end;
+      end if;
+   end Validate_Server_Cert_12;
+
+   --  RFC 5246 §7.4.4 CertificateRequest (HS type 0x0D). Parses the
+   --  three length-prefixed lists (cert_types, sig_algs, ca_dns), picks
+   --  a sig_algs entry compatible with our local identity if mTLS is
+   --  configured, and falls back to a canonical default per algorithm
+   --  when the server's offer is unusable.
+   procedure Handle_CertReq_12
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   with Pre  => Msg_Len + 4 <= Frag'Length
+                and Msg_Len >= 0
+                and Frag'First >= 0
+                and Frag'Last < N32'Last - 4;
+
+   procedure Handle_CertReq_12
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   is
+      Body_OK : Boolean := False;
+      B       : constant N32 := Frag'First + 4;
+   begin
+      Result := OK;
+      --  Body-length structural validation.
+      if B + 1 <= Frag'Last then
+         declare
+            CT_Len_D : constant N32 := N32 (Frag (B));
+            SA_Off_D : constant N32 := B + 1 + CT_Len_D;
+         begin
+            if SA_Off_D + 1 <= Frag'Last then
+               declare
+                  SA_Len_D : constant N32 :=
+                     N32 (Frag (SA_Off_D)) * 256
+                     + N32 (Frag (SA_Off_D + 1));
+                  CA_Off_D : constant N32 :=
+                     SA_Off_D + 2 + SA_Len_D;
+               begin
+                  if CA_Off_D + 1 <= Frag'Last then
+                     declare
+                        CA_Len_D : constant N32 :=
+                           N32 (Frag (CA_Off_D)) * 256
+                           + N32 (Frag (CA_Off_D + 1));
+                        Expected : constant N32 :=
+                           1 + CT_Len_D + 2 + SA_Len_D + 2 + CA_Len_D;
+                     begin
+                        Body_OK := Msg_Len = Expected;
+                     end;
+                  end if;
+               end;
+            end if;
+         end;
+      end if;
+      if not Body_OK then
+         Free_Byte_Seq (HC.Reasm_Buf);
+         HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+         HC.Reasm_Hdr_Pending := False;
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+      HC.Cert_Request_Received := True;
+
+      --  Sig-algs selection. Empty sig_algs list is malformed per
+      --  RFC 5246 §7.4.1.4.1.
+      declare
+         Picked   : Unsigned_16 := 0;
+         SA_Empty : Boolean := True;
+      begin
+         if B + 1 <= Frag'Last then
+            declare
+               CT_Len : constant N32 := N32 (Frag (B));
+               SA_Off : constant N32 := B + 1 + CT_Len;
+            begin
+               if SA_Off + 1 <= Frag'Last then
+                  declare
+                     SA_Len : constant N32 :=
+                        N32 (Frag (SA_Off)) * 256
+                        + N32 (Frag (SA_Off + 1));
+                  begin
+                     if SA_Len >= 2
+                       and SA_Off + 1 + SA_Len <= Frag'Last
+                     then
+                        SA_Empty := False;
+                        if HC.Cfg.Local /= null then
+                           declare
+                              SA_Slice : constant Byte_Seq
+                                 (0 .. SA_Len - 1) :=
+                                 Frag (SA_Off + 2 ..
+                                       SA_Off + 1 + SA_Len);
+                           begin
+                              Picked := Handshake.Pick_Sig_Algo
+                                (SA_Slice,
+                                 HC.Cfg.Local.Sign_Algo,
+                                 Allow_PKCS1_v1_5 => True);
+                           end;
+                        end if;
+                     end if;
+                  end;
+               end if;
+            end;
+         end if;
+         if SA_Empty then
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            Send_Alert_And_Error (S, Decode_Error, Result);
+            return;
+         end if;
+         if HC.Cfg.Local /= null then
+            if Picked /= 0 then
+               HC.Negotiated_Sig_Algo := Picked;
+            else
+               case HC.Cfg.Local.Sign_Algo is
+                  when Sign_RSA_PSS =>
+                     HC.Negotiated_Sig_Algo := 16#0804#;
+                  when Sign_ECDSA_P256 =>
+                     HC.Negotiated_Sig_Algo := 16#0403#;
+                  when Sign_ECDSA_P384 =>
+                     HC.Negotiated_Sig_Algo := 16#0503#;
+                  when Sign_Ed25519 =>
+                     HC.Negotiated_Sig_Algo := 16#0807#;
+                  when Sign_None =>
+                     null;
+               end case;
+            end if;
+         end if;
+      end;
+      Append_Transcript (HC, Frag);
+   end Handle_CertReq_12;
+
+   --  RFC 5246 §7.4.3 ServerKeyExchange (HS type 0x0C). Length-validates
+   --  the body shape first (curve_type/curve/pt_len/pt + sig_hash/alg/
+   --  len/sig must sum to Msg_Len), then dispatches to
+   --  Parse_Server_Key_Exchange which extracts ECDHE params + verifies
+   --  the signature.
+   procedure Handle_SKE_12
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   with Pre  => Msg_Len + 4 <= Frag'Length
+                and Msg_Len >= 0
+                and Frag'First >= 0
+                and Frag'Last < N32'Last - 4;
+
+   procedure Handle_SKE_12
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   is
+      Body_Start : constant N32 := Frag'First + 4;
+   begin
+      Result := OK;
+      if Msg_Len = 0 then
+         Free_Byte_Seq (HC.Reasm_Buf);
+         HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+
+      declare
+         Length_OK  : Boolean := False;
+      begin
+         if Msg_Len >= 8 then
+            declare
+               Pt_Len  : constant N32 := N32 (Frag (Body_Start + 3));
+               Sig_Pos : constant N32 := Body_Start + 4 + Pt_Len + 2;
+            begin
+               if Sig_Pos + 1 < Frag'First + 4 + Msg_Len then
+                  declare
+                     Sig_Len : constant N32 :=
+                        N32 (Frag (Sig_Pos)) * 256
+                        + N32 (Frag (Sig_Pos + 1));
+                  begin
+                     Length_OK := Msg_Len = 8 + Pt_Len + Sig_Len;
+                  end;
+               end if;
+            end;
+         end if;
+         if not Length_OK then
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            HC.Reasm_Hdr_Pending := False;
+            Send_Alert_And_Error (S, Decode_Error, Result);
+            return;
+         end if;
+      end;
+
+      declare
+         Body_Data : Byte_Seq (0 .. Msg_Len - 1);
+         SKE_OK    : Boolean;
+      begin
+         Body_Data := Frag (Body_Start .. Body_Start + Msg_Len - 1);
+         Parse_Server_Key_Exchange (HC, Body_Data, SKE_OK);
+         if not SKE_OK then
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            Send_Alert_And_Error (S, Handshake_Failure, Result);
+            return;
+         end if;
+      end;
+      Append_Transcript (HC, Frag);
+   end Handle_SKE_12;
+
+   --  RFC 5246 §7.4.5 ServerHelloDone (HS type 0x0E). End of the
+   --  server's pre-CCS flight. Computes the ECDHE shared secret,
+   --  derives the AEAD keys, then builds and commits the entire
+   --  client flight atomically: (optional Certificate + CKE +
+   --  optional CertificateVerify + CCS + encrypted Finished) into a
+   --  stack-scratch IO_Buffer, with HC.Client_Seq_12 rolled back on
+   --  commit failure to keep AEAD nonces in sync with the peer.
+   procedure Handle_SHD_12
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   with Pre  => Msg_Len + 4 <= Frag'Length
+                and Frag'First >= 0
+                and Frag'Last < N32'Last - 4
+                and SPARKTLSCrypto.P384.Field.Initialized
+                and SPARKTLSCrypto.P384.ECDSA.Initialized;
+
+   procedure Handle_SHD_12
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   is
+   begin
+      Result := OK;
+      if Msg_Len /= 0 then
+         Free_Byte_Seq (HC.Reasm_Buf);
+         HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+         HC.Reasm_Hdr_Pending := False;
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+      if HC.Reasm_Len > HC.Reasm_Need then
+         Free_Byte_Seq (HC.Reasm_Buf);
+         HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+         HC.Reasm_Hdr_Pending := False;
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         return;
+      end if;
+      Append_Transcript (HC, Frag);
+
+      --  Compute ECDHE shared secret per Selected_Group.
+      declare
+         Gen : constant Random_Bytes_Fn := HC.Cfg.Random;
+         SS_OK  : Boolean    := False;
+         SS_Err : Error_Code := Handshake_Failure;
+      begin
+         case HC.Selected_Group is
+            when Group_X25519 =>
+               Gen (Byte_Seq (HC.Local_SK));
+               HC.Shared_Secret (0 .. 31) :=
+                  SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+               SS_OK := Shared_Secret_Is_Acceptable_X25519
+                          (HC.Shared_Secret (0 .. 31));
+               if not SS_OK then SS_Err := Illegal_Parameter; end if;
+            when Group_Secp256r1 =>
+               Gen (Byte_Seq (HC.P256_Local_SK));
+               declare
+                  use SPARKTLSCrypto.P256.Point;
+                  Pt : P256_Jacobian; V : SPARKNaCl.U32;
+               begin
+                  P256_Decode (Pt, HC.P256_Peer_PK, V);
+                  if V /= 0 then
+                     P256_Mul (Pt, HC.P256_Local_SK, 32);
+                     P256_To_Affine (Pt);
+                     declare E : Byte_Seq (0 .. 64);
+                     begin
+                        P256_Encode (E, Pt);
+                        HC.Shared_Secret := (others => 0);
+                        HC.Shared_Secret (0 .. 31) := E (1 .. 32);
+                     end;
+                     SS_OK := True;
+                  else
+                     SS_Err := Illegal_Parameter;
+                  end if;
+               end;
+            when Group_Secp384r1 =>
+               Gen (Byte_Seq (HC.P384_Local_SK));
+               declare SS : Bytes_48; OK384 : Boolean;
+               begin
+                  SPARKTLSCrypto.P384.Point.P384_ECDHE
+                    (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
+                  if OK384 then
+                     HC.Shared_Secret := SS; SS_OK := True;
+                  else
+                     SS_Err := Illegal_Parameter;
+                  end if;
+               end;
+            when others => null;
+         end case;
+
+         if not SS_OK then
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            Send_Alert_And_Error (S, SS_Err, Result);
+            return;
+         end if;
+      end;
+
+      --  Build + atomically commit the client flight.
+      declare
+         use Key_Schedule_12;
+         use Records.TLS12;
+         Scratch : IO_Buffer;
+         CKE : Byte_Seq (0 .. Max_Client_Key_Exchange - 1);
+         CKE_Len : N32;
+         Rec_Out : N32;
+         CCS_Out : N32;
+         FB : Byte_Seq (0 .. Finished_12_Total_Len - 1);
+         FL : N32; EO : N32;
+         TH : Digest;
+         TH4 : SPARKNaCl.Hashing.SHA384.Digest;
+         Use_384 : constant Boolean :=
+            S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
+                               | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+         Saved_Seq : Unsigned_64;
+      begin
+         if HC.Cert_Request_Received then
+            declare
+               Cert_Buf : Byte_Seq (0 .. 4 + 3 + Max_Cert_DER - 1);
+               Cert_Len : N32;
+            begin
+               if HC.Cfg.Local /= null
+                 and then HC.Cfg.Local.Has_Identity
+               then
+                  Build_Certificate_Chain_12
+                    (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
+               else
+                  Cert_Buf := (others => 0);
+                  Cert_Buf (0) := 16#0B#;
+                  Cert_Buf (3) := 3;
+                  Cert_Len := 7;
+               end if;
+               if Cert_Len > 0 then
+                  Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
+                  Records.Build_Handshake_Record
+                    (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out);
+                  if Rec_Out = 0 then
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                     Send_Alert_And_Error
+                       (S, Insufficient_Buffer, Result);
+                     return;
+                  end if;
+               end if;
+            end;
+         end if;
+
+         Build_Client_Key_Exchange (HC, CKE, CKE_Len);
+         if CKE_Len > 0 then
+            Append_Transcript (HC, CKE (0 .. CKE_Len - 1));
+            Records.Build_Handshake_Record
+              (CKE (0 .. CKE_Len - 1), Scratch, Rec_Out);
+            if Rec_Out = 0 then
+               Free_Byte_Seq (HC.Reasm_Buf);
+               HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
+         end if;
+
+         if HC.Cert_Request_Received
+           and then HC.Cfg.Local /= null
+           and then HC.Cfg.Local.Has_Identity
+         then
+            declare
+               CV_Buf : Byte_Seq (0 .. 523);
+               CV_Len : N32;
+               TH_CV  : Digest;
+               TH4_CV : SPARKNaCl.Hashing.SHA384.Digest;
+               TH5_CV : SPARKNaCl.Hashing.SHA512.Digest;
+               Use_384_For_CV : constant Boolean :=
+                  HC.Negotiated_Sig_Algo in 16#0503# | 16#0805# | 16#0501#;
+               Use_512_For_CV : constant Boolean :=
+                  HC.Negotiated_Sig_Algo in 16#0806# | 16#0601#;
+               Use_Raw_For_CV : constant Boolean :=
+                  HC.Negotiated_Sig_Algo = 16#0807#;
+            begin
+               if Use_Raw_For_CV then
+                  Build_Certificate_Verify_12
+                    (Transcript_Hash =>
+                       HC.Transcript (0 .. HC.Transcript_Len - 1),
+                     Id              => HC.Cfg.Local.all,
+                     Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
+                     Random          => HC.Cfg.Random,
+                     Result          => CV_Buf,
+                     Len             => CV_Len);
+               elsif Use_512_For_CV then
+                  SPARKNaCl.Hashing.SHA512.Hash
+                    (TH5_CV,
+                     HC.Transcript (0 .. HC.Transcript_Len - 1));
+                  Build_Certificate_Verify_12
+                    (Transcript_Hash => Byte_Seq (TH5_CV),
+                     Id              => HC.Cfg.Local.all,
+                     Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
+                     Random          => HC.Cfg.Random,
+                     Result          => CV_Buf,
+                     Len             => CV_Len);
+               elsif Use_384_For_CV then
+                  SPARKNaCl.Hashing.SHA384.Hash
+                    (TH4_CV,
+                     HC.Transcript (0 .. HC.Transcript_Len - 1));
+                  Build_Certificate_Verify_12
+                    (Transcript_Hash => Byte_Seq (TH4_CV),
+                     Id              => HC.Cfg.Local.all,
+                     Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
+                     Random          => HC.Cfg.Random,
+                     Result          => CV_Buf,
+                     Len             => CV_Len);
+               else
+                  Hash (TH_CV,
+                        HC.Transcript (0 .. HC.Transcript_Len - 1));
+                  Build_Certificate_Verify_12
+                    (Transcript_Hash => Byte_Seq (TH_CV),
+                     Id              => HC.Cfg.Local.all,
+                     Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
+                     Random          => HC.Cfg.Random,
+                     Result          => CV_Buf,
+                     Len             => CV_Len);
+               end if;
+               if CV_Len = 0 then
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                  Send_Alert_And_Error (S, Internal_Error, Result);
+                  return;
+               end if;
+               Append_Transcript (HC, CV_Buf (0 .. CV_Len - 1));
+               Records.Build_Handshake_Record
+                 (CV_Buf (0 .. CV_Len - 1), Scratch, Rec_Out);
+               if Rec_Out = 0 then
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                  Send_Alert_And_Error
+                    (S, Insufficient_Buffer, Result);
+                  return;
+               end if;
+            end;
+         end if;
+
+         Derive_Keys_12 (S, HC);
+
+         Records.Build_CCS_Record (Scratch, CCS_Out);
+         if CCS_Out = 0 then
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+
+         if Use_384 then
+            SPARKNaCl.Hashing.SHA384.Hash
+              (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+            Build_Finished_12 (HC.Master_Secret_12,
+                               Label_Client_Finished,
+                               Byte_Seq (TH4), True, FB, FL);
+         else
+            Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+            Build_Finished_12 (HC.Master_Secret_12,
+                               Label_Client_Finished,
+                               Byte_Seq (TH), False, FB, FL);
+         end if;
+
+         Append_Transcript (HC, FB (0 .. FL - 1));
+
+         Saved_Seq := HC.Client_Seq_12;
+         Build_Encrypted_Record_12
+           (FB (0 .. FL - 1), 16#16#, S.Client_App,
+            HC.Client_Write_IV_12, HC.Client_Seq_12,
+            Scratch, EO);
+         if EO = 0 then
+            HC.Client_Seq_12 := Saved_Seq;
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+
+         if Free_Space (S.Output) < Scratch.Write_Pos then
+            HC.Client_Seq_12 := Saved_Seq;
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+         S.Output.Data
+           (S.Output.Write_Pos ..
+            S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+            Scratch.Data (0 .. Scratch.Write_Pos - 1);
+         S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+      end;
+
+      HC.CKE_Received_12 := True;
+      Result := (if Output_Pending (S) > 0
+                 then Has_Output else Need_Input);
+   end Handle_SHD_12;
+
+   --  RFC 5077 §3.3 NewSessionTicket (HS type 0x04). Two arrival times:
+   --    * Abbreviated handshake (HC.TLS12_Resuming): right after SH,
+   --      before server CCS+Finished. Cache, append transcript, derive
+   --      AEAD keys from cached master_secret + this connection's
+   --      randoms, flip CKE_Received_12 so the dispatcher advances.
+   --    * Full handshake: after client CKE+CCS+Finished, before
+   --      server CCS+Finished. The dispatcher routes to
+   --      Process_Server_CCS at that point — handled there.
+   --
+   --  Frag is the reassembled HS message bytes (header + body), Msg_Len
+   --  the declared body length from the HS header.
+   procedure Handle_NST_12
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   with Pre  => Msg_Len + 4 <= Frag'Length
+                and Msg_Len in 6 .. Max_HS_Msg - 4
+                and Frag'First >= 0
+                and Frag'Last < N32'Last - 4;
+
+   procedure Handle_NST_12
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Frag    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   is
+      B          : constant N32 := Frag'First + 4;
+      NST_Body   : constant Byte_Seq (0 .. Msg_Len - 1) :=
+                     Frag (B .. B + Msg_Len - 1);
+      Lifetime   : Unsigned_32;
+      Ticket_Len : N32;
+      Parse_OK   : Boolean;
+   begin
+      SPARKTLS.Handshake.TLS12.Parse_New_Session_Ticket_12
+        (NST_Body      => NST_Body,
+         Lifetime_Hint => Lifetime,
+         Ticket_Len    => Ticket_Len,
+         OK            => Parse_OK);
+      if not Parse_OK or Ticket_Len > Max_TLS12_Ticket_Len then
+         Free_Byte_Seq (HC.Reasm_Buf);
+         HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+      if Ticket_Len > 0 then
+         S.TLS12_New_Ticket.Ticket (0 .. Ticket_Len - 1) :=
+            NST_Body (6 .. 6 + Ticket_Len - 1);
+      end if;
+      S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
+      S.TLS12_New_Ticket.Suite := S.Negotiated_Suite_12;
+      S.TLS12_New_Ticket.Master_Secret := HC.Master_Secret_12;
+      S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
+      S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
+      S.TLS12_New_Ticket.Valid := True;
+
+      Append_Transcript (HC, Frag);
+
+      if HC.TLS12_Resuming then
+         Derive_Keys_Resumed_12 (S, HC);
+         HC.CKE_Received_12 := True;
+      end if;
+      Result := OK;
+   end Handle_NST_12;
 
    procedure Process_Server_Flight
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
@@ -515,918 +1362,50 @@ is
 
          case Msg_Type is
             when 16#0B# =>
-               --  Certificate (RFC 5246 §7.4.2) — parsed via RFLX
-               --  TLS_1_2_Certificate. The wire format is
-               --  cert_list_len(3) || {cert_len(3) || cert}* with no
-               --  context byte and no per-cert extensions. The RFLX
-               --  schema enforces all length-field invariants
-               --  (cert_list_len matches the entries sequence size;
-               --  each entry's cert_len matches its cert_data size).
-               --  Trailing bytes raise Decode_Error here, matching
-               --  BoGo TrailingMessageData-ServerCertificate.
-               declare
-                  package C12 renames
-                    RFLX.TLS_Handshake.TLS_1_2_Certificate;
-                  package C12_Entries renames
-                    RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
-                  package C12_Entry renames
-                    RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
-                  package RBT renames RFLX.RFLX_Builtin_Types;
-                  procedure RFLX_Free_Local is new
-                    Ada.Unchecked_Deallocation
-                      (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-                  Buf : RBT.Bytes_Ptr;
-                  Ctx : C12.Context;
-                  B   : constant N32 := Frag'First + 4;
-                  --  Msg_Len is a flow-mutable variable; SPARK E0007
-                  --  forbids subtype constraints on it directly. Pin
-                  --  it to a local constant so Body_Bytes' bounds are
-                  --  a constant input.
-                  Msg_Len_C : constant N32 := Msg_Len;
-                  Body_Bytes : Byte_Seq (0 .. Msg_Len_C - 1);
-                  Cert_Idx : Natural := 0;
-               begin
-                  HC.Peer_Cert_Valid := False;
-                  HC.Peer_Int_Count := 0;
-
-                  if Msg_Len_C < 3 then
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     HC.Reasm_Hdr_Pending := False;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-
-                  Body_Bytes := Frag (B .. B + Msg_Len_C - 1);
-
-                  Buf := new RBT.Bytes'
-                          (1 .. RBT.Index (Msg_Len_C) => 0);
-                  Buf.all := To_RFLX (Body_Bytes);
-                  C12.Initialize
-                    (Ctx, Buf,
-                     Written_Last => RBT.Bit_Length (Msg_Len_C * 8));
-                  C12.Verify_Message (Ctx);
-
-                  if not C12.Well_Formed_Message (Ctx) then
-                     C12.Take_Buffer (Ctx, Buf);
-                     RFLX_Free_Local (Buf);
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     HC.Reasm_Hdr_Pending := False;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-
-                  declare
-                     use type RBT.Bit_Length;
-                  begin
-                  if C12.Field_Size
-                       (Ctx, C12.F_Certificate_List) > 0
-                  then
-                     declare
-                        Entries_Ctx : C12_Entries.Context;
-                     begin
-                        C12.Switch_To_Certificate_List
-                          (Ctx, Entries_Ctx);
-
-                        while C12_Entries.Has_Element (Entries_Ctx)
-                          and then Cert_Idx <= Max_Pool_Size
-                        loop
-                           declare
-                              E_Ctx : C12_Entry.Context;
-                           begin
-                              C12_Entries.Switch (Entries_Ctx, E_Ctx);
-                              C12_Entry.Verify_Message (E_Ctx);
-
-                              if C12_Entry.Well_Formed_Message (E_Ctx)
-                              then
-                                 declare
-                                    C_Len : constant N32 :=
-                                      N32 (C12_Entry.Get_Cert_Data_Length
-                                             (E_Ctx));
-                                    Cert_RFLX : RBT.Bytes
-                                                  (1 .. RBT.Index (C_Len));
-                                 begin
-                                    if C_Len > 0
-                                      and C_Len <= N32 (Max_Cert_DER)
-                                    then
-                                       C12_Entry.Get_Cert_Data
-                                         (E_Ctx, Cert_RFLX);
-
-                                       if Cert_Idx = 0 then
-                                          --  Leaf cert
-                                          HC.Peer_Cert_DER_Len := C_Len;
-                                          for I in N32 range 0 .. C_Len - 1
-                                          loop
-                                             HC.Peer_Cert_DER (I) :=
-                                               Byte
-                                                 (Cert_RFLX
-                                                    (RBT.Index (I + 1)));
-                                          end loop;
-                                          declare
-                                             Cert_X : X509.Byte_Seq
-                                               (0 .. X509.N32 (C_Len) - 1) :=
-                                                 (others => 0);
-                                             P_OK : Boolean;
-                                          begin
-                                             for I in N32 range
-                                               0 .. C_Len - 1
-                                             loop
-                                                Cert_X (X509.N32 (I)) :=
-                                                  X509.Byte
-                                                    (Cert_RFLX
-                                                       (RBT.Index (I + 1)));
-                                             end loop;
-                                             X509.Parse
-                                               (Cert_X, HC.Peer_Cert, P_OK);
-                                             HC.Peer_Cert_Valid := P_OK
-                                               and then X509.Is_Valid
-                                                          (HC.Peer_Cert);
-                                          end;
-                                       elsif HC.Peer_Int_Count
-                                               < Max_Pool_Size
-                                       then
-                                          --  Intermediate cert
-                                          declare
-                                             Idx : constant Natural :=
-                                               HC.Peer_Int_Count;
-                                             Int_X : X509.Byte_Seq
-                                               (0 .. X509.N32 (C_Len) - 1) :=
-                                                 (others => 0);
-                                             C   : X509.Certificate;
-                                             P_OK : Boolean;
-                                          begin
-                                             for I in N32 range
-                                               0 .. C_Len - 1
-                                             loop
-                                                Int_X (X509.N32 (I)) :=
-                                                  X509.Byte
-                                                    (Cert_RFLX
-                                                       (RBT.Index (I + 1)));
-                                             end loop;
-                                             X509.Parse
-                                               (Int_X, C, P_OK);
-                                             if P_OK
-                                               and then X509.Is_Valid (C)
-                                             then
-                                                HC.Peer_Ints (Idx).Cert := C;
-                                                for I in X509.N32 range
-                                                  0 .. X509.N32 (C_Len) - 1
-                                                loop
-                                                   HC.Peer_Ints (Idx).DER (I)
-                                                     :=
-                                                       X509.Byte
-                                                         (Cert_RFLX
-                                                            (RBT.Index
-                                                               (N32 (I) + 1)));
-                                                end loop;
-                                                HC.Peer_Ints (Idx).DER_Len :=
-                                                  X509.N32 (C_Len);
-                                                HC.Peer_Ints (Idx).Present :=
-                                                  True;
-                                                HC.Peer_Int_Count :=
-                                                  HC.Peer_Int_Count + 1;
-                                             end if;
-                                          end;
-                                       end if;
-                                       Cert_Idx := Cert_Idx + 1;
-                                    end if;
-                                 end;
-                              end if;
-
-                              C12_Entries.Update (Entries_Ctx, E_Ctx);
-                           end;
-                        end loop;
-
-                        C12.Update_Certificate_List
-                          (Ctx, Entries_Ctx);
-                     end;
-                  end if;
-                  end;
-
-                  C12.Take_Buffer (Ctx, Buf);
-                  RFLX_Free_Local (Buf);
-               end;
-
-               --  Wire-format gate: the leaf must parse cleanly even
-               --  in Skip_Verify mode (parseability is independent
-               --  of chain validation). BoGo's
-               --  GarbageCertificate-Client-TLS12 sends "GARBAGE" as
-               --  the cert and expects decode_error.
-               if not HC.Peer_Cert_Valid then
+               --  Certificate (RFC 5246 §7.4.2). Parsing happens in
+               --  Parse_Cert_Chain_12; subsequent validation gates
+               --  (keyUsage, suite↔cert algorithm match, hostname,
+               --  chain) live in Validate_Server_Cert_12.
+               if Msg_Len < 3 then
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                  HC.Reasm_Hdr_Pending := False;
                   Send_Alert_And_Error (S, Decode_Error, Result);
                   return;
                end if;
-
-               --  RFC 5246 §7.4.2: leaf keyUsage must include
-               --  digitalSignature for ECDHE-* suites (we sign SKE
-               --  with it). Run independently of chain validation
-               --  for the same reasons noted on the TLS 1.3 side.
-               --  BoGo's {RSA,ECDSA}KeyUsage-Client-TLS12 cluster.
-               if X509.Has_Key_Usage (HC.Peer_Cert)
-                 and then not X509.KU_Digital_Signature (HC.Peer_Cert)
-               then
-                  Send_Alert_And_Error (S, Bad_Certificate, Result);
-                  return;
-               end if;
-
-               --  RFC 5246 §7.4.2 / RFC 8422 §5.4: the leaf cert's
-               --  key type must match the cipher suite's expected
-               --  signing algorithm. BoGo CertificateCipherMismatch-*
-               --  sends e.g. an RSA cert with TLS_ECDHE_ECDSA suite
-               --  advertised; we reject with bad_certificate.
                declare
-                  PK : constant X509.Algorithm_ID :=
-                     X509.PK_Algorithm (HC.Peer_Cert);
-                  Suite_Needs_ECDSA : constant Boolean :=
-                     S.Negotiated_Suite in
-                       Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
-                  Suite_Needs_RSA   : constant Boolean :=
-                     S.Negotiated_Suite in
-                       Suite_ECDHE_RSA_AES128_GCM_SHA256
-                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                     | Suite_ECDHE_RSA_CHACHA20_SHA256;
-                  Cert_Is_ECDSA : constant Boolean :=
-                     PK = X509.Algo_EC_P256
-                     or PK = X509.Algo_EC_P384;
-                  Cert_Is_RSA : constant Boolean :=
-                     PK = X509.Algo_RSA;
-                  Cert_Is_Ed25519 : constant Boolean :=
-                     PK = X509.Algo_EC_Ed25519;
+                  Parse_OK : Boolean;
                begin
-                  if Suite_Needs_ECDSA
-                    and then not (Cert_Is_ECDSA or Cert_Is_Ed25519)
-                  then
-                     Send_Alert_And_Error
-                       (S, Bad_Certificate, Result);
-                     return;
-                  end if;
-                  if Suite_Needs_RSA and then not Cert_Is_RSA then
-                     Send_Alert_And_Error
-                       (S, Bad_Certificate, Result);
+                  Parse_Cert_Chain_12 (HC, Frag, Msg_Len, Parse_OK);
+                  if not Parse_OK then
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                     HC.Reasm_Hdr_Pending := False;
+                     Send_Alert_And_Error (S, Decode_Error, Result);
                      return;
                   end if;
                end;
 
-               --  RFC 6125 §6.4 hostname binding. Runs INDEPENDENTLY
-               --  of chain validation — see the matching TLS 1.3
-               --  comment in sparktls-client.adb for the rationale.
-               if HC.Cfg.Server_Name.Len > 0
-                 and then not HC.Cfg.Skip_Hostname_Verify
-                 and then HC.Peer_Cert_Valid
-               then
-                  declare
-                     PCDL : constant N32 := HC.Peer_Cert_DER_Len;
-                     Cert_X : X509.Byte_Seq
-                        (0 .. X509.N32 (PCDL) - 1) := (others => 0);
-                  begin
-                     for I in N32 range 0 .. PCDL - 1 loop
-                        Cert_X (X509.N32 (I)) :=
-                           X509.Byte (HC.Peer_Cert_DER (I));
-                     end loop;
-                     if not X509.Matches_Hostname
-                             (HC.Peer_Cert, Cert_X,
-                              HC.Cfg.Server_Name.Data
-                                (1 .. HC.Cfg.Server_Name.Len))
-                     then
-                        Send_Alert_And_Error
-                          (S, Bad_Certificate, Result);
-                        return;
-                     end if;
-                  end;
-               end if;
-
-               --  Chain validation (if trust store is configured)
-               if not HC.Cfg.Skip_Verify
-                  and then HC.Cfg.Trust /= null
-                  and then HC.Cfg.Get_Time /= null
-                  and then HC.Peer_Cert_Valid
-               then
-                  declare
-                     PCDL : constant N32 := HC.Peer_Cert_DER_Len;
-                     Cert_X : X509.Byte_Seq
-                        (0 .. X509.N32 (PCDL) - 1) := (others => 0);
-                     VR : Validation_Result;
-                  begin
-                     for I in N32 range 0 .. PCDL - 1 loop
-                        Cert_X (X509.N32 (I)) :=
-                           X509.Byte (HC.Peer_Cert_DER (I));
-                     end loop;
-
-                     VR := Validate_Chain
-                       (Leaf_DER   => Cert_X,
-                        Leaf       => HC.Peer_Cert,
-                        Ints       => HC.Peer_Ints,
-                        Int_Count  => HC.Peer_Int_Count,
-                        Roots      => HC.Cfg.Trust.Roots,
-                        Root_Count => HC.Cfg.Trust.Root_Count,
-                        Now        => HC.Cfg.Get_Time.all,
-                        Hostname   =>
-                           HC.Cfg.Server_Name.Data
-                             (1 .. HC.Cfg.Server_Name.Len),
-                        Purpose    => HC.Cfg.Verify_Purpose,
-                        Mode       => HC.Cfg.Verify_Mode);
-
-                     if VR /= Valid then
-                        Free_Byte_Seq (HC.Reasm_Buf);
-                        HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                        Send_Alert_And_Error (S, Bad_Certificate, Result);
-                        return;
-                     end if;
-                  end;
-               end if;
+               Validate_Server_Cert_12 (S, HC, Result);
+               if Result /= OK then return; end if;
 
                Append_Transcript (HC, Frag);
                Result := OK;
 
             when 16#0D# =>
-               --  CertificateRequest (RFC 5246 §7.4.4).
-               --  Wire shape:
-               --    cert_types_len(1) + cert_types[N]
-               --    sig_algs_len(2) + sig_algs[2N]   (TLS 1.2 only)
-               --    ca_dn_len(2) + ca_dns[N]         (we ignore)
-               --  RFC 5246 §7.4.1.4.1 mandates supported_signature_
-               --  algorithms is non-empty; empty list = decode_error.
-               --  Also verify the message ends exactly at the end of
-               --  ca_dns — trailing bytes are decode_error (BoGo
-               --  TrailingMessageData-CertificateRequest).
-               declare
-                  Body_OK : Boolean := False;
-                  B : constant N32 := Frag'First + 4;
-               begin
-                  if B + 1 <= Frag'Last then
-                     declare
-                        CT_Len_D : constant N32 := N32 (Frag (B));
-                        SA_Off_D : constant N32 := B + 1 + CT_Len_D;
-                     begin
-                        if SA_Off_D + 1 <= Frag'Last then
-                           declare
-                              SA_Len_D : constant N32 :=
-                                 N32 (Frag (SA_Off_D)) * 256
-                                 + N32 (Frag (SA_Off_D + 1));
-                              CA_Off_D : constant N32 :=
-                                 SA_Off_D + 2 + SA_Len_D;
-                           begin
-                              if CA_Off_D + 1 <= Frag'Last then
-                                 declare
-                                    CA_Len_D : constant N32 :=
-                                       N32 (Frag (CA_Off_D)) * 256
-                                       + N32 (Frag (CA_Off_D + 1));
-                                    Expected : constant N32 :=
-                                       1 + CT_Len_D + 2 + SA_Len_D
-                                       + 2 + CA_Len_D;
-                                 begin
-                                    Body_OK := Msg_Len = Expected;
-                                 end;
-                              end if;
-                           end;
-                        end if;
-                     end;
-                  end if;
-                  if not Body_OK then
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     HC.Reasm_Hdr_Pending := False;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-               end;
-               HC.Cert_Request_Received := True;
-               declare
-                  Picked   : Unsigned_16 := 0;
-                  SA_Empty : Boolean := True;
-                  B : constant N32 := Frag'First + 4;
-               begin
-                  if B + 1 <= Frag'Last then
-                     declare
-                        CT_Len : constant N32 := N32 (Frag (B));
-                        SA_Off : constant N32 := B + 1 + CT_Len;
-                     begin
-                        if SA_Off + 1 <= Frag'Last then
-                           declare
-                              SA_Len : constant N32 :=
-                                 N32 (Frag (SA_Off)) * 256
-                                 + N32 (Frag (SA_Off + 1));
-                           begin
-                              if SA_Len >= 2
-                                and SA_Off + 1 + SA_Len <= Frag'Last
-                              then
-                                 SA_Empty := False;
-                                 if HC.Cfg.Local /= null then
-                                    declare
-                                       SA_Slice : constant Byte_Seq
-                                          (0 .. SA_Len - 1) :=
-                                          Frag (SA_Off + 2 ..
-                                                SA_Off + 1 + SA_Len);
-                                    begin
-                                       Picked := Handshake.Pick_Sig_Algo
-                                         (SA_Slice,
-                                          HC.Cfg.Local.Sign_Algo,
-                                          Allow_PKCS1_v1_5 => True);
-                                    end;
-                                 end if;
-                              end if;
-                           end;
-                        end if;
-                     end;
-                  end if;
-                  if SA_Empty then
-                     --  RFC 5246 §7.4.1.4.1: empty list = malformed.
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-                  if HC.Cfg.Local /= null then
-                     if Picked /= 0 then
-                        HC.Negotiated_Sig_Algo := Picked;
-                     else
-                        case HC.Cfg.Local.Sign_Algo is
-                           when Sign_RSA_PSS =>
-                              HC.Negotiated_Sig_Algo := 16#0804#;
-                           when Sign_ECDSA_P256 =>
-                              HC.Negotiated_Sig_Algo := 16#0403#;
-                           when Sign_ECDSA_P384 =>
-                              HC.Negotiated_Sig_Algo := 16#0503#;
-                           when Sign_Ed25519 =>
-                              HC.Negotiated_Sig_Algo := 16#0807#;
-                           when Sign_None =>
-                              null;
-                        end case;
-                     end if;
-                  end if;
-               end;
-               Append_Transcript (HC, Frag);
-               Result := OK;
+               Handle_CertReq_12 (S, HC, Frag, Msg_Len, Result);
+               if Result /= OK then return; end if;
 
             when HT_Server_Key_Exchange =>
-               --  Parse SKE: extract ECDHE params + verify signature.
-               if Msg_Len = 0 then
-                  Free_Byte_Seq (HC.Reasm_Buf);
-                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                  Send_Alert_And_Error (S, Decode_Error, Result);
-                  return;
-               end if;
-               --  Length-validate the body before Parse_SKE so that
-               --  trailing bytes raise decode_error rather than
-               --  handshake_failure. SKE body layout (RFC 5246
-               --  §7.4.3): curve_type(1) + curve(2) + pt_len(1) +
-               --  pt(pt_len) + sig_hash(1) + sig_alg(1) + sig_len(2)
-               --  + sig(sig_len) = 8 + pt_len + sig_len.
-               declare
-                  Body_Start : constant N32 := Frag'First + 4;
-                  Length_OK  : Boolean := False;
-               begin
-                  if Msg_Len >= 8 then
-                     declare
-                        Pt_Len  : constant N32 :=
-                           N32 (Frag (Body_Start + 3));
-                        Sig_Pos : constant N32 :=
-                           Body_Start + 4 + Pt_Len + 2;
-                     begin
-                        if Sig_Pos + 1 < Frag'First + 4 + Msg_Len then
-                           declare
-                              Sig_Len : constant N32 :=
-                                 N32 (Frag (Sig_Pos)) * 256
-                                 + N32 (Frag (Sig_Pos + 1));
-                           begin
-                              Length_OK :=
-                                 Msg_Len = 8 + Pt_Len + Sig_Len;
-                           end;
-                        end if;
-                     end;
-                  end if;
-                  if not Length_OK then
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     HC.Reasm_Hdr_Pending := False;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-               end;
-               declare
-                  Msg_Len_C : constant N32 := Msg_Len;
-                  Body_Start : constant N32 := Frag'First + 4;
-                  Body_Data : Byte_Seq (0 .. Msg_Len_C - 1);
-                  SKE_OK : Boolean;
-               begin
-                  Body_Data := Frag (Body_Start .. Body_Start + Msg_Len_C - 1);
-                  Parse_Server_Key_Exchange (HC, Body_Data, SKE_OK);
-                  if not SKE_OK then
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error (S, Handshake_Failure, Result);
-                     return;
-                  end if;
-               end;
-               Append_Transcript (HC, Frag);
-               Result := OK;
+               Handle_SKE_12 (S, HC, Frag, Msg_Len, Result);
+               if Result /= OK then return; end if;
 
             when HT_Server_Hello_Done =>
-               --  RFC 5246 §7.4.5: ServerHelloDone has empty body
-               --  (length = 0). Reject any trailing bytes with
-               --  decode_error (BoGo TrailingMessageData-ServerHelloDone).
-               if Msg_Len /= 0 then
-                  Free_Byte_Seq (HC.Reasm_Buf);
-                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                  HC.Reasm_Hdr_Pending := False;
-                  Send_Alert_And_Error (S, Decode_Error, Result);
-                  return;
-               end if;
-               --  RFC 5246 §7.4: ServerHelloDone is the last
-               --  pre-CCS server handshake message in its record,
-               --  so any partial/extra bytes after it are excess
-               --  handshake data. BoGo
-               --  PartialFinishedWithServerHelloDone /
-               --  PartialNewSessionTicketWithServerHelloDone append
-               --  one stray byte (typeFinished / typeNewSessionTicket)
-               --  to the SHD record; reject as unexpected_message.
-               if HC.Reasm_Len > HC.Reasm_Need then
-                  Free_Byte_Seq (HC.Reasm_Buf);
-                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                  HC.Reasm_Hdr_Pending := False;
-                  Send_Alert_And_Error (S, Unexpected_Message, Result);
-                  return;
-               end if;
-               --  End of server flight. Now:
-               --  1. Compute ECDHE shared secret
-               --  2. Derive keys
-               --  3. Send CKE + CCS + Finished
-               Append_Transcript (HC, Frag);
-
-               --  Generate ECDHE keypair + compute shared secret
-               declare
-                  Gen : constant Random_Bytes_Fn := HC.Cfg.Random;
-                  SS_OK  : Boolean    := False;
-                  --  RFC 5246 §7.2.2 / RFC 8446 §6.2: invalid peer
-                  --  share is illegal_parameter; unknown group is
-                  --  handshake_failure.
-                  SS_Err : Error_Code := Handshake_Failure;
-               begin
-                  case HC.Selected_Group is
-                     when Group_X25519 =>
-                        Gen (Byte_Seq (HC.Local_SK));
-                        HC.Shared_Secret (0 .. 31) :=
-                           SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
-                        --  RFC 7748 §6.1: small-subgroup defence.
-                        --  Post-condition formally proven by SPARK.
-                        SS_OK := Shared_Secret_Is_Acceptable_X25519
-                                   (HC.Shared_Secret (0 .. 31));
-                        if not SS_OK then
-                           SS_Err := Illegal_Parameter;
-                        end if;
-                     when Group_Secp256r1 =>
-                        Gen (Byte_Seq (HC.P256_Local_SK));
-                        declare
-                           use SPARKTLSCrypto.P256.Point;
-                           Pt : P256_Jacobian; V : SPARKNaCl.U32;
-                        begin
-                           P256_Decode (Pt, HC.P256_Peer_PK, V);
-                           if V /= 0 then
-                              P256_Mul (Pt, HC.P256_Local_SK, 32);
-                              P256_To_Affine (Pt);
-                              declare E : Byte_Seq (0 .. 64);
-                              begin
-                                 P256_Encode (E, Pt);
-                                 HC.Shared_Secret := (others => 0);
-                                 HC.Shared_Secret (0 .. 31) := E (1 .. 32);
-                              end;
-                              SS_OK := True;
-                           else
-                              SS_Err := Illegal_Parameter;
-                           end if;
-                        end;
-                     when Group_Secp384r1 =>
-                        Gen (Byte_Seq (HC.P384_Local_SK));
-                        declare SS : Bytes_48; OK384 : Boolean;
-                        begin
-                           SPARKTLSCrypto.P384.Point.P384_ECDHE
-                             (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
-                           if OK384 then
-                              HC.Shared_Secret := SS; SS_OK := True;
-                           else
-                              SS_Err := Illegal_Parameter;
-                           end if;
-                        end;
-                     when others => null;
-                  end case;
-
-                  if not SS_OK then
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error (S, SS_Err, Result);
-                     return;
-                  end if;
-               end;
-
-               --  Atomic flight assembly: build CKE + CCS + encrypted
-               --  Finished into Scratch; commit only if the whole
-               --  flight fits. The Finished encryption advances
-               --  HC.Client_Seq_12, so save it and roll back on commit
-               --  failure to keep AEAD nonces in sync with the peer.
-               declare
-                  use Key_Schedule_12;
-                  use Records.TLS12;
-                  Scratch : IO_Buffer;
-                  CKE : Byte_Seq (0 .. Max_Client_Key_Exchange - 1);
-                  CKE_Len : N32;
-                  Rec_Out : N32;
-                  CCS_Out : N32;
-                  FB : Byte_Seq (0 .. Finished_12_Total_Len - 1);
-                  FL : N32; EO : N32;
-                  TH : Digest;
-                  TH4 : SPARKNaCl.Hashing.SHA384.Digest;
-                  Use_384 : constant Boolean :=
-                     S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
-                                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
-                  Saved_Seq : Unsigned_64;
-               begin
-                  --  Client Certificate (mTLS, RFC 5246 §7.4.6).
-                  --  Sent before CKE when the server requested a
-                  --  client cert. Empty cert message if we have no
-                  --  identity configured — server then decides
-                  --  whether to fail (Require) or accept anonymously.
-                  if HC.Cert_Request_Received then
-                     declare
-                        Cert_Buf : Byte_Seq
-                          (0 .. 4 + 3 + Max_Cert_DER - 1);
-                        Cert_Len : N32;
-                     begin
-                        if HC.Cfg.Local /= null
-                          and then HC.Cfg.Local.Has_Identity
-                        then
-                           Build_Certificate_Chain_12
-                             (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
-                        else
-                           --  Empty Certificate: type(0x0B) + len(3)=4
-                           --  + cert_list_len(3)=0 → 7 bytes total.
-                           Cert_Buf := (others => 0);
-                           Cert_Buf (0) := 16#0B#;
-                           Cert_Buf (3) := 3;  --  body length = 3
-                           Cert_Len := 7;
-                        end if;
-                        if Cert_Len > 0 then
-                           Append_Transcript
-                             (HC, Cert_Buf (0 .. Cert_Len - 1));
-                           Records.Build_Handshake_Record
-                             (Cert_Buf (0 .. Cert_Len - 1),
-                              Scratch, Rec_Out);
-                           if Rec_Out = 0 then
-                              Free_Byte_Seq (HC.Reasm_Buf);
-                              HC.Reasm_Len := 0;
-                              HC.Reasm_Need := 0;
-                              Send_Alert_And_Error
-                                (S, Insufficient_Buffer, Result);
-                              return;
-                           end if;
-                        end if;
-                     end;
-                  end if;
-
-                  --  CKE
-                  Build_Client_Key_Exchange (HC, CKE, CKE_Len);
-                  if CKE_Len > 0 then
-                     Append_Transcript (HC, CKE (0 .. CKE_Len - 1));
-                     Records.Build_Handshake_Record
-                       (CKE (0 .. CKE_Len - 1), Scratch, Rec_Out);
-                     if Rec_Out = 0 then
-                        Free_Byte_Seq (HC.Reasm_Buf);
-                        HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                        Send_Alert_And_Error
-                          (S, Insufficient_Buffer, Result);
-                        return;
-                     end if;
-                  end if;
-
-                  --  CertificateVerify (mTLS, RFC 5246 §7.4.8).
-                  --  Signs handshake_messages = ClientHello..CKE.
-                  --  Only sent when we presented a non-empty cert.
-                  if HC.Cert_Request_Received
-                    and then HC.Cfg.Local /= null
-                    and then HC.Cfg.Local.Has_Identity
-                  then
-                     declare
-                        --  Build_Certificate_Verify_12 requires
-                        --  Result'Last >= 523 (header + RSA-4096 sig).
-                        CV_Buf : Byte_Seq (0 .. 523);
-                        CV_Len : N32;
-                        TH_CV  : Digest;
-                        TH4_CV : SPARKNaCl.Hashing.SHA384.Digest;
-                        TH5_CV : SPARKNaCl.Hashing.SHA512.Digest;
-                        --  RFC 5246 §7.4.8: hash for CV is per the
-                        --  chosen signature algorithm. The hash family
-                        --  picked here must match the case in
-                        --  Build_Certificate_Verify_12. For Ed25519
-                        --  (0x0807) we pass the RAW transcript — the
-                        --  Ed25519 primitive does SHA-512 internally
-                        --  over (dom2 || prefix || message).
-                        Use_384_For_CV : constant Boolean :=
-                           HC.Negotiated_Sig_Algo in
-                             16#0503# | 16#0805# | 16#0501#;
-                        Use_512_For_CV : constant Boolean :=
-                           HC.Negotiated_Sig_Algo in 16#0806# | 16#0601#;
-                        Use_Raw_For_CV : constant Boolean :=
-                           HC.Negotiated_Sig_Algo = 16#0807#;
-                     begin
-                        if Use_Raw_For_CV then
-                           Build_Certificate_Verify_12
-                             (Transcript_Hash =>
-                                HC.Transcript (0 .. HC.Transcript_Len - 1),
-                              Id              => HC.Cfg.Local.all,
-                              Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
-                              Random          => HC.Cfg.Random,
-                              Result          => CV_Buf,
-                              Len             => CV_Len);
-                        elsif Use_512_For_CV then
-                           SPARKNaCl.Hashing.SHA512.Hash
-                             (TH5_CV,
-                              HC.Transcript
-                                (0 .. HC.Transcript_Len - 1));
-                           Build_Certificate_Verify_12
-                             (Transcript_Hash => Byte_Seq (TH5_CV),
-                              Id              => HC.Cfg.Local.all,
-                              Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
-                              Random          => HC.Cfg.Random,
-                              Result          => CV_Buf,
-                              Len             => CV_Len);
-                        elsif Use_384_For_CV then
-                           SPARKNaCl.Hashing.SHA384.Hash
-                             (TH4_CV,
-                              HC.Transcript
-                                (0 .. HC.Transcript_Len - 1));
-                           Build_Certificate_Verify_12
-                             (Transcript_Hash => Byte_Seq (TH4_CV),
-                              Id              => HC.Cfg.Local.all,
-                              Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
-                              Random          => HC.Cfg.Random,
-                              Result          => CV_Buf,
-                              Len             => CV_Len);
-                        else
-                           Hash (TH_CV,
-                                 HC.Transcript
-                                   (0 .. HC.Transcript_Len - 1));
-                           Build_Certificate_Verify_12
-                             (Transcript_Hash => Byte_Seq (TH_CV),
-                              Id              => HC.Cfg.Local.all,
-                              Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
-                              Random          => HC.Cfg.Random,
-                              Result          => CV_Buf,
-                              Len             => CV_Len);
-                        end if;
-                        if CV_Len = 0 then
-                           Free_Byte_Seq (HC.Reasm_Buf);
-                           HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                           Send_Alert_And_Error
-                             (S, Internal_Error, Result);
-                           return;
-                        end if;
-                        Append_Transcript
-                          (HC, CV_Buf (0 .. CV_Len - 1));
-                        Records.Build_Handshake_Record
-                          (CV_Buf (0 .. CV_Len - 1),
-                           Scratch, Rec_Out);
-                        if Rec_Out = 0 then
-                           Free_Byte_Seq (HC.Reasm_Buf);
-                           HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                           Send_Alert_And_Error
-                             (S, Insufficient_Buffer, Result);
-                           return;
-                        end if;
-                     end;
-                  end if;
-
-                  --  Derive keys (uses transcript up to CKE/CV)
-                  Derive_Keys_12 (S, HC);
-
-                  --  CCS
-                  Records.Build_CCS_Record (Scratch, CCS_Out);
-                  if CCS_Out = 0 then
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error
-                       (S, Insufficient_Buffer, Result);
-                     return;
-                  end if;
-
-                  --  Encrypted Finished (advances HC.Client_Seq_12)
-                  if Use_384 then
-                     SPARKNaCl.Hashing.SHA384.Hash
-                       (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
-                     Build_Finished_12 (HC.Master_Secret_12,
-                                        Label_Client_Finished,
-                                        Byte_Seq (TH4), True, FB, FL);
-                  else
-                     Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
-                     Build_Finished_12 (HC.Master_Secret_12,
-                                        Label_Client_Finished,
-                                        Byte_Seq (TH), False, FB, FL);
-                  end if;
-
-                  --  Add client Finished to transcript
-                  Append_Transcript (HC, FB (0 .. FL - 1));
-
-                  Saved_Seq := HC.Client_Seq_12;
-                  Build_Encrypted_Record_12
-                    (FB (0 .. FL - 1), 16#16#, S.Client_App,
-                     HC.Client_Write_IV_12, HC.Client_Seq_12,
-                     Scratch, EO);
-                  if EO = 0 then
-                     HC.Client_Seq_12 := Saved_Seq;
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error
-                       (S, Insufficient_Buffer, Result);
-                     return;
-                  end if;
-
-                  --  Atomic commit
-                  if Free_Space (S.Output) < Scratch.Write_Pos then
-                     HC.Client_Seq_12 := Saved_Seq;
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error
-                       (S, Insufficient_Buffer, Result);
-                     return;
-                  end if;
-                  S.Output.Data
-                    (S.Output.Write_Pos ..
-                     S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-                     Scratch.Data (0 .. Scratch.Write_Pos - 1);
-                  S.Output.Write_Pos :=
-                     S.Output.Write_Pos + Scratch.Write_Pos;
-               end;
-
-               HC.CKE_Received_12 := True;
-               Result := (if Output_Pending (S) > 0
-                          then Has_Output else Need_Input);
+               Handle_SHD_12 (S, HC, Frag, Msg_Len, Result);
 
             when 16#04# =>
-               --  RFC 5077 §3.3 NewSessionTicket. Two arrival times:
-               --    * Abbreviated handshake (HC.TLS12_Resuming): right
-               --      after SH, before server CCS+Finished. Cache it,
-               --      append to transcript, derive AEAD keys from the
-               --      cached master_secret + this connection's randoms,
-               --      and flip CKE_Received_12 := True so the
-               --      dispatcher advances to expect server CCS+Finished
-               --      (no CKE is ever sent in abbreviated mode).
-               --    * Full handshake: after client CKE+CCS+Finished,
-               --      before server CCS+Finished. The dispatcher would
-               --      route to Process_Server_CCS at this point (not
-               --      here) — handled there separately.
-               --  Parse via RFLX TLS_1_2_New_Session_Ticket.
-               declare
-                  B          : constant N32 := Frag'First + 4;
-                  --  Same SPARK E0007 fix as the Certificate branch:
-                  --  pin Msg_Len to a constant so the slice subtype is
-                  --  not a variable input.
-                  Msg_Len_C  : constant N32 := Msg_Len;
-                  NST_Body   : constant Byte_Seq (0 .. Msg_Len_C - 1) :=
-                    Frag (B .. B + Msg_Len_C - 1);
-                  Lifetime   : Unsigned_32;
-                  Ticket_Len : N32;
-                  Parse_OK   : Boolean;
-               begin
-                  SPARKTLS.Handshake.TLS12.Parse_New_Session_Ticket_12
-                    (NST_Body      => NST_Body,
-                     Lifetime_Hint => Lifetime,
-                     Ticket_Len    => Ticket_Len,
-                     OK            => Parse_OK);
-                  if not Parse_OK or Ticket_Len > Max_TLS12_Ticket_Len then
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-                  --  Cache for caller's Get_TLS12_Ticket extraction
-                  --  (the bytes are opaque to the client; only the
-                  --  server can decrypt). Also save the master_secret +
-                  --  suite so the next connection can resume.
-                  if Ticket_Len > 0 then
-                     S.TLS12_New_Ticket.Ticket (0 .. Ticket_Len - 1) :=
-                        NST_Body (6 .. 6 + Ticket_Len - 1);
-                  end if;
-                  S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
-                  S.TLS12_New_Ticket.Suite := S.Negotiated_Suite_12;
-                  S.TLS12_New_Ticket.Master_Secret :=
-                     HC.Master_Secret_12;
-                  S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
-                  S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
-                  S.TLS12_New_Ticket.Valid := True;
-               end;
-               Append_Transcript (HC, Frag);
-
-               if HC.TLS12_Resuming then
-                  --  Abbreviated path: derive AEAD keys from the
-                  --  cached master_secret + the new randoms, then
-                  --  enter the post-CKE state so the dispatcher
-                  --  routes the next records to Process_Server_CCS +
-                  --  Process_Server_Finished.
-                  Derive_Keys_Resumed_12 (S, HC);
-                  HC.CKE_Received_12 := True;
-               end if;
-               Result := OK;
+               Handle_NST_12 (S, HC, Frag, Msg_Len, Result);
+               if Result /= OK then return; end if;
 
             when others =>
                --  RFC 5246 §7.4: unknown handshake type during the
@@ -1541,6 +1520,7 @@ is
 
    procedure Process_Server_CCS
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   with Pre => S.State not in Idle | Closing | Closed | Error_State
    is
       Rec : Records.Parse_Result;
    begin

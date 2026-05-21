@@ -207,9 +207,9 @@ is
       if Cert = Sign_None or Sig_Algs'Length < 2 then
          return 0;
       end if;
-      while Pos + 1 <= Sig_Algs'Last loop
+      while Pos < Sig_Algs'Last loop
          pragma Loop_Invariant
-           (Pos >= Sig_Algs'First and Pos + 1 <= Sig_Algs'Last);
+           (Pos >= Sig_Algs'First and Pos < Sig_Algs'Last);
          pragma Loop_Variant (Increases => Pos);
          declare
             A : constant Unsigned_16 :=

@@ -2025,7 +2025,7 @@ is
    --  size; trailing data is excess_handshake_data.
    function Finished_Frame_Tight_RFC_8446_4_4_4
      (Plain_Len, Verify_Len : N32) return Boolean is
-     (Plain_Len = 4 + Verify_Len)
+     (Verify_Len <= N32'Last - 4 and then Plain_Len = 4 + Verify_Len)
      with Ghost;
 
    type Handshake_Context_Access is access Handshake_Context;
@@ -2175,9 +2175,11 @@ is
       OK         :    out Boolean;
       Err        :    out Error_Code)
    with Pre  => Data'Length > 0
+                and then Data'Last < N32'Last
                 and then Body_Start >= Data'First
+                and then Body_Start <= Data'Last + 1
                 and then E_Len >= 0
-                and then Body_Start + E_Len <= Data'Last + 1;
+                and then E_Len <= Data'Last + 1 - Body_Start;
 
    --================================================================
    --  Buffer operations (transport layer interface)
@@ -2196,6 +2198,8 @@ is
                   --  (S.Server_App) across the call.
                   and S.Server_App = S.Server_App'Old
                   and S.Client_App = S.Client_App'Old
+                  and S.Server_Seq_12 = S.Server_Seq_12'Old
+                  and S.Client_Seq_12 = S.Client_Seq_12'Old
                   and S.Last_Error = S.Last_Error'Old
                   and S.Negotiated_Suite = S.Negotiated_Suite'Old;
 

@@ -1,3 +1,5 @@
+with SPARKTLS.Records.TLS12;
+
 package SPARKTLS.Server with
    SPARK_Mode => On
 is
@@ -87,9 +89,9 @@ is
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
-   with Pre  => Cfg.Random /= null and
-                Cfg.Local /= null and
-                Cfg.Local.Has_Identity,
+   with Pre  => Cfg.Random /= null
+                and then Cfg.Local /= null
+                and then Cfg.Local.Has_Identity,
         Post => S.State = Wait_Client_Hello and
                 S.Role = Role_Server;
 
@@ -127,15 +129,22 @@ is
                 S.Role = Role_Server and
                 In_App_Key_Phase (S.State) and     --  RFC 8446 §7.5
                 Plaintext'First = 0 and
-                Plaintext'Length > 0,
+                Plaintext'Length > 0 and
+                Plaintext'Last < N32'Last and
+                Nonce_Space_Available (S.Server_App) and
+                SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                  (S.Server_Seq_12),
         Post => Bytes_Written <= N32 (Plaintext'Length) and
                 S.State = Connected;               --  doesn't change state
 
    --  RFC 8446 §6.1: Send a close_notify alert.
    --  Transitions to Closing state.
    procedure Close_Notify (S : in out Session)
-   with Pre  => (S.State = Connected or S.State = Closing) and
-                S.Role = Role_Server,
+   with Pre  => (S.State = Connected or S.State = Closing)
+                and S.Role = Role_Server
+                and Nonce_Space_Available (S.Server_App)
+                and SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                      (S.Server_Seq_12),
         Post => S.State = Closing;                 --  RFC 8446 §6.1
 
    --  True if a client certificate was received (mutual TLS).

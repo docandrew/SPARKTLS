@@ -54,8 +54,7 @@ is
    with Pre => Result'First = 0
                and then Result'Last in 523 .. Max_Cert_Msg - 1
                and then Transcript_Hash'First = 0
-               and then (Transcript_Hash'Length = 32
-                         or Transcript_Hash'Length = 48)
+               and then Transcript_Hash'Last in 31 | 47
                and then Random /= null
                and then Id.RSA_Mod_Len in 64 .. 512
                and then SPARKTLSCrypto.P384.Field.Initialized

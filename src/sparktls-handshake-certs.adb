@@ -245,6 +245,57 @@ is
       end;
    end Build_Certificate_Chain;
 
+   --  RFC 8446 §4.4.3 CertificateVerify signed-content layout:
+   --    64 bytes 0x20 || context_str (32 or 33) || 0x00 || transcript_hash
+   --  Total: 129 (32-byte hash) or 130 (32-byte hash, client) or 145/146
+   --  (48-byte hash). Sized at 146 so all four shapes fit.
+   Max_CV_Content : constant N32 := 146;
+
+   procedure Build_CV_Content
+     (Transcript_Hash : in     Byte_Seq;
+      Role            : in     TLS_Role;
+      Content         :    out Byte_Seq;
+      Content_Len     :    out N32)
+   with Pre  => Content'First = 0
+                and Content'Last = Max_CV_Content - 1
+                and Transcript_Hash'First = 0
+                and Transcript_Hash'Last in 31 | 47,
+        Post => Content_Len = 99 + N32 (Transcript_Hash'Last)
+                and Content_Len in 130 .. Max_CV_Content;
+
+   procedure Build_CV_Content
+     (Transcript_Hash : in     Byte_Seq;
+      Role            : in     TLS_Role;
+      Content         :    out Byte_Seq;
+      Content_Len     :    out N32)
+   is
+      --  Context_Str is statically 32 bytes regardless of role.
+      Server_Ctx : constant String := "TLS 1.3, server CertificateVerify";
+      Client_Ctx : constant String := "TLS 1.3, client CertificateVerify";
+      pragma Assert (Server_Ctx'Length = 33);
+      pragma Assert (Client_Ctx'Length = 33);
+      H_Len    : constant N32 := N32 (Transcript_Hash'Last) + 1;
+   begin
+      Content := (others => 0);
+      Content (0 .. 63) := (others => 16#20#);
+      if Role = Role_Server then
+         for I in Server_Ctx'Range loop
+            pragma Loop_Invariant (I in Server_Ctx'Range);
+            Content (64 + N32 (I - Server_Ctx'First)) :=
+               Byte (Character'Pos (Server_Ctx (I)));
+         end loop;
+      else
+         for I in Client_Ctx'Range loop
+            pragma Loop_Invariant (I in Client_Ctx'Range);
+            Content (64 + N32 (I - Client_Ctx'First)) :=
+               Byte (Character'Pos (Client_Ctx (I)));
+         end loop;
+      end if;
+      Content (97) := 16#00#;  --  64 + 33
+      Content (98 .. 97 + H_Len) := Transcript_Hash;
+      Content_Len := 98 + H_Len;
+   end Build_CV_Content;
+
    procedure Build_Certificate_Verify
      (Transcript_Hash : in     Byte_Seq;
       Id              : in     Identity;
@@ -256,13 +307,8 @@ is
    is
       use RFLX.TLS_Handshake.Certificate_Verify;
 
-      Context_Str : constant String :=
-         (if Role = Role_Server
-          then "TLS 1.3, server CertificateVerify"
-          else "TLS 1.3, client CertificateVerify");
-      H_Len       : constant N32 := N32 (Transcript_Hash'Length);
-      Content_Len : constant N32 := 64 + N32 (Context_Str'Length) + 1 + H_Len;
-      Content     : Byte_Seq (0 .. Content_Len - 1) := (others => 0);
+      Content     : Byte_Seq (0 .. Max_CV_Content - 1);
+      Content_Len : N32;
 
       Sig     : Byte_Seq (0 .. 511) := (others => 0);
       Sig_Len : N32 := 0;
@@ -273,14 +319,7 @@ is
       Result := (others => 0);
       Len := 0;
 
-      Content (0 .. 63) := (others => 16#20#);
-      for I in Context_Str'Range loop
-         Content (64 + N32 (I - Context_Str'First)) :=
-            Byte (Character'Pos (Context_Str (I)));
-      end loop;
-      Content (64 + N32 (Context_Str'Length)) := 16#00#;
-      Content (64 + N32 (Context_Str'Length) + 1 ..
-               64 + N32 (Context_Str'Length) + H_Len) := Transcript_Hash;
+      Build_CV_Content (Transcript_Hash, Role, Content, Content_Len);
 
       case Sig_Algo_Wire is
          when 16#0807# =>
@@ -292,7 +331,8 @@ is
                SK     : Bytes_64;
             begin
                SK := Id.Ed25519_Key;
-               SPARKTLSCrypto.Ed25519.Sign (SM, Content, SK);
+               SPARKTLSCrypto.Ed25519.Sign
+                 (SM, Content (0 .. Content_Len - 1), SK);
                Sig (0 .. 63) := SM (0 .. 63);
                Sig_OK := True;
             end;
@@ -301,7 +341,7 @@ is
             Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp256r1_Sha256;
             declare
                use SPARKTLSCrypto.Hashing.SHA256;
-               H : constant Digest := Hash (Content);
+               H : constant Digest := Hash (Content (0 .. Content_Len - 1));
                K_Bytes : Bytes_32;
                R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
@@ -331,7 +371,7 @@ is
             Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp384r1_Sha384;
             declare
                use SPARKNaCl.Hashing.SHA384;
-               H : constant Digest := Hash (Content);
+               H : constant Digest := Hash (Content (0 .. Content_Len - 1));
                K_Bytes : Bytes_48;
                R_Half  : Byte_Seq (0 .. 47);
                S_Half  : Byte_Seq (0 .. 47);
@@ -357,7 +397,7 @@ is
             Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256;
             declare
                use SPARKTLSCrypto.Hashing.SHA256;
-               H    : constant Digest := Hash (Content);
+               H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_32;
             begin
                Random.all (Byte_Seq (Salt));
@@ -378,7 +418,7 @@ is
             Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha384;
             declare
                use SPARKNaCl.Hashing.SHA384;
-               H    : constant Digest := Hash (Content);
+               H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_48;
             begin
                Random.all (Byte_Seq (Salt));
@@ -399,7 +439,7 @@ is
             Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha512;
             declare
                use SPARKNaCl.Hashing.SHA512;
-               H    : constant Digest := Hash (Content);
+               H    : constant Digest := Hash (Content (0 .. Content_Len - 1));
                Salt : Bytes_64;
             begin
                Random.all (Byte_Seq (Salt));
@@ -420,7 +460,11 @@ is
             return;
       end case;
 
-      if not Sig_OK then
+      --  All sign-OK paths produce non-zero Sig_Len (Ed25519: 64,
+      --  ECDSA: ECDSA_To_DER yields >= 8, RSA: Mod_Len). Reject the
+      --  pathological path so the RFLX builder sees a non-empty
+      --  signature.
+      if not Sig_OK or else Sig_Len = 0 then
          return;
       end if;
 
@@ -457,6 +501,60 @@ is
    ------------------------------------------------------------------
    --  RFC 8446 §4.4.2 TLS 1.3 Certificate parser (via RFLX)
    ------------------------------------------------------------------
+
+   --  Copy a single RFLX-shape cert blob (1-based RBT.Bytes index) into
+   --  the X509 Byte_Seq (0-based X509 index). Isolates the index
+   --  conversion + loop-invariant arithmetic from the parent
+   --  Parse_Certificate_Chain_13 body so the prover sees a tight
+   --  obligation rather than a deeply-nested cascade.
+   procedure Copy_Cert_To_X509
+     (Cert_RFLX : in     RBT.Bytes;
+      Cert_X    :    out X509.Byte_Seq)
+   with Pre  => Cert_RFLX'First = 1
+                and Cert_X'First = 0
+                and X509.N32 (Cert_RFLX'Length) = X509.N32 (Cert_X'Length);
+
+   procedure Copy_Cert_To_X509
+     (Cert_RFLX : in     RBT.Bytes;
+      Cert_X    :    out X509.Byte_Seq)
+   is
+   begin
+      Cert_X := (others => 0);
+      for I in Cert_X'Range loop
+         pragma Loop_Invariant
+           (I in Cert_X'Range
+            and RBT.Index (N32 (I) + 1) in Cert_RFLX'Range);
+         Cert_X (I) :=
+            X509.Byte (Cert_RFLX (RBT.Index (N32 (I) + 1)));
+      end loop;
+   end Copy_Cert_To_X509;
+
+   --  Same as Copy_Cert_To_X509 but into the HC.Peer_Cert_DER buffer
+   --  region (0-based, capacity Max_Cert_DER_Len).
+   procedure Copy_Cert_To_Peer_DER
+     (Cert_RFLX : in     RBT.Bytes;
+      HC        : in out Handshake_Context;
+      C_Len     : in     N32)
+   with Pre  => Cert_RFLX'First = 1
+                and Cert_RFLX'Length = RBT.Length (C_Len)
+                and C_Len > 0
+                and C_Len <= N32 (Max_Cert_DER);
+
+   procedure Copy_Cert_To_Peer_DER
+     (Cert_RFLX : in     RBT.Bytes;
+      HC        : in out Handshake_Context;
+      C_Len     : in     N32)
+   is
+   begin
+      HC.Peer_Cert_DER_Len := C_Len;
+      for I in N32 range 0 .. C_Len - 1 loop
+         pragma Loop_Invariant
+           (I in 0 .. C_Len - 1
+            and RBT.Index (I + 1) in Cert_RFLX'Range);
+         HC.Peer_Cert_DER (I) :=
+            Byte (Cert_RFLX (RBT.Index (I + 1)));
+      end loop;
+   end Copy_Cert_To_Peer_DER;
 
    procedure Parse_Certificate_Chain_13
      (HC                     : in out Handshake_Context;
@@ -541,23 +639,14 @@ is
 
                               if Cert_Idx = 0 then
                                  --  Leaf cert
-                                 HC.Peer_Cert_DER_Len := C_Len;
-                                 for I in N32 range 0 .. C_Len - 1 loop
-                                    HC.Peer_Cert_DER (I) :=
-                                       Byte
-                                         (Cert_RFLX (RBT.Index (I + 1)));
-                                 end loop;
+                                 Copy_Cert_To_Peer_DER
+                                   (Cert_RFLX, HC, C_Len);
                                  declare
                                     Cert_X : X509.Byte_Seq
-                                      (0 .. X509.N32 (C_Len) - 1) :=
-                                        (others => 0);
+                                      (0 .. X509.N32 (C_Len) - 1);
                                     P_OK : Boolean;
                                  begin
-                                    for I in N32 range 0 .. C_Len - 1 loop
-                                       Cert_X (X509.N32 (I)) :=
-                                          X509.Byte
-                                            (Cert_RFLX (RBT.Index (I + 1)));
-                                    end loop;
+                                    Copy_Cert_To_X509 (Cert_RFLX, Cert_X);
                                     X509.Parse
                                       (Cert_X, HC.Peer_Cert, P_OK);
                                     HC.Peer_Cert_Valid := P_OK
@@ -569,22 +658,21 @@ is
                                     Idx : constant Natural :=
                                       HC.Peer_Int_Count;
                                     Int_X : X509.Byte_Seq
-                                      (0 .. X509.N32 (C_Len) - 1) :=
-                                        (others => 0);
-                                    C   : X509.Certificate;
+                                      (0 .. X509.N32 (C_Len) - 1);
+                                    C    : X509.Certificate;
                                     P_OK : Boolean;
                                  begin
-                                    for I in N32 range 0 .. C_Len - 1 loop
-                                       Int_X (X509.N32 (I)) :=
-                                          X509.Byte
-                                            (Cert_RFLX (RBT.Index (I + 1)));
-                                    end loop;
+                                    Copy_Cert_To_X509 (Cert_RFLX, Int_X);
                                     X509.Parse (Int_X, C, P_OK);
                                     if P_OK and then X509.Is_Valid (C) then
                                        HC.Peer_Ints (Idx).Cert := C;
+                                       HC.Peer_Ints (Idx).DER := (others => 0);
                                        for I in X509.N32 range
                                          0 .. X509.N32 (C_Len) - 1
                                        loop
+                                          pragma Loop_Invariant
+                                            (I in
+                                               0 .. X509.N32 (C_Len) - 1);
                                           HC.Peer_Ints (Idx).DER (I) :=
                                              X509.Byte
                                                (Cert_RFLX

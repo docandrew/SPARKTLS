@@ -538,6 +538,8 @@ is
             HC.Cfg.DoS_Caps.Max_ALPN_Protocols;
       begin
          while P <= 2 + List_Len and then Iter_Count < Cap loop
+            pragma Loop_Invariant (P >= 3);
+            pragma Loop_Variant (Increases => P);
             declare
                PL : constant N32 := N32 (AB (RBT.Index (P)));
             begin
@@ -792,6 +794,16 @@ is
       --  RFLX's TLS_Cipher_Suites enum (which only models negotiable
       --  suites) rejects it via Valid_TLS_Cipher_Suites — we detect
       --  it ourselves before falling through.
+      --  Suite_Code is RFLX Base_Integer; guard the Unsigned_16
+      --  conversion so SPARK can discharge the range check below.
+      declare
+         use type RFLX.RFLX_Types.Base_Integer;
+         Hi : constant RFLX.RFLX_Types.Base_Integer := 16#FFFF#;
+      begin
+         if Suite_Code > Hi then
+            return;
+         end if;
+      end;
       if Unsigned_16 (Suite_Code) = 16#00FF# then
          HC.Saw_Reneg_Info := True;
          return;

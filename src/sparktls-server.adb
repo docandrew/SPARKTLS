@@ -58,16 +58,21 @@ is
 
    procedure Derive_Handshake_Keys
      (S  : in     Session;
-      HC : in out Handshake_Context);
+      HC : in out Handshake_Context)
+   with Pre => HC.Transcript_Len > 0;
 
    procedure Derive_App_Keys
      (S  : in out Session;
-      HC : in out Handshake_Context);
+      HC : in out Handshake_Context)
+   with Pre => HC.Transcript_Len > 0;
 
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
-      Suite  : in     Unsigned_16);
+      Suite  : in     Unsigned_16)
+   with Pre => Suite in Suite_AES_128_GCM_SHA256
+                      | Suite_AES_256_GCM_SHA384
+                      | Suite_CHACHA20_POLY1305_SHA256;
 
    --  Alert_Desc / Error_Code mapping is in the parent SPARKTLS
    --  package — child-unit visibility resolves call sites here.
@@ -185,6 +190,7 @@ is
 
    function Transcript_Hash_256 (HC : Handshake_Context) return Digest
    with Pre => HC.Transcript_Len > 0
+               and HC.Transcript_Len <= Transcript_Capacity
    is
       H : Digest;
    begin
@@ -195,6 +201,7 @@ is
    function Transcript_Hash_384 (HC : Handshake_Context)
       return SPARKNaCl.Hashing.SHA384.Digest
    with Pre => HC.Transcript_Len > 0
+               and HC.Transcript_Len <= Transcript_Capacity
    is
       H : SPARKNaCl.Hashing.SHA384.Digest;
    begin
@@ -382,15 +389,26 @@ is
       end case;
    end Advance;
 
-   --  Dispatch handshake states to the appropriate handler
-   procedure Advance_Handshake
+   --  RFC 8446 §4.1.2 Wait_Client_Hello state handler. Reads a TLS
+   --  record, validates header, runs RFLX-based reassembly for any
+   --  multi-record handshake message, decodes the ClientHello body,
+   --  populates HC fields (random, cipher suites, key shares, ext
+   --  policy, etc.), and transitions to Wait_Client_Hello_Retry or
+   --  the ServerHello-build path on success. Pulled out of the giant
+   --  Advance_Handshake case dispatch so SPARK can prove each
+   --  protocol state's logic in isolation.
+   procedure Handle_Wait_Client_Hello
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action)
+   with Pre => S.State = Wait_Client_Hello;
+
+   procedure Handle_Wait_Client_Hello
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
    is
    begin
-      case S.State is
-         when Wait_Client_Hello =>
             if Input_Available (S) = 0 then
                Result := Need_Input;
                return;
@@ -747,6 +765,18 @@ is
                   end;
                end;
             end;
+   end Handle_Wait_Client_Hello;
+
+   --  Dispatch handshake states to the appropriate handler
+   procedure Advance_Handshake
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action)
+   is
+   begin
+      case S.State is
+         when Wait_Client_Hello =>
+            Handle_Wait_Client_Hello (S, HC, Result);
 
          when Server_Hello_Sent =>
             if Output_Pending (S) > 0 then
@@ -1104,6 +1134,175 @@ is
 
    --  Build the entire server handshake flight:
    --  ServerHello (plaintext record) + CCS + encrypted(EE + Cert + CV + Finished)
+   --  RFC 8446 §4.2.11 server-side PSK binder verification. Looks up
+   --  the cached PSK by ticket ID, recomputes the binder over the
+   --  truncated ClientHello transcript, and either installs the PSK
+   --  (HC.Using_PSK := True + HC.PSK_Value/Len populated) on a hash
+   --  match or emits a fatal alert on mismatch (matching BoringSSL's
+   --  decrypt_error convention per BoGo Resume-Server-InvalidPSKBinder).
+   procedure Verify_PSK_Binder
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Rejected :    out Boolean;
+      Result   :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State;
+
+   procedure Verify_PSK_Binder
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Rejected :    out Boolean;
+      Result   :    out Action)
+   is
+      PSK     : Bytes_48;
+      PSK_Len : N32;
+      Suite   : Unsigned_16;
+      Found   : Boolean;
+   begin
+      Rejected := False;
+      Result := OK;
+      Ticket_Cache.Lookup
+        (Cache      => HC.Cfg.Ticket_Store.all,
+         ID         => HC.PSK_Ticket_ID,
+         Want_Suite => S.Negotiated_Suite,
+         PSK        => PSK,
+         PSK_Len    => PSK_Len,
+         Suite      => Suite,
+         Found      => Found);
+      pragma Assert (if Found then Suite = S.Negotiated_Suite);
+      if not Found or HC.PSK_Binder_Len = 0 then
+         return;
+      end if;
+
+      declare
+         Binder_OK : Boolean := False;
+         Binders_Size : constant N32 := 2 + 1 + HC.PSK_Binder_Len;
+         Trunc_Len    : N32;
+      begin
+         if HC.Transcript_Len > Binders_Size then
+            Trunc_Len := HC.Transcript_Len - Binders_Size;
+            if PSK_Len = 48 then
+               declare
+                  use SPARKTLSCrypto.HKDF384;
+                  Trunc_Hash   : Key_Schedule.Digest_384;
+                  Binder_Key   : OKM384_Seq (0 .. 47);
+                  Finished_Key : OKM384_Seq (0 .. 47);
+                  Expected     : Bytes_48;
+               begin
+                  SPARKNaCl.Hashing.SHA384.Hash
+                    (Trunc_Hash,
+                     HC.Transcript (0 .. Trunc_Len - 1));
+                  Key_Schedule.Derive_Binder_Key_384
+                    (Binder_Key, PSK);
+                  Key_Schedule.Derive_Finished_Key_384
+                    (Finished_Key, Byte_Seq (Binder_Key));
+                  HMAC384.HMAC_SHA_384
+                    (Output => Expected,
+                     M      => Trunc_Hash,
+                     K      => Byte_Seq (Finished_Key));
+                  Binder_OK := Equal
+                    (Expected, Bytes_48 (HC.PSK_Binder));
+               end;
+            else
+               declare
+                  Trunc_Hash   : Digest;
+                  Binder_Key   : OKM_Seq (0 .. 31);
+                  Finished_Key : OKM_Seq (0 .. 31);
+                  Expected     : Digest;
+               begin
+                  SPARKTLSCrypto.Hashing.SHA256.Hash
+                    (Trunc_Hash,
+                     HC.Transcript (0 .. Trunc_Len - 1));
+                  Key_Schedule.Derive_Binder_Key
+                    (Binder_Key,
+                     Bytes_32 (PSK (0 .. 31)));
+                  Key_Schedule.Derive_Finished_Key
+                    (Finished_Key, Byte_Seq (Binder_Key));
+                  HMAC_SHA_256
+                    (Output => Expected,
+                     M      => Trunc_Hash,
+                     K      => Byte_Seq (Finished_Key));
+                  Binder_OK := Equal
+                    (Expected,
+                     Bytes_32 (HC.PSK_Binder (0 .. 31)));
+               end;
+            end if;
+         end if;
+
+         if Binder_OK then
+            pragma Assert
+              (PSK_Binder_Validated_RFC_8446_4_2_11_2 (Binder_OK));
+            HC.Using_PSK := True;
+            HC.PSK_Value := PSK;
+            HC.PSK_Value_Len := PSK_Len;
+         else
+            --  BoringSSL convention: emit decrypt_error (alert 51 =
+            --  Certificate_Verify_Failed in our codes) on binder fail.
+            Send_Alert_And_Error
+              (S, Certificate_Verify_Failed, Result);
+            Rejected := True;
+         end if;
+      end;
+   end Verify_PSK_Binder;
+
+   --  RFC 8446 §4.2.3 server-side signature-algorithm negotiation.
+   --  Walks HC.Peer_Sig_Algos in client-preferred order, picks the
+   --  first entry compatible with our local identity's key type, and
+   --  stores it in HC.Negotiated_Sig_Algo. Emits handshake_failure
+   --  on no overlap.
+   procedure Negotiate_Sig_Algo
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Algo_OK  :    out Boolean;
+      Result   :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and HC.Cfg.Local /= null;
+
+   procedure Negotiate_Sig_Algo
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Algo_OK  :    out Boolean;
+      Result   :    out Action)
+   is
+   begin
+      Result := OK;
+      Algo_OK := False;
+      for I in 0 .. HC.Peer_Sig_Algo_Count - 1 loop
+         case HC.Cfg.Local.Sign_Algo is
+            when Sign_Ed25519 =>
+               if HC.Peer_Sig_Algos (I) = 16#0807# then
+                  HC.Negotiated_Sig_Algo := 16#0807#;
+                  Algo_OK := True;
+                  exit;
+               end if;
+            when Sign_ECDSA_P256 =>
+               if HC.Peer_Sig_Algos (I) = 16#0403# then
+                  HC.Negotiated_Sig_Algo := 16#0403#;
+                  Algo_OK := True;
+                  exit;
+               end if;
+            when Sign_ECDSA_P384 =>
+               if HC.Peer_Sig_Algos (I) = 16#0503# then
+                  HC.Negotiated_Sig_Algo := 16#0503#;
+                  Algo_OK := True;
+                  exit;
+               end if;
+            when Sign_RSA_PSS =>
+               if HC.Peer_Sig_Algos (I) in
+                  16#0804# | 16#0805# | 16#0806#
+               then
+                  HC.Negotiated_Sig_Algo := HC.Peer_Sig_Algos (I);
+                  Algo_OK := True;
+                  exit;
+               end if;
+            when Sign_None =>
+               null;
+         end case;
+      end loop;
+      if not Algo_OK then
+         Send_Alert_And_Error (S, Handshake_Failure, Result);
+      end if;
+   end Negotiate_Sig_Algo;
+
    procedure Build_Server_Flight
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -1125,182 +1324,25 @@ is
       --  know whether a counter rollback is needed on commit failure).
       Encryption_Started : Boolean := False;
    begin
-      --  Check for PSK resumption (must happen before Build_Server_Hello
-      --  so the ServerHello includes the pre_shared_key extension)
+      --  PSK resumption: verify binder, install if valid, fatal-alert
+      --  on mismatch. Sets HC.Using_PSK on success.
       if HC.PSK_Offered and then HC.Cfg.Ticket_Store /= null then
          declare
-            PSK     : Bytes_48;
-            PSK_Len : N32;
-            Suite   : Unsigned_16;
-            Found   : Boolean;
+            Rejected : Boolean;
          begin
-            --  RFC 8446 §4.2.11: Lookup enforces that the cached PSK's
-            --  suite matches the already-negotiated suite. The Post on
-            --  Lookup makes this provable: Found => Suite = Want_Suite.
-            Ticket_Cache.Lookup
-              (Cache      => HC.Cfg.Ticket_Store.all,
-               ID         => HC.PSK_Ticket_ID,
-               Want_Suite => S.Negotiated_Suite,
-               PSK        => PSK,
-               PSK_Len    => PSK_Len,
-               Suite      => Suite,
-               Found      => Found);
-            pragma Assert
-              (if Found then Suite = S.Negotiated_Suite);
-            if Found and then HC.PSK_Binder_Len > 0 then
-               --  Verify the PSK binder before accepting
-               --  The binder covers the truncated ClientHello:
-               --  everything up to the binders list in pre_shared_key.
-               --  The ClientHello is in HC.Transcript at this point.
-               --  Binders offset within pre_shared_key extension data
-               --  is HC.PSK_Binders_Offset. We need to find the absolute
-               --  offset in the ClientHello message.
-               --
-               --  The pre_shared_key ext is the last extension.
-               --  Its data starts at: CH_len - ext_data_len
-               --  Binders start at: that + PSK_Binders_Offset
-               --  Truncation point: 2 bytes before binders (binders_len field)
-               --
-               --  For simplicity, accept if binder length is valid.
-               --  Full binder verification requires knowing the exact
-               --  byte offset, which we'll compute from the transcript.
-
-               declare
-                  Binder_OK : Boolean := False;
-               begin
-                  --  Compute truncated ClientHello hash.
-                  --  The binders list is at the end of the transcript.
-                  --  binders_list = binders_len(2) + binder_entry(1 + binder)
-                  declare
-                     Binders_Size : constant N32 :=
-                        2 + 1 + HC.PSK_Binder_Len;
-                     Trunc_Len    : N32;
-                  begin
-                     if HC.Transcript_Len > Binders_Size then
-                        Trunc_Len := HC.Transcript_Len - Binders_Size;
-
-                        if PSK_Len = 48 then
-                           declare
-                              use SPARKTLSCrypto.HKDF384;
-                              Trunc_Hash  : Key_Schedule.Digest_384;
-                              Binder_Key  : OKM384_Seq (0 .. 47);
-                              Finished_Key : OKM384_Seq (0 .. 47);
-                              Expected    : Bytes_48;
-                           begin
-                              SPARKNaCl.Hashing.SHA384.Hash
-                                (Trunc_Hash,
-                                 HC.Transcript (0 .. Trunc_Len - 1));
-                              Key_Schedule.Derive_Binder_Key_384
-                                (Binder_Key, PSK);
-                              Key_Schedule.Derive_Finished_Key_384
-                                (Finished_Key, Byte_Seq (Binder_Key));
-                              HMAC384.HMAC_SHA_384
-                                (Output => Expected,
-                                 M      => Trunc_Hash,
-                                 K      => Byte_Seq (Finished_Key));
-                              Binder_OK := Equal
-                                (Expected, Bytes_48 (HC.PSK_Binder));
-                           end;
-                        else
-                           declare
-                              Trunc_Hash   : Digest;
-                              Binder_Key   : OKM_Seq (0 .. 31);
-                              Finished_Key : OKM_Seq (0 .. 31);
-                              Expected     : Digest;
-                           begin
-                              SPARKTLSCrypto.Hashing.SHA256.Hash
-                                (Trunc_Hash,
-                                 HC.Transcript (0 .. Trunc_Len - 1));
-                              Key_Schedule.Derive_Binder_Key
-                                (Binder_Key,
-                                 Bytes_32 (PSK (0 .. 31)));
-                              Key_Schedule.Derive_Finished_Key
-                                (Finished_Key, Byte_Seq (Binder_Key));
-                              HMAC_SHA_256
-                                (Output => Expected,
-                                 M      => Trunc_Hash,
-                                 K      => Byte_Seq (Finished_Key));
-                              Binder_OK := Equal
-                                (Expected,
-                                 Bytes_32 (HC.PSK_Binder (0 .. 31)));
-                           end;
-                        end if;
-                     end if;
-                  end;
-
-                  if Binder_OK then
-                     --  RFC 8446 §4.2.11.2: PSK installation gated on
-                     --  binder verification. The pragma pins the
-                     --  invariant — without Binder_OK = True we MUST
-                     --  NOT install the PSK or derive any key from it.
-                     pragma Assert
-                       (PSK_Binder_Validated_RFC_8446_4_2_11_2 (Binder_OK));
-                     HC.Using_PSK := True;
-                     HC.PSK_Value := PSK;
-                     HC.PSK_Value_Len := PSK_Len;
-                  else
-                     --  RFC 8446 §4.2.11.2 mandates a fatal alert
-                     --  on binder verification failure. The RFC
-                     --  text says `illegal_parameter`, but
-                     --  BoringSSL emits `decrypt_error` (alert 51
-                     --  = our Certificate_Verify_Failed code) and
-                     --  the BoGo tests verify that. Match the
-                     --  de-facto convention so cross-impl tests
-                     --  pass; the SECURITY property — refuse the
-                     --  PSK and emit a fatal alert — is identical.
-                     --  BoGo Resume-Server-InvalidPSKBinder.
-                     Send_Alert_And_Error
-                       (S, Certificate_Verify_Failed, Result);
-                     return;
-                  end if;
-               end;
-            end if;
+            Verify_PSK_Binder (S, HC, Rejected, Result);
+            if Rejected then return; end if;
          end;
       end if;
 
-      --  Negotiate signature algorithm (must happen before ServerHello
-      --  so we reject before committing to any response).
+      --  RFC 8446 §4.2.3: pick a sig_algorithm compatible with our
+      --  local cert. Skipped on PSK resumption (no signature in flight).
       if not HC.Using_PSK then
          declare
-            Algo_OK : Boolean := False;
+            Got_It : Boolean;
          begin
-            for I in 0 .. HC.Peer_Sig_Algo_Count - 1 loop
-               case HC.Cfg.Local.Sign_Algo is
-                  when Sign_Ed25519 =>
-                     if HC.Peer_Sig_Algos (I) = 16#0807# then
-                        HC.Negotiated_Sig_Algo := 16#0807#;
-                        Algo_OK := True;
-                        exit;
-                     end if;
-                  when Sign_ECDSA_P256 =>
-                     if HC.Peer_Sig_Algos (I) = 16#0403# then
-                        HC.Negotiated_Sig_Algo := 16#0403#;
-                        Algo_OK := True;
-                        exit;
-                     end if;
-                  when Sign_ECDSA_P384 =>
-                     if HC.Peer_Sig_Algos (I) = 16#0503# then
-                        HC.Negotiated_Sig_Algo := 16#0503#;
-                        Algo_OK := True;
-                        exit;
-                     end if;
-                  when Sign_RSA_PSS =>
-                     if HC.Peer_Sig_Algos (I) in
-                        16#0804# | 16#0805# | 16#0806#
-                     then
-                        HC.Negotiated_Sig_Algo := HC.Peer_Sig_Algos (I);
-                        Algo_OK := True;
-                        exit;
-                     end if;
-                  when Sign_None =>
-                     null;
-               end case;
-            end loop;
-
-            if not Algo_OK then
-               Send_Alert_And_Error (S, Handshake_Failure, Result);
-               return;
-            end if;
+            Negotiate_Sig_Algo (S, HC, Got_It, Result);
+            if not Got_It then return; end if;
          end;
       end if;
 
@@ -1844,6 +1886,206 @@ is
    end Set_Traffic_Keys;
 
    --  Process incoming records while waiting for client Finished
+   --  RFC 8446 §4.4.2 server-side mTLS Certificate handler. Parses
+   --  the client's certificate chain via the shared RFLX-backed
+   --  helper, then transitions to Wait_Client_Cert_Verify (cert
+   --  present) or Wait_Client_Finished (optional-mode empty cert).
+   --  Returns Result = OK on success; otherwise emits the encrypted
+   --  alert and sets Result to an Error_* action.
+   procedure Handle_Client_Cert_13
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Data   : in     Byte_Seq;
+      Result :    out Action)
+   with Pre  => Data'First = 0
+                and Data'Length > 0
+                and Data'Last < N32'Last - 4
+                and S.State = Wait_Client_Certificate;
+
+   procedure Handle_Client_Cert_13
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Data   : in     Byte_Seq;
+      Result :    out Action)
+   is
+      Parse_OK  : Boolean;
+      Parse_Err : Error_Code;
+   begin
+      Result := OK;
+      Append_Transcript (HC, Data);
+      Handshake.Certs.Parse_Certificate_Chain_13
+        (HC                     => HC,
+         HS_Msg                 => Data,
+         Reject_Cert_Extensions => False,
+         OK                     => Parse_OK,
+         Err                    => Parse_Err);
+      if not Parse_OK then
+         Send_Encrypted_Alert (S, Parse_Err, Result);
+         return;
+      end if;
+
+      if not HC.Peer_Cert_Valid then
+         if HC.Cfg.Require_Client_Cert then
+            --  RFC 8446 §6 cert reject after server Finished — keys
+            --  are live, MUST be encrypted alert.
+            Send_Encrypted_Alert
+              (S, Certificate_Required, Result);
+            return;
+         end if;
+         Set_State (S, Wait_Client_Finished);
+      else
+         Set_State (S, Wait_Client_Cert_Verify);
+      end if;
+   end Handle_Client_Cert_13;
+
+   --  RFC 8446 §4.4.3 server-side mTLS CertificateVerify handler.
+   --  Reconstructs the signed Content (64 spaces || ctx_str || 0x00
+   --  || transcript_hash), verifies the client's signature against
+   --  its leaf cert, runs trust-store chain validation if a Trust
+   --  is configured, and transitions to Wait_Client_Finished on
+   --  success.
+   procedure Handle_Client_CertVerify_13
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Data    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   with Pre  => Data'First = 0
+                and Data'Length > 0
+                and Data'Last < N32'Last - 4
+                and S.State = Wait_Client_Cert_Verify
+                and HC.Hash_Len in 32 | 48;
+
+   procedure Handle_Client_CertVerify_13
+     (S       : in out Session;
+      HC      : in out Handshake_Context;
+      Data    : in     Byte_Seq;
+      Msg_Len : in     N32;
+      Result  :    out Action)
+   is
+      H_Len : constant N32 := HC.Hash_Len;
+      CV_Hash : Byte_Seq (0 .. H_Len - 1);
+   begin
+      Result := OK;
+      case S.Negotiated_Suite is
+         when Suite_AES_256_GCM_SHA384 =>
+            CV_Hash := Transcript_Hash_384 (HC);
+         when others =>
+            declare
+               H : constant Digest := Transcript_Hash_256 (HC);
+            begin
+               CV_Hash := H;
+            end;
+      end case;
+
+      Append_Transcript (HC, Data);
+
+      declare
+         Ctx_Str : constant String :=
+            "TLS 1.3, client CertificateVerify";
+         C_Len : constant N32 := 64 + N32 (Ctx_Str'Length) + 1 + H_Len;
+         Content : Byte_Seq (0 .. C_Len - 1) := (others => 0);
+         Verified : Boolean := False;
+      begin
+         Content (0 .. 63) := (others => 16#20#);
+         for I in Ctx_Str'Range loop
+            Content (64 + N32 (I - Ctx_Str'First)) :=
+               Byte (Character'Pos (Ctx_Str (I)));
+         end loop;
+         Content (64 + N32 (Ctx_Str'Length)) := 0;
+         Content (64 + N32 (Ctx_Str'Length) + 1 ..
+                  64 + N32 (Ctx_Str'Length) + H_Len) := CV_Hash;
+
+         if Msg_Len >= 8 then
+            declare
+               Sig_Scheme : constant Unsigned_16 :=
+                  Unsigned_16 (Data (4)) * 256 +
+                  Unsigned_16 (Data (5));
+               Sig_Len : constant N32 :=
+                  N32 (Data (6)) * 256 + N32 (Data (7));
+               Sig_Start : constant N32 := 8;
+            begin
+               --  RFC 8446 §4.2.3: rsa_pkcs1_* MUST NOT be used in
+               --  TLS 1.3 CV.
+               if Sig_Scheme = 16#0401#
+                  or Sig_Scheme = 16#0501#
+                  or Sig_Scheme = 16#0601#
+               then
+                  Send_Encrypted_Alert (S, Illegal_Parameter, Result);
+                  return;
+               end if;
+               if Sig_Len > 0
+                  and then Sig_Start + Sig_Len <= N32 (Data'Length)
+               then
+                  declare
+                     Sig : Byte_Seq (0 .. Sig_Len - 1);
+                  begin
+                     Sig := Data (Sig_Start ..
+                                  Sig_Start + Sig_Len - 1);
+                     Verified := Cert_Verify.Verify_Signature
+                       (Data       => Content,
+                        Sig        => Sig,
+                        Cert       => HC.Peer_Cert,
+                        Sig_Scheme => Sig_Scheme);
+                  end;
+               end if;
+            end;
+         end if;
+
+         if not Verified then
+            Send_Encrypted_Alert
+              (S, Certificate_Verify_Failed, Result);
+            pragma Assert (S.Last_Error /= Unexpected_Message);
+            pragma Assert (Output_Pending (S) > 0);
+            pragma Assert
+              (Cert_Validation_Alerted_RFC_5246_7_4_2
+                 (S.State, Output_Pending (S), S.Last_Error));
+            return;
+         end if;
+      end;
+
+      --  Trust-store chain validation, if configured.
+      if HC.Cfg.Trust /= null
+         and then HC.Cfg.Get_Time /= null
+         and then HC.Peer_Cert_Valid
+      then
+         declare
+            Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
+            Cert_X : X509.Byte_Seq
+               (0 .. X509.N32 (Cert_DER_Len_Const) - 1) :=
+                 (others => 0);
+            VR : Validation_Result;
+         begin
+            for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
+               Cert_X (X509.N32 (I)) :=
+                  X509.Byte (HC.Peer_Cert_DER (I));
+            end loop;
+            VR := Validate_Chain
+              (Leaf_DER   => Cert_X,
+               Leaf       => HC.Peer_Cert,
+               Ints       => HC.Peer_Ints,
+               Int_Count  => HC.Peer_Int_Count,
+               Roots      => HC.Cfg.Trust.Roots,
+               Root_Count => HC.Cfg.Trust.Root_Count,
+               Now        => HC.Cfg.Get_Time.all,
+               Hostname   => "",
+               Purpose    => Purpose_Client,
+               Mode       => HC.Cfg.Verify_Mode);
+            if VR /= Valid then
+               Send_Encrypted_Alert (S, Bad_Certificate, Result);
+               pragma Assert (S.Last_Error /= Unexpected_Message);
+               pragma Assert (Output_Pending (S) > 0);
+               pragma Assert
+                 (Cert_Validation_Alerted_RFC_5246_7_4_2
+                    (S.State, Output_Pending (S), S.Last_Error));
+               return;
+            end if;
+         end;
+      end if;
+
+      Set_State (S, Wait_Client_Finished);
+   end Handle_Client_CertVerify_13;
+
    --================================================================
    --  Process_Client_Auth (mTLS)
    --
@@ -2007,234 +2249,20 @@ is
                   case S.State is
                      when Wait_Client_Certificate =>
                         if Msg_Type /= Handshake.HT_Certificate then
-                           --  RFC 8446 §6.2: send fatal
-                           --  unexpected_message alert before close.
                            Send_Encrypted_Alert
                              (S, Unexpected_Message, Result);
                            return;
                         end if;
-
-                        Append_Transcript (HC, Data);
-
-                        --  Parse client certificate chain via the
-                        --  RFLX-backed shared helper. Wire structure
-                        --  is validated by RFLX; each cert's DER bytes
-                        --  are then handed to sparkx509 for content
-                        --  parsing (subject, issuer, KU, etc.).
-                        declare
-                           Parse_OK  : Boolean;
-                           Parse_Err : Error_Code;
-                        begin
-                           Handshake.Certs.Parse_Certificate_Chain_13
-                             (HC                     => HC,
-                              HS_Msg                 => Data,
-                              Reject_Cert_Extensions => False,
-                              OK                     => Parse_OK,
-                              Err                    => Parse_Err);
-                           if not Parse_OK then
-                              Send_Encrypted_Alert (S, Parse_Err, Result);
-                              return;
-                           end if;
-                        end;
-
-                        if not HC.Peer_Cert_Valid then
-                           if HC.Cfg.Require_Client_Cert then
-                              --  Required-cert mode: client did not
-                              --  present a valid cert. Abort with
-                              --  certificate_required (RFC 8446 §6).
-                              --  Server Finished is already on the wire,
-                              --  so the server's app keys are live —
-                              --  the alert MUST be encrypted. A plain-
-                              --  text alert here lands as a record-type
-                              --  decode error on the peer and the auth
-                              --  reject is invisible — caller side reads
-                              --  the prior handshake_done as success.
-                              Send_Encrypted_Alert
-                                (S, Certificate_Required, Result);
-                              return;
-                           end if;
-                           --  Optional-cert mode: empty / invalid cert
-                           --  is allowed. Skip CertificateVerify.
-                           Set_State (S, Wait_Client_Finished);
-                        else
-                           Set_State (S, Wait_Client_Cert_Verify);
-                        end if;
-                        Result := OK;
+                        Handle_Client_Cert_13 (S, HC, Data, Result);
 
                      when Wait_Client_Cert_Verify =>
                         if Msg_Type /= Handshake.HT_Certificate_Verify then
-                           --  RFC 8446 §6.2: fatal alert before close.
                            Send_Encrypted_Alert
                              (S, Unexpected_Message, Result);
                            return;
                         end if;
-
-                        --  Verify client CertificateVerify signature
-                        declare
-                           H_Len : constant N32 := HC.Hash_Len;
-                           CV_Hash : Byte_Seq (0 .. H_Len - 1);
-                        begin
-                           --  Transcript hash up to (not including) CV
-                           case S.Negotiated_Suite is
-                              when Suite_AES_256_GCM_SHA384 =>
-                                 CV_Hash := Transcript_Hash_384 (HC);
-                              when others =>
-                                 declare
-                                    H : constant Digest :=
-                                       Transcript_Hash_256 (HC);
-                                 begin
-                                    CV_Hash := H;
-                                 end;
-                           end case;
-
-                           Append_Transcript (HC, Data);
-
-                           --  Build expected signed content
-                           declare
-                              Ctx_Str : constant String :=
-                                 "TLS 1.3, client CertificateVerify";
-                              C_Len : constant N32 :=
-                                 64 + N32 (Ctx_Str'Length) + 1 + H_Len;
-                              Content : Byte_Seq (0 .. C_Len - 1) := (others => 0);
-                              Verified : Boolean := False;
-                           begin
-                              Content (0 .. 63) := (others => 16#20#);
-                              for I in Ctx_Str'Range loop
-                                 Content (64 + N32 (I - Ctx_Str'First)) :=
-                                    Byte (Character'Pos (Ctx_Str (I)));
-                              end loop;
-                              Content (64 + N32 (Ctx_Str'Length)) := 0;
-                              Content (64 + N32 (Ctx_Str'Length) + 1 ..
-                                       64 + N32 (Ctx_Str'Length) + H_Len) :=
-                                 CV_Hash;
-
-                              --  Parse SignatureScheme + Sig from CV
-                              --  message. Layout (past 4-byte HS hdr):
-                              --    sig_scheme(2) + sig_len(2) + sig(N)
-                              if Msg_Len >= 8 then
-                                 declare
-                                    Sig_Scheme : constant Unsigned_16 :=
-                                       Unsigned_16 (Data (4)) * 256 +
-                                       Unsigned_16 (Data (5));
-                                    Sig_Len : constant N32 :=
-                                       N32 (Data (6)) * 256 +
-                                       N32 (Data (7));
-                                    Sig_Start : constant N32 := 8;
-                                 begin
-                                    --  RFC 8446 §4.2.3: rsa_pkcs1_*
-                                    --  MUST NOT be used in TLS 1.3 CV.
-                                    if Sig_Scheme = 16#0401#
-                                       or Sig_Scheme = 16#0501#
-                                       or Sig_Scheme = 16#0601#
-                                    then
-                                       --  Same encrypted-alert path as
-                                       --  Cert_Verify_Failed below: server
-                                       --  Finished is on the wire so app
-                                       --  keys are live.
-                                       Send_Encrypted_Alert
-                                         (S, Illegal_Parameter, Result);
-                                       return;
-                                    end if;
-
-                                    if Sig_Len > 0
-                                       and then Sig_Start + Sig_Len
-                                                  <= N32 (Data'Length)
-                                    then
-                                       declare
-                                          Sig : Byte_Seq (0 .. Sig_Len - 1);
-                                       begin
-                                          Sig := Data (Sig_Start ..
-                                                       Sig_Start + Sig_Len - 1);
-                                          Verified := Cert_Verify.Verify_Signature
-                                            (Data       => Content,
-                                             Sig        => Sig,
-                                             Cert       => HC.Peer_Cert,
-                                             Sig_Scheme => Sig_Scheme);
-                                       end;
-                                    end if;
-                                 end;
-                              end if;
-
-                              if not Verified then
-                                 --  RFC 8446 §6.2: at Wait_Client_Cert_Verify
-                                 --  we've already sent server Finished, so
-                                 --  app keys are live — emit ENCRYPTED
-                                 --  fatal alert. Was using plaintext
-                                 --  Send_Alert_And_Error which a strict
-                                 --  TLS 1.3 client treats as protocol
-                                 --  violation (alert in clear after keys).
-                                 Send_Encrypted_Alert
-                                   (S, Certificate_Verify_Failed, Result);
-                                 pragma Assert
-                                   (S.Last_Error /= Unexpected_Message);
-                                 pragma Assert (Output_Pending (S) > 0);
-                                 pragma Assert
-                                   (Cert_Validation_Alerted_RFC_5246_7_4_2
-                                      (S.State, Output_Pending (S),
-                                       S.Last_Error));
-                                 return;
-                              end if;
-                           end;
-                        end;
-
-                        --  Validate client cert chain if trust store
-                        if HC.Cfg.Trust /= null
-                           and then HC.Cfg.Get_Time /= null
-                           and then HC.Peer_Cert_Valid
-                        then
-                           declare
-                              Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
-                              Cert_X : X509.Byte_Seq
-                                 (0 .. X509.N32 (Cert_DER_Len_Const) - 1) := (others => 0);
-                              VR : Validation_Result;
-                           begin
-                              for I in N32 range
-                                 0 .. HC.Peer_Cert_DER_Len - 1
-                              loop
-                                 Cert_X (X509.N32 (I)) :=
-                                    X509.Byte (HC.Peer_Cert_DER (I));
-                              end loop;
-
-                              VR := Validate_Chain
-                                (Leaf_DER   => Cert_X,
-                                 Leaf       => HC.Peer_Cert,
-                                 Ints       => HC.Peer_Ints,
-                                 Int_Count  => HC.Peer_Int_Count,
-                                 Roots      => HC.Cfg.Trust.Roots,
-                                 Root_Count => HC.Cfg.Trust.Root_Count,
-                                 Now        => HC.Cfg.Get_Time.all,
-                                 Hostname   => "",
-                                 Purpose    => Purpose_Client,
-                                 Mode       => HC.Cfg.Verify_Mode);
-
-                              if VR /= Valid then
-                                 --  RFC 5246 §7.4.2 / RFC 8446 §6.2:
-                                 --  certificate path validation failure
-                                 --  MUST send a fatal bad_certificate
-                                 --  alert (42). Previously we just set
-                                 --  Last_Error and Error_State without
-                                 --  queueing the alert — peer would see
-                                 --  a TCP RST instead of the RFC alert.
-                                 Send_Encrypted_Alert
-                                   (S, Bad_Certificate, Result);
-                                 --  Bridge: Error_Has_Alert (the Post on
-                                 --  Send_Encrypted_Alert) plus
-                                 --  Last_Error = Bad_Certificate /=
-                                 --  Unexpected_Message gives Pending > 0.
-                                 pragma Assert
-                                   (S.Last_Error /= Unexpected_Message);
-                                 pragma Assert (Output_Pending (S) > 0);
-                                 pragma Assert
-                                   (Cert_Validation_Alerted_RFC_5246_7_4_2
-                                      (S.State, Output_Pending (S),
-                                       S.Last_Error));
-                                 return;
-                              end if;
-                           end;
-                        end if;
-
-                        Set_State (S, Wait_Client_Finished);
-                        Result := OK;
+                        Handle_Client_CertVerify_13
+                          (S, HC, Data, Msg_Len, Result);
 
                      when others =>
                         S.Last_Error := Internal_Error;
@@ -3104,6 +3132,11 @@ is
           then TLS12_Overhead else TLS13_Overhead);
    begin
       while Pos < Total loop
+         pragma Loop_Invariant
+           (Pos in 0 .. Total
+            and S.Negotiated_Version = S.Negotiated_Version'Loop_Entry);
+         pragma Loop_Variant (Increases => Pos);
+
          Chunk := N32'Min (Max_Record_Plaintext, Total - Pos);
 
          --  Bail if S.Output can't hold this record. Caller drains.
@@ -3111,27 +3144,40 @@ is
             exit;
          end if;
 
-         if S.Negotiated_Version = TLS_1_2 then
-            Records.TLS12.Build_Encrypted_Record_12
-              (Plaintext    =>
-                  Plaintext (Plaintext'First + Pos ..
-                             Plaintext'First + Pos + Chunk - 1),
-               Content_Type => 16#17#,  --  application_data
-               Keys         => S.Server_App,
-               Implicit_IV  => S.Server_IV_12,
-               Seq_Num      => S.Server_Seq_12,
-               Output       => S.Output,
-               Bytes_Out    => Enc_Out);
-         else
-            Records.Build_Encrypted_Record
-              (Plaintext  =>
-                  Plaintext (Plaintext'First + Pos ..
-                             Plaintext'First + Pos + Chunk - 1),
-               Inner_Type => 16#17#,
-               Keys       => S.Server_App,
-               Output     => S.Output,
-               Bytes_Out  => Enc_Out);
+         --  RFC 8446 §5.3 / RFC 5246 §6.1: stop emitting once nonce
+         --  space exhausts on this leg.
+         exit when not Nonce_Space_Available (S.Server_App);
+         if S.Negotiated_Version = TLS_1_2
+            and then S.Server_Seq_12 = Unsigned_64'Last
+         then
+            exit;
          end if;
+
+         --  Copy slice to 0-based scratch so AEAD builders' Pre is
+         --  satisfied (Plaintext'First = 0).
+         declare
+            Frag : Byte_Seq (0 .. Chunk - 1);
+         begin
+            Frag := Plaintext (Plaintext'First + Pos ..
+                               Plaintext'First + Pos + Chunk - 1);
+            if S.Negotiated_Version = TLS_1_2 then
+               Records.TLS12.Build_Encrypted_Record_12
+                 (Plaintext    => Frag,
+                  Content_Type => 16#17#,  --  application_data
+                  Keys         => S.Server_App,
+                  Implicit_IV  => S.Server_IV_12,
+                  Seq_Num      => S.Server_Seq_12,
+                  Output       => S.Output,
+                  Bytes_Out    => Enc_Out);
+            else
+               Records.Build_Encrypted_Record
+                 (Plaintext  => Frag,
+                  Inner_Type => 16#17#,
+                  Keys       => S.Server_App,
+                  Output     => S.Output,
+                  Bytes_Out  => Enc_Out);
+            end if;
+         end;
 
          exit when Enc_Out = 0;
          Pos := Pos + Chunk;
@@ -3159,7 +3205,12 @@ is
             Output    => S.Output,
             Bytes_Out => Alert_Out);
       end if;
-      Set_State (S, Closing);
+      --  RFC 8446 §6.1: at most one close_notify per peer; if we
+      --  already transitioned to Closing on a prior invocation, the
+      --  state-machine transition is a no-op.
+      if S.State = Connected then
+         Set_State (S, Closing);
+      end if;
    end Close_Notify;
 
 end SPARKTLS.Server;

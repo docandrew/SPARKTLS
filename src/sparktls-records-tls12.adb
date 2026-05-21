@@ -308,28 +308,38 @@ is
       Wire_Exp_Nonce_Len : constant N32 :=
          (if Is_ChaCha20 then 0 else Explicit_Nonce_Len);
 
-      CT_Len : constant N32 :=
-         N32 (Encrypted'Length) - Wire_Exp_Nonce_Len - GCM_Tag_Len;
-
-      Exp_Nonce : Byte_Seq (0 .. 7) := (others => 0);
-
-      Nonce : Bytes_12 := (others => 0);
-      AAD   : Byte_Seq (0 .. AAD_Len - 1);
-      Tag   : Bytes_16;
-
-      --  0-based copy of ciphertext for AEAD (requires First = 0)
-      CT_Copy   : Byte_Seq (0 .. CT_Len - 1);
-      Decrypted : Byte_Seq (0 .. CT_Len - 1);
+      Original_Seq : constant Unsigned_64 := Seq_Num;
    begin
       Plaintext := (others => 0);
       Plain_Len := 0;
       Valid := False;
 
-      --  Defense-in-depth: verify input is large enough for [nonce] + tag
-      if N32 (Encrypted'Length) < Wire_Exp_Nonce_Len + GCM_Tag_Len + 1 then
+      --  RFC 5246 §6.1: Seq_Num MUST advance even on failure. Do this
+      --  up front so every early-return path satisfies the Post
+      --  `Seq_Num = Seq_Num'Old + 1` and the runtime invariant.
+      Seq_Num := Original_Seq + 1;
+
+      --  Defense-in-depth: verify input is large enough for [nonce] + tag,
+      --  and (for ChaCha20-Poly1305 per RFC 7905 §2, body = ct + tag[16])
+      --  reject records whose ciphertext would exceed Max_Record_Plaintext.
+      if N32 (Encrypted'Length) < Wire_Exp_Nonce_Len + GCM_Tag_Len + 1
+        or else N32 (Encrypted'Length) >
+                  Max_Record_Plaintext + Wire_Exp_Nonce_Len + GCM_Tag_Len
+      then
          return;
       end if;
 
+      declare
+         CT_Len : constant N32 :=
+            N32 (Encrypted'Length) - Wire_Exp_Nonce_Len - GCM_Tag_Len;
+         Exp_Nonce : Byte_Seq (0 .. 7) := (others => 0);
+         Nonce : Bytes_12 := (others => 0);
+         AAD   : Byte_Seq (0 .. AAD_Len - 1);
+         Tag   : Bytes_16;
+         --  0-based copy of ciphertext for AEAD (requires First = 0)
+         CT_Copy   : Byte_Seq (0 .. CT_Len - 1);
+         Decrypted : Byte_Seq (0 .. CT_Len - 1);
+      begin
       --  Extract explicit nonce (GCM only), ciphertext, and tag.
       if not Is_ChaCha20 then
          for I in N32 range 0 .. 7 loop
@@ -345,7 +355,7 @@ is
 
       --  Build the AEAD nonce per suite.
       if Is_ChaCha20 then
-         Nonce := Make_Nonce_ChaCha20 (Implicit_IV, Seq_Num);
+         Nonce := Make_Nonce_ChaCha20 (Implicit_IV, Original_Seq);
       else
          --  GCM nonce: implicit_IV[4] || explicit_nonce[8]
          Nonce (0) := Implicit_IV (Implicit_IV'First);
@@ -360,10 +370,8 @@ is
       --  Build AAD: seq_num || content_type || version || plaintext_length
       --  Content type from record header byte 0
       --  Plaintext length = ciphertext length (no inner type byte in 1.2)
-      AAD := Build_AAD (Seq_Num, Record_Hdr (Record_Hdr'First), CT_Len);
-
-      --  Increment seq_num (always, even on failure — RFC 5246 §6.1)
-      Seq_Num := Seq_Num + 1;
+      AAD := Build_AAD
+               (Original_Seq, Record_Hdr (Record_Hdr'First), CT_Len);
 
       --  Decrypt
       case Keys.Suite is
@@ -421,6 +429,7 @@ is
       if CT_Len > 0 then
          Plaintext (0 .. CT_Len - 1) := Decrypted;
       end if;
+      end;
    end Decrypt_Record_12;
 
    ------------------------------------------------------------------

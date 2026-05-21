@@ -38,6 +38,8 @@ is
       HC     : in out Handshake_Context;
       Err    : Error_Code;
       Result :    out Action)
+   with Pre => Nonce_Space_Available (HC.Client_HS)
+               and S.State not in Idle | Closing | Closed | Error_State
    is
       A1, A2 : N32;
    begin
@@ -65,6 +67,8 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result :    out Action)
+   with Pre => Nonce_Space_Available (S.Client_App)
+               and S.State not in Idle | Closing | Closed | Error_State
    is
       A : N32;
    begin
@@ -135,7 +139,10 @@ is
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
-      Suite  : in     Unsigned_16);
+      Suite  : in     Unsigned_16)
+   with Pre => Suite in Suite_AES_128_GCM_SHA256
+                      | Suite_AES_256_GCM_SHA384
+                      | Suite_CHACHA20_POLY1305_SHA256;
 
    --  Advance the handshake state machine (operates on dereferenced HC).
    procedure Advance_Handshake
@@ -163,6 +170,7 @@ is
 
    function Transcript_Hash_256 (HC : Handshake_Context) return Digest
    with Pre => HC.Transcript_Len > 0
+               and HC.Transcript_Len <= Transcript_Capacity
    is
       H : Digest;
    begin
@@ -173,6 +181,7 @@ is
    function Transcript_Hash_384 (HC : Handshake_Context)
       return SPARKNaCl.Hashing.SHA384.Digest
    with Pre => HC.Transcript_Len > 0
+               and HC.Transcript_Len <= Transcript_Capacity
    is
       H : SPARKNaCl.Hashing.SHA384.Digest;
    begin
@@ -2172,7 +2181,10 @@ is
       end case;
    end Advance;
 
-   --  Helper: derive key/IV and set Traffic_Keys based on suite
+   --  Helper: derive key/IV and set Traffic_Keys based on suite.
+   --  Suite must be one of the three RFC 8446 TLS-1.3 / RFC 5288/7905
+   --  TLS-1.2 negotiable AEAD suites — matches the Traffic_Keys
+   --  Predicate at sparktls.ads:770.
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
@@ -3177,7 +3189,11 @@ is
             Output    => S.Output,
             Bytes_Out => Alert_Out);
       end if;
-      Set_State (S, Closing);
+      --  See server-side comment: Set_State is a no-op when already
+      --  Closing (avoids an invalid Closing → Closing transition).
+      if S.State = Connected then
+         Set_State (S, Closing);
+      end if;
    end Close_Notify;
 
 end SPARKTLS.Client;

@@ -2,6 +2,8 @@ with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.Handshake.Client_Msgs;
+with SPARKTLSCrypto.P384.Field;
+with SPARKTLSCrypto.P384.ECDSA;
 
 --  TLS 1.2 Handshake Messages (RFC 5246 §7.4, RFC 8422)
 --
@@ -247,7 +249,8 @@ is
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and Result'Last >= Max_Client_Key_Exchange - 1
-                and Valid_ECDHE_Group (HC.Selected_Group),
+                and Valid_ECDHE_Group (HC.Selected_Group)
+                and SPARKTLSCrypto.P384.Field.Initialized,
         Post => Len <= Max_Client_Key_Exchange;
 
    --  RFC 8422 §5.4: Parse ServerKeyExchange.
@@ -343,7 +346,9 @@ is
                 and Transcript_Hash'First = 0
                 and Transcript_Hash'Length in 32 | 48
                 and Random /= null
-                and Id.Has_Identity;
+                and Id.Has_Identity
+                and SPARKTLSCrypto.P384.Field.Initialized
+                and SPARKTLSCrypto.P384.ECDSA.Initialized;
 
    --  RFC 5246 §7.4.1.2: Build TLS 1.2 ServerHello.
    --
@@ -440,7 +445,8 @@ is
       Lifetime_Hint :    out Interfaces.Unsigned_32;
       Ticket_Len    :    out N32;
       OK            :    out Boolean)
-   with Pre => NST_Body'First = 0,
+   with Pre => NST_Body'First = 0
+               and NST_Body'Last < Max_HS_Msg,
         Post => (if OK then Ticket_Len <= N32 (NST_Body'Length)
                           and Ticket_Len + 6 = N32 (NST_Body'Length));
 
@@ -457,7 +463,8 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0 and Result'Last >= 15
+                and Result'Last < N32'Last
                 and Id.Has_Identity,
-        Post => Len <= Result'Length;
+        Post => Len <= N32 (Result'Length);
 
 end SPARKTLS.Handshake.TLS12;

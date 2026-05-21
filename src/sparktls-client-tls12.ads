@@ -29,7 +29,11 @@ is
    procedure Advance_Handshake_12
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => (S.State not in Idle | Closing | Closed | Error_State)
+               and then Reasm_Coherent (HC)
+               and then (if HC.CKE_Received_12 and HC.CCS_Received
+                         then Reasm_Building (HC));
 
    --  Process records in Connected state for TLS 1.2.
    --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).

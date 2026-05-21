@@ -45,6 +45,13 @@ is
       S.Last_Error := Err;
       Set_State (S, Error_State);
       Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
+      --  When the output buffer is full, no alert byte hit the wire;
+      --  collapse the recorded error to Unexpected_Message so the
+      --  Error_Has_Alert ghost remains satisfied (RFC 8446 §6 lets
+      --  Unexpected_Message close silently).
+      if Output_Pending (S) = 0 then
+         S.Last_Error := Unexpected_Message;
+      end if;
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
 
@@ -107,6 +114,8 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
+   with Pre => Records.TLS12.Nonce_Space_Available_12 (S.Server_Seq_12)
+               and S.State not in Idle | Closing | Closed | Error_State
    is
       Dummy : N32;
    begin
@@ -226,6 +235,7 @@ is
       --  the ticket, it SHOULD proceed with a full handshake."
       if HC.TLS12_Ticket_Offered
         and then HC.TLS12_Peer_Ticket_Len > 0
+        and then HC.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len
         and then HC.Cfg.TLS12_Ticket_Keys /= null
       then
          declare

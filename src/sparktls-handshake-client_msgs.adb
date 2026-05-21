@@ -63,6 +63,245 @@ is
    --  Build procedures (keep manual serialization for simple output)
    --================================================================
 
+   --  Append a 2-byte cipher_suite entry to the in-flight RFLX
+   --  CipherSuites sequence. Encapsulates the buffer-init / set /
+   --  append / take-buffer / free dance so each callsite is a
+   --  single line.
+   procedure Append_Cipher_Suite
+     (Suites_Ctx : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
+      Suite      : in     RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum);
+
+   procedure Append_Cipher_Suite
+     (Suites_Ctx : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
+      Suite      : in     RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum)
+   is
+      S_Buf : RBT.Bytes_Ptr;
+      S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
+   begin
+      S_Buf := new RBT.Bytes'(1 .. 4 => 0);
+      RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
+      RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite (S_Ctx, Suite);
+      RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
+        (Suites_Ctx, S_Ctx);
+      RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
+      RFLX_Free (S_Buf);
+   end Append_Cipher_Suite;
+
+   --  Append a generic CH extension (tag + opaque data) to the
+   --  in-flight RFLX CH_Extensions sequence. Same shape as
+   --  Append_Cipher_Suite: hides the per-call buffer allocation and
+   --  cleanup so the cipher-suite/extension matrix in
+   --  Build_Client_Hello becomes a flat list of one-liners.
+   procedure Append_CH_Extension
+     (Exts_Ctx : in out RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
+      Tag      : in     RFLX.Tls_Extensiontype_Values
+                          .TLS_ExtensionType_Values_Enum;
+      Data     : in     Byte_Seq);
+
+   procedure Append_CH_Extension
+     (Exts_Ctx : in out RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
+      Tag      : in     RFLX.Tls_Extensiontype_Values
+                          .TLS_ExtensionType_Values_Enum;
+      Data     : in     Byte_Seq)
+   is
+      Ext_Buf : RBT.Bytes_Ptr;
+      Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
+   begin
+      --  RFLX CH_Extension data fields require a buffer at least
+      --  (4 + Data'Length) bytes — header + opaque payload.
+      Ext_Buf := new RBT.Bytes'
+                       (1 .. RBT.Index (4 + N32 (Data'Length)) => 0);
+      RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
+      RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag (Ext_Ctx, Tag);
+      RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
+        (Ext_Ctx,
+         RFLX.TLS_Handshake.Data_Length (Data'Length));
+      RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
+        (Ext_Ctx, To_RFLX (Data));
+      RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
+        (Exts_Ctx, Ext_Ctx);
+      RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
+        (Ext_Ctx, Ext_Buf);
+      RFLX_Free (Ext_Buf);
+   end Append_CH_Extension;
+
+   --  RFC 8446 §4.2.11 / §4.2.11.2 post-RFLX pre_shared_key extension
+   --  append. The PSK extension MUST be the last extension on the
+   --  wire, and its binder must be computed over the truncated
+   --  ClientHello (everything up to but not including the binders
+   --  list). We append manually after the RFLX-built body, then
+   --  patch the handshake-length and extensions_length fields and
+   --  finally compute the binder over the rolled-back transcript.
+   --  Spec'd separately so Build_Client_Hello doesn't carry this
+   --  140-line block in its proof footprint.
+   procedure Append_PSK_Extension
+     (S         : in     Session;
+      HC        : in out Handshake_Context;
+      Retry_Mode : in    Boolean;
+      Result    : in out Byte_Seq;
+      Len       : in out N32)
+   with Pre  => Result'First = 0
+                and Result'Length >= 600
+                and Len > 0
+                and Len <= N32 (Result'Length);
+
+   procedure Append_PSK_Extension
+     (S         : in     Session;
+      HC        : in out Handshake_Context;
+      Retry_Mode : in    Boolean;
+      Result    : in out Byte_Seq;
+      Len       : in out N32)
+   is
+      use SPARKTLSCrypto.Hashing.SHA256;
+   begin
+      if not (S.Ticket.Valid
+              and then S.Ticket.PSK_Len in 32 | 48)
+      then
+         return;
+      end if;
+      HC.PSK_Offered := True;
+      declare
+         Tick_Len : constant N32 := S.Ticket.Ticket_Len;
+         ID_Entry_Len : constant N32 := 2 + Tick_Len + 4;
+         IDs_Len : constant N32 := 2 + ID_Entry_Len;
+         Binder_Size : constant N32 :=
+            (if S.Ticket.PSK_Len = 48 then 48 else 32);
+         Binder_Entry_Len : constant N32 := 1 + Binder_Size;
+         Binders_Len : constant N32 := 2 + Binder_Entry_Len;
+         PSK_Ext_Len : constant N32 := 4 + IDs_Len + Binders_Len;
+         New_Len     : constant N32 := Len + PSK_Ext_Len;
+         P : N32;
+
+         --  CH body layout — see comments in Build_Client_Hello.
+         Sid_Len_Off    : constant N32 := 4 + 2 + 32;
+         Sid_Len_Read   : constant N32 := N32 (Result (Sid_Len_Off));
+         Suites_Len_Off : constant N32 :=
+           Sid_Len_Off + 1 + Sid_Len_Read;
+         Suites_Len_Read : constant N32 :=
+           N32 (Result (Suites_Len_Off)) * 256 +
+           N32 (Result (Suites_Len_Off + 1));
+         Comp_Len_Off   : constant N32 :=
+           Suites_Len_Off + 2 + Suites_Len_Read;
+         Comp_Len_Read  : constant N32 :=
+           N32 (Result (Comp_Len_Off));
+         Ext_Len_Offset : constant N32 :=
+           Comp_Len_Off + 1 + Comp_Len_Read;
+         Old_Ext_Len : N32;
+         New_Ext_Len : N32;
+      begin
+         if New_Len > N32 (Result'Length) then
+            return;
+         end if;
+         Old_Ext_Len := N32 (Result (Ext_Len_Offset)) * 256 +
+                        N32 (Result (Ext_Len_Offset + 1));
+         New_Ext_Len := Old_Ext_Len + PSK_Ext_Len;
+
+         P := Len;
+         Result (P) := 0; Result (P + 1) := 16#29#;
+         P := P + 2;
+         Result (P) := Byte ((IDs_Len + Binders_Len) / 256);
+         Result (P + 1) := Byte ((IDs_Len + Binders_Len) mod 256);
+         P := P + 2;
+         Result (P) := Byte (ID_Entry_Len / 256);
+         Result (P + 1) := Byte (ID_Entry_Len mod 256);
+         P := P + 2;
+         Result (P) := Byte (Tick_Len / 256);
+         Result (P + 1) := Byte (Tick_Len mod 256);
+         P := P + 2;
+         Result (P .. P + Tick_Len - 1) :=
+            S.Ticket.Ticket (0 .. Tick_Len - 1);
+         P := P + Tick_Len;
+         declare
+            A : constant Unsigned_32 := S.Ticket.Age_Add;
+         begin
+            Result (P)     := Byte (A / 2**24 mod 256);
+            Result (P + 1) := Byte (A / 2**16 mod 256);
+            Result (P + 2) := Byte (A / 2**8 mod 256);
+            Result (P + 3) := Byte (A mod 256);
+         end;
+         P := P + 4;
+         Result (P) := Byte (Binder_Entry_Len / 256);
+         Result (P + 1) := Byte (Binder_Entry_Len mod 256);
+         P := P + 2;
+         Result (P) := Byte (Binder_Size);
+         P := P + 1;
+         declare
+            Binder_Offset : constant N32 := P;
+         begin
+            Result (P .. P + Binder_Size - 1) := (others => 0);
+            P := P + Binder_Size;
+
+            --  Patch handshake length
+            declare
+               New_Body_Len : constant N32 := P - 4;
+            begin
+               Result (1) := Byte (New_Body_Len / 65536);
+               Result (2) := Byte ((New_Body_Len / 256) mod 256);
+               Result (3) := Byte (New_Body_Len mod 256);
+            end;
+            Result (Ext_Len_Offset) := Byte (New_Ext_Len / 256);
+            Result (Ext_Len_Offset + 1) := Byte (New_Ext_Len mod 256);
+
+            --  Compute binder per RFC 8446 §4.2.11.2.
+            declare
+               Trunc_Len  : constant N32 := Binder_Offset - 3;
+               Pre_Len    : constant N32 :=
+                 (if Retry_Mode then HC.Transcript_Len else 0);
+               Trans_In   : constant Byte_Seq (0 .. Pre_Len
+                                                    + Trunc_Len - 1) :=
+                  HC.Transcript (0 .. Pre_Len - 1)
+                  & Result (0 .. Trunc_Len - 1);
+            begin
+               if S.Ticket.PSK_Len = 48 then
+                  declare
+                     Trunc_Hash384 : SPARKNaCl.Hashing.SHA384.Digest;
+                     Binder_Key48  : SPARKTLSCrypto.HKDF384.OKM384_Seq
+                                       (0 .. 47);
+                     Finished_K48  : SPARKTLSCrypto.HKDF384.OKM384_Seq
+                                       (0 .. 47);
+                     Binder_V48    : Bytes_48;
+                  begin
+                     SPARKNaCl.Hashing.SHA384.Hash
+                       (Trunc_Hash384, Trans_In);
+                     Key_Schedule.Derive_Binder_Key_384
+                       (Binder_Key48, S.Ticket.PSK);
+                     Key_Schedule.Derive_Finished_Key_384
+                       (Finished_K48, Byte_Seq (Binder_Key48));
+                     SPARKTLSCrypto.HMAC384.HMAC_SHA_384
+                       (Output => Binder_V48,
+                        M      => Byte_Seq (Trunc_Hash384),
+                        K      => Byte_Seq (Finished_K48));
+                     Result (Binder_Offset ..
+                               Binder_Offset + 47) := Binder_V48;
+                  end;
+               else
+                  declare
+                     Trunc_Hash   : Digest;
+                     Binder_Key   : OKM_Seq (0 .. 31);
+                     Finished_Key : OKM_Seq (0 .. 31);
+                     Binder_Val   : Digest;
+                  begin
+                     Hash (Trunc_Hash, Trans_In);
+                     Key_Schedule.Derive_Binder_Key
+                       (Binder_Key,
+                        Bytes_32 (S.Ticket.PSK (0 .. 31)));
+                     Key_Schedule.Derive_Finished_Key
+                       (Finished_Key, Byte_Seq (Binder_Key));
+                     HMAC_SHA_256
+                       (Output => Binder_Val,
+                        M      => Trunc_Hash,
+                        K      => Byte_Seq (Finished_Key));
+                     Result (Binder_Offset ..
+                               Binder_Offset + 31) := Binder_Val;
+                  end;
+               end if;
+            end;
+         end;
+
+         Len := P;
+      end;
+   end Append_PSK_Extension;
+
    procedure Build_Client_Hello
      (S          : in     Session;
       HC         : in out Handshake_Context;
@@ -316,142 +555,30 @@ is
          Suites_Ctx : RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
       begin
          Switch_To_Cipher_Suites_TLS (Ctx, Suites_Ctx);
-
-         --  Suite 1: TLS_AES_128_GCM_SHA256 (0x1301)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
-         --  Suite 2: TLS_CHACHA20_POLY1305_SHA256 (0x1303)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
-         --  Suite 3: TLS_AES_256_GCM_SHA384 (0x1302)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
-         --  Suite 4: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (0xC02F)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
-         --  Suite 5: TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 (0xC030)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
-         --  Suite 6: TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 (0xCCA8)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
-         --  Suite 7: TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (0xC02B)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
-         --  Suite 8: TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 (0xC02C)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
-         --  Suite 9: TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 (0xCCA9)
-         declare
-            S_Buf : RBT.Bytes_Ptr;
-            S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-         begin
-            S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite
-              (S_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
-            RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-              (Suites_Ctx, S_Ctx);
-            RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-            RFLX_Free (S_Buf);
-         end;
-
+         Append_Cipher_Suite
+           (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256);
+         Append_Cipher_Suite
+           (Suites_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256);
+         Append_Cipher_Suite
+           (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384);
+         Append_Cipher_Suite
+           (Suites_Ctx,
+            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+         Append_Cipher_Suite
+           (Suites_Ctx,
+            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
+         Append_Cipher_Suite
+           (Suites_Ctx,
+            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
+         Append_Cipher_Suite
+           (Suites_Ctx,
+            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
+         Append_Cipher_Suite
+           (Suites_Ctx,
+            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384);
+         Append_Cipher_Suite
+           (Suites_Ctx,
+            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
          Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
       end;
 
@@ -470,9 +597,7 @@ is
 
          --  Extension 1: server_name (0x0000)
          declare
-            Ext_Buf  : RBT.Bytes_Ptr;
-            Ext_Ctx  : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-            SNI_Raw  : Byte_Seq (0 .. SNI_Data_Len - 1) := (others => 0);
+            SNI_Raw : Byte_Seq (0 .. SNI_Data_Len - 1) := (others => 0);
          begin
             --  SNI list: list_len(2) + type(1) + name_len(2) + name
             SNI_Raw (0) := Byte ((Host_Len + 3) / 256);
@@ -484,52 +609,29 @@ is
                SNI_Raw (4 + N32 (I)) :=
                   Byte (Character'Pos (HC.Cfg.Server_Name.Data (I)));
             end loop;
-
-            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SNI_Data_Len) => 0);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-              (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Server_Name);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (SNI_Data_Len));
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (SNI_Raw));
-            RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
+            Append_CH_Extension
+              (Exts_Ctx,
+               RFLX.Tls_Extensiontype_Values.Server_Name,
+               SNI_Raw);
          end;
 
          --  Extension 2: supported_groups (0x000A)
          declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-            SG_Raw  : constant Byte_Seq (0 .. SG_Data_Len - 1) :=
+            SG_Raw : constant Byte_Seq (0 .. SG_Data_Len - 1) :=
                (16#00#, 16#06#,          --  list_len=6 (3 groups)
                 16#00#, 16#1D#,          --  X25519
                 16#00#, 16#17#,          --  secp256r1
                 16#00#, 16#18#);         --  secp384r1
          begin
-            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SG_Data_Len) => 0);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-              (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Groups);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (SG_Data_Len));
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (SG_Raw));
-            RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
+            Append_CH_Extension
+              (Exts_Ctx,
+               RFLX.Tls_Extensiontype_Values.Supported_Groups,
+               SG_Raw);
          end;
 
          --  Extension 3: signature_algorithms (0x000D)
          declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-            SA_Raw  : constant Byte_Seq (0 .. SA_Data_Len - 1) :=
+            SA_Raw : constant Byte_Seq (0 .. SA_Data_Len - 1) :=
                (16#00#, 16#0C#,          --  list_len=12 (6 algorithms)
                 16#04#, 16#03#,          --  ecdsa_secp256r1_sha256
                 16#05#, 16#03#,          --  ecdsa_secp384r1_sha384
@@ -538,19 +640,10 @@ is
                 16#08#, 16#06#,          --  rsa_pss_rsae_sha512
                 16#08#, 16#07#);         --  ed25519
          begin
-            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SA_Data_Len) => 0);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-              (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Signature_Algorithms);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (SA_Data_Len));
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (SA_Raw));
-            RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
+            Append_CH_Extension
+              (Exts_Ctx,
+               RFLX.Tls_Extensiontype_Values.Signature_Algorithms,
+               SA_Raw);
          end;
 
          --  Extension 4: key_share (0x0033).
@@ -558,11 +651,8 @@ is
          --  36, secp256r1 69, secp384r1 101). Retry with selected
          --  group: a single entry for that group only.
          declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-            KS_Raw  : Byte_Seq (0 .. KS_Data_Len - 1);
+            KS_Raw : Byte_Seq (0 .. KS_Data_Len - 1) := (others => 0);
          begin
-            KS_Raw := (others => 0);
             if Retry_KS_Single then
                --  Single-entry retry key_share.
                KS_Raw (0) := Byte (Retry_KS_Entry / 256);
@@ -591,38 +681,22 @@ is
                --  shares_len(2) = 36
                KS_Raw (0) := 16#00#;
                KS_Raw (1) := 16#24#;
-               --  X25519 key share: group(2) + key_len(2) + key(32)
                KS_Raw (2) := 16#00#;
-               KS_Raw (3) := 16#1D#;  --  X25519
+               KS_Raw (3) := 16#1D#;
                KS_Raw (4) := 16#00#;
-               KS_Raw (5) := 16#20#;  --  32 bytes
+               KS_Raw (5) := 16#20#;
                KS_Raw (6 .. 37) := PK_Bytes;
             end if;
-
-            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + KS_Data_Len) => 0);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-              (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Key_Share);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (KS_Data_Len));
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (KS_Raw));
-            RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
+            Append_CH_Extension
+              (Exts_Ctx,
+               RFLX.Tls_Extensiontype_Values.Key_Share,
+               KS_Raw);
          end;
 
          --  Extension 4.5 (retry only): cookie (0x002C) — echo back
          --  the cookie the server sent in HRR. RFC 8446 §4.2.2.
          if Cookie_Bytes_Len > 0 then
             declare
-               Ext_Buf  : RBT.Bytes_Ptr;
-               Ext_Ctx  : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-               --  Flow can't see that the (0..1) prefix + the
-               --  (2..Cookie_Data_Len-1) loop cover the whole array;
-               --  the cheap fix is an explicit zero init.
                Cookie_Raw : Byte_Seq (0 .. Cookie_Data_Len - 1) :=
                   (others => 0);
             begin
@@ -631,209 +705,110 @@ is
                for I in 0 .. Cookie_Bytes_Len - 1 loop
                   Cookie_Raw (2 + I) := HC.HRR_Cookie (I);
                end loop;
-               Ext_Buf := new RBT.Bytes'
-                 (1 .. RBT.Index (4 + Cookie_Data_Len) => 0);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
-                 (Ext_Ctx, Ext_Buf);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-                 (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Cookie);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-                 (Ext_Ctx,
-                  RFLX.TLS_Handshake.Data_Length (Cookie_Data_Len));
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-                 (Ext_Ctx, To_RFLX (Cookie_Raw));
-               RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-                 (Exts_Ctx, Ext_Ctx);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-                 (Ext_Ctx, Ext_Buf);
-               RFLX_Free (Ext_Buf);
+               Append_CH_Extension
+                 (Exts_Ctx,
+                  RFLX.Tls_Extensiontype_Values.Cookie,
+                  Cookie_Raw);
             end;
          end if;
 
          --  Extension 5: psk_key_exchange_modes (0x002D)
          declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             PSK_Raw : constant Byte_Seq (0 .. PSK_Data_Len - 1) :=
                (16#01#, 16#01#);  --  list_len=1, psk_dhe_ke
          begin
-            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + PSK_Data_Len) => 0);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-              (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (PSK_Data_Len));
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (PSK_Raw));
-            RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
+            Append_CH_Extension
+              (Exts_Ctx,
+               RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes,
+               PSK_Raw);
          end;
 
          --  Extension 6: supported_versions (0x002B).
-         --  Body shape matches SV_Data_Len above — branched on policy.
          declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-            SV_Raw  : constant Byte_Seq (0 .. SV_Data_Len - 1) :=
+            SV_Raw : constant Byte_Seq (0 .. SV_Data_Len - 1) :=
               (case HC.Cfg.Versions is
                   when Allow_Both =>
-                     Byte_Seq'(16#04#,             -- list_len = 4
-                               16#03#, 16#04#,     -- TLS 1.3 preferred
-                               16#03#, 16#03#),    -- TLS 1.2 fallback
+                     Byte_Seq'(16#04#,
+                               16#03#, 16#04#,
+                               16#03#, 16#03#),
                   when TLS_1_3_Only =>
-                     Byte_Seq'(16#02#,             -- list_len = 2
-                               16#03#, 16#04#),    -- TLS 1.3 only
+                     Byte_Seq'(16#02#,
+                               16#03#, 16#04#),
                   when TLS_1_2_Only =>
-                     Byte_Seq'(16#02#,             -- list_len = 2
-                               16#03#, 16#03#));   -- TLS 1.2 only
+                     Byte_Seq'(16#02#,
+                               16#03#, 16#03#));
          begin
-            Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + SV_Data_Len) => 0);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-              (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Versions);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-              (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (SV_Data_Len));
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-              (Ext_Ctx, To_RFLX (SV_Raw));
-            RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-              (Exts_Ctx, Ext_Ctx);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-              (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
+            Append_CH_Extension
+              (Exts_Ctx,
+               RFLX.Tls_Extensiontype_Values.Supported_Versions,
+               SV_Raw);
          end;
 
          --  Extension 7: ec_point_formats (0x000B) — RFC 8422 §5.1.2.
-         --  Required by BoGo for TLS 1.2 ECDHE; OpenSSL is lax. Body:
-         --  format_list_len(1)=1 + uncompressed(1)=0.
          declare
-            Ext_Buf : RBT.Bytes_Ptr;
-            Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             EPF_Raw : constant Byte_Seq (0 .. EPF_Data_Len - 1) :=
                (16#01#, 16#00#);
          begin
-            Ext_Buf := new RBT.Bytes'
-               (1 .. RBT.Index (4 + EPF_Data_Len) => 0);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
-               (Ext_Ctx, Ext_Buf);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-               (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Ec_Point_Formats);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-               (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (EPF_Data_Len));
-            RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-               (Ext_Ctx, To_RFLX (EPF_Raw));
-            RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-               (Exts_Ctx, Ext_Ctx);
-            RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-               (Ext_Ctx, Ext_Buf);
-            RFLX_Free (Ext_Buf);
+            Append_CH_Extension
+              (Exts_Ctx,
+               RFLX.Tls_Extensiontype_Values.Ec_Point_Formats,
+               EPF_Raw);
          end;
 
          --  Extension 8: ALPN (0x0010) — if configured
          if ALPN_Len > 0 then
             declare
-               Ext_Buf : RBT.Bytes_Ptr;
-               Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
                ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
                              := (others => 0);
             begin
-               --  protocol_name_list_length (2 bytes)
                ALPN_Raw (0) := Byte ((ALPN_Len + 1) / 256);
                ALPN_Raw (1) := Byte ((ALPN_Len + 1) mod 256);
-               --  protocol_name_length (1 byte)
                ALPN_Raw (2) := Byte (ALPN_Len);
-               --  protocol_name
                for I in 1 .. ALPN_Len loop
                   ALPN_Raw (N32 (2 + I)) :=
                      Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
                end loop;
-
-               Ext_Buf := new RBT.Bytes'
-                  (1 .. RBT.Index (4 + ALPN_Data_Len) => 0);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
-                  (Ext_Ctx, Ext_Buf);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-                  (Ext_Ctx,
-                   RFLX.Tls_Extensiontype_Values
-                     .Application_Layer_Protocol_Negotiation);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-                  (Ext_Ctx,
-                   RFLX.TLS_Handshake.Data_Length (ALPN_Data_Len));
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-                  (Ext_Ctx, To_RFLX (ALPN_Raw));
-               RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-                  (Exts_Ctx, Ext_Ctx);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-                  (Ext_Ctx, Ext_Buf);
-               RFLX_Free (Ext_Buf);
+               Append_CH_Extension
+                 (Exts_Ctx,
+                  RFLX.Tls_Extensiontype_Values
+                    .Application_Layer_Protocol_Negotiation,
+                  ALPN_Raw);
             end;
          end if;
 
          --  Extension 8b (conditional): RFC 5077 session_ticket (0x0023).
-         --  TLS 1.2 only. Emitted via the RFLX CH_Extension_TLS API —
-         --  same pattern as the other extensions above.
+         --  Empty data on initial CH; resume ticket bytes when resuming.
          if Offer_TLS12_Ticket then
-            declare
-               Ext_Buf : RBT.Bytes_Ptr;
-               Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
-            begin
-               Ext_Buf := new RBT.Bytes'
-                 (1 .. RBT.Index (4 + TLS12_Ticket_Data_Len) => 0);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
-                 (Ext_Ctx, Ext_Buf);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-                 (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Session_Ticket);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-                 (Ext_Ctx,
-                  RFLX.TLS_Handshake.Data_Length (TLS12_Ticket_Data_Len));
-               if TLS12_Ticket_Data_Len > 0 then
-                  RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-                    (Ext_Ctx,
-                     To_RFLX
-                       (HC.Cfg.TLS12_Resume_Ticket.Ticket
-                          (0 .. TLS12_Ticket_Data_Len - 1)));
-               else
-                  RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Empty (Ext_Ctx);
-               end if;
-               RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-                 (Exts_Ctx, Ext_Ctx);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-                 (Ext_Ctx, Ext_Buf);
-               RFLX_Free (Ext_Buf);
-            end;
+            if TLS12_Ticket_Data_Len > 0 then
+               Append_CH_Extension
+                 (Exts_Ctx,
+                  RFLX.Tls_Extensiontype_Values.Session_Ticket,
+                  HC.Cfg.TLS12_Resume_Ticket.Ticket
+                    (0 .. TLS12_Ticket_Data_Len - 1));
+            else
+               --  Empty body: Append_CH_Extension's Data is zero-len.
+               declare
+                  Empty : constant Byte_Seq (1 .. 0) := (others => 0);
+               begin
+                  Append_CH_Extension
+                    (Exts_Ctx,
+                     RFLX.Tls_Extensiontype_Values.Session_Ticket,
+                     Empty);
+               end;
+            end if;
             HC.TLS12_Sent_Ticket_Ext := True;
          end if;
 
          --  Extension 9 (conditional): padding (RFC 7685, tag 0x0015).
-         --  Inserted last in the RFLX-built chain (the post-build PSK
-         --  append still legally trails it — PSK ext must be last per
-         --  RFC 8446 §4.2.11 only when actually present). Body is all
-         --  zeros; only its length matters.
          if Pad_Ext_Total > 0 then
             declare
-               Ext_Buf : RBT.Bytes_Ptr;
-               Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
                Pad_Raw : constant Byte_Seq (0 .. Pad_Data_Len - 1) :=
                  (others => 0);
             begin
-               Ext_Buf := new RBT.Bytes'
-                 (1 .. RBT.Index (4 + Pad_Data_Len) => 0);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Initialize
-                 (Ext_Ctx, Ext_Buf);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag
-                 (Ext_Ctx, RFLX.Tls_Extensiontype_Values.Padding);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
-                 (Ext_Ctx,
-                  RFLX.TLS_Handshake.Data_Length (Pad_Data_Len));
-               RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-                 (Ext_Ctx, To_RFLX (Pad_Raw));
-               RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
-                 (Exts_Ctx, Ext_Ctx);
-               RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
-                 (Ext_Ctx, Ext_Buf);
-               RFLX_Free (Ext_Buf);
+               Append_CH_Extension
+                 (Exts_Ctx,
+                  RFLX.Tls_Extensiontype_Values.Padding,
+                  Pad_Raw);
             end;
          end if;
 
@@ -871,212 +846,10 @@ is
       --  Binder hash matches the ticket's hash: PSK_Len=32 → SHA-256;
       --  PSK_Len=48 → SHA-384. Both paths share the same wire
       --  layout (only the binder VALUE size differs).
-      if S.Ticket.Valid
-        and then S.Ticket.PSK_Len in 32 | 48
-        and then Len > 0
-      then
-         HC.PSK_Offered := True;
-         declare
-            use SPARKTLSCrypto.Hashing.SHA256;
-            Tick_Len : constant N32 := S.Ticket.Ticket_Len;
-            --  PSK identity: identity_len(2) + ticket + age(4)
-            ID_Entry_Len : constant N32 := 2 + Tick_Len + 4;
-            --  identities: len(2) + entry
-            IDs_Len : constant N32 := 2 + ID_Entry_Len;
-            --  binder: binder_len(1) + binder(32 or 48)
-            Binder_Size : constant N32 :=
-               (if S.Ticket.PSK_Len = 48 then 48 else 32);
-            Binder_Entry_Len : constant N32 := 1 + Binder_Size;
-            --  binders: len(2) + entry
-            Binders_Len : constant N32 := 2 + Binder_Entry_Len;
-            --  pre_shared_key extension: tag(2) + data_len(2) + identities + binders
-            PSK_Ext_Len : constant N32 := 4 + IDs_Len + Binders_Len;
-            --  New total message length
-            New_Len     : constant N32 := Len + PSK_Ext_Len;
-            P : N32;
-
-            --  Location of the extensions_length field in the
-            --  ClientHello. CH body layout:
-            --    hs_hdr(4) + version(2) + random(32) + sid_len(1)
-            --    + sid(0..32) + suites_len(2) + suites(N) +
-            --    comp_len(1) + comp(N) + ext_len(2) + extensions(M)
-            --  Read sid_len, suites_len, comp_len from the CH we
-            --  just built so the offset is correct for any number
-            --  of cipher suites or session-id length.
-            Sid_Len_Off    : constant N32 := 4 + 2 + 32;  --  to sid_len byte
-            Sid_Len_Read   : constant N32 := N32 (Result (Sid_Len_Off));
-            Suites_Len_Off : constant N32 :=
-              Sid_Len_Off + 1 + Sid_Len_Read;
-            Suites_Len_Read : constant N32 :=
-              N32 (Result (Suites_Len_Off)) * 256 +
-              N32 (Result (Suites_Len_Off + 1));
-            Comp_Len_Off   : constant N32 :=
-              Suites_Len_Off + 2 + Suites_Len_Read;
-            Comp_Len_Read  : constant N32 :=
-              N32 (Result (Comp_Len_Off));
-            Ext_Len_Offset : constant N32 :=
-              Comp_Len_Off + 1 + Comp_Len_Read;
-            Old_Ext_Len : N32;
-            New_Ext_Len : N32;
-         begin
-            if New_Len <= N32 (Result'Length) then
-               --  Read current extensions length
-               Old_Ext_Len := N32 (Result (Ext_Len_Offset)) * 256 +
-                               N32 (Result (Ext_Len_Offset + 1));
-               New_Ext_Len := Old_Ext_Len + PSK_Ext_Len;
-
-               P := Len;
-
-               --  pre_shared_key extension tag (0x0029)
-               Result (P) := 0; Result (P + 1) := 16#29#;
-               P := P + 2;
-               --  data length
-               Result (P) := Byte ((IDs_Len + Binders_Len) / 256);
-               Result (P + 1) := Byte ((IDs_Len + Binders_Len) mod 256);
-               P := P + 2;
-               --  identities length
-               Result (P) := Byte (ID_Entry_Len / 256);
-               Result (P + 1) := Byte (ID_Entry_Len mod 256);
-               P := P + 2;
-               --  identity: ticket length + ticket
-               Result (P) := Byte (Tick_Len / 256);
-               Result (P + 1) := Byte (Tick_Len mod 256);
-               P := P + 2;
-               Result (P .. P + Tick_Len - 1) :=
-                  S.Ticket.Ticket (0 .. Tick_Len - 1);
-               P := P + Tick_Len;
-               --  obfuscated_ticket_age (RFC 8446 §4.2.11.1).
-               --  obfuscated_age = (real_age_ms + age_add) mod 2^32.
-               --  Without a real clock we cheat by asserting
-               --  real_age=0 → obfuscated_age = age_add. OpenSSL
-               --  by default accepts a plausible age but treats a
-               --  far-future / far-past value as a stale ticket and
-               --  silently falls back to a full handshake. Sending
-               --  age_add verbatim keeps the apparent age at 0 ms,
-               --  which is always within the freshness window.
-               declare
-                  A : constant Unsigned_32 := S.Ticket.Age_Add;
-               begin
-                  Result (P)     := Byte (A / 2**24 mod 256);
-                  Result (P + 1) := Byte (A / 2**16 mod 256);
-                  Result (P + 2) := Byte (A / 2**8 mod 256);
-                  Result (P + 3) := Byte (A mod 256);
-               end;
-               P := P + 4;
-               --  binders length
-               Result (P) := Byte (Binder_Entry_Len / 256);
-               Result (P + 1) := Byte (Binder_Entry_Len mod 256);
-               P := P + 2;
-               --  binder: length byte + placeholder (zeroed, patched below)
-               Result (P) := Byte (Binder_Size);
-               P := P + 1;
-               declare
-                  Binder_Offset : constant N32 := P;
-               begin
-                  Result (P .. P + Binder_Size - 1) := (others => 0);
-                  P := P + Binder_Size;
-
-                  --  Patch handshake length
-                  declare
-                     New_Body_Len : constant N32 := P - 4;
-                  begin
-                     Result (1) := Byte (New_Body_Len / 65536);
-                     Result (2) := Byte ((New_Body_Len / 256) mod 256);
-                     Result (3) := Byte (New_Body_Len mod 256);
-                  end;
-
-                  --  Patch extensions length
-                  Result (Ext_Len_Offset) := Byte (New_Ext_Len / 256);
-                  Result (Ext_Len_Offset + 1) := Byte (New_Ext_Len mod 256);
-
-                  --  Compute binder (RFC 8446 §4.2.11.2):
-                  --  1. Hash the partial ClientHello up to but not
-                  --     including the binders block. The binders
-                  --     block is `binders_len(2) + binder_entries`.
-                  --  2. HMAC with binder_key derived from PSK.
-                  --
-                  --  At this point P (== Binder_Offset) points at
-                  --  the first byte of the binder VALUE. We've
-                  --  already written binders_len (2 bytes at
-                  --  Binder_Offset-3 .. -2) and the binder_len byte
-                  --  (1 byte at Binder_Offset-1). The truncation
-                  --  point is therefore Binder_Offset - 3 — start
-                  --  of binders_len.  Earlier code computed
-                  --  Binder_Offset - Binders_Len which over-shot
-                  --  by 32 bytes (the binder VALUE length itself),
-                  --  causing the server to reject every binder
-                  --  with `tls_psk_do_binder: binder does not
-                  --  verify`.
-                  --  RFC 8446 §4.2.11.2: binder = HMAC(finished_key,
-                  --  Transcript-Hash(Truncate(ClientHello1))) on the
-                  --  fresh-handshake path. After a HelloRetryRequest
-                  --  the transcript is `message_hash(CH1) || HRR ||
-                  --  Truncate(CH2)` — HC.Transcript already holds the
-                  --  first two pieces (Wait_Server_Hello's HRR branch
-                  --  replaces CH1 with its message_hash and appends
-                  --  HRR before re-entering Build_Client_Hello). The
-                  --  truncated CH2 = Result (0 .. Trunc_Len - 1).
-                  --  Hash the concatenation. BoGo CurveID-Resume-
-                  --  Client-TLS13.
-                  declare
-                     Trunc_Len  : constant N32 := Binder_Offset - 3;
-                     Pre_Len    : constant N32 :=
-                       (if Retry_Mode then HC.Transcript_Len else 0);
-                     Trans_In   : constant Byte_Seq (0 .. Pre_Len
-                                                         + Trunc_Len - 1) :=
-                        HC.Transcript (0 .. Pre_Len - 1)
-                        & Result (0 .. Trunc_Len - 1);
-                  begin
-                     if S.Ticket.PSK_Len = 48 then
-                        declare
-                           Trunc_Hash384 : SPARKNaCl.Hashing.SHA384.Digest;
-                           Binder_Key48  : SPARKTLSCrypto.HKDF384.OKM384_Seq
-                                             (0 .. 47);
-                           Finished_K48  : SPARKTLSCrypto.HKDF384.OKM384_Seq
-                                             (0 .. 47);
-                           Binder_V48    : Bytes_48;
-                        begin
-                           SPARKNaCl.Hashing.SHA384.Hash
-                             (Trunc_Hash384, Trans_In);
-                           Key_Schedule.Derive_Binder_Key_384
-                             (Binder_Key48, S.Ticket.PSK);
-                           Key_Schedule.Derive_Finished_Key_384
-                             (Finished_K48, Byte_Seq (Binder_Key48));
-                           SPARKTLSCrypto.HMAC384.HMAC_SHA_384
-                             (Output => Binder_V48,
-                              M      => Byte_Seq (Trunc_Hash384),
-                              K      => Byte_Seq (Finished_K48));
-                           Result (Binder_Offset ..
-                                     Binder_Offset + 47) := Binder_V48;
-                        end;
-                     else
-                        declare
-                           Trunc_Hash   : Digest;
-                           Binder_Key   : OKM_Seq (0 .. 31);
-                           Finished_Key : OKM_Seq (0 .. 31);
-                           Binder_Val   : Digest;
-                        begin
-                           Hash (Trunc_Hash, Trans_In);
-                           Key_Schedule.Derive_Binder_Key
-                             (Binder_Key,
-                              Bytes_32 (S.Ticket.PSK (0 .. 31)));
-                           Key_Schedule.Derive_Finished_Key
-                             (Finished_Key, Byte_Seq (Binder_Key));
-                           HMAC_SHA_256
-                             (Output => Binder_Val,
-                              M      => Trunc_Hash,
-                              K      => Byte_Seq (Finished_Key));
-                           Result (Binder_Offset ..
-                                     Binder_Offset + 31) := Binder_Val;
-                        end;
-                     end if;
-                  end;
-               end;
-
-               Len := P;
-            end if;
-         end;
+      if Len > 0 then
+         Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
       end if;
+
    end Build_Client_Hello;
 
    --================================================================
