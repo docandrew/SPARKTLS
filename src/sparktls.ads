@@ -1563,7 +1563,18 @@ is
       RFLX_Main : aliased RFLX.RFLX_Builtin_Types.Bytes
                     (1 .. RFLX.RFLX_Builtin_Types.Index (RFLX_Main_Size))
                     := (others => 0);
-   end record;
+   end record
+     with Predicate =>
+       --  RFC 5246 §7.4.9 transcript bound: every Append_Transcript
+       --  guards against overrun. Pin the runtime invariant so the
+       --  prover doesn't have to re-derive it at every callsite.
+       Handshake_Context.Transcript_Len <= Transcript_Capacity
+       and Handshake_Context.Hash_Len <= 48
+       and Handshake_Context.Peer_Cert_DER_Len <= Max_Cert_DER_Len
+       and Handshake_Context.Peer_Int_Count <= Max_Pool_Size
+       and Handshake_Context.PSK_Binder_Len <= 64
+       and Handshake_Context.PSK_Value_Len <= 48
+       and Handshake_Context.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len;
 
    Max_Handshake_Heap : constant := 262_144;  --  256 KB per handshake
 

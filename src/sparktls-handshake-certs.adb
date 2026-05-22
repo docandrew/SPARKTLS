@@ -133,23 +133,24 @@ is
       Pos : N32 := 0;
 
       procedure Put_U8 (V : Byte)
-      with Pre  => Pos <= Result'Last + 1
-                   and Result'Last < N32'Last,
+      with Pre  => Result'Last < N32'Last
+                   and then Pos <= Result'Last + 1,
            Post => Pos <= Pos'Old + 1
-                   and Pos <= Result'Last + 1
+                   and then Pos <= Result'Last + 1
       is
       begin
          if Pos <= Result'Last then
-            Result (Pos) := V;
-            Pos := Pos + 1;
+           Result (Pos) := V;
+           Pos := Pos + 1;
          end if;
       end Put_U8;
 
       procedure Put_U24 (V : N32)
-      with Pre  => Pos <= Result'Last + 1
-                   and Result'Last < N32'Last,
+      with Pre  => Result'Last < N32'Last
+                   and then Pos <= Result'Last + 1
+                   and then V <= 16#FFFFFF#,
            Post => Pos <= Pos'Old + 3
-                   and Pos <= Result'Last + 1
+                   and then Pos <= Result'Last + 1
       is
       begin
          Put_U8 (Byte (V / 65536));
@@ -159,12 +160,12 @@ is
 
       procedure Put_Cert_Entry (DER : Byte_Seq; DER_Len : N32)
       with Pre  => DER'First = 0
-                   and DER_Len > 0
-                   and DER_Len <= N32 (Max_Cert_DER)
-                   and DER'Last in 0 .. N32 (Max_Cert_DER) - 1
-                   and DER'Last >= DER_Len - 1
-                   and Pos <= Result'Last + 1
-                   and Result'Last < N32'Last,
+                   and then DER_Len > 0
+                   and then DER_Len <= N32 (Max_Cert_DER)
+                   and then DER'Last in 0 .. N32 (Max_Cert_DER) - 1
+                   and then DER'Last >= DER_Len - 1
+                   and then Result'Last < N32'Last
+                   and then Pos <= Result'Last + 1,
            Post => Pos <= Result'Last + 1
       is
       begin

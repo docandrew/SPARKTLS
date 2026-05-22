@@ -59,12 +59,20 @@ is
    procedure Derive_Handshake_Keys
      (S  : in     Session;
       HC : in out Handshake_Context)
-   with Pre => HC.Transcript_Len > 0;
+   with Pre => HC.Transcript_Len > 0
+               and HC.Transcript_Len <= Transcript_Capacity
+               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                       | Suite_AES_256_GCM_SHA384
+                                       | Suite_CHACHA20_POLY1305_SHA256;
 
    procedure Derive_App_Keys
      (S  : in out Session;
       HC : in out Handshake_Context)
-   with Pre => HC.Transcript_Len > 0;
+   with Pre => HC.Transcript_Len > 0
+               and HC.Transcript_Len <= Transcript_Capacity
+               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                       | Suite_AES_256_GCM_SHA384
+                                       | Suite_CHACHA20_POLY1305_SHA256;
 
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
@@ -177,11 +185,13 @@ is
    procedure Append_Transcript
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
-   with Post => HC.Transcript_Len >= HC.Transcript_Len'Old
+   with Pre  => Data'Length <= Transcript_Capacity
+                and HC.Transcript_Len <= Transcript_Capacity,
+        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
    is
       Len : constant N32 := N32 (Data'Length);
    begin
-      if HC.Transcript_Len + Len <= HC.Transcript'Length then
+      if HC.Transcript_Len <= HC.Transcript'Length - Len then
          HC.Transcript (HC.Transcript_Len ..
                           HC.Transcript_Len + Len - 1) := Data;
          HC.Transcript_Len := HC.Transcript_Len + Len;
@@ -1145,7 +1155,10 @@ is
       HC       : in out Handshake_Context;
       Rejected :    out Boolean;
       Result   :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State;
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and HC.Cfg.Ticket_Store /= null
+                and HC.Transcript_Len <= Transcript_Capacity
+                and HC.PSK_Binder_Len <= Max_HS_Msg;
 
    procedure Verify_PSK_Binder
      (S        : in out Session;

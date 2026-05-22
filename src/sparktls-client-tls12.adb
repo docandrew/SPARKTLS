@@ -49,11 +49,13 @@ is
    --  RFC 5246 §7.4.9 transcript-monotonicity: bytes already
    --  appended cannot be removed. The Post pins this; a future
    --  edit that resets HC.Transcript_Len in this proc would fail.
-   with Post => HC.Transcript_Len >= HC.Transcript_Len'Old
+   with Pre  => Data'Length <= Transcript_Capacity
+                and HC.Transcript_Len <= Transcript_Capacity,
+        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
    is
       Len : constant N32 := N32 (Data'Length);
    begin
-      if HC.Transcript_Len + Len <= HC.Transcript'Length then
+      if HC.Transcript_Len <= HC.Transcript'Length - Len then
          HC.Transcript (HC.Transcript_Len ..
                           HC.Transcript_Len + Len - 1) := Data;
          HC.Transcript_Len := HC.Transcript_Len + Len;
@@ -114,6 +116,17 @@ is
    end Derive_Keys_Resumed_12;
 
    procedure Derive_Keys_12 (S : in out Session; HC : in out Handshake_Context)
+   with Pre => HC.Transcript_Len > 0
+               and HC.Transcript_Len <= Transcript_Capacity
+               and HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+               and S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
@@ -212,7 +225,8 @@ is
 
    procedure Process_Server_Flight
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-   with Pre  => Reasm_Coherent (HC),
+   with Pre  => Reasm_Coherent (HC)
+                and (S.State not in Idle | Closing | Closed | Error_State),
         Post => Reasm_Coherent (HC);
 
    --  RFC 5246 §7.4.2 Certificate (HS type 0x0B). Parses the on-wire
@@ -228,9 +242,10 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       OK      :    out Boolean)
-   with Pre  => Msg_Len + 4 <= Frag'Length
+   with Pre  => Msg_Len in 3 .. Max_HS_Msg - 4
                 and Frag'First >= 0
-                and Frag'Last < N32'Last - 4;
+                and Frag'Last < N32'Last - 4
+                and Msg_Len <= N32 (Frag'Length) - 4;
 
    procedure Parse_Cert_Chain_12
      (HC      : in out Handshake_Context;
@@ -493,10 +508,12 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   with Pre  => Msg_Len + 4 <= Frag'Length
-                and Msg_Len >= 0
+   with Pre  => Msg_Len >= 0
+                and Msg_Len <= Max_HS_Msg - 4
                 and Frag'First >= 0
-                and Frag'Last < N32'Last - 4;
+                and Frag'Last < N32'Last - 4
+                and Msg_Len <= N32 (Frag'Length) - 4
+                and S.State not in Idle | Closing | Closed | Error_State;
 
    procedure Handle_CertReq_12
      (S       : in out Session;
@@ -625,10 +642,12 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   with Pre  => Msg_Len + 4 <= Frag'Length
-                and Msg_Len >= 0
+   with Pre  => Msg_Len >= 0
+                and Msg_Len <= Max_HS_Msg - 4
                 and Frag'First >= 0
-                and Frag'Last < N32'Last - 4;
+                and Frag'Last < N32'Last - 4
+                and Msg_Len <= N32 (Frag'Length) - 4
+                and S.State not in Idle | Closing | Closed | Error_State;
 
    procedure Handle_SKE_12
      (S       : in out Session;
@@ -704,9 +723,12 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   with Pre  => Msg_Len + 4 <= Frag'Length
+   with Pre  => Msg_Len >= 0
+                and Msg_Len <= Max_HS_Msg - 4
                 and Frag'First >= 0
                 and Frag'Last < N32'Last - 4
+                and Msg_Len <= N32 (Frag'Length) - 4
+                and S.State not in Idle | Closing | Closed | Error_State
                 and SPARKTLSCrypto.P384.Field.Initialized
                 and SPARKTLSCrypto.P384.ECDSA.Initialized;
 
@@ -1007,10 +1029,11 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   with Pre  => Msg_Len + 4 <= Frag'Length
-                and Msg_Len in 6 .. Max_HS_Msg - 4
+   with Pre  => Msg_Len in 6 .. Max_HS_Msg - 4
                 and Frag'First >= 0
-                and Frag'Last < N32'Last - 4;
+                and Frag'Last < N32'Last - 4
+                and Msg_Len <= N32 (Frag'Length) - 4
+                and S.State not in Idle | Closing | Closed | Error_State;
 
    procedure Handle_NST_12
      (S       : in out Session;
@@ -1644,6 +1667,75 @@ is
    --  Process_Server_Finished: decrypt + verify server Finished
    ------------------------------------------------------------------
 
+   --  RFC 5077 §3.3 abbreviated handshake client flight: CCS plus
+   --  encrypted Finished. In the resumed flow the CLIENT sends these
+   --  AFTER the server's Finished (inverse of the full handshake order
+   --  where they were already sent). Atomic flight assembly: build
+   --  into Scratch first, roll back HC.Client_Seq_12 on commit fail.
+   procedure Send_Abbreviated_Client_Flight_12
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action);
+
+   procedure Send_Abbreviated_Client_Flight_12
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action)
+   is
+      use Records.TLS12;
+      use Key_Schedule_12;
+      Use_384 : constant Boolean :=
+         S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
+                            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+      Scratch    : IO_Buffer;
+      CCS_Out    : N32;
+      FB         : Byte_Seq (0 .. Finished_12_Total_Len - 1);
+      FL         : N32;
+      TH         : Digest;
+      TH4        : SPARKNaCl.Hashing.SHA384.Digest;
+      EO         : N32;
+      Saved_Seq  : Unsigned_64;
+   begin
+      Result := OK;
+      Records.Build_CCS_Record (Scratch, CCS_Out);
+      if CCS_Out = 0 then
+         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+         return;
+      end if;
+      if Use_384 then
+         SPARKNaCl.Hashing.SHA384.Hash
+           (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+         Build_Finished_12 (HC.Master_Secret_12,
+                            Label_Client_Finished,
+                            Byte_Seq (TH4), True, FB, FL);
+      else
+         Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+         Build_Finished_12 (HC.Master_Secret_12,
+                            Label_Client_Finished,
+                            Byte_Seq (TH), False, FB, FL);
+      end if;
+      Saved_Seq := HC.Client_Seq_12;
+      Build_Encrypted_Record_12
+        (FB (0 .. FL - 1), 16#16#, S.Client_App,
+         HC.Client_Write_IV_12, HC.Client_Seq_12,
+         Scratch, EO);
+      if EO = 0 then
+         HC.Client_Seq_12 := Saved_Seq;
+         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+         return;
+      end if;
+      if Free_Space (S.Output) < Scratch.Write_Pos then
+         HC.Client_Seq_12 := Saved_Seq;
+         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+         return;
+      end if;
+      S.Output.Data
+        (S.Output.Write_Pos ..
+         S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+         Scratch.Data (0 .. Scratch.Write_Pos - 1);
+      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+   end Send_Abbreviated_Client_Flight_12;
+
    procedure Process_Server_Finished
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => Reasm_Building (HC),
@@ -1963,60 +2055,12 @@ is
       end;
 
       --  RFC 5077 §3.3 abbreviated handshake: in the resumed flow the
-      --  CLIENT sends CCS+Finished AFTER the server's (inverse of full
-      --  HS). In the full-HS case both records were sent before the
-      --  server's Finished arrived, so nothing more to send here.
+      --  CLIENT sends CCS+Finished AFTER the server's. In the full-HS
+      --  case both records were sent before the server's Finished
+      --  arrived, so this is a no-op.
       if HC.TLS12_Resuming then
-         declare
-            use Records.TLS12;
-            Scratch    : IO_Buffer;
-            CCS_Out    : N32;
-            FB         : Byte_Seq (0 .. Finished_12_Total_Len - 1);
-            FL         : N32;
-            TH         : Digest;
-            TH4        : SPARKNaCl.Hashing.SHA384.Digest;
-            EO         : N32;
-            Saved_Seq  : Unsigned_64;
-         begin
-            Records.Build_CCS_Record (Scratch, CCS_Out);
-            if CCS_Out = 0 then
-               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-               return;
-            end if;
-            if Use_384 then
-               SPARKNaCl.Hashing.SHA384.Hash
-                 (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
-               Build_Finished_12 (HC.Master_Secret_12,
-                                  Label_Client_Finished,
-                                  Byte_Seq (TH4), True, FB, FL);
-            else
-               Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
-               Build_Finished_12 (HC.Master_Secret_12,
-                                  Label_Client_Finished,
-                                  Byte_Seq (TH), False, FB, FL);
-            end if;
-            Saved_Seq := HC.Client_Seq_12;
-            Build_Encrypted_Record_12
-              (FB (0 .. FL - 1), 16#16#, S.Client_App,
-               HC.Client_Write_IV_12, HC.Client_Seq_12,
-               Scratch, EO);
-            if EO = 0 then
-               HC.Client_Seq_12 := Saved_Seq;
-               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-               return;
-            end if;
-            if Free_Space (S.Output) < Scratch.Write_Pos then
-               HC.Client_Seq_12 := Saved_Seq;
-               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-               return;
-            end if;
-            S.Output.Data
-              (S.Output.Write_Pos ..
-               S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-               Scratch.Data (0 .. Scratch.Write_Pos - 1);
-            S.Output.Write_Pos :=
-               S.Output.Write_Pos + Scratch.Write_Pos;
-         end;
+         Send_Abbreviated_Client_Flight_12 (S, HC, Result);
+         if Result /= OK then return; end if;
       end if;
 
       --  Copy TLS 1.2 state to Session

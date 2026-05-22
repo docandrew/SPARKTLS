@@ -87,7 +87,12 @@ is
    --  Forward declarations for internal procedures
    procedure Derive_Handshake_Keys
      (S  : in     Session;
-      HC : in out Handshake_Context);
+      HC : in out Handshake_Context)
+   with Pre => HC.Transcript_Len > 0
+               and HC.Transcript_Len <= Transcript_Capacity
+               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                       | Suite_AES_256_GCM_SHA384
+                                       | Suite_CHACHA20_POLY1305_SHA256;
 
    --  RFC 8446 §4.3.1 / RFC 7301: scan a TLS 1.3 EncryptedExtensions
    --  message for an application_layer_protocol_negotiation entry.
