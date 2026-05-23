@@ -937,7 +937,14 @@ is
       Suite   : Unsigned_16 := 0;
       Age_Add : Unsigned_32 := 0;
       Valid   : Boolean := False;
-   end record;
+   end record
+     with Predicate =>
+       --  RFC 8446 §4.6.1: PSK is SHA-256 (32 byte) or SHA-384 (48
+       --  byte) only when Valid; zero-length on invalid slots is OK
+       --  because they're never read.
+       (if Ticket_Entry.Valid
+        then Ticket_Entry.PSK_Len in 32 | 48
+        else Ticket_Entry.PSK_Len = 0);
 
    type Ticket_Array is array (Natural range 0 .. Max_Cached_Tickets - 1)
       of Ticket_Entry;

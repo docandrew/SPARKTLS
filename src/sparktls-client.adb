@@ -124,16 +124,31 @@ is
      (S       : in out Session;
       HC      : in out Handshake_Context;
       Scratch : in out IO_Buffer;
-      Result  :    out Action);
+      Result  :    out Action)
+   with Pre => S.State not in Idle | Closing | Closed | Error_State
+               and Nonce_Space_Available (HC.Client_HS)
+               and HC.Transcript_Len > 0;
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => S.State not in Idle | Closing | Closed | Error_State
+               and Nonce_Space_Available (HC.Client_HS)
+               and HC.Transcript_Len > 0
+               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                       | Suite_AES_256_GCM_SHA384
+                                       | Suite_CHACHA20_POLY1305_SHA256;
    procedure Process_Handshake_Message
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Data   : in     Byte_Seq;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => S.State not in Idle | Closing | Closed | Error_State
+               and Data'First = 0
+               and Data'Length >= 4
+               and Data'Last < N32'Last - 4
+               and Data'Length <= Transcript_Capacity
+               and Nonce_Space_Available (HC.Client_HS);
    procedure Process_Encrypted_Handshake
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -2703,7 +2718,13 @@ is
      (Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Start_Off : in     N32;
-      Status    :    out NST_Status);
+      Status    :    out NST_Status)
+   with Pre => Plaintext'First = 0
+               and Plaintext'Last < N32'Last
+               and Plain_Len >= 0
+               and Plain_Len <= N32 (Plaintext'Length)
+               and Start_Off >= 0
+               and Start_Off <= Plain_Len;
 
    procedure Walk_NST_Extensions
      (Plaintext : in     Byte_Seq;

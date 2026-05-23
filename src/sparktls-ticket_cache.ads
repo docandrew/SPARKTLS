@@ -38,6 +38,7 @@ is
       Suite      : out Unsigned_16;
       Found      : out Boolean)
    with Pre  => ID'First = 0 and ID'Length = Ticket_ID_Len,
-        Post => (if Found then Suite = Want_Suite);
+        Post => (if Found then Suite = Want_Suite
+                              and PSK_Len in 32 | 48);
 
 end SPARKTLS.Ticket_Cache;

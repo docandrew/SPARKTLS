@@ -1913,7 +1913,9 @@ is
    with Pre  => Data'First = 0
                 and Data'Length > 0
                 and Data'Last < N32'Last - 4
-                and S.State = Wait_Client_Certificate;
+                and Data'Length <= Transcript_Capacity
+                and S.State = Wait_Client_Certificate
+                and Nonce_Space_Available (S.Server_App);
 
    procedure Handle_Client_Cert_13
      (S      : in out Session;
