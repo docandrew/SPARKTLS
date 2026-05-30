@@ -53,6 +53,20 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action);
+   procedure Handle_PCF_App_Data
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Rec    : in     Records.Parse_Result;
+      Result :    out Action);
+   procedure Verify_Client_Finished
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Msg_Len   : in     N32;
+      Result    :    out Action);
+
+
 
    procedure Process_Connected (S : in out Session; Result : out Action);
 
@@ -2293,233 +2307,16 @@ is
       end case;
    end Process_Client_Auth;
 
-   procedure Process_Client_Finished
-     (S      : in out Session;
-      HC     : in out Handshake_Context;
-      Result :    out Action)
+   procedure Verify_Client_Finished
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Msg_Len   : in     N32;
+      Result    :    out Action)
    is
-      Rec : Records.Parse_Result;
    begin
-      if Input_Available (S) = 0 then
-         Result := Need_Input;
-         return;
-      end if;
-
-      Records.Parse_Record_Header
-        (Data   => S.Input.Data (S.Input.Read_Pos ..
-                                  S.Input.Write_Pos - 1),
-         Avail  => Available (S.Input),
-         Result => Rec);
-
-      if Rec.Overflow then
-         Send_Encrypted_Alert (S, Record_Overflow, Result);
-         return;
-      end if;
-
-      if not Rec.OK then
-         if Rec.Record_Len > 0 then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Encrypted_Alert (S, Unexpected_Message, Result);
-         else
-            Result := Need_Input;
-         end if;
-         return;
-      end if;
-
-      case Rec.Content is
-         when Records.Content_Change_Cipher_Spec =>
-            --  CCS for middlebox compatibility.
-            --  RFC 8446 Section 5: MUST be a single byte 0x01.
-            --  Only one CCS is allowed per direction.
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            if Rec.Fragment_Len = 1 and then not HC.CCS_Received then
-               HC.CCS_Received := True;
-               Result := OK;
-            else
-               --  Invalid CCS (wrong length or duplicate)
-               declare
-                  A : N32;
-               begin
-                  Records.Build_Alert_Record
-                    (2, 10, S.Server_App, S.Output, A);
-               end;
-               S.Last_Error := Unexpected_Message;
-               Set_State (S, Error_State);
-               if Output_Pending (S) > 0 then
-                  Result := Has_Output;
-               else
-                  Result := Error_Alert;
-               end if;
-            end if;
-
-         when Records.Content_Application_Data =>
-            declare
-               Frag_Len   : constant N32 := Rec.Fragment_Len;
-               Frag_Start : constant N32 :=
-                  S.Input.Read_Pos + Rec.Fragment_Pos;
-               Encrypted  : Byte_Seq (0 .. Frag_Len - 1) :=
-                  S.Input.Data (Frag_Start ..
-                                 Frag_Start + Frag_Len - 1);
-               Hdr        : constant Byte_Seq (0 .. 4) :=
-                  S.Input.Data (S.Input.Read_Pos ..
-                                 S.Input.Read_Pos + 4);
-               Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
-               Plain_Len  : N32;
-               Inner_Type : Byte;
-               Dec_Valid  : Boolean;
-            begin
-               if Frag_Len < Records.Tag_Size + 1 then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
-                  return;
-               end if;
-
-               --  RFC 8446 §5.4: TLSInnerPlaintext MUST NOT exceed
-               --  2^14 + 1 octets. Check before decrypting.
-               if Frag_Len - Records.Tag_Size >
-                  Records.Max_Fragment + 1
-               then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Encrypted_Alert (S, Record_Overflow, Result);
-                  return;
-               end if;
-
-               Records.Decrypt_Record
-                 (Encrypted  => Encrypted,
-                  Record_Hdr => Hdr,
-                  Keys       => HC.Client_HS,
-                  Plaintext  => Plaintext,
-                  Plain_Len  => Plain_Len,
-                  Inner_Type => Inner_Type,
-                  Valid      => Dec_Valid);
-
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-
-               if not Dec_Valid then
-                  --  RFC 8446 §4.2.10 / §4.6.1: 0-RTT is intentionally
-                  --  not supported by this stack. If a client tried
-                  --  it anyway (Early_Data_Offered set in CH), its
-                  --  records are encrypted with a key we never
-                  --  derived and won't decrypt with Client_HS. The
-                  --  RFC requires the server to silently drop those
-                  --  records and keep waiting for the client
-                  --  Finished (which uses Client_HS keys we do have).
-                  --  Bounded to defend against a buggy/malicious
-                  --  peer streaming garbage indefinitely.
-                  if HC.Early_Data_Offered
-                    and then HC.Skipped_Early_Data_Records < 32
-                  then
-                     HC.Skipped_Early_Data_Records :=
-                        HC.Skipped_Early_Data_Records + 1;
-                     Result := OK;
-                     return;
-                  end if;
-                  --  MAC failure or empty inner plaintext.
-                  --  Send alert with app keys (client switched to app
-                  --  keys after receiving our Finished).
-                  --  RFC 8446 §5.2: bad_record_mac (20)
-                  declare
-                     A : N32;
-                  begin
-                     Records.Build_Alert_Record
-                       (2, 20, S.Server_App, S.Output, A);
-                  end;
-                  S.Last_Error := Bad_Record_MAC;
-                  Set_State (S, Error_State);
-                  if Output_Pending (S) > 0 then
-                     Result := Has_Output;
-                  else
-                     Result := Error_Alert;
-                  end if;
-                  return;
-               end if;
-
-               if Inner_Type = 16#15# and then Plain_Len >= 2 then
-                  --  Peer sent alert
-                  S.Last_Error := Error_Code'Val
-                    (Natural'Min (Natural (Plaintext (1)),
-                                  Error_Code'Pos (Error_Code'Last)));
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
-                  return;
-               elsif Inner_Type /= 16#16# then
-                  --  Unexpected inner type during handshake
-                  declare
-                     A : N32;
-                  begin
-                     Records.Build_Alert_Record
-                       (2, 10, S.Server_App, S.Output, A);
-                  end;
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State);
-                  if Output_Pending (S) > 0 then
-                     Result := Has_Output;
-                  else
-                     Result := Error_Alert;
-                  end if;
-                  return;
-               end if;
-
-               --  Parse handshake header
-               declare
-                  Msg_Type : Byte;
-                  Msg_Len  : N32;
-                  Parse_OK : Boolean;
-               begin
-                  Handshake.Parse_Handshake_Header
-                    (Plaintext (0 .. Plain_Len - 1),
-                     Msg_Type, Msg_Len, Parse_OK);
-
-                  if not Parse_OK then
-                     --  Distinguish unknown-type (BoGo
-                     --  WrongMessageType injects type+42) from
-                     --  malformed shape. Unknown type →
-                     --  unexpected_message; otherwise decode_error.
-                     declare
-                        Raw_Type : constant Byte :=
-                           (if Plain_Len >= 1 then Plaintext (0)
-                            else 0);
-                        Is_Known : constant Boolean :=
-                           Raw_Type in 16#01# | 16#02# | 16#04# |
-                                       16#08# | 16#0B# | 16#0C# |
-                                       16#0D# | 16#0E# | 16#0F# |
-                                       16#10# | 16#14#;
-                        A : N32;
-                     begin
-                        Records.Build_Alert_Record
-                          (2, (if Is_Known then 50 else 10),
-                           S.Server_App, S.Output, A);
-                        S.Last_Error :=
-                          (if Is_Known then Decode_Error
-                           else Unexpected_Message);
-                     end;
-                     Set_State (S, Error_State);
-                     if Output_Pending (S) > 0 then
-                        Result := Has_Output;
-                     else
-                        Result := Error_Alert;
-                     end if;
-                     return;
-                  end if;
-
-                  if Msg_Type /= Handshake.HT_Finished then
-                     --  Wrong handshake type: unexpected_message (10)
-                     declare
-                        A : N32;
-                     begin
-                        Records.Build_Alert_Record
-                          (2, 10, S.Server_App, S.Output, A);
-                     end;
-                     S.Last_Error := Unexpected_Message;
-                     Set_State (S, Error_State);
-                     if Output_Pending (S) > 0 then
-                        Result := Has_Output;
-                     else
-                        Result := Error_Alert;
-                     end if;
-                     return;
-                  end if;
-
+      Result := OK;
                   --  Verify client Finished
                   declare
                      Plain_Len_Const : constant N32 := Plain_Len;
@@ -2793,8 +2590,250 @@ is
                         Result := Handshake_Done;
                      end if;
                   end;
+   end Verify_Client_Finished;
+
+   procedure Handle_PCF_App_Data
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Rec    : in     Records.Parse_Result;
+      Result :    out Action)
+   is
+   begin
+      Result := OK;
+            declare
+               Frag_Len   : constant N32 := Rec.Fragment_Len;
+               Frag_Start : constant N32 :=
+                  S.Input.Read_Pos + Rec.Fragment_Pos;
+               Encrypted  : Byte_Seq (0 .. Frag_Len - 1) :=
+                  S.Input.Data (Frag_Start ..
+                                 Frag_Start + Frag_Len - 1);
+               Hdr        : constant Byte_Seq (0 .. 4) :=
+                  S.Input.Data (S.Input.Read_Pos ..
+                                 S.Input.Read_Pos + 4);
+               Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
+               Plain_Len  : N32;
+               Inner_Type : Byte;
+               Dec_Valid  : Boolean;
+            begin
+               if Frag_Len < Records.Tag_Size + 1 then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+                  return;
+               end if;
+
+               --  RFC 8446 §5.4: TLSInnerPlaintext MUST NOT exceed
+               --  2^14 + 1 octets. Check before decrypting.
+               if Frag_Len - Records.Tag_Size >
+                  Records.Max_Fragment + 1
+               then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Encrypted_Alert (S, Record_Overflow, Result);
+                  return;
+               end if;
+
+               Records.Decrypt_Record
+                 (Encrypted  => Encrypted,
+                  Record_Hdr => Hdr,
+                  Keys       => HC.Client_HS,
+                  Plaintext  => Plaintext,
+                  Plain_Len  => Plain_Len,
+                  Inner_Type => Inner_Type,
+                  Valid      => Dec_Valid);
+
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+               if not Dec_Valid then
+                  --  RFC 8446 §4.2.10 / §4.6.1: 0-RTT is intentionally
+                  --  not supported by this stack. If a client tried
+                  --  it anyway (Early_Data_Offered set in CH), its
+                  --  records are encrypted with a key we never
+                  --  derived and won't decrypt with Client_HS. The
+                  --  RFC requires the server to silently drop those
+                  --  records and keep waiting for the client
+                  --  Finished (which uses Client_HS keys we do have).
+                  --  Bounded to defend against a buggy/malicious
+                  --  peer streaming garbage indefinitely.
+                  if HC.Early_Data_Offered
+                    and then HC.Skipped_Early_Data_Records < 32
+                  then
+                     HC.Skipped_Early_Data_Records :=
+                        HC.Skipped_Early_Data_Records + 1;
+                     Result := OK;
+                     return;
+                  end if;
+                  --  MAC failure or empty inner plaintext.
+                  --  Send alert with app keys (client switched to app
+                  --  keys after receiving our Finished).
+                  --  RFC 8446 §5.2: bad_record_mac (20)
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 20, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Bad_Record_MAC;
+                  Set_State (S, Error_State);
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
+                  return;
+               end if;
+
+               if Inner_Type = 16#15# and then Plain_Len >= 2 then
+                  --  Peer sent alert
+                  S.Last_Error := Error_Code'Val
+                    (Natural'Min (Natural (Plaintext (1)),
+                                  Error_Code'Pos (Error_Code'Last)));
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               elsif Inner_Type /= 16#16# then
+                  --  Unexpected inner type during handshake
+                  declare
+                     A : N32;
+                  begin
+                     Records.Build_Alert_Record
+                       (2, 10, S.Server_App, S.Output, A);
+                  end;
+                  S.Last_Error := Unexpected_Message;
+                  Set_State (S, Error_State);
+                  if Output_Pending (S) > 0 then
+                     Result := Has_Output;
+                  else
+                     Result := Error_Alert;
+                  end if;
+                  return;
+               end if;
+
+               --  Parse handshake header
+               declare
+                  Msg_Type : Byte;
+                  Msg_Len  : N32;
+                  Parse_OK : Boolean;
+               begin
+                  Handshake.Parse_Handshake_Header
+                    (Plaintext (0 .. Plain_Len - 1),
+                     Msg_Type, Msg_Len, Parse_OK);
+
+                  if not Parse_OK then
+                     --  Distinguish unknown-type (BoGo
+                     --  WrongMessageType injects type+42) from
+                     --  malformed shape. Unknown type →
+                     --  unexpected_message; otherwise decode_error.
+                     declare
+                        Raw_Type : constant Byte :=
+                           (if Plain_Len >= 1 then Plaintext (0)
+                            else 0);
+                        Is_Known : constant Boolean :=
+                           Raw_Type in 16#01# | 16#02# | 16#04# |
+                                       16#08# | 16#0B# | 16#0C# |
+                                       16#0D# | 16#0E# | 16#0F# |
+                                       16#10# | 16#14#;
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (2, (if Is_Known then 50 else 10),
+                           S.Server_App, S.Output, A);
+                        S.Last_Error :=
+                          (if Is_Known then Decode_Error
+                           else Unexpected_Message);
+                     end;
+                     Set_State (S, Error_State);
+                     if Output_Pending (S) > 0 then
+                        Result := Has_Output;
+                     else
+                        Result := Error_Alert;
+                     end if;
+                     return;
+                  end if;
+
+                  if Msg_Type /= Handshake.HT_Finished then
+                     --  Wrong handshake type: unexpected_message (10)
+                     declare
+                        A : N32;
+                     begin
+                        Records.Build_Alert_Record
+                          (2, 10, S.Server_App, S.Output, A);
+                     end;
+                     S.Last_Error := Unexpected_Message;
+                     Set_State (S, Error_State);
+                     if Output_Pending (S) > 0 then
+                        Result := Has_Output;
+                     else
+                        Result := Error_Alert;
+                     end if;
+                     return;
+                  end if;
+
+                  Verify_Client_Finished
+                    (S, HC, Plaintext, Plain_Len, Msg_Len, Result);
                end;
             end;
+   end Handle_PCF_App_Data;
+
+   procedure Process_Client_Finished
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action)
+   is
+      Rec : Records.Parse_Result;
+   begin
+      if Input_Available (S) = 0 then
+         Result := Need_Input;
+         return;
+      end if;
+
+      Records.Parse_Record_Header
+        (Data   => S.Input.Data (S.Input.Read_Pos ..
+                                  S.Input.Write_Pos - 1),
+         Avail  => Available (S.Input),
+         Result => Rec);
+
+      if Rec.Overflow then
+         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         return;
+      end if;
+
+      if not Rec.OK then
+         if Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Encrypted_Alert (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
+         return;
+      end if;
+
+      case Rec.Content is
+         when Records.Content_Change_Cipher_Spec =>
+            --  CCS for middlebox compatibility.
+            --  RFC 8446 Section 5: MUST be a single byte 0x01.
+            --  Only one CCS is allowed per direction.
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if Rec.Fragment_Len = 1 and then not HC.CCS_Received then
+               HC.CCS_Received := True;
+               Result := OK;
+            else
+               --  Invalid CCS (wrong length or duplicate)
+               declare
+                  A : N32;
+               begin
+                  Records.Build_Alert_Record
+                    (2, 10, S.Server_App, S.Output, A);
+               end;
+               S.Last_Error := Unexpected_Message;
+               Set_State (S, Error_State);
+               if Output_Pending (S) > 0 then
+                  Result := Has_Output;
+               else
+                  Result := Error_Alert;
+               end if;
+            end if;
+
+         when Records.Content_Application_Data =>
+            Handle_PCF_App_Data (S, HC, Rec, Result);
 
          when others =>
             --  Plaintext handshake/alert records are not allowed here.

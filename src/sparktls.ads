@@ -16,7 +16,8 @@ is
 
    --  Heap-allocated byte sequence (for reassembly buffers)
    type Byte_Seq_Access is access Byte_Seq;
-   procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access);
+   procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access)
+      with Post => Ptr = null;
 
    --  Validated wire-length subtypes.
    --  Any value parsed from the network that will be used as an array
@@ -194,7 +195,10 @@ is
         when Wait_Server_Hello =>
            To in Wait_Encrypted_Extensions | Error_State,
         when Wait_Encrypted_Extensions =>
-           To in Wait_Certificate_Request | Wait_Certificate | Error_State,
+           --  PSK resumption skips Cert/CV, so EE → Wait_Server_Finished
+           --  is legal (RFC 8446 §2.2 / §4.2.11).
+           To in Wait_Certificate_Request | Wait_Certificate
+                 | Wait_Server_Finished | Error_State,
         when Wait_Certificate_Request =>
            To in Wait_Certificate | Error_State,
         when Wait_Certificate =>
