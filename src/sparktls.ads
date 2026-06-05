@@ -1072,9 +1072,14 @@ is
       --  above any legitimate peer.
       Max_Cipher_Suites    : N32 := 256;
 
-      --  Max supported_groups entries consumed from the named-group
-      --  extension. Real clients send 4-12; cap of 64.
-      Max_Supported_Groups : N32 := 64;
+	      --  Max supported_groups entries consumed from the named-group
+	      --  extension. Real clients send 4-12; cap of 64.
+	      Max_Supported_Groups : N32 := 64;
+
+	      --  Max key_share entries consumed from a TLS 1.3 ClientHello.
+	      --  Real clients send 1-3; cap of 64 leaves ample room while
+	      --  bounding duplicate/share parsing work.
+	      Max_Key_Shares       : N32 := 64;
 
       --  Max signature_algorithms entries CONSUMED from the wire
       --  (distinct from Max_Sig_Algos which caps how many we STORE
@@ -1093,10 +1098,11 @@ is
       Max_Warning_Alerts   : N32 := 4;
    end record;
 
-   Default_DoS_Caps : constant DoS_Caps :=
-     (Max_Cipher_Suites    => 256,
-      Max_Supported_Groups => 64,
-      Max_Sig_Algs_Wire    => 64,
+	   Default_DoS_Caps : constant DoS_Caps :=
+	     (Max_Cipher_Suites    => 256,
+	      Max_Supported_Groups => 64,
+	      Max_Key_Shares       => 64,
+	      Max_Sig_Algs_Wire    => 64,
       Max_ALPN_Protocols   => 32,
       Max_Warning_Alerts   => 4);
 
@@ -1368,7 +1374,7 @@ is
       --  a given extension list more than once". Track seen tag codes
       --  to enforce. Modern CHs use ~10-20 extensions; cap at 64.
       Seen_Ext_Tags     : Ext_Tag_Array := (others => 0);
-      Seen_Ext_Count    : Natural := 0;
+      Seen_Ext_Count    : Natural range 0 .. Ext_Tag_Array'Last := 0;
 
       --  Handshake traffic keys
       Client_HS     : Traffic_Keys;

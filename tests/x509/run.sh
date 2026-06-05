@@ -1,7 +1,6 @@
 #!/bin/bash
 # Run x509-limbo certificate validation tests against SPARKTLS.
 #
-# Prerequisite: ./tests/x509/generate.sh (downloads + generates test cases)
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$DIR/../.."
@@ -9,14 +8,14 @@ GEN_DIR="$DIR/generated"
 VALIDATOR="$REPO_ROOT/bin/tests/x509_validate"
 
 if [ ! -d "$GEN_DIR" ] || [ ! -f "$GEN_DIR/manifest.txt" ]; then
-    echo "Test cases not generated. Run: ./tests/x509/generate.sh"
-    exit 2
+    echo "x509-limbo test cases not found; downloading/generating them now..."
+    bash "$DIR/generate.sh"
 fi
 
 if [ ! -f "$VALIDATOR" ]; then
-    echo "Validator not found: $VALIDATOR"
-    echo "Build with: cd tests && alr build"
-    exit 2
+    echo "Validator not found; building it now..."
+    cd "$REPO_ROOT"
+    alr exec -- gprbuild -q -P tests/x509/x509_validate.gpr
 fi
 
 echo "=== x509-limbo Certificate Validation Tests ==="

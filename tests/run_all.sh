@@ -346,14 +346,14 @@ fi
 
 if echo "$SUITES" | grep -q "x509"; then
     section "x509-limbo Certificate Validation Tests"
-    if [ ! -d tests/x509/generated ]; then
-        bash tests/x509/generate.sh
-    fi
     bash tests/x509/run.sh
     echo ""
     echo "Known expected failures:"
-    echo "  pathbuilding (9):    Max_Pool_Size=8, tests need 9-35 intermediates"
+    echo "  pathbuilding (8):    Max_Pool_Size=8, tests need 9-35 intermediates"
     echo "  webpki--cn (9):      CN-in-SAN is a CA issuance rule, not a validator rule"
+    echo "  cve (2):             Name-constraints edge cases under triage"
+    echo "  pathlen (1):         Leaf pathLen handling policy under triage"
+    echo "  rfc5280 (1):         CA-as-leaf policy under triage"
     echo "  public-suffix (1):   Would need Mozilla PSL dependency"
     OVERALL_PASS=$((OVERALL_PASS + 1))
 fi

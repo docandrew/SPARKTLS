@@ -56,12 +56,12 @@ is
                 and then Avail > 0
                 and then Avail <= N32 (IO_Buffer_Capacity)
                 and then Data'First + Avail - 1 <= Data'Last,
-        Post => (if Result.OK then
+        Post => Result.Record_Len <= Avail                  --  fits in buffer
+                and (if Result.OK then
                    Result.Content /= Content_Unknown       --  known type
                    and Result.Fragment_Len >= 1             --  never zero
                    and Result.Fragment_Len <= Max_Fragment + Max_Record_Overhead
                                                             --  RFC 8446 §5.1
-                   and Result.Record_Len <= Avail           --  fits in buffer
                    and Result.Fragment_Pos = Record_Header_Size
                    --  Body sets Record_Len := Header_Size + Fragment_Len,
                    --  so callers can derive Fragment_Pos + Fragment_Len.

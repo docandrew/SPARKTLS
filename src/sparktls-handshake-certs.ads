@@ -106,6 +106,8 @@ is
       Reject_Cert_Extensions : in     Boolean;
       OK                     :    out Boolean;
       Err                    :    out Error_Code)
-   with Pre => HS_Msg'First = 0 and HS_Msg'Length >= 4;
+   with Pre => HS_Msg'First = 0
+               and HS_Msg'Length >= 4
+               and HS_Msg'Length <= Max_Cert_Msg;
 
 end SPARKTLS.Handshake.Certs;

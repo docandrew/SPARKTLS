@@ -1,7 +1,9 @@
 with SPARKNaCl.AES;
 with SPARKTLSCrypto.AES_GCM;
 
-package body SPARKTLS.Tickets_12 is
+package body SPARKTLS.Tickets_12 with
+   SPARK_Mode => On
+is
 
    --  Cumulative days from Jan 1 to the start of each month, non-leap.
    --  Index 1 = Jan (0), 2 = Feb (31), …, 12 = Dec (334).
@@ -123,14 +125,13 @@ package body SPARKTLS.Tickets_12 is
       Ticket_Len :    out N32)
    is
       use SPARKNaCl.AES;
-      Plain_Buf : Byte_Seq (0 .. 90) := (others => 0);
+      Plain_Buf : Byte_Seq (0 .. 90);
       Plain_Len : N32;
       Ct        : Byte_Seq (0 .. 90) := (others => 0);
       Tag       : SPARKNaCl.Bytes_16;
       Key       : AES256_Key;
    begin
       Ticket := (others => 0);
-      Ticket_Len := 0;
 
       Encode_Plain (Plain, Plain_Buf, Plain_Len);
 
@@ -139,8 +140,9 @@ package body SPARKTLS.Tickets_12 is
       --  across different TEKs.
       Construct (Key, SPARKNaCl.Bytes_32 (TEK));
       declare
-         Plain_Slice : constant Byte_Seq := Plain_Buf (0 .. Plain_Len - 1);
-         Ct_Slice    : Byte_Seq (0 .. Plain_Len - 1) := (others => 0);
+         PL          : constant N32 := Plain_Len;
+         Plain_Slice : constant Byte_Seq := Plain_Buf (0 .. PL - 1);
+         Ct_Slice    : Byte_Seq (0 .. PL - 1);
          AAD         : constant Byte_Seq := Byte_Seq (Key_ID);
       begin
          SPARKTLSCrypto.AES_GCM.Encrypt_256
@@ -152,7 +154,9 @@ package body SPARKTLS.Tickets_12 is
             AAD => AAD);
          Ct (0 .. Plain_Len - 1) := Ct_Slice;
       end;
+      pragma Warnings (GNATProve, Off, "statement has no effect");
       Sanitize (Key);
+      pragma Warnings (GNATProve, On, "statement has no effect");
 
       --  Assemble wire: Key_ID (4) | Nonce (12) | Ct (N) | Tag (16)
       Ticket (0 .. 3) := Byte_Seq (Key_ID);
@@ -167,6 +171,8 @@ package body SPARKTLS.Tickets_12 is
    function Find_Key_Index
      (Keys : TLS12_Ticket_Key_Array;
       ID   : Byte_Seq) return Integer
+   with Post => Find_Key_Index'Result = -1
+                or else Find_Key_Index'Result in Keys'Range
    is
    begin
       for I in Keys'Range loop
@@ -216,15 +222,16 @@ package body SPARKTLS.Tickets_12 is
       Tag := SPARKNaCl.Bytes_16
                (Ticket (T_Len - 16 .. T_Len - 1));
       declare
+         CL : constant N32 := Ct_Len;
          --  Slide to First=0 — the Decrypt_256 precondition is
          --  C'First = 0 and AAD'First = 0; slicing Ticket (a..b)
          --  preserves a as 'First, violating the precondition for
          --  a /= 0. Build a copy with origin 0 to satisfy it.
          Ct_Slice_Raw : constant Byte_Seq :=
-                          Ticket (16 .. 16 + Ct_Len - 1);
-         Ct_Slice : Byte_Seq (0 .. Ct_Len - 1);
+                          Ticket (16 .. 16 + CL - 1);
+         Ct_Slice : Byte_Seq (0 .. CL - 1);
          AAD : Byte_Seq (0 .. 3);
-         Pt_Slice : Byte_Seq (0 .. Ct_Len - 1) := (others => 0);
+         Pt_Slice : Byte_Seq (0 .. CL - 1);
          Nonce_B  : SPARKNaCl.Bytes_12;
       begin
          Ct_Slice := Ct_Slice_Raw;
@@ -241,7 +248,9 @@ package body SPARKTLS.Tickets_12 is
             N      => Nonce_B,
             K      => Key,
             AAD    => AAD);
+         pragma Warnings (GNATProve, Off, "statement has no effect");
          Sanitize (Key);
+         pragma Warnings (GNATProve, On, "statement has no effect");
          if not AES_OK then
             return;
          end if;

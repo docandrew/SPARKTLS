@@ -34,6 +34,7 @@ package body SPARKTLS.Handshake.TLS12 with
 is
    package RBT renames RFLX.RFLX_Builtin_Types;
    use type RBT.Bytes_Ptr;
+   use type RFLX.RFLX_Types.Base_Integer;
 
    Max_Sig : constant := 512;  --  max RSA-4096 signature
    --  Helper: write a 3-byte big-endian length
@@ -519,7 +520,7 @@ is
       package SKE renames RFLX.TLS_Handshake.TLS_1_2_Server_Key_Exchange_ECDHE;
       procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
         (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-      Buf : RBT.Bytes_Ptr;
+      Buf : RBT.Bytes_Ptr := null;
       Ctx : SKE.Context;
    begin
       OK := False;
@@ -527,15 +528,22 @@ is
       --  Minimum body: curve_type(1) + curve(2) + pt_len(1) + pt(1) +
       --                algo(2) + sig_len(2) + sig(1) = 10
       if Data'Length < 10 then return; end if;
+      pragma Assert (Data'First = 0);
+      pragma Assert (Data'Last >= 9);
 
       --  RFLX parse. The TLS_1_2_Server_Key_Exchange_ECDHE message
       --  enforces curve_type = Named_Curve (rejects explicit-prime /
       --  explicit-char2 — those were never legal for modern TLS 1.2).
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Data'Length) => 0);
+      declare
+         Data_Len : constant N32 := Data'Last + 1;
+      begin
+         pragma Assert (Data_Len = Data'Length);
+         Buf := new RBT.Bytes'(1 .. RBT.Index (Data_Len) => 0);
+      end;
       Buf.all := To_RFLX (Data);
       SKE.Initialize
         (Ctx, Buf,
-         Written_Last => RBT.Bit_Length (Data'Length * 8));
+         Written_Last => RBT.Bit_Length (Buf'Length * 8));
       SKE.Verify_Message (Ctx);
       if not SKE.Well_Formed_Message (Ctx) then
          SKE.Take_Buffer (Ctx, Buf);
@@ -561,11 +569,15 @@ is
            or not Valid_ECDHE_Group (Curve)
            or Pt_Len /= Point_Len_For_Group (Curve)
            or Sig_Len = 0
+           or Sig_Len > Max_Sig
          then
             SKE.Take_Buffer (Ctx, Buf);
             RFLX_Free_Local (Buf);
             return;
          end if;
+         pragma Assert (Pt_Len = Point_Len_For_Group (Curve));
+         pragma Assert (Pt_Len <= P384_Point_Len);
+         pragma Assert (Sig_Len in 1 .. Max_Sig);
          HC.Selected_Group := Curve;
 
          --  Extract server's ephemeral public key.
@@ -575,12 +587,14 @@ is
             SKE.Get_Point (Ctx, Pt_RFLX);
             case Curve is
                when Group_X25519 =>
+                  pragma Assert (Pt_Len = X25519_Point_Len);
                   for I in N32 range 0 .. 31 loop
                      HC.Peer_PK (I) :=
                         Byte (Pt_RFLX (RBT.Index (I + 1)));
                   end loop;
 
                when Group_Secp256r1 =>
+                  pragma Assert (Pt_Len = P256_Point_Len);
                   for I in N32 range 0 .. 64 loop
                      HC.P256_Peer_PK (I) :=
                         Byte (Pt_RFLX (RBT.Index (I + 1)));
@@ -588,6 +602,7 @@ is
                   HC.Use_P256_KE := True;
 
                when Group_Secp384r1 =>
+                  pragma Assert (Pt_Len = P384_Point_Len);
                   for I in N32 range 0 .. 96 loop
                      HC.P384_Peer_PK (I) :=
                         Byte (Pt_RFLX (RBT.Index (I + 1)));
@@ -600,6 +615,13 @@ is
                   return;
             end case;
          end;
+
+         if 4 + Pt_Len > Data'Length then
+            SKE.Take_Buffer (Ctx, Buf);
+            RFLX_Free_Local (Buf);
+            return;
+         end if;
+         pragma Assert (4 + Pt_Len <= Data'Length);
 
          --  RFC 5246 §7.4.3: verify signature over
          --  client_random || server_random || params
@@ -614,18 +636,31 @@ is
             Sig_RFLX      : RBT.Bytes
                               (1 .. RBT.Index (Sig_Len));
             Sig_OK        : Boolean;
-            Sig_Scheme    : constant Unsigned_16 :=
-               Unsigned_16
-                 (RFLX.Tls_Parameters.To_Base_Integer
-                    (SKE.Get_Algorithm (Ctx)));
+            Alg_Value     : constant RFLX.RFLX_Types.Base_Integer :=
+               RFLX.Tls_Parameters.To_Base_Integer
+                 (SKE.Get_Algorithm (Ctx));
+            Sig_Scheme    : Unsigned_16;
          begin
+            if Params_Len > Data'Length
+              or else Alg_Value > RFLX.RFLX_Types.Base_Integer (Unsigned_16'Last)
+            then
+               SKE.Take_Buffer (Ctx, Buf);
+               RFLX_Free_Local (Buf);
+               return;
+            end if;
+            pragma Assert (Params_Len <= Data'Length);
+            pragma Assert (Data'First = 0);
+            pragma Assert (Params_Len - 1 <= Data'Last);
+            pragma Assert (Alg_Value <= RFLX.RFLX_Types.Base_Integer (Unsigned_16'Last));
+            Sig_Scheme := Unsigned_16 (Alg_Value);
+
             Sig_Input (0 .. 31)  := Byte_Seq (HC.Client_Random);
             Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
             --  params is the first Params_Len bytes of the input
             --  (RFLX field order is curve_type then named_curve then
             --  point_length then point — matches RFC 8422 §5.4 wire).
             Sig_Input (64 .. 64 + Params_Len - 1) :=
-               Data (Data'First .. Data'First + Params_Len - 1);
+               Data (0 .. Params_Len - 1);
 
             SKE.Get_Signature (Ctx, Sig_RFLX);
             for I in N32 range 0 .. Sig_Len - 1 loop
@@ -679,11 +714,15 @@ is
       --  Minimum: point_len(1) + point(1) = 2
       if Data'Length < 2 then return; end if;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Data'Length) => 0);
+      declare
+         Data_Len : constant N32 := Data'Last - Data'First + 1;
+      begin
+         Buf := new RBT.Bytes'(1 .. RBT.Index (Data_Len) => 0);
+      end;
       Buf.all := To_RFLX (Data);
       CKE.Initialize
         (Ctx, Buf,
-         Written_Last => RBT.Bit_Length (Data'Length * 8));
+         Written_Last => RBT.Bit_Length (Buf'Length * 8));
       CKE.Verify_Message (Ctx);
       if not CKE.Well_Formed_Message (Ctx) then
          CKE.Take_Buffer (Ctx, Buf);
@@ -1022,7 +1061,9 @@ is
    ------------------------------------------------------------------
    --  Build_Server_Hello_12 (RFC 5246 §7.4.1.2)
    --
-   --  Uses RFLX Server_Hello context for structured serialization.
+   --  Uses direct serialization. The TLS 1.2 ServerHello layout is
+   --  fixed-size apart from a small extension list, and handwritten
+   --  encoding keeps this path heap-free and straightforward to prove.
    --
    --  TLS 1.2 ServerHello:
    --    server_version = 0x0303 (real version)
@@ -1043,46 +1084,7 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
-      use RFLX.TLS_Handshake.Server_Hello;
-      use RFLX.TLS_Common;
-
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
-
-      --  Map TLS 1.2 wire values to RFLX cipher suite enum
-      function To_Suite_Enum_12 (Val : Unsigned_16)
-         return RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum
-      is
-      begin
-         case Val is
-            when Suite_ECDHE_RSA_AES128_GCM_SHA256 =>
-               return RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256;
-            when Suite_ECDHE_RSA_AES256_GCM_SHA384 =>
-               return RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384;
-            when Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
-               return RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
-            when Suite_ECDHE_ECDSA_AES256_GCM_SHA384 =>
-               return RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384;
-            when Suite_ECDHE_RSA_CHACHA20_SHA256 =>
-               return RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256;
-            when Suite_ECDHE_ECDSA_CHACHA20_SHA256 =>
-               return RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256;
-            when others =>
-               return RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256;
-         end case;
-      end To_Suite_Enum_12;
-
-      --  RFLX free wrapper (SPARK_Mode On spec, Off body)
-      procedure RFLX_Free_SH (Buf : in out RBT.Bytes_Ptr)
-      with Post => Buf = null;
-
-      procedure RFLX_Free_SH (Buf : in out RBT.Bytes_Ptr)
-      with SPARK_Mode => Off
-      is
-         procedure Dealloc is new Ada.Unchecked_Deallocation
-           (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-      begin
-         Dealloc (Buf);
-      end RFLX_Free_SH;
 
       --  Renegotiation info (0xFF01): data = 1 byte (length=0).
       --  Always emit. RFC 5746 §3.6 says only emit if the client
@@ -1143,8 +1145,7 @@ is
       SH_Body_Len : constant N32 := 72 + Ext_Total;
       SH_Msg_Len  : constant N32 := 4 + SH_Body_Len;
 
-      Buf : RBT.Bytes_Ptr;
-      Ctx : Context;
+      Pos : N32;
    begin
       Result := (others => 0);
       Len := 0;
@@ -1167,185 +1168,11 @@ is
          end if;
       end;
 
-      --  Allocate RFLX buffer and initialize context
-      Buf := new RBT.Bytes'(1 .. RBT.Index (RFLX_Main_Size) => 0);
-      Initialize (Ctx, Buf);
-
-      --  Help the prover: buffer is 17000 bytes, ServerHello is << 256.
-      pragma Assert (Has_Buffer (Ctx));
-
-      --  Set ServerHello fields via RFLX
-      --  RFC 5246 §7.4.1.3: version = 0x0303 (actual TLS 1.2)
-      pragma Assert (ServerHello_Legacy_Version_RFC_8446_4_1_3 (TLS_1_2));
-      Set_Legacy_Version (Ctx, TLS_1_2);
-      pragma Assert (Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random));
-      Set_Random (Ctx, To_RFLX (HC.Server_Random));
-      Set_Legacy_Session_ID_Length (Ctx, 32);
-      Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
-      Set_Cipher_Suite_TLS_Suite
-        (Ctx, To_Suite_Enum_12 (S.Negotiated_Suite));
-      --  RFC 5246 §6.2.2 / §7.4.1.4: compression_method MUST be 0
-      --  (null compression). CRIME-class attacks come from anything
-      --  else; we never accept or emit non-zero here.
-      pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));
-      Set_Legacy_Compression_Method (Ctx, 0);
-      Set_Extensions_Length
-        (Ctx, RFLX.TLS_Handshake.Server_Hello_Extensions_Length (Ext_Total));
-
-      --  Build extensions: renegotiation_info only
-      declare
-         Exts_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
-      begin
-         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
-
-         --  renegotiation_info (0xFF01). RFC 5746 §3.6: emit only when
-         --  the client signalled support — via the extension itself or
-         --  the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) cipher
-         --  suite. Both signals land in HC.Saw_Reneg_Info during CH
-         --  parsing. BoGo Renegotiate-Server-NoExt verifies we DON'T
-         --  echo it when the client offered neither.
-         if Emit_RI then
-            declare
-               Ext_Buf : RBT.Bytes_Ptr;
-               Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-               RI_Raw  : constant Byte_Seq (0 .. 0) := (0 => 0);
-            begin
-               --  RFC 5746 §3.5: initial-handshake renegotiation_info
-               --  carries an empty renegotiated_connection field — on
-               --  the wire that's a single 0x00 length-prefix byte.
-               pragma Assert (RI_Empty_Initial_RFC_5746_3_5 (RI_Raw));
-               Ext_Buf := new RBT.Bytes'
-                 (1 .. RBT.Index (4 + RI_Data_Len) => 0);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
-                 (Ext_Ctx, Ext_Buf);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
-                 (Ext_Ctx,
-                  RFLX.Tls_Extensiontype_Values.Renegotiation_Info);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-                 (Ext_Ctx,
-                  RFLX.TLS_Handshake.Data_Length (RI_Data_Len));
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
-                 (Ext_Ctx, To_RFLX (RI_Raw));
-
-               RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
-                 (Exts_Ctx, Ext_Ctx);
-
-               RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
-                 (Ext_Ctx, Ext_Buf);
-               RFLX_Free_SH (Ext_Buf);
-            end;
-         end if;
-
-         --  extended_master_secret (0x0017, RFC 7627). RFC 7627 §5.1:
-         --  echo the extension only if the client offered it.
-         --  Otherwise we'd signal EMS to a client that didn't request
-         --  it, breaking master-secret derivation.
-         if HC.Use_EMS then
-            declare
-               Ext_Buf : RBT.Bytes_Ptr;
-               Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-            begin
-               Ext_Buf := new RBT.Bytes'(1 .. 4 => 0);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
-                 (Ext_Ctx, Ext_Buf);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
-                 (Ext_Ctx,
-                  RFLX.Tls_Extensiontype_Values.Extended_Master_Secret);
-               --  RFC 7627 §5.1: the EMS extension carries no data.
-               --  Presence alone signals support; the body is empty.
-               pragma Assert (EMS_Extension_Empty_Body_RFC_7627_5_1 (0));
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-                 (Ext_Ctx, 0);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Empty
-                 (Ext_Ctx);
-
-               RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
-                 (Exts_Ctx, Ext_Ctx);
-
-               RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
-                 (Ext_Ctx, Ext_Buf);
-               RFLX_Free_SH (Ext_Buf);
-            end;
-         end if;
-
-         --  RFC 5077 §3.3 session_ticket (0x0023) — empty body.
-         --  Signals "I will send a NewSessionTicket later". Issued iff
-         --  the client offered the extension and we have TEK config.
-         if Emit_ST_Ext then
-            declare
-               Ext_Buf : RBT.Bytes_Ptr;
-               Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-            begin
-               Ext_Buf := new RBT.Bytes'(1 .. 4 => 0);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
-                 (Ext_Ctx, Ext_Buf);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
-                 (Ext_Ctx,
-                  RFLX.Tls_Extensiontype_Values.Session_Ticket);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-                 (Ext_Ctx, 0);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Empty
-                 (Ext_Ctx);
-               RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
-                 (Exts_Ctx, Ext_Ctx);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
-                 (Ext_Ctx, Ext_Buf);
-               RFLX_Free_SH (Ext_Buf);
-            end;
-         end if;
-
-         --  ALPN (0x0010) — if client offered and server matches
-         if ALPN_Match then
-            declare
-               Ext_Buf : RBT.Bytes_Ptr;
-               Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-               ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
-                             := (others => 0);
-               Proto_Len : constant Natural := HC.Cfg.ALPN.Len;
-            begin
-               --  list_len(2) + proto_len(1) + proto(N)
-               ALPN_Raw (0) := Byte ((Proto_Len + 1) / 256);
-               ALPN_Raw (1) := Byte ((Proto_Len + 1) mod 256);
-               ALPN_Raw (2) := Byte (Proto_Len);
-               for I in 1 .. Proto_Len loop
-                  ALPN_Raw (N32 (2 + I)) :=
-                     Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
-               end loop;
-
-               Ext_Buf := new RBT.Bytes'
-                  (1 .. RBT.Index (4 + ALPN_Data_Len) => 0);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Initialize
-                  (Ext_Ctx, Ext_Buf);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
-                  (Ext_Ctx,
-                   RFLX.Tls_Extensiontype_Values
-                     .Application_Layer_Protocol_Negotiation);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
-                  (Ext_Ctx,
-                   RFLX.TLS_Handshake.Data_Length (ALPN_Data_Len));
-               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
-                  (Ext_Ctx, To_RFLX (ALPN_Raw));
-               RFLX.TLS_Handshake.SH_Extensions_TLS.Append_Element
-                  (Exts_Ctx, Ext_Ctx);
-               RFLX.TLS_Handshake.SH_Extension_TLS.Take_Buffer
-                  (Ext_Ctx, Ext_Buf);
-               RFLX_Free_SH (Ext_Buf);
-
-               --  Store negotiated ALPN in session
-               S.Negotiated_ALPN := HC.Cfg.ALPN;
-            end;
-         end if;
-
-         Update_Extensions_TLS (Ctx, Exts_Ctx);
-      end;
-
-      --  Extract serialized body and prepend handshake header
-      Take_Buffer (Ctx, Buf);
-
       if SH_Msg_Len - 1 > Result'Last then
-         RFLX_Free_SH (Buf);
          return;
       end if;
+
+      pragma Assert (SH_Msg_Len <= Max_Server_Hello_12);
 
       --  Handshake header: type(1) = 0x02 || length(3)
       Result (0) := 16#02#;  --  ServerHello
@@ -1353,13 +1180,93 @@ is
       Result (2) := Byte ((SH_Body_Len / 256) mod 256);
       Result (3) := Byte (SH_Body_Len mod 256);
 
-      --  Copy RFLX-serialized body after header
-      pragma Assert (SH_Body_Len >= 1);
-      pragma Assert (SH_Body_Len <= RFLX_Main_Size);
-      Result (4 .. 4 + SH_Body_Len - 1) :=
-         To_NaCl (Buf.all (1 .. RBT.Index (SH_Body_Len)));
+      Pos := 4;
 
-      RFLX_Free_SH (Buf);
+      --  RFC 5246 §7.4.1.3: version = 0x0303 (actual TLS 1.2).
+      pragma Assert (ServerHello_Legacy_Version_RFC_8446_4_1_3 (TLS_1_2));
+      Result (Pos) := 16#03#;
+      Result (Pos + 1) := 16#03#;
+      Pos := Pos + 2;
+
+      pragma Assert (Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random));
+      Result (Pos .. Pos + 31) := Byte_Seq (HC.Server_Random);
+      Pos := Pos + 32;
+
+      Result (Pos) := 32;
+      Pos := Pos + 1;
+      Result (Pos .. Pos + 31) := Byte_Seq (HC.Legacy_Session_ID);
+      Pos := Pos + 32;
+
+      Put16 (Result, Pos, S.Negotiated_Suite);
+      Pos := Pos + 2;
+
+      --  RFC 5246 §6.2.2 / §7.4.1.4: compression_method MUST be 0
+      --  (null compression). CRIME-class attacks come from anything
+      --  else; we never accept or emit non-zero here.
+      pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));
+      Result (Pos) := 0;
+      Pos := Pos + 1;
+
+      Put16 (Result, Pos, Unsigned_16 (Ext_Total));
+      Pos := Pos + 2;
+
+      --  renegotiation_info (0xFF01). RFC 5746 §3.6: emit only when
+      --  the client signalled support — via the extension itself or
+      --  the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) cipher
+      --  suite. Both signals land in HC.Saw_Reneg_Info during CH
+      --  parsing. BoGo Renegotiate-Server-NoExt verifies we DON'T
+      --  echo it when the client offered neither.
+      if Emit_RI then
+         declare
+            RI_Raw  : constant Byte_Seq (0 .. 0) := (0 => 0);
+         begin
+            pragma Assert (RI_Empty_Initial_RFC_5746_3_5 (RI_Raw));
+            Put16 (Result, Pos, 16#FF01#);
+            Put16 (Result, Pos + 2, Unsigned_16 (RI_Data_Len));
+            Result (Pos + 4) := RI_Raw (0);
+            Pos := Pos + RI_Ext_Len;
+         end;
+      end if;
+
+      --  extended_master_secret (0x0017, RFC 7627). RFC 7627 §5.1:
+      --  echo the extension only if the client offered it.
+      if HC.Use_EMS then
+         pragma Assert (EMS_Extension_Empty_Body_RFC_7627_5_1 (0));
+         Put16 (Result, Pos, 16#0017#);
+         Put16 (Result, Pos + 2, 0);
+         Pos := Pos + EMS_Ext_Len;
+      end if;
+
+      --  RFC 5077 §3.3 session_ticket (0x0023) — empty body.
+      if Emit_ST_Ext then
+         Put16 (Result, Pos, 16#0023#);
+         Put16 (Result, Pos + 2, 0);
+         Pos := Pos + ST_Ext_Len;
+      end if;
+
+      --  ALPN (0x0010) — if client offered and server matches.
+      if ALPN_Match then
+         declare
+            Proto_Len : constant Natural := HC.Cfg.ALPN.Len;
+         begin
+            Put16 (Result, Pos, 16#0010#);
+            Put16 (Result, Pos + 2, Unsigned_16 (ALPN_Data_Len));
+            Result (Pos + 4) := Byte ((Proto_Len + 1) / 256);
+            Result (Pos + 5) := Byte ((Proto_Len + 1) mod 256);
+            Result (Pos + 6) := Byte (Proto_Len);
+            for I in 1 .. Proto_Len loop
+               pragma Loop_Invariant (I in 1 .. Proto_Len);
+               Result (Pos + N32 (6 + I)) :=
+                  Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
+            end loop;
+            Pos := Pos + ALPN_Ext_Len;
+
+            --  Store negotiated ALPN in session.
+            S.Negotiated_ALPN := HC.Cfg.ALPN;
+         end;
+      end if;
+
+      pragma Assert (Pos = SH_Msg_Len);
       Len := SH_Msg_Len;
    end Build_Server_Hello_12;
 
@@ -1466,8 +1373,11 @@ is
          declare
             Ext_Len : constant N32 :=
                N32 (Data (Pos)) * 256 + N32 (Data (Pos + 1));
-            Ext_End : constant N32 :=
-               N32'Min (Pos + 2 + Ext_Len, Data'Last + 1);
+            Available_End : constant N32 := Data'Last + 1;
+            Ext_End       : constant N32 :=
+               (if Ext_Len <= N32'Last - Pos - 2
+                then N32'Min (Pos + 2 + Ext_Len, Available_End)
+                else Available_End);
             Ext_Pos : N32 := Pos + 2;
          begin
             while Ext_Pos + 3 <= Data'Last
@@ -1596,7 +1506,7 @@ is
       package NST renames RFLX.TLS_Handshake.TLS_1_2_New_Session_Ticket;
       procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
         (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-      Ticket_Len : constant N32 := N32 (Ticket'Length);
+      Ticket_Len : constant N32 := Ticket'Last + 1;
       Body_Len   : constant N32 := 4 + 2 + Ticket_Len;
       Total_Len  : constant N32 := 4 + Body_Len;
       Buf        : RBT.Bytes_Ptr;
@@ -1605,7 +1515,7 @@ is
       Result := (others => 0);
       Len := 0;
 
-      if Total_Len > N32 (Result'Length) then
+      if Total_Len - 1 > Result'Last then
          return;
       end if;
 

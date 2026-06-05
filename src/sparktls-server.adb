@@ -52,7 +52,9 @@ is
    procedure Process_Client_Finished
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => S.State = Wait_Client_Finished
+               and Nonce_Space_Available (S.Server_App);
    procedure Handle_PCF_App_Data
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -199,16 +201,22 @@ is
    procedure Append_Transcript
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
-   with Pre  => Data'Length <= Transcript_Capacity
+   with Pre  => (if Data'First <= Data'Last then
+                    Data'Last - Data'First < Transcript_Capacity)
                 and HC.Transcript_Len <= Transcript_Capacity,
         Post => HC.Transcript_Len >= HC.Transcript_Len'Old
    is
-      Len : constant N32 := N32 (Data'Length);
    begin
-      if HC.Transcript_Len <= HC.Transcript'Length - Len then
-         HC.Transcript (HC.Transcript_Len ..
-                          HC.Transcript_Len + Len - 1) := Data;
-         HC.Transcript_Len := HC.Transcript_Len + Len;
+      if Data'First <= Data'Last then
+         declare
+            Len : constant N32 := Data'Last - Data'First + 1;
+         begin
+            if HC.Transcript_Len <= HC.Transcript'Length - Len then
+               HC.Transcript (HC.Transcript_Len ..
+                                HC.Transcript_Len + Len - 1) := Data;
+               HC.Transcript_Len := HC.Transcript_Len + Len;
+            end if;
+         end;
       end if;
    end Append_Transcript;
 
@@ -1032,9 +1040,13 @@ is
       HRR_Len := 0;
       Rec_Out := 0;
 
-      if HRR_Buf'Length < Msg_Len then
+      if HRR_Buf'First > 0
+        or else HRR_Buf'Last < Msg_Len - 1
+      then
          return;
       end if;
+      pragma Assert (HRR_Buf'First = 0);
+      pragma Assert (HRR_Buf'Last >= Msg_Len - 1);
 
       --  Handshake header: type=ServerHello(0x02) + length(3)
       HRR_Buf (0) := 16#02#;
@@ -1925,9 +1937,9 @@ is
       Data   : in     Byte_Seq;
       Result :    out Action)
    with Pre  => Data'First = 0
-                and Data'Length > 0
+                and Data'Last >= 3
                 and Data'Last < N32'Last - 4
-                and Data'Length <= Transcript_Capacity
+                and Data'Last < Transcript_Capacity
                 and S.State = Wait_Client_Certificate
                 and Nonce_Space_Available (S.Server_App);
 
@@ -3210,10 +3222,11 @@ is
          --  Copy slice to 0-based scratch so AEAD builders' Pre is
          --  satisfied (Plaintext'First = 0).
          declare
-            Frag : Byte_Seq (0 .. Chunk - 1);
+            Frag_Len : constant N32 := Chunk;
+            Frag     : Byte_Seq (0 .. Frag_Len - 1);
          begin
             Frag := Plaintext (Plaintext'First + Pos ..
-                               Plaintext'First + Pos + Chunk - 1);
+                               Plaintext'First + Pos + Frag_Len - 1);
             if S.Negotiated_Version = TLS_1_2 then
                Records.TLS12.Build_Encrypted_Record_12
                  (Plaintext    => Frag,

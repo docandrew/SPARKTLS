@@ -166,8 +166,10 @@ is
    --    - EKU must not be critical
    --    - SAN extension must be present (DNS or IP)
    --    - Leaf must not be a CA
-   --    - CN must be byte-for-byte copy of a SAN entry
    --    - RSA keys >= 2048 bits and divisible by 8
+   --
+   --  CABF BR 7.1.4.3 CN/SAN copy requirements are issuance rules
+   --  and are not enforced by the consumer validator.
    function Validate_Leaf_Policy
      (Leaf     : X509.Certificate;
       Leaf_DER : X509.Byte_Seq;

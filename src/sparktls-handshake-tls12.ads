@@ -209,7 +209,9 @@ is
                 and Result'Last >= Max_Server_Key_Exchange - 1
                 and Random /= null
                 and Id.Has_Identity
-                and Valid_ECDHE_Group (HC.Selected_Group),
+                and Valid_ECDHE_Group (HC.Selected_Group)
+                and SPARKTLSCrypto.P384.Field.Initialized
+                and SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Len <= Max_Server_Key_Exchange;
 
    --  RFC 5246 §7.4.5: Build ServerHelloDone.
@@ -271,7 +273,10 @@ is
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
-   with Pre  => Data'First = 0 and Data'Length >= 4,
+   with Pre  => Data'First = 0
+                and then Data'Last in 9 .. Max_Server_Key_Exchange - 1
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => (if OK then
                    Valid_ECDHE_Group (HC.Selected_Group));
 
@@ -284,7 +289,8 @@ is
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
-   with Pre  => Data'First = 0 and Data'Length >= 4
+   with Pre  => Data'First = 0
+                and Data'Last in 3 .. Max_Client_Key_Exchange - 1
                 and Valid_ECDHE_Group (HC.Selected_Group),
         Post => (if OK then
                    HC.Selected_Group = HC.Selected_Group'Old);
@@ -371,11 +377,11 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
-                and Result'Last >= Max_Server_Hello_12 - 1
-                and HC.Cfg.Local /= null
-                and HC.Cfg.Local.Has_Identity
-                and HC.Cfg.Random /= null
-                and HC.Version = TLS_1_2,
+                and then Result'Last >= Max_Server_Hello_12 - 1
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
+                and then HC.Version = TLS_1_2,
         --  Frame postcondition: ServerHello construction does not
         --  touch S.State, the configuration pointer/identity, or the
         --  Random callback. Callers (Build_Server_Flight_12) need
@@ -429,9 +435,10 @@ is
       Result        :    out Byte_Seq;
       Len           :    out N32)
    with Pre  => Result'First = 0
-                and Ticket'Length <= 65535
-                and N32 (Result'Length) >= 10 + N32 (Ticket'Length),
-        Post => Len <= Result'Length;
+                and then Ticket'First = 0
+                and then Ticket'Last in 0 .. 65534
+                and then Result'Last >= 10 + Ticket'Last,
+        Post => Len = 0 or else Result'Last >= Len - 1;
 
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket parser.
    --

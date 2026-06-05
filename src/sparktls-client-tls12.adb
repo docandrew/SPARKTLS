@@ -49,16 +49,22 @@ is
    --  RFC 5246 §7.4.9 transcript-monotonicity: bytes already
    --  appended cannot be removed. The Post pins this; a future
    --  edit that resets HC.Transcript_Len in this proc would fail.
-   with Pre  => Data'Length <= Transcript_Capacity
+   with Pre  => (if Data'First <= Data'Last then
+                    Data'Last - Data'First < Transcript_Capacity)
                 and HC.Transcript_Len <= Transcript_Capacity,
         Post => HC.Transcript_Len >= HC.Transcript_Len'Old
    is
-      Len : constant N32 := N32 (Data'Length);
    begin
-      if HC.Transcript_Len <= HC.Transcript'Length - Len then
-         HC.Transcript (HC.Transcript_Len ..
-                          HC.Transcript_Len + Len - 1) := Data;
-         HC.Transcript_Len := HC.Transcript_Len + Len;
+      if Data'First <= Data'Last then
+         declare
+            Len : constant N32 := Data'Last - Data'First + 1;
+         begin
+            if HC.Transcript_Len <= HC.Transcript'Length - Len then
+               HC.Transcript (HC.Transcript_Len ..
+                                HC.Transcript_Len + Len - 1) := Data;
+               HC.Transcript_Len := HC.Transcript_Len + Len;
+            end if;
+         end;
       end if;
    end Append_Transcript;
 

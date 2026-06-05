@@ -16,7 +16,9 @@ with Interfaces; use Interfaces;
 with SPARKNaCl; use SPARKNaCl;
 with X509;
 
-package SPARKTLS.Tickets_12 is
+package SPARKTLS.Tickets_12 with
+   SPARK_Mode => On
+is
 
    --  Convert an X509.Date_Time to seconds since the Unix epoch
    --  (1970-01-01 00:00:00 UTC). Assumes the input is already UTC
@@ -79,6 +81,7 @@ package SPARKTLS.Tickets_12 is
       Max_Age : in     Unsigned_32;
       Plain   :    out Ticket_Plain;
       Status  :    out Boolean)
-   with Pre => Ticket'First = 0;
+   with Pre => Ticket'First = 0
+               and then Ticket'Last < N32'Last;
 
 end SPARKTLS.Tickets_12;

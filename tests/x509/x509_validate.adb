@@ -5,6 +5,7 @@
 with Ada.Calendar;
 with Ada.Calendar.Formatting;
 with Ada.Command_Line;
+with Ada.Exceptions;
 with Ada.Text_IO;
 with SPARKNaCl;     use SPARKNaCl;
 with X509;
@@ -350,6 +351,9 @@ begin
    end;
 
 exception
-   when others =>
+   when E : others =>
+      Ada.Text_IO.Put_Line
+        (Ada.Text_IO.Standard_Error,
+         Ada.Exceptions.Exception_Information (E));
       Ada.Command_Line.Set_Exit_Status (2);
 end X509_Validate;
