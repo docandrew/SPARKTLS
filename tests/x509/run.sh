@@ -6,6 +6,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$DIR/../.."
 GEN_DIR="$DIR/generated"
 VALIDATOR="$REPO_ROOT/bin/tests/x509_validate"
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
 
 if [ ! -d "$GEN_DIR" ] || [ ! -f "$GEN_DIR/manifest.txt" ]; then
     echo "x509-limbo test cases not found; downloading/generating them now..."
@@ -15,7 +17,7 @@ fi
 if [ ! -f "$VALIDATOR" ]; then
     echo "Validator not found; building it now..."
     cd "$REPO_ROOT"
-    alr exec -- gprbuild -q -P tests/x509/x509_validate.gpr
+    alr -n --no-tty exec -- gprbuild -q -P tests/x509/x509_validate.gpr
 fi
 
 echo "=== x509-limbo Certificate Validation Tests ==="

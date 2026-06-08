@@ -3,7 +3,7 @@ with SPARKTLS.Records.TLS12;
 package SPARKTLS.Server with
    SPARK_Mode => On
 is
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Server-side TLS 1.3 session management
    --
    --  Usage follows the same pattern as SPARKTLS.Client, but the
@@ -35,7 +35,7 @@ is
    --          when others => null;
    --       end case;
    --    end loop;
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Quick setup: configure and initialize a server session in one call.
    --  Sets Mode_WebPKI and the default cipher suite.
@@ -151,7 +151,7 @@ is
    function Has_Peer_Certificate (S : Session) return Boolean is
       (S.Peer_Cert_Valid);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  RFC 5077 TLS 1.2 ticket encryption key (TEK) rotation
    --
    --  Atomic primitive for rotating the active TEK. Used by:

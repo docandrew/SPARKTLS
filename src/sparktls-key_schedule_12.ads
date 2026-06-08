@@ -16,9 +16,9 @@ use SPARKTLSCrypto;
 package SPARKTLS.Key_Schedule_12 with
    SPARK_Mode => On
 is
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Constants from RFC 5246
-   --================================================================
+   ----------------------------------------------------------------------------
 
    Master_Secret_Len   : constant := 48;  --  RFC 5246 §8.1: always 48 bytes
    Finished_Verify_Len : constant := 12;  --  RFC 5246 §7.4.9
@@ -37,9 +37,9 @@ is
    Label_Client_Finished : constant String := "client finished";
    Label_Server_Finished : constant String := "server finished";
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Ghost functions: RFC behavioral invariants
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  RFC 5246 §8.1: Seed order for master secret derivation.
    --  The seed is client_random || server_random (client FIRST).
@@ -89,9 +89,9 @@ is
      (Label = Label_Client_Finished or Label = Label_Server_Finished)
    with Ghost;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Procedures
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  RFC 5246 §5: TLS PRF (SHA-256 variant).
    --

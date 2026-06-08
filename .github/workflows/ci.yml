@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    env:
+      ALR_NON_INTERACTIVE: "1"
+      NO_COLOR: "1"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: DeterminateSystems/nix-installer-action@v16
+
+      - uses: alire-project/setup-alire@v5
+        if: runner.arch == 'ARM64'
+        with:
+          version: "2.1.0"
+          toolchain: "gnat_native gprbuild"
+
+      - name: Build and test
+        run: nix develop --command bash ci/check.sh
+
+  ctgrind:
+    env:
+      ALR_NON_INTERACTIVE: "1"
+      NO_COLOR: "1"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: DeterminateSystems/nix-installer-action@v16
+
+      - name: Constant-time Memcheck
+        run: nix develop --command bash ci/timing.sh ctgrind

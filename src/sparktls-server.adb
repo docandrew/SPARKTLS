@@ -2127,12 +2127,12 @@ is
       Set_State (S, Wait_Client_Finished);
    end Handle_Client_CertVerify_13;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Process_Client_Auth (mTLS)
    --
    --  Handles encrypted records containing the client's Certificate
    --  and CertificateVerify messages.
-   --================================================================
+   ----------------------------------------------------------------------------
    procedure Process_Client_Auth
      (S      : in out Session;
       HC     : in out Handshake_Context;

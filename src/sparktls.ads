@@ -6,9 +6,9 @@ with X509;
 package SPARKTLS with
    SPARK_Mode => On
 is
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Constants
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  48-byte sequence (for SHA-384 digests/secrets)
    subtype Index_48 is N32 range 0 .. 47;
@@ -93,9 +93,9 @@ is
    --  RFLX scratch buffer sizes (stack-allocated, no heap)
    RFLX_Main_Size : constant := 17000;  --  Holds largest message (incoming record)
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Cipher suite
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type TLS_Role is (Role_Client, Role_Server);
 
@@ -117,13 +117,13 @@ is
    Suite_ECDHE_RSA_CHACHA20_SHA256     : constant Unsigned_16 := 16#CCA8#;
    Suite_ECDHE_ECDSA_CHACHA20_SHA256   : constant Unsigned_16 := 16#CCA9#;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Connection state
    --
    --  The handshake proceeds through these states in order.
    --  Client and server share the same enum; unused states for
    --  a given role are simply never entered.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Protocol version
    type TLS_Version is (TLS_1_3, TLS_1_2);
@@ -165,12 +165,12 @@ is
       Closed,
       Error_State);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Protocol requirements as ghost functions (RFC 8446)
    --
    --  These are formally verified by SPARK — the prover checks that
    --  the implementation never violates these properties.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  RFC 8446 §5: CCS is only valid during the handshake.
    --  CCS after server Finished MUST be rejected.
@@ -336,9 +336,9 @@ is
      (Key_Phase'Pos (A) < Key_Phase'Pos (B))
    with Ghost;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Action result - tells the caller what to do next
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type Action is
      (OK,             --  Progress made, call Advance again
@@ -349,9 +349,9 @@ is
       Shutdown,       --  Clean close complete
       Error_Alert);   --  Fatal error, see Last_Error
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Error codes
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type Error_Code is
      (No_Error,
@@ -372,7 +372,7 @@ is
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  TLS extension policy table (RFC 8446 §4.2)
    --
    --  Single source of truth for every TLS extension we recognise.
@@ -385,7 +385,7 @@ is
    --  Validate_Server_Ext below — adding a new extension means
    --  adding one row to Ext_Policy_For, not peppering checks at
    --  every parse site.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  TLS messages that can carry extensions. The split SH13/SH12 is
    --  necessary because RFC 8446 §4.2 says key_share, pre_shared_key,
@@ -721,7 +721,7 @@ is
      renames Alert_Desc;
    --  Ghost-callable alias — proof contracts use this name.
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  I/O Buffer
    --
    --  Linear buffer with read/write cursors. The caller fills it
@@ -731,7 +731,7 @@ is
    --  This is the BIO equivalent: the TLS engine never touches
    --  sockets, files, or any OS resource. It only reads from
    --  and writes to these buffers.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    subtype Buffer_Size is N32 range 0 .. IO_Buffer_Capacity;
 
@@ -749,9 +749,9 @@ is
    function Free_Space (Buf : IO_Buffer) return N32 is
       (IO_Buffer_Capacity - Buf.Write_Pos);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Hostname storage (for SNI)
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type Hostname_Buf is record
       Data : String (1 .. Max_Hostname_Len) := (others => ASCII.NUL);
@@ -759,9 +759,9 @@ is
    end record
      with Predicate => Hostname_Buf.Len <= Max_Hostname_Len;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Traffic keys for one direction (key + IV + nonce counter)
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  RFC 8446 §7.3: Traffic keys with suite constraint.
    type Traffic_Keys is record
@@ -779,12 +779,12 @@ is
    function Nonce_Space_Available (K : Traffic_Keys) return Boolean is
      (K.Counter < Unsigned_64'Last);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Random byte generation callback
    --
    --  The caller must supply a CSPRNG. This is the only callback;
    --  everything else is buffer-based.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type Random_Bytes_Fn is access
       procedure (Output : out Byte_Seq);
@@ -794,13 +794,13 @@ is
    type Get_Time_Fn is access
       function return X509.Date_Time;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Certificate pool types
    --
    --  Used by Trust_Store, Identity, and Validate_Chain.
    --  Each pool entry holds a parsed cert and its own DER buffer
    --  starting at index 0 (required by X509 span offsets).
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Max entries in an intermediate cert pool (Peer_Ints, Identity.Ints).
    --  Real cert chains have ≤ 6 intermediates; 8 is comfortably above that.
@@ -828,7 +828,7 @@ is
    type Cert_Pool is array (0 .. Max_Pool_Size - 1) of Pool_Entry;
    type Used_Set  is array (0 .. Max_Pool_Size - 1) of Boolean;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Trust Store
    --
    --  Holds root CA certificates for chain validation.
@@ -839,7 +839,7 @@ is
    --  certificate bundles typically contain 130+ root CAs.
    --  Not embedded in Session — referenced by pointer, so the
    --  larger size doesn't affect per-connection memory.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    Max_Root_Pool_Size : constant := 200;
    type Root_Pool is array (0 .. Max_Root_Pool_Size - 1) of Pool_Entry;
@@ -851,14 +851,14 @@ is
 
    type Trust_Store_Access is access constant Trust_Store;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Identity
    --
    --  Local certificate chain and signing key.  The signing algorithm
    --  is inferred from the leaf certificate's public key algorithm.
    --  Required for servers; optional for clients (mTLS only).
    --  Allocated once, shared across sessions via Identity_Access.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type Signing_Algorithm is
      (Sign_Ed25519, Sign_ECDSA_P256, Sign_ECDSA_P384, Sign_RSA_PSS, Sign_None);
@@ -897,7 +897,7 @@ is
 
    type Identity_Access is access constant Identity;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  SNI-based certificate selection (RFC 6066 §3, RFC 8446 §4.4.2.4)
    --
    --  Servers that host multiple virtual hosts on one listener install
@@ -919,16 +919,16 @@ is
    --  return either null or an Identity_Access that remains valid for
    --  the lifetime of the session. Identities returned here are
    --  typically allocated once at server startup and immutable.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type SNI_Cert_Selector is access function
      (Server_Name : in String) return Identity_Access;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Ticket Store (for session resumption)
    --  Defined here so Config can reference it. Implementation in
    --  SPARKTLS.Ticket_Cache child package.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    Max_Cached_Tickets : constant := 1024;
    Ticket_ID_Len      : constant := 16;
@@ -960,13 +960,13 @@ is
 
    type Ticket_Store_Access is access all Ticket_Store;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Session Ticket (RFC 8446 §4.6.1)
    --
    --  Stand-alone, copyable record so the caller can persist it
    --  across connections. Defined here (before Config) because
    --  Cfg.Resume_Ticket embeds it.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    Max_Ticket_Len : constant := 256;
 
@@ -981,7 +981,7 @@ is
       Valid        : Boolean := False;
    end record;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  TLS 1.2 ticket encryption key (RFC 5077 §4)
    --
    --  Caller-supplied 32-byte AES-256 key plus a 4-byte Key_ID for
@@ -990,7 +990,7 @@ is
    --  ticket (rotation = add new key, drop oldest). Server encrypts
    --  outgoing tickets with key at TLS12_Active_TEK_Idx. A ticket
    --  carries the Key_ID in its header so decryption is O(1) lookup.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    TLS12_Max_Keys : constant := 4;
 
@@ -1011,13 +1011,13 @@ is
 
    type TLS12_Ticket_Keys_Access is access all TLS12_Ticket_Key_Array;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  TLS 1.2 cached session ticket (client side, RFC 5077 §3.4)
    --
    --  Stand-alone copyable record so the caller can persist it
    --  across processes. The ticket bytes are opaque blobs; the
    --  meaningful state for resumption is Master_Secret + Suite.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    Max_TLS12_Ticket_Len : constant := 2048;
    --  RFC 5077 allows up to 2^16-1 bytes, but practical tickets are
@@ -1036,9 +1036,9 @@ is
       Valid         : Boolean := False;
    end record;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Validation modes (used by Config and Cert_Verify)
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Mode_RFC5280: RFC 5280 rules only.
    --  Mode_WebPKI: RFC 5280 + CA/Browser Forum Baseline Requirements.
@@ -1047,7 +1047,7 @@ is
    --  Validation purpose (controls EKU requirements on the leaf)
    type Validation_Purpose is (Purpose_Server, Purpose_Client, Purpose_Any);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  DoS resource limits (§2.13 in ROADMAP)
    --
    --  Policy caps on per-handshake parser work, defending against
@@ -1064,7 +1064,7 @@ is
    --  These caps are PER-CONNECTION; cross-connection budgets
    --  (accept rate, concurrent half-open) are the caller's
    --  responsibility (see ROADMAP §2.13).
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type DoS_Caps is record
       --  Max cipher_suite entries consumed from a CH. Wire allows
@@ -1106,9 +1106,9 @@ is
       Max_ALPN_Protocols   => 32,
       Max_Warning_Alerts   => 4);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Configuration (set once before Init)
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type Config is record
       Suite        : Cipher_Suite    := TLS_CHACHA20_POLY1305_SHA256;
@@ -1260,7 +1260,7 @@ is
       Resume_Ticket : Session_Ticket;
    end record;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Session
    --
    --  All TLS connection state in one record. No hidden heap
@@ -1273,16 +1273,16 @@ is
    --    Write_Plaintext  - encrypt and queue application data
    --    Read_Plaintext   - read decrypted application data
    --    Close_Notify    - initiate clean shutdown
-   --================================================================
+   ----------------------------------------------------------------------------
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Handshake Context
    --
    --  Contains all state needed only during the TLS handshake.
    --  Heap-allocated at Init, freed when handshake completes.
    --  Handshake procedures receive this as `in out` — they never
    --  see the pointer, only the record.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  RFC 7627 §4 ghost type: tracks which TLS 1.2 master_secret PRF
    --  was used. Set inside Derive_Keys_12 along the matching code
@@ -1987,12 +1987,12 @@ is
      (HC.CKE_Received_12 and then HC.CCS_Received)
      with Ghost;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Ghost predicates added 2026-05-09 covering the BoGo morning
    --  fix batch. Each pins a specific RFC clause so a later
    --  refactor that re-introduces the bug will be flagged at
    --  proof time, not runtime.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  RFC 8446 §6 / RFC 5246 §7.2: alert level MUST be 1 (warning)
    --  or 2 (fatal). Anything else is a fatal protocol violation
@@ -2058,9 +2058,9 @@ is
 
    type Handshake_Context_Access is access Handshake_Context;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  TLS extension policy: HC-aware Tag_Is_Offered + Validate_Server_Ext
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Combines Tag_Is_Offered_Static with the conditional CH
    --  offerings: server_name (iff Cfg.Server_Name.Len > 0), ALPN
@@ -2095,11 +2095,11 @@ is
       OK       :    out Boolean;
       Err      :    out Error_Code);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Session Ticket (for resumption)
    --  Definition was moved earlier (before Config) so Config can
    --  embed a Resume_Ticket.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    type Session is record
       --  State
@@ -2209,9 +2209,9 @@ is
                 and then E_Len >= 0
                 and then E_Len <= Data'Last + 1 - Body_Start;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Buffer operations (transport layer interface)
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Transition to a new state. The precondition enforces that only
    --  transitions permitted by the RFC 8446 state machine are allowed.
@@ -2261,12 +2261,12 @@ is
    function Output_Pending (S : Session) return N32 is
       (Available (S.Output));
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Session-scoped ghost predicates (added 2026-05-09 alongside
    --  the alert-handling / DoS-bound fixes). Each pins an RFC
    --  clause so a regression that re-introduces the unbounded
    --  behavior is caught at proof time.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  RFC 8446 §6.1 / §6: warning-alert flood cap. Holds whenever
    --  the receiver is still in a non-error state — once we exceed

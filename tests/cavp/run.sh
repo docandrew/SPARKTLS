@@ -7,11 +7,13 @@ set +e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$DIR/../.."
 RUNNER="$REPO_ROOT/bin/tests/wycheproof_runner"
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
 
 if [ ! -f "$RUNNER" ]; then
     echo "Building runner..."
     (cd "$DIR/../wycheproof"
-     alr exec -- gprbuild -P wycheproof_runner.gpr 2>&1 | tail -3)
+     alr -n --no-tty exec -- gprbuild -P wycheproof_runner.gpr 2>&1 | tail -3)
 fi
 if [ ! -f "$RUNNER" ]; then
     echo "FAIL: runner not built"

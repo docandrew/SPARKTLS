@@ -3,7 +3,7 @@ with SPARKTLS.Records.TLS12;
 package SPARKTLS.Client with
    SPARK_Mode => On
 is
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Client-side TLS 1.3 session management
    --
    --  Usage (blocking):
@@ -52,7 +52,7 @@ is
    --    On socket writable (if Has_Output was returned):
    --       SPARKTLS.Drain_Ciphertext (S, Buf, N);
    --       Socket_Write (Buf (0 .. N - 1));
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Quick setup: configure and initialize a client session in one call.
    --  Sets Mode_WebPKI, Purpose_Server, and the default cipher suite.
@@ -155,7 +155,7 @@ is
    function Has_Peer_Certificate (S : Session) return Boolean is
       (S.Peer_Cert_Valid);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Session resumption (RFC 8446 §4.6.1 / §2.2)
    --
    --  Workflow:
@@ -170,7 +170,7 @@ is
    --  The Cfg-driven path is required because Init constructs and
    --  queues CH atomically — there is no post-Init injection point
    --  for the ticket.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  True iff a usable resumption PSK has been derived from a
    --  NewSessionTicket. Servers may send NSTs at any point after

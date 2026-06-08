@@ -17,6 +17,8 @@ set +e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$DIR/../.."
 BIN="$REPO/bin/tests/ctgrind"
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
 
 if ! command -v valgrind >/dev/null 2>&1; then
   echo "valgrind not installed; aborting"
@@ -28,7 +30,7 @@ fi
 #  a clean separation between the ctgrind binaries and the bench /
 #  unit-test binaries (which need the optimize build).
 echo "Rebuilding library + harnesses in ctgrind mode..."
-( cd "$DIR" && SPARKTLSCRYPTO_BUILD_MODE=ctgrind alr build >/dev/null 2>&1 )
+( cd "$DIR" && SPARKTLSCRYPTO_BUILD_MODE=ctgrind alr -n --no-tty build >/dev/null 2>&1 )
 build_status=$?
 if [ "$build_status" -ne 0 ]; then
   echo "Rebuild failed; aborting"
@@ -95,11 +97,11 @@ fi
 #  Restore the regular optimize build so subsequent bench / unit-test
 #  runs see the AVX-512 codegen they expect.
 echo "Restoring optimize build..."
-( cd "$DIR" && SPARKTLSCRYPTO_BUILD_MODE=optimize alr build >/dev/null 2>&1 )
-( cd "$REPO" && SPARKTLSCRYPTO_BUILD_MODE=optimize alr build >/dev/null 2>&1 )
+( cd "$DIR" && SPARKTLSCRYPTO_BUILD_MODE=optimize alr -n --no-tty build >/dev/null 2>&1 )
+( cd "$REPO" && SPARKTLSCRYPTO_BUILD_MODE=optimize alr -n --no-tty build >/dev/null 2>&1 )
 ( cd "$REPO/tests/unit" && \
-  SPARKTLSCRYPTO_BUILD_MODE=optimize alr build >/dev/null 2>&1 )
+  SPARKTLSCRYPTO_BUILD_MODE=optimize alr -n --no-tty build >/dev/null 2>&1 )
 ( cd "$REPO/examples" && \
-  SPARKTLSCRYPTO_BUILD_MODE=optimize alr build >/dev/null 2>&1 )
+  SPARKTLSCRYPTO_BUILD_MODE=optimize alr -n --no-tty build >/dev/null 2>&1 )
 
 exit "$rc"

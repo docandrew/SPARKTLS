@@ -26,6 +26,8 @@ WORKERS="${BOGO_WORKERS:-4}"
 GO_VER="1.23.4"
 GO_URL="https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz"
 BORING_URL="https://boringssl.googlesource.com/boringssl"
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
 
 echo "=== BoGo (BoringSSL adversarial TLS tests) ==="
 
@@ -38,7 +40,7 @@ if [ ! -x "$SHIM" ]; then
         echo "  SKIP: alire not found, can't build shim"
         exit 0
     fi
-    eval "$(cd "$REPO_ROOT" && alr printenv --unix 2>/dev/null)"
+    eval "$(cd "$REPO_ROOT" && alr -n --no-tty printenv --unix 2>/dev/null)"
     if ! gprbuild -P "$REPO_ROOT/tests/bogo/bogo_shim.gpr" 2>&1 | tail -3; then
         echo "  SKIP: shim build failed"
         exit 0

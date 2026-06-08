@@ -79,7 +79,7 @@ is
                 and not X509.Has_Empty_Key_Usage_Value (Root)
                 and not X509.Has_Key_Cert_Sign_Without_CA (Root))));
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Chain validation building blocks
    --
    --  The caller walks the chain and calls these for each level:
@@ -90,7 +90,7 @@ is
    --  All SPARK_Mode On.  DER buffers use X509.Byte_Seq so that
    --  X509 functions (Issuer_Matches, Satisfies_Name_Constraints,
    --  Matches_Hostname) can be called directly.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Verify a certificate's signature using X509.Byte_Seq DER.
    --  Copies TBS bytes to SPARKNaCl.Byte_Seq internally for crypto.
@@ -230,12 +230,12 @@ is
                and SPARKTLSCrypto.P384.Field.Initialized
                and SPARKTLSCrypto.P384.ECDSA.Initialized;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Credential loading helpers
    --
    --  Types (Trust_Store, Identity, Cert_Pool, etc.) are in the
    --  parent package SPARKTLS.  These procedures load data into them.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Parse a DER certificate and add it to the trust store.
    --  Fails if the store is full or the cert doesn't parse.
@@ -285,9 +285,9 @@ is
       OK  : out Boolean)
    with Pre => DER'First = 0 and DER'Last < X509.N32 (Max_Cert_DER);
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Chain building and validation
-   --================================================================
+   ----------------------------------------------------------------------------
 
    Max_Chain_Depth : constant := 8;   --  EE + 6 sub-CAs + root
    Max_Build_Calls : constant := 1000;  --  budget to prevent DoS

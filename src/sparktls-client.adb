@@ -153,7 +153,8 @@ is
                                        | Suite_AES_256_GCM_SHA384
                                        | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if Result = Has_Output then
-                    Nonce_Space_Available (S.Client_App))
+                    Nonce_Space_Available (S.Client_App)
+                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
                 and then Result in Has_Output | Error_Alert;
    procedure Process_Handshake_Message
      (S      : in out Session;
@@ -177,10 +178,20 @@ is
         --  installed, but HC.Client_HS may have consumed a nonce.
         Post => (if Result = OK and then S.State /= Error_State then
                     HC.Client_HS = HC.Client_HS'Old
-                    and then Nonce_Space_Available (S.Client_App))
+                    and then Nonce_Space_Available (S.Client_App)
+                    and then HC.Transcript_Len > 0
+                    and then S.Negotiated_Suite
+                       in Suite_AES_128_GCM_SHA256
+                        | Suite_AES_256_GCM_SHA384
+                        | Suite_CHACHA20_POLY1305_SHA256)
                 and then (if Result = Has_Output
                            and then S.State /= Error_State then
-                    Nonce_Space_Available (S.Client_App));
+                    Nonce_Space_Available (S.Client_App)
+                    and then S.Negotiated_Suite
+                       in Suite_AES_128_GCM_SHA256
+                        | Suite_AES_256_GCM_SHA384
+                        | Suite_CHACHA20_POLY1305_SHA256)
+                and then Result in OK | Has_Output | Error_Alert;
    procedure Process_Encrypted_Handshake
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -189,6 +200,10 @@ is
                and then Nonce_Space_Available (HC.Client_HS)
                and then Nonce_Space_Available (HC.Server_HS)
                and then Nonce_Space_Available (S.Client_App)
+               and then HC.Transcript_Len > 0
+               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                           | Suite_AES_256_GCM_SHA384
+                                           | Suite_CHACHA20_POLY1305_SHA256
                and then Reasm_Coherent (HC)
                and then (HC.Reasm_Buf = null
                          or else (HC.Reasm_Buf'First = 0
@@ -197,17 +212,23 @@ is
                                   and then HC.Reasm_Len
                                      <= N32 (HC.Reasm_Buf'Length)
                                   and then HC.Reasm_Need
-                                     <= N32 (HC.Reasm_Buf'Length)));
+                                     <= N32 (HC.Reasm_Buf'Length)
+                                  and then (if HC.Reasm_Need > 0 then
+                                               HC.Reasm_Need >= 4)));
    procedure Handle_Encrypted_App_Data
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
    with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and then Nonce_Space_Available (HC.Client_HS)
-               and then Nonce_Space_Available (HC.Server_HS)
-               and then Nonce_Space_Available (S.Client_App)
-               and then Reasm_Coherent (HC)
+	               and then Nonce_Space_Available (HC.Client_HS)
+	               and then Nonce_Space_Available (HC.Server_HS)
+	               and then Nonce_Space_Available (S.Client_App)
+	               and then HC.Transcript_Len > 0
+	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                           | Suite_AES_256_GCM_SHA384
+	                                           | Suite_CHACHA20_POLY1305_SHA256
+	               and then Reasm_Coherent (HC)
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
                and then Rec.Fragment_Pos = Records.Record_Header_Size
@@ -228,7 +249,9 @@ is
                                   and then HC.Reasm_Len
                                      <= N32 (HC.Reasm_Buf'Length)
                                   and then HC.Reasm_Need
-                                     <= N32 (HC.Reasm_Buf'Length)));
+                                     <= N32 (HC.Reasm_Buf'Length)
+                                  and then (if HC.Reasm_Need > 0 then
+                                               HC.Reasm_Need >= 4)));
    procedure Process_Decrypted_Handshake_Bytes
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -252,7 +275,9 @@ is
                                   and then HC.Reasm_Len
                                      <= N32 (HC.Reasm_Buf'Length)
                                   and then HC.Reasm_Need
-                                     <= N32 (HC.Reasm_Buf'Length)));
+                                     <= N32 (HC.Reasm_Buf'Length)
+                                  and then (if HC.Reasm_Need > 0 then
+                                               HC.Reasm_Need >= 4)));
 
    procedure Dispatch_Decrypted_HS_Message
      (S      : in out Session;
@@ -272,10 +297,20 @@ is
                                            | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if Result = OK and then S.State /= Error_State then
                     HC.Client_HS = HC.Client_HS'Old
-                    and then Nonce_Space_Available (S.Client_App))
+                    and then Nonce_Space_Available (S.Client_App)
+                    and then HC.Transcript_Len > 0
+                    and then S.Negotiated_Suite
+                       in Suite_AES_128_GCM_SHA256
+                        | Suite_AES_256_GCM_SHA384
+                        | Suite_CHACHA20_POLY1305_SHA256)
                 and then (if Result = Has_Output
                            and then S.State /= Error_State then
-                    Nonce_Space_Available (S.Client_App));
+                    Nonce_Space_Available (S.Client_App)
+                    and then S.Negotiated_Suite
+                       in Suite_AES_128_GCM_SHA256
+                        | Suite_AES_256_GCM_SHA384
+                        | Suite_CHACHA20_POLY1305_SHA256)
+                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Continue_Decrypted_HS_Reassembly
      (S         : in out Session;
@@ -300,7 +335,9 @@ is
                                   and then HC.Reasm_Len
                                      <= N32 (HC.Reasm_Buf'Length)
                                   and then HC.Reasm_Need
-                                     <= N32 (HC.Reasm_Buf'Length))),
+                                     <= N32 (HC.Reasm_Buf'Length)
+                                  and then (if HC.Reasm_Need > 0 then
+                                               HC.Reasm_Need >= 4))),
         Post => Pos <= Plain_Len
                 and then (if Result = OK
                           and then S.State not in Error_State then
@@ -313,8 +350,138 @@ is
                                  | Suite_CHACHA20_POLY1305_SHA256)
                 and then (if Result = Has_Output
                           and then S.State /= Error_State then
-                             Nonce_Space_Available (S.Client_App)
+                             Nonce_Space_Available (S.Client_App));
+
+   procedure Fill_Decrypted_HS_Reassembly
+     (HC            : in out Handshake_Context;
+      Plaintext     : in     Byte_Seq;
+      Plain_Len     : in     N32;
+      Pos           :    out N32;
+      Decode_Failed :    out Boolean)
+   with Pre => Plaintext'First = 0
+               and then Plaintext'Last < N32'Last / 2
+               and then Plain_Len <= N32 (Plaintext'Length)
+               and then Nonce_Space_Available (HC.Client_HS)
+               and then HC.Transcript_Len > 0
+               and then HC.Reasm_Buf /= null
+               and then HC.Reasm_Buf'First = 0
+               and then HC.Reasm_Buf'Last in 0 .. 131071
+               and then HC.Reasm_Need > 0
+               and then HC.Reasm_Need >= 4
+               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length),
+        Post => Pos <= Plain_Len
+                and then Nonce_Space_Available (HC.Client_HS)
+                and then HC.Transcript_Len > 0
+                and then (if Decode_Failed then
+                             HC.Reasm_Buf = null
+                             and then HC.Reasm_Len = 0
+                             and then HC.Reasm_Need = 0)
+                and then (if not Decode_Failed then
+                             HC.Reasm_Buf /= null
+                             and then HC.Reasm_Buf'First = 0
+                             and then HC.Reasm_Buf'Last in 0 .. 131071
+                             and then HC.Reasm_Len
+                                <= N32 (HC.Reasm_Buf'Length)
+                             and then HC.Reasm_Need
+                                <= N32 (HC.Reasm_Buf'Length)
+                             and then (if HC.Reasm_Need > 0 then
+                                          HC.Reasm_Need >= 4));
+
+   procedure Copy_Decrypted_Reasm_Bytes
+     (HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      From      : in     N32;
+      Take      : in     N32)
+   with Pre => Plaintext'First = 0
+               and then Plaintext'Last < N32'Last / 2
+               and then Nonce_Space_Available (HC.Client_HS)
+               and then HC.Transcript_Len > 0
+               and then HC.Reasm_Buf /= null
+               and then HC.Reasm_Buf'First = 0
+               and then HC.Reasm_Buf'Last in 0 .. 131071
+               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+               and then Take > 0
+               and then HC.Reasm_Len <= N32'Last - Take
+               and then Take <= N32 (HC.Reasm_Buf'Length) - HC.Reasm_Len
+               and then From <= N32 (Plaintext'Length)
+               and then Take <= N32 (Plaintext'Length) - From,
+        Post => HC.Reasm_Buf /= null
+                and then HC.Reasm_Buf'First = 0
+                and then Nonce_Space_Available (HC.Client_HS)
+                and then HC.Transcript_Len > 0
+                and then HC.Reasm_Buf'Last in 0 .. 131071
+                and then HC.Reasm_Len = HC.Reasm_Len'Old + Take
+                and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old;
+
+   procedure Decode_Decrypted_Reasm_Header
+     (HC            : in out Handshake_Context;
+      Decode_Failed :    out Boolean)
+   with Pre => Nonce_Space_Available (HC.Client_HS)
+               and then HC.Transcript_Len > 0
+               and then HC.Reasm_Buf /= null
+               and then HC.Reasm_Buf'First = 0
+               and then HC.Reasm_Buf'Last in 0 .. 131071
+               and then HC.Reasm_Len >= 4
+               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+               and then HC.Reasm_Hdr_Pending,
+        Post => Nonce_Space_Available (HC.Client_HS)
+                and then HC.Transcript_Len > 0
+                and then (if Decode_Failed then
+                             HC.Reasm_Buf = null
+                             and then HC.Reasm_Len = 0
+                             and then HC.Reasm_Need = 0)
+                and then (if not Decode_Failed then
+                             HC.Reasm_Buf /= null
+                             and then HC.Reasm_Buf'First = 0
+                             and then HC.Reasm_Buf'Last in 0 .. 131071
+                             and then HC.Reasm_Len
+                                <= N32 (HC.Reasm_Buf'Length)
+                             and then HC.Reasm_Need
+                                <= N32 (HC.Reasm_Buf'Length)
+                             and then HC.Reasm_Need >= 4
+                             and then not HC.Reasm_Hdr_Pending);
+
+   procedure Dispatch_Completed_Decrypted_Reasm
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plain_Len : in     N32;
+      Pos       : in out N32;
+      Result    :    out Action)
+   with Pre => S.State not in Idle | Closing | Closed | Error_State
+               and then Nonce_Space_Available (HC.Client_HS)
+               and then Nonce_Space_Available (S.Client_App)
+               and then HC.Transcript_Len > 0
+               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                           | Suite_AES_256_GCM_SHA384
+                                           | Suite_CHACHA20_POLY1305_SHA256
+               and then Plain_Len <= N32'Last
+               and then Pos <= Plain_Len
+               and then HC.Reasm_Buf /= null
+               and then HC.Reasm_Buf'First = 0
+               and then HC.Reasm_Need in 4 .. Transcript_Capacity
+               and then HC.Reasm_Need - 1 <= HC.Reasm_Buf'Last
+               and then HC.Reasm_Len >= HC.Reasm_Need,
+        Post => Pos <= Plain_Len
+                and then HC.Reasm_Len = 0
+                and then HC.Reasm_Need = 0
+                and then (if Result = OK
+                          and then S.State /= Error_State then
+                             Nonce_Space_Available (HC.Client_HS)
+                             and then Nonce_Space_Available (S.Client_App)
                              and then HC.Transcript_Len > 0
+                             and then S.Negotiated_Suite
+                                in Suite_AES_128_GCM_SHA256
+                                 | Suite_AES_256_GCM_SHA384
+                                 | Suite_CHACHA20_POLY1305_SHA256)
+                and then (if Result = Has_Output
+                          and then S.State /= Error_State then
+                             Nonce_Space_Available (S.Client_App)
                              and then S.Negotiated_Suite
                                 in Suite_AES_128_GCM_SHA256
                                  | Suite_AES_256_GCM_SHA384
@@ -339,6 +506,46 @@ is
                and then Plain_Len <= N32 (Plaintext'Length)
                and then Pos <= Plain_Len,
         Post => Pos <= Plain_Len;
+
+   procedure Process_One_Decrypted_HS_Message
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Pos       : in out N32;
+      Result    : in out Action)
+   with Pre => Result = OK
+               and then S.State in Wait_Encrypted_Extensions
+                                   | Wait_Certificate_Request
+                                   | Wait_Certificate
+                                   | Wait_Certificate_Verify
+                                   | Wait_Server_Finished
+               and then Nonce_Space_Available (HC.Client_HS)
+               and then Nonce_Space_Available (S.Client_App)
+               and then HC.Transcript_Len > 0
+               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                           | Suite_AES_256_GCM_SHA384
+                                           | Suite_CHACHA20_POLY1305_SHA256
+               and then Plaintext'First = 0
+               and then Plaintext'Last < N32'Last / 2
+               and then Plain_Len <= N32 (Plaintext'Length)
+               and then Pos <= N32'Last - 4
+               and then Pos + 4 <= Plain_Len,
+        Post => Pos <= Plain_Len
+                and then (if Result = OK
+                          and then S.State in Wait_Encrypted_Extensions
+                                              | Wait_Certificate_Request
+                                              | Wait_Certificate
+                                              | Wait_Certificate_Verify
+                                              | Wait_Server_Finished then
+                             Pos > Pos'Old
+                             and then Nonce_Space_Available (HC.Client_HS)
+                             and then Nonce_Space_Available (S.Client_App)
+                             and then HC.Transcript_Len > 0
+                             and then S.Negotiated_Suite
+                                in Suite_AES_128_GCM_SHA256
+                                 | Suite_AES_256_GCM_SHA384
+                                 | Suite_CHACHA20_POLY1305_SHA256);
 
 
    procedure Process_Connected
@@ -388,6 +595,11 @@ is
                 then Nonce_Space_Available (HC.Client_HS)
                      and then Nonce_Space_Available (HC.Server_HS)
                      and then Nonce_Space_Available (S.Client_App)
+                     and then HC.Transcript_Len > 0
+                     and then S.Negotiated_Suite
+                        in Suite_AES_128_GCM_SHA256
+                         | Suite_AES_256_GCM_SHA384
+                         | Suite_CHACHA20_POLY1305_SHA256
                      and then Reasm_Coherent (HC)
                      and then (HC.Reasm_Buf = null
                                or else (HC.Reasm_Buf'First = 0
@@ -396,7 +608,9 @@ is
                                         and then HC.Reasm_Len
                                            <= N32 (HC.Reasm_Buf'Length)
                                         and then HC.Reasm_Need
-                                           <= N32 (HC.Reasm_Buf'Length))))
+                                           <= N32 (HC.Reasm_Buf'Length)
+                                        and then (if HC.Reasm_Need > 0
+                                                  then HC.Reasm_Need >= 4))))
       and then (if S.State = Client_Finished_Sent
                 then HC.Transcript_Len > 0
                      and then S.Negotiated_Suite
@@ -563,7 +777,7 @@ is
       return H;
    end Transcript_Hash_384;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Extract_ALPN_From_EE — see forward decl above for contract.
    --
    --  All offsets are computed against P, kept invariant by the
@@ -571,7 +785,7 @@ is
    --  before the inner read. Ext_End is the absolute index just
    --  past the last extension byte; computed once from the 2-byte
    --  ext_total_len read at fixed offset Body+0..1.
-   --================================================================
+   ----------------------------------------------------------------------------
    procedure Extract_ALPN_From_EE
      (Data : in     Byte_Seq;
       HC   : in     Handshake_Context;
@@ -838,7 +1052,13 @@ is
                                             | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if S.State /= Error_State
                  then HC.Client_HS = HC.Client_HS'Old
-                      and S.Client_App = S.Client_App'Old);
+                      and S.Client_App = S.Client_App'Old
+                      and HC.Transcript_Len > 0
+                      and S.Negotiated_Suite
+                         in Suite_AES_128_GCM_SHA256
+                          | Suite_AES_256_GCM_SHA384
+                          | Suite_CHACHA20_POLY1305_SHA256)
+                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_EE_13
      (S      : in out Session;
@@ -910,7 +1130,13 @@ is
                                             | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if S.State /= Error_State
                  then HC.Client_HS = HC.Client_HS'Old
-                      and S.Client_App = S.Client_App'Old);
+                      and S.Client_App = S.Client_App'Old
+                      and HC.Transcript_Len > 0
+                      and S.Negotiated_Suite
+                         in Suite_AES_128_GCM_SHA256
+                          | Suite_AES_256_GCM_SHA384
+                          | Suite_CHACHA20_POLY1305_SHA256)
+                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CertReq_13
      (S      : in out Session;
@@ -1111,7 +1337,13 @@ is
                                             | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if S.State /= Error_State
                  then HC.Client_HS = HC.Client_HS'Old
-                      and S.Client_App = S.Client_App'Old);
+                      and S.Client_App = S.Client_App'Old
+                      and HC.Transcript_Len > 0
+                      and S.Negotiated_Suite
+                         in Suite_AES_128_GCM_SHA256
+                          | Suite_AES_256_GCM_SHA384
+                          | Suite_CHACHA20_POLY1305_SHA256)
+                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_Cert_13
      (S      : in out Session;
@@ -1248,10 +1480,21 @@ is
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
                 and then Data'Length <= Transcript_Capacity
-                and then Nonce_Space_Available (HC.Client_HS),
+                and then HC.Transcript_Len > 0
+                and then Nonce_Space_Available (HC.Client_HS)
+                and then Nonce_Space_Available (S.Client_App)
+                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                            | Suite_AES_256_GCM_SHA384
+                                            | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if S.State /= Error_State
                  then HC.Client_HS = HC.Client_HS'Old
-                      and S.Client_App = S.Client_App'Old);
+                      and S.Client_App = S.Client_App'Old
+                      and HC.Transcript_Len > 0
+                      and S.Negotiated_Suite
+                         in Suite_AES_128_GCM_SHA256
+                          | Suite_AES_256_GCM_SHA384
+                          | Suite_CHACHA20_POLY1305_SHA256)
+                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CV_13
      (S       : in out Session;
@@ -1409,7 +1652,8 @@ is
         --  replaced (not pinned to 'Old). Nonce headroom is guaranteed
         --  because the new key starts with Counter = 0.
         Post => (if Result = Has_Output
-                 then Nonce_Space_Available (S.Client_App))
+                 then Nonce_Space_Available (S.Client_App)
+                      and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
                 and then Result in Has_Output | Error_Alert;
 
    procedure Handle_Finished_13
@@ -2975,6 +3219,349 @@ is
       Process_Handshake_Message (S, HC, Msg, Result);
    end Dispatch_Decrypted_HS_Message;
 
+   procedure Dispatch_Completed_Decrypted_Reasm
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plain_Len : in     N32;
+      Pos       : in out N32;
+      Result    :    out Action)
+   is
+   begin
+      declare
+         Reasm_Need_Const : constant N32 := HC.Reasm_Need;
+         Full : constant Byte_Seq :=
+            HC.Reasm_Buf (0 .. Reasm_Need_Const - 1);
+      begin
+         Dispatch_Decrypted_HS_Message (S, HC, Full, Result);
+      end;
+
+      pragma Assert
+        (if Result = OK and then S.State /= Error_State then
+            S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                | Suite_AES_256_GCM_SHA384
+                                | Suite_CHACHA20_POLY1305_SHA256);
+      Free_Byte_Seq (HC.Reasm_Buf);
+      pragma Assert
+        (if Result = OK and then S.State /= Error_State then
+            S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                | Suite_AES_256_GCM_SHA384
+                                | Suite_CHACHA20_POLY1305_SHA256);
+      HC.Reasm_Len := 0;
+      HC.Reasm_Need := 0;
+      if Result = Error_Alert then
+         Pos := Plain_Len;  --  skip rest
+      end if;
+      pragma Assert
+        (if Result = OK and then S.State /= Error_State then
+            S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                | Suite_AES_256_GCM_SHA384
+                                | Suite_CHACHA20_POLY1305_SHA256);
+   end Dispatch_Completed_Decrypted_Reasm;
+
+   procedure Copy_Decrypted_Reasm_Bytes
+     (HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      From      : in     N32;
+      Take      : in     N32)
+   is
+   begin
+      HC.Reasm_Buf
+        (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
+         Plaintext (From .. From + Take - 1);
+      HC.Reasm_Len := HC.Reasm_Len + Take;
+   end Copy_Decrypted_Reasm_Bytes;
+
+   procedure Decode_Decrypted_Reasm_Header
+     (HC            : in out Handshake_Context;
+      Decode_Failed :    out Boolean)
+   is
+      Max_HS_Msg : constant N32 := 131072;
+   begin
+      Decode_Failed := False;
+      pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+      pragma Assert (HC.Reasm_Buf'Length >= 4);
+      pragma Assert (HC.Reasm_Buf'Last >= 3);
+
+      declare
+         HS_Total : constant N32 :=
+            N32 (HC.Reasm_Buf (1)) * 65536
+            + N32 (HC.Reasm_Buf (2)) * 256
+            + N32 (HC.Reasm_Buf (3)) + 4;
+      begin
+         HC.Reasm_Hdr_Pending := False;
+         if HS_Total > Max_HS_Msg
+           or else HS_Total > N32 (HC.Reasm_Buf'Length)
+         then
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0;
+            HC.Reasm_Need := 0;
+            Decode_Failed := True;
+            return;
+         end if;
+         HC.Reasm_Need := HS_Total;
+      end;
+   end Decode_Decrypted_Reasm_Header;
+
+   procedure Fill_Decrypted_HS_Reassembly
+     (HC            : in out Handshake_Context;
+      Plaintext     : in     Byte_Seq;
+      Plain_Len     : in     N32;
+      Pos           :    out N32;
+      Decode_Failed :    out Boolean)
+   is
+   begin
+      Decode_Failed := False;
+
+      declare
+         --  PackHandshake leftover can leave Reasm_Len > Reasm_Need
+         --  temporarily; guard the subtraction.
+         Remaining : constant N32 :=
+            (if HC.Reasm_Len <= HC.Reasm_Need
+             then HC.Reasm_Need - HC.Reasm_Len
+             else 0);
+         Copy_Len  : constant N32 :=
+            N32'Min (Plain_Len, Remaining);
+      begin
+         if Copy_Len > 0
+           and then HC.Reasm_Len + Copy_Len <=
+               N32 (HC.Reasm_Buf'Length)
+         then
+            Copy_Decrypted_Reasm_Bytes
+              (HC, Plaintext, 0, Copy_Len);
+         end if;
+         Pos := Copy_Len;
+      end;
+
+      --  Header-pending sentinel: once 4 bytes are in, decode the
+      --  real HS_Total. BoGo's SplitHandshakeRecords (1-byte
+      --  fragments) exercises this.
+      if HC.Reasm_Hdr_Pending
+        and then HC.Reasm_Len >= 4
+      then
+         Decode_Decrypted_Reasm_Header (HC, Decode_Failed);
+         if Decode_Failed then
+            return;
+         end if;
+
+         --  Now that Reasm_Need is real, drain more body bytes from
+         --  this same record if any.
+         if HC.Reasm_Len < HC.Reasm_Need
+           and Pos < Plain_Len
+         then
+            declare
+               Need2 : constant N32 :=
+                  HC.Reasm_Need - HC.Reasm_Len;
+               Take2 : constant N32 :=
+                  N32'Min (Need2, Plain_Len - Pos);
+            begin
+               if Take2 > 0
+                 and then HC.Reasm_Len + Take2 <=
+                     N32 (HC.Reasm_Buf'Length)
+               then
+                  pragma Assert (HC.Reasm_Buf'Last in 0 .. 131071);
+                  Copy_Decrypted_Reasm_Bytes
+                    (HC, Plaintext, Pos, Take2);
+               end if;
+               Pos := Pos + Take2;
+               pragma Assert
+                 (HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+            end;
+         end if;
+      end if;
+      pragma Assert
+        (if not Decode_Failed then
+            HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+   end Fill_Decrypted_HS_Reassembly;
+
+   procedure Continue_Decrypted_HS_Reassembly
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Pos       :    out N32;
+      Result    :    out Action)
+   is
+   begin
+      Result := OK;
+      Pos := 0;
+
+      if HC.Reasm_Need > 0 and HC.Reasm_Buf /= null then
+         declare
+            Decode_Failed : Boolean;
+         begin
+            Fill_Decrypted_HS_Reassembly
+              (HC, Plaintext, Plain_Len, Pos, Decode_Failed);
+
+            if Decode_Failed then
+               S.Last_Error := Decode_Error;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+               return;
+            end if;
+         end;
+
+         if HC.Reasm_Len >= HC.Reasm_Need then
+            --  Full message reassembled. Belt-and-braces bound check:
+            --  Reasm_Need is always set to 4 (header sentinel) or
+            --  HS_Total >= 4, so this is unreachable in practice but
+            --  the prover doesn't know without an explicit guard before
+            --  slicing for PHM.
+            if HC.Reasm_Need < 4
+              or else HC.Reasm_Need > Transcript_Capacity
+            then
+               Free_Byte_Seq (HC.Reasm_Buf);
+               HC.Reasm_Len := 0;
+               HC.Reasm_Need := 0;
+               S.Last_Error := Decode_Error;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+               return;
+            end if;
+
+            Dispatch_Completed_Decrypted_Reasm
+              (S, HC, Plain_Len, Pos, Result);
+         else
+            --  Still need more data
+            Pos := Plain_Len;  --  consumed all
+         end if;
+      end if;
+   end Continue_Decrypted_HS_Reassembly;
+
+   procedure Process_One_Decrypted_HS_Message
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Pos       : in out N32;
+      Result    : in out Action)
+   is
+   begin
+      declare
+         HS_Len : constant N32 :=
+            N32 (Plaintext (Pos + 1)) * 65536 +
+            N32 (Plaintext (Pos + 2)) * 256 +
+            N32 (Plaintext (Pos + 3));
+         Msg_Total : constant N32 := 4 + HS_Len;
+         Msg_End   : constant N32 := Pos + Msg_Total;
+      begin
+         --  PHM.Pre requires Data'Length <= Transcript_Capacity.
+         --  Reject oversize HS messages early so we do not allocate
+         --  beyond what we can transcript.
+         if Msg_Total > Transcript_Capacity then
+            S.Last_Error := Decode_Error;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            Pos := Plain_Len;
+            return;
+         end if;
+
+         if Msg_End > Plain_Len then
+            --  Message spans into next record.
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Buf := new Byte_Seq'(0 .. Msg_Total - 1 => 0);
+            HC.Reasm_Need := Msg_Total;
+            declare
+               Avail : constant N32 := Plain_Len - Pos;
+            begin
+               HC.Reasm_Buf (0 .. Avail - 1) :=
+                  Plaintext (Pos .. Plain_Len - 1);
+               HC.Reasm_Len := Avail;
+            end;
+            Pos := Plain_Len;
+            return;
+         end if;
+
+         --  Complete message -- process it.
+         declare
+            Msg_Copy : Byte_Seq (0 .. Msg_Total - 1);
+         begin
+            Msg_Copy := Plaintext (Pos .. Msg_End - 1);
+            Dispatch_Decrypted_HS_Message (S, HC, Msg_Copy, Result);
+         end;
+
+         Pos := Msg_End;
+
+         --  Has_Output is either a fatal alert flight or the successful
+         --  client Finished flight. In either case this record must not
+         --  contain another server handshake message.
+         if Result /= OK then
+            if Result = Has_Output
+              and then S.State not in Idle | Closing | Closed | Error_State
+              and then Pos < Plain_Len
+            then
+               Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+            end if;
+            return;
+         end if;
+
+         if S.State = Error_State then
+            return;
+         end if;
+
+         --  RFC 8446 §4.4.4: server Finished is the last server
+         --  handshake message. After dispatch moves us out of the
+         --  expected server-handshake states, any trailing plaintext is
+         --  excess handshake data.
+         if S.State /= Wait_Server_Finished
+           and S.State /= Wait_Certificate
+           and S.State /= Wait_Certificate_Verify
+           and S.State /= Wait_Encrypted_Extensions
+           and S.State /= Wait_Certificate_Request
+           and S.State /= Idle
+           and S.State /= Closing
+           and S.State /= Closed
+           and S.State /= Error_State
+           and Pos < Plain_Len
+         then
+            Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+         end if;
+      end;
+   end Process_One_Decrypted_HS_Message;
+
+   procedure Process_Decrypted_HS_Packed_Messages
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Pos       : in out N32;
+      Result    : in out Action)
+   is
+   begin
+      --  Process complete messages in this record. Loop condition
+      --  includes state sanity so the loop exits cleanly after PHM
+      --  moves us to Error_State.
+      while Pos + 4 <= Plain_Len
+        and then Result = OK
+        and then S.State in Wait_Encrypted_Extensions
+                            | Wait_Certificate_Request
+                            | Wait_Certificate
+                            | Wait_Certificate_Verify
+                            | Wait_Server_Finished
+      loop
+         pragma Loop_Invariant
+           (Pos >= 0 and then Pos + 4 <= Plain_Len
+            and then Result = OK
+            and then Plain_Len <= N32 (Plaintext'Length)
+            and then Plaintext'First = 0
+            and then Plaintext'Last < N32'Last / 2
+            and then S.State in Wait_Encrypted_Extensions
+                                | Wait_Certificate_Request
+                                | Wait_Certificate
+                                | Wait_Certificate_Verify
+                                | Wait_Server_Finished
+            and then Nonce_Space_Available (HC.Client_HS)
+            and then Nonce_Space_Available (S.Client_App)
+            and then HC.Transcript_Len > 0
+            and then S.Negotiated_Suite
+               in Suite_AES_128_GCM_SHA256
+                | Suite_AES_256_GCM_SHA384
+                | Suite_CHACHA20_POLY1305_SHA256);
+
+         Process_One_Decrypted_HS_Message
+           (S, HC, Plaintext, Plain_Len, Pos, Result);
+      end loop;
+   end Process_Decrypted_HS_Packed_Messages;
+
    --  Process encrypted handshake records (post-ServerHello)
    procedure Process_Decrypted_Handshake_Bytes
      (S         : in out Session;
@@ -2985,251 +3572,27 @@ is
    is
    begin
       Result := OK;
-                  declare
-                     Pos : N32 := 0;
-                     Max_HS_Msg : constant N32 := 131072;
-                  begin
-                     --  If we have a partial message from a previous
-                     --  record, continue filling the reassembly buffer.
-                     if HC.Reasm_Need > 0 and HC.Reasm_Buf /= null then
-                        declare
-                           --  PackHandshake leftover can leave
-                           --  Reasm_Len > Reasm_Need temporarily;
-                           --  guard the subtraction.
-                           Remaining : constant N32 :=
-                              (if HC.Reasm_Len <= HC.Reasm_Need
-                               then HC.Reasm_Need - HC.Reasm_Len
-                               else 0);
-                           Copy_Len  : constant N32 :=
-                              N32'Min (Plain_Len, Remaining);
-                        begin
-                           if HC.Reasm_Len + Copy_Len <=
-                                 N32 (HC.Reasm_Buf'Length)
-                           then
-                              HC.Reasm_Buf
-                                (HC.Reasm_Len ..
-                                 HC.Reasm_Len + Copy_Len - 1) :=
-                                 Plaintext (0 .. Copy_Len - 1);
-                              HC.Reasm_Len := HC.Reasm_Len + Copy_Len;
-                           end if;
-                           Pos := Copy_Len;
-                        end;
+      declare
+         Pos : N32;
+         Max_HS_Msg : constant N32 := 131072;
+      begin
+         Continue_Decrypted_HS_Reassembly
+           (S, HC, Plaintext, Plain_Len, Pos, Result);
 
-                        --  Header-pending sentinel: once 4 bytes are
-                        --  in, decode the real HS_Total. BoGo's
-                        --  SplitHandshakeRecords (1-byte fragments)
-                        --  exercises this.
-                        if HC.Reasm_Hdr_Pending
-                          and then HC.Reasm_Len >= 4
-                        then
-                           declare
-                              HS_Total : constant N32 :=
-                                 N32 (HC.Reasm_Buf (1)) * 65536
-                                 + N32 (HC.Reasm_Buf (2)) * 256
-                                 + N32 (HC.Reasm_Buf (3)) + 4;
-                           begin
-                              HC.Reasm_Hdr_Pending := False;
-                              if HS_Total > Max_HS_Msg then
-                                 Free_Byte_Seq (HC.Reasm_Buf);
-                                 HC.Reasm_Len := 0;
-                                 HC.Reasm_Need := 0;
-                                 S.Last_Error := Decode_Error;
-                                 Set_State (S, Error_State);
-                                 Result := Error_Alert;
-                                 return;
-                              end if;
-                              HC.Reasm_Need := HS_Total;
-                           end;
-                           --  Now that Reasm_Need is real, drain more
-                           --  body bytes from this same record if any.
-                           if HC.Reasm_Len < HC.Reasm_Need
-                             and Pos < Plain_Len
-                           then
-                              declare
-                                 Need2 : constant N32 :=
-                                    HC.Reasm_Need - HC.Reasm_Len;
-                                 Take2 : constant N32 :=
-                                    N32'Min (Need2, Plain_Len - Pos);
-                              begin
-                                 if HC.Reasm_Len + Take2 <=
-                                       N32 (HC.Reasm_Buf'Length)
-                                 then
-                                    HC.Reasm_Buf
-                                      (HC.Reasm_Len ..
-                                       HC.Reasm_Len + Take2 - 1) :=
-                                       Plaintext (Pos .. Pos + Take2 - 1);
-                                    HC.Reasm_Len := HC.Reasm_Len + Take2;
-                                 end if;
-                                 Pos := Pos + Take2;
-                              end;
-                           end if;
-                        end if;
+         if Result = Error_Alert then
+            return;
+         end if;
 
-                        if HC.Reasm_Len >= HC.Reasm_Need then
-                           --  Full message reassembled. Belt-and-braces
-                           --  bound check: Reasm_Need is always set to
-                           --  4 (header sentinel) or HS_Total >= 4, so
-                           --  this is unreachable in practice but the
-                           --  prover doesn't know without an explicit
-                           --  guard before slicing for PHM.
-                           if HC.Reasm_Need < 4
-                             or else HC.Reasm_Need > Transcript_Capacity
-                           then
-                              Free_Byte_Seq (HC.Reasm_Buf);
-                              HC.Reasm_Len := 0;
-                              HC.Reasm_Need := 0;
-                              S.Last_Error := Decode_Error;
-                              Set_State (S, Error_State);
-                              Result := Error_Alert;
-                              return;
-                           end if;
-                           declare
-                              Reasm_Need_Const : constant N32 := HC.Reasm_Need;
-                              Full : constant Byte_Seq :=
-                                 HC.Reasm_Buf (0 .. Reasm_Need_Const - 1);
-                           begin
-                              Dispatch_Decrypted_HS_Message
-                                (S, HC, Full, Result);
-                           end;
-                           Free_Byte_Seq (HC.Reasm_Buf);
-                           HC.Reasm_Len := 0;
-                           HC.Reasm_Need := 0;
-                           if Result = Error_Alert then
-                              Pos := Plain_Len;  --  skip rest
-                           end if;
-                        else
-                           --  Still need more data
-                           Pos := Plain_Len;  --  consumed all
-                        end if;
-                     end if;
-
-                     --  Process complete messages in this record.
-                     --  Loop condition includes state sanity so the loop
-                     --  exits cleanly after PHM moves us to Error_State.
-                     while Pos + 4 <= Plain_Len
-                       and then S.State not in Idle | Closing
-                                              | Closed | Error_State
-                     loop
-                        pragma Loop_Invariant
-                          (Pos >= 0 and then Pos + 4 <= Plain_Len
-                           and then Plain_Len <= N32 (Plaintext'Length)
-                           and then Plaintext'First = 0
-                           and then Plaintext'Last < N32'Last / 2
-                           and then S.State not in Idle | Closing
-                                                 | Closed | Error_State
-                           and then (if S.State in Wait_Encrypted_Extensions
-                                                   | Wait_Certificate_Request
-                                                   | Wait_Certificate
-                                                   | Wait_Certificate_Verify
-                                                   | Wait_Server_Finished
-                                     then Nonce_Space_Available (HC.Client_HS))
-                           and then Nonce_Space_Available (S.Client_App)
-                           and then HC.Transcript_Len > 0
-                           and then S.Negotiated_Suite
-                              in Suite_AES_128_GCM_SHA256
-                               | Suite_AES_256_GCM_SHA384
-                               | Suite_CHACHA20_POLY1305_SHA256);
-                        declare
-                           HS_Len : constant N32 :=
-                              N32 (Plaintext (Pos + 1)) * 65536 +
-                              N32 (Plaintext (Pos + 2)) * 256 +
-                              N32 (Plaintext (Pos + 3));
-                           Msg_Total : constant N32 := 4 + HS_Len;
-                           Msg_End   : constant N32 := Pos + Msg_Total;
-                        begin
-                           --  PHM.Pre requires Data'Length
-                           --  <= Transcript_Capacity (the transcript
-                           --  buffer cap). Reject oversize HS messages
-                           --  early so the loop body satisfies the
-                           --  contract and so we don't allocate beyond
-                           --  what we can transcript.
-                           if Msg_Total > Transcript_Capacity then
-                              S.Last_Error := Decode_Error;
-                              Set_State (S, Error_State);
-                              Result := Error_Alert;
-                              exit;
-                           end if;
-
-                           if Msg_End > Plain_Len then
-                              --  Message spans into next record.
-                              --  Start reassembly. Free any prior
-                              --  buffer first; the prover models
-                              --  Reasm_Buf as potentially non-null,
-                              --  so the explicit Free is required to
-                              --  discharge the leak medium.
-                              Free_Byte_Seq (HC.Reasm_Buf);
-                              HC.Reasm_Buf := new Byte_Seq'
-                                 (0 .. Msg_Total - 1 => 0);
-                              HC.Reasm_Need := Msg_Total;
-                              declare
-                                 Avail : constant N32 :=
-                                    Plain_Len - Pos;
-                              begin
-                                 HC.Reasm_Buf (0 .. Avail - 1) :=
-                                    Plaintext (Pos .. Plain_Len - 1);
-                                 HC.Reasm_Len := Avail;
-                              end;
-                              exit;  --  wait for next record
-                           end if;
-
-                           --  Complete message — process it
-                           declare
-                              Msg_Copy : Byte_Seq
-                                 (0 .. Msg_Total - 1);
-                           begin
-                              Msg_Copy :=
-                                 Plaintext (Pos .. Msg_End - 1);
-                              Dispatch_Decrypted_HS_Message
-                                (S, HC, Msg_Copy, Result);
-                           end;
-                           --  Bail on any terminal state — even if
-                           --  Process_Handshake_Message returned
-                           --  Has_Output (alert queued, output pending)
-                           --  we must not keep processing further
-                           --  packed messages from this same record.
-                           if Result = Error_Alert
-                             or else S.State = Error_State
-                           then
-                              exit;
-                           end if;
-                           Pos := Msg_End;
-                           --  RFC 8446 §4.4.4: server Finished is the
-                           --  last server handshake message. After we
-                           --  dispatch it (state transitions out of
-                           --  Wait_Server_Finished), any plaintext
-                           --  remaining in this record is excess
-                           --  handshake data → fatal unexpected_message
-                           --  (BoGo TrailingDataWithFinished).
-                           if S.State /= Wait_Server_Finished
-                             and S.State /= Wait_Certificate
-                             and S.State /= Wait_Certificate_Verify
-                             and S.State /= Wait_Encrypted_Extensions
-                             and S.State /= Wait_Certificate_Request
-                             and S.State /= Idle
-                             and S.State /= Closing
-                             and S.State /= Closed
-                             and S.State /= Error_State
-                             and Pos < Plain_Len
-                           then
-                              --  BoGo TrailingDataWithFinished: stray
-                              --  bytes after server's Finished →
-                              --  fatal unexpected_message.
-                              --
-                              --  Derive_App_Keys_And_Send_Finished has
-                              --  already run (state = Client_Finished_
-                              --  _Sent), so the server's read key has
-                              --  switched from server_handshake_traffic_
-                              --  secret to client_application_traffic_
-                              --  secret. Encrypting this alert under
-                              --  HC.Client_HS would now be rejected as
-                              --  bad_record_mac. Use the app-secret
-                              --  helper.
-                              Send_App_Encrypted_Alert
-                                (S, Unexpected_Message, Result);
-                              exit;
-                           end if;
-                        end;
-                     end loop;
+         if Result = OK
+           and then S.State in Wait_Encrypted_Extensions
+                               | Wait_Certificate_Request
+                               | Wait_Certificate
+                               | Wait_Certificate_Verify
+                               | Wait_Server_Finished
+         then
+            Process_Decrypted_HS_Packed_Messages
+              (S, HC, Plaintext, Plain_Len, Pos, Result);
+         end if;
 
                      --  Tail handling: 1..3 stray bytes left in this
                      --  record (server fragmented the 4-byte HS header
@@ -3257,9 +3620,9 @@ is
                            HC.Reasm_Len := Avail;
                            HC.Reasm_Buf (0 .. Avail - 1) :=
                               Plaintext (Pos .. Pos + Avail - 1);
-                        end;
-                     end if;
-                  end;
+	                        end;
+	                     end if;
+      end;
    end Process_Decrypted_Handshake_Bytes;
 
    procedure Handle_Encrypted_App_Data
@@ -3284,12 +3647,20 @@ is
                Hdr        : Byte_Seq (0 .. 4) :=
                   S.Input.Data (S.Input.Read_Pos ..
                                  S.Input.Read_Pos + 4);
-               Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
-               Plain_Len  : N32;
-               Inner_Type : Byte;
-               Dec_Valid  : Boolean;
-            begin
-               if Frag_Len <= Records.Tag_Size then
+	               Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
+	               Plain_Len  : N32;
+	               Inner_Type : Byte;
+	               Dec_Valid  : Boolean;
+	               Server_HS_Copy : Traffic_Keys := HC.Server_HS;
+	               Saved_Transcript_Len : constant N32 := HC.Transcript_Len;
+	               Saved_Suite : constant Unsigned_16 := S.Negotiated_Suite;
+	            begin
+	               pragma Assert (Saved_Transcript_Len > 0);
+	               pragma Assert
+	                 (Saved_Suite in Suite_AES_128_GCM_SHA256
+	                               | Suite_AES_256_GCM_SHA384
+	                               | Suite_CHACHA20_POLY1305_SHA256);
+	               if Frag_Len <= Records.Tag_Size then
                   S.Last_Error := Decode_Error;
                   S.Input.Read_Pos := Next_Read;
                   Set_State (S, Error_State);
@@ -3297,20 +3668,21 @@ is
                   return;
                end if;
 
-               Records.Decrypt_Record
-                 (Encrypted  => Encrypted,
-                  Record_Hdr => Hdr,
-                  Keys       => HC.Server_HS,
-                  Plaintext  => Plaintext,
-                  Plain_Len  => Plain_Len,
-                  Inner_Type => Inner_Type,
-                  Valid      => Dec_Valid);
+	               Records.Decrypt_Record
+	                 (Encrypted  => Encrypted,
+	                  Record_Hdr => Hdr,
+	                  Keys       => Server_HS_Copy,
+	                  Plaintext  => Plaintext,
+	                  Plain_Len  => Plain_Len,
+	                  Inner_Type => Inner_Type,
+	                  Valid      => Dec_Valid);
+	               HC.Transcript_Len := Saved_Transcript_Len;
 
-               S.Input.Read_Pos := Next_Read;
-
-               if not Dec_Valid then
-                  --  RFC 8446 §5.2: AEAD decryption failure MUST emit
-                  --  a fatal bad_record_mac alert. Encrypted under
+	               if not Dec_Valid then
+	                  HC.Server_HS.Counter := Server_HS_Copy.Counter;
+	                  S.Input.Read_Pos := Next_Read;
+	                  --  RFC 8446 §5.2: AEAD decryption failure MUST emit
+	                  --  a fatal bad_record_mac alert. Encrypted under
                   --  HC.Client_HS via the helper.
                   Send_HS_Encrypted_Alert
                     (S, HC, Bad_Record_MAC, Result);
@@ -3318,27 +3690,32 @@ is
                   if Output_Pending (S) > 0 then
                      pragma Assert
                        (AEAD_Failure_Alert_Queued_RFC_8446_5_2 (S));
-                  end if;
-                  return;
-               end if;
+	                  end if;
+	                  return;
+	               end if;
+	               S.Input.Read_Pos := Next_Read;
+	               S.Negotiated_Suite := Saved_Suite;
 
-               --  Inner type should be handshake (0x16)
+	               --  Inner type should be handshake (0x16)
                --  A single encrypted record may contain multiple
                --  handshake messages, or a single message may span
                --  multiple records. Use Reasm_Buf for cross-record
-               --  reassembly.
-               if Inner_Type = 16#16# then
-                  Process_Decrypted_Handshake_Bytes
-                    (S, HC, Plaintext, Plain_Len, Result);
+	               --  reassembly.
+	               if Inner_Type = 16#16# then
+	                  HC.Transcript_Len := Saved_Transcript_Len;
+	                  pragma Assert (HC.Transcript_Len > 0);
+	                  Process_Decrypted_Handshake_Bytes
+	                    (S, HC, Plaintext, Plain_Len, Result);
                elsif Inner_Type = 16#15# then
                   --  Alert
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
                   Result := Error_Alert;
-               else
-                  Result := OK;
-               end if;
-            end;
+	               else
+		                  Result := OK;
+		               end if;
+		               HC.Server_HS.Counter := Server_HS_Copy.Counter;
+		            end;
    end Handle_Encrypted_App_Data;
 
    procedure Process_Encrypted_Handshake

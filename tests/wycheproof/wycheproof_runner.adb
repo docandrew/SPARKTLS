@@ -123,9 +123,9 @@ procedure Wycheproof_Runner is
    procedure Reply_Invalid is
    begin Put_Line ("invalid"); end;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Verifier dispatchers
-   --================================================================
+   ----------------------------------------------------------------------------
 
    procedure Do_RSA_PKCS1_SHA256
      (Hex_Mod, Hex_Exp, Hex_Hash, Hex_Sig : String)

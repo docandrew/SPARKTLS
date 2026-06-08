@@ -61,14 +61,14 @@ is
       Dealloc (Buf);
    end RFLX_Free;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Per-extension helpers extracted from Parse_Client_Hello
    --  to keep each piece small enough for SPARK to discharge.
    --
    --  The caller (Parse_Client_Hello's extensions loop) owns the
    --  outer CH_Extension_TLS context (Ext_Ctx); each helper consumes
    --  its data via Get_Data / Get_Data_Length.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    procedure Parse_KS_Data
      (Data : in     Byte_Seq;
@@ -2458,17 +2458,17 @@ is
       OK := True;
    end Parse_Client_Hello;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Server-side build procedures
-   --================================================================
+   ----------------------------------------------------------------------------
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Helpers extracted from Build_Server_Hello so each piece is
    --  small enough for SPARK's SMT solvers to discharge.
    --
    --  KS_Raw layout: 4-byte TLS NamedGroupEntry header (group(2) +
    --  key_len(2)) followed by the encoded public key bytes.
-   --================================================================
+   ----------------------------------------------------------------------------
 
    subtype KS_Raw_Buffer is Byte_Seq (0 .. 103);  --  max P-384: 4 + 97
    --  Wire representation of a single TLS 1.3 KeyShareEntry.

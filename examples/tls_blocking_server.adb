@@ -88,6 +88,7 @@ procedure TLS_Blocking_Server is
       S         : SPARKTLS.Session;
       Res       : SPARKTLS.Action;
       Read_Dead : Boolean := False;
+      Write_Dead : Boolean := False;
 
       Net_In  : Byte_Seq (0 .. 16383);
       Net_Out : Byte_Seq (0 .. 16383);
@@ -108,6 +109,9 @@ procedure TLS_Blocking_Server is
                GNAT.Sockets.Send_Socket (Client_Sock, SE, Last);
             end;
          end loop;
+      exception
+         when Socket_Error =>
+            Write_Dead := True;
       end Send_Output;
 
       procedure Read_Input is
@@ -157,6 +161,9 @@ procedure TLS_Blocking_Server is
          case Res is
             when Has_Output =>
                Send_Output;
+               if Write_Dead then
+                  exit;
+               end if;
 
             when Need_Input =>
                if Read_Dead then exit; end if;
@@ -223,6 +230,8 @@ procedure TLS_Blocking_Server is
       end loop;
 
    exception
+      when Socket_Error =>
+         null;
       when E : others =>
          Put_Line ("  Connection error: " &
                    Ada.Exceptions.Exception_Message (E));
@@ -304,7 +313,7 @@ begin
                 (Family => Family_Inet,
                  Addr   => Any_Inet_Addr,
                  Port   => Port));
-   Listen_Socket (Server_Sock, 5);
+   Listen_Socket (Server_Sock, 128);
 
    Put_Line ("Ready.");
 

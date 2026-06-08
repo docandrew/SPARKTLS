@@ -1,3 +1,5 @@
 #!/bin/sh
-eval $(alr printenv --unix)
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
+eval $(alr -n --no-tty printenv --unix)
 make

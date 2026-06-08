@@ -5,11 +5,13 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$DIR/../.."
 CLI="$REPO/bin/sparktls_cli"
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
 
 # Build CLI if needed
 if [ ! -f "$CLI" ]; then
     echo "Building sparktls_cli..."
-    (cd "$REPO/cli" && alr build 2>/dev/null)
+    (cd "$REPO/cli" && alr -n --no-tty build 2>/dev/null)
 fi
 
 # Ed25519

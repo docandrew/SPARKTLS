@@ -9,6 +9,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$DIR/../.."
 WP_DIR="$DIR/wycheproof"
 RUNNER="$REPO_ROOT/bin/tests/wycheproof_runner"
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
 
 if [ ! -d "$WP_DIR/testvectors_v1" ]; then
     echo "Cloning Wycheproof test vectors (sparse, ~30 MB)..."
@@ -20,7 +22,7 @@ fi
 
 if [ ! -f "$RUNNER" ]; then
     echo "Building wycheproof_runner..."
-    (cd "$DIR" && alr exec -- gprbuild -P wycheproof_runner.gpr 2>&1 | tail -3)
+    (cd "$DIR" && alr -n --no-tty exec -- gprbuild -P wycheproof_runner.gpr 2>&1 | tail -3)
 fi
 
 if [ ! -f "$RUNNER" ]; then

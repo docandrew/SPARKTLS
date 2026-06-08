@@ -1,6 +1,7 @@
 name = "sparktls"
 description = "SPARK implementation of TLS 1.3"
 version = "0.0.0"
+licenses = "BSD-3-Clause"
 
 authors = ["Jon Andrew"]
 maintainers = ["Jon Andrew <jonfandrew@fastmail.com>"]

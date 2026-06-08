@@ -59,9 +59,9 @@ is
       Dealloc (Buf);
    end RFLX_Free;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Build procedures (keep manual serialization for simple output)
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Append a 2-byte cipher_suite entry to the in-flight RFLX
    --  CipherSuites sequence. Encapsulates the buffer-init / set /
@@ -852,9 +852,9 @@ is
 
    end Build_Client_Hello;
 
-   --================================================================
+   ----------------------------------------------------------------------------
    --  Parse procedures (using RecordFlux-generated parsers)
-   --================================================================
+   ----------------------------------------------------------------------------
 
    --  Pre-RFLX byte walk of the SH extensions block. Detects
    --  duplicates, unsolicited extensions, and malformed SNI / ALPN

@@ -26,6 +26,8 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$DIR/.."
 cd "$REPO_ROOT"
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
 
 # --- Parse args ---
 # --checked (or env CHECKED_BUILD=1) builds with runtime checks +
@@ -92,7 +94,7 @@ else
     section "Building SPARKTLS"
 fi
 
-if ! alr build 2>&1 | tail -3; then
+if ! alr -n --no-tty build 2>&1 | tail -3; then
     echo "FATAL: Library build failed"
     exit 1
 fi
@@ -100,7 +102,7 @@ cd examples
 if [ "$CHECKED_BUILD" = "1" ]; then
     rm -rf obj/* 2>/dev/null
 fi
-if ! alr build 2>&1 | tail -3; then
+if ! alr -n --no-tty build 2>&1 | tail -3; then
     echo "FATAL: Examples build failed"
     exit 1
 fi
@@ -108,7 +110,7 @@ cd "$REPO_ROOT"
 
 # Build x509 validator if .gpr exists
 if [ -f tests/x509/x509_validate.gpr ]; then
-    eval $(alr printenv --unix)
+    eval $(alr -n --no-tty printenv --unix)
     cd tests/x509
     gprbuild -q -P x509_validate.gpr 2>&1 | tail -3
     cd "$REPO_ROOT"
@@ -117,7 +119,7 @@ fi
 # Build crypto unit tests
 if [ -f tests/unit/alire.toml ]; then
     cd tests/unit
-    alr build 2>&1 | tail -3
+    alr -n --no-tty build 2>&1 | tail -3
     cd "$REPO_ROOT"
 fi
 

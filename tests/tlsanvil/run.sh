@@ -13,6 +13,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$DIR/../.."
 SERVER="$REPO_ROOT/bin/examples/tls_blocking_server"
 PORT=8443
+export ALR_NON_INTERACTIVE=1
+export NO_COLOR=1
 # Container writes output as root via volume mount, so we need a
 # directory we can clean afterwards. Per-run unique dir avoids the
 # need for sudo-rm of stale runs.
@@ -55,8 +57,8 @@ fi
 # Always rebuild the library + example binary so the run reflects
 # the current source. Easy to forget and chase a stale binary.
 echo "Rebuilding sparktls + examples..."
-(cd "$REPO_ROOT" && alr build 2>&1 | tail -2)
-(cd "$REPO_ROOT/examples" && alr build 2>&1 | tail -2)
+(cd "$REPO_ROOT" && alr -n --no-tty build 2>&1 | tail -2)
+(cd "$REPO_ROOT/examples" && alr -n --no-tty build 2>&1 | tail -2)
 
 cleanup() {
     for pid in $(ss -tlnp 2>/dev/null | grep ":$PORT " | grep -oP 'pid=\K\d+'); do
