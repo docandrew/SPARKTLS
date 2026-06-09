@@ -412,7 +412,9 @@ is
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
-   with Pre  => Data'First = 0 and Data'Length > 0
+   with Pre  => Data'First = 0
+                and Data'Length > 0
+                and Data'Last < N32'Last
                 and HC.Version = TLS_1_2,
         Post => (if OK then
                    Valid_TLS12_Suite (S.Negotiated_Suite)

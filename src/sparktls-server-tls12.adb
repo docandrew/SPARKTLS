@@ -168,7 +168,22 @@ is
    --  Forward decl: full handshake state machine entry that the resume
    --  attempt may fall through to.
    procedure Build_Server_Flight_12_Full
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action);
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   with Pre  => HC.Version = TLS_1_2
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
+                and then S.State = Wait_Client_Hello
+                and then S.Role = Role_Server
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => S.State in Server_Hello_Sent | Error_State
+                and then (if S.State = Server_Hello_Sent
+                          then S.Role = Role_Server
+                               and then HC.Version = TLS_1_2
+                               and then HC.Cfg.Local /= null
+                               and then HC.Cfg.Local.Has_Identity
+                               and then HC.Cfg.Random /= null);
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
    --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
@@ -177,7 +192,25 @@ is
    --  then transitions to Wait_Client_Finished to receive the
    --  client's CCS + Finished.
    procedure Build_Abbreviated_Server_Flight_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action);
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   with Pre  => HC.Version = TLS_1_2
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
+                and then HC.Cfg.TLS12_Ticket_Keys /= null
+                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+                and then S.State = Wait_Client_Hello
+                and then S.Role = Role_Server
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                  | Suite_ECDHE_RSA_CHACHA20_SHA256
+                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                  (HC.Server_Seq_12),
+        Post => S.State in Wait_Client_Finished | Error_State;
 
    procedure Build_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
@@ -508,6 +541,31 @@ is
    --  assignments) without the master-secret PRF step.
    procedure Derive_Keys_Resumed_12
      (S : in out Session; HC : in out Handshake_Context)
+   with Pre  => HC.Version = TLS_1_2
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
+                and then HC.Cfg.TLS12_Ticket_Keys /= null
+                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                  | Suite_ECDHE_RSA_CHACHA20_SHA256
+                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+        Post => HC.Version = TLS_1_2
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
+                and then HC.Cfg.TLS12_Ticket_Keys /= null
+                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+                and then S.State = S.State'Old
+                and then S.Role = S.Role'Old
+                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+                and then HC.Server_Seq_12 = 0
+                and then Records.TLS12.Nonce_Space_Available_12
+                  (HC.Server_Seq_12)
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=

@@ -24,16 +24,50 @@ with SPARKTLS.Server.TLS12;
 package body SPARKTLS.Server with
    SPARK_Mode => On
 is
+   function Server_Configured (HC : Handshake_Context) return Boolean is
+     (HC.Cfg.Local /= null
+      and then HC.Cfg.Local.Has_Identity
+      and then HC.Cfg.Random /= null)
+   with Ghost;
+
+   function Server_Active (S : Session) return Boolean is
+     (S.Role = Role_Server
+      and then S.State not in Idle | Closing | Closed | Error_State)
+   with Ghost;
+
    --  Forward declarations
    procedure Advance_Handshake
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre  => Server_Active (S)
+                and then Server_Configured (HC)
+                and then Reasm_Coherent (HC),
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC))
+                and then (if S.State not in Error_State | Closed
+                          then Reasm_Coherent (HC));
 
    procedure Build_Server_Flight
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre  => Server_Active (S)
+                and then S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
+                and then Server_Configured (HC)
+                and then HC.Transcript_Len > 0
+                and then S.Negotiated_Suite in
+                  Suite_AES_128_GCM_SHA256
+                  | Suite_AES_256_GCM_SHA384
+                  | Suite_CHACHA20_POLY1305_SHA256
+                and then Nonce_Space_Available (HC.Server_HS)
+                and then Nonce_Space_Available (S.Server_App),
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC));
 
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
@@ -41,36 +75,135 @@ is
       Group     : in     Unsigned_16;
       HRR_Buf   :    out Byte_Seq;
       HRR_Len   :    out N32;
-      Rec_Out   :    out N32);
+      Rec_Out   :    out N32)
+   with Pre  => Server_Active (S)
+                and then Server_Configured (HC),
+        Post => HRR_Len <= N32 (HRR_Buf'Length)
+                and then (S.State = S.State'Old
+                          or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC))
+                and then (if HRR_Len > 0 then S.State = S.State'Old)
+                and then (if HRR_Len > 0
+                          then HC.Transcript_Len > 0);
+
+   procedure Append_And_Encrypt_Server_HS
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Scratch   : in out IO_Buffer;
+      Saved_Ctr : in     Unsigned_64;
+      Result    :    out Action;
+      Emitted   :    out Boolean)
+   with Pre  => Server_Active (S)
+                and then Server_Configured (HC)
+                and then HC.Transcript_Len > 0
+                and then Plaintext'Length > 0
+                and then Plaintext'Length <= Max_Fragment
+                and then Plaintext'Length < Transcript_Capacity
+                and then Nonce_Space_Available (HC.Server_HS),
+        Post => (if Emitted
+                 then Server_Active (S)
+                      and then Server_Configured (HC)
+                      and then HC.Transcript_Len > 0
+                      and then S.State = S.State'Old
+                      and then S.Role = S.Role'Old
+                      and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+                      and then HC.Server_HS.Counter =
+                        HC.Server_HS.Counter'Old + 1
+                      and then Result = OK)
+                and then (if not Emitted
+                          then S.State = Error_State
+                               and then Result = Error_Alert
+                               and then HC.Server_HS.Counter = Saved_Ctr);
+
+   procedure Append_And_Encrypt_Server_HS_Fragmented
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Scratch   : in out IO_Buffer;
+      Saved_Ctr : in     Unsigned_64;
+      Result    :    out Action;
+      Emitted   :    out Boolean)
+   with Pre  => Server_Active (S)
+                and then Server_Configured (HC)
+                and then HC.Transcript_Len > 0
+                and then Plaintext'First = 0
+                and then Plaintext'Last in 0 .. N32 (Transcript_Capacity) - 2
+                and then HC.Server_HS.Counter <= Unsigned_64'Last - 2,
+        Post => (if Emitted
+                 then Server_Active (S)
+                      and then Server_Configured (HC)
+                      and then HC.Transcript_Len > 0
+                      and then S.State = S.State'Old
+                      and then S.Role = S.Role'Old
+                      and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+                      and then HC.Server_HS.Counter in
+                        HC.Server_HS.Counter'Old + 1 ..
+                        HC.Server_HS.Counter'Old + 2
+                      and then Result = OK)
+                and then (if not Emitted
+                          then S.State = Error_State
+                               and then Result = Error_Alert
+                               and then HC.Server_HS.Counter = Saved_Ctr);
 
    procedure Process_Client_Auth
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify;
+   with Pre  => S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify
+                and then S.Role = Role_Server
+                and then Server_Configured (HC)
+                and then Nonce_Space_Available (S.Server_App),
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC));
 
    procedure Process_Client_Finished
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => S.State = Wait_Client_Finished
-               and Nonce_Space_Available (S.Server_App);
+               and then S.Role = Role_Server
+               and then Server_Configured (HC)
+               and then Nonce_Space_Available (S.Server_App)
+               and then Nonce_Space_Available (HC.Client_HS),
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC));
    procedure Handle_PCF_App_Data
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Rec    : in     Records.Parse_Result;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => S.State = Wait_Client_Finished
+               and then S.Role = Role_Server
+               and then Rec.OK
+               and then Rec.Content = Records.Content_Application_Data
+               and then Server_Configured (HC)
+               and then Nonce_Space_Available (HC.Client_HS)
+               and then Nonce_Space_Available (S.Server_App);
    procedure Verify_Client_Finished
      (S         : in out Session;
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Msg_Len   : in     N32;
-      Result    :    out Action);
+      Result    :    out Action)
+   with Pre => S.State = Wait_Client_Finished
+               and then S.Role = Role_Server
+               and then Server_Configured (HC)
+               and then Nonce_Space_Available (S.Server_App);
 
 
 
-   procedure Process_Connected (S : in out Session; Result : out Action);
+   procedure Process_Connected (S : in out Session; Result : out Action)
+   with Pre => S.State = Connected
+               and then S.Role = Role_Server
+               and then Nonce_Space_Available (S.Server_App)
+               and then Nonce_Space_Available (S.Client_App);
 
    procedure Derive_Handshake_Keys
      (S  : in     Session;
@@ -79,7 +212,12 @@ is
                and HC.Transcript_Len <= Transcript_Capacity
                and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                        | Suite_AES_256_GCM_SHA384
-                                       | Suite_CHACHA20_POLY1305_SHA256;
+                                       | Suite_CHACHA20_POLY1305_SHA256
+               and Server_Configured (HC),
+        Post => Server_Configured (HC)
+                and HC.Transcript_Len = HC.Transcript_Len'Old
+                and HC.Server_HS.Counter = 0
+                and Nonce_Space_Available (HC.Server_HS);
 
    procedure Derive_App_Keys
      (S  : in out Session;
@@ -88,7 +226,16 @@ is
                and HC.Transcript_Len <= Transcript_Capacity
                and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                        | Suite_AES_256_GCM_SHA384
-                                       | Suite_CHACHA20_POLY1305_SHA256;
+                                       | Suite_CHACHA20_POLY1305_SHA256
+               and Server_Configured (HC),
+        Post => Server_Configured (HC)
+                and HC.Transcript_Len = HC.Transcript_Len'Old
+                and S.State = S.State'Old
+                and S.Role = S.Role'Old
+                and S.Negotiated_Suite = S.Negotiated_Suite'Old
+                and S.Server_App.Counter = 0
+                and Nonce_Space_Available (S.Server_App)
+                and Nonce_Space_Available (S.Client_App);
 
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
@@ -96,7 +243,10 @@ is
       Suite  : in     Unsigned_16)
    with Pre => Suite in Suite_AES_128_GCM_SHA256
                       | Suite_AES_256_GCM_SHA384
-                      | Suite_CHACHA20_POLY1305_SHA256;
+                      | Suite_CHACHA20_POLY1305_SHA256,
+        Post => TK.Counter = 0
+                and TK.Suite = Suite
+                and Nonce_Space_Available (TK);
 
    --  Alert_Desc / Error_Code mapping is in the parent SPARKTLS
    --  package — child-unit visibility resolves call sites here.
@@ -205,6 +355,16 @@ is
                     Data'Last - Data'First < Transcript_Capacity)
                 and HC.Transcript_Len <= Transcript_Capacity,
         Post => HC.Transcript_Len >= HC.Transcript_Len'Old
+                and HC.Transcript_Len <= Transcript_Capacity
+                and (if HC.Transcript_Len'Old > 0
+                       or else Data'First <= Data'Last
+                     then HC.Transcript_Len > 0)
+                and (if Server_Configured (HC)'Old
+                     then Server_Configured (HC))
+                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+                and HC.Client_HS.Counter = HC.Client_HS.Counter'Old
+                and HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+                and HC.Client_HS.Suite = HC.Client_HS.Suite'Old
    is
    begin
       if Data'First <= Data'Last then
@@ -430,10 +590,12 @@ is
    --  Advance_Handshake case dispatch so SPARK can prove each
    --  protocol state's logic in isolation.
    procedure Handle_Wait_Client_Hello
-     (S      : in out Session;
-      HC     : in out Handshake_Context;
-      Result :    out Action)
-   with Pre => S.State = Wait_Client_Hello;
+	     (S      : in out Session;
+	      HC     : in out Handshake_Context;
+	      Result :    out Action)
+	   with Pre => S.State = Wait_Client_Hello
+	               and then S.Role = Role_Server
+	               and then Server_Configured (HC);
 
    procedure Handle_Wait_Client_Hello
      (S      : in out Session;
@@ -523,7 +685,16 @@ is
                   --  Larger messages are rejected.
                   Max_HS_Msg : constant N32 := 131072;
 
-                  procedure Free_Reasm is
+                  procedure Free_Reasm
+                  with Pre  => Server_Active (S)
+                               and then Server_Configured (HC),
+                       Post => Server_Active (S)
+                               and then Server_Configured (HC)
+                               and then HC.Reasm_Buf = null
+                               and then HC.Reasm_Len = 0
+                               and then HC.Reasm_Need = 0
+                               and then not HC.Reasm_Hdr_Pending
+                  is
                   begin
                      Free_Byte_Seq (HC.Reasm_Buf);
                      HC.Reasm_Len := 0;
@@ -1184,7 +1355,14 @@ is
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and HC.Cfg.Ticket_Store /= null
                 and HC.Transcript_Len <= Transcript_Capacity
-                and HC.PSK_Binder_Len <= Max_HS_Msg;
+                and HC.PSK_Binder_Len <= Max_HS_Msg
+                and Server_Configured (HC),
+        Post => (if not Rejected
+                 then S.State = S.State'Old
+                      and S.Role = S.Role'Old
+                      and Server_Configured (HC)
+                      and HC.Transcript_Len = HC.Transcript_Len'Old
+                      and S.Negotiated_Suite = S.Negotiated_Suite'Old);
 
    procedure Verify_PSK_Binder
      (S        : in out Session;
@@ -1294,7 +1472,13 @@ is
       Algo_OK  :    out Boolean;
       Result   :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and HC.Cfg.Local /= null;
+                and Server_Configured (HC),
+        Post => (if Algo_OK
+                 then S.State = S.State'Old
+                      and S.Role = S.Role'Old
+                      and Server_Configured (HC)
+                      and HC.Transcript_Len = HC.Transcript_Len'Old
+                      and HC.Negotiated_Sig_Algo /= 0);
 
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
@@ -1341,6 +1525,108 @@ is
          Send_Alert_And_Error (S, Handshake_Failure, Result);
       end if;
    end Negotiate_Sig_Algo;
+
+   procedure Append_And_Encrypt_Server_HS
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Scratch   : in out IO_Buffer;
+      Saved_Ctr : in     Unsigned_64;
+      Result    :    out Action;
+      Emitted   :    out Boolean)
+   is
+      Enc_Out : N32;
+   begin
+      Append_Transcript (HC, Plaintext);
+      Records.Build_Encrypted_Record
+        (Plaintext  => Plaintext,
+         Inner_Type => 16#16#,
+         Keys       => HC.Server_HS,
+         Output     => Scratch,
+         Bytes_Out  => Enc_Out);
+
+      if Enc_Out = 0 then
+         HC.Server_HS.Counter := Saved_Ctr;
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         Emitted := False;
+      else
+         Result := OK;
+         Emitted := True;
+      end if;
+   end Append_And_Encrypt_Server_HS;
+
+   procedure Append_And_Encrypt_Server_HS_Fragmented
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      Scratch   : in out IO_Buffer;
+      Saved_Ctr : in     Unsigned_64;
+      Result    :    out Action;
+      Emitted   :    out Boolean)
+   is
+      Enc_Out : N32;
+   begin
+      Append_Transcript (HC, Plaintext);
+
+      if Plaintext'Length <= Max_Fragment then
+         Records.Build_Encrypted_Record
+           (Plaintext  => Plaintext,
+            Inner_Type => 16#16#,
+            Keys       => HC.Server_HS,
+            Output     => Scratch,
+            Bytes_Out  => Enc_Out);
+
+         if Enc_Out = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            Emitted := False;
+         else
+            Result := OK;
+            Emitted := True;
+         end if;
+      else
+         pragma Assert (Plaintext'Last >= N32 (Max_Fragment));
+         Records.Build_Encrypted_Record
+           (Plaintext  => Plaintext (0 .. N32 (Max_Fragment) - 1),
+            Inner_Type => 16#16#,
+            Keys       => HC.Server_HS,
+            Output     => Scratch,
+            Bytes_Out  => Enc_Out);
+
+         if Enc_Out = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            Emitted := False;
+            return;
+         end if;
+
+         pragma Assert (HC.Server_HS.Counter <= Unsigned_64'Last - 1);
+         pragma Assert (Nonce_Space_Available (HC.Server_HS));
+         Records.Build_Encrypted_Record
+           (Plaintext  => Plaintext (N32 (Max_Fragment) .. Plaintext'Last),
+            Inner_Type => 16#16#,
+            Keys       => HC.Server_HS,
+            Output     => Scratch,
+            Bytes_Out  => Enc_Out);
+
+         if Enc_Out = 0 then
+            HC.Server_HS.Counter := Saved_Ctr;
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            Emitted := False;
+         else
+            Result := OK;
+            Emitted := True;
+         end if;
+      end if;
+   end Append_And_Encrypt_Server_HS_Fragmented;
 
    procedure Build_Server_Flight
      (S      : in out Session;
@@ -1475,6 +1761,8 @@ is
       --  commit fails we restore this so the next record's nonce stays
       --  in sync with whatever the peer last saw.
       Saved_Ctr := HC.Server_HS.Counter;
+      pragma Assert (Saved_Ctr = 0);
+      pragma Assert (Nonce_Space_Available (HC.Server_HS));
 
       --  Send CCS for middlebox compatibility
       Records.Build_CCS_Record (Scratch, CCS_Out);
@@ -1487,28 +1775,32 @@ is
 
       --  Build EncryptedExtensions (encrypted with server HS keys)
       declare
-         EE_Buf : Byte_Seq (0 .. 255);
+         EE_Buf : Byte_Seq (0 .. 267);
          EE_Len : N32;
-         Enc_Out : N32;
+         Emitted : Boolean;
       begin
          Handshake.Server_Msgs.Build_Encrypted_Extensions (HC, S, EE_Buf, EE_Len);
-         Append_Transcript (HC, EE_Buf (0 .. EE_Len - 1));
-
-         Records.Build_Encrypted_Record
-           (Plaintext  => EE_Buf (0 .. EE_Len - 1),
-            Inner_Type => 16#16#,
-            Keys       => HC.Server_HS,
-            Output     => Scratch,
-            Bytes_Out  => Enc_Out);
+         pragma Assert (EE_Len in 6 .. N32 (EE_Buf'Length));
+         pragma Assert (EE_Len <= Max_Fragment);
+         pragma Assert (HC.Server_HS.Counter = 0);
+         pragma Assert (Nonce_Space_Available (HC.Server_HS));
+         pragma Assert (S.Role = Role_Server);
+         pragma Assert (S.State not in Idle | Closing | Closed | Error_State);
+         pragma Assert (Server_Active (S));
          Encryption_Started := True;
-
-         if Enc_Out = 0 then
-            HC.Server_HS.Counter := Saved_Ctr;
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
+         Append_And_Encrypt_Server_HS
+           (S         => S,
+            HC        => HC,
+            Plaintext => EE_Buf (0 .. EE_Len - 1),
+            Scratch   => Scratch,
+            Saved_Ctr => Saved_Ctr,
+            Result    => Result,
+            Emitted   => Emitted);
+         if not Emitted then
             return;
          end if;
+         pragma Assert (HC.Server_HS.Counter = 1);
+         pragma Assert (Nonce_Space_Available (HC.Server_HS));
       end;
 
       --  Skip Certificate/CertificateVerify for PSK resumption
@@ -1519,25 +1811,26 @@ is
          declare
             CR_Buf  : Byte_Seq (0 .. 31);
             CR_Len  : N32;
-            Enc_Out : N32;
+            Emitted : Boolean;
          begin
             Handshake.Server_Msgs.Build_Certificate_Request (CR_Buf, CR_Len);
             if CR_Len > 0 then
-               Append_Transcript (HC, CR_Buf (0 .. CR_Len - 1));
-               Records.Build_Encrypted_Record
-                 (Plaintext  => CR_Buf (0 .. CR_Len - 1),
-                  Inner_Type => 16#16#,
-                  Keys       => HC.Server_HS,
-                  Output     => Scratch,
-                  Bytes_Out  => Enc_Out);
-               if Enc_Out = 0 then
-                  HC.Server_HS.Counter := Saved_Ctr;
-                  S.Last_Error := Insufficient_Buffer;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
+               pragma Assert (CR_Len <= Max_Fragment);
+               pragma Assert (Nonce_Space_Available (HC.Server_HS));
+               Append_And_Encrypt_Server_HS
+                 (S         => S,
+                  HC        => HC,
+                  Plaintext => CR_Buf (0 .. CR_Len - 1),
+                  Scratch   => Scratch,
+                  Saved_Ctr => Saved_Ctr,
+                  Result    => Result,
+                  Emitted   => Emitted);
+               if not Emitted then
                   return;
                end if;
             end if;
+            pragma Assert (HC.Server_HS.Counter in 1 .. 2);
+            pragma Assert (Nonce_Space_Available (HC.Server_HS));
          end;
       end if;
 
@@ -1546,7 +1839,7 @@ is
          --  Max: leaf + 8 intermediates, each up to 8 KB + 5 bytes overhead
          Cert_Buf : Byte_Seq (0 .. 9 * (Max_Cert_DER_Len + 5) + 10);
          Cert_Len : N32;
-         Enc_Out  : N32;
+         Emitted  : Boolean;
       begin
          Handshake.Certs.Build_Certificate_Chain
            (Id     => HC.Cfg.Local.all,
@@ -1561,22 +1854,22 @@ is
             return;
          end if;
 
-         Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
-
-         Records.Build_Encrypted_Record
-           (Plaintext  => Cert_Buf (0 .. Cert_Len - 1),
-            Inner_Type => 16#16#,
-            Keys       => HC.Server_HS,
-            Output     => Scratch,
-            Bytes_Out  => Enc_Out);
-
-         if Enc_Out = 0 then
-            HC.Server_HS.Counter := Saved_Ctr;
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
+         pragma Assert (Cert_Len < Transcript_Capacity);
+         pragma Assert (Cert_Len <= 2 * Max_Fragment);
+         pragma Assert (HC.Server_HS.Counter <= Unsigned_64'Last - 2);
+         Append_And_Encrypt_Server_HS_Fragmented
+           (S         => S,
+            HC        => HC,
+            Plaintext => Cert_Buf (0 .. Cert_Len - 1),
+            Scratch   => Scratch,
+            Saved_Ctr => Saved_Ctr,
+            Result    => Result,
+            Emitted   => Emitted);
+         if not Emitted then
             return;
          end if;
+         pragma Assert (HC.Server_HS.Counter in 2 .. 3);
+         pragma Assert (Nonce_Space_Available (HC.Server_HS));
       end;
 
       --  Build CertificateVerify (encrypted)
@@ -1585,7 +1878,7 @@ is
          CV_Hash : Byte_Seq (0 .. H_Len - 1);
          CV_Buf  : Byte_Seq (0 .. 523);
          CV_Len  : N32;
-         Enc_Out : N32;
+         Emitted : Boolean;
       begin
          case S.Negotiated_Suite is
             when Suite_AES_256_GCM_SHA384 =>
@@ -1623,29 +1916,28 @@ is
             return;
          end if;
 
-         Append_Transcript (HC, CV_Buf (0 .. CV_Len - 1));
-
-         Records.Build_Encrypted_Record
-           (Plaintext  => CV_Buf (0 .. CV_Len - 1),
-            Inner_Type => 16#16#,
-            Keys       => HC.Server_HS,
-            Output     => Scratch,
-            Bytes_Out  => Enc_Out);
-
-         if Enc_Out = 0 then
-            HC.Server_HS.Counter := Saved_Ctr;
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
+         pragma Assert (CV_Len <= Max_Fragment);
+         pragma Assert (Nonce_Space_Available (HC.Server_HS));
+         Append_And_Encrypt_Server_HS
+           (S         => S,
+            HC        => HC,
+            Plaintext => CV_Buf (0 .. CV_Len - 1),
+            Scratch   => Scratch,
+            Saved_Ctr => Saved_Ctr,
+            Result    => Result,
+            Emitted   => Emitted);
+         if not Emitted then
             return;
          end if;
+         pragma Assert (HC.Server_HS.Counter in 3 .. 4);
+         pragma Assert (Nonce_Space_Available (HC.Server_HS));
       end;
 
       end if;  --  not Using_PSK (skip cert/cert_verify for resumption)
 
       --  Build Finished (encrypted)
       declare
-         Enc_Out : N32;
+         Emitted : Boolean;
       begin
          case S.Negotiated_Suite is
             when Suite_AES_256_GCM_SHA384 =>
@@ -1675,14 +1967,16 @@ is
                   Big_Finished (3) := 16#30#;  --  48
                   Big_Finished (4 .. 51) := Verify_48;
 
-                  Append_Transcript (HC, Big_Finished);
-
-                  Records.Build_Encrypted_Record
-                    (Plaintext  => Big_Finished,
-                     Inner_Type => 16#16#,
-                     Keys       => HC.Server_HS,
-                     Output     => Scratch,
-                     Bytes_Out  => Enc_Out);
+                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
+                  Append_And_Encrypt_Server_HS
+                    (S         => S,
+                     HC        => HC,
+                     Plaintext => Big_Finished,
+                     Scratch   => Scratch,
+                     Saved_Ctr => Saved_Ctr,
+                     Result    => Result,
+                     Emitted   => Emitted);
+                  pragma Assert (HC.Server_HS.Counter in 2 .. 5);
                end;
 
             when others =>
@@ -1706,24 +2000,27 @@ is
                        (Byte_Seq (Verify_32)));
 
                   Handshake.Build_Finished (Verify_32, Fin_Buf, Fin_Len);
-                  Append_Transcript (HC, Fin_Buf (0 .. Fin_Len - 1));
-
-                  Records.Build_Encrypted_Record
-                    (Plaintext  => Fin_Buf (0 .. Fin_Len - 1),
-                     Inner_Type => 16#16#,
-                     Keys       => HC.Server_HS,
-                     Output     => Scratch,
-                     Bytes_Out  => Enc_Out);
+                  pragma Assert (Fin_Len <= Max_Fragment);
+                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
+                  Append_And_Encrypt_Server_HS
+                    (S         => S,
+                     HC        => HC,
+                     Plaintext => Fin_Buf (0 .. Fin_Len - 1),
+                     Scratch   => Scratch,
+                     Saved_Ctr => Saved_Ctr,
+                     Result    => Result,
+                     Emitted   => Emitted);
+                  pragma Assert (HC.Server_HS.Counter in 2 .. 5);
                end;
          end case;
 
-         if Enc_Out = 0 then
-            HC.Server_HS.Counter := Saved_Ctr;
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
+         if not Emitted then
             return;
          end if;
+         pragma Assert
+           (S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                  | Suite_AES_256_GCM_SHA384
+                                  | Suite_CHACHA20_POLY1305_SHA256);
       end;
 
       --  Atomic commit: full flight assembled in Scratch. If S.Output

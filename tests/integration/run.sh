@@ -257,11 +257,12 @@ output=$(echo "hello" | timeout 5 openssl s_client \
     -connect localhost:$PORT -tls1_3 -CAfile "$CERT_DIR/ed25519.crt" 2>&1 || true)
 if echo "$output" | grep -qE "(certificate required|alert.*116|sslv3 alert certificate required)"; then
     pass "Required mode rejects no-cert client"
-elif echo "$output" | grep -q "Verify return code: 0 (ok)"; then
+elif echo "$output" | grep -qx "hello"; then
     fail "Required mode incorrectly accepted no-cert client (BYPASS)"
 else
-    # Connection failed but we couldn't pin the exact alert —
-    # still better than success.
+    # OpenSSL may print "Verify return code: 0 (ok)" before it reads
+    # the encrypted certificate_required alert. The security condition
+    # is that no application data is accepted/echoed.
     pass "Required mode rejects no-cert client (handshake aborted)"
 fi
 cleanup

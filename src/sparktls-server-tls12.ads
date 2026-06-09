@@ -59,6 +59,7 @@ is
                 --  Client_Hello_Sent is Wait_Server_Hello, which would
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
+                and then S.Role = Role_Server
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized;
 

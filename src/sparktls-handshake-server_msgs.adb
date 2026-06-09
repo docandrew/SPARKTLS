@@ -1005,10 +1005,15 @@ is
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
       S         : in out Session;
       HC        : in out Handshake_Context)
-   with Pre =>
+  with Pre =>
      RFLX.TLS_Handshake.Cipher_Suite_TLS.Has_Buffer (Suite_Ctx)
      and then RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
-                (Suite_Ctx);
+                (Suite_Ctx),
+       Post =>
+         S.Role = S.Role'Old
+         and then S.State = S.State'Old
+         and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+         and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
 
    procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
@@ -2121,7 +2126,11 @@ is
      Post =>
        RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
-       and Ctx.Buffer_Last  = Ctx.Buffer_Last'Old;
+       and Ctx.Buffer_Last  = Ctx.Buffer_Last'Old
+       and S.Role = S.Role'Old
+       and S.State = S.State'Old
+       and (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+       and (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
 
    procedure Parse_CH_Cipher_Suites
      (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
@@ -2194,6 +2203,8 @@ is
       Body_Len : N32;
       Buf      : RBT.Bytes_Ptr;
       Ctx      : Context;
+      Saved_Local  : constant Identity_Access := HC.Cfg.Local;
+      Saved_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
    begin
       OK := False;
 
@@ -2383,6 +2394,8 @@ is
 
       if Well_Formed (Ctx, F_Cipher_Suites_TLS) then
          Parse_CH_Cipher_Suites (Ctx, S, HC);
+         HC.Cfg.Local := Saved_Local;
+         HC.Cfg.Random := Saved_Random;
       end if;
 
       --  Need at least one matching suite (either TLS 1.3 or 1.2)
@@ -2398,6 +2411,8 @@ is
             Ext_OK : Boolean;
          begin
             Parse_CH_Extensions (Ctx, HC, Ext_OK);
+            HC.Cfg.Local := Saved_Local;
+            HC.Cfg.Random := Saved_Random;
             if not Ext_OK then
                --  Some extension's contents were malformed.
                --  Most paths default to decode_error; specific
@@ -2482,6 +2497,9 @@ is
       OK         :    out Boolean)
    with Pre  => HC.Cfg.Random /= null,
         Post => (if OK then KS_Raw_Len = 36 else KS_Raw_Len = 0)
+                and then HC.Cfg.Random /= null
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
                 and then HC.Legacy_Session_ID_Len =
                          HC.Legacy_Session_ID_Len'Old
                 and then HC.Server_Random = HC.Server_Random'Old
@@ -2538,6 +2556,9 @@ is
       OK         :    out Boolean)
    with Pre  => HC.Cfg.Random /= null,
         Post => (if OK then KS_Raw_Len = 69 else KS_Raw_Len = 0)
+                and then HC.Cfg.Random /= null
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
                 and then HC.Legacy_Session_ID_Len =
                          HC.Legacy_Session_ID_Len'Old
                 and then HC.Server_Random = HC.Server_Random'Old
@@ -2595,6 +2616,9 @@ is
    with Pre  => HC.Cfg.Random /= null
                 and SPARKTLSCrypto.P384.Field.Initialized,
         Post => (if OK then KS_Raw_Len = 101 else KS_Raw_Len = 0)
+                and then HC.Cfg.Random /= null
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
                 and then HC.Legacy_Session_ID_Len =
                          HC.Legacy_Session_ID_Len'Old
                 and then HC.Server_Random = HC.Server_Random'Old
@@ -3002,6 +3026,9 @@ is
                and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
                and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
         Post => (if OK then KS_Raw_Len in 36 | 69 | 101 else KS_Raw_Len = 0)
+                and then HC.Cfg.Random /= null
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
                 and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
                 and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random);
 

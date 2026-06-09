@@ -232,7 +232,8 @@ is
    procedure Process_Server_Flight
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => Reasm_Coherent (HC)
-                and (S.State not in Idle | Closing | Closed | Error_State),
+                and (S.State not in Idle | Closing | Closed | Error_State)
+                and Warning_Alerts_Bounded_RFC_8446_6_1 (S),
         Post => Reasm_Coherent (HC);
 
    --  RFC 5246 §7.4.2 Certificate (HS type 0x0B). Parses the on-wire
@@ -397,7 +398,12 @@ is
    procedure Validate_Server_Cert_12
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre  => Reasm_Coherent (HC)
+                and S.State not in Idle | Closing | Closed | Error_State,
+        Post => Reasm_Coherent (HC)
+                and (if Result = OK then
+                       S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Validate_Server_Cert_12
      (S      : in out Session;
@@ -519,7 +525,11 @@ is
                 and Frag'First >= 0
                 and Frag'Last < N32'Last - 4
                 and Msg_Len <= N32 (Frag'Length) - 4
-                and S.State not in Idle | Closing | Closed | Error_State;
+                and S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Coherent (HC),
+        Post => Reasm_Coherent (HC)
+                and (if Result = OK then
+                       S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Handle_CertReq_12
      (S       : in out Session;
@@ -653,7 +663,11 @@ is
                 and Frag'First >= 0
                 and Frag'Last < N32'Last - 4
                 and Msg_Len <= N32 (Frag'Length) - 4
-                and S.State not in Idle | Closing | Closed | Error_State;
+                and S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Coherent (HC),
+        Post => Reasm_Coherent (HC)
+                and (if Result = OK then
+                       S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Handle_SKE_12
      (S       : in out Session;
@@ -735,8 +749,15 @@ is
                 and Frag'Last < N32'Last - 4
                 and Msg_Len <= N32 (Frag'Length) - 4
                 and S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Coherent (HC)
+                and HC.Cfg.Random /= null
+                and Valid_ECDHE_Group (HC.Selected_Group)
+                and HC.Transcript_Len > 0
                 and SPARKTLSCrypto.P384.Field.Initialized
-                and SPARKTLSCrypto.P384.ECDSA.Initialized;
+                and SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => Reasm_Coherent (HC)
+                and (if Result = OK then
+                       S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Handle_SHD_12
      (S       : in out Session;
@@ -1039,7 +1060,11 @@ is
                 and Frag'First >= 0
                 and Frag'Last < N32'Last - 4
                 and Msg_Len <= N32 (Frag'Length) - 4
-                and S.State not in Idle | Closing | Closed | Error_State;
+                and S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Coherent (HC),
+        Post => Reasm_Coherent (HC)
+                and (if Result = OK then
+                       S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Handle_NST_12
      (S       : in out Session;
@@ -1379,9 +1404,15 @@ is
               (Decreases => HC.Reasm_Len);
             pragma Loop_Invariant
               (HC.Reasm_Buf /= null
+               and then HC.Reasm_Buf'First = 0
+               and then HC.Reasm_Buf'Length <= Max_HS_Msg
                and then HC.Reasm_Need > 0
                and then HC.Reasm_Need <= HC.Reasm_Len
-               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+               and then Reasm_Coherent (HC)
+               and then S.State not in Idle | Closing | Closed | Error_State
+               and then Msg_Len <= Max_HS_Msg - 4);
             More_Packed := False;
          declare
             RN : constant N32 := HC.Reasm_Need;
@@ -1510,6 +1541,7 @@ is
                      end if;
                      if Leftover >= Next_Total then
                         --  Next message complete; loop to dispatch it.
+                        pragma Assert (Leftover < HC.Reasm_Len);
                         Msg_Type := HC.Reasm_Buf (0);
                         Msg_Len := Next_Len;
                         HC.Reasm_Need := Next_Total;

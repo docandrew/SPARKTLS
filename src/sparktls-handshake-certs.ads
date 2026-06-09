@@ -39,7 +39,8 @@ is
                and Id.NaCl_Cert_Len <= N32 (Max_Cert_DER)
                and Id.Int_Count <= Max_Pool_Size
                and (for all I in 0 .. Max_Pool_Size - 1 =>
-                       Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER));
+                       Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER)),
+        Post => Len <= N32 (Result'Length);
 
    --  Build a CertificateVerify handshake message.
    --  Signs the transcript hash with the identity's private key.
@@ -58,7 +59,8 @@ is
                and then Random /= null
                and then Id.RSA_Mod_Len in 64 .. 512
                and then SPARKTLSCrypto.P384.Field.Initialized
-               and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => Len <= N32 (Result'Length);
 
    --  RFC 8446 §4.4.2 TLS 1.3 Certificate parser. Replaces the
    --  hand-rolled cert chain walker that previously lived (in
