@@ -13,6 +13,8 @@ with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule;
 with SPARKTLSCrypto.HMAC384;
 with SPARKTLSCrypto.HKDF384;
+with SPARKTLSCrypto.P384.Field;
+with SPARKTLSCrypto.P384.ECDSA;
 use SPARKTLSCrypto;
 with SPARKTLS.HC_Alloc;
 with SPARKTLS.Records.TLS12;
@@ -122,8 +124,10 @@ is
       Err  :    out Error_Code)
    with Pre  => Data'Length >= 4
                 and Data'Last < N32'Last
+                and Data'Last <= N32'Last - 16#1_0004#
                 and Data'First >= 0,
-        Post => S.State = S.State'Old;
+        Post => S.State = S.State'Old
+                and then S.Client_App = S.Client_App'Old;
    --  OK = False signals a fatal protocol error. `Err` discriminates
    --  the alert kind so the caller picks the right alert code:
    --    Unsupported_Extension : server sent an EE extension we did
@@ -833,8 +837,12 @@ is
             while Q + 4 <= Ext_End loop
                pragma Loop_Invariant
                  (Q >= Body_Start + 2
+                  and Q <= Ext_End
                   and Q + 4 <= Ext_End
+                  and Ext_End <= N32'Last - 16#1_0003#
                   and Ext_End <= Data'Last + 1
+                  and S.State = S.State'Loop_Entry
+                  and S.Client_App = S.Client_App'Loop_Entry
                   and Seen_Count <= 32);
                declare
                   T : constant N32 :=
@@ -842,6 +850,7 @@ is
                   L : constant N32 :=
                      N32 (Data (Q + 2)) * 256 + N32 (Data (Q + 3));
                begin
+                  pragma Assert (L <= 16#FFFF#);
                   exit when Q + 4 + L > Ext_End;
                   for I in N32 range 1 .. Seen_Count loop
                      pragma Loop_Invariant (Seen_Count <= 32);
@@ -862,15 +871,20 @@ is
 
          while P + 4 <= Ext_End loop
             pragma Loop_Invariant
-              (P >= Body_Start + 2
-               and P + 4 <= Ext_End
-               and Ext_End <= Data'Last + 1);
+               (P >= Body_Start + 2
+                and P <= Ext_End
+                and P + 4 <= Ext_End
+                and Ext_End <= N32'Last - 16#1_0003#
+                and Ext_End <= Data'Last + 1
+                and S.State = S.State'Loop_Entry
+                and S.Client_App = S.Client_App'Loop_Entry);
             declare
                Tag : constant N32 :=
                   N32 (Data (P)) * 256 + N32 (Data (P + 1));
                E_Len : constant N32 :=
                   N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
             begin
+               pragma Assert (E_Len <= 16#FFFF#);
                --  Skip if extension overflows what's left.
                exit when P + 4 + E_Len > Ext_End;
 
@@ -1324,7 +1338,7 @@ is
       HC     : in out Handshake_Context;
       Data   : in     Byte_Seq;
       Result :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+   with Pre  => S.State = Wait_Certificate
                 and then Data'First = 0
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
@@ -1332,6 +1346,8 @@ is
                 and then HC.Transcript_Len > 0
                 and then Nonce_Space_Available (HC.Client_HS)
                 and then Nonce_Space_Available (S.Client_App)
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256,
@@ -1475,14 +1491,21 @@ is
       Data    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+   with Pre  => S.State = Wait_Certificate_Verify
                 and then Data'First = 0
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
                 and then Data'Length <= Transcript_Capacity
+                and then Msg_Len <= N32 (Data'Length) - 4
                 and then HC.Transcript_Len > 0
                 and then Nonce_Space_Available (HC.Client_HS)
                 and then Nonce_Space_Available (S.Client_App)
+                and then
+                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+                   then HC.Hash_Len = 48
+                   else HC.Hash_Len = 32)
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256,

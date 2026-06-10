@@ -16,10 +16,13 @@ with X509;
 use type X509.Algorithm_ID;
 with SPARKTLSCrypto.HMAC384;
 with SPARKTLSCrypto.HKDF384;
+with SPARKTLSCrypto.P384.Field;
+with SPARKTLSCrypto.P384.ECDSA;
 use SPARKTLSCrypto;
 with SPARKTLS.Ticket_Cache;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Server.TLS12;
+with SPARKTLS.Handshake.TLS12;
 
 package body SPARKTLS.Server with
    SPARK_Mode => On
@@ -35,6 +38,26 @@ is
       and then S.State not in Idle | Closing | Closed | Error_State)
    with Ghost;
 
+   function Server_State_Keys_Ready
+     (S  : Session;
+      HC : Handshake_Context) return Boolean is
+     ((if S.State in Wait_Client_Certificate
+                    | Wait_Client_Cert_Verify
+                    | Wait_Client_Finished
+       then Nonce_Space_Available (S.Server_App))
+      and then
+        (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_3
+         then Nonce_Space_Available (HC.Client_HS))
+      and then
+        (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_2
+         then SPARKTLS.Handshake.TLS12.Valid_TLS12_Suite
+                (S.Negotiated_Suite)
+              and then SPARKTLSCrypto.P384.Field.Initialized
+              and then SPARKTLSCrypto.P384.ECDSA.Initialized
+              and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                (HC.Server_Seq_12)))
+   with Ghost;
+
    --  Forward declarations
    procedure Advance_Handshake
      (S      : in out Session;
@@ -42,7 +65,8 @@ is
       Result :    out Action)
    with Pre  => Server_Active (S)
                 and then Server_Configured (HC)
-                and then Reasm_Coherent (HC),
+                and then Reasm_Coherent (HC)
+                and then Server_State_Keys_Ready (S, HC),
         Post => (S.State = S.State'Old
                  or else Valid_Transition (S.State'Old, S.State))
                 and then (if S.State not in Error_State | Closed

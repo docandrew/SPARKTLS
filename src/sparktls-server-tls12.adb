@@ -337,6 +337,7 @@ is
          Send_Alert_And_Error (S, Handshake_Failure, Result);
          return;
       end if;
+      pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
 
       --  Use the TLS 1.2 suite that the client actually offered
       if S.Negotiated_Suite_12 /= 0 then
@@ -491,6 +492,7 @@ is
       declare
          SKE_Buf : Byte_Seq (0 .. Max_Server_Key_Exchange - 1); SKE_Len : N32;
       begin
+         pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
          Build_Server_Key_Exchange
            (HC, HC.Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
          if SKE_Len > 0 then
@@ -1508,6 +1510,9 @@ is
          return;
       end if;
 
+      pragma Assert
+        (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
+
       --  TLS 1.2: CCS in Connected is ignored
       if Rec.Content = Records.Content_Change_Cipher_Spec then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1551,91 +1556,109 @@ is
       declare
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. Frag_Len - 1);
-         Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. Frag_Len - 1);
-         PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. Frag_Len - 1 loop
-            Encrypted (I) := S.Input.Data (FS + I);
-         end loop;
-         for I in N32 range 0 .. 4 loop
-            Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
-         end loop;
-
-         declare
-            --  ChaCha20-Poly1305 (RFC 7905) omits the on-wire
-            --  explicit_nonce; AES-GCM (RFC 5288) includes it.
-            Min_Frag : constant N32 :=
-              (if S.Client_App.Suite = Suite_CHACHA20_POLY1305_SHA256
-               then GCM_Tag_Len + 1
-               else Explicit_Nonce_Len + GCM_Tag_Len + 1);
-         begin
-            if Frag_Len < Min_Frag then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Encrypted_Alert_Connected_12 (S, Unexpected_Message, Result);
-               return;
-            end if;
-         end;
-
-         Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
-                            S.Client_IV_12, S.Client_Seq_12,
-                            Plaintext, PL, DV);
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-
-         if not DV then
-            Send_Encrypted_Alert_Connected_12 (S, Bad_Record_MAC, Result);
+         if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Encrypted_Alert_Connected_12 (S, Record_Overflow, Result);
             return;
          end if;
 
-         case Rec.Content is
-            when Records.Content_Application_Data =>
-               if PL > 0
-                  and then S.App_Data_Len <= S.App_Data'Length
-                  and then PL <= S.App_Data'Length - S.App_Data_Len
-               then
-                  S.App_Data (S.App_Data_Len .. S.App_Data_Len + PL - 1) :=
-                     Plaintext (0 .. PL - 1);
-                  S.App_Data_Len := S.App_Data_Len + PL;
-                  Result := Plaintext_Ready;
-               else
-                  Result := OK;
-               end if;
+         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
 
-            when Records.Content_Alert =>
-               if PL >= 2 and then Plaintext (1) = 0 then
-                  --  close_notify received — RFC 5246 §7.2.1 (and
-                  --  RFC 8446 §6.1) require a close_notify reply at
-                  --  warning level (1) before tearing the
-                  --  connection down. Without this TLS-Anvil's
-                  --  closeNotify test sees a level-2 alert from us.
-                  declare
-                     A : N32;
-                  begin
-                     Records.TLS12.Build_Alert_Record_12
-                       (Level       => 1,
-                        Desc        => 0,
-                        Keys        => S.Server_App,
-                        Implicit_IV => S.Server_IV_12,
-                        Seq_Num     => S.Server_Seq_12,
-                        Output      => S.Output,
-                        Bytes_Out   => A);
-                  end;
-                  Set_State (S, Closing);
-                  if Output_Pending (S) > 0 then
-                     Result := Has_Output;
+         declare
+            Encrypted : Byte_Seq (0 .. Frag_Len - 1);
+            Hdr : Byte_Seq (0 .. 4);
+            Plaintext : Byte_Seq (0 .. Frag_Len - 1);
+            PL : N32; DV : Boolean;
+         begin
+            for I in N32 range 0 .. Frag_Len - 1 loop
+               Encrypted (I) := S.Input.Data (FS + I);
+            end loop;
+            for I in N32 range 0 .. 4 loop
+               Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
+            end loop;
+
+            declare
+               --  ChaCha20-Poly1305 (RFC 7905) omits the on-wire
+               --  explicit_nonce; AES-GCM (RFC 5288) includes it.
+               Min_Frag : constant N32 :=
+                 (if S.Client_App.Suite = Suite_CHACHA20_POLY1305_SHA256
+                  then GCM_Tag_Len + 1
+                  else Explicit_Nonce_Len + GCM_Tag_Len + 1);
+            begin
+               if Frag_Len < Min_Frag then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Encrypted_Alert_Connected_12
+                    (S, Unexpected_Message, Result);
+                  return;
+               end if;
+            end;
+
+            if S.Client_Seq_12 = Unsigned_64'Last then
+               Send_Encrypted_Alert_Connected_12 (S, Internal_Error, Result);
+               return;
+            end if;
+
+            Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
+                               S.Client_IV_12, S.Client_Seq_12,
+                               Plaintext, PL, DV);
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+            if not DV then
+               Send_Encrypted_Alert_Connected_12 (S, Bad_Record_MAC, Result);
+               return;
+            end if;
+
+            case Rec.Content is
+               when Records.Content_Application_Data =>
+                  if PL > 0
+                     and then S.App_Data_Len <= S.App_Data'Length
+                     and then PL <= S.App_Data'Length - S.App_Data_Len
+                  then
+                     S.App_Data
+                       (S.App_Data_Len .. S.App_Data_Len + PL - 1) :=
+                        Plaintext (0 .. PL - 1);
+                     S.App_Data_Len := S.App_Data_Len + PL;
+                     Result := Plaintext_Ready;
                   else
-                     Result := Shutdown;
+                     Result := OK;
                   end if;
-               else
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
-               end if;
 
-            when others =>
-               Result := OK;
-         end case;
+               when Records.Content_Alert =>
+                  if PL >= 2 and then Plaintext (1) = 0 then
+                     --  close_notify received — RFC 5246 §7.2.1 (and
+                     --  RFC 8446 §6.1) require a close_notify reply at
+                     --  warning level (1) before tearing the
+                     --  connection down. Without this TLS-Anvil's
+                     --  closeNotify test sees a level-2 alert from us.
+                     declare
+                        A : N32;
+                     begin
+                        Records.TLS12.Build_Alert_Record_12
+                          (Level       => 1,
+                           Desc        => 0,
+                           Keys        => S.Server_App,
+                           Implicit_IV => S.Server_IV_12,
+                           Seq_Num     => S.Server_Seq_12,
+                           Output      => S.Output,
+                           Bytes_Out   => A);
+                     end;
+                     Set_State (S, Closing);
+                     if Output_Pending (S) > 0 then
+                        Result := Has_Output;
+                     else
+                        Result := Shutdown;
+                     end if;
+                  else
+                     S.Last_Error := Unexpected_Message;
+                     Set_State (S, Error_State);
+                     Result := Error_Alert;
+                  end if;
+
+               when others =>
+                  Result := OK;
+            end case;
+         end;
       end;
    end Process_Connected_12;
 

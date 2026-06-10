@@ -100,7 +100,7 @@ is
      (Sig_Algs           : Byte_Seq;
       Cert               : Signing_Algorithm;
       Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
-   with Pre => Sig_Algs'First = 0
+   with Pre => Sig_Algs'First >= 0
                and then Sig_Algs'Last < N32'Last;
 
 end SPARKTLS.Handshake;

@@ -169,13 +169,16 @@ is
       procedure Put_U8 (V : Byte)
       with Pre  => Result'Last < N32'Last
                    and then Pos <= Result'Last + 1,
-           Post => Pos <= Pos'Old + 1
-                   and then Pos <= Result'Last + 1
+           Post => Pos <= Result'Last + 1
+                   and then
+                     (if Pos'Old <= Result'Last
+                      then Pos = Pos'Old + 1
+                      else Pos = Pos'Old)
       is
       begin
          if Pos <= Result'Last then
-           Result (Pos) := V;
-           Pos := Pos + 1;
+            Result (Pos) := V;
+            Pos := Pos + 1;
          end if;
       end Put_U8;
 
@@ -183,8 +186,11 @@ is
       with Pre  => Result'Last < N32'Last
                    and then Pos <= Result'Last + 1
                    and then V <= 16#FFFFFF#,
-           Post => Pos <= Pos'Old + 3
-                   and then Pos <= Result'Last + 1
+           Post => Pos <= Result'Last + 1
+                   and then
+                     (if Pos'Old <= Result'Last - 2
+                      then Pos = Pos'Old + 3
+                      else Pos <= Result'Last + 1)
       is
       begin
          Put_U8 (Byte (V / 65536));
@@ -207,6 +213,8 @@ is
          if Pos <= Result'Last
             and then Result'Last - Pos >= DER_Len - 1
          then
+            pragma Assert (Pos + DER_Len - 1 <= Result'Last);
+            pragma Assert (DER_Len - 1 <= DER'Last);
             Result (Pos .. Pos + DER_Len - 1) := DER (0 .. DER_Len - 1);
             Pos := Pos + DER_Len;
          end if;
@@ -628,7 +636,10 @@ is
    with Pre  => Cert_RFLX'First = 1
                 and Cert_RFLX'Length = RBT.Length (C_Len)
                 and C_Len > 0
-                and C_Len <= N32 (Max_Cert_DER);
+                and C_Len <= N32 (Max_Cert_DER),
+        Post => HC.Client_HS = HC.Client_HS'Old
+                and then HC.Transcript_Len = HC.Transcript_Len'Old
+                and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
@@ -757,7 +768,18 @@ is
                loop
                   pragma Loop_Invariant
                     (C13_Entries.Has_Buffer (Entries_Ctx)
-                     and then C13_Entries.Valid (Entries_Ctx));
+                     and then C13_Entries.Valid (Entries_Ctx)
+                     and then HC.Client_HS = HC.Client_HS'Loop_Entry
+                     and then
+                       HC.Transcript_Len =
+                         HC.Transcript_Len'Loop_Entry
+                     and then
+                       (if HC.Peer_Cert_Valid
+                        then HC.Peer_Cert_DER_Len
+                             in 1 .. Max_Cert_DER_Len
+                             and then X509.Spans_Valid
+                               (HC.Peer_Cert,
+                                X509.N32 (HC.Peer_Cert_DER_Len) - 1)));
                   declare
                      E_Ctx : C13_Entry.Context;
                   begin
@@ -820,6 +842,15 @@ is
                                           HC.Peer_Cert_Valid := P_OK
                                              and then
                                                X509.Is_Valid (HC.Peer_Cert);
+                                          pragma Assert
+                                            (if HC.Peer_Cert_Valid
+                                             then HC.Peer_Cert_DER_Len
+                                                  in 1 .. Max_Cert_DER_Len
+                                                  and then X509.Spans_Valid
+                                                    (HC.Peer_Cert,
+                                                     X509.N32
+                                                       (HC.Peer_Cert_DER_Len)
+                                                     - 1));
                                        end;
                                     elsif HC.Peer_Int_Count < Max_Pool_Size
                                     then

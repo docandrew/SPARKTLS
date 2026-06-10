@@ -35,7 +35,9 @@ is
      (S : in out Session; Err : Error_Code; Result : out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and Alert_Desc (Err) /= 0
-                and Alert_Desc (Err) /= 90
+                and Alert_Desc (Err) /= 90,
+        Post => S.State = Error_State
+                and Result in Has_Output | Error_Alert
    is
       Dummy : N32;
    begin
@@ -252,7 +254,11 @@ is
    with Pre  => Msg_Len in 3 .. Max_HS_Msg - 4
                 and Frag'First >= 0
                 and Frag'Last < N32'Last - 4
-                and Msg_Len <= N32 (Frag'Length) - 4;
+                and Msg_Len <= N32 (Frag'Length) - 4,
+        Post => (if HC.Peer_Cert_Valid then
+                    HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                    and then X509.Spans_Valid
+                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 
    procedure Parse_Cert_Chain_12
      (HC      : in out Handshake_Context;
@@ -400,7 +406,12 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre  => Reasm_Coherent (HC)
-                and S.State not in Idle | Closing | Closed | Error_State,
+                and S.State not in Idle | Closing | Closed | Error_State
+                and (if HC.Peer_Cert_Valid then
+                       HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                       and then X509.Spans_Valid
+                         (HC.Peer_Cert,
+                          X509.N32 (HC.Peer_Cert_DER_Len) - 1)),
         Post => Reasm_Coherent (HC)
                 and (if Result = OK then
                        S.State not in Idle | Closing | Closed | Error_State);
@@ -1705,6 +1716,224 @@ is
    --  Process_Server_Finished: decrypt + verify server Finished
    ------------------------------------------------------------------
 
+   procedure Send_Encrypted_Finished_Error_12
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Desc_Code : in     Byte;
+      Err       : in     Error_Code;
+      Result    :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Building (HC)
+                and Desc_Code /= 0
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Client_Seq_12),
+        Post => S.State = Error_State
+                and Reasm_Building (HC)
+                and Result in Has_Output | Error_Alert;
+
+   procedure Send_Encrypted_Finished_Error_12
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Desc_Code : in     Byte;
+      Err       : in     Error_Code;
+      Result    :    out Action)
+   is
+      Saved_Seq : constant Unsigned_64 := HC.Client_Seq_12;
+      Dummy     : N32;
+   begin
+      Records.TLS12.Build_Alert_Record_12
+        (Level       => 2,
+         Desc        => Desc_Code,
+         Keys        => S.Client_App,
+         Implicit_IV => HC.Client_Write_IV_12,
+         Seq_Num     => HC.Client_Seq_12,
+         Output      => S.Output,
+         Bytes_Out   => Dummy);
+      if Dummy = 0 then
+         HC.Client_Seq_12 := Saved_Seq;
+      end if;
+
+      Free_Byte_Seq (HC.Reasm_Buf);
+      HC.Reasm_Len := 0;
+      HC.Reasm_Need := 0;
+      S.Last_Error := Err;
+      Set_State (S, Error_State);
+      Result := (if Output_Pending (S) > 0
+                 then Has_Output else Error_Alert);
+   end Send_Encrypted_Finished_Error_12;
+
+   procedure Ensure_Finished_Reasm_Buffer_12
+     (HC : in out Handshake_Context)
+   with Pre  => Reasm_Building (HC),
+        Post => Reasm_Building (HC)
+                and HC.Reasm_Buf /= null
+                and HC.Reasm_Len <= HC.Reasm_Need;
+
+   procedure Ensure_Finished_Reasm_Buffer_12
+     (HC : in out Handshake_Context)
+   is
+   begin
+      if HC.Reasm_Buf = null then
+         HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
+         pragma Assert (HC.Reasm_Buf'First = 0);
+         pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
+         HC.Reasm_Need := 4;
+         HC.Reasm_Hdr_Pending := True;
+         HC.Reasm_Len := 0;
+      end if;
+   end Ensure_Finished_Reasm_Buffer_12;
+
+   procedure Copy_Finished_Reasm_Bytes_12
+     (HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      PL        : in     N32;
+      P_Pos     : in out N32)
+   with Pre  => Reasm_Building (HC)
+                and HC.Reasm_Buf /= null
+                and Plaintext'First = 0
+                and PL > 0
+                and PL - 1 <= Plaintext'Last
+                and P_Pos <= PL
+                and not HC.Reasm_Hdr_Pending,
+        Post => Reasm_Building (HC)
+                and HC.Reasm_Buf /= null
+                and P_Pos >= P_Pos'Old
+                and P_Pos <= PL
+                and HC.Reasm_Len >= HC.Reasm_Len'Old
+                and HC.Reasm_Len <= HC.Reasm_Need;
+
+   procedure Copy_Finished_Reasm_Bytes_12
+     (HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      PL        : in     N32;
+      P_Pos     : in out N32)
+   is
+      Take : constant N32 :=
+         N32'Min (HC.Reasm_Need - HC.Reasm_Len, PL - P_Pos);
+   begin
+      if Take > 0 then
+         pragma Assert (P_Pos + Take <= PL);
+         pragma Assert (P_Pos + Take - 1 <= Plaintext'Last);
+         pragma Assert
+           (HC.Reasm_Len + Take <= N32 (HC.Reasm_Buf'Length));
+         HC.Reasm_Buf
+           (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
+           Plaintext (P_Pos .. P_Pos + Take - 1);
+         HC.Reasm_Len := HC.Reasm_Len + Take;
+         P_Pos := P_Pos + Take;
+      end if;
+   end Copy_Finished_Reasm_Bytes_12;
+
+   procedure Accumulate_Finished_Plaintext_12
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      PL        : in     N32;
+      Complete  :    out Boolean;
+      Result    :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Building (HC)
+                and Plaintext'First = 0
+                and PL > 0
+                and PL - 1 <= Plaintext'Last
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Client_Seq_12),
+        Post => Reasm_Building (HC)
+                and (if Complete then
+                       Result = OK
+                       and then HC.Reasm_Buf /= null
+                       and then HC.Reasm_Len = HC.Reasm_Need)
+                and (if Result = OK then
+                       S.State not in Idle | Closing | Closed | Error_State
+                       and then Records.TLS12.Nonce_Space_Available_12
+                         (HC.Client_Seq_12));
+
+   procedure Accumulate_Finished_Plaintext_12
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Plaintext : in     Byte_Seq;
+      PL        : in     N32;
+      Complete  :    out Boolean;
+      Result    :    out Action)
+   is
+   begin
+      Complete := False;
+      Result := OK;
+
+      --  Append decrypted plaintext to HC.Reasm_Buf. Allocate the
+      --  buffer on first chunk; size cap is Max_HS_Msg which
+      --  trivially holds Finished's 16 bytes. Use Hdr_Pending
+      --  while we still need 4 bytes to know the real HS_Total.
+      Ensure_Finished_Reasm_Buffer_12 (HC);
+      pragma Assert (Reasm_Building (HC));
+      pragma Assert (HC.Reasm_Buf /= null);
+
+      declare
+         P_Pos : N32 := 0;  --  bytes consumed from Plaintext
+      begin
+         --  First-take bounded by current Reasm_Need (which may
+         --  still be the Hdr_Pending sentinel of 4).
+         if HC.Reasm_Hdr_Pending then
+            declare
+               Take : constant N32 :=
+                  N32'Min (PL, 4 - HC.Reasm_Len);
+            begin
+               if Take > 0 then
+                  pragma Assert (P_Pos + Take <= PL);
+                  pragma Assert (P_Pos + Take - 1 <= Plaintext'Last);
+                  pragma Assert
+                    (HC.Reasm_Len + Take <=
+                       N32 (HC.Reasm_Buf'Length));
+                  HC.Reasm_Buf
+                    (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
+                    Plaintext (P_Pos .. P_Pos + Take - 1);
+                  HC.Reasm_Len := HC.Reasm_Len + Take;
+                  P_Pos := P_Pos + Take;
+               end if;
+            end;
+         else
+            Copy_Finished_Reasm_Bytes_12 (HC, Plaintext, PL, P_Pos);
+         end if;
+
+         if HC.Reasm_Hdr_Pending and then HC.Reasm_Len >= 4 then
+            declare
+               HS_Total : constant N32 :=
+                  N32 (HC.Reasm_Buf (1)) * 65536
+                  + N32 (HC.Reasm_Buf (2)) * 256
+                  + N32 (HC.Reasm_Buf (3)) + 4;
+            begin
+               HC.Reasm_Hdr_Pending := False;
+               if HS_Total < 4 or HS_Total > Max_HS_Msg then
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+                  return;
+               end if;
+               HC.Reasm_Need := HS_Total;
+            end;
+            --  Drain remaining plaintext bytes from this same
+            --  record (non-split case: full Finished in one record).
+            if P_Pos < PL and HC.Reasm_Len < HC.Reasm_Need then
+               Copy_Finished_Reasm_Bytes_12 (HC, Plaintext, PL, P_Pos);
+            end if;
+
+            --  RFC 5246 §7.4.9: server Finished is the last server
+            --  handshake message and must be the last thing in its
+            --  TLS record. Any leftover plaintext after the Finished
+            --  body is fatal unexpected_message (BoGo
+            --  TrailingDataWithFinished-Client-TLS12). The alert is
+            --  encrypted under client_write_key since we're post-CCS.
+            if HC.Reasm_Len = HC.Reasm_Need and P_Pos < PL then
+               Send_Encrypted_Finished_Error_12
+                 (S, HC, 10, Unexpected_Message, Result);
+               return;
+            end if;
+         end if;
+      end;
+
+      Complete := HC.Reasm_Len >= HC.Reasm_Need;
+   end Accumulate_Finished_Plaintext_12;
+
    --  RFC 5077 §3.3 abbreviated handshake client flight: CCS plus
    --  encrypted Finished. In the resumed flow the CLIENT sends these
    --  AFTER the server's Finished (inverse of the full handshake order
@@ -1713,7 +1942,15 @@ is
    procedure Send_Abbreviated_Client_Flight_12
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Building (HC)
+                and HC.Transcript_Len > 0
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Client_Seq_12),
+        Post => Reasm_Building (HC)
+                and (if Result = OK then
+                       S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Send_Abbreviated_Client_Flight_12
      (S      : in out Session;
@@ -1776,8 +2013,16 @@ is
 
    procedure Process_Server_Finished
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-   with Pre  => Reasm_Building (HC),
-        Post => Reasm_Building (HC);
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Building (HC)
+                and HC.Transcript_Len > 0
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Client_Seq_12)
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Server_Seq_12),
+        Post => Reasm_Building (HC)
+                and (if Result = OK then
+                       S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Process_Server_Finished
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
@@ -1788,7 +2033,6 @@ is
       Use_384 : constant Boolean :=
          S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
-      Max_HS_Msg : constant N32 := 131072;
    begin
       if Input_Available (S) = 0 then Result := Need_Input; return; end if;
 
@@ -1836,6 +2080,10 @@ is
                then GCM_Tag_Len + 1
                else Explicit_Nonce_Len + GCM_Tag_Len + 1);
          begin
+            if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Decode_Error, Result); return;
+            end if;
             if Frag_Len < Min_Frag then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Send_Alert_And_Error (S, Decode_Error, Result); return;
@@ -1854,107 +2102,17 @@ is
             Send_Alert_And_Error (S, Decode_Error, Result); return;
          end if;
 
-         --  Append decrypted plaintext to HC.Reasm_Buf. Allocate the
-         --  buffer on first chunk; size cap is Max_HS_Msg which
-         --  trivially holds Finished's 16 bytes. Use Hdr_Pending
-         --  while we still need 4 bytes to know the real HS_Total.
-         if HC.Reasm_Buf = null then
-            HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
-            pragma Assert (HC.Reasm_Buf'First = 0);
-            pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
-            HC.Reasm_Need := 4;
-            HC.Reasm_Hdr_Pending := True;
-            HC.Reasm_Len := 0;
-         end if;
-         pragma Assert (Reasm_Building (HC));
-
          declare
-            P_Pos : N32 := 0;  --  bytes consumed from Plaintext
-            Take  : N32;
+            Complete : Boolean;
          begin
-            --  First-take bounded by current Reasm_Need (which may
-            --  still be the Hdr_Pending sentinel of 4).
-            Take := N32'Min (PL, HC.Reasm_Need - HC.Reasm_Len);
-            if HC.Reasm_Len + Take <=
-                  N32 (HC.Reasm_Buf'Length)
-            then
-               HC.Reasm_Buf
-                 (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
-                 Plaintext (P_Pos .. P_Pos + Take - 1);
-               HC.Reasm_Len := HC.Reasm_Len + Take;
-               P_Pos := P_Pos + Take;
+            Accumulate_Finished_Plaintext_12
+              (S, HC, Plaintext, PL, Complete, Result);
+            if Result /= OK then
+               return;
             end if;
-
-            if HC.Reasm_Hdr_Pending and then HC.Reasm_Len >= 4 then
-               declare
-                  HS_Total : constant N32 :=
-                     N32 (HC.Reasm_Buf (1)) * 65536
-                     + N32 (HC.Reasm_Buf (2)) * 256
-                     + N32 (HC.Reasm_Buf (3)) + 4;
-               begin
-                  HC.Reasm_Hdr_Pending := False;
-                  if HS_Total < 4 or HS_Total > Max_HS_Msg then
-                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-                  HC.Reasm_Need := HS_Total;
-               end;
-               --  Drain remaining plaintext bytes from this same
-               --  record (non-split case: full Finished in one record).
-               if P_Pos < PL and HC.Reasm_Len < HC.Reasm_Need then
-                  declare
-                     Need2 : constant N32 :=
-                        HC.Reasm_Need - HC.Reasm_Len;
-                     Take2 : constant N32 :=
-                        N32'Min (Need2, PL - P_Pos);
-                  begin
-                     if HC.Reasm_Len + Take2 <=
-                           N32 (HC.Reasm_Buf'Length)
-                     then
-                        HC.Reasm_Buf
-                          (HC.Reasm_Len ..
-                           HC.Reasm_Len + Take2 - 1) :=
-                          Plaintext (P_Pos .. P_Pos + Take2 - 1);
-                        HC.Reasm_Len := HC.Reasm_Len + Take2;
-                        P_Pos := P_Pos + Take2;
-                     end if;
-                  end;
-               end if;
-
-               --  RFC 5246 §7.4.9: server Finished is the last server
-               --  handshake message and must be the last thing in its
-               --  TLS record. Any leftover plaintext after the Finished
-               --  body is fatal unexpected_message (BoGo
-               --  TrailingDataWithFinished-Client-TLS12). The alert is
-               --  encrypted under client_write_key since we're post-CCS.
-               if HC.Reasm_Len = HC.Reasm_Need and P_Pos < PL then
-                  declare
-                     Saved_Seq : constant Unsigned_64 :=
-                        HC.Client_Seq_12;
-                     Dummy : N32;
-                  begin
-                     Records.TLS12.Build_Alert_Record_12
-                       (Level       => 2,
-                        Desc        => 10,  --  unexpected_message
-                        Keys        => S.Client_App,
-                        Implicit_IV => HC.Client_Write_IV_12,
-                        Seq_Num     => HC.Client_Seq_12,
-                        Output      => S.Output,
-                        Bytes_Out   => Dummy);
-                     if Dummy = 0 then
-                        HC.Client_Seq_12 := Saved_Seq;
-                     end if;
-                  end;
-                  Free_Byte_Seq (HC.Reasm_Buf);
-                  HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State);
-                  Result := (if Output_Pending (S) > 0
-                             then Has_Output else Error_Alert);
-                  return;
-               end if;
+            if not Complete then
+               Result := OK;
+               return;  --  more encrypted records to drain
             end if;
          end;
 
@@ -1983,31 +2141,15 @@ is
                --  unexpected_message; we treat short body as
                --  decode_error.
                declare
-                  Saved_Seq : constant Unsigned_64 := HC.Client_Seq_12;
                   Desc_Code : constant Byte :=
                      (if Msg_Type /= HT_Finished then 10 else 50);
-                  Dummy : N32;
                begin
-                  Records.TLS12.Build_Alert_Record_12
-                    (Level       => 2,
-                     Desc        => Desc_Code,
-                     Keys        => S.Client_App,
-                     Implicit_IV => HC.Client_Write_IV_12,
-                     Seq_Num     => HC.Client_Seq_12,
-                     Output      => S.Output,
-                     Bytes_Out   => Dummy);
-                  if Dummy = 0 then
-                     HC.Client_Seq_12 := Saved_Seq;
-                  end if;
+                  Send_Encrypted_Finished_Error_12
+                    (S, HC, Desc_Code,
+                     (if Msg_Type /= HT_Finished
+                      then Unexpected_Message else Decode_Error),
+                     Result);
                end;
-               Free_Byte_Seq (HC.Reasm_Buf);
-               HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-               S.Last_Error :=
-                 (if Msg_Type /= HT_Finished
-                  then Unexpected_Message else Decode_Error);
-               Set_State (S, Error_State);
-               Result := (if Output_Pending (S) > 0
-                          then Has_Output else Error_Alert);
                return;
             end if;
             if Msg_Len /= Finished_Verify_Len then
@@ -2015,28 +2157,13 @@ is
                --  RFC 8446 §6.2: decrypt_error (alert 51). We're
                --  post-CCS so the alert must be encrypted with our
                --  client_write_key, not plaintext.
-               declare
-                  Saved_Seq : constant Unsigned_64 := HC.Client_Seq_12;
-                  Dummy : N32;
-               begin
-                  Records.TLS12.Build_Alert_Record_12
-                    (Level       => 2,
-                     Desc        => 51,  --  decrypt_error
-                     Keys        => S.Client_App,
-                     Implicit_IV => HC.Client_Write_IV_12,
-                     Seq_Num     => HC.Client_Seq_12,
-                     Output      => S.Output,
-                     Bytes_Out   => Dummy);
-                  if Dummy = 0 then
-                     HC.Client_Seq_12 := Saved_Seq;
-                  end if;
-               end;
-               Free_Byte_Seq (HC.Reasm_Buf);
-               HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-               S.Last_Error := Certificate_Verify_Failed;
-               Set_State (S, Error_State);
-               Result := (if Output_Pending (S) > 0
-                          then Has_Output else Error_Alert);
+               Send_Encrypted_Finished_Error_12
+                 (S, HC, 51, Certificate_Verify_Failed, Result);
+               return;
+            end if;
+            if RN /= 4 + Finished_Verify_Len then
+               Send_Encrypted_Finished_Error_12
+                 (S, HC, 51, Certificate_Verify_Failed, Result);
                return;
             end if;
 
@@ -2085,6 +2212,7 @@ is
             Fin_Snap : constant Byte_Seq :=
                HC.Reasm_Buf (0 .. HC.Reasm_Need - 1);
          begin
+            pragma Assert (Fin_Snap'Length = Finished_12_Total_Len);
             Append_Transcript (HC, Fin_Snap);
          end;
 

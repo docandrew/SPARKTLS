@@ -1012,6 +1012,8 @@ is
        Post =>
          S.Role = S.Role'Old
          and then S.State = S.State'Old
+         and then S.Input.Read_Pos = S.Input.Read_Pos'Old
+         and then S.Input.Write_Pos = S.Input.Write_Pos'Old
          and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
          and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
 
@@ -2129,6 +2131,8 @@ is
        and Ctx.Buffer_Last  = Ctx.Buffer_Last'Old
        and S.Role = S.Role'Old
        and S.State = S.State'Old
+       and S.Input.Read_Pos = S.Input.Read_Pos'Old
+       and S.Input.Write_Pos = S.Input.Write_Pos'Old
        and (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
        and (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
 
@@ -2165,7 +2169,17 @@ is
                and then Suites_Ctx.First =
                           Field_First (Ctx, F_Cipher_Suites_TLS)
                and then Suites_Ctx.Last  =
-                          Field_Last  (Ctx, F_Cipher_Suites_TLS));
+                          Field_Last  (Ctx, F_Cipher_Suites_TLS)
+               and then S.Role = S.Role'Loop_Entry
+               and then S.State = S.State'Loop_Entry
+               and then S.Input.Read_Pos = S.Input.Read_Pos'Loop_Entry
+               and then S.Input.Write_Pos = S.Input.Write_Pos'Loop_Entry
+               and then
+                  (if HC.Cfg.Local'Loop_Entry /= null
+                   then HC.Cfg.Local /= null)
+               and then
+                  (if HC.Cfg.Random'Loop_Entry /= null
+                   then HC.Cfg.Random /= null));
             declare
                Suite_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
             begin

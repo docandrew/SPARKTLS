@@ -88,7 +88,9 @@ is
                         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
-                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
+                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+        Post => S.State = S.State'Old
+                or else Valid_Transition (S.State'Old, S.State);
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block
@@ -124,7 +126,9 @@ is
                --  Required by Send_Encrypted_Alert_12 in error paths
                --  (RFC 5246 §7.2.1 post-CCS encrypted alerts).
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                          (HC.Server_Seq_12);
+                          (HC.Server_Seq_12),
+        Post => S.State = S.State'Old
+                or else Valid_Transition (S.State'Old, S.State);
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:
@@ -160,6 +164,10 @@ is
    procedure Process_Connected_12
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State = Connected;
+   with Pre => S.State = Connected
+               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                 (S.Client_Seq_12)
+               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                 (S.Server_Seq_12);
 
 end SPARKTLS.Server.TLS12;

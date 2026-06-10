@@ -847,7 +847,8 @@ is
    type Trust_Store is record
       Roots      : Root_Pool;
       Root_Count : Natural := 0;
-   end record;
+   end record
+     with Predicate => Trust_Store.Root_Count <= Max_Root_Pool_Size;
 
    type Trust_Store_Access is access constant Trust_Store;
 
@@ -2208,7 +2209,9 @@ is
                 and then Body_Start >= Data'First
                 and then Body_Start <= Data'Last + 1
                 and then E_Len >= 0
-                and then E_Len <= Data'Last + 1 - Body_Start;
+                and then E_Len <= Data'Last + 1 - Body_Start,
+        Post => S.State = S.State'Old
+                and then S.Client_App = S.Client_App'Old;
 
    ----------------------------------------------------------------------------
    --  Buffer operations (transport layer interface)

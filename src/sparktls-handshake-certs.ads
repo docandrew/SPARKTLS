@@ -110,6 +110,14 @@ is
       Err                    :    out Error_Code)
    with Pre => HS_Msg'First = 0
                and HS_Msg'Length >= 4
-               and HS_Msg'Length <= Max_Cert_Msg;
+               and HS_Msg'Length <= Max_Cert_Msg,
+        Post => HC.Client_HS = HC.Client_HS'Old
+                and then HC.Transcript_Len = HC.Transcript_Len'Old
+                and then
+                  (if HC.Peer_Cert_Valid
+                   then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                        and then X509.Spans_Valid
+                          (HC.Peer_Cert,
+                           X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 
 end SPARKTLS.Handshake.Certs;
