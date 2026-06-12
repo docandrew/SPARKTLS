@@ -34,8 +34,13 @@ is
                 --  invariant: in Error_State, output is non-empty
                 --  unless the error is one we couldn't write
                 --  (Unexpected_Message after early plaintext).
-                and Error_Has_Alert (S.State, Output_Pending (S),
-                                     S.Last_Error);
+                and then Error_Has_Alert (S.State, Output_Pending (S),
+                                          S.Last_Error)
+                and then
+                  (if Output_Pending (S) > 0 then S.Last_Error = Err)
+                and then
+                  (if S.Output.Write_Pos'Old <= IO_Buffer_Capacity - 7 then
+                     Output_Pending (S) > 0 and then S.Last_Error = Err);
 
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
@@ -147,6 +152,10 @@ is
         Post => HC.Cfg.Local /= null
                 and then HC.Cfg.Local.Has_Identity
                 and then HC.Cfg.Random /= null
+                and then HC.Version = HC.Version'Old
+                and then HC.Selected_Group = HC.Selected_Group'Old
+                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
+                and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
                 --  RFC 5246 §7.4.9 transcript-monotonicity invariant:
                 --  the handshake transcript is the basis for Finished
                 --  verify_data. Once a byte enters the transcript it
@@ -241,8 +250,8 @@ is
          begin
             if Now >= Last + Interval then
                declare
-                  New_Key_ID : Byte_Seq (0 .. 3) := (others => 0);
-                  New_TEK    : Byte_Seq (0 .. 31) := (others => 0);
+                  New_Key_ID : Byte_Seq (0 .. 3);
+                  New_TEK    : Byte_Seq (0 .. 31);
                   New_Active : Natural := Active;
                begin
                   HC.Cfg.Random.all (New_Key_ID);
@@ -270,6 +279,7 @@ is
         and then HC.TLS12_Peer_Ticket_Len > 0
         and then HC.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len
         and then HC.Cfg.TLS12_Ticket_Keys /= null
+        and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
       then
          declare
             Plain : SPARKTLS.Tickets_12.Ticket_Plain;
@@ -299,6 +309,13 @@ is
                Status  => OK);
             if OK
               and then S.Negotiated_Suite_12 /= 0
+              and then S.Negotiated_Suite_12 in
+                Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
               and then Plain.Suite = S.Negotiated_Suite_12
             then
                --  Resume: install ticket's master_secret + force suite.
@@ -460,6 +477,7 @@ is
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1); Hello_Len : N32;
       begin
          Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+         pragma Assert (S.Role = Role_Server);
          if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
          end if;
@@ -531,6 +549,7 @@ is
          Scratch.Data (0 .. Scratch.Write_Pos - 1);
       S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
 
+      pragma Assert (S.Role = Role_Server);
       Set_State (S, Server_Hello_Sent);
       Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
    end Build_Server_Flight_12_Full;
@@ -544,12 +563,10 @@ is
    procedure Derive_Keys_Resumed_12
      (S : in out Session; HC : in out Handshake_Context)
    with Pre  => HC.Version = TLS_1_2
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then HC.Cfg.Random /= null
-                and then HC.Cfg.TLS12_Ticket_Keys /= null
-                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
-                and then S.Negotiated_Suite in
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then HC.Cfg.Random /= null
+	                and then S.Negotiated_Suite in
                   Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_RSA_AES256_GCM_SHA384
                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
@@ -557,12 +574,10 @@ is
                   | Suite_ECDHE_RSA_CHACHA20_SHA256
                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
         Post => HC.Version = TLS_1_2
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then HC.Cfg.Random /= null
-                and then HC.Cfg.TLS12_Ticket_Keys /= null
-                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
-                and then S.State = S.State'Old
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then HC.Cfg.Random /= null
+	                and then S.State = S.State'Old
                 and then S.Role = S.Role'Old
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                 and then HC.Server_Seq_12 = 0
@@ -626,11 +641,17 @@ is
       Gen_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
       Rec_Out    : N32;
       Scratch    : IO_Buffer;
-      Saved_Seq  : Unsigned_64;
-      Use_384    : constant Boolean :=
-         S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
-                             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
-   begin
+	      Saved_Seq  : Unsigned_64;
+	      Use_384    : constant Boolean :=
+	         S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
+	                             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+	      Active_TEK_Idx : constant Natural :=
+	         HC.Cfg.TLS12_Active_TEK_Idx;
+	      Active_Key_ID : constant Byte_Seq :=
+	         HC.Cfg.TLS12_Ticket_Keys (Active_TEK_Idx).Key_ID;
+	      Active_TEK : constant Byte_Seq :=
+	         HC.Cfg.TLS12_Ticket_Keys (Active_TEK_Idx).TEK;
+	   begin
       --  Mirror the full-flight setup that Build_Server_Flight_12_Full
       --  did before we diverted. We don't pick a group (no ECDHE), we
       --  don't pick a signature scheme (no SKE), but we DO need the
@@ -664,21 +685,11 @@ is
       --     ticket; just expand to traffic keys + IVs).
       Derive_Keys_Resumed_12 (S, HC);
 
-      --  3. NewSessionTicket (re-issued under our active TEK with a
-      --     fresh nonce). RFC 5077 §3.3: the server MUST send NST in
-      --     the resumed flight if it advertised session_ticket in SH.
-      declare
-         --  Renaming a deref-and-index of HC.Cfg.* trips SPARK E0007
-         --  (renamed object depends on variable input). Copying the
-         --  Key_ID + TEK into local constants keeps the same shape
-         --  for the Encrypt_Ticket call below without the rename.
-         Active_Key_ID : constant Byte_Seq :=
-            HC.Cfg.TLS12_Ticket_Keys
-              (HC.Cfg.TLS12_Active_TEK_Idx).Key_ID;
-         Active_TEK    : constant Byte_Seq :=
-            HC.Cfg.TLS12_Ticket_Keys
-              (HC.Cfg.TLS12_Active_TEK_Idx).TEK;
-         Nonce_Buf  : Byte_Seq (0 .. 11) := (others => 0);
+	      --  3. NewSessionTicket (re-issued under our active TEK with a
+	      --     fresh nonce). RFC 5077 §3.3: the server MUST send NST in
+	      --     the resumed flight if it advertised session_ticket in SH.
+	      declare
+	         Nonce_Buf  : Byte_Seq (0 .. 11) := (others => 0);
          Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
          Ticket_Buf : Byte_Seq (0 .. 255) := (others => 0);
          Ticket_Len : N32;
@@ -985,6 +996,7 @@ is
                      Desc      => 0,
                      Output    => S.Output,
                      Bytes_Out => A);
+                  pragma Assert (A in 0 | 7);
                end;
                Set_State (S, Closing);
                if Output_Pending (S) > 0 then
@@ -1053,7 +1065,9 @@ is
                --  Min CKE body for ECDHE: 1-byte length + 32-byte X25519
                --  point = 33 bytes. Require at least 4 to satisfy
                --  Parse_Client_Key_Exchange's Pre.
-               if Msg_Len >= 4 and then 4 + Msg_Len <= Frag_Len then
+               if Msg_Len in 4 .. Max_Client_Key_Exchange
+                 and then 4 + Msg_Len <= Frag_Len
+               then
                   Body_Data := Frag (BS .. BS + Msg_Len - 1);
                   Parse_Client_Key_Exchange (HC, Body_Data, CKE_OK);
                   if not CKE_OK then
@@ -1189,17 +1203,12 @@ is
       declare
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-         Encrypted : Byte_Seq (0 .. Frag_Len - 1);
-         Hdr : Byte_Seq (0 .. 4);
-         Plaintext : Byte_Seq (0 .. Frag_Len - 1);
-         PL : N32; DV : Boolean;
       begin
-         for I in N32 range 0 .. Frag_Len - 1 loop
-            Encrypted (I) := S.Input.Data (FS + I);
-         end loop;
-         for I in N32 range 0 .. 4 loop
-            Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
-         end loop;
+         if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Record_Overflow, Result);
+            return;
+         end if;
 
          declare
             Min_Frag : constant N32 :=
@@ -1213,93 +1222,109 @@ is
             end if;
          end;
 
-         Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
-                            HC.Client_Write_IV_12, HC.Client_Seq_12,
-                            Plaintext, PL, DV);
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-
-         if not DV then
-            Send_Alert_And_Error (S, Bad_Record_MAC, Result); return;
-         end if;
-         if PL < 4 then
-            Send_Alert_And_Error (S, Decode_Error, Result); return;
-         end if;
+         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
 
          declare
-            Msg_Type : constant Byte := Plaintext (0);
-            Msg_Len : constant N32 := N32 (Plaintext (1)) * 65536 +
-                                 N32 (Plaintext (2)) * 256 +
-                                 N32 (Plaintext (3));
+            Encrypted : Byte_Seq (0 .. Frag_Len - 1);
+            Hdr : Byte_Seq (0 .. 4);
+            Plaintext : Byte_Seq (0 .. Frag_Len - 1);
+            PL : N32; DV : Boolean;
          begin
-            if Msg_Type /= HT_Finished then
-               Send_Alert_And_Error (S, Unexpected_Message, Result); return;
+            for I in N32 range 0 .. Frag_Len - 1 loop
+               Encrypted (I) := S.Input.Data (FS + I);
+            end loop;
+            for I in N32 range 0 .. 4 loop
+               Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
+            end loop;
+
+            Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
+                               HC.Client_Write_IV_12, HC.Client_Seq_12,
+                               Plaintext, PL, DV);
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+            if not DV then
+               Send_Alert_And_Error (S, Bad_Record_MAC, Result); return;
             end if;
-            if Msg_Len /= Finished_Verify_Len then
-               --  Finished length mismatch — RFC 8446 §6.2:
-               --  decrypt_error (alert 51). BoGo
-               --  TrailingMessageData-ClientFinished expects this
-               --  rather than decode_error.
-               Send_Alert_And_Error
-                 (S, Certificate_Verify_Failed, Result);
-               return;
-            end if;
-            --  RFC 5246 §7.4.9: Finished is the last handshake
-            --  message in the client's flight. Any plaintext bytes
-            --  in the same record beyond `4 + Finished_Verify_Len`
-            --  is excess data → fatal unexpected_message
-            --  (BoGo TrailingDataWithFinished). Server's WRITE state
-            --  is still plaintext at this point (CCS not yet sent),
-            --  so the alert MUST be plaintext — sending it encrypted
-            --  leaves Go's TLS stack seeing garbage on the wire.
-            if PL /= 4 + Finished_Verify_Len then
-               Send_Alert_And_Error (S, Unexpected_Message, Result);
-               return;
+            if PL < 4 then
+               Send_Alert_And_Error (S, Decode_Error, Result); return;
             end if;
 
             declare
-               Exp : Verify_Data_12;
-               TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
+               Msg_Type : constant Byte := Plaintext (0);
+               Msg_Len : constant N32 := N32 (Plaintext (1)) * 65536 +
+                                    N32 (Plaintext (2)) * 256 +
+                                    N32 (Plaintext (3));
             begin
-               if Use_384 then
-                  SPARKNaCl.Hashing.SHA384.Hash
-                    (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
-                  Compute_Finished_12 (Exp, HC.Master_Secret_12,
-                                       Label_Client_Finished,
-                                       Byte_Seq (TH4), True);
-               else
-                  Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
-                  Compute_Finished_12 (Exp, HC.Master_Secret_12,
-                                       Label_Client_Finished,
-                                       Byte_Seq (TH), False);
+               if Msg_Type /= HT_Finished then
+                  Send_Alert_And_Error (S, Unexpected_Message, Result); return;
+               end if;
+               if Msg_Len /= Finished_Verify_Len then
+                  --  Finished length mismatch — RFC 8446 §6.2:
+                  --  decrypt_error (alert 51). BoGo
+                  --  TrailingMessageData-ClientFinished expects this
+                  --  rather than decode_error.
+                  Send_Alert_And_Error
+                    (S, Certificate_Verify_Failed, Result);
+                  return;
+               end if;
+               --  RFC 5246 §7.4.9: Finished is the last handshake
+               --  message in the client's flight. Any plaintext bytes
+               --  in the same record beyond `4 + Finished_Verify_Len`
+               --  is excess data → fatal unexpected_message
+               --  (BoGo TrailingDataWithFinished). Server's WRITE state
+               --  is still plaintext at this point (CCS not yet sent),
+               --  so the alert MUST be plaintext — sending it encrypted
+               --  leaves Go's TLS stack seeing garbage on the wire.
+               if PL /= 4 + Finished_Verify_Len then
+                  Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  return;
                end if;
 
-               --  Constant-time comparison (prevents timing attacks
-               --  on the verify_data). SPARKNaCl.Equal uses XOR
-               --  accumulation — no early exit on mismatch.
                declare
-                  Received : constant Key_Schedule_12.Verify_Data_12 :=
-                     Key_Schedule_12.Verify_Data_12
-                       (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
+                  Exp : Verify_Data_12;
+                  TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
                begin
-                  if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
-                     --  RFC 5246 §7.4.9 / §7.2.1: Finished verify
-                     --  mismatch → fatal alert. Server WRITE state
-                     --  is still plaintext (no CCS sent yet) so the
-                     --  alert MUST be plaintext, not encrypted.
-                     Send_Alert_And_Error
-                       (S, Handshake_Failure, Result);
-                     pragma Assert
-                       (S.Last_Error /= Unexpected_Message);
-                     pragma Assert (Output_Pending (S) > 0);
-                     pragma Assert
-                       (Finished_Mismatch_Alerted_RFC_8446_4_4_4
-                          (S.State, Output_Pending (S), S.Last_Error));
-                     return;
+                  if Use_384 then
+                     SPARKNaCl.Hashing.SHA384.Hash
+                       (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                     Compute_Finished_12 (Exp, HC.Master_Secret_12,
+                                          Label_Client_Finished,
+                                          Byte_Seq (TH4), True);
+                  else
+                     Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                     Compute_Finished_12 (Exp, HC.Master_Secret_12,
+                                          Label_Client_Finished,
+                                          Byte_Seq (TH), False);
                   end if;
-               end;
-            end;
 
-            Append_Transcript (HC, Plaintext (0 .. PL - 1));
+                  --  Constant-time comparison (prevents timing attacks
+                  --  on the verify_data). SPARKNaCl.Equal uses XOR
+                  --  accumulation — no early exit on mismatch.
+                  declare
+                     Received : constant Key_Schedule_12.Verify_Data_12 :=
+                        Key_Schedule_12.Verify_Data_12
+                          (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
+                  begin
+                     if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
+                        --  RFC 5246 §7.4.9 / §7.2.1: Finished verify
+                        --  mismatch → fatal alert. Server WRITE state
+                        --  is still plaintext (no CCS sent yet) so the
+                        --  alert MUST be plaintext, not encrypted.
+                        Send_Alert_And_Error
+                          (S, Handshake_Failure, Result);
+                        pragma Assert (Output_Pending (S) > 0);
+                        pragma Assert
+                          (S.Last_Error /= Unexpected_Message);
+                        pragma Assert
+                          (Finished_Mismatch_Alerted_RFC_8446_4_4_4
+                             (S.State, Output_Pending (S), S.Last_Error));
+                        return;
+                     end if;
+                  end;
+               end;
+
+               Append_Transcript (HC, Plaintext (0 .. PL - 1));
+            end;
          end;
       end;
 
@@ -1348,11 +1373,11 @@ is
                Active_TEK    : constant Byte_Seq :=
                   HC.Cfg.TLS12_Ticket_Keys
                     (HC.Cfg.TLS12_Active_TEK_Idx).TEK;
-               Nonce_Buf  : Byte_Seq (0 .. 11) := (others => 0);
+               Nonce_Buf  : Byte_Seq (0 .. 11);
                Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
-               Ticket_Buf : Byte_Seq (0 .. 255) := (others => 0);
+               Ticket_Buf : Byte_Seq (0 .. 255);
                Ticket_Len : N32;
-               NST_Buf    : Byte_Seq (0 .. 271) := (others => 0);
+               NST_Buf    : Byte_Seq (0 .. 271);
                NST_Total  : N32;
                NST_Rec_Out : N32;
             begin

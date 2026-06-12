@@ -214,7 +214,10 @@ is
         when Client_Finished_Sent =>
            To in Connected | Error_State,
         when Wait_Client_Hello =>
-           To in Server_Hello_Sent | Wait_Client_Hello_Retry | Error_State,
+           --  TLS 1.2 abbreviated resumption emits the complete server
+           --  flight immediately and then waits for client CCS/Finished.
+           To in Server_Hello_Sent | Wait_Client_Hello_Retry
+                 | Wait_Client_Finished | Error_State,
         when Wait_Client_Hello_Retry =>
            To in Server_Hello_Sent | Error_State,
         when Server_Hello_Sent =>
@@ -226,7 +229,7 @@ is
         when Wait_Client_Cert_Verify =>
            To in Wait_Client_Finished | Error_State,
         when Wait_Client_Finished =>
-           To in Connected | Error_State,
+           To in Connected | Closing | Error_State,
         when Connected =>
            To in Closing | Error_State | Closed,
         when Closing =>
@@ -2211,7 +2214,8 @@ is
                 and then E_Len >= 0
                 and then E_Len <= Data'Last + 1 - Body_Start,
         Post => S.State = S.State'Old
-                and then S.Client_App = S.Client_App'Old;
+                and then S.Client_App = S.Client_App'Old
+                and then S.Negotiated_Suite = S.Negotiated_Suite'Old;
 
    ----------------------------------------------------------------------------
    --  Buffer operations (transport layer interface)
@@ -2228,8 +2232,11 @@ is
                   --  unchanged fields so callers don't have to
                   --  re-establish Pre's like Nonce_Space_Available
                   --  (S.Server_App) across the call.
+                  and S.Role = S.Role'Old
                   and S.Server_App = S.Server_App'Old
                   and S.Client_App = S.Client_App'Old
+                  and S.Input = S.Input'Old
+                  and S.Output = S.Output'Old
                   and S.Server_Seq_12 = S.Server_Seq_12'Old
                   and S.Client_Seq_12 = S.Client_Seq_12'Old
                   and S.Last_Error = S.Last_Error'Old

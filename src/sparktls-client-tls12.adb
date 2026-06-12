@@ -251,10 +251,11 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       OK      :    out Boolean)
-   with Pre  => Msg_Len in 3 .. Max_HS_Msg - 4
-                and Frag'First >= 0
-                and Frag'Last < N32'Last - 4
-                and Msg_Len <= N32 (Frag'Length) - 4,
+	   with Pre  => Msg_Len in 3 .. Max_HS_Msg - 4
+	                and Frag'First >= 0
+	                and Frag'Last < N32'Last - 4
+	                and Frag'Length <= Natural (N32'Last)
+	                and Msg_Len <= N32 (Frag'Length) - 4,
         Post => (if HC.Peer_Cert_Valid then
                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                     and then X509.Spans_Valid
@@ -310,11 +311,18 @@ is
                Entries_Ctx : C12_Entries.Context;
             begin
                C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
-               while C12_Entries.Has_Element (Entries_Ctx)
-                 and then Cert_Idx <= Max_Pool_Size
-               loop
-                  declare
-                     E_Ctx : C12_Entry.Context;
+	               while C12_Entries.Has_Element (Entries_Ctx)
+	                 and then Cert_Idx <= Max_Pool_Size
+	               loop
+                  pragma Loop_Invariant
+                    (if HC.Peer_Cert_Valid
+                     then HC.Peer_Cert_DER_Len
+                          in 1 .. Max_Cert_DER_Len
+                          and then X509.Spans_Valid
+                            (HC.Peer_Cert,
+                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	                  declare
+	                     E_Ctx : C12_Entry.Context;
                   begin
                      C12_Entries.Switch (Entries_Ctx, E_Ctx);
                      C12_Entry.Verify_Message (E_Ctx);
@@ -342,11 +350,28 @@ is
                                        Cert_X (X509.N32 (I)) :=
                                           X509.Byte
                                             (Cert_RFLX (RBT.Index (I + 1)));
-                                    end loop;
-                                    X509.Parse (Cert_X, HC.Peer_Cert, P_OK);
-                                    HC.Peer_Cert_Valid := P_OK
-                                       and then X509.Is_Valid (HC.Peer_Cert);
-                                 end;
+	                                    end loop;
+	                                    X509.Parse (Cert_X, HC.Peer_Cert, P_OK);
+                                    if P_OK then
+                                       pragma Assert
+                                         (X509.Spans_Valid
+                                            (HC.Peer_Cert,
+                                             X509.N32 (C_Len) - 1));
+                                       HC.Peer_Cert_Valid :=
+                                         X509.Is_Valid (HC.Peer_Cert);
+                                       pragma Assert
+                                         (if HC.Peer_Cert_Valid
+                                          then HC.Peer_Cert_DER_Len
+                                               in 1 .. Max_Cert_DER_Len
+                                               and then X509.Spans_Valid
+                                                 (HC.Peer_Cert,
+                                                  X509.N32
+                                                    (HC.Peer_Cert_DER_Len)
+                                                  - 1));
+                                    else
+                                       HC.Peer_Cert_Valid := False;
+                                    end if;
+	                                 end;
                               elsif HC.Peer_Int_Count < Max_Pool_Size then
                                  declare
                                     Idx : constant Natural := HC.Peer_Int_Count;
@@ -1552,7 +1577,8 @@ is
                      end if;
                      if Leftover >= Next_Total then
                         --  Next message complete; loop to dispatch it.
-                        pragma Assert (Leftover < HC.Reasm_Len);
+                        pragma Assert (Old_Need > 0);
+                        pragma Assert (Leftover < Old_Need + Leftover);
                         Msg_Type := HC.Reasm_Buf (0);
                         Msg_Len := Next_Len;
                         HC.Reasm_Need := Next_Total;

@@ -14,6 +14,7 @@ with SPARKTLS.Key_Schedule;
 with SPARKTLS.HC_Alloc;
 with X509;
 use type X509.Algorithm_ID;
+use type X509.Certificate;
 with SPARKTLSCrypto.HMAC384;
 with SPARKTLSCrypto.HKDF384;
 with SPARKTLSCrypto.P384.Field;
@@ -46,16 +47,30 @@ is
                     | Wait_Client_Finished
        then Nonce_Space_Available (S.Server_App))
       and then
+        (if S.State = Wait_Client_Hello and then HC.Version = TLS_1_2
+         then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                (HC.Server_Seq_12))
+      and then
+        (if S.State = Wait_Client_Hello_Retry
+         then HC.Version = TLS_1_3
+              and then Nonce_Space_Available (HC.Server_HS)
+              and then Nonce_Space_Available (S.Server_App))
+      and then
         (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_3
          then Nonce_Space_Available (HC.Client_HS))
       and then
         (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_2
          then SPARKTLS.Handshake.TLS12.Valid_TLS12_Suite
                 (S.Negotiated_Suite)
+              and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
+                (HC.Selected_Group)
               and then SPARKTLSCrypto.P384.Field.Initialized
               and then SPARKTLSCrypto.P384.ECDSA.Initialized
               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                (HC.Server_Seq_12)))
+                (HC.Client_Seq_12)
+              and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                (HC.Server_Seq_12)
+              and then Free_Space (S.Output) >= 7))
    with Ghost;
 
    --  Forward declarations
@@ -78,16 +93,16 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre  => Server_Active (S)
-                and then S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
-                and then Server_Configured (HC)
-                and then HC.Transcript_Len > 0
-                and then S.Negotiated_Suite in
-                  Suite_AES_128_GCM_SHA256
-                  | Suite_AES_256_GCM_SHA384
-                  | Suite_CHACHA20_POLY1305_SHA256
-                and then Nonce_Space_Available (HC.Server_HS)
-                and then Nonce_Space_Available (S.Server_App),
+	   with Pre  => Server_Active (S)
+	                and then S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
+	                and then Server_Configured (HC)
+	                and then HC.Transcript_Len > 0
+		                and then S.Negotiated_Suite in
+		                  Suite_AES_128_GCM_SHA256
+		                  | Suite_AES_256_GCM_SHA384
+		                  | Suite_CHACHA20_POLY1305_SHA256
+		                and then Nonce_Space_Available (HC.Server_HS)
+		                and then Nonce_Space_Available (S.Server_App),
         Post => (S.State = S.State'Old
                  or else Valid_Transition (S.State'Old, S.State))
                 and then (if S.State not in Error_State | Closed
@@ -178,7 +193,29 @@ is
    with Pre  => S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify
                 and then S.Role = Role_Server
                 and then Server_Configured (HC)
-                and then Nonce_Space_Available (S.Server_App),
+                and then Nonce_Space_Available (S.Server_App)
+                and then Nonce_Space_Available (HC.Client_HS)
+                and then HC.Hash_Len in 32 | 48
+                and then
+                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+                   then HC.Hash_Len = 48
+                   else HC.Hash_Len = 32)
+                and then HC.Transcript_Len > 0
+                and then
+                  (if S.State = Wait_Client_Cert_Verify then
+                     HC.Peer_Cert_Valid
+	                     and then HC.Peer_Cert_DER_Len > 0
+	                     and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
+	                     and then
+	                       X509.N32 (HC.Peer_Cert_DER_Len) - 1 <
+	                          X509.N32'Last
+	                     and then X509.Spans_Valid
+	                       (HC.Peer_Cert,
+	                        X509.N32 (HC.Peer_Cert_DER_Len) - 1)
+                     and then SPARKTLSCrypto.P384.Field.Initialized
+                     and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+                and then Free_Space (S.Output) >=
+                           Records.Record_Header_Size + 3 + Records.Tag_Size,
         Post => (S.State = S.State'Old
                  or else Valid_Transition (S.State'Old, S.State))
                 and then (if S.State not in Error_State | Closed
@@ -192,7 +229,9 @@ is
                and then S.Role = Role_Server
                and then Server_Configured (HC)
                and then Nonce_Space_Available (S.Server_App)
-               and then Nonce_Space_Available (HC.Client_HS),
+               and then Nonce_Space_Available (HC.Client_HS)
+               and then Free_Space (S.Output) >=
+                          Records.Record_Header_Size + 3 + Records.Tag_Size,
         Post => (S.State = S.State'Old
                  or else Valid_Transition (S.State'Old, S.State))
                 and then (if S.State not in Error_State | Closed
@@ -208,7 +247,20 @@ is
                and then Rec.Content = Records.Content_Application_Data
                and then Server_Configured (HC)
                and then Nonce_Space_Available (HC.Client_HS)
-               and then Nonce_Space_Available (S.Server_App);
+               and then Nonce_Space_Available (S.Server_App)
+               and then Free_Space (S.Output) >=
+                          Records.Record_Header_Size + 3 + Records.Tag_Size
+               and then Rec.Fragment_Len >= 1
+               and then Rec.Fragment_Len <=
+                          Records.Max_Fragment + Max_Record_Overhead
+               and then Rec.Fragment_Pos = Records.Record_Header_Size
+               and then Rec.Record_Len >= Rec.Fragment_Pos
+               and then Rec.Fragment_Len = Rec.Record_Len - Rec.Fragment_Pos
+               and then Rec.Record_Len <= Available (S.Input),
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC));
    procedure Verify_Client_Finished
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -219,7 +271,11 @@ is
    with Pre => S.State = Wait_Client_Finished
                and then S.Role = Role_Server
                and then Server_Configured (HC)
-               and then Nonce_Space_Available (S.Server_App);
+               and then Nonce_Space_Available (S.Server_App),
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC));
 
 
 
@@ -227,7 +283,12 @@ is
    with Pre => S.State = Connected
                and then S.Role = Role_Server
                and then Nonce_Space_Available (S.Server_App)
-               and then Nonce_Space_Available (S.Client_App);
+               and then Nonce_Space_Available (S.Client_App)
+               and then S.App_Data_Len <= Max_Record_Plaintext
+               and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
+               and then S.Empty_Records_Recvd <= Max_Empty_Records
+               and then Free_Space (S.Output) >=
+                          Records.Record_Header_Size + 3 + Records.Tag_Size;
 
    procedure Derive_Handshake_Keys
      (S  : in     Session;
@@ -238,10 +299,13 @@ is
                                        | Suite_AES_256_GCM_SHA384
                                        | Suite_CHACHA20_POLY1305_SHA256
                and Server_Configured (HC),
-        Post => Server_Configured (HC)
-                and HC.Transcript_Len = HC.Transcript_Len'Old
-                and HC.Server_HS.Counter = 0
-                and Nonce_Space_Available (HC.Server_HS);
+	        Post => Server_Configured (HC)
+	                and HC.Transcript_Len = HC.Transcript_Len'Old
+	                and HC.Server_HS.Counter = 0
+	                and (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                     then HC.Hash_Len = 48
+	                     else HC.Hash_Len = 32)
+	                and Nonce_Space_Available (HC.Server_HS);
 
    procedure Derive_App_Keys
      (S  : in out Session;
@@ -345,12 +409,10 @@ is
                 and Nonce_Space_Available (S.Server_App),
         Post => S.State = Error_State
                 and S.Last_Error = Err
-                --  Error_Has_Alert (Pending > 0 OR Err = Unexpected_Message)
-                --  is NOT in this Post: Records.Build_Alert_Record gives no
-                --  postcondition about Output_Pending, so we can't carry
-                --  "alert was queued" through proof. Call sites that need
-                --  it add a pragma Assert (Output_Pending (S) > 0) before
-                --  the bridging Cert/Finished/AEAD-class predicate.
+                and Result in Has_Output | Error_Alert
+                and (if Free_Space (S.Output'Old) >=
+                         Records.Record_Header_Size + 3 + Records.Tag_Size
+                     then Output_Pending (S) > 0)
    is
       Dummy : N32;
    begin
@@ -383,9 +445,14 @@ is
                 and (if HC.Transcript_Len'Old > 0
                        or else Data'First <= Data'Last
                      then HC.Transcript_Len > 0)
-                and (if Server_Configured (HC)'Old
-                     then Server_Configured (HC))
-                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+	                and (if Server_Configured (HC)'Old
+	                     then Server_Configured (HC))
+	                and HC.Hash_Len = HC.Hash_Len'Old
+		                and HC.Version = HC.Version'Old
+	                and HC.Peer_Cert = HC.Peer_Cert'Old
+	                and HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
+	                and HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
+	                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and HC.Client_HS.Counter = HC.Client_HS.Counter'Old
                 and HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and HC.Client_HS.Suite = HC.Client_HS.Suite'Old
@@ -805,7 +872,7 @@ is
                      end;
                      Free_Reasm;
 
-                     if not Parse_OK then
+	                  if not Parse_OK then
                         Dispatch_CH_Parse_Error_Alert (S, Result);
                         return;
                      end if;
@@ -1498,11 +1565,12 @@ is
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and Server_Configured (HC),
         Post => (if Algo_OK
-                 then S.State = S.State'Old
-                      and S.Role = S.Role'Old
-                      and Server_Configured (HC)
-                      and HC.Transcript_Len = HC.Transcript_Len'Old
-                      and HC.Negotiated_Sig_Algo /= 0);
+	                 then S.State = S.State'Old
+	                      and S.Role = S.Role'Old
+	                      and S.Negotiated_Suite = S.Negotiated_Suite'Old
+	                      and Server_Configured (HC)
+	                      and HC.Transcript_Len = HC.Transcript_Len'Old
+	                      and HC.Negotiated_Sig_Algo /= 0);
 
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
@@ -1669,6 +1737,8 @@ is
       --  what the peer actually sees.
       Scratch    : IO_Buffer;
       Saved_Ctr  : Unsigned_64;
+      Flight_Suite    : constant Unsigned_16 := S.Negotiated_Suite;
+      Flight_Hash_Len : N32 := 32;
       --  Track whether we've started writing encrypted records (so we
       --  know whether a counter rollback is needed on commit failure).
       Encryption_Started : Boolean := False;
@@ -1779,6 +1849,11 @@ is
 
       --  Derive handshake keys
       Derive_Handshake_Keys (S, HC);
+      Flight_Hash_Len := HC.Hash_Len;
+      pragma Assert
+        (if Flight_Suite = Suite_AES_256_GCM_SHA384
+         then Flight_Hash_Len = 48
+         else Flight_Hash_Len = 32);
       --  Save the AEAD counter snapshot now: every Build_Encrypted_Record
       --  call below advances HC.Server_HS.Counter unconditionally
       --  (Post: Keys.Counter = Keys.Counter'Old + 1). If the final
@@ -1898,14 +1973,15 @@ is
 
       --  Build CertificateVerify (encrypted)
       declare
-         H_Len   : constant N32 := HC.Hash_Len;
+         H_Len   : constant N32 := Flight_Hash_Len;
          CV_Hash : Byte_Seq (0 .. H_Len - 1);
          CV_Buf  : Byte_Seq (0 .. 523);
          CV_Len  : N32;
          Emitted : Boolean;
       begin
-         case S.Negotiated_Suite is
+         case Flight_Suite is
             when Suite_AES_256_GCM_SHA384 =>
+               pragma Assert (H_Len = 48);
                CV_Hash := Transcript_Hash_384 (HC);
             when others =>
                declare
@@ -2259,10 +2335,14 @@ is
       Result :    out Action)
    with Pre  => Data'First = 0
                 and Data'Last >= 3
-                and Data'Last < N32'Last - 4
-                and Data'Last < Transcript_Capacity
-                and S.State = Wait_Client_Certificate
-                and Nonce_Space_Available (S.Server_App);
+	                and Data'Last < N32'Last - 4
+	                and Data'Last < Transcript_Capacity
+	                and S.State = Wait_Client_Certificate
+	                and Nonce_Space_Available (S.Server_App),
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC));
 
    procedure Handle_Client_Cert_13
      (S      : in out Session;
@@ -2313,10 +2393,34 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Data'First = 0
-                and Data'Length > 0
-                and Data'Last < N32'Last - 4
-                and S.State = Wait_Client_Cert_Verify
-                and HC.Hash_Len in 32 | 48;
+                and then Data'Length > 0
+                and then Data'Last < N32'Last - 4
+                and then Data'Last < Transcript_Capacity
+                and then S.State = Wait_Client_Cert_Verify
+                and then Server_Configured (HC)
+                and then Nonce_Space_Available (S.Server_App)
+                and then HC.Hash_Len in 32 | 48
+                and then
+                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+                   then HC.Hash_Len = 48
+                   else HC.Hash_Len = 32)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then HC.Peer_Cert_Valid
+	                and then HC.Peer_Cert_DER_Len > 0
+	                and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
+	                and then
+	                  X509.N32 (HC.Peer_Cert_DER_Len) - 1 < X509.N32'Last
+	                and then X509.Spans_Valid
+	                  (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1)
+	                and then SPARKTLSCrypto.P384.Field.Initialized
+	                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+	                and then Free_Space (S.Output) >=
+	                           Records.Record_Header_Size + 3 + Records.Tag_Size,
+        Post => (S.State = S.State'Old
+                 or else Valid_Transition (S.State'Old, S.State))
+                and then (if S.State not in Error_State | Closed
+                          then Server_Configured (HC));
 
    procedure Handle_Client_CertVerify_13
      (S       : in out Session;
@@ -2328,9 +2432,13 @@ is
       H_Len : constant N32 := HC.Hash_Len;
       CV_Hash : Byte_Seq (0 .. H_Len - 1);
    begin
+      pragma Assert
+        (X509.Spans_Valid
+           (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
       Result := OK;
       case S.Negotiated_Suite is
          when Suite_AES_256_GCM_SHA384 =>
+            pragma Assert (H_Len = 48);
             CV_Hash := Transcript_Hash_384 (HC);
          when others =>
             declare
@@ -2358,7 +2466,7 @@ is
          Content (64 + N32 (Ctx_Str'Length) + 1 ..
                   64 + N32 (Ctx_Str'Length) + H_Len) := CV_Hash;
 
-         if Msg_Len >= 8 then
+         if Msg_Len >= 8 and then Data'Length >= 8 then
             declare
                Sig_Scheme : constant Unsigned_16 :=
                   Unsigned_16 (Data (4)) * 256 +
@@ -2410,21 +2518,46 @@ is
       if HC.Cfg.Trust /= null
          and then HC.Cfg.Get_Time /= null
          and then HC.Peer_Cert_Valid
-      then
-         declare
-            Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
-            Cert_X : X509.Byte_Seq
-               (0 .. X509.N32 (Cert_DER_Len_Const) - 1) :=
-                 (others => 0);
-            VR : Validation_Result;
-         begin
-            for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
-               Cert_X (X509.N32 (I)) :=
-                  X509.Byte (HC.Peer_Cert_DER (I));
-            end loop;
-            VR := Validate_Chain
-              (Leaf_DER   => Cert_X,
-               Leaf       => HC.Peer_Cert,
+	      then
+	         declare
+	            Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
+	            Leaf_Last : constant X509.N32 :=
+	               X509.N32 (Cert_DER_Len_Const) - 1;
+	            Cert_X : X509.Byte_Seq
+	               (0 .. Leaf_Last) :=
+	                 (others => 0);
+	            VR : Validation_Result;
+	         begin
+	            pragma Assert (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
+	            pragma Assert
+	              (Leaf_Last = X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+	            for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
+	               pragma Loop_Invariant
+	                 (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
+	               pragma Loop_Invariant
+	                 (HC.Peer_Cert = HC.Peer_Cert'Loop_Entry);
+	               pragma Loop_Invariant
+	                 (HC.Peer_Cert_DER_Len =
+	                    HC.Peer_Cert_DER_Len'Loop_Entry);
+	               pragma Loop_Invariant
+	                 (Leaf_Last =
+	                    X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+	               pragma Loop_Invariant (Leaf_Last < X509.N32'Last);
+	               pragma Loop_Invariant
+	                 (X509.Spans_Valid
+	                    (HC.Peer_Cert'Loop_Entry,
+	                     X509.N32 (HC.Peer_Cert_DER_Len'Loop_Entry) - 1));
+	               Cert_X (X509.N32 (I)) :=
+	                  X509.Byte (HC.Peer_Cert_DER (I));
+	            end loop;
+		            pragma Assert (Leaf_Last < X509.N32'Last);
+		            pragma Assert
+		              (X509.N32 (HC.Peer_Cert_DER_Len) - 1 < X509.N32'Last);
+		            VR := Validate_Chain
+		              (Leaf_DER   =>
+		                  Cert_X
+		                    (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
+	               Leaf       => HC.Peer_Cert,
                Ints       => HC.Peer_Ints,
                Int_Count  => HC.Peer_Int_Count,
                Roots      => HC.Cfg.Trust.Roots,
@@ -2494,7 +2627,6 @@ is
                HC.CCS_Received := True;
                Result := OK;
             else
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                declare
                   A : N32;
                begin
@@ -2511,6 +2643,15 @@ is
             end if;
 
          when Records.Content_Application_Data =>
+            pragma Assert (Rec.Fragment_Len >= 1);
+            pragma Assert (Rec.Fragment_Len <=
+                             Records.Max_Fragment + Max_Record_Overhead);
+            pragma Assert (Rec.Fragment_Pos = Records.Record_Header_Size);
+            pragma Assert (Rec.Record_Len >= Rec.Fragment_Pos);
+            pragma Assert (Rec.Fragment_Len =
+                             Rec.Record_Len - Rec.Fragment_Pos);
+            pragma Assert (Rec.Record_Len <= Available (S.Input));
+
             declare
                Frag_Len   : constant N32 := Rec.Fragment_Len;
                Frag_Start : constant N32 :=
@@ -2589,6 +2730,11 @@ is
                   return;
                end if;
 
+               if Plain_Len = 0 then
+                  Send_Encrypted_Alert (S, Decode_Error, Result);
+                  return;
+               end if;
+
                declare
                   Msg_Type : Byte;
                   Msg_Len  : N32;
@@ -2603,7 +2749,12 @@ is
                      --  RFC 8446 §6.2: malformed handshake → fatal
                      --  decode_error alert. We're past keys, so use
                      --  the encrypted alert path. Was missing the
-                     --  alert entirely (peer saw TCP RST).
+	                     --  alert entirely (peer saw TCP RST).
+	                     Send_Encrypted_Alert (S, Decode_Error, Result);
+                     return;
+                  end if;
+
+                  if Plain_Len_Const < 4 then
                      Send_Encrypted_Alert (S, Decode_Error, Result);
                      return;
                   end if;
@@ -2933,6 +3084,13 @@ is
    is
    begin
       Result := OK;
+      pragma Assert (Rec.Fragment_Len >= 1);
+      pragma Assert (Rec.Fragment_Len <=
+                       Records.Max_Fragment + Max_Record_Overhead);
+      pragma Assert (Rec.Fragment_Pos = Records.Record_Header_Size);
+      pragma Assert (Rec.Record_Len >= Rec.Fragment_Pos);
+      pragma Assert (Rec.Fragment_Len = Rec.Record_Len - Rec.Fragment_Pos);
+      pragma Assert (Rec.Record_Len <= Available (S.Input));
             declare
                Frag_Len   : constant N32 := Rec.Fragment_Len;
                Frag_Start : constant N32 :=
@@ -3041,6 +3199,11 @@ is
                end if;
 
                --  Parse handshake header
+               if Plain_Len = 0 then
+                  Send_Encrypted_Alert (S, Decode_Error, Result);
+                  return;
+               end if;
+
                declare
                   Msg_Type : Byte;
                   Msg_Len  : N32;
@@ -3243,6 +3406,14 @@ is
          end if;
          return;
       end if;
+
+      pragma Assert (Rec.Fragment_Len >= 1);
+      pragma Assert (Rec.Fragment_Len <=
+                       Records.Max_Fragment + Max_Record_Overhead);
+      pragma Assert (Rec.Fragment_Pos = Records.Record_Header_Size);
+      pragma Assert (Rec.Record_Len >= Rec.Fragment_Pos);
+      pragma Assert (Rec.Fragment_Len = Rec.Record_Len - Rec.Fragment_Pos);
+      pragma Assert (Rec.Record_Len <= Available (S.Input));
 
       declare
          Frag_Len   : constant N32 := Rec.Fragment_Len;

@@ -63,7 +63,7 @@ is
    with Pre  => Ticket'First = 0
                 and then Ticket'Last >= Max_Ticket_Wire_Len - 1
                 and then Plain.SID_Len in 0 .. 32,
-        Post => Ticket_Len in 0 .. Max_Ticket_Wire_Len;
+        Post => Ticket_Len in 1 .. Max_Ticket_Wire_Len;
 
    --  Decrypt a wire-format ticket. Looks up the Key_ID against
    --  Keys (linear scan over up to TLS12_Max_Keys entries), then

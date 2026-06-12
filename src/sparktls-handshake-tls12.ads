@@ -292,8 +292,19 @@ is
    with Pre  => Data'First = 0
                 and Data'Last in 3 .. Max_Client_Key_Exchange - 1
                 and Valid_ECDHE_Group (HC.Selected_Group),
-        Post => (if OK then
-                   HC.Selected_Group = HC.Selected_Group'Old);
+        Post => HC.Version = HC.Version'Old
+                and then HC.Selected_Group = HC.Selected_Group'Old
+                and then
+                  (if Valid_ECDHE_Group (HC.Selected_Group'Old)
+                   then Valid_ECDHE_Group (HC.Selected_Group))
+                and then
+                  (if HC.Cfg.Local'Old /= null
+                     and then HC.Cfg.Local'Old.Has_Identity
+                   then HC.Cfg.Local /= null
+                     and then HC.Cfg.Local.Has_Identity)
+                and then
+                  (if HC.Cfg.Random'Old /= null
+                   then HC.Cfg.Random /= null);
 
    --  RFC 5246 §7.4.9: Build TLS 1.2 Finished message.
    --
@@ -391,9 +402,13 @@ is
         --  rather than HC.Cfg = HC.Cfg'Old.
         Post => Len <= Max_Server_Hello_12
                 and S.State = S.State'Old
+                and S.Role = S.Role'Old
+                and S.Negotiated_Suite = S.Negotiated_Suite'Old
                 and HC.Cfg.Local /= null
                 and HC.Cfg.Local.Has_Identity
-                and HC.Cfg.Random /= null;
+                and HC.Cfg.Random /= null
+                and HC.Version = HC.Version'Old
+                and HC.Selected_Group = HC.Selected_Group'Old;
 
    --  RFC 5246 §7.4.1.2: Parse TLS 1.2 ServerHello.
    --

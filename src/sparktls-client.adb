@@ -80,6 +80,11 @@ is
    with Pre  => Nonce_Space_Available (S.Client_App)
                 and S.State not in Idle | Closing | Closed | Error_State,
         Post => S.State = Error_State
+                and S.Last_Error = Err
+                and Result in Has_Output | Error_Alert
+                and (if Free_Space (S.Output'Old) >=
+                         Records.Record_Header_Size + 3 + Records.Tag_Size
+                     then Output_Pending (S) > 0)
    is
       A : N32;
    begin
@@ -126,8 +131,9 @@ is
                 and Data'Last < N32'Last
                 and Data'Last <= N32'Last - 16#1_0004#
                 and Data'First >= 0,
-        Post => S.State = S.State'Old
-                and then S.Client_App = S.Client_App'Old;
+	        Post => S.State = S.State'Old
+	                and then S.Client_App = S.Client_App'Old
+	                and then S.Negotiated_Suite = S.Negotiated_Suite'Old;
    --  OK = False signals a fatal protocol error. `Err` discriminates
    --  the alert kind so the caller picks the right alert code:
    --    Unsupported_Extension : server sent an EE extension we did
@@ -140,25 +146,33 @@ is
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and Nonce_Space_Available (HC.Client_HS)
-               and HC.Transcript_Len > 0,
-        Post => (if Result = OK then
-                    S.State = S.State'Old
-                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+	               and then Nonce_Space_Available (HC.Client_HS)
+	               and then HC.Transcript_Len > 0
+	               and then
+	                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                  then HC.Hash_Len = 48
+	                  else HC.Hash_Len = 32),
+	        Post => (if Result = OK then
+	                    S.State = S.State'Old
+	                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                     and then HC.Transcript_Len > 0);
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => S.State = Wait_Server_Finished
-               and Nonce_Space_Available (HC.Client_HS)
-               and HC.Transcript_Len > 0
-               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                       | Suite_AES_256_GCM_SHA384
-                                       | Suite_CHACHA20_POLY1305_SHA256,
-        Post => (if Result = Has_Output then
-                    Nonce_Space_Available (S.Client_App)
-                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
+	               and then Nonce_Space_Available (HC.Client_HS)
+	               and then HC.Transcript_Len > 0
+	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                               | Suite_AES_256_GCM_SHA384
+	                                               | Suite_CHACHA20_POLY1305_SHA256
+	               and then
+	                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                  then HC.Hash_Len = 48
+	                  else HC.Hash_Len = 32),
+	        Post => (if Result = Has_Output then
+	                    Nonce_Space_Available (S.Client_App)
+	                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
                 and then Result in Has_Output | Error_Alert;
    procedure Process_Handshake_Message
      (S      : in out Session;
@@ -295,10 +309,14 @@ is
                and then Msg'Last < Transcript_Capacity
                and then HC.Transcript_Len > 0
                and then Nonce_Space_Available (HC.Client_HS)
-               and then Nonce_Space_Available (S.Client_App)
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                           | Suite_AES_256_GCM_SHA384
-                                           | Suite_CHACHA20_POLY1305_SHA256,
+	                and then Nonce_Space_Available (S.Client_App)
+	                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                            | Suite_AES_256_GCM_SHA384
+	                                            | Suite_CHACHA20_POLY1305_SHA256
+	                and then
+	                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                   then HC.Hash_Len = 48
+	                   else HC.Hash_Len = 32),
         Post => (if Result = OK and then S.State /= Error_State then
                     HC.Client_HS = HC.Client_HS'Old
                     and then Nonce_Space_Available (S.Client_App)
@@ -556,13 +574,34 @@ is
      (S      : in out Session;
       Result :    out Action)
    with Pre => S.State = Connected
-               and then Nonce_Space_Available (S.Client_App);
+               and then Nonce_Space_Available (S.Client_App)
+               and then Nonce_Space_Available (S.Server_App)
+               and then S.App_Data_Len <= Max_Record_Plaintext
+               and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
+               and then S.Empty_Records_Recvd <= Max_Empty_Records
+               and then Free_Space (S.Output) >=
+                          Records.Record_Header_Size + 3 + Records.Tag_Size;
    procedure Handle_Connected_App_Record
      (S      : in out Session;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
    with Pre => S.State = Connected
-               and then Nonce_Space_Available (S.Client_App);
+               and then Nonce_Space_Available (S.Client_App)
+               and then Nonce_Space_Available (S.Server_App)
+               and then S.App_Data_Len <= Max_Record_Plaintext
+               and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
+               and then S.Empty_Records_Recvd <= Max_Empty_Records
+               and then Free_Space (S.Output) >=
+                          Records.Record_Header_Size + 3 + Records.Tag_Size
+               and then Rec.OK
+               and then Rec.Content = Records.Content_Application_Data
+               and then Rec.Fragment_Len >= 1
+               and then Rec.Fragment_Len <=
+                          Records.Max_Fragment + Max_Record_Overhead
+               and then Rec.Fragment_Pos = Records.Record_Header_Size
+               and then Rec.Record_Len >= Rec.Fragment_Pos
+               and then Rec.Fragment_Len = Rec.Record_Len - Rec.Fragment_Pos
+               and then Rec.Record_Len <= Available (S.Input);
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
@@ -742,9 +781,10 @@ is
    with Pre  => (if Data'First <= Data'Last then
                     Data'Last - Data'First < Transcript_Capacity)
                 and HC.Transcript_Len <= Transcript_Capacity,
-        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
-               and HC.Client_HS = HC.Client_HS'Old
-   is
+	        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
+	               and HC.Client_HS = HC.Client_HS'Old
+	               and HC.Hash_Len = HC.Hash_Len'Old
+	   is
    begin
       if Data'First <= Data'Last then
          declare
@@ -840,10 +880,11 @@ is
                   and Q <= Ext_End
                   and Q + 4 <= Ext_End
                   and Ext_End <= N32'Last - 16#1_0003#
-                  and Ext_End <= Data'Last + 1
-                  and S.State = S.State'Loop_Entry
-                  and S.Client_App = S.Client_App'Loop_Entry
-                  and Seen_Count <= 32);
+	                  and Ext_End <= Data'Last + 1
+	                  and S.State = S.State'Loop_Entry
+	                  and S.Client_App = S.Client_App'Loop_Entry
+	                  and S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry
+	                  and Seen_Count <= 32);
                declare
                   T : constant N32 :=
                      N32 (Data (Q)) * 256 + N32 (Data (Q + 1));
@@ -875,9 +916,10 @@ is
                 and P <= Ext_End
                 and P + 4 <= Ext_End
                 and Ext_End <= N32'Last - 16#1_0003#
-                and Ext_End <= Data'Last + 1
-                and S.State = S.State'Loop_Entry
-                and S.Client_App = S.Client_App'Loop_Entry);
+	                and Ext_End <= Data'Last + 1
+	                and S.State = S.State'Loop_Entry
+	                and S.Client_App = S.Client_App'Loop_Entry
+	                and S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry);
             declare
                Tag : constant N32 :=
                   N32 (Data (P)) * 256 + N32 (Data (P + 1));
@@ -1543,9 +1585,10 @@ is
       declare
          H_Len   : constant N32 := HC.Hash_Len;
          CV_Hash : Byte_Seq (0 .. H_Len - 1);
-      begin
-         case S.Negotiated_Suite is
-            when Suite_AES_256_GCM_SHA384 =>
+	      begin
+	         case S.Negotiated_Suite is
+	            when Suite_AES_256_GCM_SHA384 =>
+               pragma Assert (H_Len = 48);
                CV_Hash := Transcript_Hash_384 (HC);
             when others =>
                declare
@@ -1699,9 +1742,9 @@ is
       end if;
       declare
          Verified : Boolean := False;
-      begin
-         case S.Negotiated_Suite is
-            when Suite_AES_256_GCM_SHA384 =>
+	         begin
+	            case S.Negotiated_Suite is
+	               when Suite_AES_256_GCM_SHA384 =>
                declare
                   use HKDF384;
                   Pre_Hash : constant Key_Schedule.Digest_384 :=
@@ -1839,6 +1882,8 @@ is
       Result  :    out Action)
    is
       Enc_Out : N32;
+      Cert_Suite    : constant Unsigned_16 := S.Negotiated_Suite;
+      Cert_Hash_Len : constant N32 := HC.Hash_Len;
    begin
       Result := OK;
 
@@ -1929,11 +1974,12 @@ is
            | Sign_ECDSA_P256 | Sign_ECDSA_P384
       then
          declare
-            H_Len : constant N32 := HC.Hash_Len;
+            H_Len : constant N32 := Cert_Hash_Len;
             CV_Hash : Byte_Seq (0 .. H_Len - 1);
          begin
-            case S.Negotiated_Suite is
+            case Cert_Suite is
                when Suite_AES_256_GCM_SHA384 =>
+                  pragma Assert (H_Len = 48);
                   CV_Hash := Transcript_Hash_384 (HC);
                when others =>
                   declare
@@ -1987,6 +2033,7 @@ is
                and then S.Negotiated_Suite = Suite_AES_256_GCM_SHA384,
         Post => (if Result = OK then
                     Nonce_Space_Available (S.Client_App))
+                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                 and then Result in OK | Error_Alert;
 
    procedure Build_Client_Finished_384
@@ -2074,6 +2121,7 @@ is
                                            | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if Result = OK then
                     Nonce_Space_Available (S.Client_App))
+                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                 and then Result in OK | Error_Alert;
 
    procedure Build_Client_Finished_256
@@ -2159,7 +2207,6 @@ is
       --  failure to keep AEAD nonces in sync with what the peer saw.
       Scratch   : IO_Buffer;
       Saved_Ctr : constant Unsigned_64 := HC.Client_HS.Counter;
-      Pre_CCS_Out : N32;
       --  RFC 8446 §7.1: client_application_traffic_secret_0 uses
       --  the transcript hash through SERVER's Finished — NOT
       --  including any subsequent client Cert/CV. Snapshot the
@@ -2183,15 +2230,17 @@ is
       --  expectChangeCipherSpec was cleared by that one and a
       --  second CCS would be rejected as unexpected.
       if not HC.Sent_HRR_CCS then
-         Records.Build_CCS_Record (Scratch, Pre_CCS_Out);
-         if Pre_CCS_Out = 0 then
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
-            return;
-         end if;
-      else
-         Pre_CCS_Out := 0;
+         declare
+            Pre_CCS_Out : N32;
+         begin
+            Records.Build_CCS_Record (Scratch, Pre_CCS_Out);
+            if Pre_CCS_Out = 0 then
+               S.Last_Error := Insufficient_Buffer;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+               return;
+            end if;
+         end;
       end if;
 
       --  mTLS: send client certificate before Finished if requested

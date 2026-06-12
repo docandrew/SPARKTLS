@@ -167,7 +167,8 @@ is
       Pos : N32 := 0;
 
       procedure Put_U8 (V : Byte)
-      with Pre  => Result'Last < N32'Last
+      with Pre  => Result'First = 0
+                   and then Result'Last < N32'Last
                    and then Pos <= Result'Last + 1,
            Post => Pos <= Result'Last + 1
                    and then
@@ -183,7 +184,8 @@ is
       end Put_U8;
 
       procedure Put_U24 (V : N32)
-      with Pre  => Result'Last < N32'Last
+      with Pre  => Result'First = 0
+                   and then Result'Last < N32'Last
                    and then Pos <= Result'Last + 1
                    and then V <= 16#FFFFFF#,
            Post => Pos <= Result'Last + 1
@@ -204,6 +206,7 @@ is
                    and then DER_Len <= N32 (Max_Cert_DER)
                    and then DER'Last in 0 .. N32 (Max_Cert_DER) - 1
                    and then DER'Last >= DER_Len - 1
+                   and then Result'First = 0
                    and then Result'Last < N32'Last
                    and then Pos <= Result'Last + 1,
            Post => Pos <= Result'Last + 1
@@ -213,6 +216,9 @@ is
          if Pos <= Result'Last
             and then Result'Last - Pos >= DER_Len - 1
          then
+            pragma Assert (Result'First = 0);
+            pragma Assert (Pos >= Result'First);
+            pragma Assert (Pos <= Result'Last - (DER_Len - 1));
             pragma Assert (Pos + DER_Len - 1 <= Result'Last);
             pragma Assert (DER_Len - 1 <= DER'Last);
             Result (Pos .. Pos + DER_Len - 1) := DER (0 .. DER_Len - 1);

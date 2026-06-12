@@ -128,7 +128,21 @@ is
                 and Nonce_Space_Available (Keys),             --  RFC 8446 §5.5
         Post => (if Bytes_Out > 0
                  then Keys.Counter = Keys.Counter'Old + 1   --  RFC 8446 §5.3
-                 else Keys.Counter = Keys.Counter'Old);
+                 else Keys.Counter = Keys.Counter'Old)
+                and then
+                  (if Free_Space (Output'Old) >=
+                         Record_Header_Size
+                       + N32 (Plaintext'Length)
+                       + 1
+                       + Tag_Size
+                   then Bytes_Out =
+                         Record_Header_Size
+                       + N32 (Plaintext'Length)
+                       + 1
+                       + Tag_Size
+                        and then Output.Write_Pos =
+                          Output.Write_Pos'Old + Bytes_Out
+                        and then Available (Output) > 0);
 
    --  Decrypt a TLS 1.3 encrypted record.
    --  RFC 8446 Section 5.4: After decryption, the inner plaintext
@@ -173,7 +187,13 @@ is
       Bytes_Out  :    out N32)
    with Pre =>
      SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc)
-     and Nonce_Space_Available (Keys);
+     and Nonce_Space_Available (Keys),
+        Post => (if Free_Space (Output'Old) >=
+                       Record_Header_Size + 3 + Tag_Size
+                 then Bytes_Out = Record_Header_Size + 3 + Tag_Size
+                      and then Output.Write_Pos =
+                        Output.Write_Pos'Old + Bytes_Out
+                      and then Available (Output) > 0);
 
    --  Build a plaintext alert record (no encryption).
    --  Uses RFLX-generated alert serializer for the payload.
@@ -190,6 +210,14 @@ is
       Output    : in out IO_Buffer;
       Bytes_Out :    out N32)
    with Pre =>
-     SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc);
+     SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
+     Post => Bytes_Out in 0 | 7
+             and then Output.Read_Pos = Output.Read_Pos'Old
+             and then
+               (if Output.Write_Pos'Old <= IO_Buffer_Capacity - 7 then
+                  Bytes_Out = 7 and then Available (Output) > 0)
+             and then
+               (if Bytes_Out = 7 then
+                  Output.Write_Pos = Output.Write_Pos'Old + 7);
 
 end SPARKTLS.Records;

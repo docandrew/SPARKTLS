@@ -1,6 +1,7 @@
 with SPARKNaCl; use SPARKNaCl;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Records.TLS12;
 
 --  TLS 1.2 Server State Machine (RFC 5246)
@@ -60,8 +61,16 @@ is
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
                 and then S.Role = Role_Server
+                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                           (HC.Server_Seq_12)
                 and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => (if S.State = Server_Hello_Sent
+                 then S.Role = Role_Server
+                      and then HC.Version = TLS_1_2
+                      and then HC.Cfg.Local /= null
+                      and then HC.Cfg.Local.Has_Identity
+                      and then HC.Cfg.Random /= null);
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
@@ -78,6 +87,9 @@ is
                and then S.State = Wait_Client_Finished
                and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity
+               and then HC.Cfg.Random /= null
+               and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
+                 (HC.Selected_Group)
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                --  Required by Derive_Keys_12 called at the end:
@@ -122,11 +134,17 @@ is
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
                and then S.State = Wait_Client_Finished
+               and then HC.Cfg.Local /= null
+               and then HC.Cfg.Local.Has_Identity
+               and then HC.Cfg.Random /= null
                and then CCS_Precedes_Finished_RFC_5246_7_1 (HC)
                --  Required by Send_Encrypted_Alert_12 in error paths
                --  (RFC 5246 §7.2.1 post-CCS encrypted alerts).
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                          (HC.Server_Seq_12),
+                          (HC.Client_Seq_12)
+               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                          (HC.Server_Seq_12)
+               and then Free_Space (S.Output) >= 7,
         Post => S.State = S.State'Old
                 or else Valid_Transition (S.State'Old, S.State);
 
@@ -155,7 +173,8 @@ is
         --  returns, HC.MS_Derivation matches HC.Use_EMS via the
         --  EMS_PRF_Binding_RFC_7627_4 predicate. This is the v9→v12
         --  invariant whose absence caused the TLS-Anvil regression.
-        Post => EMS_PRF_Binding_RFC_7627_4 (HC)
+        Post => S.State = S.State'Old
+                and then EMS_PRF_Binding_RFC_7627_4 (HC)
                 and then HC.MS_Derivation /= Not_Derived;
 
    --  Process records in Connected state for TLS 1.2.

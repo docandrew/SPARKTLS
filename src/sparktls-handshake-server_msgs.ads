@@ -39,7 +39,23 @@ is
                 and then S.Role = S.Role'Old
                 and then S.State = S.State'Old
                 and then S.Input.Read_Pos = S.Input.Read_Pos'Old
-                and then S.Input.Write_Pos = S.Input.Write_Pos'Old;
+                and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+                and then S.Server_App.Counter = S.Server_App.Counter'Old
+                and then S.Server_App.Suite = S.Server_App.Suite'Old
+                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+                and then
+                  (if OK and then HC.Version = TLS_1_3 then
+                     S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                           | Suite_AES_256_GCM_SHA384
+                                           | Suite_CHACHA20_POLY1305_SHA256)
+                and then
+                  (if OK and then HC.Version'Old = TLS_1_3 then
+                     HC.Version = TLS_1_3
+                     and then S.Negotiated_Suite in
+                       Suite_AES_128_GCM_SHA256
+                       | Suite_AES_256_GCM_SHA384
+                       | Suite_CHACHA20_POLY1305_SHA256);
 
    --  Build a ServerHello handshake message.
    --  Includes key_share and supported_versions extensions.
