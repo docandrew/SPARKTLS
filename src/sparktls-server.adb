@@ -50,14 +50,57 @@ is
         (if S.State = Wait_Client_Hello and then HC.Version = TLS_1_2
          then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                 (HC.Server_Seq_12))
-      and then
-        (if S.State = Wait_Client_Hello_Retry
-         then HC.Version = TLS_1_3
-              and then Nonce_Space_Available (HC.Server_HS)
-              and then Nonce_Space_Available (S.Server_App))
+	      and then
+	        (if S.State = Wait_Client_Hello_Retry
+	         then HC.Version = TLS_1_3
+	              and then HC.HRR_Sent
+	              and then Server_Configured (HC)
+	              and then HC.Cfg.Local.NaCl_Cert_Len
+	                <= N32 (Max_Cert_DER)
+	              and then
+	                (for all I in 0 .. Max_Pool_Size - 1 =>
+	                   HC.Cfg.Local.Ints (I).DER_Len
+	                     <= X509.N32 (Max_Cert_DER))
+	              and then
+	                (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                 then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	              and then Nonce_Space_Available (HC.Server_HS)
+	              and then Nonce_Space_Available (S.Server_App))
       and then
         (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_3
-         then Nonce_Space_Available (HC.Client_HS))
+         then Nonce_Space_Available (HC.Client_HS)
+              and then Nonce_Space_Available (S.Server_App)
+              and then
+                (if HC.Cfg.Ticket_Store /= null
+                 then HC.Cfg.Ticket_Store.Next
+                      in 0 .. Max_Cached_Tickets - 1)
+              and then Free_Space (S.Output) >=
+                Records.Record_Header_Size + 3 + Records.Tag_Size)
+      and then
+        (if S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify
+         then Nonce_Space_Available (S.Server_App)
+              and then Nonce_Space_Available (HC.Client_HS)
+              and then HC.Hash_Len in 32 | 48
+              and then
+                (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+                 then HC.Hash_Len = 48
+                 else HC.Hash_Len = 32)
+              and then HC.Transcript_Len > 0
+              and then
+                (if S.State = Wait_Client_Cert_Verify then
+                   HC.Peer_Cert_Valid
+                   and then HC.Peer_Cert_DER_Len > 0
+                   and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
+                   and then
+                     X509.N32 (HC.Peer_Cert_DER_Len) - 1 <
+                       X509.N32'Last
+                   and then X509.Spans_Valid
+                     (HC.Peer_Cert,
+                      X509.N32 (HC.Peer_Cert_DER_Len) - 1)
+                   and then SPARKTLSCrypto.P384.Field.Initialized
+                   and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+              and then Free_Space (S.Output) >=
+                Records.Record_Header_Size + 3 + Records.Tag_Size)
       and then
         (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_2
          then SPARKTLS.Handshake.TLS12.Valid_TLS12_Suite
@@ -94,19 +137,34 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
 	   with Pre  => Server_Active (S)
-	                and then S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
-	                and then Server_Configured (HC)
-	                and then HC.Transcript_Len > 0
-		                and then S.Negotiated_Suite in
-		                  Suite_AES_128_GCM_SHA256
+		                and then S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
+		                and then (if S.State = Wait_Client_Hello_Retry
+		                          then HC.HRR_Sent)
+		                and then Server_Configured (HC)
+		                and then HC.Cfg.Local.NaCl_Cert_Len
+		                  <= N32 (Max_Cert_DER)
+		                and then
+		                  (for all I in 0 .. Max_Pool_Size - 1 =>
+		                     HC.Cfg.Local.Ints (I).DER_Len
+		                       <= X509.N32 (Max_Cert_DER))
+		                and then
+		                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                and then HC.Legacy_Session_ID_Len in 0 .. 32
+		                and then HC.Transcript_Len > 0
+			                and then S.Negotiated_Suite in
+			                  Suite_AES_128_GCM_SHA256
 		                  | Suite_AES_256_GCM_SHA384
 		                  | Suite_CHACHA20_POLY1305_SHA256
 		                and then Nonce_Space_Available (HC.Server_HS)
 		                and then Nonce_Space_Available (S.Server_App),
-        Post => (S.State = S.State'Old
-                 or else Valid_Transition (S.State'Old, S.State))
-                and then (if S.State not in Error_State | Closed
-                          then Server_Configured (HC));
+	        Post => (if S.State'Old = Wait_Client_Hello
+	                  then S.State in Wait_Client_Hello_Retry
+	                                  | Server_Hello_Sent
+	                                  | Error_State
+	                  else S.State in Server_Hello_Sent | Error_State)
+	                and then (if S.State not in Error_State | Closed
+	                          then Server_Configured (HC));
 
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
@@ -245,11 +303,16 @@ is
                and then S.Role = Role_Server
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
-               and then Server_Configured (HC)
-               and then Nonce_Space_Available (HC.Client_HS)
-               and then Nonce_Space_Available (S.Server_App)
-               and then Free_Space (S.Output) >=
-                          Records.Record_Header_Size + 3 + Records.Tag_Size
+	               and then Server_Configured (HC)
+	               and then HC.Transcript_Len > 0
+	               and then Nonce_Space_Available (HC.Client_HS)
+	               and then Nonce_Space_Available (S.Server_App)
+	               and then
+	                 (if HC.Cfg.Ticket_Store /= null
+	                  then HC.Cfg.Ticket_Store.Next
+	                       in 0 .. Max_Cached_Tickets - 1)
+	               and then Free_Space (S.Output) >=
+	                          Records.Record_Header_Size + 3 + Records.Tag_Size
                and then Rec.Fragment_Len >= 1
                and then Rec.Fragment_Len <=
                           Records.Max_Fragment + Max_Record_Overhead
@@ -269,9 +332,18 @@ is
       Msg_Len   : in     N32;
       Result    :    out Action)
    with Pre => S.State = Wait_Client_Finished
-               and then S.Role = Role_Server
-               and then Server_Configured (HC)
-               and then Nonce_Space_Available (S.Server_App),
+	               and then S.Role = Role_Server
+	               and then Server_Configured (HC)
+		               and then Nonce_Space_Available (S.Server_App)
+		               and then Plaintext'First = 0
+		               and then Plain_Len > 0
+		               and then Plaintext'Last < N32'Last
+		               and then Plain_Len - 1 <= Plaintext'Last
+		               and then HC.Transcript_Len > 0
+		               and then
+		                 (if HC.Cfg.Ticket_Store /= null
+	                  then HC.Cfg.Ticket_Store.Next
+	                       in 0 .. Max_Cached_Tickets - 1),
         Post => (S.State = S.State'Old
                  or else Valid_Transition (S.State'Old, S.State))
                 and then (if S.State not in Error_State | Closed
@@ -344,7 +416,10 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
-   with Pre => S.State not in Idle | Closed | Closing | Error_State
+   with Pre => S.State not in Idle | Closed | Closing | Error_State,
+        Post => S.State = Error_State
+                and then S.Last_Error = Err
+                and then Result in Has_Output | Error_Alert
    is
       Dummy : N32;
    begin
@@ -405,14 +480,14 @@ is
       Err    : Error_Code;
       Result : out Action)
    with Pre  => S.State not in Idle | Closed | Closing | Error_State
-                and Alert_Desc (Err) /= 0
-                and Nonce_Space_Available (S.Server_App),
+                and then Alert_Desc (Err) /= 0
+                and then Nonce_Space_Available (S.Server_App),
         Post => S.State = Error_State
-                and S.Last_Error = Err
-                and Result in Has_Output | Error_Alert
-                and (if Free_Space (S.Output'Old) >=
-                         Records.Record_Header_Size + 3 + Records.Tag_Size
-                     then Output_Pending (S) > 0)
+                and then S.Last_Error = Err
+                and then Result in Has_Output | Error_Alert
+                and then (if Free_Space (S.Output'Old) >=
+                            Records.Record_Header_Size + 3 + Records.Tag_Size
+                          then Output_Pending (S) > 0)
    is
       Dummy : N32;
    begin
@@ -439,7 +514,7 @@ is
       Data : in     Byte_Seq)
    with Pre  => (if Data'First <= Data'Last then
                     Data'Last - Data'First < Transcript_Capacity)
-                and HC.Transcript_Len <= Transcript_Capacity,
+                and then HC.Transcript_Len <= Transcript_Capacity,
         Post => HC.Transcript_Len >= HC.Transcript_Len'Old
                 and HC.Transcript_Len <= Transcript_Capacity
                 and (if HC.Transcript_Len'Old > 0
@@ -452,6 +527,7 @@ is
 	                and HC.Peer_Cert = HC.Peer_Cert'Old
 	                and HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
 	                and HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
+	                and HC.HRR_Sent = HC.HRR_Sent'Old
 	                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and HC.Client_HS.Counter = HC.Client_HS.Counter'Old
                 and HC.Server_HS.Suite = HC.Server_HS.Suite'Old
@@ -1185,12 +1261,14 @@ is
                      HC.Client_Has_P256 := False;
                      HC.Client_Has_P384 := False;
                      HC.CH_Ext_Hash := 0;
-                     HC.CH_Ext_Count := 0;
-                     HC.Seen_Ext_Count := 0;
-                     HC.Seen_Ext_Tags := (others => 0);
+	                     HC.CH_Ext_Count := 0;
+	                     HC.Seen_Ext_Count := 0;
+	                     HC.Seen_Ext_Tags := (others => 0);
+	                     pragma Assert (HC.HRR_Sent);
 
-                     Handshake.Server_Msgs.Parse_Client_Hello
-                       (S, HC, Frag, Parse_OK);
+	                     Handshake.Server_Msgs.Parse_Client_Hello
+	                       (S, HC, Frag, Parse_OK);
+	                     pragma Assert (HC.HRR_Sent);
 
                      if not Parse_OK then
                         --  After HRR, CH2 parse failures are
@@ -1212,12 +1290,14 @@ is
                         Send_Alert_And_Error
                           (S, Illegal_Parameter, Result);
                         return;
-                     end if;
-                  end;
+	                     end if;
+	                     pragma Assert (HC.HRR_Sent);
+	                  end;
 
-                  --  Append CH2 to transcript
-                  Append_Transcript (HC, Frag);
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                  --  Append CH2 to transcript
+	                  Append_Transcript (HC, Frag);
+	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                  pragma Assert (HC.HRR_Sent);
 
                   --  Now proceed to build the real ServerHello flight
                   Build_Server_Flight (S, HC, Result);
@@ -1444,16 +1524,37 @@ is
       Rejected :    out Boolean;
       Result   :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and HC.Cfg.Ticket_Store /= null
-                and HC.Transcript_Len <= Transcript_Capacity
-                and HC.PSK_Binder_Len <= Max_HS_Msg
-                and Server_Configured (HC),
-        Post => (if not Rejected
-                 then S.State = S.State'Old
-                      and S.Role = S.Role'Old
-                      and Server_Configured (HC)
-                      and HC.Transcript_Len = HC.Transcript_Len'Old
-                      and S.Negotiated_Suite = S.Negotiated_Suite'Old);
+                and then HC.Cfg.Ticket_Store /= null
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then HC.PSK_Binder_Len <= Max_HS_Msg
+                and then Server_Configured (HC)
+                and then HC.Cfg.Local.NaCl_Cert_Len
+                  <= N32 (Max_Cert_DER)
+                and then
+                  (for all I in 0 .. Max_Pool_Size - 1 =>
+                     HC.Cfg.Local.Ints (I).DER_Len
+                       <= X509.N32 (Max_Cert_DER))
+                and then
+                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+                and then HC.Legacy_Session_ID_Len in 0 .. 32,
+	        Post => (if not Rejected
+	                 then S.State = S.State'Old
+	                      and S.Role = S.Role'Old
+	                      and Server_Configured (HC)
+	                      and HC.Transcript_Len = HC.Transcript_Len'Old
+	                      and HC.HRR_Sent = HC.HRR_Sent'Old
+	                      and HC.Legacy_Session_ID_Len in 0 .. 32
+	                      and HC.Cfg.Local.NaCl_Cert_Len
+	                        <= N32 (Max_Cert_DER)
+	                      and (for all I in 0 .. Max_Pool_Size - 1 =>
+	                             HC.Cfg.Local.Ints (I).DER_Len
+	                               <= X509.N32 (Max_Cert_DER))
+	                      and
+	                        (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                         then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                      and S.Negotiated_Suite = S.Negotiated_Suite'Old)
+	                 and then (if Rejected then S.State = Error_State);
 
    procedure Verify_PSK_Binder
      (S        : in out Session;
@@ -1563,14 +1664,38 @@ is
       Algo_OK  :    out Boolean;
       Result   :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and Server_Configured (HC),
+                and then Server_Configured (HC)
+                and then HC.Cfg.Local.NaCl_Cert_Len
+                  <= N32 (Max_Cert_DER)
+                and then
+                  (for all I in 0 .. Max_Pool_Size - 1 =>
+                     HC.Cfg.Local.Ints (I).DER_Len
+                       <= X509.N32 (Max_Cert_DER))
+                and then
+                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+                and then HC.Legacy_Session_ID_Len in 0 .. 32,
         Post => (if Algo_OK
 	                 then S.State = S.State'Old
 	                      and S.Role = S.Role'Old
 	                      and S.Negotiated_Suite = S.Negotiated_Suite'Old
 	                      and Server_Configured (HC)
 	                      and HC.Transcript_Len = HC.Transcript_Len'Old
-	                      and HC.Negotiated_Sig_Algo /= 0);
+	                      and HC.HRR_Sent = HC.HRR_Sent'Old
+	                      and HC.Legacy_Session_ID_Len in 0 .. 32
+	                      and HC.Cfg.Local.NaCl_Cert_Len
+	                        <= N32 (Max_Cert_DER)
+	                      and (for all I in 0 .. Max_Pool_Size - 1 =>
+	                             HC.Cfg.Local.Ints (I).DER_Len
+	                               <= X509.N32 (Max_Cert_DER))
+	                      and
+	                        (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                         then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                      and HC.Negotiated_Sig_Algo /= 0
+	                      and Handshake.Sig_Algo_Compatible_With_Cert
+	                        (HC.Negotiated_Sig_Algo,
+	                         HC.Cfg.Local.Sign_Algo))
+	                 and then (if not Algo_OK then S.State = Error_State);
 
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
@@ -1800,12 +1925,13 @@ is
             if Need_HRR then
                Build_Hello_Retry_Request
                  (S, HC, HRR_Group, SH_Buf, SH_Len, Rec_Out);
-               if SH_Len = 0 then
-                  Send_Alert_And_Error (S, Internal_Error, Result);
-                  return;
-               end if;
-               Set_State (S, Wait_Client_Hello_Retry);
-               HC.HRR_Sent := True;
+	               if SH_Len = 0 then
+	                  Send_Alert_And_Error (S, Internal_Error, Result);
+	                  return;
+	               end if;
+	               pragma Assert (S.State = Wait_Client_Hello);
+	               Set_State (S, Wait_Client_Hello_Retry);
+	               HC.HRR_Sent := True;
                --  RFC 8446 §4.1.4: at-most-one-HRR invariant. After
                --  this assignment, the outer `if not HC.HRR_Sent`
                --  guard prevents any further HRR from being built

@@ -361,7 +361,15 @@ is
    with Pre  => Result'First = 0
                 and Result'Last >= 523
                 and Transcript_Hash'First = 0
-                and Transcript_Hash'Length in 32 | 48
+                and
+                  (if Sig_Algo_Wire = 16#0807# then
+                     Transcript_Hash'Last <= N32'Last - 65
+                   elsif Sig_Algo_Wire in 16#0601# | 16#0806# then
+                     Transcript_Hash'Length = 64
+                   elsif Sig_Algo_Wire in 16#0501# | 16#0503# | 16#0805# then
+                     Transcript_Hash'Length = 48
+                   else
+                     Transcript_Hash'Length = 32)
                 and Random /= null
                 and Id.Has_Identity
                 and SPARKTLSCrypto.P384.Field.Initialized
@@ -428,12 +436,16 @@ is
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre  => Data'First = 0
-                and Data'Length > 0
-                and Data'Last < N32'Last
-                and HC.Version = TLS_1_2,
+                and then Data'Length > 0
+                and then Data'Last < N32'Last
+                and then HC.Version = TLS_1_2
+                and then SPARKTLSCrypto.P384.Field.Initialized,
         Post => (if OK then
                    Valid_TLS12_Suite (S.Negotiated_Suite)
-                   and HC.Version = TLS_1_2);
+                   and HC.Version = TLS_1_2)
+                and then (if HC.Cfg.Random'Old /= null
+                          then HC.Cfg.Random /= null)
+                and then SPARKTLSCrypto.P384.Field.Initialized;
 
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket builder.
    --

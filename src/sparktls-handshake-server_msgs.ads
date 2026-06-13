@@ -1,6 +1,7 @@
 with SPARKNaCl; use SPARKNaCl;
 with Interfaces; use Interfaces;
 with SPARKTLSCrypto.P384.Field;
+with X509;
 
 --  TLS 1.3 Server Handshake Messages
 --
@@ -30,19 +31,44 @@ is
               and Data'Last <= N32 (Max_HS_Msg) - 1,
         Post => (if HC.Cfg.Local'Old /= null
                  then HC.Cfg.Local /= null)
-                and then (if HC.Cfg.Local'Old /= null
-                          and then HC.Cfg.Local'Old.Has_Identity
-                          then HC.Cfg.Local /= null
-                               and then HC.Cfg.Local.Has_Identity)
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
+	                and then (if HC.Cfg.Local'Old /= null
+	                          and then HC.Cfg.Local'Old.Has_Identity
+	                          then HC.Cfg.Local /= null
+	                               and then HC.Cfg.Local.Has_Identity)
+	                and then (if HC.Cfg.Local'Old /= null
+	                            and then HC.Cfg.Local'Old.NaCl_Cert_Len
+	                              <= N32 (Max_Cert_DER)
+	                          then HC.Cfg.Local /= null
+	                               and then HC.Cfg.Local.NaCl_Cert_Len
+	                                 <= N32 (Max_Cert_DER))
+	                and then
+	                  (if HC.Cfg.Local'Old /= null
+	                     and then
+	                       (for all I in 0 .. Max_Pool_Size - 1 =>
+	                          HC.Cfg.Local'Old.Ints (I).DER_Len
+	                            <= X509.N32 (Max_Cert_DER))
+	                   then HC.Cfg.Local /= null
+	                        and then
+	                          (for all I in 0 .. Max_Pool_Size - 1 =>
+	                             HC.Cfg.Local.Ints (I).DER_Len
+	                               <= X509.N32 (Max_Cert_DER)))
+	                and then
+	                  (if HC.Cfg.Local'Old /= null
+	                     and then HC.Cfg.Local'Old.Sign_Algo = Sign_RSA_PSS
+	                     and then HC.Cfg.Local'Old.RSA_Mod_Len in 64 .. 512
+	                   then HC.Cfg.Local /= null
+	                        and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                        and then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                and then (if HC.Cfg.Random'Old /= null
+	                          then HC.Cfg.Random /= null)
                 and then S.Role = S.Role'Old
                 and then S.State = S.State'Old
                 and then S.Input.Read_Pos = S.Input.Read_Pos'Old
-                and then S.Input.Write_Pos = S.Input.Write_Pos'Old
-                and then S.Server_App.Counter = S.Server_App.Counter'Old
-                and then S.Server_App.Suite = S.Server_App.Suite'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+	                and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+	                and then S.Server_App.Counter = S.Server_App.Counter'Old
+	                and then S.Server_App.Suite = S.Server_App.Suite'Old
+	                and then HC.HRR_Sent = HC.HRR_Sent'Old
+	                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then
                   (if OK and then HC.Version = TLS_1_3 then
@@ -73,11 +99,15 @@ is
                                                | Suite_AES_256_GCM_SHA384
                                                | Suite_CHACHA20_POLY1305_SHA256
                 and then SPARKTLSCrypto.P384.Field.Initialized,
-        Post => Len <= N32 (Result'Length)
-                and then (if Len > 0 then Len >= 4)
-                and then HC.Cfg.Random /= null
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null);
+	        Post => Len <= N32 (Result'Length)
+	                and then (if Len > 0 then Len >= 4)
+	                and then HC.Cfg.Random /= null
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local /= null)
+	                and then (if HC.Cfg.Local'Old /= null
+	                              and then HC.Cfg.Local'Old.Has_Identity
+	                          then HC.Cfg.Local /= null
+	                               and then HC.Cfg.Local.Has_Identity);
 
    --  RFC 8446 Section 4.3.1: Build EncryptedExtensions.
    --  Sent immediately after ServerHello (encrypted with HS keys).

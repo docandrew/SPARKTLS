@@ -1,6 +1,7 @@
 with SPARKNaCl; use SPARKNaCl;
 with Interfaces; use Interfaces;
 with X509;
+with SPARKTLS.Records;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
 
@@ -27,7 +28,9 @@ is
                and then Cert_DER'First = 0
                and then Cert_DER'Last in 0 .. N32 (Max_Cert_DER) - 1
                and then Cert_Len in 1 .. Cert_DER'Last + 1
-               and then N32 (Result'Length) >= Cert_Len + 16;
+               and then N32 (Result'Length) >= Cert_Len + 16,
+        Post => Len <= N32 (Result'Length)
+                and then Len <= SPARKTLS.Records.Max_Fragment;
 
    --  Build a Certificate message with leaf + intermediates from an Identity.
    procedure Build_Certificate_Chain
@@ -56,8 +59,10 @@ is
                and then Result'Last in 523 .. Max_Cert_Msg - 1
                and then Transcript_Hash'First = 0
                and then Transcript_Hash'Last in 31 | 47
-               and then Random /= null
-               and then Id.RSA_Mod_Len in 64 .. 512
+               and then
+                 (if Sig_Algo_Wire in 16#0804# | 16#0805# | 16#0806#
+                  then Random /= null
+                       and then Id.RSA_Mod_Len in 64 .. 512)
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Len <= N32 (Result'Length);
@@ -111,10 +116,11 @@ is
    with Pre => HS_Msg'First = 0
                and HS_Msg'Length >= 4
                and HS_Msg'Length <= Max_Cert_Msg,
-        Post => HC.Client_HS = HC.Client_HS'Old
-                and then HC.Transcript_Len = HC.Transcript_Len'Old
-                and then
-                  (if HC.Peer_Cert_Valid
+	        Post => HC.Client_HS = HC.Client_HS'Old
+	                and then HC.Transcript_Len = HC.Transcript_Len'Old
+	                and then HC.Hash_Len = HC.Hash_Len'Old
+	                and then
+	                  (if HC.Peer_Cert_Valid
                    then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                         and then X509.Spans_Valid
                           (HC.Peer_Cert,

@@ -34,10 +34,11 @@ is
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and Alert_Desc (Err) /= 0
-                and Alert_Desc (Err) /= 90,
+                and then Alert_Desc (Err) /= 0
+                and then Alert_Desc (Err) /= 90,
         Post => S.State = Error_State
-                and Result in Has_Output | Error_Alert
+                and then S.Last_Error = Err
+                and then Result in Has_Output | Error_Alert
    is
       Dummy : N32;
    begin
@@ -53,7 +54,7 @@ is
    --  edit that resets HC.Transcript_Len in this proc would fail.
    with Pre  => (if Data'First <= Data'Last then
                     Data'Last - Data'First < Transcript_Capacity)
-                and HC.Transcript_Len <= Transcript_Capacity,
+                and then HC.Transcript_Len <= Transcript_Capacity,
         Post => HC.Transcript_Len >= HC.Transcript_Len'Old
    is
    begin
@@ -134,7 +135,15 @@ is
                 | Suite_ECDHE_RSA_CHACHA20_SHA256
                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+        Post => S.State = S.State'Old
+                and S.Negotiated_Suite = S.Negotiated_Suite'Old
+                and HC.Selected_Group = HC.Selected_Group'Old
+                and HC.Transcript_Len = HC.Transcript_Len'Old
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Client_Seq_12)
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Server_Seq_12)
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
@@ -234,8 +243,8 @@ is
    procedure Process_Server_Flight
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => Reasm_Coherent (HC)
-                and (S.State not in Idle | Closing | Closed | Error_State)
-                and Warning_Alerts_Bounded_RFC_8446_6_1 (S),
+                and then (S.State not in Idle | Closing | Closed | Error_State)
+                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S),
         Post => Reasm_Coherent (HC);
 
    --  RFC 5246 §7.4.2 Certificate (HS type 0x0B). Parses the on-wire
@@ -251,11 +260,12 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       OK      :    out Boolean)
-	   with Pre  => Msg_Len in 3 .. Max_HS_Msg - 4
-	                and Frag'First >= 0
-	                and Frag'Last < N32'Last - 4
-	                and Frag'Length <= Natural (N32'Last)
-	                and Msg_Len <= N32 (Frag'Length) - 4,
+		   with Pre  => Msg_Len in 3 .. Max_HS_Msg - 4
+			                and then Frag'First >= 0
+			                and then Frag'Last < N32'Last - 4
+			                and then Frag'First <= N32'Last - 4
+			                and then Msg_Len <= N32'Last - Frag'First - 4
+			                and then Frag'First + 3 + Msg_Len <= Frag'Last,
         Post => (if HC.Peer_Cert_Valid then
                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                     and then X509.Spans_Valid
@@ -308,9 +318,30 @@ is
       begin
          if C12.Field_Size (Ctx, C12.F_Certificate_List) > 0 then
             declare
-               Entries_Ctx : C12_Entries.Context;
-            begin
-               C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
+	               Entries_Ctx : C12_Entries.Context;
+	            begin
+	               if not C12.Has_Buffer (Ctx) then
+	                  C12.Take_Buffer (Ctx, Buf);
+	                  RFLX_Free_Local (Buf);
+	                  return;
+	               end if;
+	               if not
+	                 (C12.Valid_Next (Ctx, C12.F_Certificate_List)
+	                  and then C12.Field_First
+	                             (Ctx, C12.F_Certificate_List)
+	                           rem RBT.Byte'Size = 1
+	                  and then C12.Available_Space
+	                             (Ctx, C12.F_Certificate_List)
+	                           >= C12.Field_Size
+	                                (Ctx, C12.F_Certificate_List)
+	                  and then C12.Field_Condition
+	                             (Ctx, C12.F_Certificate_List))
+	               then
+	                  C12.Take_Buffer (Ctx, Buf);
+	                  RFLX_Free_Local (Buf);
+	                  return;
+	               end if;
+	               C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
 	               while C12_Entries.Has_Element (Entries_Ctx)
 	                 and then Cert_Idx <= Max_Pool_Size
 	               loop
@@ -386,11 +417,15 @@ is
                                           X509.Byte
                                             (Cert_RFLX (RBT.Index (I + 1)));
                                     end loop;
-                                    X509.Parse (Int_X, C, P_OK);
-                                    if P_OK and then X509.Is_Valid (C) then
-                                       HC.Peer_Ints (Idx).Cert := C;
-                                       for I in X509.N32 range
-                                         0 .. X509.N32 (C_Len) - 1
+	                                    X509.Parse (Int_X, C, P_OK);
+	                                    if P_OK and then X509.Is_Valid (C) then
+	                                       pragma Assert
+	                                         (X509.Spans_Valid
+	                                            (C, X509.N32 (C_Len) - 1));
+	                                       HC.Peer_Ints (Idx).Present := False;
+	                                       HC.Peer_Ints (Idx).Cert := C;
+	                                       for I in X509.N32 range
+	                                         0 .. X509.N32 (C_Len) - 1
                                        loop
                                           HC.Peer_Ints (Idx).DER (I) :=
                                              X509.Byte
@@ -431,12 +466,12 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre  => Reasm_Coherent (HC)
-                and S.State not in Idle | Closing | Closed | Error_State
-                and (if HC.Peer_Cert_Valid then
-                       HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                       and then X509.Spans_Valid
-                         (HC.Peer_Cert,
-                          X509.N32 (HC.Peer_Cert_DER_Len) - 1)),
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then (if HC.Peer_Cert_Valid then
+                            HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                            and then X509.Spans_Valid
+                              (HC.Peer_Cert,
+                               X509.N32 (HC.Peer_Cert_DER_Len) - 1)),
         Post => Reasm_Coherent (HC)
                 and (if Result = OK then
                        S.State not in Idle | Closing | Closed | Error_State);
@@ -780,17 +815,24 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Msg_Len >= 0
-                and Msg_Len <= Max_HS_Msg - 4
-                and Frag'First >= 0
-                and Frag'Last < N32'Last - 4
-                and Msg_Len <= N32 (Frag'Length) - 4
-                and S.State not in Idle | Closing | Closed | Error_State
-                and Reasm_Coherent (HC)
-                and HC.Cfg.Random /= null
-                and Valid_ECDHE_Group (HC.Selected_Group)
-                and HC.Transcript_Len > 0
-                and SPARKTLSCrypto.P384.Field.Initialized
-                and SPARKTLSCrypto.P384.ECDSA.Initialized,
+                and then Msg_Len <= Max_HS_Msg - 4
+                and then Frag'First >= 0
+                and then Frag'Last < N32'Last - 4
+                and then Frag'First <= N32'Last - 4
+                and then Msg_Len <= N32'Last - Frag'First - 4
+                and then Frag'First + 3 + Msg_Len <= Frag'Last
+                and then Frag'First <= Frag'Last
+                and then Frag'Last - Frag'First < Transcript_Capacity
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then Reasm_Coherent (HC)
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
                 and (if Result = OK then
                        S.State not in Idle | Closing | Closed | Error_State);
@@ -825,8 +867,9 @@ is
          Gen : constant Random_Bytes_Fn := HC.Cfg.Random;
          SS_OK  : Boolean    := False;
          SS_Err : Error_Code := Handshake_Failure;
-      begin
-         case HC.Selected_Group is
+	      begin
+	         pragma Assert (Gen /= null);
+	         case HC.Selected_Group is
             when Group_X25519 =>
                Gen (Byte_Seq (HC.Local_SK));
                HC.Shared_Secret (0 .. 31) :=

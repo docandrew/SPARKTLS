@@ -1,4 +1,5 @@
 with SPARKNaCl; use SPARKNaCl;
+with SPARKTLSCrypto.P384.Field;
 
 --  TLS 1.3 Client Handshake Messages
 --
@@ -30,9 +31,18 @@ is
       Result     :    out Byte_Seq;
       Len        :    out N32;
       Retry_Mode : in     Boolean := False)
-   with Pre  => Result'First = 0
-                and N32 (Result'Length) >= Max_Client_Hello
-                and HC.Cfg.Random /= null;
+	   with Pre  => Result'First = 0
+	                and then Result'Last in Max_Client_Hello - 1 .. N32'Last - 1
+	                and then HC.Cfg.Random /= null
+	                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then
+                  (if Retry_Mode
+                   then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
+	                and then
+	                  (if HC.Cfg.TLS12_Resume_Ticket.Valid
+	                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
+	                        <= Max_TLS12_Ticket_Len),
+	        Post => Len <= N32 (Result'Length);
 
    --  Parse a ServerHello from raw handshake message bytes.
    --  Extracts: server random, cipher suite, key share (server public key).
@@ -41,6 +51,10 @@ is
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
-   with Pre => Data'Length > 0;
+   with Pre => Data'Length > 0
+               and then SPARKTLSCrypto.P384.Field.Initialized,
+        Post => (if HC.Cfg.Random'Old /= null
+                 then HC.Cfg.Random /= null)
+                and then SPARKTLSCrypto.P384.Field.Initialized;
 
 end SPARKTLS.Handshake.Client_Msgs;

@@ -47,6 +47,10 @@ is
    --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).
    procedure Process_Connected_12
      (S      : in out Session;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => S.State = Connected
+               and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                 (S.Server_Seq_12);
 
 end SPARKTLS.Client.TLS12;

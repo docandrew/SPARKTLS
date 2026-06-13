@@ -643,9 +643,10 @@ is
                 and Cert_RFLX'Length = RBT.Length (C_Len)
                 and C_Len > 0
                 and C_Len <= N32 (Max_Cert_DER),
-        Post => HC.Client_HS = HC.Client_HS'Old
-                and then HC.Transcript_Len = HC.Transcript_Len'Old
-                and then HC.Peer_Cert_DER_Len = C_Len;
+	        Post => HC.Client_HS = HC.Client_HS'Old
+	                and then HC.Transcript_Len = HC.Transcript_Len'Old
+	                and then HC.Hash_Len = HC.Hash_Len'Old
+	                and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
@@ -776,10 +777,11 @@ is
                     (C13_Entries.Has_Buffer (Entries_Ctx)
                      and then C13_Entries.Valid (Entries_Ctx)
                      and then HC.Client_HS = HC.Client_HS'Loop_Entry
-                     and then
-                       HC.Transcript_Len =
-                         HC.Transcript_Len'Loop_Entry
-                     and then
+	                     and then
+	                       HC.Transcript_Len =
+	                         HC.Transcript_Len'Loop_Entry
+	                     and then HC.Hash_Len = HC.Hash_Len'Loop_Entry
+	                     and then
                        (if HC.Peer_Cert_Valid
                         then HC.Peer_Cert_DER_Len
                              in 1 .. Max_Cert_DER_Len
@@ -887,42 +889,70 @@ is
                         end if;
                      end if;
 
-                     C13_Entries.Update (Entries_Ctx, E_Ctx);
-                     if not C13_Entries.Has_Buffer (Entries_Ctx) then
-                        return;
-                     end if;
-                     if not C13_Entries.Valid (Entries_Ctx) then
-                        C13_Entries.Take_Buffer (Entries_Ctx, Buf);
-                        RFLX_Free (Buf);
-                        return;
-                     end if;
+	                     C13_Entries.Update (Entries_Ctx, E_Ctx);
+	                     if not C13_Entries.Has_Buffer (Entries_Ctx) then
+	                        pragma Assert
+	                          (if HC.Peer_Cert_Valid
+	                           then HC.Peer_Cert_DER_Len
+	                                in 1 .. Max_Cert_DER_Len
+	                                and then X509.Spans_Valid
+	                                  (HC.Peer_Cert,
+	                                   X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	                        return;
+	                     end if;
+	                     if not C13_Entries.Valid (Entries_Ctx) then
+	                        C13_Entries.Take_Buffer (Entries_Ctx, Buf);
+	                        RFLX_Free (Buf);
+	                        pragma Assert
+	                          (if HC.Peer_Cert_Valid
+	                           then HC.Peer_Cert_DER_Len
+	                                in 1 .. Max_Cert_DER_Len
+	                                and then X509.Spans_Valid
+	                                  (HC.Peer_Cert,
+	                                   X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	                        return;
+	                     end if;
                   end;
                end loop;
 
                C13_Entries.Take_Buffer (Entries_Ctx, Buf);
                RFLX_Free (Buf);
-               if Ext_Reject then
-                  OK := False;
-                  Err := Unsupported_Extension;
-               else
-                  OK := True;
-                  Err := No_Error;
-               end if;
-               return;
-            end;
+	               if Ext_Reject then
+	                  OK := False;
+	                  Err := Unsupported_Extension;
+	               else
+	                  OK := True;
+	                  Err := No_Error;
+	               end if;
+	               pragma Assert
+	                 (if HC.Peer_Cert_Valid
+	                  then HC.Peer_Cert_DER_Len
+	                       in 1 .. Max_Cert_DER_Len
+	                       and then X509.Spans_Valid
+	                         (HC.Peer_Cert,
+	                          X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	               return;
+	            end;
          end if;
       end;
 
       C13.Take_Buffer (Ctx, Buf);
       RFLX_Free (Buf);
 
-      if Ext_Reject then
-         OK := False;
-         Err := Unsupported_Extension;
-      else
-         OK := True;
-         Err := No_Error;
-      end if;
-   end Parse_Certificate_Chain_13;
+	      if Ext_Reject then
+	         OK := False;
+	         Err := Unsupported_Extension;
+	      else
+	         OK := True;
+	         Err := No_Error;
+	      end if;
+	      pragma Assert
+	        (if HC.Peer_Cert_Valid
+	         then HC.Peer_Cert_DER_Len
+	              in 1 .. Max_Cert_DER_Len
+	              and then X509.Spans_Valid
+	                (HC.Peer_Cert,
+	                 X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	   end Parse_Certificate_Chain_13;
 
 end SPARKTLS.Handshake.Certs;

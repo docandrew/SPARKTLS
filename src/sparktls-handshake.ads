@@ -96,11 +96,37 @@ is
    --  §4.2.3 forbids RSA-PKCS1-v1_5 codes from being selected for
    --  TLS 1.3 CertificateVerify even though servers may list them
    --  in `signature_algorithms` for back-compat.
+   function Sig_Algo_Compatible_With_Cert
+     (Scheme           : Unsigned_16;
+      Cert             : Signing_Algorithm;
+      Allow_PKCS1_v1_5 : Boolean := False) return Boolean is
+     (Scheme = 0
+      or else
+        (case Cert is
+            when Sign_Ed25519 =>
+               Scheme = 16#0807#,
+            when Sign_ECDSA_P256 =>
+               Scheme = 16#0403#,
+            when Sign_ECDSA_P384 =>
+               Scheme = 16#0503#,
+            when Sign_RSA_PSS =>
+               Scheme = 16#0804# or else Scheme = 16#0805#
+               or else Scheme = 16#0806#
+               or else
+                 (Allow_PKCS1_v1_5
+                  and then (Scheme = 16#0401# or else Scheme = 16#0501#
+                            or else Scheme = 16#0601#)),
+            when Sign_None =>
+               False))
+   with Ghost;
+
    function Pick_Sig_Algo
      (Sig_Algs           : Byte_Seq;
       Cert               : Signing_Algorithm;
       Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
    with Pre => Sig_Algs'First >= 0
-               and then Sig_Algs'Last < N32'Last;
+               and then Sig_Algs'Last < N32'Last,
+        Post => Sig_Algo_Compatible_With_Cert
+                  (Pick_Sig_Algo'Result, Cert, Allow_PKCS1_v1_5);
 
 end SPARKTLS.Handshake;

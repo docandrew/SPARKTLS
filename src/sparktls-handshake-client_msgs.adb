@@ -30,6 +30,7 @@ package body SPARKTLS.Handshake.Client_Msgs with
 is
    use type RBT.Length;
    use type RBT.Index;
+   use type RBT.Bit_Length;
    use type RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values_Enum;
    use type RFLX.Tls_Parameters.TLS_Supported_Groups_Enum;
 
@@ -69,7 +70,23 @@ is
    --  single line.
    procedure Append_Cipher_Suite
      (Suites_Ctx : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
-      Suite      : in     RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum);
+      Suite      : in     RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum)
+   with Pre  => RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Buffer
+                  (Suites_Ctx)
+                and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Valid
+                  (Suites_Ctx)
+                and then RFLX.TLS_Handshake.Cipher_Suites_TLS
+                  .Available_Space (Suites_Ctx) >= 16,
+        Post => RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Buffer
+                  (Suites_Ctx)
+                and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Valid
+                  (Suites_Ctx)
+                and then Suites_Ctx.Buffer_First =
+                  Suites_Ctx.Buffer_First'Old
+                and then Suites_Ctx.Buffer_Last =
+                  Suites_Ctx.Buffer_Last'Old
+                and then Suites_Ctx.First = Suites_Ctx.First'Old
+                and then Suites_Ctx.Last = Suites_Ctx.Last'Old;
 
    procedure Append_Cipher_Suite
      (Suites_Ctx : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
@@ -96,7 +113,25 @@ is
      (Exts_Ctx : in out RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
       Tag      : in     RFLX.Tls_Extensiontype_Values
                           .TLS_ExtensionType_Values_Enum;
-      Data     : in     Byte_Seq);
+      Data     : in     Byte_Seq)
+   with Pre  => Data'Length <= 4096
+                and then RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Buffer
+                  (Exts_Ctx)
+                and then RFLX.TLS_Handshake.CH_Extensions_TLS.Valid
+                  (Exts_Ctx)
+                and then RFLX.TLS_Handshake.CH_Extensions_TLS
+                  .Available_Space (Exts_Ctx)
+                    >= RBT.Bit_Length (8) *
+                       (RBT.Bit_Length (4) +
+                        RBT.Bit_Length (Data'Length)),
+        Post => RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Buffer
+                  (Exts_Ctx)
+                and then RFLX.TLS_Handshake.CH_Extensions_TLS.Valid
+                  (Exts_Ctx)
+                and then Exts_Ctx.Buffer_First = Exts_Ctx.Buffer_First'Old
+                and then Exts_Ctx.Buffer_Last = Exts_Ctx.Buffer_Last'Old
+                and then Exts_Ctx.First = Exts_Ctx.First'Old
+                and then Exts_Ctx.Last = Exts_Ctx.Last'Old;
 
    procedure Append_CH_Extension
      (Exts_Ctx : in out RFLX.TLS_Handshake.CH_Extensions_TLS.Context;

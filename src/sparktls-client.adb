@@ -50,6 +50,7 @@ is
                 --  alert). Pin so callers can preserve
                 --  Nonce_Space_Available (S.Client_App).
                 and S.Client_App = S.Client_App'Old
+                and S.Negotiated_Suite = S.Negotiated_Suite'Old
    is
       A1, A2 : N32;
    begin
@@ -131,9 +132,8 @@ is
                 and Data'Last < N32'Last
                 and Data'Last <= N32'Last - 16#1_0004#
                 and Data'First >= 0,
-	        Post => S.State = S.State'Old
-	                and then S.Client_App = S.Client_App'Old
-	                and then S.Negotiated_Suite = S.Negotiated_Suite'Old;
+			        Post => S.State = S.State'Old
+			                and then S.Negotiated_Suite = S.Negotiated_Suite'Old;
    --  OK = False signals a fatal protocol error. `Err` discriminates
    --  the alert kind so the caller picks the right alert code:
    --    Unsupported_Extension : server sent an EE extension we did
@@ -149,13 +149,35 @@ is
 	               and then Nonce_Space_Available (HC.Client_HS)
 	               and then HC.Transcript_Len > 0
 	               and then
+	                 (if HC.Cert_Request_Received
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                  then HC.Cfg.Random /= null
+	                       and then HC.Cfg.Local.NaCl_Cert_Len
+	                         in 1 .. N32 (Max_Cert_DER)
+	                       and then Handshake.Sig_Algo_Compatible_With_Cert
+	                         (HC.Negotiated_Sig_Algo,
+	                          HC.Cfg.Local.Sign_Algo)
+	                       and then
+	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                       and then HC.Client_HS.Counter
+	                         <= Unsigned_64'Last - 2
+	                       and then SPARKTLSCrypto.P384.Field.Initialized
+	                       and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+	               and then
 	                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 	                  then HC.Hash_Len = 48
 	                  else HC.Hash_Len = 32),
-	        Post => (if Result = OK then
-	                    S.State = S.State'Old
-	                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                    and then HC.Transcript_Len > 0);
+		        Post => (if Result = OK then
+		                    S.State = S.State'Old
+		                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+	                    and then HC.Transcript_Len > 0
+	                    and then HC.Hash_Len = HC.Hash_Len'Old
+	                    and then
+	                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                       then HC.Hash_Len = 48
+	                       else HC.Hash_Len = 32));
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -163,33 +185,79 @@ is
    with Pre => S.State = Wait_Server_Finished
 	               and then Nonce_Space_Available (HC.Client_HS)
 	               and then HC.Transcript_Len > 0
-	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-	                                               | Suite_AES_256_GCM_SHA384
-	                                               | Suite_CHACHA20_POLY1305_SHA256
+	               and then SPARKTLSCrypto.P384.Field.Initialized
+	               and then SPARKTLSCrypto.P384.ECDSA.Initialized
 	               and then
-	                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                 (if HC.Cert_Request_Received
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                  then HC.Cfg.Random /= null
+	                       and then HC.Cfg.Local.NaCl_Cert_Len
+	                         in 1 .. N32 (Max_Cert_DER)
+	                       and then Handshake.Sig_Algo_Compatible_With_Cert
+	                         (HC.Negotiated_Sig_Algo,
+	                          HC.Cfg.Local.Sign_Algo)
+	                       and then
+	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                       and then HC.Client_HS.Counter
+	                         <= Unsigned_64'Last - 2)
+			               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+			                                           | Suite_AES_256_GCM_SHA384
+			                                           | Suite_CHACHA20_POLY1305_SHA256
+			               and then SPARKTLSCrypto.P384.Field.Initialized
+			               and then SPARKTLSCrypto.P384.ECDSA.Initialized
+			               and then
+			                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 	                  then HC.Hash_Len = 48
 	                  else HC.Hash_Len = 32),
-	        Post => (if Result = Has_Output then
-	                    Nonce_Space_Available (S.Client_App)
-	                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
+		        Post => (if Result = Has_Output then
+		                    Nonce_Space_Available (S.Client_App)
+		                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+		                    and then
+		                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                       then HC.Hash_Len = 48
+		                       else HC.Hash_Len = 32)
+		                    and then SPARKTLSCrypto.P384.Field.Initialized
+		                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
                 and then Result in Has_Output | Error_Alert;
    procedure Process_Handshake_Message
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Data   : in     Byte_Seq;
       Result :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and Data'First = 0
-                and Data'Length >= 4
-                and Data'Last < N32'Last - 4
-                and Data'Last < Transcript_Capacity
-                and HC.Transcript_Len > 0
-                and Nonce_Space_Available (HC.Client_HS)
-                and Nonce_Space_Available (S.Client_App)
-                and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                    | Suite_AES_256_GCM_SHA384
-                                    | Suite_CHACHA20_POLY1305_SHA256,
+	   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+	                and then Data'First = 0
+	                and then Data'Length >= 4
+	                and then Data'Last < N32'Last - 4
+	                and then Data'Last < Transcript_Capacity
+		                and then HC.Transcript_Len > 0
+		                and then Nonce_Space_Available (HC.Client_HS)
+		                and then Nonce_Space_Available (S.Client_App)
+		                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		                and then
+		                  (if HC.Cert_Request_Received
+		                       and then HC.Cfg.Local /= null
+		                       and then HC.Cfg.Local.Has_Identity
+		                   then HC.Cfg.Random /= null
+		                        and then HC.Cfg.Local.NaCl_Cert_Len
+		                          in 1 .. N32 (Max_Cert_DER)
+		                        and then Handshake.Sig_Algo_Compatible_With_Cert
+		                          (HC.Negotiated_Sig_Algo,
+		                           HC.Cfg.Local.Sign_Algo)
+		                        and then
+		                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                        and then HC.Client_HS.Counter
+		                          <= Unsigned_64'Last - 2)
+		                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                            | Suite_AES_256_GCM_SHA384
+	                                            | Suite_CHACHA20_POLY1305_SHA256
+	                and then
+	                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                   then HC.Hash_Len = 48
+	                   else HC.Hash_Len = 32),
         --  OK means an intermediate handshake message was consumed and
         --  the client handshake traffic key was not used for output.
         --  Has_Output is the successful Finished path: app keys are
@@ -198,17 +266,25 @@ is
                     HC.Client_HS = HC.Client_HS'Old
                     and then Nonce_Space_Available (S.Client_App)
                     and then HC.Transcript_Len > 0
-                    and then S.Negotiated_Suite
-                       in Suite_AES_128_GCM_SHA256
-                        | Suite_AES_256_GCM_SHA384
-                        | Suite_CHACHA20_POLY1305_SHA256)
+	                    and then S.Negotiated_Suite
+	                       in Suite_AES_128_GCM_SHA256
+	                        | Suite_AES_256_GCM_SHA384
+	                        | Suite_CHACHA20_POLY1305_SHA256
+	                    and then
+	                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                       then HC.Hash_Len = 48
+	                       else HC.Hash_Len = 32))
                 and then (if Result = Has_Output
                            and then S.State /= Error_State then
                     Nonce_Space_Available (S.Client_App)
-                    and then S.Negotiated_Suite
-                       in Suite_AES_128_GCM_SHA256
-                        | Suite_AES_256_GCM_SHA384
-                        | Suite_CHACHA20_POLY1305_SHA256)
+	                    and then S.Negotiated_Suite
+	                       in Suite_AES_128_GCM_SHA256
+	                        | Suite_AES_256_GCM_SHA384
+	                        | Suite_CHACHA20_POLY1305_SHA256
+	                    and then
+	                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                       then HC.Hash_Len = 48
+	                       else HC.Hash_Len = 32))
                 and then Result in OK | Has_Output | Error_Alert;
    procedure Process_Encrypted_Handshake
      (S      : in out Session;
@@ -218,12 +294,16 @@ is
                and then Nonce_Space_Available (HC.Client_HS)
                and then Nonce_Space_Available (HC.Server_HS)
                and then Nonce_Space_Available (S.Client_App)
-               and then HC.Transcript_Len > 0
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                           | Suite_AES_256_GCM_SHA384
-                                           | Suite_CHACHA20_POLY1305_SHA256
-               and then Reasm_Coherent (HC)
-               and then (HC.Reasm_Buf = null
+	               and then HC.Transcript_Len > 0
+	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                           | Suite_AES_256_GCM_SHA384
+	                                           | Suite_CHACHA20_POLY1305_SHA256
+	               and then
+	                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                  then HC.Hash_Len = 48
+	                  else HC.Hash_Len = 32)
+	               and then Reasm_Coherent (HC)
+	               and then (HC.Reasm_Buf = null
                          or else (HC.Reasm_Buf'First = 0
                                   and then HC.Reasm_Buf'Last
                                      in 0 .. 131071
@@ -242,11 +322,15 @@ is
 	               and then Nonce_Space_Available (HC.Client_HS)
 	               and then Nonce_Space_Available (HC.Server_HS)
 	               and then Nonce_Space_Available (S.Client_App)
-	               and then HC.Transcript_Len > 0
-	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-	                                           | Suite_AES_256_GCM_SHA384
-	                                           | Suite_CHACHA20_POLY1305_SHA256
-	               and then Reasm_Coherent (HC)
+		               and then HC.Transcript_Len > 0
+		               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+		                                           | Suite_AES_256_GCM_SHA384
+		                                           | Suite_CHACHA20_POLY1305_SHA256
+		               and then
+		                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                  then HC.Hash_Len = 48
+		                  else HC.Hash_Len = 32)
+		               and then Reasm_Coherent (HC)
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
                and then Rec.Fragment_Pos = Records.Record_Header_Size
@@ -280,10 +364,16 @@ is
                and then Nonce_Space_Available (HC.Client_HS)
                and then Nonce_Space_Available (S.Client_App)
                and then HC.Transcript_Len > 0
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                           | Suite_AES_256_GCM_SHA384
-                                           | Suite_CHACHA20_POLY1305_SHA256
-               and then Plaintext'First = 0
+	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                           | Suite_AES_256_GCM_SHA384
+	                                           | Suite_CHACHA20_POLY1305_SHA256
+		               and then
+		                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                  then HC.Hash_Len = 48
+		                  else HC.Hash_Len = 32)
+		               and then SPARKTLSCrypto.P384.Field.Initialized
+		               and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		               and then Plaintext'First = 0
                and then Plain_Len >= 0
                and then Plaintext'Last < N32'Last / 2
                and then Plain_Len <= N32 (Plaintext'Length)
@@ -307,10 +397,12 @@ is
                and then Msg'Length >= 4
                and then Msg'Last < N32'Last - 4
                and then Msg'Last < Transcript_Capacity
-               and then HC.Transcript_Len > 0
-               and then Nonce_Space_Available (HC.Client_HS)
-	                and then Nonce_Space_Available (S.Client_App)
-	                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	               and then HC.Transcript_Len > 0
+	               and then Nonce_Space_Available (HC.Client_HS)
+		                and then Nonce_Space_Available (S.Client_App)
+		                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
 	                                            | Suite_AES_256_GCM_SHA384
 	                                            | Suite_CHACHA20_POLY1305_SHA256
 	                and then
@@ -321,17 +413,25 @@ is
                     HC.Client_HS = HC.Client_HS'Old
                     and then Nonce_Space_Available (S.Client_App)
                     and then HC.Transcript_Len > 0
-                    and then S.Negotiated_Suite
-                       in Suite_AES_128_GCM_SHA256
-                        | Suite_AES_256_GCM_SHA384
-                        | Suite_CHACHA20_POLY1305_SHA256)
+	                    and then S.Negotiated_Suite
+	                       in Suite_AES_128_GCM_SHA256
+	                        | Suite_AES_256_GCM_SHA384
+	                        | Suite_CHACHA20_POLY1305_SHA256
+	                    and then
+	                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                       then HC.Hash_Len = 48
+	                       else HC.Hash_Len = 32))
                 and then (if Result = Has_Output
                            and then S.State /= Error_State then
                     Nonce_Space_Available (S.Client_App)
-                    and then S.Negotiated_Suite
-                       in Suite_AES_128_GCM_SHA256
-                        | Suite_AES_256_GCM_SHA384
-                        | Suite_CHACHA20_POLY1305_SHA256)
+	                    and then S.Negotiated_Suite
+	                       in Suite_AES_128_GCM_SHA256
+	                        | Suite_AES_256_GCM_SHA384
+	                        | Suite_CHACHA20_POLY1305_SHA256
+	                    and then
+	                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                       then HC.Hash_Len = 48
+	                       else HC.Hash_Len = 32))
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Continue_Decrypted_HS_Reassembly
@@ -345,10 +445,16 @@ is
                and then Nonce_Space_Available (HC.Client_HS)
                and then Nonce_Space_Available (S.Client_App)
                and then HC.Transcript_Len > 0
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                           | Suite_AES_256_GCM_SHA384
-                                           | Suite_CHACHA20_POLY1305_SHA256
-               and then Plaintext'First = 0
+	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                           | Suite_AES_256_GCM_SHA384
+	                                           | Suite_CHACHA20_POLY1305_SHA256
+		               and then
+		                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                  then HC.Hash_Len = 48
+		                  else HC.Hash_Len = 32)
+		               and then SPARKTLSCrypto.P384.Field.Initialized
+		               and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		               and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
                and then Plain_Len <= N32 (Plaintext'Length)
                and then (HC.Reasm_Buf = null
@@ -361,18 +467,36 @@ is
                                   and then (if HC.Reasm_Need > 0 then
                                                HC.Reasm_Need >= 4))),
         Post => Pos <= Plain_Len
-                and then (if Result = OK
-                          and then S.State not in Error_State then
-                             Nonce_Space_Available (HC.Client_HS)
-                             and then Nonce_Space_Available (S.Client_App)
-                             and then HC.Transcript_Len > 0
-                             and then S.Negotiated_Suite
-                                in Suite_AES_128_GCM_SHA256
-                                 | Suite_AES_256_GCM_SHA384
-                                 | Suite_CHACHA20_POLY1305_SHA256)
-                and then (if Result = Has_Output
-                          and then S.State /= Error_State then
-                             Nonce_Space_Available (S.Client_App));
+	                and then (if Result = OK
+	                          and then S.State not in Error_State then
+	                             Nonce_Space_Available (HC.Client_HS)
+	                             and then Nonce_Space_Available (S.Client_App)
+	                             and then HC.Transcript_Len > 0
+	                             and then S.Negotiated_Suite
+	                                in Suite_AES_128_GCM_SHA256
+	                                 | Suite_AES_256_GCM_SHA384
+	                                 | Suite_CHACHA20_POLY1305_SHA256
+		                             and then
+		                               (if S.Negotiated_Suite =
+		                                     Suite_AES_256_GCM_SHA384
+		                                then HC.Hash_Len = 48
+		                                else HC.Hash_Len = 32)
+		                             and then
+		                               SPARKTLSCrypto.P384.Field.Initialized
+		                             and then
+		                               SPARKTLSCrypto.P384.ECDSA.Initialized)
+	                and then (if Result = Has_Output
+	                          and then S.State /= Error_State then
+	                             Nonce_Space_Available (S.Client_App)
+	                             and then S.Negotiated_Suite
+	                                in Suite_AES_128_GCM_SHA256
+	                                 | Suite_AES_256_GCM_SHA384
+	                                 | Suite_CHACHA20_POLY1305_SHA256
+	                             and then
+	                               (if S.Negotiated_Suite =
+	                                     Suite_AES_256_GCM_SHA384
+	                                then HC.Hash_Len = 48
+	                                else HC.Hash_Len = 32));
 
    procedure Fill_Decrypted_HS_Reassembly
      (HC            : in out Handshake_Context;
@@ -392,9 +516,10 @@ is
                and then HC.Reasm_Need >= 4
                and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
                and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length),
-        Post => Pos <= Plain_Len
-                and then Nonce_Space_Available (HC.Client_HS)
-                and then HC.Transcript_Len > 0
+	        Post => Pos <= Plain_Len
+	                and then HC.Hash_Len = HC.Hash_Len'Old
+	                and then Nonce_Space_Available (HC.Client_HS)
+	                and then HC.Transcript_Len > 0
                 and then (if Decode_Failed then
                              HC.Reasm_Buf = null
                              and then HC.Reasm_Len = 0
@@ -429,9 +554,10 @@ is
                and then Take <= N32 (HC.Reasm_Buf'Length) - HC.Reasm_Len
                and then From <= N32 (Plaintext'Length)
                and then Take <= N32 (Plaintext'Length) - From,
-        Post => HC.Reasm_Buf /= null
-                and then HC.Reasm_Buf'First = 0
-                and then Nonce_Space_Available (HC.Client_HS)
+	        Post => HC.Reasm_Buf /= null
+	                and then HC.Reasm_Buf'First = 0
+	                and then HC.Hash_Len = HC.Hash_Len'Old
+	                and then Nonce_Space_Available (HC.Client_HS)
                 and then HC.Transcript_Len > 0
                 and then HC.Reasm_Buf'Last in 0 .. 131071
                 and then HC.Reasm_Len = HC.Reasm_Len'Old + Take
@@ -452,8 +578,9 @@ is
                and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
                and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
                and then HC.Reasm_Hdr_Pending,
-        Post => Nonce_Space_Available (HC.Client_HS)
-                and then HC.Transcript_Len > 0
+	        Post => Nonce_Space_Available (HC.Client_HS)
+	                and then HC.Hash_Len = HC.Hash_Len'Old
+	                and then HC.Transcript_Len > 0
                 and then (if Decode_Failed then
                              HC.Reasm_Buf = null
                              and then HC.Reasm_Len = 0
@@ -475,14 +602,20 @@ is
       Plain_Len : in     N32;
       Pos       : in out N32;
       Result    :    out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and then Nonce_Space_Available (HC.Client_HS)
-               and then Nonce_Space_Available (S.Client_App)
+	     with Pre => S.State not in Idle | Closing | Closed | Error_State
+	               and then Nonce_Space_Available (HC.Client_HS)
+	               and then Nonce_Space_Available (S.Client_App)
                and then HC.Transcript_Len > 0
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                           | Suite_AES_256_GCM_SHA384
-                                           | Suite_CHACHA20_POLY1305_SHA256
-               and then Plain_Len <= N32'Last
+	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                           | Suite_AES_256_GCM_SHA384
+	                                           | Suite_CHACHA20_POLY1305_SHA256
+		               and then
+		                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                  then HC.Hash_Len = 48
+		                  else HC.Hash_Len = 32)
+		               and then SPARKTLSCrypto.P384.Field.Initialized
+		               and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		               and then Plain_Len <= N32'Last
                and then Pos <= Plain_Len
                and then HC.Reasm_Buf /= null
                and then HC.Reasm_Buf'First = 0
@@ -497,17 +630,29 @@ is
                              Nonce_Space_Available (HC.Client_HS)
                              and then Nonce_Space_Available (S.Client_App)
                              and then HC.Transcript_Len > 0
-                             and then S.Negotiated_Suite
-                                in Suite_AES_128_GCM_SHA256
-                                 | Suite_AES_256_GCM_SHA384
-                                 | Suite_CHACHA20_POLY1305_SHA256)
+	                             and then S.Negotiated_Suite
+	                                in Suite_AES_128_GCM_SHA256
+	                                 | Suite_AES_256_GCM_SHA384
+	                                 | Suite_CHACHA20_POLY1305_SHA256
+	                             and then
+		                               (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                                then HC.Hash_Len = 48
+		                                else HC.Hash_Len = 32)
+		                             and then
+		                               SPARKTLSCrypto.P384.Field.Initialized
+		                             and then
+		                               SPARKTLSCrypto.P384.ECDSA.Initialized)
                 and then (if Result = Has_Output
                           and then S.State /= Error_State then
                              Nonce_Space_Available (S.Client_App)
-                             and then S.Negotiated_Suite
-                                in Suite_AES_128_GCM_SHA256
-                                 | Suite_AES_256_GCM_SHA384
-                                 | Suite_CHACHA20_POLY1305_SHA256);
+	                             and then S.Negotiated_Suite
+	                                in Suite_AES_128_GCM_SHA256
+	                                 | Suite_AES_256_GCM_SHA384
+	                                 | Suite_CHACHA20_POLY1305_SHA256
+	                             and then
+	                               (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                                then HC.Hash_Len = 48
+	                                else HC.Hash_Len = 32));
 
    procedure Process_Decrypted_HS_Packed_Messages
      (S         : in out Session;
@@ -520,14 +665,42 @@ is
                and then Nonce_Space_Available (HC.Client_HS)
                and then Nonce_Space_Available (S.Client_App)
                and then HC.Transcript_Len > 0
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                           | Suite_AES_256_GCM_SHA384
-                                           | Suite_CHACHA20_POLY1305_SHA256
-               and then Plaintext'First = 0
+	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                           | Suite_AES_256_GCM_SHA384
+	                                           | Suite_CHACHA20_POLY1305_SHA256
+		               and then
+		                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                  then HC.Hash_Len = 48
+		                  else HC.Hash_Len = 32)
+		               and then SPARKTLSCrypto.P384.Field.Initialized
+		               and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		               and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
                and then Plain_Len <= N32 (Plaintext'Length)
-               and then Pos <= Plain_Len,
-        Post => Pos <= Plain_Len;
+	               and then Pos <= Plain_Len,
+	        Post => Pos <= Plain_Len
+	                and then (if Result = OK
+	                          and then S.State in Wait_Encrypted_Extensions
+	                                              | Wait_Certificate_Request
+	                                              | Wait_Certificate
+	                                              | Wait_Certificate_Verify
+	                                              | Wait_Server_Finished then
+	                             Nonce_Space_Available (HC.Client_HS)
+	                             and then Nonce_Space_Available (S.Client_App)
+	                             and then HC.Transcript_Len > 0
+	                             and then S.Negotiated_Suite
+	                                in Suite_AES_128_GCM_SHA256
+	                                 | Suite_AES_256_GCM_SHA384
+	                                 | Suite_CHACHA20_POLY1305_SHA256
+	                             and then
+		                               (if S.Negotiated_Suite =
+		                                     Suite_AES_256_GCM_SHA384
+		                                then HC.Hash_Len = 48
+		                                else HC.Hash_Len = 32)
+		                             and then
+		                               SPARKTLSCrypto.P384.Field.Initialized
+		                             and then
+		                               SPARKTLSCrypto.P384.ECDSA.Initialized);
 
    procedure Process_One_Decrypted_HS_Message
      (S         : in out Session;
@@ -545,10 +718,16 @@ is
                and then Nonce_Space_Available (HC.Client_HS)
                and then Nonce_Space_Available (S.Client_App)
                and then HC.Transcript_Len > 0
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                           | Suite_AES_256_GCM_SHA384
-                                           | Suite_CHACHA20_POLY1305_SHA256
-               and then Plaintext'First = 0
+	               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                           | Suite_AES_256_GCM_SHA384
+	                                           | Suite_CHACHA20_POLY1305_SHA256
+		               and then
+		                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                  then HC.Hash_Len = 48
+		                  else HC.Hash_Len = 32)
+		               and then SPARKTLSCrypto.P384.Field.Initialized
+		               and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		               and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
                and then Plain_Len <= N32 (Plaintext'Length)
                and then Pos <= N32'Last - 4
@@ -564,10 +743,16 @@ is
                              and then Nonce_Space_Available (HC.Client_HS)
                              and then Nonce_Space_Available (S.Client_App)
                              and then HC.Transcript_Len > 0
-                             and then S.Negotiated_Suite
-                                in Suite_AES_128_GCM_SHA256
-                                 | Suite_AES_256_GCM_SHA384
-                                 | Suite_CHACHA20_POLY1305_SHA256);
+	            and then S.Negotiated_Suite
+	               in Suite_AES_128_GCM_SHA256
+	                | Suite_AES_256_GCM_SHA384
+	                | Suite_CHACHA20_POLY1305_SHA256
+	            and then
+		              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		               then HC.Hash_Len = 48
+		               else HC.Hash_Len = 32)
+	            and then SPARKTLSCrypto.P384.Field.Initialized
+	            and then SPARKTLSCrypto.P384.ECDSA.Initialized);
 
 
    procedure Process_Connected
@@ -629,8 +814,14 @@ is
                | Client_Certificate_Sent
                | Client_Cert_Verify_Sent
                | Client_Finished_Sent
-      and then (if S.State = Wait_Server_Hello
-                then Reasm_Coherent (HC))
+	      and then (if S.State = Wait_Server_Hello
+	                then Reasm_Coherent (HC)
+	                     and then HC.Cfg.Random /= null
+	                     and then SPARKTLSCrypto.P384.Field.Initialized
+	                     and then HC.Transcript_Len > 0
+	                     and then HC.Transcript_Len <= Transcript_Capacity
+	                     and then HC.HRR_Cookie_Len
+	                       <= N32 (HC.HRR_Cookie'Length))
       and then (if S.State in Wait_Encrypted_Extensions
                             | Wait_Certificate
                             | Wait_Certificate_Verify
@@ -639,11 +830,16 @@ is
                      and then Nonce_Space_Available (HC.Server_HS)
                      and then Nonce_Space_Available (S.Client_App)
                      and then HC.Transcript_Len > 0
-                     and then S.Negotiated_Suite
-                        in Suite_AES_128_GCM_SHA256
-                         | Suite_AES_256_GCM_SHA384
-                         | Suite_CHACHA20_POLY1305_SHA256
-                     and then Reasm_Coherent (HC)
+	                     and then S.Negotiated_Suite
+	                        in Suite_AES_128_GCM_SHA256
+	                         | Suite_AES_256_GCM_SHA384
+	                         | Suite_CHACHA20_POLY1305_SHA256
+	                     and then
+	                       (if S.Negotiated_Suite =
+	                             Suite_AES_256_GCM_SHA384
+	                        then HC.Hash_Len = 48
+	                        else HC.Hash_Len = 32)
+	                     and then Reasm_Coherent (HC)
                      and then (HC.Reasm_Buf = null
                                or else (HC.Reasm_Buf'First = 0
                                         and then HC.Reasm_Buf'Last
@@ -656,24 +852,38 @@ is
                                                   then HC.Reasm_Need >= 4))))
       and then (if S.State = Client_Finished_Sent
                 then HC.Transcript_Len > 0
-                     and then S.Negotiated_Suite
-                        in Suite_AES_128_GCM_SHA256
-                         | Suite_AES_256_GCM_SHA384
-                         | Suite_CHACHA20_POLY1305_SHA256);
+	            and then S.Negotiated_Suite
+	               in Suite_AES_128_GCM_SHA256
+	                | Suite_AES_256_GCM_SHA384
+	                | Suite_CHACHA20_POLY1305_SHA256
+	            and then
+	              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	               then HC.Hash_Len = 48
+	               else HC.Hash_Len = 32));
    procedure Handle_WSH_Frame_13
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => S.State = Wait_Server_Hello
-               and then Reasm_Coherent (HC);
+	   with Pre => S.State = Wait_Server_Hello
+	               and then Reasm_Coherent (HC)
+	               and then HC.Cfg.Random /= null
+	               and then SPARKTLSCrypto.P384.Field.Initialized
+	               and then HC.Transcript_Len > 0
+	               and then HC.Transcript_Len <= Transcript_Capacity
+	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
    procedure Handle_WSH_HS_Frame
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
-   with Pre => S.State = Wait_Server_Hello
-               and then Reasm_Coherent (HC)
-               and then Rec.OK
+	   with Pre => S.State = Wait_Server_Hello
+	               and then Reasm_Coherent (HC)
+	               and then HC.Cfg.Random /= null
+	               and then SPARKTLSCrypto.P384.Field.Initialized
+	               and then HC.Transcript_Len > 0
+	               and then HC.Transcript_Len <= Transcript_Capacity
+	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+	               and then Rec.OK
                and then Rec.Content = Records.Content_Handshake
                and then Rec.Fragment_Pos = Records.Record_Header_Size
                and then Rec.Fragment_Len >= 1
@@ -691,10 +901,16 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => S.State = Wait_Server_Hello
+               and then HC.Cfg.Random /= null
+               and then SPARKTLSCrypto.P384.Field.Initialized
                and then HC.Reasm_Buf /= null
-               and then HC.Reasm_Need > 0
-               and then HC.Reasm_Buf'First = 0
-               and then HC.Reasm_Need - 1 <= HC.Reasm_Buf'Last;
+	               and then HC.Reasm_Need > 0
+	               and then HC.Reasm_Buf'First = 0
+	               and then HC.Reasm_Need - 1 <= HC.Reasm_Buf'Last
+	               and then HC.Reasm_Need - 1 < Transcript_Capacity
+	               and then HC.Transcript_Len > 0
+	               and then HC.Transcript_Len <= Transcript_Capacity
+	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
    procedure Finalize_SH_Processing
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -705,9 +921,10 @@ is
       HC     : in out Handshake_Context;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
-   with Pre => S.State = Wait_Server_Hello
-               and then Reasm_Coherent (HC)
-               and then Rec.OK
+	   with Pre => S.State = Wait_Server_Hello
+	               and then Reasm_Coherent (HC)
+	               and then HC.Cfg.Random /= null
+	               and then Rec.OK
                and then Rec.Content = Records.Content_Handshake
                and then Rec.Fragment_Pos = Records.Record_Header_Size
                and then Rec.Fragment_Len >= 1
@@ -720,10 +937,11 @@ is
                         <= S.Input.Write_Pos
                and then S.Input.Read_Pos + Rec.Record_Len
                         <= IO_Buffer_Capacity,
-        Post => (if Result = OK then
-                    S.State = Wait_Server_Hello
-                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
-                                 HC.Reasm_Buf /= null
+	        Post => (if Result = OK then
+	                    S.State = Wait_Server_Hello
+	                    and then HC.Cfg.Random /= null
+	                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
+	                                 HC.Reasm_Buf /= null
                                  and then HC.Reasm_Need > 0
                                  and then HC.Reasm_Buf'First = 0
                                  and then HC.Reasm_Need - 1
@@ -736,9 +954,10 @@ is
       Frag_Start : in     N32;
       Max_HS_Msg : in     N32;
       Result     :    out Action)
-   with Pre => S.State = Wait_Server_Hello
-               and then Reasm_Coherent (HC)
-               and then Rec.OK
+	   with Pre => S.State = Wait_Server_Hello
+	               and then Reasm_Coherent (HC)
+	               and then HC.Cfg.Random /= null
+	               and then Rec.OK
                and then Rec.Content = Records.Content_Handshake
                and then Rec.Fragment_Pos = Records.Record_Header_Size
                and then Rec.Fragment_Len = Frag_Len
@@ -758,11 +977,12 @@ is
                and then (if Frag_Len >= 4
                          then Frag_Start <= IO_Buffer_Capacity - 4)
                and then Max_HS_Msg = 131072,
-        Post => (if Result = OK then
-                    S.State = Wait_Server_Hello
-                    and then Reasm_Coherent (HC)
-                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
-                                 HC.Reasm_Buf /= null
+	        Post => (if Result = OK then
+	                    S.State = Wait_Server_Hello
+	                    and then Reasm_Coherent (HC)
+	                    and then HC.Cfg.Random /= null
+	                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
+	                                 HC.Reasm_Buf /= null
                                  and then HC.Reasm_Need > 0));
 
 
@@ -782,7 +1002,28 @@ is
                     Data'Last - Data'First < Transcript_Capacity)
                 and HC.Transcript_Len <= Transcript_Capacity,
 	        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
-	               and HC.Client_HS = HC.Client_HS'Old
+		               and HC.Client_HS = HC.Client_HS'Old
+		               and (if HC.Cfg.Local'Old /= null
+		                    then HC.Cfg.Local /= null
+		                         and then HC.Cfg.Local.Has_Identity =
+	                           HC.Cfg.Local'Old.Has_Identity
+	                         and then HC.Cfg.Local.Sign_Algo =
+	                           HC.Cfg.Local'Old.Sign_Algo
+	                         and then HC.Cfg.Local.RSA_Mod_Len =
+	                           HC.Cfg.Local'Old.RSA_Mod_Len
+		                         and then HC.Cfg.Local.NaCl_Cert_Len =
+		                           HC.Cfg.Local'Old.NaCl_Cert_Len)
+		               and (if HC.Cfg.Local /= null
+		                    then HC.Cfg.Local'Old /= null
+		                         and then
+		                           (if HC.Cfg.Local.Has_Identity
+		                            then HC.Cfg.Local'Old.Has_Identity))
+		               and (if HC.Cfg.Random'Old /= null
+		                    then HC.Cfg.Random /= null)
+	               and HC.Cert_Request_Received =
+	                 HC.Cert_Request_Received'Old
+	               and HC.Negotiated_Sig_Algo =
+	                 HC.Negotiated_Sig_Algo'Old
 	               and HC.Hash_Len = HC.Hash_Len'Old
 	   is
    begin
@@ -1100,20 +1341,45 @@ is
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
                 and then Data'Length <= Transcript_Capacity
-                and then HC.Transcript_Len > 0
-                and then Nonce_Space_Available (HC.Client_HS)
-                and then Nonce_Space_Available (S.Client_App)
-                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                            | Suite_AES_256_GCM_SHA384
-                                            | Suite_CHACHA20_POLY1305_SHA256,
-        Post => (if S.State /= Error_State
-                 then HC.Client_HS = HC.Client_HS'Old
-                      and S.Client_App = S.Client_App'Old
-                      and HC.Transcript_Len > 0
-                      and S.Negotiated_Suite
-                         in Suite_AES_128_GCM_SHA256
-                          | Suite_AES_256_GCM_SHA384
-                          | Suite_CHACHA20_POLY1305_SHA256)
+	                and then HC.Transcript_Len > 0
+	                and then Nonce_Space_Available (HC.Client_HS)
+		                and then Nonce_Space_Available (S.Client_App)
+		                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		                and then
+		                  (if HC.Cert_Request_Received
+		                       and then HC.Cfg.Local /= null
+		                       and then HC.Cfg.Local.Has_Identity
+		                   then HC.Cfg.Random /= null
+		                        and then HC.Cfg.Local.NaCl_Cert_Len
+		                          in 1 .. N32 (Max_Cert_DER)
+		                        and then Handshake.Sig_Algo_Compatible_With_Cert
+		                          (HC.Negotiated_Sig_Algo,
+		                           HC.Cfg.Local.Sign_Algo)
+		                        and then
+		                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                        and then HC.Client_HS.Counter
+		                          <= Unsigned_64'Last - 2)
+		                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+		                                            | Suite_AES_256_GCM_SHA384
+	                                            | Suite_CHACHA20_POLY1305_SHA256
+	                and then
+	                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                   then HC.Hash_Len = 48
+	                   else HC.Hash_Len = 32),
+		        Post => (if S.State /= Error_State
+			                 then HC.Client_HS = HC.Client_HS'Old
+			                      and then Nonce_Space_Available (S.Client_App)
+			                      and then HC.Transcript_Len > 0
+		                      and then S.Negotiated_Suite
+	                         in Suite_AES_128_GCM_SHA256
+	                          | Suite_AES_256_GCM_SHA384
+	                          | Suite_CHACHA20_POLY1305_SHA256
+	                      and then
+	                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                         then HC.Hash_Len = 48
+	                         else HC.Hash_Len = 32))
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_EE_13
@@ -1178,20 +1444,45 @@ is
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
                 and then Data'Length <= Transcript_Capacity
-                and then HC.Transcript_Len > 0
-                and then Nonce_Space_Available (HC.Client_HS)
-                and then Nonce_Space_Available (S.Client_App)
-                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                            | Suite_AES_256_GCM_SHA384
-                                            | Suite_CHACHA20_POLY1305_SHA256,
-        Post => (if S.State /= Error_State
-                 then HC.Client_HS = HC.Client_HS'Old
-                      and S.Client_App = S.Client_App'Old
-                      and HC.Transcript_Len > 0
-                      and S.Negotiated_Suite
-                         in Suite_AES_128_GCM_SHA256
-                          | Suite_AES_256_GCM_SHA384
-                          | Suite_CHACHA20_POLY1305_SHA256)
+	                and then HC.Transcript_Len > 0
+	                and then Nonce_Space_Available (HC.Client_HS)
+		                and then Nonce_Space_Available (S.Client_App)
+		                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		                and then
+		                  (if HC.Cert_Request_Received
+		                       and then HC.Cfg.Local /= null
+		                       and then HC.Cfg.Local.Has_Identity
+		                   then HC.Cfg.Random /= null
+		                        and then HC.Cfg.Local.NaCl_Cert_Len
+		                          in 1 .. N32 (Max_Cert_DER)
+		                        and then Handshake.Sig_Algo_Compatible_With_Cert
+		                          (HC.Negotiated_Sig_Algo,
+		                           HC.Cfg.Local.Sign_Algo)
+		                        and then
+		                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                        and then HC.Client_HS.Counter
+		                          <= Unsigned_64'Last - 2)
+		                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+		                                            | Suite_AES_256_GCM_SHA384
+	                                            | Suite_CHACHA20_POLY1305_SHA256
+	                and then
+	                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                   then HC.Hash_Len = 48
+	                   else HC.Hash_Len = 32),
+	        Post => (if S.State /= Error_State
+		                 then HC.Client_HS = HC.Client_HS'Old
+		                      and then S.Client_App = S.Client_App'Old
+		                      and then HC.Transcript_Len > 0
+		                      and then S.Negotiated_Suite
+	                         in Suite_AES_128_GCM_SHA256
+	                          | Suite_AES_256_GCM_SHA384
+	                          | Suite_CHACHA20_POLY1305_SHA256
+	                      and then
+	                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                         then HC.Hash_Len = 48
+	                         else HC.Hash_Len = 32))
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CertReq_13
@@ -1385,22 +1676,45 @@ is
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
                 and then Data'Length <= Transcript_Capacity
-                and then HC.Transcript_Len > 0
-                and then Nonce_Space_Available (HC.Client_HS)
-                and then Nonce_Space_Available (S.Client_App)
-                and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized
-                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                            | Suite_AES_256_GCM_SHA384
-                                            | Suite_CHACHA20_POLY1305_SHA256,
-        Post => (if S.State /= Error_State
-                 then HC.Client_HS = HC.Client_HS'Old
-                      and S.Client_App = S.Client_App'Old
-                      and HC.Transcript_Len > 0
-                      and S.Negotiated_Suite
-                         in Suite_AES_128_GCM_SHA256
-                          | Suite_AES_256_GCM_SHA384
-                          | Suite_CHACHA20_POLY1305_SHA256)
+		                and then HC.Transcript_Len > 0
+		                and then Nonce_Space_Available (HC.Client_HS)
+		                and then Nonce_Space_Available (S.Client_App)
+		                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		                and then
+		                  (if HC.Cert_Request_Received
+		                       and then HC.Cfg.Local /= null
+		                       and then HC.Cfg.Local.Has_Identity
+		                   then HC.Cfg.Random /= null
+		                        and then HC.Cfg.Local.NaCl_Cert_Len
+		                          in 1 .. N32 (Max_Cert_DER)
+		                        and then Handshake.Sig_Algo_Compatible_With_Cert
+		                          (HC.Negotiated_Sig_Algo,
+		                           HC.Cfg.Local.Sign_Algo)
+		                        and then
+		                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                        and then HC.Client_HS.Counter
+		                          <= Unsigned_64'Last - 2)
+		                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                            | Suite_AES_256_GCM_SHA384
+	                                            | Suite_CHACHA20_POLY1305_SHA256
+	                and then
+	                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                   then HC.Hash_Len = 48
+	                   else HC.Hash_Len = 32),
+	        Post => (if S.State /= Error_State
+		                 then HC.Client_HS = HC.Client_HS'Old
+		                      and then S.Client_App = S.Client_App'Old
+		                      and then HC.Transcript_Len > 0
+		                      and then S.Negotiated_Suite
+	                         in Suite_AES_128_GCM_SHA256
+	                          | Suite_AES_256_GCM_SHA384
+	                          | Suite_CHACHA20_POLY1305_SHA256
+	                      and then
+	                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                         then HC.Hash_Len = 48
+	                         else HC.Hash_Len = 32))
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_Cert_13
@@ -1552,13 +1866,17 @@ is
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if S.State /= Error_State
-                 then HC.Client_HS = HC.Client_HS'Old
-                      and S.Client_App = S.Client_App'Old
-                      and HC.Transcript_Len > 0
-                      and S.Negotiated_Suite
-                         in Suite_AES_128_GCM_SHA256
-                          | Suite_AES_256_GCM_SHA384
-                          | Suite_CHACHA20_POLY1305_SHA256)
+	                 then HC.Client_HS = HC.Client_HS'Old
+	                      and then S.Client_App = S.Client_App'Old
+		                      and then HC.Transcript_Len > 0
+		                      and then S.Negotiated_Suite
+	                         in Suite_AES_128_GCM_SHA256
+	                          | Suite_AES_256_GCM_SHA384
+	                          | Suite_CHACHA20_POLY1305_SHA256
+	                      and then
+	                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                         then HC.Hash_Len = 48
+	                         else HC.Hash_Len = 32))
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CV_13
@@ -1707,19 +2025,44 @@ is
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
                 and then Data'Length <= Transcript_Capacity
-                and then HC.Transcript_Len > 0
-                and then Nonce_Space_Available (HC.Client_HS)
-                and then Nonce_Space_Available (S.Client_App)
-                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                            | Suite_AES_256_GCM_SHA384
-                                            | Suite_CHACHA20_POLY1305_SHA256,
+	                and then HC.Transcript_Len > 0
+	                and then Nonce_Space_Available (HC.Client_HS)
+		                and then Nonce_Space_Available (S.Client_App)
+		                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		                and then
+		                  (if HC.Cert_Request_Received
+		                       and then HC.Cfg.Local /= null
+		                       and then HC.Cfg.Local.Has_Identity
+		                   then HC.Cfg.Random /= null
+		                        and then HC.Cfg.Local.NaCl_Cert_Len
+		                          in 1 .. N32 (Max_Cert_DER)
+		                        and then Handshake.Sig_Algo_Compatible_With_Cert
+		                          (HC.Negotiated_Sig_Algo,
+		                           HC.Cfg.Local.Sign_Algo)
+		                        and then
+		                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                        and then HC.Client_HS.Counter
+		                          <= Unsigned_64'Last - 2)
+		                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+		                                            | Suite_AES_256_GCM_SHA384
+	                                            | Suite_CHACHA20_POLY1305_SHA256
+	                and then
+	                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                   then HC.Hash_Len = 48
+	                   else HC.Hash_Len = 32),
         --  Handle_Finished installs the app traffic secret via
         --  Derive_App_Keys_And_Send_Finished, so S.Client_App is
         --  replaced (not pinned to 'Old). Nonce headroom is guaranteed
         --  because the new key starts with Counter = 0.
-        Post => (if Result = Has_Output
-                 then Nonce_Space_Available (S.Client_App)
-                      and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
+	        Post => (if Result = Has_Output
+	                 then Nonce_Space_Available (S.Client_App)
+	                      and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+	                      and then
+	                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	                         then HC.Hash_Len = 48
+	                         else HC.Hash_Len = 32))
                 and then Result in Has_Output | Error_Alert;
 
    procedure Handle_Finished_13
@@ -1792,11 +2135,21 @@ is
                      end if;
                   end if;
                end;
-         end case;
+	         end case;
 
-         if not Verified then
-            S.Last_Error := Handshake_Failure;
-            Set_State (S, Error_State);
+	         pragma Assert
+	           (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	            then HC.Hash_Len = 48
+	            else HC.Hash_Len = 32);
+	         pragma Assert
+	           (if HC.Cert_Request_Received
+	                 and then HC.Cfg.Local /= null
+	                 and then HC.Cfg.Local.Has_Identity
+	            then HC.Cfg.Random /= null);
+
+	         if not Verified then
+	            S.Last_Error := Handshake_Failure;
+	            Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
@@ -1847,15 +2200,30 @@ is
          when Handshake.HT_Certificate_Request =>
             Handle_CertReq_13 (S, HC, Data, Result);
             if Result /= OK then return; end if;
-         when Handshake.HT_Certificate =>
-            Handle_Cert_13 (S, HC, Data, Result);
-            if Result /= OK then
-               return;
-            end if;
+	         when Handshake.HT_Certificate =>
+	            if S.State /= Wait_Certificate then
+	               Send_HS_Encrypted_Alert
+	                 (S, HC, Unexpected_Message, Result);
+	               return;
+	            end if;
+	            Handle_Cert_13 (S, HC, Data, Result);
+	            if Result /= OK then
+	               return;
+	            end if;
 
-         when Handshake.HT_Certificate_Verify =>
-            Handle_CV_13 (S, HC, Data, Msg_Len, Result);
-            if Result /= OK then
+	         when Handshake.HT_Certificate_Verify =>
+	            if S.State /= Wait_Certificate_Verify then
+	               Send_HS_Encrypted_Alert
+	                 (S, HC, Unexpected_Message, Result);
+	               return;
+	            end if;
+	            if Msg_Len > N32 (Data'Length) - 4 then
+	               Send_HS_Encrypted_Alert
+	                 (S, HC, Decode_Error, Result);
+	               return;
+	            end if;
+	            Handle_CV_13 (S, HC, Data, Msg_Len, Result);
+	            if Result /= OK then
                return;
             end if;
 
@@ -2031,10 +2399,11 @@ is
                and then Nonce_Space_Available (HC.Client_HS)
                and then HC.Transcript_Len > 0
                and then S.Negotiated_Suite = Suite_AES_256_GCM_SHA384,
-        Post => (if Result = OK then
-                    Nonce_Space_Available (S.Client_App))
-                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                and then Result in OK | Error_Alert;
+	        Post => (if Result = OK then
+	                    Nonce_Space_Available (S.Client_App))
+	                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+	                and then HC.Hash_Len = HC.Hash_Len'Old
+	                and then Result in OK | Error_Alert;
 
    procedure Build_Client_Finished_384
      (S               : in out Session;
@@ -2119,10 +2488,11 @@ is
                and then HC.Transcript_Len > 0
                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                            | Suite_CHACHA20_POLY1305_SHA256,
-        Post => (if Result = OK then
-                    Nonce_Space_Available (S.Client_App))
-                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                and then Result in OK | Error_Alert;
+	        Post => (if Result = OK then
+	                    Nonce_Space_Available (S.Client_App))
+	                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+	                and then HC.Hash_Len = HC.Hash_Len'Old
+	                and then Result in OK | Error_Alert;
 
    procedure Build_Client_Finished_256
      (S               : in out Session;
@@ -2316,10 +2686,15 @@ is
       Len  : in     N32)
    with Pre => HC.Reasm_Buf /= null
                and then HC.Reasm_Buf'First = 0
+               and then Reasm_Coherent (HC)
                and then Len >= 1
                and then Len - 1 <= HC.Reasm_Buf'Last
                and then From <= N32'Last - Len
-               and then From + Len <= IO_Buffer_Capacity;
+               and then From + Len <= IO_Buffer_Capacity,
+        Post => Reasm_Coherent (HC)
+                and then HC.Reasm_Len = HC.Reasm_Len'Old
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old;
 
    procedure Copy_Input_Fragment
      (S    : in     Session;
@@ -2342,17 +2717,19 @@ is
       Max_HS_Msg : in     N32;
       Next_Read  : in     Buffer_Size;
       Result     :    out Action)
-   with Pre => S.State = Wait_Server_Hello
-               and then Reasm_Coherent (HC)
-               and then Frag_Len in 1 .. 3
+	   with Pre => S.State = Wait_Server_Hello
+	               and then Reasm_Coherent (HC)
+	               and then HC.Cfg.Random /= null
+	               and then Frag_Len in 1 .. 3
                and then Frag_Start <= N32'Last - Frag_Len
                and then Frag_Start + Frag_Len <= IO_Buffer_Capacity
                and then Next_Read <= S.Input.Write_Pos
                and then Max_HS_Msg = 131072,
-        Post => Result = OK
-                and then S.State = Wait_Server_Hello
-                and then Reasm_Coherent (HC)
-                and then HC.Reasm_Len < HC.Reasm_Need;
+	        Post => Result = OK
+	                and then S.State = Wait_Server_Hello
+	                and then Reasm_Coherent (HC)
+	                and then HC.Cfg.Random /= null
+	                and then HC.Reasm_Len < HC.Reasm_Need;
 
    procedure Start_Pending_SH_Reassembly
      (S          : in out Session;
@@ -2370,10 +2747,11 @@ is
       HC.Reasm_Hdr_Pending := True;
       HC.Reasm_Len := Frag_Len;
       pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
-      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
-      S.Input.Read_Pos := Next_Read;
-      Result := OK;
-   end Start_Pending_SH_Reassembly;
+	      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
+	      S.Input.Read_Pos := Next_Read;
+	      Result := OK;
+	      pragma Assert (HC.Cfg.Random /= null);
+	   end Start_Pending_SH_Reassembly;
 
    procedure Start_Spanning_SH_Reassembly
      (S          : in out Session;
@@ -2383,18 +2761,20 @@ is
       HS_Total   : in     N32;
       Next_Read  : in     Buffer_Size;
       Result     :    out Action)
-   with Pre => S.State = Wait_Server_Hello
-               and then Reasm_Coherent (HC)
-               and then Frag_Len >= 4
+	   with Pre => S.State = Wait_Server_Hello
+	               and then Reasm_Coherent (HC)
+	               and then HC.Cfg.Random /= null
+	               and then Frag_Len >= 4
                and then HS_Total > Frag_Len
                and then HS_Total <= 131072
                and then Frag_Start <= N32'Last - Frag_Len
                and then Frag_Start + Frag_Len <= IO_Buffer_Capacity
                and then Next_Read <= S.Input.Write_Pos,
-        Post => Result = OK
-                and then S.State = Wait_Server_Hello
-                and then Reasm_Coherent (HC)
-                and then HC.Reasm_Len < HC.Reasm_Need;
+	        Post => Result = OK
+	                and then S.State = Wait_Server_Hello
+	                and then Reasm_Coherent (HC)
+	                and then HC.Cfg.Random /= null
+	                and then HC.Reasm_Len < HC.Reasm_Need;
 
    procedure Start_Spanning_SH_Reassembly
      (S          : in out Session;
@@ -2409,12 +2789,14 @@ is
       Free_Byte_Seq (HC.Reasm_Buf);
       HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
       HC.Reasm_Need := HS_Total;
+      HC.Reasm_Hdr_Pending := False;
       HC.Reasm_Len := Frag_Len;
       pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
-      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
-      S.Input.Read_Pos := Next_Read;
-      Result := OK;
-   end Start_Spanning_SH_Reassembly;
+	      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
+	      S.Input.Read_Pos := Next_Read;
+	      Result := OK;
+	      pragma Assert (HC.Cfg.Random /= null);
+	   end Start_Spanning_SH_Reassembly;
 
    procedure Start_Complete_SH_Reassembly
      (S          : in out Session;
@@ -2423,18 +2805,20 @@ is
       Frag_Start : in     N32;
       HS_Total   : in     N32;
       Next_Read  : in     Buffer_Size)
-   with Pre => S.State = Wait_Server_Hello
-               and then Reasm_Coherent (HC)
-               and then Frag_Len >= 4
+	   with Pre => S.State = Wait_Server_Hello
+	               and then Reasm_Coherent (HC)
+	               and then HC.Cfg.Random /= null
+	               and then Frag_Len >= 4
                and then HS_Total >= 4
                and then HS_Total <= Frag_Len
                and then Frag_Start <= N32'Last - Frag_Len
                and then Frag_Start + Frag_Len <= IO_Buffer_Capacity
                and then Next_Read <= S.Input.Write_Pos,
-        Post => S.State = Wait_Server_Hello
-                and then Reasm_Coherent (HC)
-                and then HC.Reasm_Buf /= null
-                and then HC.Reasm_Need > 0;
+	        Post => S.State = Wait_Server_Hello
+	                and then Reasm_Coherent (HC)
+	                and then HC.Cfg.Random /= null
+	                and then HC.Reasm_Buf /= null
+	                and then HC.Reasm_Need > 0;
 
    procedure Start_Complete_SH_Reassembly
      (S          : in out Session;
@@ -2448,11 +2832,13 @@ is
       Free_Byte_Seq (HC.Reasm_Buf);
       HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
       HC.Reasm_Need := HS_Total;
+      HC.Reasm_Hdr_Pending := False;
       HC.Reasm_Len := Frag_Len;
-      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
-      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
-      S.Input.Read_Pos := Next_Read;
-   end Start_Complete_SH_Reassembly;
+	      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
+	      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
+	      S.Input.Read_Pos := Next_Read;
+	      pragma Assert (HC.Cfg.Random /= null);
+	   end Start_Complete_SH_Reassembly;
 
    procedure Reasm_Fresh_Fragment
      (S          : in out Session;
@@ -2694,11 +3080,12 @@ is
                            Handshake.Client_Msgs.Parse_Server_Hello
                              (S, HC, Frag, Parse_OK);
 
-                           if not Parse_OK
-                             and then S.Last_Error = No_Error
-                           then
-                              Handshake.TLS12.Parse_Server_Hello_12
-                                (S, HC, Frag, Parse_OK);
+	                           if not Parse_OK
+	                             and then S.Last_Error = No_Error
+	                           then
+	                              HC.Version := TLS_1_2;
+	                              Handshake.TLS12.Parse_Server_Hello_12
+	                                (S, HC, Frag, Parse_OK);
                            end if;
 
                            if not Parse_OK then
@@ -3624,10 +4011,14 @@ is
             and then Nonce_Space_Available (HC.Client_HS)
             and then Nonce_Space_Available (S.Client_App)
             and then HC.Transcript_Len > 0
-            and then S.Negotiated_Suite
-               in Suite_AES_128_GCM_SHA256
-                | Suite_AES_256_GCM_SHA384
-                | Suite_CHACHA20_POLY1305_SHA256);
+	            and then S.Negotiated_Suite
+	               in Suite_AES_128_GCM_SHA256
+	                | Suite_AES_256_GCM_SHA384
+	                | Suite_CHACHA20_POLY1305_SHA256
+	            and then
+	              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+	               then HC.Hash_Len = 48
+	               else HC.Hash_Len = 32));
 
          Process_One_Decrypted_HS_Message
            (S, HC, Plaintext, Plain_Len, Pos, Result);
@@ -3891,9 +4282,10 @@ is
       Start_Off : in     N32;
       Status    :    out NST_Status)
    with Pre => Plaintext'First = 0
-               and Plaintext'Last < N32'Last
+               and Plaintext'Last < N32'Last / 2
                and Plain_Len >= 0
-               and Plain_Len <= N32 (Plaintext'Length)
+               and Plain_Len <= Max_Record_Plaintext
+               and (if Plain_Len > 0 then Plain_Len - 1 <= Plaintext'Last)
                and Start_Off >= 0
                and Start_Off <= Plain_Len;
 
@@ -3913,6 +4305,8 @@ is
       if EP + 2 > Plain_Len then
          return;
       end if;
+      pragma Assert (EP <= Plain_Len);
+      pragma Assert (Plain_Len <= Max_Record_Plaintext);
 
       declare
          Ext_Total : constant N32 :=
@@ -3921,7 +4315,13 @@ is
             N32'Min (EP + 2 + Ext_Total, Plain_Len);
       begin
          EP := EP + 2;
+         pragma Assert (EP <= Ext_End);
+         pragma Assert (Ext_End <= Plain_Len);
          while EP + 4 <= Ext_End loop
+            pragma Loop_Invariant (EP <= Ext_End);
+            pragma Loop_Invariant (Ext_End <= Plain_Len);
+            pragma Loop_Invariant (Plain_Len <= Max_Record_Plaintext);
+            pragma Loop_Invariant (Seen_N <= Seen_Tags'Last);
             declare
                Tag : constant Unsigned_16 :=
                   Unsigned_16 (Plaintext (EP)) * 256
@@ -3979,6 +4379,7 @@ is
                and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
                and then Plain_Len >= 0
+               and then Plain_Len <= Max_Record_Plaintext
                and then Plain_Len <= N32 (Plaintext'Length);
 
    procedure Process_NST_Message

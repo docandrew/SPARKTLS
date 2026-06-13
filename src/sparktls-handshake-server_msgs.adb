@@ -2514,6 +2514,10 @@ is
                 and then HC.Cfg.Random /= null
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Local'Old /= null
+                              and then HC.Cfg.Local'Old.Has_Identity
+                          then HC.Cfg.Local /= null
+                               and then HC.Cfg.Local.Has_Identity)
                 and then HC.Legacy_Session_ID_Len =
                          HC.Legacy_Session_ID_Len'Old
                 and then HC.Server_Random = HC.Server_Random'Old
@@ -2573,6 +2577,10 @@ is
                 and then HC.Cfg.Random /= null
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Local'Old /= null
+                              and then HC.Cfg.Local'Old.Has_Identity
+                          then HC.Cfg.Local /= null
+                               and then HC.Cfg.Local.Has_Identity)
                 and then HC.Legacy_Session_ID_Len =
                          HC.Legacy_Session_ID_Len'Old
                 and then HC.Server_Random = HC.Server_Random'Old
@@ -2633,6 +2641,10 @@ is
                 and then HC.Cfg.Random /= null
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Local'Old /= null
+                              and then HC.Cfg.Local'Old.Has_Identity
+                          then HC.Cfg.Local /= null
+                               and then HC.Cfg.Local.Has_Identity)
                 and then HC.Legacy_Session_ID_Len =
                          HC.Legacy_Session_ID_Len'Old
                 and then HC.Server_Random = HC.Server_Random'Old
@@ -3043,6 +3055,10 @@ is
                 and then HC.Cfg.Random /= null
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Local'Old /= null
+                              and then HC.Cfg.Local'Old.Has_Identity
+                          then HC.Cfg.Local /= null
+                               and then HC.Cfg.Local.Has_Identity)
                 and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
                 and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random);
 
