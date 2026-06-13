@@ -1,4 +1,7 @@
 with SPARKNaCl; use SPARKNaCl;
+with SPARKTLS.Handshake.TLS12; use SPARKTLS.Handshake.TLS12;
+with SPARKTLSCrypto.P384.Field;
+with SPARKTLSCrypto.P384.ECDSA;
 
 --  TLS 1.2 Client State Machine (RFC 5246)
 --
@@ -33,6 +36,16 @@ is
    with Pre => (S.State not in Idle | Closing | Closed | Error_State)
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                and then Reasm_Coherent (HC)
+               and then
+                 (if not HC.CKE_Received_12 then
+                    HC.Cfg.Random /= null
+                    and then HC.Selected_Group in
+                      Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                    and then Valid_ECDHE_Group (HC.Selected_Group)
+                    and then HC.Transcript_Len > 0
+                    and then HC.Transcript_Len <= Transcript_Capacity
+                    and then SPARKTLSCrypto.P384.Field.Initialized
+                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
                and then (if HC.CKE_Received_12 and HC.CCS_Received
                          then Reasm_Building (HC)
                               and then HC.Transcript_Len > 0

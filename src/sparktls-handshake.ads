@@ -46,7 +46,8 @@ is
                    Msg_Type in 16#01# | 16#02# | 16#04# | 16#08# |
                               16#0B# | 16#0C# | 16#0D# | 16#0E# |
                               16#0F# | 16#10# | 16#14#
-                   and Msg_Len <= Max_HS_Msg);
+                   and Msg_Len <= Max_HS_Msg
+                   and Msg_Len <= N32 (Data'Length) - 4);
 
    --  RFC 8446 Section 4.4.4: Build a Finished handshake message.
    --  Contains HMAC verify_data (32 bytes for SHA-256).
