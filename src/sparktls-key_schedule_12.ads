@@ -225,7 +225,8 @@ is
       Use_SHA384 : in     Boolean)
    with Pre  => Valid_Finished_Label (Label)
                 and TH'First = 0
-                and TH'Length in 32 | 48,  --  SHA-256 or SHA-384 transcript hash
+                --  SHA-256 or SHA-384 transcript hash.
+                and (TH'Last = 31 or else TH'Last = 47),
         --  RFC 5246 §7.4.9: verify_data is 12 bytes regardless of
         --  cipher suite. Already type-enforced via Verify_Data_12;
         --  the Post lifts to a named ghost predicate for clause

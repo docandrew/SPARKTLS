@@ -901,6 +901,20 @@ is
 
    type Identity_Access is access constant Identity;
 
+   subtype Selected_Identity_Access is Identity_Access
+     with Dynamic_Predicate =>
+       Selected_Identity_Access = null
+       or else
+         (Selected_Identity_Access.Has_Identity
+          and then Selected_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+          and then
+            (for all I in 0 .. Max_Pool_Size - 1 =>
+               Selected_Identity_Access.Ints (I).DER_Len
+                 <= X509.N32 (Max_Cert_DER))
+          and then
+            (if Selected_Identity_Access.Sign_Algo = Sign_RSA_PSS
+             then Selected_Identity_Access.RSA_Mod_Len in 64 .. 512));
+
    ----------------------------------------------------------------------------
    --  SNI-based certificate selection (RFC 6066 §3, RFC 8446 §4.4.2.4)
    --
@@ -926,7 +940,7 @@ is
    ----------------------------------------------------------------------------
 
    type SNI_Cert_Selector is access function
-     (Server_Name : in String) return Identity_Access;
+     (Server_Name : in String) return Selected_Identity_Access;
 
    ----------------------------------------------------------------------------
    --  Ticket Store (for session resumption)
@@ -1632,7 +1646,8 @@ is
                and then (if HC.Reasm_Need > 0 then HC.Reasm_Need >= 4)
                and then (if HC.Reasm_Hdr_Pending
                          then HC.Reasm_Need = 4
-                              and then HC.Reasm_Len < 4)))
+                              and then HC.Reasm_Len < 4
+                              and then HC.Reasm_Buf'Length = Max_HS_Msg)))
      with Ghost;
 
    --  Stricter variant: like Reasm_Coherent, but additionally

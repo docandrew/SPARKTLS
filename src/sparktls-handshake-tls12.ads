@@ -289,13 +289,18 @@ is
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
-   with Pre  => Data'First = 0
-                and Data'Last in 3 .. Max_Client_Key_Exchange - 1
-                and Valid_ECDHE_Group (HC.Selected_Group),
-        Post => HC.Version = HC.Version'Old
-                and then HC.Selected_Group = HC.Selected_Group'Old
-                and then
-                  (if Valid_ECDHE_Group (HC.Selected_Group'Old)
+      with Pre  => Data'First = 0
+                   and Data'Last in 3 .. Max_Client_Key_Exchange - 1
+                   and Valid_ECDHE_Group (HC.Selected_Group)
+                   and Reasm_Building (HC),
+           Post => HC.Version = HC.Version'Old
+                   and then HC.Selected_Group = HC.Selected_Group'Old
+                   and then HC.Reasm_Need = HC.Reasm_Need'Old
+                   and then HC.Reasm_Len = HC.Reasm_Len'Old
+                   and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
+                   and then Reasm_Building (HC)
+                   and then
+                     (if Valid_ECDHE_Group (HC.Selected_Group'Old)
                    then Valid_ECDHE_Group (HC.Selected_Group))
                 and then
                   (if HC.Cfg.Local'Old /= null
@@ -334,7 +339,8 @@ is
                 and Result'Last >= Finished_12_Total_Len - 1
                 and Key_Schedule_12.Valid_Finished_Label (Label)
                 and Transcript_Hash'First = 0
-                and Transcript_Hash'Length in 32 | 48,
+                and (Transcript_Hash'Last = 31
+                     or else Transcript_Hash'Last = 47),
         Post => Valid_Finished_12_Len (Len)        --  exactly 16 bytes
                 and Result (0) = HT_Finished       --  type = 0x14
                 and Result (1) = 0                 --  length = 12
@@ -400,7 +406,8 @@ is
                 and then HC.Cfg.Local /= null
                 and then HC.Cfg.Local.Has_Identity
                 and then HC.Cfg.Random /= null
-                and then HC.Version = TLS_1_2,
+                and then HC.Version = TLS_1_2
+                and then Reasm_Building (HC),
         --  Frame postcondition: ServerHello construction does not
         --  touch S.State, the configuration pointer/identity, or the
         --  Random callback. Callers (Build_Server_Flight_12) need
@@ -416,7 +423,8 @@ is
                 and HC.Cfg.Local.Has_Identity
                 and HC.Cfg.Random /= null
                 and HC.Version = HC.Version'Old
-                and HC.Selected_Group = HC.Selected_Group'Old;
+                and HC.Selected_Group = HC.Selected_Group'Old
+                and Reasm_Building (HC);
 
    --  RFC 5246 §7.4.1.2: Parse TLS 1.2 ServerHello.
    --

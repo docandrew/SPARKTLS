@@ -35,7 +35,9 @@ is
                     and then Reasm_Need <= N32 (Reasm_Buf'Length)
                     and then
                       (if Reasm_Hdr_Pending then
-                         Reasm_Need = 4 and then Reasm_Len < 4)
+                         Reasm_Need = 4
+                         and then Reasm_Len < 4
+                         and then Reasm_Buf'Length = Max_HS_Msg)
                     and then
                       (if More_Packed then
                          Reasm_Need >= 4

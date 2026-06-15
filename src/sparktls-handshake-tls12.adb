@@ -712,7 +712,10 @@ is
       OK := False;
 
       --  Minimum: point_len(1) + point(1) = 2
-      if Data'Length < 2 then return; end if;
+      if Data'Length < 2 then
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
 
       declare
          Data_Len : constant N32 := Data'Last - Data'First + 1;
@@ -727,6 +730,7 @@ is
       if not CKE.Well_Formed_Message (Ctx) then
          CKE.Take_Buffer (Ctx, Buf);
          RFLX_Free_Local (Buf);
+         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -742,6 +746,7 @@ is
          then
             CKE.Take_Buffer (Ctx, Buf);
             RFLX_Free_Local (Buf);
+            pragma Assert (Reasm_Building (HC));
             return;
          end if;
 
@@ -770,12 +775,14 @@ is
             when others =>
                CKE.Take_Buffer (Ctx, Buf);
                RFLX_Free_Local (Buf);
+               pragma Assert (Reasm_Building (HC));
                return;
          end case;
       end;
 
       CKE.Take_Buffer (Ctx, Buf);
       RFLX_Free_Local (Buf);
+      pragma Assert (Reasm_Building (HC));
       OK := True;
    end Parse_Client_Key_Exchange;
 

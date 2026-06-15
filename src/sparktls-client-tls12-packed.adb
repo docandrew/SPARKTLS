@@ -39,7 +39,30 @@ is
 
       if Leftover < 4 then
          --  Partial header at tail; defer to next call via
-         --  Hdr_Pending sentinel.
+         --  Hdr_Pending sentinel. Normalize to a max-sized buffer so
+         --  the eventual decoded message length remains within the
+         --  allocated reassembly capacity.
+            declare
+               New_Buf : Byte_Seq_Access :=
+                  new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
+            begin
+               pragma Assert (New_Buf /= null);
+               pragma Assert (New_Buf'First = 0);
+               pragma Assert (New_Buf'Length = Max_HS_Msg);
+               for I in N32 range 0 .. Leftover - 1 loop
+                  pragma Loop_Invariant (I <= Leftover - 1);
+                  pragma Loop_Invariant (New_Buf /= null);
+                  pragma Loop_Invariant (New_Buf'First = 0);
+                  pragma Loop_Invariant (New_Buf'Length = Max_HS_Msg);
+                  pragma Loop_Invariant (Reasm_Buf /= null);
+                  pragma Loop_Invariant (Reasm_Buf'First = 0);
+                  pragma Loop_Invariant
+                    (Leftover <= N32 (Reasm_Buf'Length));
+                  New_Buf (I) := Reasm_Buf (I);
+               end loop;
+               Free_Byte_Seq (Reasm_Buf);
+               Reasm_Buf := New_Buf;
+            end;
             Reasm_Need := 4;
             Reasm_Hdr_Pending := True;
             pragma Assert (Reasm_Need <= N32 (Reasm_Buf'Length));

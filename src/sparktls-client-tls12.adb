@@ -82,6 +82,10 @@ is
      (S : in out Session; HC : in out Handshake_Context)
    with Pre  => Reasm_Coherent (HC),
         Post => Reasm_Coherent (HC)
+                and then HC.Reasm_Len = HC.Reasm_Len'Old
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then HC.Reasm_Hdr_Pending =
+                  HC.Reasm_Hdr_Pending'Old
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
@@ -1486,11 +1490,23 @@ is
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
+                and then HC.Reasm_Len = HC.Reasm_Len'Old
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then HC.Reasm_Hdr_Pending =
+                  HC.Reasm_Hdr_Pending'Old
                 and then
                   (if Have_Record then
                      Result = OK
                      and then Rec.OK
                      and then Rec.Content = Records.Content_Handshake
+                     and then Rec.Fragment_Pos <=
+                       N32'Last - Rec.Fragment_Len
+                     and then Rec.Record_Len =
+                       Rec.Fragment_Pos + Rec.Fragment_Len
+                     and then Rec.Record_Len <=
+                       S.Input.Write_Pos - S.Input.Read_Pos
+                     and then S.Input.Read_Pos <=
+                       N32'Last - Rec.Record_Len
                      and then S.State not in Idle | Closing | Closed | Error_State
                      and then HC.Cfg.Random /= null
                      and then HC.Selected_Group in
@@ -1621,6 +1637,53 @@ is
       pragma Assert (Reasm_Coherent (HC));
    end Read_Server_Flight_Record;
 
+   procedure Copy_To_Reassembly_Buffer
+     (Reasm_Buf : in out Byte_Seq_Access;
+      Old_Len   : in     N32;
+      Source    : in     Byte_Seq;
+      Copy_Len  : in     N32;
+      Required_Len : in N32;
+      Was_Max   : in     Boolean)
+   with Pre  => Reasm_Buf /= null
+                and then Reasm_Buf'First = 0
+                and then Reasm_Buf'Length <= Max_HS_Msg
+                and then Was_Max = (Reasm_Buf'Length = Max_HS_Msg)
+                and then Copy_Len > 0
+                and then Source'Last < N32'Last
+                and then Source'Length <= Max_HS_Msg
+                and then Source'Length = Copy_Len
+                and then Required_Len <= N32 (Reasm_Buf'Length)
+                and then Old_Len <= N32'Last - Copy_Len
+                and then Old_Len + Copy_Len <= N32 (Reasm_Buf'Length),
+        Post => Reasm_Buf /= null
+                and then Reasm_Buf'First = 0
+                and then Reasm_Buf'Length <= Max_HS_Msg
+                and then Required_Len <= N32 (Reasm_Buf'Length)
+                and then (if Was_Max then Reasm_Buf'Length = Max_HS_Msg);
+
+   procedure Copy_To_Reassembly_Buffer
+     (Reasm_Buf : in out Byte_Seq_Access;
+      Old_Len   : in     N32;
+      Source    : in     Byte_Seq;
+      Copy_Len  : in     N32;
+      Required_Len : in N32;
+      Was_Max   : in     Boolean)
+   is
+   begin
+      for I in N32 range 0 .. Copy_Len - 1 loop
+         pragma Loop_Invariant (I <= Copy_Len - 1);
+         pragma Loop_Invariant (Reasm_Buf /= null);
+         pragma Loop_Invariant (Reasm_Buf'First = 0);
+         pragma Loop_Invariant (Reasm_Buf'Length <= Max_HS_Msg);
+         pragma Loop_Invariant
+           (Old_Len + Copy_Len <= N32 (Reasm_Buf'Length));
+         pragma Loop_Invariant (Required_Len <= N32 (Reasm_Buf'Length));
+         pragma Loop_Invariant (Source'Length = Copy_Len);
+         Reasm_Buf (Old_Len + I) :=
+            Source (Source'First + I);
+      end loop;
+   end Copy_To_Reassembly_Buffer;
+
    procedure Prepare_Leftover_Server_Flight_Message
      (S        : in out Session;
       HC       : in out Handshake_Context;
@@ -1650,10 +1713,10 @@ is
                 and then
                   (if Ready then
                      Result = OK
-                     and then S.State not in Idle | Closing | Closed | Error_State
-                     and then HC.Reasm_Buf /= null
-                     and then HC.Reasm_Buf'First = 0
-                     and then HC.Reasm_Buf'Length <= Max_HS_Msg
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then HC.Reasm_Buf /= null
+                and then HC.Reasm_Buf'First = 0
+                and then HC.Reasm_Buf'Length = Max_HS_Msg
                      and then not HC.Reasm_Hdr_Pending
                      and then HC.Reasm_Need >= 4
                      and then HC.Reasm_Need <= HC.Reasm_Len
@@ -1703,6 +1766,69 @@ is
       Result := OK;
    end Prepare_Leftover_Server_Flight_Message;
 
+   procedure Decode_Pending_Reassembly_Header
+     (HC     : in out Handshake_Context;
+      Failed :    out Boolean)
+   with Pre  => HC.Reasm_Buf /= null
+                and then HC.Reasm_Buf'First = 0
+                and then HC.Reasm_Buf'Length = Max_HS_Msg
+                and then HC.Reasm_Hdr_Pending
+                and then HC.Reasm_Need = 4
+                and then HC.Reasm_Len >= 4
+                and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => Reasm_Coherent (HC)
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+                and then
+                  (if not Failed then
+                     HC.Reasm_Buf /= null
+                     and then HC.Reasm_Buf'First = 0
+                     and then HC.Reasm_Buf'Length = Max_HS_Msg
+                     and then not HC.Reasm_Hdr_Pending
+                     and then HC.Reasm_Need >= 4
+                     and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+                     and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+
+   procedure Decode_Pending_Reassembly_Header
+     (HC     : in out Handshake_Context;
+      Failed :    out Boolean)
+   is
+      B1 : constant Byte := HC.Reasm_Buf (1);
+      B2 : constant Byte := HC.Reasm_Buf (2);
+      B3 : constant Byte := HC.Reasm_Buf (3);
+      HS_Total : constant N32 :=
+         N32 (B1) * 65536 + N32 (B2) * 256 + N32 (B3) + 4;
+   begin
+      Failed := False;
+      HC.Reasm_Hdr_Pending := False;
+      if HS_Total < 4 or HS_Total > Max_HS_Msg then
+         Free_Byte_Seq (HC.Reasm_Buf);
+         HC.Reasm_Len := 0;
+         HC.Reasm_Need := 0;
+         HC.Reasm_Hdr_Pending := False;
+         Failed := True;
+         pragma Assert (Reasm_Coherent (HC));
+         return;
+      end if;
+
+      HC.Reasm_Need := HS_Total;
+      pragma Assert (Reasm_Coherent (HC));
+   end Decode_Pending_Reassembly_Header;
+
    procedure Continue_Server_Flight_Reassembly
      (S        : in out Session;
       HC       : in out Handshake_Context;
@@ -1715,6 +1841,12 @@ is
                 and then Reasm_Coherent (HC)
                 and then Rec.OK
                 and then Rec.Content = Records.Content_Handshake
+                and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+                and then Rec.Record_Len =
+                  Rec.Fragment_Pos + Rec.Fragment_Len
+                and then Rec.Record_Len <=
+                  S.Input.Write_Pos - S.Input.Read_Pos
+                and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
                 and then HC.Reasm_Buf /= null
                 and then HC.Reasm_Buf'First = 0
                 and then HC.Reasm_Buf'Length <= Max_HS_Msg
@@ -1766,7 +1898,6 @@ is
    is
       FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
       Frag_Len : constant N32 := Rec.Fragment_Len;
-      Parse_OK : Boolean;
    begin
       Msg_Type := 0;
       Msg_Len := 0;
@@ -1776,61 +1907,84 @@ is
       declare
          Remaining : constant N32 := HC.Reasm_Need - HC.Reasm_Len;
          Copy_Len  : constant N32 := N32'Min (Frag_Len, Remaining);
+         Old_Len   : constant N32 := HC.Reasm_Len;
       begin
          if Copy_Len > 0
            and then HC.Reasm_Len + Copy_Len <=
                       N32 (HC.Reasm_Buf'Length)
          then
-            HC.Reasm_Buf (HC.Reasm_Len ..
-                          HC.Reasm_Len + Copy_Len - 1) :=
-               S.Input.Data (FS .. FS + Copy_Len - 1);
-            HC.Reasm_Len := HC.Reasm_Len + Copy_Len;
+            pragma Assert
+              (Rec.Record_Len = Rec.Fragment_Pos + Rec.Fragment_Len);
+            pragma Assert
+              (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
+            pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+            pragma Assert (FS + Copy_Len <= S.Input.Write_Pos);
+            declare
+               Source : Byte_Seq renames
+                  S.Input.Data (FS .. FS + Copy_Len - 1);
+            begin
+               Copy_To_Reassembly_Buffer
+                 (Reasm_Buf => HC.Reasm_Buf,
+                  Old_Len   => Old_Len,
+                  Source    => Source,
+                  Copy_Len  => Copy_Len,
+                  Required_Len => HC.Reasm_Need,
+                  Was_Max   => HC.Reasm_Buf'Length = Max_HS_Msg);
+            end;
+            HC.Reasm_Len := Old_Len + Copy_Len;
          end if;
       end;
+      pragma Assert (HC.Reasm_Buf /= null);
+      pragma Assert (HC.Reasm_Buf'First = 0);
+      pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
+      pragma Assert (HC.Reasm_Need > 0);
+      pragma Assert (HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+      pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+      pragma Assert (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
+      pragma Assert (S.Input.Read_Pos <= N32'Last - Rec.Record_Len);
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
       if HC.Reasm_Hdr_Pending and then HC.Reasm_Len >= 4 then
          declare
-            HS_Total : constant N32 :=
-               N32 (HC.Reasm_Buf (1)) * 65536
-               + N32 (HC.Reasm_Buf (2)) * 256
-               + N32 (HC.Reasm_Buf (3)) + 4;
+            Failed : Boolean;
          begin
-            HC.Reasm_Hdr_Pending := False;
-            if HS_Total < 4 or HS_Total > Max_HS_Msg then
-               Free_Byte_Seq (HC.Reasm_Buf);
-               HC.Reasm_Len := 0;
-               HC.Reasm_Need := 0;
-               HC.Reasm_Hdr_Pending := False;
+            Decode_Pending_Reassembly_Header
+              (HC     => HC,
+               Failed => Failed);
+            if Failed then
                Send_Alert_And_Error (S, Decode_Error, Result);
-               pragma Assert (Reasm_Coherent (HC));
                return;
             end if;
-            HC.Reasm_Need := HS_Total;
          end;
       end if;
 
       if HC.Reasm_Len < HC.Reasm_Need then
          Result := OK;
+         if HC.Reasm_Hdr_Pending then
+            pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
+            pragma Assert (HC.Reasm_Need = 4);
+            pragma Assert (HC.Reasm_Len < 4);
+         end if;
          pragma Assert (Reasm_Coherent (HC));
          return;
       end if;
+      pragma Assert (HC.Reasm_Len >= HC.Reasm_Need);
+      if HC.Reasm_Hdr_Pending then
+         pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
+         pragma Assert (HC.Reasm_Need = 4);
+         pragma Assert (HC.Reasm_Len < 4);
+      end if;
+      pragma Assert (Reasm_Coherent (HC));
+      pragma Assert (not HC.Reasm_Hdr_Pending);
+      pragma Assert (HC.Reasm_Need <= HC.Reasm_Len);
 
-      Handshake.Parse_Handshake_Header
-        (HC.Reasm_Buf (0 .. HC.Reasm_Need - 1),
-         Msg_Type, Msg_Len, Parse_OK);
-      if not Parse_OK then
-         Free_Byte_Seq (HC.Reasm_Buf);
-         HC.Reasm_Len := 0;
-         HC.Reasm_Need := 0;
-         HC.Reasm_Hdr_Pending := False;
-         Send_Alert_And_Error (S, Decode_Error, Result);
-         pragma Assert (Reasm_Coherent (HC));
-         return;
-      end if;
-      pragma Assert (Msg_Len <= HC.Reasm_Need - 4);
-      Ready := True;
-      Result := OK;
+      Prepare_Leftover_Server_Flight_Message
+        (S        => S,
+         HC       => HC,
+         Msg_Type => Msg_Type,
+         Msg_Len  => Msg_Len,
+         Ready    => Ready,
+         Result   => Result);
    end Continue_Server_Flight_Reassembly;
 
    procedure Prepare_Fresh_Server_Flight_Message
@@ -1845,6 +1999,12 @@ is
                 and then Reasm_Coherent (HC)
                 and then Rec.OK
                 and then Rec.Content = Records.Content_Handshake
+                and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+                and then Rec.Record_Len =
+                  Rec.Fragment_Pos + Rec.Fragment_Len
+                and then Rec.Record_Len <=
+                  S.Input.Write_Pos - S.Input.Read_Pos
+                and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
                 and then (HC.Reasm_Buf = null or else HC.Reasm_Need = 0)
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
@@ -1878,6 +2038,240 @@ is
                      and then SPARKTLSCrypto.P384.Field.Initialized
                      and then SPARKTLSCrypto.P384.ECDSA.Initialized);
 
+   procedure Start_Fresh_Pending_Header_Reassembly
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Rec      : in     Records.Parse_Result;
+      FS       : in     N32;
+      Frag_Len : in     N32;
+      Result   :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and then Reasm_Coherent (HC)
+                and then Rec.OK
+                and then Rec.Content = Records.Content_Handshake
+                and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+                and then Rec.Record_Len =
+                  Rec.Fragment_Pos + Rec.Fragment_Len
+                and then Rec.Record_Len <=
+                  S.Input.Write_Pos - S.Input.Read_Pos
+                and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+                and then Frag_Len = Rec.Fragment_Len
+                and then Frag_Len in 1 .. 3
+                and then FS = S.Input.Read_Pos + Rec.Fragment_Pos
+                and then FS + Frag_Len <= S.Input.Write_Pos
+                and then (HC.Reasm_Buf = null or else HC.Reasm_Need = 0)
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => Reasm_Coherent (HC)
+                and then Result = OK
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then HC.Reasm_Buf /= null
+                and then HC.Reasm_Buf'First = 0
+                and then HC.Reasm_Buf'Length = Max_HS_Msg
+                and then HC.Reasm_Need = 4
+                and then HC.Reasm_Hdr_Pending
+                and then HC.Reasm_Len = Frag_Len
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+
+   procedure Start_Fresh_Pending_Header_Reassembly
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Rec      : in     Records.Parse_Result;
+      FS       : in     N32;
+      Frag_Len : in     N32;
+      Result   :    out Action)
+   is
+   begin
+      HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
+      HC.Reasm_Need := 4;
+      HC.Reasm_Hdr_Pending := True;
+      HC.Reasm_Len := Frag_Len;
+      for I in N32 range 0 .. Frag_Len - 1 loop
+         pragma Loop_Invariant (I <= Frag_Len - 1);
+         pragma Loop_Invariant (HC.Reasm_Buf /= null);
+         pragma Loop_Invariant (HC.Reasm_Buf'First = 0);
+         pragma Loop_Invariant (HC.Reasm_Buf'Length = Max_HS_Msg);
+         pragma Loop_Invariant (FS + Frag_Len <= S.Input.Write_Pos);
+         HC.Reasm_Buf (I) := S.Input.Data (FS + I);
+      end loop;
+      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      Result := OK;
+      pragma Assert (Reasm_Coherent (HC));
+   end Start_Fresh_Pending_Header_Reassembly;
+
+   procedure Start_Fresh_Spanning_Reassembly
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Rec      : in     Records.Parse_Result;
+      FS       : in     N32;
+      Frag_Len : in     N32;
+      Msg_Len  : in     N32;
+      Result   :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and then Reasm_Coherent (HC)
+                and then Rec.OK
+                and then Rec.Content = Records.Content_Handshake
+                and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+                and then Rec.Record_Len =
+                  Rec.Fragment_Pos + Rec.Fragment_Len
+                and then Rec.Record_Len <=
+                  S.Input.Write_Pos - S.Input.Read_Pos
+                and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+                and then Frag_Len = Rec.Fragment_Len
+                and then Frag_Len >= 4
+                and then FS = S.Input.Read_Pos + Rec.Fragment_Pos
+                and then FS + Frag_Len <= S.Input.Write_Pos
+                and then Msg_Len <= Max_HS_Msg - 4
+                and then Msg_Len + 4 > Frag_Len
+                and then (HC.Reasm_Buf = null or else HC.Reasm_Need = 0)
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => Reasm_Coherent (HC)
+                and then Result = OK
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then HC.Reasm_Buf /= null
+                and then HC.Reasm_Buf'First = 0
+                and then HC.Reasm_Buf'Length = Msg_Len + 4
+                and then HC.Reasm_Need = Msg_Len + 4
+                and then HC.Reasm_Len = Frag_Len
+                and then not HC.Reasm_Hdr_Pending
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+
+   procedure Start_Fresh_Spanning_Reassembly
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Rec      : in     Records.Parse_Result;
+      FS       : in     N32;
+      Frag_Len : in     N32;
+      Msg_Len  : in     N32;
+      Result   :    out Action)
+   is
+      Total : constant N32 := Msg_Len + 4;
+   begin
+      HC.Reasm_Buf := new Byte_Seq'(0 .. Total - 1 => 0);
+      HC.Reasm_Need := Total;
+      HC.Reasm_Len := Frag_Len;
+      HC.Reasm_Hdr_Pending := False;
+      for I in N32 range 0 .. Frag_Len - 1 loop
+         pragma Loop_Invariant (I <= Frag_Len - 1);
+         pragma Loop_Invariant (HC.Reasm_Buf /= null);
+         pragma Loop_Invariant (HC.Reasm_Buf'First = 0);
+         pragma Loop_Invariant (HC.Reasm_Buf'Length = Total);
+         pragma Loop_Invariant (Frag_Len <= Total);
+         pragma Loop_Invariant (FS + Frag_Len <= S.Input.Write_Pos);
+         HC.Reasm_Buf (I) := S.Input.Data (FS + I);
+      end loop;
+      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      Result := OK;
+      pragma Assert (Reasm_Coherent (HC));
+   end Start_Fresh_Spanning_Reassembly;
+
+   procedure Start_Fresh_Complete_Message
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Rec      : in     Records.Parse_Result;
+      FS       : in     N32;
+      Frag_Len : in     N32;
+      Msg_Len  : in     N32;
+      Result   :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and then Reasm_Coherent (HC)
+                and then Rec.OK
+                and then Rec.Content = Records.Content_Handshake
+                and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+                and then Rec.Record_Len =
+                  Rec.Fragment_Pos + Rec.Fragment_Len
+                and then Rec.Record_Len <=
+                  S.Input.Write_Pos - S.Input.Read_Pos
+                and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+                and then Frag_Len = Rec.Fragment_Len
+                and then Frag_Len >= 4
+                and then Frag_Len <= Max_HS_Msg
+                and then FS = S.Input.Read_Pos + Rec.Fragment_Pos
+                and then FS + Frag_Len <= S.Input.Write_Pos
+                and then Msg_Len <= Frag_Len - 4
+                and then Msg_Len <= Max_HS_Msg - 4
+                and then (HC.Reasm_Buf = null or else HC.Reasm_Need = 0)
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => Reasm_Coherent (HC)
+                and then Result = OK
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then HC.Reasm_Buf /= null
+                and then HC.Reasm_Buf'First = 0
+                and then HC.Reasm_Buf'Length = Frag_Len
+                and then HC.Reasm_Need = Msg_Len + 4
+                and then HC.Reasm_Len = Frag_Len
+                and then HC.Reasm_Need <= HC.Reasm_Len
+                and then not HC.Reasm_Hdr_Pending
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+
+   procedure Start_Fresh_Complete_Message
+     (S        : in out Session;
+      HC       : in out Handshake_Context;
+      Rec      : in     Records.Parse_Result;
+      FS       : in     N32;
+      Frag_Len : in     N32;
+      Msg_Len  : in     N32;
+      Result   :    out Action)
+   is
+   begin
+      HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
+      HC.Reasm_Need := Msg_Len + 4;
+      HC.Reasm_Len := Frag_Len;
+      HC.Reasm_Hdr_Pending := False;
+      for I in N32 range 0 .. Frag_Len - 1 loop
+         pragma Loop_Invariant (I <= Frag_Len - 1);
+         pragma Loop_Invariant (HC.Reasm_Buf /= null);
+         pragma Loop_Invariant (HC.Reasm_Buf'First = 0);
+         pragma Loop_Invariant (HC.Reasm_Buf'Length = Frag_Len);
+         pragma Loop_Invariant (FS + Frag_Len <= S.Input.Write_Pos);
+         HC.Reasm_Buf (I) := S.Input.Data (FS + I);
+      end loop;
+      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      Result := OK;
+      pragma Assert (Reasm_Coherent (HC));
+   end Start_Fresh_Complete_Message;
+
    procedure Prepare_Fresh_Server_Flight_Message
      (S        : in out Session;
       HC       : in out Handshake_Context;
@@ -1903,15 +2297,13 @@ is
             pragma Assert (Reasm_Coherent (HC));
             return;
          end if;
-         HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
-         HC.Reasm_Need := 4;
-         HC.Reasm_Hdr_Pending := True;
-         HC.Reasm_Len := Frag_Len;
-         HC.Reasm_Buf (0 .. Frag_Len - 1) :=
-            S.Input.Data (FS .. FS + Frag_Len - 1);
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         pragma Assert (Reasm_Coherent (HC));
-         Result := OK;
+         Start_Fresh_Pending_Header_Reassembly
+           (S        => S,
+            HC       => HC,
+            Rec      => Rec,
+            FS       => FS,
+            Frag_Len => Frag_Len,
+            Result   => Result);
          return;
       end if;
 
@@ -1951,23 +2343,25 @@ is
             pragma Assert (Reasm_Coherent (HC));
             return;
          end if;
-         HC.Reasm_Buf := new Byte_Seq'(0 .. Msg_Len + 3 => 0);
-         HC.Reasm_Need := Msg_Len + 4;
-         HC.Reasm_Len := Frag_Len;
-         HC.Reasm_Buf (0 .. Frag_Len - 1) :=
-            S.Input.Data (FS .. FS + Frag_Len - 1);
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         pragma Assert (Reasm_Coherent (HC));
-         Result := OK;
+         Start_Fresh_Spanning_Reassembly
+           (S        => S,
+            HC       => HC,
+            Rec      => Rec,
+            FS       => FS,
+            Frag_Len => Frag_Len,
+            Msg_Len  => Msg_Len,
+            Result   => Result);
          return;
       end if;
 
-      HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
-      HC.Reasm_Buf.all :=
-         S.Input.Data (FS .. FS + Frag_Len - 1);
-      HC.Reasm_Need := Msg_Len + 4;
-      HC.Reasm_Len := Frag_Len;
-      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      Start_Fresh_Complete_Message
+        (S        => S,
+         HC       => HC,
+         Rec      => Rec,
+         FS       => FS,
+         Frag_Len => Frag_Len,
+         Msg_Len  => Msg_Len,
+         Result   => Result);
       pragma Assert (Reasm_Coherent (HC));
       pragma Assert (HC.Reasm_Need <= HC.Reasm_Len);
       pragma Assert (not HC.Reasm_Hdr_Pending);
@@ -2064,7 +2458,11 @@ is
             pragma Assert (Rec.OK);
             pragma Assert (Rec.Content = Records.Content_Handshake);
 
-            if HC.Reasm_Need > 0 and then HC.Reasm_Buf /= null then
+            if HC.Reasm_Need > 0
+              and then HC.Reasm_Buf /= null
+              and then (HC.Reasm_Hdr_Pending
+                        or else HC.Reasm_Len < HC.Reasm_Need)
+            then
                Continue_Server_Flight_Reassembly
                  (S        => S,
                   HC       => HC,
@@ -2073,7 +2471,21 @@ is
                   Msg_Len  => Msg_Len,
                   Ready    => Ready,
                   Result   => Result);
+            elsif HC.Reasm_Need > 0
+              and then HC.Reasm_Buf /= null
+            then
+               pragma Assert (not HC.Reasm_Hdr_Pending);
+               pragma Assert (HC.Reasm_Need <= HC.Reasm_Len);
+               Prepare_Leftover_Server_Flight_Message
+                 (S        => S,
+                  HC       => HC,
+                  Msg_Type => Msg_Type,
+                  Msg_Len  => Msg_Len,
+                  Ready    => Ready,
+                  Result   => Result);
             else
+               pragma Assert (not Have_Leftover_Msg);
+               pragma Assert (HC.Reasm_Buf = null or else HC.Reasm_Need = 0);
                Prepare_Fresh_Server_Flight_Message
                  (S        => S,
                   HC       => HC,

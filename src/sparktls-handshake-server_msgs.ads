@@ -1,5 +1,6 @@
 with SPARKNaCl; use SPARKNaCl;
 with Interfaces; use Interfaces;
+with SPARKTLS.Records.TLS12;
 with SPARKTLSCrypto.P384.Field;
 with X509;
 
@@ -12,6 +13,28 @@ package SPARKTLS.Handshake.Server_Msgs with
 is
    --  Maximum ServerHello size
    Max_Server_Hello : constant := 256;
+
+   function Local_Config_Valid (Local : Identity_Access) return Boolean is
+     (Local = null
+      or else
+        (Local.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+         and then
+           (for all I in 0 .. Max_Pool_Size - 1 =>
+              Local.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
+         and then
+           (if Local.Sign_Algo = Sign_RSA_PSS
+            then Local.RSA_Mod_Len in 64 .. 512)))
+   with Ghost;
+
+   function Local_Config_Frame
+     (Old_Local : Identity_Access;
+      New_Local : Identity_Access) return Boolean is
+     (if Old_Local = null then New_Local = null
+      else New_Local /= null
+           and then
+             (if Old_Local.Has_Identity then New_Local.Has_Identity)
+           and then Local_Config_Valid (New_Local))
+   with Ghost;
 
    --  Parse a ClientHello from raw handshake message bytes.
    --  Extracts: client_random, legacy_session_id, cipher suites offered,
@@ -27,61 +50,38 @@ is
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
-   with Pre => Data'Length > 0
-              and Data'Last <= N32 (Max_HS_Msg) - 1,
-        Post => (if HC.Cfg.Local'Old /= null
-                 then HC.Cfg.Local /= null)
-	                and then (if HC.Cfg.Local'Old /= null
-	                          and then HC.Cfg.Local'Old.Has_Identity
-	                          then HC.Cfg.Local /= null
-	                               and then HC.Cfg.Local.Has_Identity)
-	                and then (if HC.Cfg.Local'Old /= null
-	                            and then HC.Cfg.Local'Old.NaCl_Cert_Len
-	                              <= N32 (Max_Cert_DER)
-	                          then HC.Cfg.Local /= null
-	                               and then HC.Cfg.Local.NaCl_Cert_Len
-	                                 <= N32 (Max_Cert_DER))
-	                and then
-	                  (if HC.Cfg.Local'Old /= null
-	                     and then
-	                       (for all I in 0 .. Max_Pool_Size - 1 =>
-	                          HC.Cfg.Local'Old.Ints (I).DER_Len
-	                            <= X509.N32 (Max_Cert_DER))
-	                   then HC.Cfg.Local /= null
-	                        and then
-	                          (for all I in 0 .. Max_Pool_Size - 1 =>
-	                             HC.Cfg.Local.Ints (I).DER_Len
-	                               <= X509.N32 (Max_Cert_DER)))
-	                and then
-	                  (if HC.Cfg.Local'Old /= null
-	                     and then HC.Cfg.Local'Old.Sign_Algo = Sign_RSA_PSS
-	                     and then HC.Cfg.Local'Old.RSA_Mod_Len in 64 .. 512
-	                   then HC.Cfg.Local /= null
-	                        and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-	                        and then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
+	      with Pre => Data'Length > 0
+	                 and then Data'Last <= N32 (Max_HS_Msg) - 1
+	                 and then Local_Config_Valid (HC.Cfg.Local)
+                         and then Reasm_Building (HC),
+	           Post => Local_Config_Frame (HC.Cfg.Local'Old, HC.Cfg.Local)
+                      and then (if HC.Cfg.Random'Old /= null
+                                then HC.Cfg.Random /= null)
+                      and then Reasm_Building (HC)
+                      and then
+                        (if Nonce_Space_Available (HC.Server_HS'Old)
+                         then Nonce_Space_Available (HC.Server_HS))
+                      and then
+                        (if SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                              (HC.Server_Seq_12'Old)
+                         then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                              (HC.Server_Seq_12))
                 and then S.Role = S.Role'Old
                 and then S.State = S.State'Old
                 and then S.Input.Read_Pos = S.Input.Read_Pos'Old
-	                and then S.Input.Write_Pos = S.Input.Write_Pos'Old
-	                and then S.Server_App.Counter = S.Server_App.Counter'Old
-	                and then S.Server_App.Suite = S.Server_App.Suite'Old
-	                and then HC.HRR_Sent = HC.HRR_Sent'Old
-	                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+                   and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+                   and then S.Server_App.Counter = S.Server_App.Counter'Old
+                   and then S.Server_App.Suite = S.Server_App.Suite'Old
+                   and then HC.HRR_Sent = HC.HRR_Sent'Old
+                   and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then
-                  (if OK and then HC.Version = TLS_1_3 then
-                     S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                           | Suite_AES_256_GCM_SHA384
-                                           | Suite_CHACHA20_POLY1305_SHA256)
-                and then
-                  (if OK and then HC.Version'Old = TLS_1_3 then
-                     HC.Version = TLS_1_3
-                     and then S.Negotiated_Suite in
-                       Suite_AES_128_GCM_SHA256
-                       | Suite_AES_256_GCM_SHA384
-                       | Suite_CHACHA20_POLY1305_SHA256);
+	                   and then
+	                     (if OK and then HC.Version = TLS_1_3 then
+	                        S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                              | Suite_AES_256_GCM_SHA384
+	                                              | Suite_CHACHA20_POLY1305_SHA256)
+	                   and then
+	                     (if OK then HC.Legacy_Session_ID_Len in 0 .. 32);
 
    --  Build a ServerHello handshake message.
    --  Includes key_share and supported_versions extensions.
@@ -99,15 +99,15 @@ is
                                                | Suite_AES_256_GCM_SHA384
                                                | Suite_CHACHA20_POLY1305_SHA256
                 and then SPARKTLSCrypto.P384.Field.Initialized,
-	        Post => Len <= N32 (Result'Length)
-	                and then (if Len > 0 then Len >= 4)
-	                and then HC.Cfg.Random /= null
-	                and then (if HC.Cfg.Local'Old /= null
-	                          then HC.Cfg.Local /= null)
-	                and then (if HC.Cfg.Local'Old /= null
-	                              and then HC.Cfg.Local'Old.Has_Identity
-	                          then HC.Cfg.Local /= null
-	                               and then HC.Cfg.Local.Has_Identity);
+           Post => Len <= N32 (Result'Length)
+                   and then (if Len > 0 then Len >= 4)
+                   and then HC.Cfg.Random /= null
+                   and then (if HC.Cfg.Local'Old /= null
+                             then HC.Cfg.Local /= null)
+                   and then (if HC.Cfg.Local'Old /= null
+                                 and then HC.Cfg.Local'Old.Has_Identity
+                             then HC.Cfg.Local /= null
+                                  and then HC.Cfg.Local.Has_Identity);
 
    --  RFC 8446 Section 4.3.1: Build EncryptedExtensions.
    --  Sent immediately after ServerHello (encrypted with HS keys).

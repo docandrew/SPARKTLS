@@ -2,6 +2,7 @@ with SPARKNaCl; use SPARKNaCl;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
 with SPARKTLS.Handshake.TLS12;
+with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Records.TLS12;
 
 --  TLS 1.2 Server State Machine (RFC 5246)
@@ -61,16 +62,24 @@ is
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
                 and then S.Role = Role_Server
+                and then Reasm_Building (HC)
                 and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                            (HC.Server_Seq_12)
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => (if S.State = Server_Hello_Sent
-                 then S.Role = Role_Server
-                      and then HC.Version = TLS_1_2
-                      and then HC.Cfg.Local /= null
-                      and then HC.Cfg.Local.Has_Identity
-                      and then HC.Cfg.Random /= null);
+        Post => S.State in Server_Hello_Sent | Wait_Client_Finished
+                            | Error_State
+                and then
+                  (if S.State in Server_Hello_Sent | Wait_Client_Finished
+                   then S.Role = Role_Server
+                        and then HC.Version = TLS_1_2
+                        and then HC.Cfg.Local /= null
+                        and then HC.Cfg.Local.Has_Identity
+                        and then
+                          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                            (HC.Cfg.Local)
+                        and then HC.Cfg.Random /= null
+                        and then Reasm_Building (HC));
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
@@ -88,6 +97,7 @@ is
                and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity
                and then HC.Cfg.Random /= null
+               and then Reasm_Building (HC)
                and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
                  (HC.Selected_Group)
                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -101,8 +111,12 @@ is
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-        Post => S.State = S.State'Old
-                or else Valid_Transition (S.State'Old, S.State);
+        Post => S.State in Wait_Client_Finished | Connected | Closing
+                           | Error_State
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
+                and then Reasm_Building (HC);
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block
@@ -137,6 +151,7 @@ is
                and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity
                and then HC.Cfg.Random /= null
+               and then Reasm_Building (HC)
                and then CCS_Precedes_Finished_RFC_5246_7_1 (HC)
                --  Required by Send_Encrypted_Alert_12 in error paths
                --  (RFC 5246 §7.2.1 post-CCS encrypted alerts).
@@ -145,8 +160,12 @@ is
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                           (HC.Server_Seq_12)
                and then Free_Space (S.Output) >= 7,
-        Post => S.State = S.State'Old
-                or else Valid_Transition (S.State'Old, S.State);
+        Post => S.State in Wait_Client_Finished | Connected | Closing
+                           | Error_State
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
+                and then Reasm_Building (HC);
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:
@@ -156,10 +175,14 @@ is
    procedure Derive_Keys_12
      (S  : in out Session;
       HC : in out Handshake_Context)
-   with Pre =>
-     HC.Version = TLS_1_2
-     --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
-     and then HC.Transcript_Len <= Transcript_Capacity
+      with Pre =>
+        HC.Version = TLS_1_2
+        and then HC.Cfg.Local /= null
+        and then HC.Cfg.Local.Has_Identity
+        and then HC.Cfg.Random /= null
+        and then Reasm_Building (HC)
+        --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
+        and then HC.Transcript_Len <= Transcript_Capacity
      --  Negotiated_Suite must be one of the six TLS 1.2 ECDHE suites
      --  we recognize, so the local mapping matches Internal_Suite_For.
      and then S.Negotiated_Suite in
@@ -173,9 +196,22 @@ is
         --  returns, HC.MS_Derivation matches HC.Use_EMS via the
         --  EMS_PRF_Binding_RFC_7627_4 predicate. This is the v9→v12
         --  invariant whose absence caused the TLS-Anvil regression.
-        Post => S.State = S.State'Old
-                and then EMS_PRF_Binding_RFC_7627_4 (HC)
-                and then HC.MS_Derivation /= Not_Derived;
+           Post => HC.Version = TLS_1_2
+                   and then HC.Cfg.Local /= null
+                   and then HC.Cfg.Local.Has_Identity
+                   and then HC.Cfg.Random /= null
+                   and then Reasm_Building (HC)
+                   and then S.State = S.State'Old
+                   and then S.Role = S.Role'Old
+                   and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+                   and then HC.Client_Seq_12 = 0
+                   and then HC.Server_Seq_12 = 0
+                   and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                              (HC.Client_Seq_12)
+                   and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                              (HC.Server_Seq_12)
+                   and then EMS_PRF_Binding_RFC_7627_4 (HC)
+                   and then HC.MS_Derivation /= Not_Derived;
 
    --  Process records in Connected state for TLS 1.2.
    --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).

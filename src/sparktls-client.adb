@@ -910,12 +910,31 @@ is
 	               and then HC.Reasm_Need - 1 < Transcript_Capacity
 	               and then HC.Transcript_Len > 0
 	               and then HC.Transcript_Len <= Transcript_Capacity
-	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
+	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
+        Post => (if Result = OK and then S.State = Wait_Server_Hello then
+                    HC.Cfg.Random /= null
+                    and then SPARKTLSCrypto.P384.Field.Initialized
+                    and then Reasm_Coherent (HC)
+                    and then HC.Transcript_Len > 0
+                    and then HC.Transcript_Len <= Transcript_Capacity
+                    and then HC.HRR_Cookie_Len <=
+                      N32 (HC.HRR_Cookie'Length)
+                    and then HC.Reasm_Buf /= null
+                    and then HC.Reasm_Need > 0
+                    and then HC.Reasm_Buf'First = 0
+                    and then HC.Reasm_Need - 1 <= HC.Reasm_Buf'Last
+                    and then HC.Reasm_Need - 1 < Transcript_Capacity);
    procedure Finalize_SH_Processing
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => S.State = Wait_Server_Hello;
+   with Pre => S.State = Wait_Server_Hello
+               and then Reasm_Coherent (HC)
+               and then HC.Cfg.Random /= null
+               and then SPARKTLSCrypto.P384.Field.Initialized
+               and then HC.Transcript_Len > 0
+               and then HC.Transcript_Len <= Transcript_Capacity
+               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
    procedure Reassemble_For_SH
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -937,13 +956,19 @@ is
                         <= S.Input.Write_Pos
                and then S.Input.Read_Pos + Rec.Record_Len
                         <= IO_Buffer_Capacity,
-	        Post => (if Result = OK then
-	                    S.State = Wait_Server_Hello
-	                    and then HC.Cfg.Random /= null
-	                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
-	                                 HC.Reasm_Buf /= null
-                                 and then HC.Reasm_Need > 0
-                                 and then HC.Reasm_Buf'First = 0
+		        Post => (if Result = OK then
+		                    S.State = Wait_Server_Hello
+		                    and then HC.Cfg.Random /= null
+		                    and then Reasm_Coherent (HC)
+		                    and then SPARKTLSCrypto.P384.Field.Initialized
+		                    and then HC.Transcript_Len > 0
+		                    and then HC.Transcript_Len <= Transcript_Capacity
+		                    and then HC.HRR_Cookie_Len <=
+		                      N32 (HC.HRR_Cookie'Length)
+		                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
+		                                 HC.Reasm_Buf /= null
+	                                 and then HC.Reasm_Need > 0
+	                                 and then HC.Reasm_Buf'First = 0
                                  and then HC.Reasm_Need - 1
                                           <= HC.Reasm_Buf'Last));
    procedure Reasm_Fresh_Fragment
@@ -3000,11 +3025,59 @@ is
                               Leftover : constant N32 :=
                                  HC.Reasm_Len - Old_Need;
                            begin
+                              pragma Assert (HC.Reasm_Buf /= null);
+                              pragma Assert (HC.Reasm_Buf'First = 0);
+                              pragma Assert
+                                (HC.Reasm_Len <=
+                                   N32 (HC.Reasm_Buf'Length));
+                              pragma Assert (Old_Need < HC.Reasm_Len);
+                              pragma Assert (Leftover > 0);
+                              pragma Assert (Leftover <= HC.Reasm_Len);
+                              pragma Assert
+                                (Leftover <= N32 (HC.Reasm_Buf'Length));
+                              pragma Assert
+                                (Leftover - 1 <= HC.Reasm_Buf'Last);
+                              pragma Assert (Old_Need <= HC.Reasm_Buf'Last);
+                              pragma Assert
+                                (HC.Reasm_Len - 1 <= HC.Reasm_Buf'Last);
                               HC.Reasm_Buf (0 .. Leftover - 1) :=
                                  HC.Reasm_Buf
                                    (Old_Need .. HC.Reasm_Len - 1);
                               HC.Reasm_Len := Leftover;
                               if Leftover < 4 then
+                                 declare
+                                    New_Buf : Byte_Seq_Access :=
+                                       new Byte_Seq'
+                                         (0 .. Max_HS_Msg - 1 => 0);
+                                 begin
+                                    pragma Assert (New_Buf /= null);
+                                    pragma Assert (New_Buf'First = 0);
+                                    pragma Assert
+                                      (New_Buf'Length = Max_HS_Msg);
+                                    pragma Assert (HC.Reasm_Buf /= null);
+                                    pragma Assert
+                                      (Leftover <= N32 (HC.Reasm_Buf'Length));
+                                    for I in N32 range 0 .. Leftover - 1 loop
+                                       pragma Loop_Invariant
+                                         (I <= Leftover - 1);
+                                       pragma Loop_Invariant
+                                         (New_Buf /= null);
+                                       pragma Loop_Invariant
+                                         (New_Buf'First = 0);
+                                       pragma Loop_Invariant
+                                         (New_Buf'Length = Max_HS_Msg);
+                                       pragma Loop_Invariant
+                                         (HC.Reasm_Buf /= null);
+                                       pragma Loop_Invariant
+                                         (HC.Reasm_Buf'First = 0);
+                                       pragma Loop_Invariant
+                                         (Leftover <=
+                                            N32 (HC.Reasm_Buf'Length));
+                                       New_Buf (I) := HC.Reasm_Buf (I);
+                                    end loop;
+                                    Free_Byte_Seq (HC.Reasm_Buf);
+                                    HC.Reasm_Buf := New_Buf;
+                                 end;
                                  HC.Reasm_Need := 4;
                                  HC.Reasm_Hdr_Pending := True;
                               else
