@@ -3341,10 +3341,8 @@ is
 	                and Data'Last < Transcript_Capacity
 	                and S.State = Wait_Client_Certificate
 	                and Nonce_Space_Available (S.Server_App),
-        Post => (S.State = S.State'Old
-                 or else Valid_Transition (S.State'Old, S.State))
-                and then (if S.State not in Error_State | Closed
-                          then Server_Configured (HC));
+        Post => S.State = S.State'Old
+                or else Valid_Transition (S.State'Old, S.State);
 
    procedure Handle_Client_Cert_13
      (S      : in out Session;

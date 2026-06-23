@@ -70,13 +70,15 @@ is
    --  single line.
    procedure Append_Cipher_Suite
      (Suites_Ctx : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
-      Suite      : in     RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum)
+      Suite      : in     RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum;
+      Required_After : in RBT.Bit_Length)
    with Pre  => RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Buffer
                   (Suites_Ctx)
                 and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Valid
                   (Suites_Ctx)
+                and then Required_After <= RBT.Bit_Length'Last - 16
                 and then RFLX.TLS_Handshake.Cipher_Suites_TLS
-                  .Available_Space (Suites_Ctx) >= 16,
+                  .Available_Space (Suites_Ctx) >= Required_After + 16,
         Post => RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Buffer
                   (Suites_Ctx)
                 and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Valid
@@ -86,11 +88,15 @@ is
                 and then Suites_Ctx.Buffer_Last =
                   Suites_Ctx.Buffer_Last'Old
                 and then Suites_Ctx.First = Suites_Ctx.First'Old
-                and then Suites_Ctx.Last = Suites_Ctx.Last'Old;
+                and then Suites_Ctx.Last = Suites_Ctx.Last'Old
+                and then RFLX.TLS_Handshake.Cipher_Suites_TLS
+                  .Available_Space (Suites_Ctx)
+                    >= Required_After;
 
    procedure Append_Cipher_Suite
      (Suites_Ctx : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
-      Suite      : in     RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum)
+      Suite      : in     RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum;
+      Required_After : in RBT.Bit_Length)
    is
       S_Buf : RBT.Bytes_Ptr;
       S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
@@ -99,7 +105,7 @@ is
       RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
       RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite (S_Ctx, Suite);
       RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element
-        (Suites_Ctx, S_Ctx);
+         (Suites_Ctx, S_Ctx);
       RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
       RFLX_Free (S_Buf);
    end Append_Cipher_Suite;
@@ -115,6 +121,7 @@ is
                           .TLS_ExtensionType_Values_Enum;
       Data     : in     Byte_Seq)
    with Pre  => Data'Length <= 4096
+                and then Data'Last < N32 (Natural'Last)
                 and then RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Buffer
                   (Exts_Ctx)
                 and then RFLX.TLS_Handshake.CH_Extensions_TLS.Valid
@@ -151,8 +158,12 @@ is
       RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
         (Ext_Ctx,
          RFLX.TLS_Handshake.Data_Length (Data'Length));
-      RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
-        (Ext_Ctx, To_RFLX (Data));
+      if Data'Length = 0 then
+         RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Empty (Ext_Ctx);
+      else
+         RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data
+           (Ext_Ctx, To_RFLX (Data));
+      end if;
       RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element
         (Exts_Ctx, Ext_Ctx);
       RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer
@@ -573,8 +584,7 @@ is
       Set_Random (Ctx, To_RFLX (HC.Client_Random));
       if HC.Cfg.Versions = TLS_1_2_Only then
          Set_Legacy_Session_ID_Length (Ctx, 0);
-         Set_Legacy_Session_ID
-           (Ctx, To_RFLX (Byte_Seq'(1 .. 0 => 0)));
+         Set_Legacy_Session_ID_Empty (Ctx);
       else
          Set_Legacy_Session_ID_Length (Ctx, 32);
          Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
@@ -591,29 +601,32 @@ is
       begin
          Switch_To_Cipher_Suites_TLS (Ctx, Suites_Ctx);
          Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256);
+           (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256, 128);
          Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256);
+           (Suites_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256,
+            112);
          Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384);
-         Append_Cipher_Suite
-           (Suites_Ctx,
-            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+           (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384, 96);
          Append_Cipher_Suite
            (Suites_Ctx,
-            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
+            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 80);
          Append_Cipher_Suite
            (Suites_Ctx,
-            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
+            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 64);
          Append_Cipher_Suite
            (Suites_Ctx,
-            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
+            RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+            48);
          Append_Cipher_Suite
            (Suites_Ctx,
-            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384);
+            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 32);
          Append_Cipher_Suite
            (Suites_Ctx,
-            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
+            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 16);
+         Append_Cipher_Suite
+           (Suites_Ctx,
+            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+            0);
          Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
       end;
 

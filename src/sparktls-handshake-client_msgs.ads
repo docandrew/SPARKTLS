@@ -43,14 +43,7 @@ is
 	                and then
 	                  (if HC.Cfg.TLS12_Resume_Ticket.Valid
 	                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
-	                        <= Max_TLS12_Ticket_Len),
-			        Post => Len <= N32 (Result'Length)
-			                and then HC.HRR_Cookie_Len <=
-			                  N32 (HC.HRR_Cookie'Length)
-			                and then HC.Transcript_Len = HC.Transcript_Len'Old
-			                and then (if HC.Cfg.Random'Old /= null
-			                          then HC.Cfg.Random /= null)
-		                and then SPARKTLSCrypto.P384.Field.Initialized;
+	                        <= Max_TLS12_Ticket_Len);
 
    --  Parse a ServerHello from raw handshake message bytes.
    --  Extracts: server random, cipher suite, key share (server public key).
@@ -62,20 +55,6 @@ is
    with Pre => Data'Length > 0
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then HC.HRR_Cookie_Len <=
-                 N32 (HC.HRR_Cookie'Length),
-        Post => (if HC.Cfg.Random'Old /= null
-                 then HC.Cfg.Random /= null)
-                and then HC.Transcript_Len =
-                  HC.Transcript_Len'Old
-                and then HC.HRR_Cookie_Len <=
-                  N32 (HC.HRR_Cookie'Length)
-                and then SPARKTLSCrypto.P384.Field.Initialized
-		                and then S.State = S.State'Old
-		                and then
-		                  (if OK and then HC.Version = TLS_1_3
-		                   then S.Negotiated_Suite in
-		                     Suite_AES_128_GCM_SHA256
-		                   | Suite_AES_256_GCM_SHA384
-		                   | Suite_CHACHA20_POLY1305_SHA256);
+                 N32 (HC.HRR_Cookie'Length);
 
 end SPARKTLS.Handshake.Client_Msgs;

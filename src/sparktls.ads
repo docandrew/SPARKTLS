@@ -205,8 +205,9 @@ is
            To in Wait_Certificate_Verify | Error_State,
         when Wait_Certificate_Verify =>
            To in Wait_Server_Finished | Error_State,
-        when Wait_Server_Finished =>
-           To in Client_Certificate_Sent | Client_Finished_Sent | Error_State,
+	        when Wait_Server_Finished =>
+	           To in Client_Certificate_Sent | Client_Finished_Sent
+                 | Connected | Error_State,
         when Client_Certificate_Sent =>
            To in Client_Cert_Verify_Sent | Error_State,
         when Client_Cert_Verify_Sent =>

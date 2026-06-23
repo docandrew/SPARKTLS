@@ -328,9 +328,10 @@ is
          return;
       end if;
 
-      declare
-         use type RBT.Bit_Length;
-      begin
+	      declare
+	         use type RBT.Bit_Length;
+	         use type RBT.Index;
+	      begin
          if C12.Field_Size (Ctx, C12.F_Certificate_List) > 0 then
             declare
                   Entries_Ctx : C12_Entries.Context;
@@ -356,17 +357,25 @@ is
                      RFLX_Free_Local (Buf);
                      return;
                   end if;
-                  C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
-                  while C12_Entries.Has_Element (Entries_Ctx)
-                    and then Cert_Idx <= Max_Pool_Size
-                  loop
+	                  C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
+	                  while C12_Entries.Has_Element (Entries_Ctx)
+	                    and then Cert_Idx <= Max_Pool_Size
+	                  loop
                   pragma Loop_Invariant
-                    (if HC.Peer_Cert_Valid
-                     then HC.Peer_Cert_DER_Len
+                    (not C12.Has_Buffer (Ctx));
+                  pragma Loop_Invariant
+                    (C12_Entries.Has_Buffer (Entries_Ctx));
+                  pragma Loop_Invariant
+                    (C12_Entries.Valid (Entries_Ctx));
+	                  pragma Loop_Invariant
+	                    (if HC.Peer_Cert_Valid
+	                     then HC.Peer_Cert_DER_Len
                           in 1 .. Max_Cert_DER_Len
-                          and then X509.Spans_Valid
-                            (HC.Peer_Cert,
-                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	                          and then X509.Spans_Valid
+	                            (HC.Peer_Cert,
+	                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	                  pragma Loop_Invariant
+	                    (if HC.Peer_Cert_Valid then Cert_Idx > 0);
                      declare
                         E_Ctx : C12_Entry.Context;
                   begin
@@ -439,14 +448,17 @@ is
                                                (C, X509.N32 (C_Len) - 1));
                                           HC.Peer_Ints (Idx).Present := False;
                                           HC.Peer_Ints (Idx).Cert := C;
-                                          for I in X509.N32 range
-                                            0 .. X509.N32 (C_Len) - 1
-                                       loop
-                                          HC.Peer_Ints (Idx).DER (I) :=
-                                             X509.Byte
-                                               (Cert_RFLX
-                                                  (RBT.Index (N32 (I) + 1)));
-                                       end loop;
+	                                          for I in N32 range
+	                                            0 .. C_Len - 1
+	                                          loop
+                                             pragma Loop_Invariant
+                                               (I <= C_Len - 1);
+	                                          HC.Peer_Ints (Idx).DER
+                                               (X509.N32 (I)) :=
+	                                             X509.Byte
+	                                               (Cert_RFLX
+	                                                  (RBT.Index (I + 1)));
+	                                       end loop;
                                        HC.Peer_Ints (Idx).DER_Len :=
                                          X509.N32 (C_Len);
                                        HC.Peer_Ints (Idx).Present := True;
@@ -459,13 +471,16 @@ is
                            end if;
                         end;
                      end if;
-                     C12_Entries.Update (Entries_Ctx, E_Ctx);
-                  end;
-               end loop;
-               C12.Update_Certificate_List (Ctx, Entries_Ctx);
-            end;
-         end if;
-      end;
+	                     C12_Entries.Update (Entries_Ctx, E_Ctx);
+	                  end;
+	               end loop;
+	               C12_Entries.Take_Buffer (Entries_Ctx, Buf);
+	               RFLX_Free_Local (Buf);
+	               OK := True;
+	               return;
+	            end;
+	         end if;
+	      end;
 
       C12.Take_Buffer (Ctx, Buf);
       RFLX_Free_Local (Buf);
@@ -482,11 +497,13 @@ is
       Result :    out Action)
    with Pre  => Reasm_Coherent (HC)
                 and then S.State not in Idle | Closing | Closed | Error_State
-                and then (if HC.Peer_Cert_Valid then
-                            HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                            and then X509.Spans_Valid
-                              (HC.Peer_Cert,
-                               X509.N32 (HC.Peer_Cert_DER_Len) - 1)),
+	                and then (if HC.Peer_Cert_Valid then
+	                            HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+	                            and then X509.Spans_Valid
+	                              (HC.Peer_Cert,
+	                               X509.N32 (HC.Peer_Cert_DER_Len) - 1))
+	                and then SPARKTLSCrypto.P384.Field.Initialized
+	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
                 and (if Result = OK then
                        S.State not in Idle | Closing | Closed | Error_State);
@@ -607,15 +624,17 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Msg_Len >= 0
-                and Msg_Len <= Max_HS_Msg - 4
-                and Frag'First >= 0
-                and Frag'Last < N32'Last - 4
-                and Msg_Len <= N32 (Frag'Length) - 4
-                and S.State not in Idle | Closing | Closed | Error_State
-                and Reasm_Coherent (HC),
-        Post => Reasm_Coherent (HC)
-                and (if Result = OK then
-                       S.State not in Idle | Closing | Closed | Error_State);
+                and then Msg_Len <= Max_HS_Msg - 4
+                and then Frag'First >= 0
+                and then Frag'First <= Frag'Last
+                and then Frag'Last < N32'Last - 4
+                and then Frag'First <= N32'Last - 4
+                and then Msg_Len <= N32'Last - Frag'First - 4
+                and then Msg_Len <= N32 (Frag'Length) - 4
+                and then Frag'First + 3 + Msg_Len <= Frag'Last
+                and then Frag'Last - Frag'First < Transcript_Capacity
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then Reasm_Coherent (HC);
 
    procedure Handle_CertReq_12
      (S       : in out Session;
@@ -629,28 +648,39 @@ is
    begin
       Result := OK;
       --  Body-length structural validation.
-      if B + 1 <= Frag'Last then
+      if B < Frag'Last then
          declare
             CT_Len_D : constant N32 := N32 (Frag (B));
-            SA_Off_D : constant N32 := B + 1 + CT_Len_D;
          begin
-            if SA_Off_D + 1 <= Frag'Last then
+            if CT_Len_D <= Frag'Last - B - 1 then
                declare
-                  SA_Len_D : constant N32 :=
-                     N32 (Frag (SA_Off_D)) * 256
-                     + N32 (Frag (SA_Off_D + 1));
-                  CA_Off_D : constant N32 :=
-                     SA_Off_D + 2 + SA_Len_D;
+                  SA_Off_D : constant N32 := B + 1 + CT_Len_D;
                begin
-                  if CA_Off_D + 1 <= Frag'Last then
+                  if SA_Off_D < Frag'Last then
                      declare
-                        CA_Len_D : constant N32 :=
-                           N32 (Frag (CA_Off_D)) * 256
-                           + N32 (Frag (CA_Off_D + 1));
-                        Expected : constant N32 :=
-                           1 + CT_Len_D + 2 + SA_Len_D + 2 + CA_Len_D;
+                        SA_Len_D : constant N32 :=
+                           N32 (Frag (SA_Off_D)) * 256
+                           + N32 (Frag (SA_Off_D + 1));
                      begin
-                        Body_OK := Msg_Len = Expected;
+                        if SA_Len_D <= Frag'Last - SA_Off_D - 2 then
+                           declare
+                              CA_Off_D : constant N32 :=
+                                 SA_Off_D + 2 + SA_Len_D;
+                           begin
+                              if CA_Off_D < Frag'Last then
+                                 declare
+                                    CA_Len_D : constant N32 :=
+                                       N32 (Frag (CA_Off_D)) * 256
+                                       + N32 (Frag (CA_Off_D + 1));
+                                    Expected : constant N32 :=
+                                       1 + CT_Len_D + 2 + SA_Len_D
+                                         + 2 + CA_Len_D;
+                                 begin
+                                    Body_OK := Msg_Len = Expected;
+                                 end;
+                              end if;
+                           end;
+                        end if;
                      end;
                   end if;
                end;
@@ -672,34 +702,39 @@ is
          Picked   : Unsigned_16 := 0;
          SA_Empty : Boolean := True;
       begin
-         if B + 1 <= Frag'Last then
+         if B < Frag'Last then
             declare
                CT_Len : constant N32 := N32 (Frag (B));
-               SA_Off : constant N32 := B + 1 + CT_Len;
             begin
-               if SA_Off + 1 <= Frag'Last then
+               if CT_Len <= Frag'Last - B - 1 then
                   declare
-                     SA_Len : constant N32 :=
-                        N32 (Frag (SA_Off)) * 256
-                        + N32 (Frag (SA_Off + 1));
+                     SA_Off : constant N32 := B + 1 + CT_Len;
                   begin
-                     if SA_Len >= 2
-                       and SA_Off + 1 + SA_Len <= Frag'Last
-                     then
-                        SA_Empty := False;
-                        if HC.Cfg.Local /= null then
-                           declare
-                              SA_Slice : constant Byte_Seq
-                                 (0 .. SA_Len - 1) :=
-                                 Frag (SA_Off + 2 ..
-                                       SA_Off + 1 + SA_Len);
-                           begin
-                              Picked := Handshake.Pick_Sig_Algo
-                                (SA_Slice,
-                                 HC.Cfg.Local.Sign_Algo,
-                                 Allow_PKCS1_v1_5 => True);
-                           end;
-                        end if;
+                     if SA_Off < Frag'Last then
+                        declare
+                           SA_Len : constant N32 :=
+                              N32 (Frag (SA_Off)) * 256
+                              + N32 (Frag (SA_Off + 1));
+                        begin
+                           if SA_Len >= 2
+                             and then SA_Len <= Frag'Last - SA_Off - 1
+                           then
+                              SA_Empty := False;
+                              if HC.Cfg.Local /= null then
+                                 declare
+                                    SA_Slice : constant Byte_Seq
+                                      (0 .. SA_Len - 1) :=
+                                       Frag (SA_Off + 2 ..
+                                             SA_Off + 1 + SA_Len);
+                                 begin
+                                    Picked := Handshake.Pick_Sig_Algo
+                                      (SA_Slice,
+                                       HC.Cfg.Local.Sign_Algo,
+                                       Allow_PKCS1_v1_5 => True);
+                                 end;
+                              end if;
+                           end if;
+                        end;
                      end if;
                   end;
                end if;
@@ -745,15 +780,17 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Msg_Len >= 0
-                and Msg_Len <= Max_HS_Msg - 4
-                and Frag'First >= 0
-                and Frag'Last < N32'Last - 4
-                and Msg_Len <= N32 (Frag'Length) - 4
-                and S.State not in Idle | Closing | Closed | Error_State
-                and Reasm_Coherent (HC),
-        Post => Reasm_Coherent (HC)
-                and (if Result = OK then
-                       S.State not in Idle | Closing | Closed | Error_State);
+                and then Msg_Len <= Max_HS_Msg - 4
+                and then Frag'First >= 0
+                and then Frag'First <= Frag'Last
+                and then Frag'Last < N32'Last - 4
+                and then Frag'First <= N32'Last - 4
+                and then Msg_Len <= N32'Last - Frag'First - 4
+                and then Msg_Len <= N32 (Frag'Length) - 4
+                and then Frag'First + 3 + Msg_Len <= Frag'Last
+                and then Frag'Last - Frag'First < Transcript_Capacity
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then Reasm_Coherent (HC);
 
    procedure Handle_SKE_12
      (S       : in out Session;
@@ -778,15 +815,20 @@ is
          if Msg_Len >= 8 then
             declare
                Pt_Len  : constant N32 := N32 (Frag (Body_Start + 3));
-               Sig_Pos : constant N32 := Body_Start + 4 + Pt_Len + 2;
             begin
-               if Sig_Pos + 1 < Frag'First + 4 + Msg_Len then
+               if Pt_Len <= Msg_Len - 8 then
                   declare
-                     Sig_Len : constant N32 :=
-                        N32 (Frag (Sig_Pos)) * 256
-                        + N32 (Frag (Sig_Pos + 1));
+                     Sig_Pos : constant N32 := Body_Start + 4 + Pt_Len + 2;
                   begin
-                     Length_OK := Msg_Len = 8 + Pt_Len + Sig_Len;
+                     if Sig_Pos < Frag'First + 4 + Msg_Len - 1 then
+                        declare
+                           Sig_Len : constant N32 :=
+                              N32 (Frag (Sig_Pos)) * 256
+                              + N32 (Frag (Sig_Pos + 1));
+                        begin
+                           Length_OK := Msg_Len = 8 + Pt_Len + Sig_Len;
+                        end;
+                     end if;
                   end;
                end if;
             end;
@@ -847,10 +889,7 @@ is
                 and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => Reasm_Coherent (HC)
-                and (if Result = OK then
-                       S.State not in Idle | Closing | Closed | Error_State);
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
 
    procedure Handle_SHD_12
      (S       : in out Session;
@@ -1151,14 +1190,16 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Msg_Len in 6 .. Max_HS_Msg - 4
-                and Frag'First >= 0
-                and Frag'Last < N32'Last - 4
-                and Msg_Len <= N32 (Frag'Length) - 4
-                and S.State not in Idle | Closing | Closed | Error_State
-                and Reasm_Coherent (HC),
-        Post => Reasm_Coherent (HC)
-                and (if Result = OK then
-                       S.State not in Idle | Closing | Closed | Error_State);
+                and then Frag'First >= 0
+                and then Frag'First <= Frag'Last
+                and then Frag'Last < N32'Last - 4
+                and then Frag'First <= N32'Last - 4
+                and then Msg_Len <= N32'Last - Frag'First - 4
+                and then Msg_Len <= N32 (Frag'Length) - 4
+                and then Frag'First + 3 + Msg_Len <= Frag'Last
+                and then Frag'Last - Frag'First < Transcript_Capacity
+                and then S.State not in Idle | Closing | Closed | Error_State
+                and then Reasm_Coherent (HC);
 
    procedure Handle_NST_12
      (S       : in out Session;
@@ -1214,9 +1255,13 @@ is
       Result   :    out Action)
    with Pre  => Msg_Len <= Max_HS_Msg - 4
                 and then Frag'First >= 0
+                and then Frag'First <= Frag'Last
                 and then Frag'Last < N32'Last - 4
+                and then Frag'First <= N32'Last - 4
+                and then Msg_Len <= N32'Last - Frag'First - 4
                 and then Msg_Len <= N32 (Frag'Length) - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
+                and then Frag'Last - Frag'First < Transcript_Capacity
                 and then S.State not in Idle | Closing | Closed | Error_State
                 and then Reasm_Coherent (HC)
                 and then HC.Cfg.Random /= null
@@ -1226,26 +1271,7 @@ is
                 and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => Reasm_Coherent (HC)
-                and then
-                     (if Result = OK then
-                        S.State not in Idle | Closing | Closed | Error_State
-                        and then HC.Reasm_Buf /= null
-                        and then HC.Reasm_Buf'First = 0
-                        and then HC.Reasm_Buf'Length <= Max_HS_Msg
-                        and then HC.Reasm_Need = HC.Reasm_Need'Old
-                        and then HC.Reasm_Len = HC.Reasm_Len'Old
-                        and then
-                          HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
-                        and then HC.Cfg.Random /= null
-                        and then HC.Selected_Group in
-                          Group_X25519 | Group_Secp256r1 | Group_Secp384r1
-                        and then Valid_ECDHE_Group (HC.Selected_Group)
-                        and then HC.Transcript_Len > 0
-                        and then HC.Transcript_Len <= Transcript_Capacity
-                        and then SPARKTLSCrypto.P384.Field.Initialized
-                        and then SPARKTLSCrypto.P384.ECDSA.Initialized);
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
 
    procedure Dispatch_Server_Flight_Message
      (S        : in out Session;
@@ -1716,7 +1742,7 @@ is
                 and then S.State not in Idle | Closing | Closed | Error_State
                 and then HC.Reasm_Buf /= null
                 and then HC.Reasm_Buf'First = 0
-                and then HC.Reasm_Buf'Length = Max_HS_Msg
+                and then HC.Reasm_Buf'Length <= Max_HS_Msg
                      and then not HC.Reasm_Hdr_Pending
                      and then HC.Reasm_Need >= 4
                      and then HC.Reasm_Need <= HC.Reasm_Len
@@ -2778,16 +2804,7 @@ is
                 and PL > 0
                 and PL - 1 <= Plaintext'Last
                 and Records.TLS12.Nonce_Space_Available_12
-                      (HC.Client_Seq_12),
-        Post => Reasm_Building (HC)
-                and (if Complete then
-                       Result = OK
-                       and then HC.Reasm_Buf /= null
-                       and then HC.Reasm_Len = HC.Reasm_Need)
-                and (if Result = OK then
-                       S.State not in Idle | Closing | Closed | Error_State
-                       and then Records.TLS12.Nonce_Space_Available_12
-                         (HC.Client_Seq_12));
+                      (HC.Client_Seq_12);
 
    procedure Accumulate_Finished_Plaintext_12
      (S         : in out Session;
