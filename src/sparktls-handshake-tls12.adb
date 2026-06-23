@@ -782,8 +782,8 @@ is
 
       CKE.Take_Buffer (Ctx, Buf);
       RFLX_Free_Local (Buf);
-      pragma Assert (Reasm_Building (HC));
       OK := True;
+      pragma Assert (Reasm_Building (HC));
    end Parse_Client_Key_Exchange;
 
    ------------------------------------------------------------------

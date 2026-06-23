@@ -52,9 +52,11 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre  => HC.Version = TLS_1_2
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then HC.Cfg.Random /= null
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                           (HC.Cfg.Local)
+	                and then HC.Cfg.Random /= null
                 --  Server-side state on entry. Client_Hello_Sent (the
                 --  client's own post-CH state) is intentionally NOT
                 --  permitted here -- the only valid transition out of
@@ -94,9 +96,11 @@ is
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
                and then S.State = Wait_Client_Finished
-               and then HC.Cfg.Local /= null
-               and then HC.Cfg.Local.Has_Identity
-               and then HC.Cfg.Random /= null
+	               and then HC.Cfg.Local /= null
+	               and then HC.Cfg.Local.Has_Identity
+	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                          (HC.Cfg.Local)
+	               and then HC.Cfg.Random /= null
                and then Reasm_Building (HC)
                and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
                  (HC.Selected_Group)
@@ -113,9 +117,11 @@ is
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
         Post => S.State in Wait_Client_Finished | Connected | Closing
                            | Error_State
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then HC.Cfg.Random /= null
+	               and then HC.Cfg.Local /= null
+	               and then HC.Cfg.Local.Has_Identity
+	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                          (HC.Cfg.Local)
+	               and then HC.Cfg.Random /= null
                 and then Reasm_Building (HC);
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
@@ -148,9 +154,11 @@ is
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
                and then S.State = Wait_Client_Finished
-               and then HC.Cfg.Local /= null
-               and then HC.Cfg.Local.Has_Identity
-               and then HC.Cfg.Random /= null
+	        and then HC.Cfg.Local /= null
+	        and then HC.Cfg.Local.Has_Identity
+	        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                   (HC.Cfg.Local)
+	        and then HC.Cfg.Random /= null
                and then Reasm_Building (HC)
                and then CCS_Precedes_Finished_RFC_5246_7_1 (HC)
                --  Required by Send_Encrypted_Alert_12 in error paths
@@ -162,9 +170,11 @@ is
                and then Free_Space (S.Output) >= 7,
         Post => S.State in Wait_Client_Finished | Connected | Closing
                            | Error_State
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then HC.Cfg.Random /= null
+	        and then HC.Cfg.Local /= null
+	        and then HC.Cfg.Local.Has_Identity
+	        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                   (HC.Cfg.Local)
+	        and then HC.Cfg.Random /= null
                 and then Reasm_Building (HC);
 
    --  Derive TLS 1.2 key material from the pre-master secret.
@@ -179,6 +189,8 @@ is
         HC.Version = TLS_1_2
         and then HC.Cfg.Local /= null
         and then HC.Cfg.Local.Has_Identity
+        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                   (HC.Cfg.Local)
         and then HC.Cfg.Random /= null
         and then Reasm_Building (HC)
         --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
@@ -196,10 +208,12 @@ is
         --  returns, HC.MS_Derivation matches HC.Use_EMS via the
         --  EMS_PRF_Binding_RFC_7627_4 predicate. This is the v9→v12
         --  invariant whose absence caused the TLS-Anvil regression.
-           Post => HC.Version = TLS_1_2
-                   and then HC.Cfg.Local /= null
-                   and then HC.Cfg.Local.Has_Identity
-                   and then HC.Cfg.Random /= null
+	           Post => HC.Version = TLS_1_2
+	                   and then HC.Cfg.Local /= null
+	                   and then HC.Cfg.Local.Has_Identity
+	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                              (HC.Cfg.Local)
+	                   and then HC.Cfg.Random /= null
                    and then Reasm_Building (HC)
                    and then S.State = S.State'Old
                    and then S.Role = S.Role'Old

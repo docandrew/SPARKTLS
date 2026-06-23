@@ -2,6 +2,7 @@ with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.Handshake.Client_Msgs;
+with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
 
@@ -308,6 +309,13 @@ is
                    then HC.Cfg.Local /= null
                      and then HC.Cfg.Local.Has_Identity)
                 and then
+                  (if HC.Cfg.Local'Old /= null
+                     and then HC.Cfg.Local'Old.Has_Identity
+                     and then SPARKTLS.Handshake.Server_Msgs
+                                .Local_Config_Valid (HC.Cfg.Local'Old)
+                   then SPARKTLS.Handshake.Server_Msgs
+                          .Local_Config_Valid (HC.Cfg.Local))
+                and then
                   (if HC.Cfg.Random'Old /= null
                    then HC.Cfg.Random /= null);
 
@@ -403,9 +411,11 @@ is
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and then Result'Last >= Max_Server_Hello_12 - 1
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then HC.Cfg.Random /= null
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                           (HC.Cfg.Local)
+	                and then HC.Cfg.Random /= null
                 and then HC.Version = TLS_1_2
                 and then Reasm_Building (HC),
         --  Frame postcondition: ServerHello construction does not
@@ -419,9 +429,11 @@ is
                 and S.State = S.State'Old
                 and S.Role = S.Role'Old
                 and S.Negotiated_Suite = S.Negotiated_Suite'Old
-                and HC.Cfg.Local /= null
-                and HC.Cfg.Local.Has_Identity
-                and HC.Cfg.Random /= null
+	                and HC.Cfg.Local /= null
+	                and HC.Cfg.Local.Has_Identity
+	                and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                      (HC.Cfg.Local)
+	                and HC.Cfg.Random /= null
                 and HC.Version = HC.Version'Old
                 and HC.Selected_Group = HC.Selected_Group'Old
                 and Reasm_Building (HC);
@@ -445,15 +457,23 @@ is
       OK   :    out Boolean)
    with Pre  => Data'First = 0
                 and then Data'Length > 0
-                and then Data'Last < N32'Last
+	                and then Data'Last < N32'Last
                 and then HC.Version = TLS_1_2
                 and then SPARKTLSCrypto.P384.Field.Initialized,
-        Post => (if OK then
-                   Valid_TLS12_Suite (S.Negotiated_Suite)
-                   and HC.Version = TLS_1_2)
+	        Post => (if OK then
+	                   Valid_TLS12_Suite (S.Negotiated_Suite)
+	                   and HC.Version = TLS_1_2)
                 and then (if HC.Cfg.Random'Old /= null
                           then HC.Cfg.Random /= null)
-                and then SPARKTLSCrypto.P384.Field.Initialized;
+                and then HC.Transcript_Len = HC.Transcript_Len'Old
+                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+		                and then
+		                  (if HC.HRR_Cookie_Len'Old <=
+		                        N32 (HC.HRR_Cookie'Length)
+		                   then HC.HRR_Cookie_Len <=
+		                        N32 (HC.HRR_Cookie'Length))
+		                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then S.State = S.State'Old;
 
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket builder.
    --
@@ -475,7 +495,8 @@ is
                 and then Ticket'First = 0
                 and then Ticket'Last in 0 .. 65534
                 and then Result'Last >= 10 + Ticket'Last,
-        Post => Len = 0 or else Result'Last >= Len - 1;
+        Post => Len > 0
+                and then Result'Last >= Len - 1;
 
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket parser.
    --

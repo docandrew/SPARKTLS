@@ -1146,7 +1146,8 @@ is
 	                    and then RFLX.TLS_Handshake.CH_Extension_TLS
 	                               .Well_Formed_Message (Ext_Ctx)
 	                    and then No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-	        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Dispatch_CH_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1166,7 +1167,8 @@ is
 	                            .Get_Data_Length (Ext_Ctx)
 	                          = RFLX.TLS_Handshake.Data_Length (DLen)
 	                 and then No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-	        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Dispatch_CH_Negotiation_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1186,7 +1188,8 @@ is
 	                            .Get_Data_Length (Ext_Ctx)
 	                          = RFLX.TLS_Handshake.Data_Length (DLen)
 	                 and then No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-	        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Dispatch_CH_State_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1206,7 +1209,8 @@ is
 	                         .Get_Data_Length (Ext_Ctx)
 	                       = RFLX.TLS_Handshake.Data_Length (DLen)
 	              and then No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-	        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Dispatch_CH_State_Simple_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1226,7 +1230,8 @@ is
 	                         .Get_Data_Length (Ext_Ctx)
 	                       = RFLX.TLS_Handshake.Data_Length (DLen)
 	              and then No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-	        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Dispatch_CH_State_Validation_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1246,7 +1251,8 @@ is
 	                         .Get_Data_Length (Ext_Ctx)
 	                       = RFLX.TLS_Handshake.Data_Length (DLen)
 	              and then No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-	        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Dispatch_CH_State_Flag_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1266,7 +1272,8 @@ is
 	                         .Get_Data_Length (Ext_Ctx)
 	                       = RFLX.TLS_Handshake.Data_Length (DLen)
 	              and then No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-	        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Dispatch_CH_State_Data_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1286,14 +1293,16 @@ is
 	                         .Get_Data_Length (Ext_Ctx)
 	                       = RFLX.TLS_Handshake.Data_Length (DLen)
 	              and then No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-	        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Register_CH_Extension
      (Code : in     Unsigned_32;
       HC   : in out Handshake_Context;
       OK   :    out Boolean)
    with Pre  => No_Duplicate_Extensions_RFC_8446_4_2 (HC),
-        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+        Post => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+                and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Register_CH_Extension
      (Code : in     Unsigned_32;
@@ -2257,13 +2266,12 @@ is
       Buf          : RBT.Bytes_Ptr;
       Ctx          : Context;
       Saved_Local  : constant Identity_Access := HC.Cfg.Local;
-      Saved_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
-	      function Saved_Config_Frame return Boolean is
-	        (Local_Config_Frame (Saved_Local, HC.Cfg.Local)
-	         and then Local_Config_Valid (HC.Cfg.Local)
-	         and then
-	           (if Saved_Random /= null
-	            then HC.Cfg.Random /= null))
+	      Saved_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
+		      function Saved_Config_Frame return Boolean is
+		        (Local_Config_Frame (Saved_Local, HC.Cfg.Local)
+		         and then
+		           (if Saved_Random /= null
+		            then HC.Cfg.Random /= null))
       with Ghost;
    begin
       OK := False;
@@ -2584,10 +2592,13 @@ is
       KS_Raw_Len :    out N32;
       OK         :    out Boolean)
    with Pre  => HC.Cfg.Random /= null,
-        Post => (if OK then KS_Raw_Len = 36 else KS_Raw_Len = 0)
-                and then HC.Cfg.Random /= null
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
+	        Post => (if OK then KS_Raw_Len = 36 else KS_Raw_Len = 0)
+	                and then HC.Cfg.Random /= null
+	                and then
+	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
+	                   then Local_Config_Valid (HC.Cfg.Local))
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Local'Old /= null
                               and then HC.Cfg.Local'Old.Has_Identity
                           then HC.Cfg.Local /= null
@@ -2647,10 +2658,13 @@ is
       KS_Raw_Len :    out N32;
       OK         :    out Boolean)
    with Pre  => HC.Cfg.Random /= null,
-        Post => (if OK then KS_Raw_Len = 69 else KS_Raw_Len = 0)
-                and then HC.Cfg.Random /= null
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
+	        Post => (if OK then KS_Raw_Len = 69 else KS_Raw_Len = 0)
+	                and then HC.Cfg.Random /= null
+	                and then
+	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
+	                   then Local_Config_Valid (HC.Cfg.Local))
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Local'Old /= null
                               and then HC.Cfg.Local'Old.Has_Identity
                           then HC.Cfg.Local /= null
@@ -2711,10 +2725,13 @@ is
       OK         :    out Boolean)
    with Pre  => HC.Cfg.Random /= null
                 and SPARKTLSCrypto.P384.Field.Initialized,
-        Post => (if OK then KS_Raw_Len = 101 else KS_Raw_Len = 0)
-                and then HC.Cfg.Random /= null
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
+	        Post => (if OK then KS_Raw_Len = 101 else KS_Raw_Len = 0)
+	                and then HC.Cfg.Random /= null
+	                and then
+	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
+	                   then Local_Config_Valid (HC.Cfg.Local))
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Local'Old /= null
                               and then HC.Cfg.Local'Old.Has_Identity
                           then HC.Cfg.Local /= null
@@ -3125,10 +3142,13 @@ is
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
                and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
-        Post => (if OK then KS_Raw_Len in 36 | 69 | 101 else KS_Raw_Len = 0)
-                and then HC.Cfg.Random /= null
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
+	        Post => (if OK then KS_Raw_Len in 36 | 69 | 101 else KS_Raw_Len = 0)
+	                and then HC.Cfg.Random /= null
+	                and then
+	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
+	                   then Local_Config_Valid (HC.Cfg.Local))
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Local'Old /= null
                               and then HC.Cfg.Local'Old.Has_Identity
                           then HC.Cfg.Local /= null

@@ -89,6 +89,14 @@ is
      (Label = Label_Client_Finished or Label = Label_Server_Finished)
    with Ghost;
 
+   procedure Prove_Client_Finished_Label
+   with Ghost,
+        Post => Valid_Finished_Label (Label_Client_Finished);
+
+   procedure Prove_Server_Finished_Label
+   with Ghost,
+        Post => Valid_Finished_Label (Label_Server_Finished);
+
    ----------------------------------------------------------------------------
    --  Procedures
    ----------------------------------------------------------------------------

@@ -905,11 +905,12 @@ is
      with Dynamic_Predicate =>
        Selected_Identity_Access = null
        or else
-         (Selected_Identity_Access.Has_Identity
-          and then Selected_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
-          and then
-            (for all I in 0 .. Max_Pool_Size - 1 =>
-               Selected_Identity_Access.Ints (I).DER_Len
+	         (Selected_Identity_Access.Has_Identity
+	          and then Selected_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+	          and then Selected_Identity_Access.Int_Count <= Max_Pool_Size
+	          and then
+	            (for all I in 0 .. Max_Pool_Size - 1 =>
+	               Selected_Identity_Access.Ints (I).DER_Len
                  <= X509.N32 (Max_Cert_DER))
           and then
             (if Selected_Identity_Access.Sign_Algo = Sign_RSA_PSS
@@ -973,7 +974,7 @@ is
 
    type Ticket_Store is record
       Entries : Ticket_Array;
-      Next    : Natural := 0;
+      Next    : Natural range 0 .. Max_Cached_Tickets - 1 := 0;
    end record;
 
    type Ticket_Store_Access is access all Ticket_Store;

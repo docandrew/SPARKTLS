@@ -18,6 +18,7 @@ is
      (Local = null
       or else
         (Local.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+         and then Local.Int_Count <= Max_Pool_Size
          and then
            (for all I in 0 .. Max_Pool_Size - 1 =>
               Local.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
@@ -102,6 +103,9 @@ is
            Post => Len <= N32 (Result'Length)
                    and then (if Len > 0 then Len >= 4)
                    and then HC.Cfg.Random /= null
+                   and then
+                     (if Local_Config_Valid (HC.Cfg.Local'Old)
+                      then Local_Config_Valid (HC.Cfg.Local))
                    and then (if HC.Cfg.Local'Old /= null
                              then HC.Cfg.Local /= null)
                    and then (if HC.Cfg.Local'Old /= null

@@ -16,6 +16,16 @@ is
    --  The label is prepended to the seed: actual_seed = label_bytes || seed.
    --  We concatenate label + seed into a single buffer before iterating.
 
+   procedure Prove_Client_Finished_Label is
+   begin
+      pragma Assert (Label_Client_Finished = Label_Client_Finished);
+   end Prove_Client_Finished_Label;
+
+   procedure Prove_Server_Finished_Label is
+   begin
+      pragma Assert (Label_Server_Finished = Label_Server_Finished);
+   end Prove_Server_Finished_Label;
+
    procedure PRF_SHA256
      (Output : out Byte_Seq;
       Secret : in  Byte_Seq;

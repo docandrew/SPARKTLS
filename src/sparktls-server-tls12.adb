@@ -26,6 +26,7 @@ is
                 and Alert_Desc (Err) /= 0
                 and Alert_Desc (Err) /= 90,
         Post => S.State = Error_State
+                and then S.Role = S.Role'Old
                 --  RFC 8446 §6.2 / RFC 5246 §7.2.2: a fatal alert
                 --  MUST be sent to the peer before the connection
                 --  closes. We satisfy this by queueing the alert
@@ -82,6 +83,7 @@ is
                 and Records.TLS12.Nonce_Space_Available_12
                       (HC.Server_Seq_12),
         Post => S.State = Error_State
+                and S.Role = S.Role'Old
                 and S.Last_Error = Err;
                 --  Error_Has_Alert is NOT in this Post — see
                 --  matching note on Send_Encrypted_Alert in
@@ -147,13 +149,17 @@ is
    --  Pre bound) rather than HC.Cfg.Local = HC.Cfg.Local'Old.
    with Pre  => Data'Length > 0
                 and then Data'Length <= HC.Transcript'Length
-                   and then HC.Cfg.Local /= null
-                   and then HC.Cfg.Local.Has_Identity
-                   and then HC.Cfg.Random /= null
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                           (HC.Cfg.Local)
+	                and then HC.Cfg.Random /= null
                    and then Reasm_Building (HC),
-           Post => HC.Cfg.Local /= null
-                   and then HC.Cfg.Local.Has_Identity
-                   and then HC.Cfg.Random /= null
+	           Post => HC.Cfg.Local /= null
+	                   and then HC.Cfg.Local.Has_Identity
+	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                              (HC.Cfg.Local)
+	                   and then HC.Cfg.Random /= null
                    and then Reasm_Building (HC)
                    and then HC.Version = HC.Version'Old
                 and then HC.Selected_Group = HC.Selected_Group'Old
@@ -182,25 +188,26 @@ is
    procedure Build_Server_Flight_12_Full
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => HC.Version = TLS_1_2
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then HC.Cfg.Random /= null
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                           (HC.Cfg.Local)
+	                and then HC.Cfg.Random /= null
                 and then S.State = Wait_Client_Hello
                 and then S.Role = Role_Server
                 and then Reasm_Building (HC)
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => S.State in Server_Hello_Sent | Error_State
-                and then (if S.State = Server_Hello_Sent
-                          then S.Role = Role_Server
-                               and then HC.Version = TLS_1_2
-                               and then HC.Cfg.Local /= null
-                               and then HC.Cfg.Local.Has_Identity
-                               and then
-                                 SPARKTLS.Handshake.Server_Msgs
-                                   .Local_Config_Valid (HC.Cfg.Local)
-                               and then HC.Cfg.Random /= null
-                               and then Reasm_Building (HC));
+	        Post => S.State in Server_Hello_Sent | Error_State
+	                and then S.Role = Role_Server
+	                and then HC.Version = TLS_1_2
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then
+	                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                    (HC.Cfg.Local)
+	                and then HC.Cfg.Random /= null
+	                and then Reasm_Building (HC);
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
    --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
@@ -211,9 +218,11 @@ is
    procedure Build_Abbreviated_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => HC.Version = TLS_1_2
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then HC.Cfg.Random /= null
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                           (HC.Cfg.Local)
+	                and then HC.Cfg.Random /= null
                 and then HC.Cfg.TLS12_Ticket_Keys /= null
                 and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
                 and then S.State = Wait_Client_Hello
@@ -228,16 +237,16 @@ is
                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                   (HC.Server_Seq_12),
-        Post => S.State in Wait_Client_Finished | Error_State
-                and then (if S.State = Wait_Client_Finished
-                          then HC.Version = TLS_1_2
-                               and then HC.Cfg.Local /= null
-                               and then HC.Cfg.Local.Has_Identity
-                               and then
-                                 SPARKTLS.Handshake.Server_Msgs
-                                   .Local_Config_Valid (HC.Cfg.Local)
-                               and then HC.Cfg.Random /= null
-                               and then Reasm_Building (HC));
+	        Post => S.State in Wait_Client_Finished | Error_State
+	                and then S.Role = Role_Server
+	                and then HC.Version = TLS_1_2
+	                and then HC.Cfg.Local /= null
+	                and then HC.Cfg.Local.Has_Identity
+	                and then
+	                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                    (HC.Cfg.Local)
+	                and then HC.Cfg.Random /= null
+	                and then Reasm_Building (HC);
 
    procedure Build_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
@@ -580,10 +589,12 @@ is
    --  assignments) without the master-secret PRF step.
    procedure Derive_Keys_Resumed_12
      (S : in out Session; HC : in out Handshake_Context)
-   with Pre  => HC.Version = TLS_1_2
-                   and then HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	                   and then HC.Cfg.Random /= null
+	   with Pre  => HC.Version = TLS_1_2
+	                   and then HC.Cfg.Local /= null
+		                   and then HC.Cfg.Local.Has_Identity
+		                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+		                              (HC.Cfg.Local)
+		                   and then HC.Cfg.Random /= null
 	                   and then Reasm_Building (HC)
 	                   and then S.Negotiated_Suite in
 	                  Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -592,10 +603,12 @@ is
                   | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                   | Suite_ECDHE_RSA_CHACHA20_SHA256
                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-        Post => HC.Version = TLS_1_2
-	                   and then HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	                   and then HC.Cfg.Random /= null
+	        Post => HC.Version = TLS_1_2
+		                   and then HC.Cfg.Local /= null
+		                   and then HC.Cfg.Local.Has_Identity
+		                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+		                              (HC.Cfg.Local)
+		                   and then HC.Cfg.Random /= null
 	                   and then Reasm_Building (HC)
 	                   and then S.State = S.State'Old
                 and then S.Role = S.Role'Old
@@ -1277,10 +1290,11 @@ is
                Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
             end loop;
 
-            Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
-                               HC.Client_Write_IV_12, HC.Client_Seq_12,
-                               Plaintext, PL, DV);
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	            Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
+	                               HC.Client_Write_IV_12, HC.Client_Seq_12,
+	                               Plaintext, PL, DV);
+	            pragma Assert (Reasm_Building (HC));
+	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
             if not DV then
                Send_Alert_And_Error (S, Bad_Record_MAC, Result); return;
@@ -1327,6 +1341,7 @@ is
 	                  if Use_384 then
 	                     SPARKNaCl.Hashing.SHA384.Hash
 	                       (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+	                     Prove_Client_Finished_Label;
 	                     pragma Assert (Valid_Finished_Label
 	                                      (Label_Client_Finished));
 	                     pragma Assert (TH4'Length = 48);
@@ -1346,6 +1361,7 @@ is
 	                     end;
 	                  else
 	                     Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+	                     Prove_Client_Finished_Label;
 	                     pragma Assert (Valid_Finished_Label
 	                                      (Label_Client_Finished));
 	                     pragma Assert (TH'Length = 32);
@@ -1435,10 +1451,10 @@ is
                use type SPARKTLS.Tickets_12.Bytes_4;
                --  Renaming a deref-and-index of HC.Cfg.* trips SPARK
                --  E0007; copy fields into local constants instead.
-               Active_Key_ID : constant Byte_Seq :=
+               Active_Key_ID : constant SPARKTLS.Tickets_12.Bytes_4 :=
                   HC.Cfg.TLS12_Ticket_Keys
                     (HC.Cfg.TLS12_Active_TEK_Idx).Key_ID;
-               Active_TEK    : constant Byte_Seq :=
+               Active_TEK    : constant SPARKTLS.Tickets_12.Bytes_32 :=
                   HC.Cfg.TLS12_Ticket_Keys
                     (HC.Cfg.TLS12_Active_TEK_Idx).TEK;
                Nonce_Buf  : Byte_Seq (0 .. 11);
@@ -1470,12 +1486,8 @@ is
 
                SPARKTLS.Tickets_12.Encrypt_Ticket
                  (Plain      => Plain,
-                  Key_ID     =>
-                    SPARKTLS.Tickets_12.Bytes_4
-                      (Active_Key_ID),
-                  TEK        =>
-                    SPARKTLS.Tickets_12.Bytes_32
-                      (Active_TEK),
+                  Key_ID     => Active_Key_ID,
+                  TEK        => Active_TEK,
                   Nonce      =>
                     SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
                   Ticket     => Ticket_Buf,
@@ -1493,21 +1505,30 @@ is
                   Result := Error_Alert;
                   return;
                end if;
+               pragma Assert (NST_Total > 0);
+               pragma Assert (NST_Total - 1 <= NST_Buf'Last);
 
-               --  Append to transcript BEFORE server Finished hash.
-               Append_Transcript (HC, NST_Buf (0 .. NST_Total - 1));
+               declare
+                  NST_Last : constant N32 := NST_Total - 1;
+                  NST_Data : Byte_Seq renames
+                    NST_Buf (0 .. NST_Last);
+               begin
+                  pragma Assert (NST_Data'Length > 0);
 
-               --  Emit as plaintext handshake record (server WRITE
-               --  state still pre-CCS).
-               Records.Build_Handshake_Record
-                 (NST_Buf (0 .. NST_Total - 1),
-                  Scratch, NST_Rec_Out);
-               if NST_Rec_Out = 0 then
-                  S.Last_Error := Insufficient_Buffer;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
-                  return;
-               end if;
+                  --  Append to transcript BEFORE server Finished hash.
+                  Append_Transcript (HC, NST_Data);
+
+                  --  Emit as plaintext handshake record (server WRITE
+                  --  state still pre-CCS).
+                  Records.Build_Handshake_Record
+                    (NST_Data, Scratch, NST_Rec_Out);
+                  if NST_Rec_Out = 0 then
+                     S.Last_Error := Insufficient_Buffer;
+                     Set_State (S, Error_State);
+                     Result := Error_Alert;
+                     return;
+                  end if;
+               end;
             end;
          end if;
 
@@ -1522,6 +1543,7 @@ is
 	         if Use_384 then
 		            SPARKNaCl.Hashing.SHA384.Hash
 		              (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+		            Prove_Server_Finished_Label;
 		            pragma Assert (Valid_Finished_Label (Label_Server_Finished));
 		            pragma Assert (TH4'Length = 48);
 		            declare
@@ -1540,6 +1562,7 @@ is
 		            end;
 		         else
 		            Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+		            Prove_Server_Finished_Label;
 		            pragma Assert (Valid_Finished_Label (Label_Server_Finished));
 		            pragma Assert (TH'Length = 32);
 		            declare
@@ -1600,11 +1623,12 @@ is
       S.Client_Seq_12 := HC.Client_Seq_12;
       S.Server_Seq_12 := HC.Server_Seq_12;
 
-      Set_State (S, Connected);
-      S.Handshake_Just_Done := True;
-      Result := (if Output_Pending (S) > 0 then Has_Output else Handshake_Done);
-      if Result = Handshake_Done then S.Handshake_Just_Done := False; end if;
-   end Process_Client_Finished_12;
+	      Set_State (S, Connected);
+	      S.Handshake_Just_Done := True;
+	      Result := (if Output_Pending (S) > 0 then Has_Output else Handshake_Done);
+	      if Result = Handshake_Done then S.Handshake_Just_Done := False; end if;
+	      pragma Assert (Reasm_Building (HC));
+	   end Process_Client_Finished_12;
 
    ------------------------------------------------------------------
    procedure Process_Connected_12 (S : in out Session; Result : out Action)
