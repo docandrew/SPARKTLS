@@ -307,16 +307,9 @@ is
                          (Ext_Ctx)
               and then RFLX.TLS_Handshake.CH_Extension_TLS
                          .Well_Formed_Message (Ext_Ctx)
-              and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
-                         (Ext_Ctx)
-                       = RFLX.TLS_Handshake.Data_Length (DLen),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+	                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
+	                            (Ext_Ctx)
+	                          = RFLX.TLS_Handshake.Data_Length (DLen);
 
    procedure Parse_Sig_Algs_Extension
      (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -387,16 +380,9 @@ is
                          (Ext_Ctx)
               and then RFLX.TLS_Handshake.CH_Extension_TLS
                          .Well_Formed_Message (Ext_Ctx)
-              and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
-                         (Ext_Ctx)
-                       = RFLX.TLS_Handshake.Data_Length (DLen),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+	                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
+	                            (Ext_Ctx)
+	                          = RFLX.TLS_Handshake.Data_Length (DLen);
 
    procedure Parse_Supported_Groups_Extension
      (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -2080,17 +2066,10 @@ is
      and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
      and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
                 (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS),
-	      Post =>
-	       RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-	            and then Ctx.Buffer_First = Ctx.Buffer_First'Old
-	            and then Ctx.Buffer_Last  = Ctx.Buffer_Last'Old
-	            and then HC.HRR_Sent = HC.HRR_Sent'Old
-	            and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-	            and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-            and then (if HC.Cfg.Local'Old /= null
-                      then HC.Cfg.Local /= null)
-            and then (if HC.Cfg.Random'Old /= null
-                      then HC.Cfg.Random /= null);
+		      Post =>
+		       RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+		            and then Ctx.Buffer_First = Ctx.Buffer_First'Old
+		            and then Ctx.Buffer_Last  = Ctx.Buffer_Last'Old;
 
    procedure Process_CH_Extension_Element
      (Ext_Ctx  : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -2177,18 +2156,7 @@ is
                              Field_First (Ctx, F_Extensions_TLS)
                      and then Exts_Ctx.Last  =
                                 Field_Last  (Ctx, F_Extensions_TLS)
-                     and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
-                     and then HC.HRR_Sent = HC.HRR_Sent'Loop_Entry
-                     and then HC.Server_HS.Counter =
-                                HC.Server_HS.Counter'Loop_Entry
-                       and then HC.Server_HS.Suite =
-                                  HC.Server_HS.Suite'Loop_Entry
-                       and then
-                          (if HC.Cfg.Local'Loop_Entry /= null
-                           then HC.Cfg.Local /= null)
-                     and then
-                        (if HC.Cfg.Random'Loop_Entry /= null
-                         then HC.Cfg.Random /= null));
+	                     and then No_Duplicate_Extensions_RFC_8446_4_2 (HC));
             declare
                Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             begin
@@ -2198,14 +2166,7 @@ is
 
                   Process_CH_Extension_Element
                        (Ext_Ctx, HC, Aborting, Saw_PSK);
-                  pragma Assert
-                    (if HC.Cfg.Local'Loop_Entry /= null
-                     then HC.Cfg.Local /= null);
-                  pragma Assert
-                    (if HC.Cfg.Random'Loop_Entry /= null
-                     then HC.Cfg.Random /= null);
-
-	                  RFLX.TLS_Handshake.CH_Extensions_TLS.Update
+		                  RFLX.TLS_Handshake.CH_Extensions_TLS.Update
 	                    (Exts_Ctx, Ext_Ctx);
                   pragma Unreferenced (Ext_Ctx);
 	            end;

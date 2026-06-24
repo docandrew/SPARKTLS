@@ -52,9 +52,9 @@ is
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
-   with Pre => Data'Length > 0
-               and then SPARKTLSCrypto.P384.Field.Initialized
-               and then HC.HRR_Cookie_Len <=
-                 N32 (HC.HRR_Cookie'Length);
+	   with Pre => Data'Length > 0
+	               and then SPARKTLSCrypto.P384.Field.Initialized
+	               and then HC.HRR_Cookie_Len <=
+	                 N32 (HC.HRR_Cookie'Length);
 
 end SPARKTLS.Handshake.Client_Msgs;
