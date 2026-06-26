@@ -195,17 +195,19 @@ is
 	                and then HC.Cfg.Random /= null
 	                and then S.State = Wait_Client_Hello
 	                and then S.Role = Role_Server
+	                and then Reasm_Building (HC)
 	                and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 	        Post => S.State in Server_Hello_Sent | Error_State
 	                and then S.Role = Role_Server
 	                and then HC.Version = TLS_1_2
 	                and then HC.Cfg.Local /= null
-	                and then HC.Cfg.Local.Has_Identity
-	                and then
-		                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-		                    (HC.Cfg.Local)
-		                and then HC.Cfg.Random /= null;
+			                and then HC.Cfg.Local.Has_Identity
+			                and then
+				                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+				                    (HC.Cfg.Local)
+				                and then HC.Cfg.Random /= null
+				                and then Reasm_Building (HC);
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
    --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
@@ -238,11 +240,12 @@ is
 	                and then S.Role = Role_Server
 	                and then HC.Version = TLS_1_2
 	                and then HC.Cfg.Local /= null
-	                and then HC.Cfg.Local.Has_Identity
-	                and then
-		                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-		                    (HC.Cfg.Local)
-		                and then HC.Cfg.Random /= null;
+			                and then HC.Cfg.Local.Has_Identity
+			                and then
+				                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+				                    (HC.Cfg.Local)
+				                and then HC.Cfg.Random /= null
+				                and then Reasm_Building (HC);
 
    procedure Build_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)

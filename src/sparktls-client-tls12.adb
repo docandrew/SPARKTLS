@@ -20,6 +20,7 @@ with SPARKTLSCrypto.P384.ECDSA;
 use SPARKTLSCrypto;
 with X509;
 use type X509.Algorithm_ID;
+use type X509.Certificate;
 
 with SPARKTLS.RFLX_Bridge;       use SPARKTLS.RFLX_Bridge;
 with RFLX.RFLX_Builtin_Types;
@@ -395,6 +396,39 @@ is
          Present => True);
    end Store_Intermediate;
 
+   procedure Append_Intermediate_12
+     (HC  : in out Handshake_Context;
+      Idx : in     Natural;
+      PE  : in     Pool_Entry)
+   with Pre  => Idx = HC.Peer_Int_Count
+                and then HC.Peer_Int_Count < Max_Pool_Size
+                and then PE.Present
+                and then (if HC.Peer_Cert_Valid then
+                    HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                    and then X509.Spans_Valid
+                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1)),
+        Post => HC.Peer_Int_Count = HC.Peer_Int_Count'Old + 1
+                and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
+                and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
+                and then HC.Peer_Cert = HC.Peer_Cert'Old
+                and then HC.Reasm_Len = HC.Reasm_Len'Old
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
+                and then (if HC.Peer_Cert_Valid then
+                    HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                    and then X509.Spans_Valid
+                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+
+   procedure Append_Intermediate_12
+     (HC  : in out Handshake_Context;
+      Idx : in     Natural;
+      PE  : in     Pool_Entry)
+   is
+   begin
+      HC.Peer_Ints (Idx) := PE;
+      HC.Peer_Int_Count := HC.Peer_Int_Count + 1;
+   end Append_Intermediate_12;
+
    --  RFC 5246 §7.4.2 Certificate (HS type 0x0B). Parses the on-wire
    --  cert_list_len(3) || {cert_len(3) || cert_data[cert_len]}* via
    --  RFLX TLS_1_2_Certificate, then runs the leaf through X509.Parse.
@@ -415,11 +449,14 @@ is
                          and then Frag'First <= N32'Last - 4
                          and then Msg_Len <= N32'Last - Frag'First - 4
                          and then Frag'First + 3 + Msg_Len <= Frag'Last,
-        Post => Reasm_Coherent (HC)
-                and then (if HC.Peer_Cert_Valid then
-                    HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                    and then X509.Spans_Valid
-                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	        Post => HC.Reasm_Len = HC.Reasm_Len'Old
+	                and then HC.Reasm_Need = HC.Reasm_Need'Old
+	                and then HC.Reasm_Hdr_Pending =
+	                  HC.Reasm_Hdr_Pending'Old
+	                and then (if HC.Peer_Cert_Valid then
+	                    HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+	                    and then X509.Spans_Valid
+	                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 
    procedure Parse_Cert_Chain_12
      (HC      : in out Handshake_Context;
@@ -510,6 +547,11 @@ is
 	                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 	                  pragma Loop_Invariant
 	                    (if HC.Peer_Cert_Valid then Cert_Idx > 0);
+                  pragma Loop_Invariant
+                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
+                     and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
+                     and then HC.Reasm_Hdr_Pending =
+                       HC.Reasm_Hdr_Pending'Loop_Entry);
                      declare
                         E_Ctx : C12_Entry.Context;
                   begin
@@ -537,8 +579,7 @@ is
                                             X509.N32 (C_Len) - 1));
                                        pragma Assert
                                          (HC.Peer_Cert_DER_Len = C_Len);
-	                                       HC.Peer_Cert_Valid :=
-	                                         X509.Is_Valid (HC.Peer_Cert);
+		                                       HC.Peer_Cert_Valid := P_OK;
 	                                       pragma Assert
 	                                         (if HC.Peer_Cert_Valid
                                           then HC.Peer_Cert_DER_Len
@@ -553,21 +594,20 @@ is
                                     end if;
                                     end;
 	                              elsif HC.Peer_Int_Count < Max_Pool_Size then
-                                 declare
-                                    Idx : constant Natural := HC.Peer_Int_Count;
-                                    C    : X509.Certificate;
-                                    P_OK : Boolean;
-                                 begin
-                                    Parse_X509_From_RFLX
-                                      (Cert_RFLX, C_Len, C, P_OK);
-                                    if P_OK then
-                                       Store_Intermediate
-                                         (Cert_RFLX, C, C_Len,
-                                          HC.Peer_Ints (Idx));
-                                       HC.Peer_Int_Count :=
-                                         HC.Peer_Int_Count + 1;
-                                    end if;
-                                 end;
+	                                 declare
+	                                    Idx : constant Natural := HC.Peer_Int_Count;
+	                                    C    : X509.Certificate;
+	                                    Tmp  : Pool_Entry;
+	                                    P_OK : Boolean;
+	                                 begin
+	                                    Parse_X509_From_RFLX
+	                                      (Cert_RFLX, C_Len, C, P_OK);
+	                                    if P_OK then
+	                                       Store_Intermediate
+	                                         (Cert_RFLX, C, C_Len, Tmp);
+	                                       Append_Intermediate_12 (HC, Idx, Tmp);
+	                                    end if;
+	                                 end;
 	                              end if;
 	                              Cert_Idx := Cert_Idx + 1;
 	                           end if;

@@ -203,9 +203,10 @@ is
 			                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
 			                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
 			                and then HC.Legacy_Session_ID_Len in 0 .. 32
-			                and then HC.Transcript_Len > 0
-			                and then S.Negotiated_Suite in
-			                  Suite_AES_128_GCM_SHA256
+				                and then HC.Transcript_Len > 0
+				                and then Reasm_Building (HC)
+				                and then S.Negotiated_Suite in
+				                  Suite_AES_128_GCM_SHA256
 			                  | Suite_AES_256_GCM_SHA384
 			                  | Suite_CHACHA20_POLY1305_SHA256
 			                and then Nonce_Space_Available (HC.Server_HS)
@@ -217,10 +218,12 @@ is
 	                                  | Server_Hello_Sent
 	                                  | Error_State
 	                  else S.State in Server_Hello_Sent | Error_State)
-		                and then (if S.State not in Error_State | Closed
-		                          then Server_Configured (HC))
-		                and then
-		                  (if S.State = Wait_Client_Hello
+			                and then (if S.State not in Error_State | Closed
+			                          then Server_Configured (HC))
+			                and then (if S.State not in Error_State | Closed
+			                          then Reasm_Building (HC))
+			                and then
+			                  (if S.State = Wait_Client_Hello
 		                     and then HC.Reasm_Need > 0
 		                   then HC.Reasm_Len < HC.Reasm_Need);
 
@@ -846,10 +849,11 @@ is
    with Pre => S.State = Wait_Client_Hello
                and then S.Role = Role_Server
                and then Server_Configured (HC)
-               and then HC.Legacy_Session_ID_Len in 0 .. 32
-               and then HC.Transcript_Len > 0
-               and then SPARKTLSCrypto.P384.Field.Initialized
-               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+	               and then HC.Legacy_Session_ID_Len in 0 .. 32
+	               and then HC.Transcript_Len > 0
+	               and then Reasm_Building (HC)
+	               and then SPARKTLSCrypto.P384.Field.Initialized
+	               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 		        Post => Result in Action
 		                and then Wait_Client_Hello_Post (S, HC);
 
@@ -2126,20 +2130,40 @@ is
 		                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 		                  pragma Assert (HC.HRR_Sent);
 		                  pragma Assert (S.State = Wait_Client_Hello_Retry);
-		                  pragma Assert (HC.Version = TLS_1_3);
-		                  pragma Assert (Server_Configured (HC));
-		                  pragma Assert (Reasm_Building (HC));
-		                  pragma Assert
+			                  pragma Assert (HC.Version = TLS_1_3);
+			                  pragma Assert (Server_Configured (HC));
+			                  pragma Assert
+			                    (HC.Cfg.Local.NaCl_Cert_Len <=
+			                       N32 (Max_Cert_DER));
+			                  pragma Assert
+			                    (HC.Cfg.Local.Int_Count <= Max_Pool_Size);
+			                  pragma Assert
+			                    (for all I in 0 .. Max_Pool_Size - 1 =>
+			                       HC.Cfg.Local.Ints (I).DER_Len <=
+			                         X509.N32 (Max_Cert_DER));
+			                  pragma Assert
+			                    (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+			                     then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512);
+			                  pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+			                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
+			                  pragma Assert (Nonce_Space_Available (S.Server_App));
+			                  pragma Assert (Reasm_Building (HC));
+			                  pragma Assert
 		                    (S.Negotiated_Suite in
 		                       Suite_AES_128_GCM_SHA256
 		                     | Suite_AES_256_GCM_SHA384
 		                     | Suite_CHACHA20_POLY1305_SHA256);
 
-		                  --  Now proceed to build the real ServerHello flight
-			                  Build_Server_Flight (S, HC, Result);
-		                  pragma Assert
-		                    (S.State = Old_State
-		                     or else Valid_Transition
+			                  --  Now proceed to build the real ServerHello flight
+				                  Build_Server_Flight (S, HC, Result);
+			                  pragma Assert
+			                    (S.State in Server_Hello_Sent | Error_State);
+			                  pragma Assert
+			                    (if S.State = Server_Hello_Sent
+			                     then Reasm_Building (HC));
+			                  pragma Assert
+			                    (S.State = Old_State
+			                     or else Valid_Transition
 		                       (Old_State, S.State));
 		                  pragma Assert
 		                    (if S.State not in Error_State | Closed

@@ -1166,10 +1166,10 @@ is
                and then Rec.Record_Len =
                         Rec.Fragment_Pos + Rec.Fragment_Len
                and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-               and then S.Input.Read_Pos + Rec.Record_Len
-                        <= S.Input.Write_Pos
-               and then S.Input.Read_Pos + Rec.Record_Len
-                        <= IO_Buffer_Capacity;
+	               and then S.Input.Read_Pos + Rec.Record_Len
+	                        <= S.Input.Write_Pos
+	               and then S.Input.Read_Pos + Rec.Record_Len
+	                        <= IO_Buffer_Capacity;
    procedure Parse_SH_From_Reasm_13
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -1181,10 +1181,24 @@ is
 	               and then HC.Reasm_Need > 0
 	               and then HC.Reasm_Buf'First = 0
 	               and then HC.Reasm_Need - 1 <= HC.Reasm_Buf'Last
-	               and then HC.Reasm_Need - 1 < Transcript_Capacity
-	               and then HC.Transcript_Len > 0
-	               and then HC.Transcript_Len <= Transcript_Capacity
-	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
+		               and then HC.Reasm_Need - 1 < Transcript_Capacity
+		               and then HC.Transcript_Len > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
+        Post => (if Result = OK then
+                    S.State = Wait_Server_Hello
+                    and then Reasm_Coherent (HC)
+	                    and then HC.Cfg.Random /= null
+	                    and then HC.Transcript_Len > 0
+	                    and then HC.Transcript_Len <= Transcript_Capacity
+	                    and then HC.HRR_Cookie_Len <=
+	                      N32 (HC.HRR_Cookie'Length)
+	                    and then
+	                      (if HC.Version = TLS_1_3 then
+	                         S.Negotiated_Suite in
+	                           Suite_AES_128_GCM_SHA256
+	                         | Suite_AES_256_GCM_SHA384
+	                         | Suite_CHACHA20_POLY1305_SHA256));
    procedure Finalize_SH_Processing
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -1219,10 +1233,24 @@ is
                and then Rec.Record_Len =
                         Rec.Fragment_Pos + Rec.Fragment_Len
                and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-               and then S.Input.Read_Pos + Rec.Record_Len
-                        <= S.Input.Write_Pos
-               and then S.Input.Read_Pos + Rec.Record_Len
-                        <= IO_Buffer_Capacity;
+	               and then S.Input.Read_Pos + Rec.Record_Len
+	                        <= S.Input.Write_Pos
+	               and then S.Input.Read_Pos + Rec.Record_Len
+	                        <= IO_Buffer_Capacity,
+	        Post => (if Result = OK then
+	                    S.State = Wait_Server_Hello
+	                    and then Reasm_Coherent (HC)
+	                    and then HC.Cfg.Random /= null
+	                    and then HC.Transcript_Len > 0
+	                    and then HC.Transcript_Len <= Transcript_Capacity
+	                    and then HC.HRR_Cookie_Len <=
+	                      N32 (HC.HRR_Cookie'Length)
+	                    and then
+	                      (if HC.Reasm_Len >= HC.Reasm_Need then
+	                         HC.Reasm_Buf /= null
+	                         and then HC.Reasm_Need > 0
+	                         and then HC.Reasm_Need - 1 <
+	                           Transcript_Capacity));
    procedure Reasm_Fresh_Fragment
      (S          : in out Session;
       HC         : in out Handshake_Context;
@@ -3218,10 +3246,13 @@ is
 	                           if HC.Reasm_Need > 0
 	                          and then HC.Reasm_Buf /= null
 	                        then
-                           if HC.Reasm_Len >= HC.Reasm_Need then
-                              Result := OK;
-                              return;
-                           end if;
+	                           if HC.Reasm_Len >= HC.Reasm_Need then
+	                              Result := OK;
+                              pragma Assert (S.State = Wait_Server_Hello);
+                              pragma Assert (Reasm_Coherent (HC));
+                              pragma Assert (HC.Cfg.Random /= null);
+	                              return;
+	                           end if;
 
                            declare
                               Need : constant N32 :=
@@ -3276,15 +3307,24 @@ is
                               end;
                            end if;
 
-                           if HC.Reasm_Len < HC.Reasm_Need then
-                              Result := OK;
-                              return;  --  need more fragments
-                           end if;
+	                           if HC.Reasm_Len < HC.Reasm_Need then
+	                              Result := OK;
+                              pragma Assert (S.State = Wait_Server_Hello);
+                              pragma Assert (Reasm_Coherent (HC));
+                              pragma Assert (HC.Cfg.Random /= null);
+	                              return;  --  need more fragments
+	                           end if;
                         else
-                           Reasm_Fresh_Fragment
-                             (S, HC, Rec, Frag_Len, Frag_Start,
-                              Max_HS_Msg, Result);
-                        end if;
+	                           Reasm_Fresh_Fragment
+	                             (S, HC, Rec, Frag_Len, Frag_Start,
+	                              Max_HS_Msg, Result);
+                           pragma Assert
+                             (if Result = OK then S.State = Wait_Server_Hello);
+                           pragma Assert
+                             (if Result = OK then Reasm_Coherent (HC));
+                           pragma Assert
+                             (if Result = OK then HC.Cfg.Random /= null);
+	                        end if;
    end Reassemble_For_SH;
 
    procedure Finalize_SH_Processing

@@ -63,11 +63,12 @@ is
                 --  Client_Hello_Sent is Wait_Server_Hello, which would
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
-                and then S.Role = Role_Server
-                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                           (HC.Server_Seq_12)
-                and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+	                and then S.Role = Role_Server
+	                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+	                           (HC.Server_Seq_12)
+	                and then Reasm_Building (HC)
+	                and then SPARKTLSCrypto.P384.Field.Initialized
+	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => S.State in Server_Hello_Sent | Wait_Client_Finished
                             | Error_State
                 and then
@@ -75,11 +76,12 @@ is
                    then S.Role = Role_Server
                         and then HC.Version = TLS_1_2
                         and then HC.Cfg.Local /= null
-                        and then HC.Cfg.Local.Has_Identity
-                        and then
-                          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                            (HC.Cfg.Local)
-                        and then HC.Cfg.Random /= null);
+	                        and then HC.Cfg.Local.Has_Identity
+	                        and then
+	                          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                            (HC.Cfg.Local)
+	                        and then HC.Cfg.Random /= null
+	                        and then Reasm_Building (HC));
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
