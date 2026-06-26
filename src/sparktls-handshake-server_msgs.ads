@@ -47,11 +47,24 @@ is
      (S    : in out Session;
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
-      OK   :    out Boolean)
-		      with Pre => Data'Length > 0
-		                 and then Data'Last <= N32 (Max_HS_Msg) - 1
-		                 and then Local_Config_Valid (HC.Cfg.Local)
-	                         and then Reasm_Building (HC);
+	      OK   :    out Boolean)
+			      with Pre => Data'Length > 0
+			                 and then Data'Last <= N32 (Max_HS_Msg) - 1
+		                         and then Reasm_Building (HC),
+                    Post => (if HC.Cfg.Local'Old /= null
+                              then HC.Cfg.Local /= null
+                                   and then
+                                     (if HC.Cfg.Local'Old.Has_Identity
+                                      then HC.Cfg.Local.Has_Identity))
+                            and then
+                              (if HC.Cfg.Random'Old /= null
+                               then HC.Cfg.Random /= null)
+                            and then S.State = S.State'Old
+                            and then S.Role = S.Role'Old
+                            and then S.Input.Read_Pos =
+                              S.Input.Read_Pos'Old
+                            and then S.Input.Write_Pos =
+                              S.Input.Write_Pos'Old;
 
    --  Build a ServerHello handshake message.
    --  Includes key_share and supported_versions extensions.

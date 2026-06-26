@@ -19,6 +19,7 @@ with RFLX.TLS_Handshake.Key_Share_SH;
 with RFLX.TLS_Handshake.Cipher_Suites_TLS;
 with RFLX.TLS_Handshake.Cipher_Suite_TLS;
 with RFLX.TLS_Common;
+with RFLX.RFLX_Types;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
 with SPARKTLSCrypto.P256.Point;
@@ -31,6 +32,10 @@ is
    use type RBT.Length;
    use type RBT.Index;
    use type RBT.Bit_Length;
+   use type RFLX.RFLX_Types.Length;
+   use type RFLX.RFLX_Types.Index;
+   use type RFLX.RFLX_Types.Bit_Index;
+   use type RFLX.RFLX_Types.Bit_Length;
    use type RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values_Enum;
    use type RFLX.Tls_Parameters.TLS_Supported_Groups_Enum;
 
@@ -187,9 +192,10 @@ is
       Result    : in out Byte_Seq;
       Len       : in out N32)
    with Pre  => Result'First = 0
-                and Result'Length >= 600
-                and Len > 0
-                and Len <= N32 (Result'Length);
+                and then Result'Last <= N32'Last - 1
+                and then Result'Length >= 600
+                and then Len > 0
+                and then Len <= N32 (Result'Length);
 
    procedure Append_PSK_Extension
      (S         : in     Session;
@@ -206,6 +212,18 @@ is
          return;
       end if;
       HC.PSK_Offered := True;
+      if S.Ticket.Ticket_Len > Max_Ticket_Len
+        or else Len > N32 (Result'Length) - 319
+      then
+         return;
+      end if;
+      if Retry_Mode then
+         if Len > Transcript_Capacity - 316
+           or else HC.Transcript_Len > Transcript_Capacity - 316 - Len
+         then
+            return;
+         end if;
+      end if;
       declare
          Tick_Len : constant N32 := S.Ticket.Ticket_Len;
          ID_Entry_Len : constant N32 := 2 + Tick_Len + 4;
@@ -216,135 +234,198 @@ is
          Binders_Len : constant N32 := 2 + Binder_Entry_Len;
          PSK_Ext_Len : constant N32 := 4 + IDs_Len + Binders_Len;
          New_Len     : constant N32 := Len + PSK_Ext_Len;
-         P : N32;
 
          --  CH body layout — see comments in Build_Client_Hello.
          Sid_Len_Off    : constant N32 := 4 + 2 + 32;
          Sid_Len_Read   : constant N32 := N32 (Result (Sid_Len_Off));
-         Suites_Len_Off : constant N32 :=
-           Sid_Len_Off + 1 + Sid_Len_Read;
-         Suites_Len_Read : constant N32 :=
-           N32 (Result (Suites_Len_Off)) * 256 +
-           N32 (Result (Suites_Len_Off + 1));
-         Comp_Len_Off   : constant N32 :=
-           Suites_Len_Off + 2 + Suites_Len_Read;
-         Comp_Len_Read  : constant N32 :=
-           N32 (Result (Comp_Len_Off));
-         Ext_Len_Offset : constant N32 :=
-           Comp_Len_Off + 1 + Comp_Len_Read;
-         Old_Ext_Len : N32;
-         New_Ext_Len : N32;
       begin
-         if New_Len > N32 (Result'Length) then
+         if New_Len > N32 (Result'Length)
+           or else New_Len > 16#00FF_FFFF# + 4
+           or else Sid_Len_Read > 32
+         then
             return;
          end if;
-         Old_Ext_Len := N32 (Result (Ext_Len_Offset)) * 256 +
-                        N32 (Result (Ext_Len_Offset + 1));
-         New_Ext_Len := Old_Ext_Len + PSK_Ext_Len;
-
-         P := Len;
-         Result (P) := 0; Result (P + 1) := 16#29#;
-         P := P + 2;
-         Result (P) := Byte ((IDs_Len + Binders_Len) / 256);
-         Result (P + 1) := Byte ((IDs_Len + Binders_Len) mod 256);
-         P := P + 2;
-         Result (P) := Byte (ID_Entry_Len / 256);
-         Result (P + 1) := Byte (ID_Entry_Len mod 256);
-         P := P + 2;
-         Result (P) := Byte (Tick_Len / 256);
-         Result (P + 1) := Byte (Tick_Len mod 256);
-         P := P + 2;
-         Result (P .. P + Tick_Len - 1) :=
-            S.Ticket.Ticket (0 .. Tick_Len - 1);
-         P := P + Tick_Len;
          declare
-            A : constant Unsigned_32 := S.Ticket.Age_Add;
+            Suites_Len_Off : constant N32 :=
+              Sid_Len_Off + 1 + Sid_Len_Read;
          begin
-            Result (P)     := Byte (A / 2**24 mod 256);
-            Result (P + 1) := Byte (A / 2**16 mod 256);
-            Result (P + 2) := Byte (A / 2**8 mod 256);
-            Result (P + 3) := Byte (A mod 256);
-         end;
-         P := P + 4;
-         Result (P) := Byte (Binder_Entry_Len / 256);
-         Result (P + 1) := Byte (Binder_Entry_Len mod 256);
-         P := P + 2;
-         Result (P) := Byte (Binder_Size);
-         P := P + 1;
-         declare
-            Binder_Offset : constant N32 := P;
-         begin
-            Result (P .. P + Binder_Size - 1) := (others => 0);
-            P := P + Binder_Size;
-
-            --  Patch handshake length
+            if Suites_Len_Off + 1 > Result'Last then
+               return;
+            end if;
             declare
-               New_Body_Len : constant N32 := P - 4;
+               Suites_Len_Read : constant N32 :=
+                 N32 (Result (Suites_Len_Off)) * 256 +
+                 N32 (Result (Suites_Len_Off + 1));
             begin
-               Result (1) := Byte (New_Body_Len / 65536);
-               Result (2) := Byte ((New_Body_Len / 256) mod 256);
-               Result (3) := Byte (New_Body_Len mod 256);
-            end;
-            Result (Ext_Len_Offset) := Byte (New_Ext_Len / 256);
-            Result (Ext_Len_Offset + 1) := Byte (New_Ext_Len mod 256);
-
-            --  Compute binder per RFC 8446 §4.2.11.2.
-            declare
-               Trunc_Len  : constant N32 := Binder_Offset - 3;
-               Pre_Len    : constant N32 :=
-                 (if Retry_Mode then HC.Transcript_Len else 0);
-               Trans_In   : constant Byte_Seq (0 .. Pre_Len
-                                                    + Trunc_Len - 1) :=
-                  HC.Transcript (0 .. Pre_Len - 1)
-                  & Result (0 .. Trunc_Len - 1);
-            begin
-               if S.Ticket.PSK_Len = 48 then
-                  declare
-                     Trunc_Hash384 : SPARKNaCl.Hashing.SHA384.Digest;
-                     Binder_Key48  : SPARKTLSCrypto.HKDF384.OKM384_Seq
-                                       (0 .. 47);
-                     Finished_K48  : SPARKTLSCrypto.HKDF384.OKM384_Seq
-                                       (0 .. 47);
-                     Binder_V48    : Bytes_48;
-                  begin
-                     SPARKNaCl.Hashing.SHA384.Hash
-                       (Trunc_Hash384, Trans_In);
-                     Key_Schedule.Derive_Binder_Key_384
-                       (Binder_Key48, S.Ticket.PSK);
-                     Key_Schedule.Derive_Finished_Key_384
-                       (Finished_K48, Byte_Seq (Binder_Key48));
-                     SPARKTLSCrypto.HMAC384.HMAC_SHA_384
-                       (Output => Binder_V48,
-                        M      => Byte_Seq (Trunc_Hash384),
-                        K      => Byte_Seq (Finished_K48));
-                     Result (Binder_Offset ..
-                               Binder_Offset + 47) := Binder_V48;
-                  end;
-               else
-                  declare
-                     Trunc_Hash   : Digest;
-                     Binder_Key   : OKM_Seq (0 .. 31);
-                     Finished_Key : OKM_Seq (0 .. 31);
-                     Binder_Val   : Digest;
-                  begin
-                     Hash (Trunc_Hash, Trans_In);
-                     Key_Schedule.Derive_Binder_Key
-                       (Binder_Key,
-                        Bytes_32 (S.Ticket.PSK (0 .. 31)));
-                     Key_Schedule.Derive_Finished_Key
-                       (Finished_Key, Byte_Seq (Binder_Key));
-                     HMAC_SHA_256
-                       (Output => Binder_Val,
-                        M      => Trunc_Hash,
-                        K      => Byte_Seq (Finished_Key));
-                     Result (Binder_Offset ..
-                               Binder_Offset + 31) := Binder_Val;
-                  end;
+               if Suites_Len_Read > 18 then
+                  return;
                end if;
+               declare
+                  Comp_Len_Off : constant N32 :=
+                    Suites_Len_Off + 2 + Suites_Len_Read;
+               begin
+                  if Comp_Len_Off > Result'Last then
+                     return;
+                  end if;
+                  declare
+                     Comp_Len_Read : constant N32 :=
+                       N32 (Result (Comp_Len_Off));
+                  begin
+                     if Comp_Len_Read > 1 then
+                        return;
+                     end if;
+                     declare
+                        Ext_Len_Offset : constant N32 :=
+                          Comp_Len_Off + 1 + Comp_Len_Read;
+                     begin
+                        if Ext_Len_Offset + 1 > Result'Last then
+                           return;
+                        end if;
+                        declare
+                           Old_Ext_Len : constant N32 :=
+                             N32 (Result (Ext_Len_Offset)) * 256 +
+                             N32 (Result (Ext_Len_Offset + 1));
+                        begin
+                           if Old_Ext_Len > 16#FFFF# - PSK_Ext_Len then
+                              return;
+                           end if;
+                           declare
+                              New_Ext_Len : constant N32 :=
+                                Old_Ext_Len + PSK_Ext_Len;
+                              P : N32 := Len;
+                           begin
+
+                              Result (P) := 0; Result (P + 1) := 16#29#;
+                              P := P + 2;
+                              Result (P) :=
+                                Byte ((IDs_Len + Binders_Len) / 256);
+                              Result (P + 1) :=
+                                Byte ((IDs_Len + Binders_Len) mod 256);
+                              P := P + 2;
+                              Result (P) := Byte (ID_Entry_Len / 256);
+                              Result (P + 1) :=
+                                Byte (ID_Entry_Len mod 256);
+                              P := P + 2;
+                              Result (P) := Byte (Tick_Len / 256);
+                              Result (P + 1) := Byte (Tick_Len mod 256);
+                              P := P + 2;
+                              Result (P .. P + Tick_Len - 1) :=
+                                S.Ticket.Ticket (0 .. Tick_Len - 1);
+                              P := P + Tick_Len;
+                              declare
+                                 A : constant Unsigned_32 := S.Ticket.Age_Add;
+                              begin
+                                 Result (P)     := Byte (A / 2**24 mod 256);
+                                 Result (P + 1) := Byte (A / 2**16 mod 256);
+                                 Result (P + 2) := Byte (A / 2**8 mod 256);
+                                 Result (P + 3) := Byte (A mod 256);
+                              end;
+                              P := P + 4;
+                              Result (P) := Byte (Binder_Entry_Len / 256);
+                              Result (P + 1) :=
+                                Byte (Binder_Entry_Len mod 256);
+                              P := P + 2;
+                              Result (P) := Byte (Binder_Size);
+                              P := P + 1;
+                              declare
+                                 Binder_Offset : constant N32 := P;
+                              begin
+                                 Result (P .. P + Binder_Size - 1) :=
+                                   (others => 0);
+                                 P := P + Binder_Size;
+
+                                 --  Patch handshake length
+                                 declare
+                                    New_Body_Len : constant N32 := P - 4;
+                                 begin
+                                    Result (1) := Byte (New_Body_Len / 65536);
+                                    Result (2) :=
+                                      Byte ((New_Body_Len / 256) mod 256);
+                                    Result (3) := Byte (New_Body_Len mod 256);
+                                 end;
+                                 Result (Ext_Len_Offset) :=
+                                   Byte (New_Ext_Len / 256);
+                                 Result (Ext_Len_Offset + 1) :=
+                                   Byte (New_Ext_Len mod 256);
+
+                                 --  Compute binder per RFC 8446 §4.2.11.2.
+                                 declare
+                                    Trunc_Len : constant N32 :=
+                                      Binder_Offset - 3;
+                                    Pre_Len   : constant N32 :=
+                                      (if Retry_Mode
+                                       then HC.Transcript_Len
+                                       else 0);
+                                    Trans_In  : constant Byte_Seq
+                                      (0 .. Pre_Len + Trunc_Len - 1) :=
+                                      HC.Transcript (0 .. Pre_Len - 1)
+                                      & Result (0 .. Trunc_Len - 1);
+                                 begin
+                                    if S.Ticket.PSK_Len = 48 then
+                                       declare
+                                          Trunc_Hash384 :
+                                            SPARKNaCl.Hashing.SHA384.Digest;
+                                          Binder_Key48  :
+                                            SPARKTLSCrypto.HKDF384.OKM384_Seq
+                                              (0 .. 47);
+                                          Finished_K48  :
+                                            SPARKTLSCrypto.HKDF384.OKM384_Seq
+                                              (0 .. 47);
+                                          Binder_V48    : Bytes_48;
+                                       begin
+                                          SPARKNaCl.Hashing.SHA384.Hash
+                                            (Trunc_Hash384, Trans_In);
+                                          Key_Schedule.Derive_Binder_Key_384
+                                            (Binder_Key48, S.Ticket.PSK);
+                                          Key_Schedule.Derive_Finished_Key_384
+                                            (Finished_K48,
+                                             Byte_Seq (Binder_Key48));
+                                          SPARKTLSCrypto.HMAC384.HMAC_SHA_384
+                                            (Output => Binder_V48,
+                                             M      => Byte_Seq
+                                                        (Trunc_Hash384),
+                                             K      => Byte_Seq
+                                                        (Finished_K48));
+                                          Result (Binder_Offset ..
+                                                    Binder_Offset + 47) :=
+                                            Binder_V48;
+                                       end;
+                                    else
+                                       declare
+                                          Trunc_Hash   : Digest;
+                                          Binder_Key   : OKM_Seq (0 .. 31);
+                                          Finished_Key : OKM_Seq (0 .. 31);
+                                          Binder_Val   : Digest;
+                                       begin
+                                          Hash (Trunc_Hash, Trans_In);
+                                          Key_Schedule.Derive_Binder_Key
+                                            (Binder_Key,
+                                             Bytes_32
+                                               (S.Ticket.PSK (0 .. 31)));
+                                          Key_Schedule.Derive_Finished_Key
+                                            (Finished_Key,
+                                             Byte_Seq (Binder_Key));
+                                          HMAC_SHA_256
+                                            (Output => Binder_Val,
+                                             M      => Trunc_Hash,
+                                             K      => Byte_Seq
+                                                        (Finished_Key));
+                                          Result (Binder_Offset ..
+                                                    Binder_Offset + 31) :=
+                                            Binder_Val;
+                                       end;
+                                    end if;
+                                 end;
+                              end;
+
+                              Len := P;
+                           end;
+                        end;
+                     end;
+                  end;
+               end;
             end;
          end;
-
-         Len := P;
       end;
    end Append_PSK_Extension;
 
@@ -931,7 +1012,9 @@ is
       HC         : in out Handshake_Context;
       S          : in out Session;
       Is_HRR_Msg : in     Boolean;
-      OK         :    out Boolean);
+      OK         :    out Boolean)
+   with Pre => Data'Length in 39 .. Max_HS_Msg
+               and then Data'Last < N32 (Natural'Last);
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
@@ -961,11 +1044,22 @@ is
          return;
       end if;
 
-      Sid_Len := N32 (Data (B + 34));
-      P := B + 35 + Sid_Len + 2 + 1;  --  past sid + cipher + comp
-      if P + 2 > Data'Last then
-         return;
-      end if;
+	      Sid_Len := N32 (Data (B + 34));
+	      if Sid_Len > 32 then
+	         S.Last_Error := Decode_Error;
+	         OK := False;
+	         return;
+	      end if;
+	      pragma Assert (Sid_Len <= 32);
+	      if B > N32'Last - 38
+	        or else Sid_Len > N32'Last - B - 38
+	      then
+	         return;
+	      end if;
+	      P := B + 38 + Sid_Len;  --  past sid + cipher + comp
+	      if P > Data'Last - 2 then
+	         return;
+	      end if;
 
       --  RFC 8446 §4.1.4 / §4.1.3: in TLS 1.3 ServerHello + HRR,
       --  legacy_compression_method MUST be 0. The TLS 1.2 parser
@@ -985,6 +1079,11 @@ is
 
       Ext_Total := N32 (Data (P)) * 256 + N32 (Data (P + 1));
       P := P + 2;
+      if Ext_Total > Data'Last - P + 1 then
+         S.Last_Error := Decode_Error;
+         OK := False;
+         return;
+      end if;
 
       declare
          Ext_End : constant N32 := P + Ext_Total;
@@ -999,14 +1098,31 @@ is
 
          --  Pass 1: walk bytes, dup-check, collect (tag, len, off)
          --  into Exts, decide TLS-1.3-vs-1.2 from supported_versions.
-         while P + 4 <= Ext_End loop
-            declare
-               Tag_U16 : constant Unsigned_16 :=
-                  Unsigned_16 (Data (P)) * 256
+	         pragma Assert (N_Ext <= Exts'Last);
+	         while P <= Ext_End - 4 loop
+            pragma Loop_Invariant (N_Ext <= Exts'Last);
+            pragma Loop_Invariant (P >= Data'First);
+	            pragma Loop_Invariant (P <= Ext_End);
+	            pragma Loop_Invariant (Ext_End = Data'Last + 1);
+            pragma Loop_Invariant
+              (for all J in 1 .. N_Ext =>
+                 Exts (J).Offset >= Data'First
+                 and then Exts (J).Offset <= Data'Last + 1
+                 and then Exts (J).E_Len <=
+	                   Data'Last + 1 - Exts (J).Offset);
+	            declare
+                  pragma Assert (P <= Data'Last - 3);
+	               Tag_U16 : constant Unsigned_16 :=
+	                  Unsigned_16 (Data (P)) * 256
                   + Unsigned_16 (Data (P + 1));
                E_Len : constant N32 :=
                   N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
             begin
+               if E_Len > Ext_End - P - 4 then
+                  S.Last_Error := Decode_Error;
+                  OK := False;
+                  return;
+               end if;
                for I in 1 .. N_Ext loop
                   if Exts (I).Tag = Tag_U16 then
                      --  RFC 8446 §4.2: duplicate ext in SH/EE →
@@ -1055,7 +1171,16 @@ is
             elsif HC.Has_TLS_1_3 then E_SH13
             else E_SH12);
       begin
+         pragma Assert (N_Ext <= Exts'Last);
          for I in 1 .. N_Ext loop
+            pragma Loop_Invariant
+              (N_Ext <= Exts'Last);
+            pragma Loop_Invariant
+              (for all J in 1 .. N_Ext =>
+                 Exts (J).Offset >= Data'First
+                 and then Exts (J).Offset <= Data'Last + 1
+                 and then Exts (J).E_Len <=
+                   Data'Last + 1 - Exts (J).Offset);
             declare
                V_OK  : Boolean;
                V_Err : Error_Code;
@@ -1099,11 +1224,11 @@ is
                --  (no key_exchange); cookie body is `cookie_len(2) +
                --  cookie<cookie_len>` (RFC 8446 §4.2.2). Stash both
                --  in HC for the caller's CH2-rebuild step.
-               if Is_HRR_Msg
-                 and then Exts (I).Tag = 16#0033#  --  key_share
-                 and then Exts (I).Offset + 1 <= Data'Last
-                 and then Exts (I).E_Len = 2
-               then
+	               if Is_HRR_Msg
+	                 and then Exts (I).Tag = 16#0033#  --  key_share
+	                 and then Exts (I).Offset <= Data'Last - 1
+	                 and then Exts (I).E_Len = 2
+	               then
                   HC.HRR_Selected_Group :=
                      Unsigned_16 (Data (Exts (I).Offset)) * 256
                      + Unsigned_16 (Data (Exts (I).Offset + 1));
@@ -1115,11 +1240,11 @@ is
                --  is illegal_parameter. The matrix has already
                --  rejected pre_shared_key in SH if we did not
                --  offer it (Requires_Offer => True).
-               if not Is_HRR_Msg
-                 and then Exts (I).Tag = 16#0029#  --  pre_shared_key
-                 and then Exts (I).Offset + 1 <= Data'Last
-                 and then Exts (I).E_Len = 2
-               then
+	               if not Is_HRR_Msg
+	                 and then Exts (I).Tag = 16#0029#  --  pre_shared_key
+	                 and then Exts (I).Offset <= Data'Last - 1
+	                 and then Exts (I).E_Len = 2
+	               then
                   declare
                      Sel : constant Unsigned_16 :=
                        Unsigned_16 (Data (Exts (I).Offset)) * 256 +
@@ -1181,7 +1306,14 @@ is
    --  through this path.
    procedure Apply_SH_Key_Share
      (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-      HC      : in out Handshake_Context);
+      HC      : in out Handshake_Context)
+   with Pre => RFLX.TLS_Handshake.SH_Extension_TLS.Has_Buffer (Ext_Ctx)
+               and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid
+                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data_Length)
+               and then RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed
+                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
+               and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid_Next
+                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data);
 
    procedure Apply_SH_Key_Share
      (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
@@ -1229,6 +1361,10 @@ is
             begin
                if Grp.Known and then
                   Grp.Enum = RFLX.Tls_Parameters.X25519
+                  and then RFLX.RFLX_Types.To_Length
+                    (RFLX.TLS_Handshake.Key_Share_SH.Field_Size
+                       (KS_Ctx,
+                        RFLX.TLS_Handshake.Key_Share_SH.F_Key_Exchange)) = 32
                then
                   declare
                      KB : RBT.Bytes (1 .. 32);
@@ -1240,6 +1376,10 @@ is
                   end;
                elsif Grp.Known and then
                   Grp.Enum = RFLX.Tls_Parameters.Secp256r1
+                  and then RFLX.RFLX_Types.To_Length
+                    (RFLX.TLS_Handshake.Key_Share_SH.Field_Size
+                       (KS_Ctx,
+                        RFLX.TLS_Handshake.Key_Share_SH.F_Key_Exchange)) = 65
                then
                   declare
                      KB : RBT.Bytes (1 .. 65);
@@ -1255,6 +1395,10 @@ is
                   end;
                elsif Grp.Known and then
                   Grp.Enum = RFLX.Tls_Parameters.Secp384r1
+                  and then RFLX.RFLX_Types.To_Length
+                    (RFLX.TLS_Handshake.Key_Share_SH.Field_Size
+                       (KS_Ctx,
+                        RFLX.TLS_Handshake.Key_Share_SH.F_Key_Exchange)) = 97
                then
                   declare
                      KB : RBT.Bytes (1 .. 97);
@@ -1298,6 +1442,14 @@ is
       OK := False;
 
       if Data'Length < 39 then
+         return;
+      end if;
+
+      if Data'Last >= N32 (Natural'Last) then
+         return;
+      end if;
+
+      if Data'Length > Max_HS_Msg then
          return;
       end if;
 
@@ -1393,18 +1545,20 @@ is
          --  Stash HRR cipher suite for the CH2 build's transcript
          --  + the cipher-mismatch check on the second SH (RFC
          --  8446 §4.1.4: cipher_suite from HRR and SH MUST match).
-         if Data'Length >= 4 + 35 + Data (Data'First + 4 + 34) + 2 then
-            declare
-               Sid_Len : constant N32 :=
-                  N32 (Data (Data'First + 4 + 34));
-               Cs_Off  : constant N32 :=
-                  Data'First + 4 + 35 + Sid_Len;
-            begin
+         declare
+            Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
+         begin
+            if N32 (Data'Length) >= 41 + Sid_Len then
+               declare
+                  Cs_Off  : constant N32 := Data'First + 39 + Sid_Len;
+               begin
+                  pragma Assert (Cs_Off + 1 <= Data'Last);
                HC.HRR_Cipher_Suite :=
                   Unsigned_16 (Data (Cs_Off)) * 256
                   + Unsigned_16 (Data (Cs_Off + 1));
-            end;
-         end if;
+               end;
+            end if;
+         end;
          OK := True;
          return;
       end if;
@@ -1479,47 +1633,75 @@ is
       if Well_Formed (Ctx, F_Extensions_TLS) then
          declare
             Exts_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
+            Ctx_First : constant RFLX.RFLX_Types.Index := Ctx.Buffer_First;
+            Ctx_Last  : constant RFLX.RFLX_Types.Index := Ctx.Buffer_Last;
+            Exts_First : constant RFLX.RFLX_Types.Bit_Index :=
+              Field_First (Ctx, F_Extensions_TLS);
+            Exts_Last  : constant RFLX.RFLX_Types.Bit_Length :=
+              Field_Last (Ctx, F_Extensions_TLS);
          begin
             Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
-            while RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element
-                    (Exts_Ctx)
-            loop
-               declare
-                  Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-               begin
-                  RFLX.TLS_Handshake.SH_Extensions_TLS.Switch
-                    (Exts_Ctx, Ext_Ctx);
-                  RFLX.TLS_Handshake.SH_Extension_TLS.Verify_Message
-                    (Ext_Ctx);
+            declare
+            begin
+               while RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element
+                       (Exts_Ctx)
+               loop
+                  pragma Loop_Invariant
+                    (not RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx));
+                  pragma Loop_Invariant
+                    (RFLX.TLS_Handshake.Server_Hello.Present
+                       (Ctx, F_Extensions_TLS));
+                  pragma Loop_Invariant
+                    (RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer
+                       (Exts_Ctx));
+                  pragma Loop_Invariant
+                    (RFLX.TLS_Handshake.SH_Extensions_TLS.Valid
+                       (Exts_Ctx));
+                  pragma Loop_Invariant
+                    (Exts_Ctx.First = Exts_First
+                     and then Exts_Ctx.Last = Exts_Last);
+                  pragma Loop_Invariant
+                    (Ctx.Buffer_First = Ctx_First
+                     and then Ctx.Buffer_Last = Ctx_Last
+                     and then Exts_Ctx.Buffer_First = Ctx_First
+                     and then Exts_Ctx.Buffer_Last = Ctx_Last);
+                  declare
+                     Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+                  begin
+                     RFLX.TLS_Handshake.SH_Extensions_TLS.Switch
+                       (Exts_Ctx, Ext_Ctx);
+                     RFLX.TLS_Handshake.SH_Extension_TLS.Verify_Message
+                       (Ext_Ctx);
 
-                  --  Policy (Where_Allowed, Requires_Offer, body
-                  --  empty) and structural checks (duplicates, ALPN
-                  --  body shape + proto match, SNI body empty,
-                  --  Has_TLS_1_3 detection, Negotiated_ALPN copy) all
-                  --  ran in Pre_Scan_SH_Extensions. This loop is the
-                  --  only RFLX-backed step that remains: key_share
-                  --  body decoding (group dispatch +
-                  --  Get_Key_Exchange). ALPN body extraction stays in
-                  --  Pre_Scan (TLS 1.2) / Extract_ALPN_From_EE (TLS
-                  --  1.3 EE); the TLS 1.3 SH itself carries no ALPN.
-                  if RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message
-                       (Ext_Ctx)
-                    and then RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
-                              (Ext_Ctx).Known
-                    and then RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
-                              (Ext_Ctx).Enum =
-                               RFLX.Tls_Extensiontype_Values.Key_Share
-                  then
-                     Apply_SH_Key_Share (Ext_Ctx, HC);
-                  end if;
+                     --  Policy (Where_Allowed, Requires_Offer, body
+                     --  empty) and structural checks (duplicates, ALPN
+                     --  body shape + proto match, SNI body empty,
+                     --  Has_TLS_1_3 detection, Negotiated_ALPN copy) all
+                     --  ran in Pre_Scan_SH_Extensions. This loop is the
+                     --  only RFLX-backed step that remains: key_share
+                     --  body decoding (group dispatch +
+                     --  Get_Key_Exchange). ALPN body extraction stays in
+                     --  Pre_Scan (TLS 1.2) / Extract_ALPN_From_EE (TLS
+                     --  1.3 EE); the TLS 1.3 SH itself carries no ALPN.
+                     if RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message
+                          (Ext_Ctx)
+                       and then RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
+                                 (Ext_Ctx).Known
+                       and then RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag
+                                 (Ext_Ctx).Enum =
+                                  RFLX.Tls_Extensiontype_Values.Key_Share
+                     then
+                        Apply_SH_Key_Share (Ext_Ctx, HC);
+                     end if;
 
-                  RFLX.TLS_Handshake.SH_Extensions_TLS.Update
-                    (Exts_Ctx, Ext_Ctx);
-               end;
-            end loop;
+                     RFLX.TLS_Handshake.SH_Extensions_TLS.Update
+                       (Exts_Ctx, Ext_Ctx);
+                  end;
+               end loop;
 
-            Update_Extensions_TLS (Ctx, Exts_Ctx);
+               Update_Extensions_TLS (Ctx, Exts_Ctx);
+            end;
 
             --  All dup / unsolicited / body-empty / ALPN-shape checks
             --  ran in Pre_Scan_SH_Extensions above; any failure there
@@ -1635,9 +1817,6 @@ is
             if R (24 + I) /= S_JDK (I) then MJ  := False; end if;
          end loop;
          if M13 or M12 or MJ then
-            pragma Assert
-              (TLS13_Downgrade_Sentinel_RFC_8446_4_1_3
-                 (R (24 .. 31)));
             S.Last_Error := Illegal_Parameter;
             Take_Buffer (Ctx, Buf);
             RFLX_Free (Buf);

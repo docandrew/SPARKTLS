@@ -132,8 +132,11 @@ is
                 and Data'Last < N32'Last
                 and Data'Last <= N32'Last - 16#1_0004#
                 and Data'First >= 0,
-			        Post => S.State = S.State'Old
-			                and then S.Negotiated_Suite = S.Negotiated_Suite'Old;
+				        Post => S.State = S.State'Old
+				                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+                                and then
+                                  (if Nonce_Space_Available (S.Client_App'Old)
+                                   then Nonce_Space_Available (S.Client_App));
    --  OK = False signals a fatal protocol error. `Err` discriminates
    --  the alert kind so the caller picks the right alert code:
    --    Unsupported_Extension : server sent an EE extension we did
@@ -179,18 +182,19 @@ is
 		               then HC.Hash_Len = 48
 		               else HC.Hash_Len = 32)
 	            and then
-	              (if HC.Cert_Request_Received
-	                   and then HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	               then HC.Cfg.Random /= null
-	                    and then HC.Cfg.Local.NaCl_Cert_Len
-	                      in 1 .. N32 (Max_Cert_DER)
-		                    and then Handshake.Sig_Algo_Compatible_With_Cert
-		                      (HC.Negotiated_Sig_Algo,
-		                       HC.Cfg.Local.Sign_Algo)
-		                    and then
-		                      (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-		                       then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512));
+			              (if HC.Cert_Request_Received
+			                   and then HC.Cfg.Local /= null
+			                   and then HC.Cfg.Local.Has_Identity
+			               then HC.Cfg.Random /= null
+			                    and then HC.Cfg.Local.NaCl_Cert_Len
+			                      in 1 .. N32 (Max_Cert_DER)
+			                    and then Handshake.Sig_Algo_Compatible_With_Cert
+			                      (HC.Negotiated_Sig_Algo,
+			                       HC.Cfg.Local.Sign_Algo)
+			                    and then
+			                      (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+			                       then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+			               else True));
    procedure Derive_App_Keys_And_Send_Finished
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -272,7 +276,25 @@ is
 			                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 		                   then HC.Hash_Len = 48
 		                   else HC.Hash_Len = 32),
-	        Post => Result in OK | Has_Output | Error_Alert;
+        Post => Result in OK | Has_Output | Error_Alert
+                and then
+                  (if Result = OK
+                       and then S.State in Wait_Encrypted_Extensions
+                                           | Wait_Certificate_Request
+                                           | Wait_Certificate
+                                           | Wait_Certificate_Verify
+                                           | Wait_Server_Finished
+                   then Nonce_Space_Available (HC.Client_HS)
+                        and then Nonce_Space_Available (S.Client_App)
+                        and then HC.Transcript_Len > 0
+                        and then S.Negotiated_Suite
+                          in Suite_AES_128_GCM_SHA256
+                           | Suite_AES_256_GCM_SHA384
+                           | Suite_CHACHA20_POLY1305_SHA256
+                        and then
+                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+                           then HC.Hash_Len = 48
+                           else HC.Hash_Len = 32));
    procedure Process_Encrypted_Handshake
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -291,6 +313,21 @@ is
 	                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 	                  then HC.Hash_Len = 48
 	                  else HC.Hash_Len = 32)
+	               and then
+	                 (if HC.Cert_Request_Received
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                  then HC.Cfg.Random /= null
+	                       and then HC.Cfg.Local.NaCl_Cert_Len
+	                         in 1 .. N32 (Max_Cert_DER)
+	                       and then Handshake.Sig_Algo_Compatible_With_Cert
+	                         (HC.Negotiated_Sig_Algo,
+	                          HC.Cfg.Local.Sign_Algo)
+	                       and then
+	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                       and then HC.Client_HS.Counter
+	                         <= Unsigned_64'Last - 2)
 	               and then Reasm_Coherent (HC)
 	               and then (HC.Reasm_Buf = null
                          or else (HC.Reasm_Buf'First = 0
@@ -321,6 +358,21 @@ is
 		                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 		                  then HC.Hash_Len = 48
 		                  else HC.Hash_Len = 32)
+		               and then
+		                 (if HC.Cert_Request_Received
+		                      and then HC.Cfg.Local /= null
+		                      and then HC.Cfg.Local.Has_Identity
+		                  then HC.Cfg.Random /= null
+		                       and then HC.Cfg.Local.NaCl_Cert_Len
+		                         in 1 .. N32 (Max_Cert_DER)
+		                       and then Handshake.Sig_Algo_Compatible_With_Cert
+		                         (HC.Negotiated_Sig_Algo,
+		                          HC.Cfg.Local.Sign_Algo)
+		                       and then
+		                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                       and then HC.Client_HS.Counter
+		                         <= Unsigned_64'Last - 2)
 		               and then Reasm_Coherent (HC)
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
@@ -370,15 +422,30 @@ is
                and then Plain_Len >= 0
                and then Plaintext'Last < N32'Last / 2
                and then Plain_Len <= N32 (Plaintext'Length)
-               and then (HC.Reasm_Buf = null
-                         or else (HC.Reasm_Buf'First = 0
-                                  and then HC.Reasm_Buf'Last in 0 .. 131071
-                                  and then HC.Reasm_Len
-                                     <= N32 (HC.Reasm_Buf'Length)
-                                  and then HC.Reasm_Need
-                                     <= N32 (HC.Reasm_Buf'Length)
-                                  and then (if HC.Reasm_Need > 0 then
-                                               HC.Reasm_Need >= 4)));
+	               and then (HC.Reasm_Buf = null
+	                         or else (HC.Reasm_Buf'First = 0
+	                                  and then HC.Reasm_Buf'Last in 0 .. 131071
+	                                  and then HC.Reasm_Len
+	                                     <= N32 (HC.Reasm_Buf'Length)
+	                                  and then HC.Reasm_Need
+	                                     <= N32 (HC.Reasm_Buf'Length)
+	                                  and then (if HC.Reasm_Need > 0 then
+	                                               HC.Reasm_Need >= 4)))
+	               and then
+	                 (if HC.Cert_Request_Received
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                  then HC.Cfg.Random /= null
+	                       and then HC.Cfg.Local.NaCl_Cert_Len
+	                         in 1 .. N32 (Max_Cert_DER)
+	                       and then Handshake.Sig_Algo_Compatible_With_Cert
+	                         (HC.Negotiated_Sig_Algo,
+	                          HC.Cfg.Local.Sign_Algo)
+	                       and then
+	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                       and then HC.Client_HS.Counter
+	                         <= Unsigned_64'Last - 2);
 
    procedure Dispatch_Decrypted_HS_Message
      (S      : in out Session;
@@ -417,21 +484,16 @@ is
 	                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 	                   then HC.Hash_Len = 48
 	                   else HC.Hash_Len = 32),
-        Post => (if Result = OK and then S.State /= Error_State then
-                    HC.Client_HS = HC.Client_HS'Old
-                    and then Nonce_Space_Available (S.Client_App)
-                    and then HC.Transcript_Len > 0
-	                    and then S.Negotiated_Suite
-	                       in Suite_AES_128_GCM_SHA256
-	                        | Suite_AES_256_GCM_SHA384
-	                        | Suite_CHACHA20_POLY1305_SHA256
-	                    and then
-	                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-	                       then HC.Hash_Len = 48
-	                       else HC.Hash_Len = 32))
-                and then (if Result = Has_Output
-                           and then S.State /= Error_State then
-                    Nonce_Space_Available (S.Client_App)
+        Post => (if Result = OK
+                      and then S.State in Wait_Encrypted_Extensions
+                                          | Wait_Certificate_Request
+                                          | Wait_Certificate
+                                          | Wait_Certificate_Verify
+                                          | Wait_Server_Finished
+                 then
+		                    Nonce_Space_Available (HC.Client_HS)
+		                    and then Nonce_Space_Available (S.Client_App)
+	                    and then HC.Transcript_Len > 0
 	                    and then S.Negotiated_Suite
 	                       in Suite_AES_128_GCM_SHA256
 	                        | Suite_AES_256_GCM_SHA384
@@ -487,9 +549,29 @@ is
 	                       and then
 	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
 	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-	                       and then HC.Client_HS.Counter
-	                         <= Unsigned_64'Last - 2),
-		        Post => Pos <= Plain_Len;
+		                       and then HC.Client_HS.Counter
+		                         <= Unsigned_64'Last - 2),
+			        Post => Pos <= Plain_Len
+			                and then (if Result = OK
+			                              and then S.State
+			                                in Wait_Encrypted_Extensions
+			                                 | Wait_Certificate_Request
+			                                 | Wait_Certificate
+			                                 | Wait_Certificate_Verify
+			                                 | Wait_Server_Finished
+			                          then Nonce_Space_Available (HC.Client_HS)
+			                               and then Nonce_Space_Available
+			                                 (S.Client_App)
+			                               and then HC.Transcript_Len > 0
+			                               and then S.Negotiated_Suite
+			                                 in Suite_AES_128_GCM_SHA256
+			                                  | Suite_AES_256_GCM_SHA384
+			                                  | Suite_CHACHA20_POLY1305_SHA256
+			                               and then
+			                                 (if S.Negotiated_Suite =
+			                                       Suite_AES_256_GCM_SHA384
+			                                  then HC.Hash_Len = 48
+			                                  else HC.Hash_Len = 32));
 
    procedure Fill_Decrypted_HS_Reassembly
      (HC            : in out Handshake_Context;
@@ -507,15 +589,73 @@ is
                and then HC.Reasm_Buf'Last in 0 .. 131071
                and then HC.Reasm_Need > 0
                and then HC.Reasm_Need >= 4
-               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length),
-	        Post => Pos <= Plain_Len
-	                and then HC.Hash_Len = HC.Hash_Len'Old
-	                and then Nonce_Space_Available (HC.Client_HS)
-	                and then HC.Transcript_Len > 0
-                and then (if Decode_Failed then
-                             HC.Reasm_Buf = null
-                             and then HC.Reasm_Len = 0
+	               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+	               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+	               and then
+	                 (if HC.Cert_Request_Received
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                  then HC.Cfg.Random /= null
+	                       and then HC.Cfg.Local.NaCl_Cert_Len
+	                         in 1 .. N32 (Max_Cert_DER)
+	                       and then Handshake.Sig_Algo_Compatible_With_Cert
+	                         (HC.Negotiated_Sig_Algo,
+	                          HC.Cfg.Local.Sign_Algo)
+	                       and then
+	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                       and then HC.Client_HS.Counter
+	                         <= Unsigned_64'Last - 2),
+		        Post => Pos <= Plain_Len
+			                and then HC.Hash_Len = HC.Hash_Len'Old
+			                and then Nonce_Space_Available (HC.Client_HS)
+			                and then HC.Client_HS = HC.Client_HS'Old
+			                and then HC.Transcript_Len > 0
+		                and then HC.Cert_Request_Received =
+		                         HC.Cert_Request_Received'Old
+			                and then (if HC.Cfg.Local'Old /= null
+			                          then HC.Cfg.Local /= null)
+			                and then (if HC.Cfg.Local'Old /= null
+			                          then HC.Cfg.Local.Has_Identity =
+			                               HC.Cfg.Local'Old.Has_Identity
+			                            and then HC.Cfg.Local.Sign_Algo =
+			                              HC.Cfg.Local'Old.Sign_Algo
+			                            and then HC.Cfg.Local.RSA_Mod_Len =
+			                              HC.Cfg.Local'Old.RSA_Mod_Len
+			                            and then HC.Cfg.Local.NaCl_Cert_Len =
+			                              HC.Cfg.Local'Old.NaCl_Cert_Len)
+		                and then (if HC.Cfg.Local /= null
+		                          then HC.Cfg.Local'Old /= null)
+		                and then (if HC.Cfg.Local'Old /= null
+		                               and then HC.Cfg.Local'Old.Has_Identity
+		                          then HC.Cfg.Local /= null
+		                               and then HC.Cfg.Local.Has_Identity)
+		                and then (if HC.Cfg.Local /= null
+		                               and then HC.Cfg.Local.Has_Identity
+		                          then HC.Cfg.Local'Old /= null
+		                               and then HC.Cfg.Local'Old.Has_Identity)
+				                and then (if HC.Cfg.Random'Old /= null
+				                          then HC.Cfg.Random /= null)
+				                and then HC.Negotiated_Sig_Algo =
+				                  HC.Negotiated_Sig_Algo'Old
+				                and then
+			                  (if HC.Cert_Request_Received
+			                       and then HC.Cfg.Local /= null
+			                       and then HC.Cfg.Local.Has_Identity
+			                   then HC.Cfg.Random /= null
+			                        and then HC.Cfg.Local.NaCl_Cert_Len
+			                          in 1 .. N32 (Max_Cert_DER)
+			                        and then Handshake.Sig_Algo_Compatible_With_Cert
+			                          (HC.Negotiated_Sig_Algo,
+			                           HC.Cfg.Local.Sign_Algo)
+			                        and then
+			                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+			                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+			                        and then HC.Client_HS.Counter
+			                          <= Unsigned_64'Last - 2)
+		                and then (if Decode_Failed then
+	                             HC.Reasm_Buf = null
+	                             and then HC.Reasm_Len = 0
                              and then HC.Reasm_Need = 0)
                 and then (if not Decode_Failed then
                              HC.Reasm_Buf /= null
@@ -545,15 +685,58 @@ is
                and then Take > 0
                and then HC.Reasm_Len <= N32'Last - Take
                and then Take <= N32 (HC.Reasm_Buf'Length) - HC.Reasm_Len
-               and then From <= N32 (Plaintext'Length)
-               and then Take <= N32 (Plaintext'Length) - From,
-	        Post => HC.Reasm_Buf /= null
-	                and then HC.Reasm_Buf'First = 0
-	                and then HC.Hash_Len = HC.Hash_Len'Old
-	                and then Nonce_Space_Available (HC.Client_HS)
-                and then HC.Transcript_Len > 0
-                and then HC.Reasm_Buf'Last in 0 .. 131071
-                and then HC.Reasm_Len = HC.Reasm_Len'Old + Take
+	               and then From <= N32 (Plaintext'Length)
+	               and then Take <= N32 (Plaintext'Length) - From
+	               and then
+	                 (if HC.Cert_Request_Received
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                  then HC.Cfg.Random /= null
+	                       and then HC.Cfg.Local.NaCl_Cert_Len
+	                         in 1 .. N32 (Max_Cert_DER)
+	                       and then Handshake.Sig_Algo_Compatible_With_Cert
+	                         (HC.Negotiated_Sig_Algo,
+	                          HC.Cfg.Local.Sign_Algo)
+	                       and then
+	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                       and then HC.Client_HS.Counter
+	                         <= Unsigned_64'Last - 2),
+		        Post => HC.Reasm_Buf /= null
+		                and then HC.Reasm_Buf'First = 0
+			                and then HC.Hash_Len = HC.Hash_Len'Old
+			                and then Nonce_Space_Available (HC.Client_HS)
+			                and then HC.Client_HS = HC.Client_HS'Old
+		                and then HC.Transcript_Len > 0
+	                and then HC.Cert_Request_Received =
+	                         HC.Cert_Request_Received'Old
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local /= null)
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local.Has_Identity =
+	                               HC.Cfg.Local'Old.Has_Identity
+	                            and then HC.Cfg.Local.Sign_Algo =
+	                              HC.Cfg.Local'Old.Sign_Algo
+	                            and then HC.Cfg.Local.RSA_Mod_Len =
+	                              HC.Cfg.Local'Old.RSA_Mod_Len
+	                            and then HC.Cfg.Local.NaCl_Cert_Len =
+	                              HC.Cfg.Local'Old.NaCl_Cert_Len)
+	                and then (if HC.Cfg.Local /= null
+	                          then HC.Cfg.Local'Old /= null)
+	                and then (if HC.Cfg.Local'Old /= null
+	                               and then HC.Cfg.Local'Old.Has_Identity
+	                          then HC.Cfg.Local /= null
+	                               and then HC.Cfg.Local.Has_Identity)
+	                and then (if HC.Cfg.Local /= null
+	                               and then HC.Cfg.Local.Has_Identity
+	                          then HC.Cfg.Local'Old /= null
+	                               and then HC.Cfg.Local'Old.Has_Identity)
+		                and then (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
+		                and then HC.Negotiated_Sig_Algo =
+		                  HC.Negotiated_Sig_Algo'Old
+		                and then HC.Reasm_Buf'Last in 0 .. 131071
+	                and then HC.Reasm_Len = HC.Reasm_Len'Old + Take
                 and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
@@ -568,14 +751,90 @@ is
                and then HC.Reasm_Buf'First = 0
                and then HC.Reasm_Buf'Last in 0 .. 131071
                and then HC.Reasm_Len >= 4
-               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
-               and then HC.Reasm_Hdr_Pending,
-	        Post => Nonce_Space_Available (HC.Client_HS)
-	                and then HC.Hash_Len = HC.Hash_Len'Old
-	                and then HC.Transcript_Len > 0
-                and then (if Decode_Failed then
-                             HC.Reasm_Buf = null
+	               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+	               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+	               and then HC.Reasm_Hdr_Pending
+	               and then
+	                 (if HC.Cert_Request_Received
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                  then HC.Cfg.Random /= null
+	                       and then HC.Cfg.Local.NaCl_Cert_Len
+	                         in 1 .. N32 (Max_Cert_DER)
+	                       and then Handshake.Sig_Algo_Compatible_With_Cert
+	                         (HC.Negotiated_Sig_Algo,
+	                          HC.Cfg.Local.Sign_Algo)
+	                       and then
+	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                       and then HC.Client_HS.Counter
+	                         <= Unsigned_64'Last - 2),
+		        Post => Nonce_Space_Available (HC.Client_HS)
+			                and then HC.Hash_Len = HC.Hash_Len'Old
+			                and then HC.Client_HS = HC.Client_HS'Old
+			                and then HC.Transcript_Len > 0
+		                and then HC.Cert_Request_Received =
+		                         HC.Cert_Request_Received'Old
+		                and then (if HC.Cfg.Local'Old /= null
+		                          then HC.Cfg.Local /= null)
+		                and then (if HC.Cfg.Local'Old /= null
+		                          then HC.Cfg.Local.Has_Identity =
+		                               HC.Cfg.Local'Old.Has_Identity
+		                            and then HC.Cfg.Local.Sign_Algo =
+		                              HC.Cfg.Local'Old.Sign_Algo
+		                            and then HC.Cfg.Local.RSA_Mod_Len =
+		                              HC.Cfg.Local'Old.RSA_Mod_Len
+		                            and then HC.Cfg.Local.NaCl_Cert_Len =
+		                              HC.Cfg.Local'Old.NaCl_Cert_Len)
+		                and then (if HC.Cfg.Local'Old /= null
+		                          then HC.Cfg.Local.Has_Identity =
+		                               HC.Cfg.Local'Old.Has_Identity
+		                            and then HC.Cfg.Local.Sign_Algo =
+		                              HC.Cfg.Local'Old.Sign_Algo
+		                            and then HC.Cfg.Local.RSA_Mod_Len =
+		                              HC.Cfg.Local'Old.RSA_Mod_Len
+		                            and then HC.Cfg.Local.NaCl_Cert_Len =
+		                              HC.Cfg.Local'Old.NaCl_Cert_Len)
+		                and then (if HC.Cfg.Local'Old /= null
+		                          then HC.Cfg.Local.Has_Identity =
+		                               HC.Cfg.Local'Old.Has_Identity
+		                            and then HC.Cfg.Local.Sign_Algo =
+		                              HC.Cfg.Local'Old.Sign_Algo
+		                            and then HC.Cfg.Local.RSA_Mod_Len =
+		                              HC.Cfg.Local'Old.RSA_Mod_Len
+		                            and then HC.Cfg.Local.NaCl_Cert_Len =
+		                              HC.Cfg.Local'Old.NaCl_Cert_Len)
+		                and then (if HC.Cfg.Local /= null
+		                          then HC.Cfg.Local'Old /= null)
+		                and then (if HC.Cfg.Local'Old /= null
+		                               and then HC.Cfg.Local'Old.Has_Identity
+		                          then HC.Cfg.Local /= null
+		                               and then HC.Cfg.Local.Has_Identity)
+		                and then (if HC.Cfg.Local /= null
+		                               and then HC.Cfg.Local.Has_Identity
+		                          then HC.Cfg.Local'Old /= null
+		                               and then HC.Cfg.Local'Old.Has_Identity)
+		                and then (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
+		                and then HC.Negotiated_Sig_Algo =
+		                  HC.Negotiated_Sig_Algo'Old
+		                and then
+		                  (if HC.Cert_Request_Received
+		                       and then HC.Cfg.Local /= null
+		                       and then HC.Cfg.Local.Has_Identity
+		                   then HC.Cfg.Random /= null
+		                        and then HC.Cfg.Local.NaCl_Cert_Len
+		                          in 1 .. N32 (Max_Cert_DER)
+		                        and then Handshake.Sig_Algo_Compatible_With_Cert
+		                          (HC.Negotiated_Sig_Algo,
+		                           HC.Cfg.Local.Sign_Algo)
+		                        and then
+		                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                        and then HC.Client_HS.Counter
+		                          <= Unsigned_64'Last - 2)
+		                and then (if Decode_Failed then
+	                             HC.Reasm_Buf = null
                              and then HC.Reasm_Len = 0
                              and then HC.Reasm_Need = 0)
                 and then (if not Decode_Failed then
@@ -630,9 +889,27 @@ is
                and then HC.Reasm_Need in 4 .. Transcript_Capacity
                and then HC.Reasm_Need - 1 <= HC.Reasm_Buf'Last
                and then HC.Reasm_Len >= HC.Reasm_Need,
-        Post => Pos <= Plain_Len
-                and then HC.Reasm_Len = 0
-                and then HC.Reasm_Need = 0;
+	       Post => Pos <= Plain_Len
+	                and then HC.Reasm_Len = 0
+	                and then HC.Reasm_Need = 0
+	                and then (if Result = OK
+	                              and then S.State in Wait_Encrypted_Extensions
+	                                                  | Wait_Certificate_Request
+	                                                  | Wait_Certificate
+	                                                  | Wait_Certificate_Verify
+	                                                  | Wait_Server_Finished
+	                          then Nonce_Space_Available (HC.Client_HS)
+	                               and then Nonce_Space_Available (S.Client_App)
+	                               and then HC.Transcript_Len > 0
+	                               and then S.Negotiated_Suite
+	                                 in Suite_AES_128_GCM_SHA256
+	                                  | Suite_AES_256_GCM_SHA384
+	                                  | Suite_CHACHA20_POLY1305_SHA256
+	                               and then
+	                                 (if S.Negotiated_Suite =
+	                                       Suite_AES_256_GCM_SHA384
+	                                  then HC.Hash_Len = 48
+	                                  else HC.Hash_Len = 32));
 
    procedure Process_Decrypted_HS_Packed_Messages
      (S         : in out Session;
@@ -657,23 +934,28 @@ is
 	               and then Plaintext'First = 0
 	               and then Plaintext'Last < N32'Last / 2
 	               and then Plain_Len <= N32 (Plaintext'Length)
-		               and then Pos <= Plain_Len
-	               and then
-	                 (if HC.Cert_Request_Received
-	                      and then HC.Cfg.Local /= null
-	                      and then HC.Cfg.Local.Has_Identity
-	                  then HC.Cfg.Random /= null
-	                       and then HC.Cfg.Local.NaCl_Cert_Len
-	                         in 1 .. N32 (Max_Cert_DER)
-	                       and then Handshake.Sig_Algo_Compatible_With_Cert
-	                         (HC.Negotiated_Sig_Algo,
-	                          HC.Cfg.Local.Sign_Algo)
-	                       and then
-	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-	                       and then HC.Client_HS.Counter
-	                         <= Unsigned_64'Last - 2),
-		        Post => Pos <= Plain_Len;
+		               and then Pos <= Plain_Len,
+			        Post => Pos <= Plain_Len
+			                and then (if Result = OK
+			                              and then S.State
+			                                in Wait_Encrypted_Extensions
+			                                 | Wait_Certificate_Request
+			                                 | Wait_Certificate
+			                                 | Wait_Certificate_Verify
+			                                 | Wait_Server_Finished
+			                          then Nonce_Space_Available (HC.Client_HS)
+			                               and then Nonce_Space_Available
+			                                 (S.Client_App)
+			                               and then HC.Transcript_Len > 0
+			                               and then S.Negotiated_Suite
+			                                 in Suite_AES_128_GCM_SHA256
+			                                  | Suite_AES_256_GCM_SHA384
+			                                  | Suite_CHACHA20_POLY1305_SHA256
+				                               and then
+				                                 (if S.Negotiated_Suite =
+				                                       Suite_AES_256_GCM_SHA384
+				                                  then HC.Hash_Len = 48
+				                                  else HC.Hash_Len = 32));
 
    procedure Process_One_Decrypted_HS_Message
      (S         : in out Session;
@@ -704,22 +986,7 @@ is
                and then Plaintext'Last < N32'Last / 2
 	               and then Plain_Len <= N32 (Plaintext'Length)
 	               and then Pos <= N32'Last - 4
-	               and then Pos + 4 <= Plain_Len
-	               and then
-	                 (if HC.Cert_Request_Received
-	                      and then HC.Cfg.Local /= null
-	                      and then HC.Cfg.Local.Has_Identity
-	                  then HC.Cfg.Random /= null
-	                       and then HC.Cfg.Local.NaCl_Cert_Len
-	                         in 1 .. N32 (Max_Cert_DER)
-	                       and then Handshake.Sig_Algo_Compatible_With_Cert
-	                         (HC.Negotiated_Sig_Algo,
-	                          HC.Cfg.Local.Sign_Algo)
-	                       and then
-	                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-	                       and then HC.Client_HS.Counter
-	                         <= Unsigned_64'Last - 2),
+	               and then Pos + 4 <= Plain_Len,
 	        Post => Pos <= Plain_Len
 	                and then (if Result = OK
 	                          and then S.State in Wait_Encrypted_Extensions
@@ -739,26 +1006,7 @@ is
 	                               (if S.Negotiated_Suite =
 	                                     Suite_AES_256_GCM_SHA384
 	                                then HC.Hash_Len = 48
-	                                else HC.Hash_Len = 32)
-	                             and then
-	                               (if HC.Cert_Request_Received
-	                                    and then HC.Cfg.Local /= null
-	                                    and then HC.Cfg.Local.Has_Identity
-	                                then HC.Cfg.Random /= null
-	                                     and then HC.Cfg.Local.NaCl_Cert_Len
-	                                       in 1 .. N32 (Max_Cert_DER)
-	                                     and then
-	                                       Handshake
-	                                         .Sig_Algo_Compatible_With_Cert
-	                                           (HC.Negotiated_Sig_Algo,
-	                                            HC.Cfg.Local.Sign_Algo)
-	                                     and then
-	                                       (if HC.Cfg.Local.Sign_Algo =
-	                                             Sign_RSA_PSS
-	                                        then HC.Cfg.Local.RSA_Mod_Len
-	                                             in 64 .. 512)
-	                                     and then HC.Client_HS.Counter
-	                                       <= Unsigned_64'Last - 2));
+	                                else HC.Hash_Len = 32));
 
 
    procedure Process_Connected
@@ -842,14 +1090,32 @@ is
 	                        in Suite_AES_128_GCM_SHA256
 	                         | Suite_AES_256_GCM_SHA384
 	                         | Suite_CHACHA20_POLY1305_SHA256
-	                     and then
-	                       (if S.Negotiated_Suite =
-	                             Suite_AES_256_GCM_SHA384
-	                        then HC.Hash_Len = 48
-	                        else HC.Hash_Len = 32)
-	                     and then Reasm_Coherent (HC)
-                     and then (HC.Reasm_Buf = null
-                               or else (HC.Reasm_Buf'First = 0
+		                     and then
+		                       (if S.Negotiated_Suite =
+		                             Suite_AES_256_GCM_SHA384
+		                        then HC.Hash_Len = 48
+		                        else HC.Hash_Len = 32)
+		                     and then
+		                       (if HC.Cert_Request_Received
+		                            and then HC.Cfg.Local /= null
+		                            and then HC.Cfg.Local.Has_Identity
+		                        then HC.Cfg.Random /= null
+		                             and then HC.Cfg.Local.NaCl_Cert_Len
+		                               in 1 .. N32 (Max_Cert_DER)
+		                             and then Handshake
+		                               .Sig_Algo_Compatible_With_Cert
+		                                 (HC.Negotiated_Sig_Algo,
+		                                  HC.Cfg.Local.Sign_Algo)
+		                             and then
+		                               (if HC.Cfg.Local.Sign_Algo =
+		                                     Sign_RSA_PSS
+		                                then HC.Cfg.Local.RSA_Mod_Len
+		                                     in 64 .. 512)
+		                             and then HC.Client_HS.Counter
+		                               <= Unsigned_64'Last - 2)
+		                     and then Reasm_Coherent (HC)
+	                     and then (HC.Reasm_Buf = null
+	                               or else (HC.Reasm_Buf'First = 0
                                         and then HC.Reasm_Buf'Last
                                            in 0 .. 131071
                                         and then HC.Reasm_Len
@@ -864,25 +1130,10 @@ is
 	               in Suite_AES_128_GCM_SHA256
 	                | Suite_AES_256_GCM_SHA384
 	                | Suite_CHACHA20_POLY1305_SHA256
-	            and then
-	              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-		               then HC.Hash_Len = 48
-		               else HC.Hash_Len = 32)
-	            and then
-	              (if HC.Cert_Request_Received
-	                   and then HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	               then HC.Cfg.Random /= null
-	                    and then HC.Cfg.Local.NaCl_Cert_Len
-	                      in 1 .. N32 (Max_Cert_DER)
-	                    and then Handshake.Sig_Algo_Compatible_With_Cert
-	                      (HC.Negotiated_Sig_Algo,
-	                       HC.Cfg.Local.Sign_Algo)
-	                    and then
-	                      (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-	                       then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-	                    and then HC.Client_HS.Counter
-	                      <= Unsigned_64'Last - 2));
+		            and then
+			              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+			               then HC.Hash_Len = 48
+			               else HC.Hash_Len = 32));
    procedure Handle_WSH_Frame_13
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -1399,7 +1650,19 @@ is
 	                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 	                   then HC.Hash_Len = 48
 	                   else HC.Hash_Len = 32),
-		        Post => Result in OK | Has_Output | Error_Alert;
+			        Post => (if Result = OK
+			                 then HC.Client_HS = HC.Client_HS'Old
+			                      and then Nonce_Space_Available (S.Client_App)
+			                      and then HC.Transcript_Len > 0
+			                      and then S.Negotiated_Suite
+		                         in Suite_AES_128_GCM_SHA256
+		                          | Suite_AES_256_GCM_SHA384
+		                          | Suite_CHACHA20_POLY1305_SHA256
+		                      and then
+		                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                         then HC.Hash_Len = 48
+		                         else HC.Hash_Len = 32))
+	                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_EE_13
      (S      : in out Session;
@@ -1442,8 +1705,8 @@ is
          end if;
       end;
 
-      if HC.Using_PSK then
-         Set_State (S, Wait_Server_Finished);
+	      if HC.Using_PSK then
+	         Set_State (S, Wait_Server_Finished);
       else
          Set_State (S, Wait_Certificate);
       end if;
@@ -1949,9 +2212,9 @@ is
             return;
          end if;
 
-         if HC.Cfg.Skip_Verify then
-            Set_State (S, Wait_Server_Finished);
-            return;
+	         if HC.Cfg.Skip_Verify then
+	            Set_State (S, Wait_Server_Finished);
+	            return;
          end if;
 
          declare
@@ -3139,10 +3402,10 @@ is
                                         = S.Negotiated_Suite_12
                            then
                               HC.TLS12_Resuming := True;
-                              HC.Master_Secret_12 :=
-                                 HC.Cfg.TLS12_Resume_Ticket.Master_Secret;
-                           end if;
-                           Set_State (S, Wait_Server_Finished);
+	                              HC.Master_Secret_12 :=
+	                                 HC.Cfg.TLS12_Resume_Ticket.Master_Secret;
+	                           end if;
+	                           S.State := Wait_Server_Finished;
                         end if;
                         Result := OK;
    end Finalize_SH_Processing;
@@ -3810,13 +4073,25 @@ is
       end;
 
       pragma Assert
-        (if Result = OK and then S.State /= Error_State then
+        (if Result = OK
+             and then S.State in Wait_Encrypted_Extensions
+                                 | Wait_Certificate_Request
+                                 | Wait_Certificate
+                                 | Wait_Certificate_Verify
+                                 | Wait_Server_Finished
+         then
             S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                 | Suite_AES_256_GCM_SHA384
                                 | Suite_CHACHA20_POLY1305_SHA256);
       Free_Byte_Seq (HC.Reasm_Buf);
       pragma Assert
-        (if Result = OK and then S.State /= Error_State then
+        (if Result = OK
+             and then S.State in Wait_Encrypted_Extensions
+                                 | Wait_Certificate_Request
+                                 | Wait_Certificate
+                                 | Wait_Certificate_Verify
+                                 | Wait_Server_Finished
+         then
             S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                 | Suite_AES_256_GCM_SHA384
                                 | Suite_CHACHA20_POLY1305_SHA256);
@@ -3826,7 +4101,13 @@ is
          Pos := Plain_Len;  --  skip rest
       end if;
       pragma Assert
-        (if Result = OK and then S.State /= Error_State then
+        (if Result = OK
+             and then S.State in Wait_Encrypted_Extensions
+                                 | Wait_Certificate_Request
+                                 | Wait_Certificate
+                                 | Wait_Certificate_Verify
+                                 | Wait_Server_Finished
+         then
             S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                 | Suite_AES_256_GCM_SHA384
                                 | Suite_CHACHA20_POLY1305_SHA256);
@@ -4045,9 +4326,43 @@ is
             return;
          end if;
 
-         --  Complete message -- process it.
-         declare
-            Msg_Copy : Byte_Seq (0 .. Msg_Total - 1);
+	         --  Complete message -- process it.
+	         if HC.Cert_Request_Received
+	           and then HC.Cfg.Local /= null
+	           and then HC.Cfg.Local.Has_Identity
+	           and then
+	             (HC.Cfg.Random = null
+		              or else HC.Cfg.Local.NaCl_Cert_Len
+		                not in 1 .. N32 (Max_Cert_DER)
+		              or else not
+		                (HC.Negotiated_Sig_Algo = 0
+		                 or else
+		                   (case HC.Cfg.Local.Sign_Algo is
+		                       when Sign_Ed25519 =>
+		                          HC.Negotiated_Sig_Algo = 16#0807#,
+		                       when Sign_ECDSA_P256 =>
+		                          HC.Negotiated_Sig_Algo = 16#0403#,
+		                       when Sign_ECDSA_P384 =>
+		                          HC.Negotiated_Sig_Algo = 16#0503#,
+		                       when Sign_RSA_PSS =>
+		                          HC.Negotiated_Sig_Algo in
+		                            16#0804# | 16#0805# | 16#0806#,
+		                       when Sign_None =>
+		                          False))
+	              or else
+	                (HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                 and then HC.Cfg.Local.RSA_Mod_Len not in 64 .. 512)
+	              or else HC.Client_HS.Counter > Unsigned_64'Last - 2)
+	         then
+	            S.Last_Error := Internal_Error;
+	            Set_State (S, Error_State);
+	            Result := Error_Alert;
+	            Pos := Plain_Len;
+	            return;
+	         end if;
+
+	         declare
+	            Msg_Copy : Byte_Seq (0 .. Msg_Total - 1);
          begin
             Msg_Copy := Plaintext (Pos .. Msg_End - 1);
             Dispatch_Decrypted_HS_Message (S, HC, Msg_Copy, Result);
@@ -4059,13 +4374,20 @@ is
          --  client Finished flight. In either case this record must not
          --  contain another server handshake message.
          if Result /= OK then
-            if Result = Has_Output
-              and then S.State not in Idle | Closing | Closed | Error_State
-              and then Pos < Plain_Len
-            then
-               Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
-            end if;
-            return;
+	            if Result = Has_Output
+	              and then S.State not in Idle | Closing | Closed | Error_State
+	              and then Pos < Plain_Len
+	            then
+	               if Nonce_Space_Available (S.Client_App) then
+	                  Send_App_Encrypted_Alert
+	                    (S, Unexpected_Message, Result);
+	               else
+	                  S.Last_Error := Insufficient_Buffer;
+	                  Set_State (S, Error_State);
+	                  Result := Error_Alert;
+	               end if;
+	            end if;
+	            return;
          end if;
 
          if S.State = Error_State then
@@ -4084,11 +4406,17 @@ is
            and S.State /= Idle
            and S.State /= Closing
            and S.State /= Closed
-           and S.State /= Error_State
-           and Pos < Plain_Len
-         then
-            Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
-         end if;
+	           and S.State /= Error_State
+	           and Pos < Plain_Len
+	         then
+	            if Nonce_Space_Available (S.Client_App) then
+	               Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+	            else
+	               S.Last_Error := Insufficient_Buffer;
+	               Set_State (S, Error_State);
+	               Result := Error_Alert;
+	            end if;
+	         end if;
       end;
    end Process_One_Decrypted_HS_Message;
 
@@ -4130,25 +4458,10 @@ is
 	               in Suite_AES_128_GCM_SHA256
 	                | Suite_AES_256_GCM_SHA384
 	                | Suite_CHACHA20_POLY1305_SHA256
-	            and then
-		              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-		               then HC.Hash_Len = 48
-		               else HC.Hash_Len = 32)
-	            and then
-	              (if HC.Cert_Request_Received
-	                   and then HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	               then HC.Cfg.Random /= null
-	                    and then HC.Cfg.Local.NaCl_Cert_Len
-	                      in 1 .. N32 (Max_Cert_DER)
-	                    and then Handshake.Sig_Algo_Compatible_With_Cert
-	                      (HC.Negotiated_Sig_Algo,
-	                       HC.Cfg.Local.Sign_Algo)
-	                    and then
-	                      (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-	                       then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-	                    and then HC.Client_HS.Counter
-	                      <= Unsigned_64'Last - 2));
+		            and then
+			              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+			               then HC.Hash_Len = 48
+			               else HC.Hash_Len = 32));
 
 	         Process_One_Decrypted_HS_Message
            (S, HC, Plaintext, Plain_Len, Pos, Result);

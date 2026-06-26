@@ -58,8 +58,17 @@ is
    --  edit that resets HC.Transcript_Len in this proc would fail.
    with Pre  => (if Data'First <= Data'Last then
                     Data'Last - Data'First < Transcript_Capacity)
-                and then HC.Transcript_Len <= Transcript_Capacity,
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then Reasm_Coherent (HC),
         Post => HC.Transcript_Len >= HC.Transcript_Len'Old
+                and then HC.Selected_Group = HC.Selected_Group'Old
+                and then
+                  (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+                and then HC.Reasm_Len = HC.Reasm_Len'Old
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then HC.Reasm_Hdr_Pending =
+                  HC.Reasm_Hdr_Pending'Old
+                and then Reasm_Coherent (HC)
    is
    begin
       if Data'First <= Data'Last then
@@ -329,6 +338,10 @@ is
         Post => HC.Client_HS = HC.Client_HS'Old
                 and then HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.Hash_Len = HC.Hash_Len'Old
+                and then HC.Reasm_Len = HC.Reasm_Len'Old
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then HC.Reasm_Hdr_Pending =
+                  HC.Reasm_Hdr_Pending'Old
                 and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
@@ -395,13 +408,15 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       OK      :    out Boolean)
-         with Pre  => Msg_Len in 3 .. Max_HS_Msg - 4
+         with Pre  => Reasm_Coherent (HC)
+                         and then Msg_Len in 3 .. Max_HS_Msg - 4
                          and then Frag'First >= 0
                          and then Frag'Last < N32'Last - 4
                          and then Frag'First <= N32'Last - 4
                          and then Msg_Len <= N32'Last - Frag'First - 4
                          and then Frag'First + 3 + Msg_Len <= Frag'Last,
-        Post => (if HC.Peer_Cert_Valid then
+        Post => Reasm_Coherent (HC)
+                and then (if HC.Peer_Cert_Valid then
                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                     and then X509.Spans_Valid
                       (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
@@ -513,13 +528,19 @@ is
                                  declare
                                     P_OK : Boolean;
                                  begin
-                                    Parse_X509_From_RFLX
-                                      (Cert_RFLX, C_Len, HC.Peer_Cert, P_OK);
-                                    if P_OK then
-                                       HC.Peer_Cert_Valid :=
-                                         X509.Is_Valid (HC.Peer_Cert);
+	                                    Parse_X509_From_RFLX
+	                                      (Cert_RFLX, C_Len, HC.Peer_Cert, P_OK);
+	                                    if P_OK then
                                        pragma Assert
-                                         (if HC.Peer_Cert_Valid
+                                         (X509.Spans_Valid
+                                           (HC.Peer_Cert,
+                                            X509.N32 (C_Len) - 1));
+                                       pragma Assert
+                                         (HC.Peer_Cert_DER_Len = C_Len);
+	                                       HC.Peer_Cert_Valid :=
+	                                         X509.Is_Valid (HC.Peer_Cert);
+	                                       pragma Assert
+	                                         (if HC.Peer_Cert_Valid
                                           then HC.Peer_Cert_DER_Len
                                                in 1 .. Max_Cert_DER_Len
                                                and then X509.Spans_Valid
@@ -1371,7 +1392,15 @@ is
                 and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => Reasm_Coherent (HC)
+                and then
+                  (if Result = OK then
+                     S.State not in Idle | Closing | Closed | Error_State
+                     and then HC.Reasm_Len = HC.Reasm_Len'Old
+                     and then HC.Reasm_Need = HC.Reasm_Need'Old
+                     and then HC.Reasm_Hdr_Pending =
+                       HC.Reasm_Hdr_Pending'Old);
 
    procedure Dispatch_Server_Flight_Message
      (S        : in out Session;
@@ -1426,6 +1455,13 @@ is
             Handle_SHD_12 (S, HC, Frag, Msg_Len, Result);
 
          when 16#04# =>
+            if Msg_Len < 6 then
+               Free_Byte_Seq (HC.Reasm_Buf);
+               HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+               HC.Reasm_Hdr_Pending := False;
+               Send_Alert_And_Error (S, Decode_Error, Result);
+               return;
+            end if;
             Handle_NST_12 (S, HC, Frag, Msg_Len, Result);
 
          when others =>
@@ -1515,6 +1551,15 @@ is
             pragma Assert (RN <= HC.Reasm_Len);
             pragma Assert (RN <= N32 (HC.Reasm_Buf'Length));
             pragma Assert (HC.Reasm_Buf'Last >= RN - 1);
+            if RN - 1 >= Transcript_Capacity then
+               Free_Byte_Seq (HC.Reasm_Buf);
+               HC.Reasm_Len := 0;
+               HC.Reasm_Need := 0;
+               HC.Reasm_Hdr_Pending := False;
+               Send_Alert_And_Error (S, Decode_Error, Result);
+               pragma Assert (Reasm_Coherent (HC));
+               return;
+            end if;
             declare
                Frag : constant Byte_Seq :=
                   HC.Reasm_Buf (0 .. RN - 1);
@@ -1533,12 +1578,16 @@ is
                   Frag     => Frag,
                   Msg_Len  => Msg_Len,
                   Result   => Result);
-               if Result /= OK
-                 and then Msg_Type /= HT_Server_Hello_Done
-               then
-                  pragma Assert (Reasm_Coherent (HC));
-                  return;
-               end if;
+	               if Result /= OK
+	                 and then Msg_Type /= HT_Server_Hello_Done
+	               then
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Len := 0;
+                  HC.Reasm_Need := 0;
+                  HC.Reasm_Hdr_Pending := False;
+	                  pragma Assert (Reasm_Coherent (HC));
+	                  return;
+	               end if;
             end;
          end;
 
@@ -1552,6 +1601,8 @@ is
            and HC.Reasm_Len > HC.Reasm_Need
            and HC.Reasm_Buf /= null
          then
+            pragma Assert (Reasm_Coherent (HC));
+            pragma Assert (HC.Reasm_Buf'First = 0);
             declare
                Bad_Next : Boolean;
             begin
@@ -2831,10 +2882,11 @@ is
 
    procedure Ensure_Finished_Reasm_Buffer_12
      (HC : in out Handshake_Context)
-   with Pre  => Reasm_Building (HC),
-        Post => Reasm_Building (HC)
-                and HC.Reasm_Buf /= null
-                and HC.Reasm_Len <= HC.Reasm_Need;
+	   with Pre  => Reasm_Building (HC),
+	        Post => Reasm_Building (HC)
+	                and HC.Reasm_Buf /= null
+	                and HC.Reasm_Len <= HC.Reasm_Need
+	                and HC.Client_Seq_12 = HC.Client_Seq_12'Old;
 
    procedure Ensure_Finished_Reasm_Buffer_12
      (HC : in out Handshake_Context)
@@ -2862,12 +2914,13 @@ is
                 and PL - 1 <= Plaintext'Last
                 and P_Pos <= PL
                 and not HC.Reasm_Hdr_Pending,
-        Post => Reasm_Building (HC)
-                and HC.Reasm_Buf /= null
-                and P_Pos >= P_Pos'Old
-                and P_Pos <= PL
-                and HC.Reasm_Len >= HC.Reasm_Len'Old
-                and HC.Reasm_Len <= HC.Reasm_Need;
+	        Post => Reasm_Building (HC)
+	                and HC.Reasm_Buf /= null
+	                and P_Pos >= P_Pos'Old
+	                and P_Pos <= PL
+	                and HC.Reasm_Len >= HC.Reasm_Len'Old
+	                and HC.Reasm_Len <= HC.Reasm_Need
+	                and HC.Client_Seq_12 = HC.Client_Seq_12'Old;
 
    procedure Copy_Finished_Reasm_Bytes_12
      (HC        : in out Handshake_Context;
@@ -2904,7 +2957,20 @@ is
                 and PL > 0
                 and PL - 1 <= Plaintext'Last
                 and Records.TLS12.Nonce_Space_Available_12
-                      (HC.Client_Seq_12);
+                      (HC.Client_Seq_12),
+        Post => Reasm_Building (HC)
+                and then
+                  (if Result = OK then
+                     S.State = S.State'Old
+                     and then Records.TLS12.Nonce_Space_Available_12
+                       (HC.Client_Seq_12)
+                     and then
+                       (if Complete then
+                          HC.Reasm_Buf /= null
+                          and then HC.Reasm_Need >= 4
+                          and then HC.Reasm_Len >= HC.Reasm_Need
+                          and then HC.Reasm_Need <=
+                            N32 (HC.Reasm_Buf'Length)));
 
    procedure Accumulate_Finished_Plaintext_12
      (S         : in out Session;
@@ -3008,7 +3074,9 @@ is
                       (HC.Client_Seq_12),
         Post => Reasm_Building (HC)
                 and (if Result = OK then
-                       S.State not in Idle | Closing | Closed | Error_State);
+                       S.State = S.State'Old
+                       and then S.State not in Idle | Closing | Closed
+                                             | Error_State);
 
    procedure Send_Abbreviated_Client_Flight_12
      (S      : in out Session;
@@ -3071,7 +3139,7 @@ is
 
    procedure Process_Server_Finished
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+   with Pre  => S.State in Wait_Server_Finished | Client_Finished_Sent
                 and Reasm_Building (HC)
                 and HC.Transcript_Len > 0
                 and Records.TLS12.Nonce_Space_Available_12

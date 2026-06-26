@@ -64,7 +64,6 @@ is
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
                 and then S.Role = Role_Server
-                and then Reasm_Building (HC)
                 and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                            (HC.Server_Seq_12)
                 and then SPARKTLSCrypto.P384.Field.Initialized
@@ -80,8 +79,7 @@ is
                         and then
                           SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                             (HC.Cfg.Local)
-                        and then HC.Cfg.Random /= null
-                        and then Reasm_Building (HC));
+                        and then HC.Cfg.Random /= null);
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
@@ -118,11 +116,10 @@ is
         Post => S.State in Wait_Client_Finished | Connected | Closing
                            | Error_State
 	               and then HC.Cfg.Local /= null
-	               and then HC.Cfg.Local.Has_Identity
-	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                          (HC.Cfg.Local)
-	               and then HC.Cfg.Random /= null
-                and then Reasm_Building (HC);
+	                and then HC.Cfg.Local.Has_Identity
+	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                  (HC.Cfg.Local)
+	                and then HC.Cfg.Random /= null;
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block

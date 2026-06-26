@@ -48,6 +48,8 @@ is
                     and then SPARKTLSCrypto.P384.ECDSA.Initialized)
                and then (if HC.CKE_Received_12 and HC.CCS_Received
                          then Reasm_Building (HC)
+                              and then S.State in Wait_Server_Finished
+                                                  | Client_Finished_Sent
                               and then HC.Transcript_Len > 0
                               and then SPARKTLS.Records.TLS12
                                 .Nonce_Space_Available_12

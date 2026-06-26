@@ -193,10 +193,9 @@ is
 	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                           (HC.Cfg.Local)
 	                and then HC.Cfg.Random /= null
-                and then S.State = Wait_Client_Hello
-                and then S.Role = Role_Server
-                and then Reasm_Building (HC)
-                and then SPARKTLSCrypto.P384.Field.Initialized
+	                and then S.State = Wait_Client_Hello
+	                and then S.Role = Role_Server
+	                and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 	        Post => S.State in Server_Hello_Sent | Error_State
 	                and then S.Role = Role_Server
@@ -204,10 +203,9 @@ is
 	                and then HC.Cfg.Local /= null
 	                and then HC.Cfg.Local.Has_Identity
 	                and then
-	                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                    (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null
-	                and then Reasm_Building (HC);
+		                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+		                    (HC.Cfg.Local)
+		                and then HC.Cfg.Random /= null;
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
    --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
@@ -224,11 +222,10 @@ is
 	                           (HC.Cfg.Local)
 	                and then HC.Cfg.Random /= null
                 and then HC.Cfg.TLS12_Ticket_Keys /= null
-                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
-                and then S.State = Wait_Client_Hello
-                and then S.Role = Role_Server
-                and then Reasm_Building (HC)
-                and then S.Negotiated_Suite in
+	                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+	                and then S.State = Wait_Client_Hello
+	                and then S.Role = Role_Server
+	                and then S.Negotiated_Suite in
                   Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_RSA_AES256_GCM_SHA384
                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
@@ -243,10 +240,9 @@ is
 	                and then HC.Cfg.Local /= null
 	                and then HC.Cfg.Local.Has_Identity
 	                and then
-	                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                    (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null
-	                and then Reasm_Building (HC);
+		                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+		                    (HC.Cfg.Local)
+		                and then HC.Cfg.Random /= null;
 
    procedure Build_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)

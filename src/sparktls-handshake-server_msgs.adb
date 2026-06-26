@@ -563,7 +563,14 @@ is
 	      HC   : in out Handshake_Context;
 	      OK   :    out Boolean)
 	   with Pre => Data'First = 0
-	               and then Data'Last in 3 .. 511;
+	               and then Data'Last in 3 .. 511,
+        Post => HC.HRR_Sent = HC.HRR_Sent'Old
+                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Random'Old /= null
+                          then HC.Cfg.Random /= null);
 
    procedure Copy_ALPN_Name
      (Data : in     Byte_Seq;
@@ -571,9 +578,16 @@ is
       PL   : in     N32;
       HC   : in out Handshake_Context)
    with Pre => Data'First = 0
-               and then PL in 1 .. N32 (Max_Hostname_Len)
-               and then P <= N32'Last - PL
-               and then P + PL <= Data'Last;
+	               and then PL in 1 .. N32 (Max_Hostname_Len)
+	               and then P <= N32'Last - PL
+	               and then P + PL <= Data'Last,
+        Post => HC.HRR_Sent = HC.HRR_Sent'Old
+                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Random'Old /= null
+                          then HC.Cfg.Random /= null);
 
    procedure Copy_ALPN_Name
      (Data : in     Byte_Seq;
@@ -610,6 +624,15 @@ is
       while P <= 1 + List_Len and then Iter_Count < Cap loop
          pragma Loop_Invariant (P >= 2 and then P <= DLen);
          pragma Loop_Invariant (Iter_Count <= Cap);
+         pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Server_HS.Counter = HC.Server_HS.Counter'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Server_HS.Suite = HC.Server_HS.Suite'Loop_Entry);
+         pragma Loop_Invariant
+           (if HC.Cfg.Local'Loop_Entry /= null then HC.Cfg.Local /= null);
+         pragma Loop_Invariant
+           (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
          pragma Loop_Variant (Increases => P);
          declare
             PL : constant N32 := N32 (Data (P));
@@ -1061,7 +1084,7 @@ is
    --  Apply one parsed cipher suite to the session's negotiation state:
    --  pick the best TLS 1.3 suite (preferring ChaCha20) and the first
    --  TLS 1.2 ECDHE suite we recognize.
-   procedure Apply_Cipher_Suite
+  procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
       S         : in out Session;
       HC        : in out Handshake_Context)
@@ -1198,7 +1221,7 @@ is
    --  Currently only the signature_algorithms branch with a malformed
    --  inner length triggers this; other malformed extensions are
    --  silently skipped (RFC 8446 doesn't require strict per-ext error).
-   procedure Apply_CH_Extension
+  procedure Apply_CH_Extension
      (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
       HC      : in out Handshake_Context;
       OK      :    out Boolean)
@@ -1340,7 +1363,7 @@ is
 	                       = RFLX.TLS_Handshake.Data_Length (DLen)
 	              and then No_Duplicate_Extensions_RFC_8446_4_2 (HC);
 
-   procedure Register_CH_Extension
+  procedure Register_CH_Extension
      (Code : in     Unsigned_32;
       HC   : in out Handshake_Context;
       OK   :    out Boolean)
@@ -2077,7 +2100,7 @@ is
       Aborting : in out Boolean;
       Saw_PSK  : in out Boolean)
       with Pre => RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer (Ext_Ctx)
-                  and then No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+	                  and then No_Duplicate_Extensions_RFC_8446_4_2 (HC);
 
    procedure Process_CH_Extension_Element
      (Ext_Ctx  : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -2154,9 +2177,9 @@ is
                   and then Valid_Next (Ctx, F_Extensions_TLS)
                   and then Exts_Ctx.First =
                              Field_First (Ctx, F_Extensions_TLS)
-                     and then Exts_Ctx.Last  =
-                                Field_Last  (Ctx, F_Extensions_TLS)
-	                     and then No_Duplicate_Extensions_RFC_8446_4_2 (HC));
+	                     and then Exts_Ctx.Last  =
+	                                Field_Last  (Ctx, F_Extensions_TLS)
+		                     and then No_Duplicate_Extensions_RFC_8446_4_2 (HC));
             declare
                Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             begin
@@ -2297,17 +2320,20 @@ is
       Body_Len     : N32;
       Buf          : RBT.Bytes_Ptr;
       Ctx          : Context;
-	      Saved_Local  : constant Identity_Access := HC.Cfg.Local;
-	      Saved_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
-	      function Saved_Config_Frame return Boolean is
-	        (Local_Config_Frame (Saved_Local, HC.Cfg.Local)
-	         and then
-	           (if Saved_Random /= null
-	            then HC.Cfg.Random /= null))
+		      Saved_Local  : constant Identity_Access := HC.Cfg.Local;
+		      Saved_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
+		      function Saved_Config_Frame return Boolean is
+		        ((if Saved_Local /= null
+                 then HC.Cfg.Local /= null
+                      and then
+                        (if Saved_Local.Has_Identity
+                         then HC.Cfg.Local.Has_Identity))
+		         and then
+		           (if Saved_Random /= null
+		            then HC.Cfg.Random /= null))
       with Ghost;
    begin
       OK := False;
-      pragma Assert (Local_Config_Valid (Saved_Local));
 
          if Data'Length < 39 then
             S.Last_Error := Decode_Error;
