@@ -182,6 +182,29 @@ is
       end if;
    end Append_Transcript;
 
+   procedure Set_Server_Random_12
+     (HC     : in out Handshake_Context;
+	      Random : in     Bytes_32)
+	   with Pre  => Reasm_Building (HC),
+	        Post => HC.Version = HC.Version'Old
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local /= null)
+	                and then (if HC.Cfg.Local'Old /= null
+	                              and then HC.Cfg.Local'Old.Has_Identity
+	                          then HC.Cfg.Local /= null
+	                               and then HC.Cfg.Local.Has_Identity)
+	                and then (if HC.Cfg.Random'Old /= null
+	                          then HC.Cfg.Random /= null)
+	                and then Reasm_Building (HC);
+
+   procedure Set_Server_Random_12
+     (HC     : in out Handshake_Context;
+      Random : in     Bytes_32)
+   is
+   begin
+      HC.Server_Random := Random;
+   end Set_Server_Random_12;
+
    ------------------------------------------------------------------
    --  Forward decl: full handshake state machine entry that the resume
    --  attempt may fall through to.
@@ -691,8 +714,13 @@ is
       --  doesn't try to echo a stale value.
       HC.Negotiated_Sig_Algo := 0;
 
-      --  Fresh server random (32 bytes).
-      Gen_Random (Byte_Seq (HC.Server_Random));
+	      --  Fresh server random (32 bytes).
+	      declare
+	         Server_Random : Bytes_32;
+	      begin
+	         Gen_Random (Byte_Seq (Server_Random));
+	         Set_Server_Random_12 (HC, Server_Random);
+	      end;
 
       --  1. ServerHello (with empty session_ticket ext, since
       --     TLS12_Ticket_Offered + TLS12_Ticket_Keys are set).

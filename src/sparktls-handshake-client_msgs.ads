@@ -40,21 +40,43 @@ is
 	                and then
 	                  (if Retry_Mode
 	                   then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
-	                and then
-	                  (if HC.Cfg.TLS12_Resume_Ticket.Valid
-	                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
-	                        <= Max_TLS12_Ticket_Len);
+		                and then
+		                  (if HC.Cfg.TLS12_Resume_Ticket.Valid
+		                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
+		                        <= Max_TLS12_Ticket_Len)
+		                and then Reasm_Building (HC),
+		        Post => (if HC.Cfg.Random'Old /= null
+		                  then HC.Cfg.Random /= null)
+		                and then HC.Transcript_Len = HC.Transcript_Len'Old
+		                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+		                and then Reasm_Building (HC);
 
    --  Parse a ServerHello from raw handshake message bytes.
    --  Extracts: server random, cipher suite, key share (server public key).
-   procedure Parse_Server_Hello
-     (S    : in out Session;
-      HC   : in out Handshake_Context;
-      Data : in     Byte_Seq;
-      OK   :    out Boolean)
-	   with Pre => Data'Length > 0
-	               and then SPARKTLSCrypto.P384.Field.Initialized
-	               and then HC.HRR_Cookie_Len <=
-	                 N32 (HC.HRR_Cookie'Length);
+	   procedure Parse_Server_Hello
+	     (S    : in out Session;
+	      HC   : in out Handshake_Context;
+	      Data : in     Byte_Seq;
+	      OK   :    out Boolean)
+		   with Pre => Data'Length > 0
+		               and then SPARKTLSCrypto.P384.Field.Initialized
+		               and then HC.HRR_Cookie_Len <=
+		                 N32 (HC.HRR_Cookie'Length)
+		               and then Reasm_Building (HC),
+		        Post => S.State = S.State'Old
+		                and then (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
+		                and then HC.Transcript_Len = HC.Transcript_Len'Old
+		                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+		                and then
+		                  (if OK
+		                   and then HC.Version = TLS_1_3
+		                   and then
+		                     (not HC.Got_HRR or else HC.Sent_HRR_CCS)
+		                   then S.Negotiated_Suite in
+		                     Suite_AES_128_GCM_SHA256
+		                   | Suite_AES_256_GCM_SHA384
+		                   | Suite_CHACHA20_POLY1305_SHA256)
+		                and then Reasm_Building (HC);
 
 end SPARKTLS.Handshake.Client_Msgs;

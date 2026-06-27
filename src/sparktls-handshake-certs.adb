@@ -646,6 +646,15 @@ is
 	        Post => HC.Client_HS = HC.Client_HS'Old
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
+	                and then (if HC.Cfg.Local'Old /= null
+	                          then HC.Cfg.Local /= null)
+	                and then (if HC.Cfg.Local'Old /= null
+	                              and then HC.Cfg.Local'Old.Has_Identity
+	                          then HC.Cfg.Local /= null
+	                               and then HC.Cfg.Local.Has_Identity)
+	                and then (if HC.Cfg.Random'Old /= null
+	                          then HC.Cfg.Random /= null)
+	                and then Reasm_Building (HC)
 	                and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
@@ -781,6 +790,16 @@ is
 	                       HC.Transcript_Len =
 	                         HC.Transcript_Len'Loop_Entry
 	                     and then HC.Hash_Len = HC.Hash_Len'Loop_Entry
+	                     and then (if HC.Cfg.Local'Loop_Entry /= null
+	                               then HC.Cfg.Local /= null)
+	                     and then
+	                       (if HC.Cfg.Local'Loop_Entry /= null
+	                           and then HC.Cfg.Local'Loop_Entry.Has_Identity
+	                        then HC.Cfg.Local /= null
+	                             and then HC.Cfg.Local.Has_Identity)
+	                     and then (if HC.Cfg.Random'Loop_Entry /= null
+	                               then HC.Cfg.Random /= null)
+	                     and then Reasm_Building (HC)
 	                     and then
                        (if HC.Peer_Cert_Valid
                         then HC.Peer_Cert_DER_Len

@@ -121,7 +121,8 @@ is
 	                and then HC.Cfg.Local.Has_Identity
 	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                  (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null;
+	                and then HC.Cfg.Random /= null
+                 and then Reasm_Building (HC);
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block

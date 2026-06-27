@@ -258,14 +258,16 @@ is
    with Pre  => Server_Active (S)
                 and then Server_Configured (HC)
                 and then HC.Transcript_Len > 0
+                and then Reasm_Building (HC)
                 and then Plaintext'Length > 0
                 and then Plaintext'Length <= Max_Fragment
                 and then Plaintext'Length < Transcript_Capacity
                 and then Nonce_Space_Available (HC.Server_HS),
 	        Post => (if Emitted
-	                 then Server_Active (S)
-	                      and then Server_Configured (HC)
-	                      and then HC.Transcript_Len > 0
+		                 then Server_Active (S)
+		                      and then Server_Configured (HC)
+		                      and then Reasm_Building (HC)
+		                      and then HC.Transcript_Len > 0
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
                       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -273,9 +275,10 @@ is
                         HC.Server_HS.Counter'Old + 1
                       and then Result = OK)
 		                and then (if not Emitted
-		                          then S.State = Error_State
-		                               and then Result = Error_Alert
-		                               and then HC.Server_HS.Counter = Saved_Ctr);
+			                          then S.State = Error_State
+			                               and then Result = Error_Alert
+			                               and then Reasm_Building (HC)
+			                               and then HC.Server_HS.Counter = Saved_Ctr);
 
    procedure Append_And_Encrypt_Server_HS_Fragmented
      (S         : in out Session;
@@ -288,13 +291,15 @@ is
    with Pre  => Server_Active (S)
                 and then Server_Configured (HC)
                 and then HC.Transcript_Len > 0
+                and then Reasm_Building (HC)
                 and then Plaintext'First = 0
                 and then Plaintext'Last in 0 .. N32 (Transcript_Capacity) - 2
                 and then HC.Server_HS.Counter <= Unsigned_64'Last - 2,
 	        Post => (if Emitted
-	                 then Server_Active (S)
-	                      and then Server_Configured (HC)
-	                      and then HC.Transcript_Len > 0
+		                 then Server_Active (S)
+		                      and then Server_Configured (HC)
+		                      and then Reasm_Building (HC)
+		                      and then HC.Transcript_Len > 0
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
                       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -303,9 +308,10 @@ is
                         HC.Server_HS.Counter'Old + 2
                       and then Result = OK)
 		                and then (if not Emitted
-		                          then S.State = Error_State
-		                               and then Result = Error_Alert
-		                               and then HC.Server_HS.Counter = Saved_Ctr);
+			                          then S.State = Error_State
+			                               and then Result = Error_Alert
+			                               and then Reasm_Building (HC)
+			                               and then HC.Server_HS.Counter = Saved_Ctr);
 
    procedure Process_Client_Auth
      (S      : in out Session;
@@ -412,15 +418,17 @@ is
 		               and then Plain_Len > 0
 		               and then Plaintext'Last < N32'Last
 		               and then Plain_Len - 1 <= Plaintext'Last
-		               and then HC.Transcript_Len > 0
-		               and then
-		                 (if HC.Cfg.Ticket_Store /= null
-	                  then HC.Cfg.Ticket_Store.Next
-	                       in 0 .. Max_Cached_Tickets - 1),
+			               and then HC.Transcript_Len > 0
+			               and then Reasm_Building (HC)
+			               and then
+			                 (if HC.Cfg.Ticket_Store /= null
+		                  then HC.Cfg.Ticket_Store.Next
+		                       in 0 .. Max_Cached_Tickets - 1),
 		        Post => (S.State = S.State'Old
 		                 or else Valid_Transition (S.State'Old, S.State))
-		                and then (if S.State not in Error_State | Closed
-		                          then Server_Configured (HC));
+			                and then (if S.State not in Error_State | Closed
+			                          then Server_Configured (HC)
+			                               and then Reasm_Building (HC));
 
 
 
@@ -1287,15 +1295,17 @@ is
 		                  is
 		                     More_Input_Needed : Boolean;
 
-	                     procedure Decode_Pending_Reassembly_Header
-	                     with Pre => S.State = Wait_Client_Hello
-	                                 and then S.Role = Role_Server
-	                                 and then Server_Configured (HC)
-	                                 and then Reasm_Building (HC)
-	                                 and then Server_State_Keys_Ready (S, HC)
-	                                 and then HC.Reasm_Hdr_Pending
-	                                 and then HC.Reasm_Len >= 4
-	                                 and then HC.Reasm_Buf /= null,
+		                     procedure Decode_Pending_Reassembly_Header
+		                     with Pre => S.State = Wait_Client_Hello
+		                                 and then S.Role = Role_Server
+		                                 and then Server_Configured (HC)
+		                                 and then Server_State_Keys_Ready (S, HC)
+		                                 and then HC.Reasm_Hdr_Pending
+		                                 and then HC.Reasm_Len >= 4
+		                                 and then HC.Reasm_Need = 4
+		                                 and then HC.Reasm_Buf /= null
+		                                 and then HC.Reasm_Buf'First = 0
+		                                 and then HC.Reasm_Buf'Length = Max_HS_Msg,
 				                          Post =>
 					                            Wait_Client_Hello_Post (S, HC)
 				                            and then
@@ -1445,12 +1455,11 @@ is
 			                        pragma Assert (S.Role = Role_Server);
 			                        pragma Assert (Server_Configured (HC));
 		                        pragma Assert (HC.Reasm_Need = 4);
-		                        pragma Assert
-		                          (HC.Reasm_Buf'Length = Max_HS_Msg);
-		                        pragma Assert (HC.Reasm_Len = HC.Reasm_Need);
-			                        pragma Assert (Reasm_Building (HC));
-		                        pragma Assert (Server_State_Keys_Ready (S, HC));
-		                        Decode_Pending_Reassembly_Header;
+			                        pragma Assert
+			                          (HC.Reasm_Buf'Length = Max_HS_Msg);
+			                        pragma Assert (HC.Reasm_Len = HC.Reasm_Need);
+			                        pragma Assert (Server_State_Keys_Ready (S, HC));
+			                        Decode_Pending_Reassembly_Header;
 		                        if S.State /= Wait_Client_Hello then
 	                           pragma Assert (Wait_Client_Hello_Post (S, HC));
 	                           return;
@@ -2034,7 +2043,7 @@ is
 		                     pragma Assert
 		                       (if S.State not in Error_State | Closed
 		                        then Reasm_Building (HC));
-	                  end;
+		               end;
 	                  return;
 	               end if;
 
@@ -2165,9 +2174,10 @@ is
 			                    (S.State = Old_State
 			                     or else Valid_Transition
 		                       (Old_State, S.State));
-		                  pragma Assert
-		                    (if S.State not in Error_State | Closed
-		                     then Reasm_Building (HC));
+		                  if S.State not in Error_State | Closed then
+		                     pragma Assert (S.State = Server_Hello_Sent);
+		                     pragma Assert (Reasm_Building (HC));
+		                  end if;
 	               end;
 	            end;
 
@@ -4186,9 +4196,12 @@ is
                Dec_Valid  : Boolean;
             begin
                if Frag_Len < Records.Tag_Size + 1 then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
-                  return;
+	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+	                  pragma Assert
+	                    (if S.State not in Error_State | Closed
+	                     then Reasm_Building (HC));
+	                  return;
                end if;
 
                --  RFC 8446 §5.4: TLSInnerPlaintext MUST NOT exceed
@@ -4196,9 +4209,12 @@ is
                if Frag_Len - Records.Tag_Size >
                   Records.Max_Fragment + 1
                then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Encrypted_Alert (S, Record_Overflow, Result);
-                  return;
+	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                  Send_Encrypted_Alert (S, Record_Overflow, Result);
+	                  pragma Assert
+	                    (if S.State not in Error_State | Closed
+	                     then Reasm_Building (HC));
+	                  return;
                end if;
 
                Records.Decrypt_Record
@@ -4227,9 +4243,10 @@ is
                     and then HC.Skipped_Early_Data_Records < 32
                   then
                      HC.Skipped_Early_Data_Records :=
-                        HC.Skipped_Early_Data_Records + 1;
-                     Result := OK;
-                     return;
+	                     HC.Skipped_Early_Data_Records + 1;
+	                     Result := OK;
+	                     pragma Assert (Reasm_Building (HC));
+	                     return;
                   end if;
                   --  MAC failure or empty inner plaintext.
                   --  Send alert with app keys (client switched to app
@@ -4245,10 +4262,13 @@ is
                   Set_State (S, Error_State);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
-                  else
-                     Result := Error_Alert;
-                  end if;
-                  return;
+	                  else
+	                     Result := Error_Alert;
+	                  end if;
+	                  pragma Assert
+	                    (if S.State not in Error_State | Closed
+	                     then Reasm_Building (HC));
+	                  return;
                end if;
 
                if Inner_Type = 16#15# and then Plain_Len >= 2 then
@@ -4256,9 +4276,12 @@ is
                   S.Last_Error := Error_Code'Val
                     (Natural'Min (Natural (Plaintext (1)),
                                   Error_Code'Pos (Error_Code'Last)));
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
-                  return;
+	                  Set_State (S, Error_State);
+	                  Result := Error_Alert;
+	                  pragma Assert
+	                    (if S.State not in Error_State | Closed
+	                     then Reasm_Building (HC));
+	                  return;
                elsif Inner_Type /= 16#16# then
                   --  Unexpected inner type during handshake
                   declare
@@ -4271,16 +4294,22 @@ is
                   Set_State (S, Error_State);
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
-                  else
-                     Result := Error_Alert;
-                  end if;
-                  return;
+	                  else
+	                     Result := Error_Alert;
+	                  end if;
+	                  pragma Assert
+	                    (if S.State not in Error_State | Closed
+	                     then Reasm_Building (HC));
+	                  return;
                end if;
 
                --  Parse handshake header
-               if Plain_Len = 0 then
-                  Send_Encrypted_Alert (S, Decode_Error, Result);
-                  return;
+	               if Plain_Len = 0 then
+	                  Send_Encrypted_Alert (S, Decode_Error, Result);
+	                  pragma Assert
+	                    (if S.State not in Error_State | Closed
+	                     then Reasm_Building (HC));
+	                  return;
                end if;
 
                declare
@@ -4318,10 +4347,13 @@ is
                      Set_State (S, Error_State);
                      if Output_Pending (S) > 0 then
                         Result := Has_Output;
-                     else
-                        Result := Error_Alert;
-                     end if;
-                     return;
+	                     else
+	                        Result := Error_Alert;
+	                     end if;
+	                     pragma Assert
+	                       (if S.State not in Error_State | Closed
+	                        then Reasm_Building (HC));
+	                     return;
                   end if;
 
                   if Msg_Type /= Handshake.HT_Finished then
@@ -4336,15 +4368,21 @@ is
                      Set_State (S, Error_State);
                      if Output_Pending (S) > 0 then
                         Result := Has_Output;
-                     else
-                        Result := Error_Alert;
-                     end if;
-                     return;
+	                     else
+	                        Result := Error_Alert;
+	                     end if;
+	                     pragma Assert
+	                       (if S.State not in Error_State | Closed
+	                        then Reasm_Building (HC));
+	                     return;
                   end if;
 
-                  Verify_Client_Finished
-                    (S, HC, Plaintext, Plain_Len, Msg_Len, Result);
-               end;
+	                  Verify_Client_Finished
+	                    (S, HC, Plaintext, Plain_Len, Msg_Len, Result);
+	                  pragma Assert
+	                    (if S.State not in Error_State | Closed
+	                     then Reasm_Building (HC));
+	               end;
             end;
    end Handle_PCF_App_Data;
 
