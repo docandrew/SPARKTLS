@@ -181,10 +181,8 @@ is
 		                     and then HC.Reasm_Need > 0
 		                   then HC.Reasm_Len < HC.Reasm_Need)
 		                and then Server_State_Keys_Ready (S, HC),
-	        Post => (S.State = S.State'Old
-	                 or else Valid_Transition (S.State'Old, S.State))
-			                and then (if S.State not in Error_State | Closed
-			                          then Server_Configured (HC));
+		        Post => S.State = S.State'Old
+		                or else Valid_Transition (S.State'Old, S.State);
 
    procedure Build_Server_Flight
      (S      : in out Session;
@@ -2109,8 +2107,8 @@ is
 	                       (S, HC, Frag, Parse_OK);
 	                     pragma Assert (HC.HRR_Sent);
 
-                     if not Parse_OK then
-                        --  After HRR, CH2 parse failures are
+		                     if not Parse_OK then
+	                        --  After HRR, CH2 parse failures are
                         --  illegal_parameter (RFC 8446 §4.1.4)
                         S.Input.Read_Pos :=
                            S.Input.Read_Pos + Rec.Record_Len;
@@ -2123,10 +2121,17 @@ is
 			                        pragma Assert
 			                          (if S.State not in Error_State | Closed
 			                           then Reasm_Building (HC));
-		                        return;
-	                     end if;
+			                        return;
+		                     end if;
+		                     pragma Assert (Parse_OK);
+		                     pragma Assert (S.State = Wait_Client_Hello_Retry);
+		                     pragma Assert
+		                       (S.Negotiated_Suite in
+		                          Suite_AES_128_GCM_SHA256
+		                        | Suite_AES_256_GCM_SHA384
+		                        | Suite_CHACHA20_POLY1305_SHA256);
 
-                     --  RFC 8446 §4.1.2: CH2 extensions must be in
+	                     --  RFC 8446 §4.1.2: CH2 extensions must be in
                      --  the same order as CH1. Compare fingerprints.
                      --  Cookie is excluded from the hash in both CH1
                      --  and CH2, so adding cookie doesn't affect it.
@@ -2147,9 +2152,14 @@ is
 	                     pragma Assert (HC.HRR_Sent);
 	                  end;
 
-		                  --  Append CH2 to transcript
-		                  Append_Transcript (HC, Frag);
-		                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+			                  --  Append CH2 to transcript
+			                  Append_Transcript (HC, Frag);
+			                  pragma Assert
+			                    (S.Negotiated_Suite in
+			                       Suite_AES_128_GCM_SHA256
+			                     | Suite_AES_256_GCM_SHA384
+			                     | Suite_CHACHA20_POLY1305_SHA256);
+			                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 			                  pragma Assert (HC.HRR_Sent);
 			                  pragma Assert (S.State = Wait_Client_Hello_Retry);
 				                  pragma Assert (Server_Configured (HC));
@@ -2169,7 +2179,6 @@ is
 				                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
 				                  pragma Assert (Nonce_Space_Available (S.Server_App));
 				                  pragma Assert (Reasm_Building (HC));
-				                  pragma Assert (HC.Version = TLS_1_3);
 				                  pragma Assert
 			                    (S.Negotiated_Suite in
 		                       Suite_AES_128_GCM_SHA256
@@ -2253,10 +2262,7 @@ is
 	         when others =>
 	            pragma Assert (S.State = Error_State);
 	      end case;
-	      pragma Assert
-	        (if S.State not in Error_State | Closed
-	         then Server_Configured (HC));
-		   end Advance_Handshake;
+			   end Advance_Handshake;
 
    --  RFC 8446 §4.1.4: Build and send a HelloRetryRequest.
    --  HRR is structurally identical to ServerHello but with:

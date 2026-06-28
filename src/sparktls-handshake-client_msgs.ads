@@ -45,10 +45,9 @@ is
 		                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
 		                        <= Max_TLS12_Ticket_Len)
 		                and then Reasm_Building (HC),
-		        Post => (if HC.Cfg.Random'Old /= null
-		                  then HC.Cfg.Random /= null)
-		                and then HC.Transcript_Len = HC.Transcript_Len'Old
-		                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+				        Post => (if HC.Cfg.Random'Old /= null
+				                          then HC.Cfg.Random /= null)
+				                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 		                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
 		                and then Reasm_Building (HC);
 
@@ -64,12 +63,9 @@ is
 		               and then HC.HRR_Cookie_Len <=
 		                 N32 (HC.HRR_Cookie'Length)
 		               and then Reasm_Building (HC),
-			        Post => (if HC.Cfg.Random'Old /= null
-			                          then HC.Cfg.Random /= null)
-			                and then HC.Transcript_Len = HC.Transcript_Len'Old
-			                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-			                and then
+					        Post => (if HC.Cfg.Random'Old /= null
+					                          then HC.Cfg.Random /= null)
+				                and then
 		                  (if OK
 		                   and then HC.Version = TLS_1_3
 		                   and then

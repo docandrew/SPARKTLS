@@ -1677,11 +1677,14 @@ is
                   pragma Loop_Invariant
                     (Exts_Ctx.First = Exts_First
                      and then Exts_Ctx.Last = Exts_Last);
-                  pragma Loop_Invariant
-                    (Ctx.Buffer_First = Ctx_First
-                     and then Ctx.Buffer_Last = Ctx_Last
-                     and then Exts_Ctx.Buffer_First = Ctx_First
-                     and then Exts_Ctx.Buffer_Last = Ctx_Last);
+	                  pragma Loop_Invariant
+	                    (Ctx.Buffer_First = Ctx_First
+	                     and then Ctx.Buffer_Last = Ctx_Last
+	                     and then Exts_Ctx.Buffer_First = Ctx_First
+	                     and then Exts_Ctx.Buffer_Last = Ctx_Last);
+	                  pragma Loop_Invariant
+	                    (if HC.Cfg.Random'Loop_Entry /= null
+	                     then HC.Cfg.Random /= null);
                   declare
                      Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                   begin

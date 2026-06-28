@@ -59,10 +59,13 @@ is
    --  edit that resets HC.Transcript_Len in this proc would fail.
    with Pre  => (if Data'First <= Data'Last then
                     Data'Last - Data'First < Transcript_Capacity)
-                and then HC.Transcript_Len <= Transcript_Capacity
-                and then Reasm_Coherent (HC),
-        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
-                and then HC.Selected_Group = HC.Selected_Group'Old
+	                and then HC.Transcript_Len <= Transcript_Capacity
+	                and then Reasm_Building (HC),
+	        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
+	                and then (if HC.Transcript_Len'Old > 0
+	                             or else Data'First <= Data'Last
+	                          then HC.Transcript_Len > 0)
+	                and then HC.Selected_Group = HC.Selected_Group'Old
                 and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
                 and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
                 and then
@@ -71,7 +74,7 @@ is
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then HC.Reasm_Hdr_Pending =
                   HC.Reasm_Hdr_Pending'Old
-                and then Reasm_Coherent (HC)
+	                and then Reasm_Building (HC)
    is
    begin
       if Data'First <= Data'Last then
@@ -362,9 +365,15 @@ is
    begin
       HC.Peer_Cert_DER_Len := C_Len;
       for I in N32 range 0 .. C_Len - 1 loop
-         pragma Loop_Invariant
-           (I in 0 .. C_Len - 1
-            and RBT.Index (I + 1) in Cert_RFLX'Range);
+	         pragma Loop_Invariant
+	           (I in 0 .. C_Len - 1
+	            and RBT.Index (I + 1) in Cert_RFLX'Range);
+	         pragma Loop_Invariant
+	           (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
+	            and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
+	            and then HC.Reasm_Hdr_Pending =
+	              HC.Reasm_Hdr_Pending'Loop_Entry
+	            and then Reasm_Building (HC));
          HC.Peer_Cert_DER (I) :=
             Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;
@@ -447,10 +456,14 @@ is
 
 	   procedure Reset_Peer_Cert_Chain_12
 	     (HC : in out Handshake_Context)
-	   with Pre  => Reasm_Building (HC),
-	        Post => Reasm_Building (HC)
-	                and then not HC.Peer_Cert_Valid
-	                and then HC.Peer_Int_Count = 0;
+		   with Pre  => Reasm_Building (HC),
+		        Post => Reasm_Building (HC)
+		                and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then HC.Reasm_Need = HC.Reasm_Need'Old
+		                and then HC.Reasm_Hdr_Pending =
+		                  HC.Reasm_Hdr_Pending'Old
+		                and then not HC.Peer_Cert_Valid
+		                and then HC.Peer_Int_Count = 0;
 
 	   procedure Reset_Peer_Cert_Chain_12
 	     (HC : in out Handshake_Context)
@@ -471,8 +484,12 @@ is
 	                and then
 	                  (if OK then
 	                     X509.Spans_Valid (Cert, X509.N32 (C_Len) - 1)),
-	        Post => Reasm_Building (HC)
-	                and then HC.Peer_Cert_Valid = OK
+		        Post => Reasm_Building (HC)
+		                and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then HC.Reasm_Need = HC.Reasm_Need'Old
+		                and then HC.Reasm_Hdr_Pending =
+		                  HC.Reasm_Hdr_Pending'Old
+		                and then HC.Peer_Cert_Valid = OK
 	                and then
 	                  (if HC.Peer_Cert_Valid then
 	                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
@@ -726,7 +743,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre  => Reasm_Coherent (HC)
+	   with Pre  => Reasm_Building (HC)
                 and then S.State not in Idle | Closing | Closed | Error_State
 	                and then (if HC.Peer_Cert_Valid then
 	                            HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
@@ -735,7 +752,7 @@ is
 	                               X509.N32 (HC.Peer_Cert_DER_Len) - 1))
 	                and then SPARKTLSCrypto.P384.Field.Initialized
 	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => Reasm_Coherent (HC)
+	        Post => Reasm_Building (HC)
                 and (if Result = OK then
                        S.State not in Idle | Closing | Closed | Error_State);
 
@@ -864,8 +881,9 @@ is
                 and then Msg_Len <= N32 (Frag'Length) - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
 	                and then Frag'Last - Frag'First < Transcript_Capacity
-	                and then S.State not in Idle | Closing | Closed | Error_State
-	                and then Reasm_Coherent (HC);
+		                and then S.State not in Idle | Closing | Closed | Error_State
+		                and then Reasm_Building (HC),
+	        Post => Reasm_Building (HC);
 
    procedure Handle_CertReq_12
      (S       : in out Session;
@@ -1021,9 +1039,10 @@ is
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
 	                and then Frag'Last - Frag'First < Transcript_Capacity
 	                and then S.State not in Idle | Closing | Closed | Error_State
-	                and then Reasm_Coherent (HC)
-	                and then SPARKTLSCrypto.P384.Field.Initialized
-	                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+	                and then Reasm_Building (HC)
+		                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+	        Post => Reasm_Building (HC);
 
    procedure Handle_SKE_12
      (S       : in out Session;
@@ -1130,9 +1149,10 @@ is
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 and then HC.Transcript_Len > 0
-                and then HC.Transcript_Len <= Transcript_Capacity
-                and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+	                and then HC.Transcript_Len <= Transcript_Capacity
+	                and then SPARKTLSCrypto.P384.Field.Initialized
+	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+	        Post => Reasm_Building (HC);
 
    procedure Handle_SHD_12
      (S       : in out Session;
@@ -1441,8 +1461,9 @@ is
                 and then Msg_Len <= N32 (Frag'Length) - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
                 and then Frag'Last - Frag'First < Transcript_Capacity
-                and then S.State not in Idle | Closing | Closed | Error_State
-                and then Reasm_Coherent (HC);
+	                and then S.State not in Idle | Closing | Closed | Error_State
+	                and then Reasm_Building (HC),
+	        Post => Reasm_Building (HC);
 
    procedure Handle_NST_12
      (S       : in out Session;

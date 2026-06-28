@@ -1069,8 +1069,8 @@ is
                | Client_Certificate_Sent
                | Client_Cert_Verify_Sent
                | Client_Finished_Sent
-	      and then (if S.State = Wait_Server_Hello
-	                then Reasm_Coherent (HC)
+		      and then (if S.State = Wait_Server_Hello
+		                then Reasm_Building (HC)
 	                     and then HC.Cfg.Random /= null
 	                     and then SPARKTLSCrypto.P384.Field.Initialized
 	                     and then HC.Transcript_Len > 0
@@ -1139,8 +1139,8 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-	   with Pre => S.State = Wait_Server_Hello
-	               and then Reasm_Coherent (HC)
+		   with Pre => S.State = Wait_Server_Hello
+		               and then Reasm_Building (HC)
 	               and then HC.Cfg.Random /= null
 	               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then HC.Transcript_Len > 0
@@ -1151,8 +1151,8 @@ is
       HC     : in out Handshake_Context;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
-	   with Pre => S.State = Wait_Server_Hello
-	               and then Reasm_Coherent (HC)
+		   with Pre => S.State = Wait_Server_Hello
+		               and then Reasm_Building (HC)
 	               and then HC.Cfg.Random /= null
 	               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then HC.Transcript_Len > 0
@@ -1187,20 +1187,25 @@ is
 		               and then HC.Transcript_Len > 0
 		               and then HC.Transcript_Len <= Transcript_Capacity
 		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
-        Post => (if Result = OK then
-                    S.State = Wait_Server_Hello
-			                    and then Reasm_Coherent (HC)
-			                    and then HC.Cfg.Random /= null
-			                    and then HC.Transcript_Len > 0
-			                    and then HC.Transcript_Len <= Transcript_Capacity
-		                    and then HC.HRR_Cookie_Len <=
-		                      N32 (HC.HRR_Cookie'Length));
+	        Post => (if Result = OK then
+		                    Reasm_Building (HC)
+				                    and then HC.Cfg.Random /= null
+				                    and then HC.Transcript_Len > 0
+				                    and then HC.Transcript_Len <= Transcript_Capacity
+			                    and then HC.HRR_Cookie_Len <=
+			                      N32 (HC.HRR_Cookie'Length)
+			                    and then
+			                      (if S.State = Wait_Server_Hello
+			                       then S.Negotiated_Suite in
+			                         Suite_AES_128_GCM_SHA256
+			                       | Suite_AES_256_GCM_SHA384
+			                       | Suite_CHACHA20_POLY1305_SHA256));
    procedure Finalize_SH_Processing
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => S.State = Wait_Server_Hello
-               and then Reasm_Coherent (HC)
+		   with Pre => S.State = Wait_Server_Hello
+		               and then Reasm_Building (HC)
 	               and then HC.Cfg.Random /= null
 	               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then HC.Transcript_Len > 0
@@ -1238,14 +1243,16 @@ is
 		                    and then Reasm_Coherent (HC)
 		                    and then HC.Cfg.Random /= null
 		                    and then HC.Transcript_Len <= Transcript_Capacity
-	                    and then HC.HRR_Cookie_Len <=
-	                      N32 (HC.HRR_Cookie'Length)
-	                    and then
-	                      (if HC.Reasm_Len >= HC.Reasm_Need then
-	                         HC.Reasm_Buf /= null
-	                         and then HC.Reasm_Need > 0
-	                         and then HC.Reasm_Need - 1 <
-	                           Transcript_Capacity));
+		                    and then HC.HRR_Cookie_Len <=
+		                      N32 (HC.HRR_Cookie'Length)
+		                    and then HC.Transcript_Len > 0
+		                    and then
+		                      (if HC.Reasm_Len >= HC.Reasm_Need then
+		                         HC.Reasm_Buf /= null
+		                         and then HC.Reasm_Need > 0
+		                         and then HC.Reasm_Need - 1 <
+		                           Transcript_Capacity
+		                         and then Reasm_Building (HC)));
    procedure Reasm_Fresh_Fragment
      (S          : in out Session;
       HC         : in out Handshake_Context;

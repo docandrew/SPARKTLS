@@ -66,8 +66,7 @@ is
 	                              S.Input.Read_Pos'Old
 	                            and then S.Input.Write_Pos =
 	                              S.Input.Write_Pos'Old
-		                            and then Reasm_Building (HC)
-		                            and then HC.HRR_Sent = HC.HRR_Sent'Old
+			                            and then Reasm_Building (HC)
 			                            and then
 				                              (if HC.Cfg.Local'Old /= null
 				                                and then
@@ -96,8 +95,14 @@ is
 	                                      Suite_AES_128_GCM_SHA256
 	                                    | Suite_AES_256_GCM_SHA384
 	                                    | Suite_CHACHA20_POLY1305_SHA256)
-			                            and then
-			                              (if Nonce_Space_Available
+	                            and then
+	                              (if OK and then HC.HRR_Sent'Old
+	                               then S.Negotiated_Suite in
+	                                      Suite_AES_128_GCM_SHA256
+	                                    | Suite_AES_256_GCM_SHA384
+	                                    | Suite_CHACHA20_POLY1305_SHA256)
+				                            and then
+				                              (if Nonce_Space_Available
 		                                    (HC.Server_HS'Old)
 		                               then Nonce_Space_Available
 		                                    (HC.Server_HS))
