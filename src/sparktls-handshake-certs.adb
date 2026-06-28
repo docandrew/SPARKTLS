@@ -640,9 +640,10 @@ is
       HC        : in out Handshake_Context;
       C_Len     : in     N32)
    with Pre  => Cert_RFLX'First = 1
-                and Cert_RFLX'Length = RBT.Length (C_Len)
-                and C_Len > 0
-                and C_Len <= N32 (Max_Cert_DER),
+                and then Cert_RFLX'Length = RBT.Length (C_Len)
+                and then C_Len > 0
+                and then C_Len <= N32 (Max_Cert_DER)
+                and then Reasm_Building (HC),
 	        Post => HC.Client_HS = HC.Client_HS'Old
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
@@ -668,6 +669,7 @@ is
          pragma Loop_Invariant
            (I in 0 .. C_Len - 1
             and RBT.Index (I + 1) in Cert_RFLX'Range);
+         pragma Loop_Invariant (Reasm_Building (HC));
          HC.Peer_Cert_DER (I) :=
             Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;

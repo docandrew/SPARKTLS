@@ -348,10 +348,10 @@ is
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
 	                and then HC.Reasm_Len = HC.Reasm_Len'Old
-	                and then HC.Reasm_Need = HC.Reasm_Need'Old
-	                and then HC.Reasm_Hdr_Pending =
-	                  HC.Reasm_Hdr_Pending'Old
-	                and then Reasm_Building (HC)
+		                and then HC.Reasm_Need = HC.Reasm_Need'Old
+		                and then HC.Reasm_Hdr_Pending =
+		                  HC.Reasm_Hdr_Pending'Old
+		                and then Reasm_Building (HC)
 	                and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
@@ -410,10 +410,10 @@ is
          Present => True);
    end Store_Intermediate;
 
-   procedure Append_Intermediate_12
-     (HC  : in out Handshake_Context;
-      Idx : in     Natural;
-      PE  : in     Pool_Entry)
+	   procedure Append_Intermediate_12
+	     (HC  : in out Handshake_Context;
+	      Idx : in     Natural;
+	      PE  : in     Pool_Entry)
    with Pre  => Idx = HC.Peer_Int_Count
                 and then HC.Peer_Int_Count < Max_Pool_Size
 	                and then PE.Present
@@ -426,10 +426,10 @@ is
                 and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
                 and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
                 and then HC.Peer_Cert = HC.Peer_Cert'Old
-	                and then HC.Reasm_Len = HC.Reasm_Len'Old
-	                and then HC.Reasm_Need = HC.Reasm_Need'Old
-	                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
-	                and then Reasm_Building (HC)
+		                and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then HC.Reasm_Need = HC.Reasm_Need'Old
+		                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
+		                and then Reasm_Building (HC)
 	                and then (if HC.Peer_Cert_Valid then
                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                     and then X509.Spans_Valid
@@ -441,11 +441,61 @@ is
       PE  : in     Pool_Entry)
    is
    begin
-      HC.Peer_Ints (Idx) := PE;
-      HC.Peer_Int_Count := HC.Peer_Int_Count + 1;
-   end Append_Intermediate_12;
+	      HC.Peer_Ints (Idx) := PE;
+	      HC.Peer_Int_Count := HC.Peer_Int_Count + 1;
+	   end Append_Intermediate_12;
 
-   --  RFC 5246 §7.4.2 Certificate (HS type 0x0B). Parses the on-wire
+	   procedure Reset_Peer_Cert_Chain_12
+	     (HC : in out Handshake_Context)
+	   with Pre  => Reasm_Building (HC),
+	        Post => Reasm_Building (HC)
+	                and then not HC.Peer_Cert_Valid
+	                and then HC.Peer_Int_Count = 0;
+
+	   procedure Reset_Peer_Cert_Chain_12
+	     (HC : in out Handshake_Context)
+	   is
+	   begin
+	      HC.Peer_Cert_Valid := False;
+	      HC.Peer_Int_Count := 0;
+	   end Reset_Peer_Cert_Chain_12;
+
+	   procedure Set_Peer_Cert_12
+	     (HC    : in out Handshake_Context;
+	      Cert  : in     X509.Certificate;
+	      C_Len : in     N32;
+	      OK    : in     Boolean)
+	   with Pre  => Reasm_Building (HC)
+	                and then C_Len in 1 .. Max_Cert_DER_Len
+	                and then HC.Peer_Cert_DER_Len = C_Len
+	                and then
+	                  (if OK then
+	                     X509.Spans_Valid (Cert, X509.N32 (C_Len) - 1)),
+	        Post => Reasm_Building (HC)
+	                and then HC.Peer_Cert_Valid = OK
+	                and then
+	                  (if HC.Peer_Cert_Valid then
+	                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+	                     and then X509.Spans_Valid
+	                       (HC.Peer_Cert,
+	                        X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+
+	   procedure Set_Peer_Cert_12
+	     (HC    : in out Handshake_Context;
+	      Cert  : in     X509.Certificate;
+	      C_Len : in     N32;
+	      OK    : in     Boolean)
+	   is
+	   begin
+	      if OK then
+	         HC.Peer_Cert := Cert;
+	         HC.Peer_Cert_Valid := True;
+	      else
+	         HC.Peer_Cert_Valid := False;
+	      end if;
+	   end Set_Peer_Cert_12;
+
+	   --  RFC 5246 §7.4.2 Certificate (HS type 0x0B). Parses the on-wire
    --  cert_list_len(3) || {cert_len(3) || cert_data[cert_len]}* via
    --  RFLX TLS_1_2_Certificate, then runs the leaf through X509.Parse.
    --  Intermediates beyond Max_Pool_Size are silently dropped — chain
@@ -493,8 +543,7 @@ is
       Body_Bytes : Byte_Seq (0 .. Msg_Len - 1);
       Cert_Idx : Natural := 0;
    begin
-      HC.Peer_Cert_Valid := False;
-      HC.Peer_Int_Count := 0;
+	      Reset_Peer_Cert_Chain_12 (HC);
       OK := False;
 
       if Msg_Len < 3 then
@@ -566,10 +615,10 @@ is
 	                    (if HC.Peer_Cert_Valid then Cert_Idx > 0);
 	                  pragma Loop_Invariant
 	                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
-	                     and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
-	                     and then HC.Reasm_Hdr_Pending =
-	                       HC.Reasm_Hdr_Pending'Loop_Entry
-	                     and then Reasm_Building (HC));
+		                     and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
+		                     and then HC.Reasm_Hdr_Pending =
+		                       HC.Reasm_Hdr_Pending'Loop_Entry
+		                     and then Reasm_Building (HC));
                      declare
                         E_Ctx : C12_Entry.Context;
                   begin
@@ -583,38 +632,41 @@ is
                         begin
                            if C_Len > 0 and C_Len <= N32 (Max_Cert_DER) then
                               C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
-                              if Cert_Idx = 0 then
-                                 Copy_Cert_To_Peer_DER (Cert_RFLX, HC, C_Len);
-                                 declare
-                                    P_OK : Boolean;
-                                 begin
-	                                    Parse_X509_From_RFLX
-	                                      (Cert_RFLX, C_Len, HC.Peer_Cert, P_OK);
-	                                    if P_OK then
-	                                       pragma Assert
-	                                         (X509.Spans_Valid
-	                                           (HC.Peer_Cert,
-	                                            X509.N32 (C_Len) - 1));
-	                                       pragma Assert
-	                                         (HC.Peer_Cert_DER_Len = C_Len);
-	                                       pragma Assert
-	                                         (X509.Spans_Valid
-	                                           (HC.Peer_Cert,
-	                                            X509.N32
-	                                              (HC.Peer_Cert_DER_Len) - 1));
-		                                       HC.Peer_Cert_Valid := P_OK;
-	                                       pragma Assert
-	                                         (if HC.Peer_Cert_Valid
-                                          then HC.Peer_Cert_DER_Len
+	                              if Cert_Idx = 0 then
+	                                 Copy_Cert_To_Peer_DER (Cert_RFLX, HC, C_Len);
+	                                 declare
+	                                    C    : X509.Certificate;
+	                                    P_OK : Boolean;
+	                                 begin
+		                                    Parse_X509_From_RFLX
+		                                      (Cert_RFLX, C_Len, C, P_OK);
+		                                    if P_OK then
+		                                       pragma Assert
+		                                         (X509.Spans_Valid
+		                                           (C,
+		                                            X509.N32 (C_Len) - 1));
+		                                       pragma Assert
+		                                         (HC.Peer_Cert_DER_Len = C_Len);
+		                                       pragma Assert
+		                                         (X509.Spans_Valid
+		                                           (C,
+		                                            X509.N32
+		                                              (HC.Peer_Cert_DER_Len) - 1));
+		                                       Set_Peer_Cert_12
+		                                         (HC, C, C_Len, P_OK);
+		                                       pragma Assert
+		                                         (if HC.Peer_Cert_Valid
+	                                          then HC.Peer_Cert_DER_Len
                                                in 1 .. Max_Cert_DER_Len
                                                and then X509.Spans_Valid
                                                  (HC.Peer_Cert,
                                                   X509.N32
                                                     (HC.Peer_Cert_DER_Len)
                                                   - 1));
-                                    else
-                                       HC.Peer_Cert_Valid := False;
-                                    end if;
+	                                    else
+	                                       Set_Peer_Cert_12
+	                                         (HC, C, C_Len, P_OK);
+	                                    end if;
                                     end;
 	                              elsif HC.Peer_Int_Count < Max_Pool_Size then
 	                                 declare

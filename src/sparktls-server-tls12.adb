@@ -189,12 +189,17 @@ is
 	        Post => HC.Version = HC.Version'Old
 	                and then (if HC.Cfg.Local'Old /= null
 	                          then HC.Cfg.Local /= null)
-	                and then (if HC.Cfg.Local'Old /= null
-	                              and then HC.Cfg.Local'Old.Has_Identity
-	                          then HC.Cfg.Local /= null
-	                               and then HC.Cfg.Local.Has_Identity)
-	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
+		                and then (if HC.Cfg.Local'Old /= null
+		                              and then HC.Cfg.Local'Old.Has_Identity
+		                          then HC.Cfg.Local /= null
+		                               and then HC.Cfg.Local.Has_Identity)
+		                and then
+		                  (if SPARKTLS.Handshake.Server_Msgs
+		                        .Local_Config_Valid (HC.Cfg.Local'Old)
+		                   then SPARKTLS.Handshake.Server_Msgs
+		                          .Local_Config_Valid (HC.Cfg.Local))
+		                and then (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
 	                and then Reasm_Building (HC);
 
    procedure Set_Server_Random_12
@@ -713,6 +718,7 @@ is
       --  Negotiated_Sig_Algo to be cleared so Build_Server_Hello_12
       --  doesn't try to echo a stale value.
       HC.Negotiated_Sig_Algo := 0;
+      pragma Assert (Reasm_Building (HC));
 
 	      --  Fresh server random (32 bytes).
 	      declare

@@ -148,11 +148,15 @@ is
                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
               and then Free_Space (S.Output) >=
                 Records.Record_Header_Size + 3 + Records.Tag_Size)
-      and then
-        (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_2
-         then SPARKTLS.Handshake.TLS12.Valid_TLS12_Suite
-                (S.Negotiated_Suite)
-              and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
+	      and then
+	        (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_2
+	         then HC.Cfg.Local /= null
+	              and then HC.Cfg.Local.Has_Identity
+	              and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                (HC.Cfg.Local)
+	              and then SPARKTLS.Handshake.TLS12.Valid_TLS12_Suite
+	                (S.Negotiated_Suite)
+	              and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
                 (HC.Selected_Group)
               and then SPARKTLSCrypto.P384.Field.Initialized
               and then SPARKTLSCrypto.P384.ECDSA.Initialized
@@ -169,19 +173,18 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
 		   with Pre  => Server_Active (S)
-		                and then Server_Configured (HC)
-		                and then Reasm_Building (HC)
-		                and then
-		                  (if S.State = Wait_Client_Hello
+			                and then Server_Configured (HC)
+			                and then Reasm_Building (HC)
+			                and then HC.Legacy_Session_ID_Len in 0 .. 32
+			                and then
+			                  (if S.State = Wait_Client_Hello
 		                     and then HC.Reasm_Need > 0
 		                   then HC.Reasm_Len < HC.Reasm_Need)
 		                and then Server_State_Keys_Ready (S, HC),
 	        Post => (S.State = S.State'Old
 	                 or else Valid_Transition (S.State'Old, S.State))
-		                and then (if S.State not in Error_State | Closed
-		                          then Server_Configured (HC))
-	                and then (if S.State not in Error_State | Closed
-	                          then Reasm_Building (HC));
+			                and then (if S.State not in Error_State | Closed
+			                          then Server_Configured (HC));
 
    procedure Build_Server_Flight
      (S      : in out Session;
@@ -218,11 +221,9 @@ is
 	                                  | Server_Hello_Sent
 	                                  | Error_State
 	                  else S.State in Server_Hello_Sent | Error_State)
-			                and then (if S.State not in Error_State | Closed
-			                          then Server_Configured (HC))
-			                and then (if S.State not in Error_State | Closed
-			                          then Reasm_Building (HC))
-			                and then
+				                and then (if S.State not in Error_State | Closed
+				                          then Server_Configured (HC))
+				                and then
 			                  (if S.State = Wait_Client_Hello
 		                     and then HC.Reasm_Need > 0
 		                   then HC.Reasm_Len < HC.Reasm_Need);
@@ -232,10 +233,11 @@ is
       HC        : in out Handshake_Context;
       Group     : in     Unsigned_16;
       HRR_Buf   :    out Byte_Seq;
-      HRR_Len   :    out N32;
-      Rec_Out   :    out N32)
+	      HRR_Len   :    out N32;
+	      Rec_Out   :    out N32)
 	   with Pre  => Server_Active (S)
-	                and then Server_Configured (HC),
+	                and then Server_Configured (HC)
+	                and then Reasm_Building (HC),
 	        Post => (if HRR_Len > 0
 	                 then HRR_Buf'First = 0
 	                   and then HRR_Len - 1 <= HRR_Buf'Last)
@@ -243,9 +245,10 @@ is
                           or else Valid_Transition (S.State'Old, S.State))
                 and then (if S.State not in Error_State | Closed
                           then Server_Configured (HC))
-                and then (if HRR_Len > 0 then S.State = S.State'Old)
-                and then (if HRR_Len > 0
-                          then HC.Transcript_Len > 0);
+	                and then (if HRR_Len > 0 then S.State = S.State'Old)
+	                and then (if HRR_Len > 0
+	                          then HC.Transcript_Len > 0)
+	                and then Reasm_Building (HC);
 
    procedure Append_And_Encrypt_Server_HS
      (S         : in out Session;
@@ -448,35 +451,39 @@ is
       HC : in out Handshake_Context)
    with Pre => HC.Transcript_Len > 0
                and HC.Transcript_Len <= Transcript_Capacity
-               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                       | Suite_AES_256_GCM_SHA384
-                                       | Suite_CHACHA20_POLY1305_SHA256
-               and Server_Configured (HC),
-	        Post => Server_Configured (HC)
-	                and HC.Transcript_Len = HC.Transcript_Len'Old
-	                and HC.Server_HS.Counter = 0
-	                and (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-	                     then HC.Hash_Len = 48
-	                     else HC.Hash_Len = 32)
-	                and Nonce_Space_Available (HC.Server_HS);
+	               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                       | Suite_AES_256_GCM_SHA384
+	                                       | Suite_CHACHA20_POLY1305_SHA256
+	               and Server_Configured (HC)
+	               and Reasm_Building (HC),
+		        Post => Server_Configured (HC)
+		                and HC.Transcript_Len = HC.Transcript_Len'Old
+		                and HC.Server_HS.Counter = 0
+		                and (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+		                     then HC.Hash_Len = 48
+		                     else HC.Hash_Len = 32)
+		                and Nonce_Space_Available (HC.Server_HS)
+		                and Reasm_Building (HC);
 
    procedure Derive_App_Keys
      (S  : in out Session;
       HC : in out Handshake_Context)
    with Pre => HC.Transcript_Len > 0
                and HC.Transcript_Len <= Transcript_Capacity
-               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                       | Suite_AES_256_GCM_SHA384
-                                       | Suite_CHACHA20_POLY1305_SHA256
-               and Server_Configured (HC),
-        Post => Server_Configured (HC)
-                and HC.Transcript_Len = HC.Transcript_Len'Old
-                and S.State = S.State'Old
+	               and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                       | Suite_AES_256_GCM_SHA384
+	                                       | Suite_CHACHA20_POLY1305_SHA256
+	               and Server_Configured (HC)
+	               and Reasm_Building (HC),
+	        Post => Server_Configured (HC)
+	                and HC.Transcript_Len = HC.Transcript_Len'Old
+	                and S.State = S.State'Old
                 and S.Role = S.Role'Old
-                and S.Negotiated_Suite = S.Negotiated_Suite'Old
-                and S.Server_App.Counter = 0
-                and Nonce_Space_Available (S.Server_App)
-                and Nonce_Space_Available (S.Client_App);
+	                and S.Negotiated_Suite = S.Negotiated_Suite'Old
+	                and S.Server_App.Counter = 0
+	                and Nonce_Space_Available (S.Server_App)
+	                and Nonce_Space_Available (S.Client_App)
+	                and Reasm_Building (HC);
 
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
@@ -613,9 +620,14 @@ is
                 and (if HC.Transcript_Len'Old > 0
                        or else Data'First <= Data'Last
                      then HC.Transcript_Len > 0)
-	                and (if Server_Configured (HC)'Old
-	                     then Server_Configured (HC))
-		                and HC.Hash_Len = HC.Hash_Len'Old
+		                and (if Server_Configured (HC)'Old
+		                     then Server_Configured (HC))
+			                and
+			                  (if Handshake.Server_Msgs.Local_Config_Valid
+			                        (HC.Cfg.Local'Old)
+			                   then Handshake.Server_Msgs.Local_Config_Valid
+			                        (HC.Cfg.Local))
+			                and HC.Hash_Len = HC.Hash_Len'Old
 		                and
 		                  (if HC.Cfg.Ticket_Store /= null
 		                   then HC.Cfg.Ticket_Store.Next
@@ -2087,12 +2099,13 @@ is
                      HC.Client_Has_P256 := False;
                      HC.Client_Has_P384 := False;
                      HC.CH_Ext_Hash := 0;
-	                     HC.CH_Ext_Count := 0;
-	                     HC.Seen_Ext_Count := 0;
-	                     HC.Seen_Ext_Tags := (others => 0);
-	                     pragma Assert (HC.HRR_Sent);
+		                     HC.CH_Ext_Count := 0;
+		                     HC.Seen_Ext_Count := 0;
+		                     HC.Seen_Ext_Tags := (others => 0);
+		                     pragma Assert (HC.HRR_Sent);
+		                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
 
-	                     Handshake.Server_Msgs.Parse_Client_Hello
+		                     Handshake.Server_Msgs.Parse_Client_Hello
 	                       (S, HC, Frag, Parse_OK);
 	                     pragma Assert (HC.HRR_Sent);
 
@@ -2137,10 +2150,9 @@ is
 		                  --  Append CH2 to transcript
 		                  Append_Transcript (HC, Frag);
 		                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-		                  pragma Assert (HC.HRR_Sent);
-		                  pragma Assert (S.State = Wait_Client_Hello_Retry);
-			                  pragma Assert (HC.Version = TLS_1_3);
-			                  pragma Assert (Server_Configured (HC));
+			                  pragma Assert (HC.HRR_Sent);
+			                  pragma Assert (S.State = Wait_Client_Hello_Retry);
+				                  pragma Assert (Server_Configured (HC));
 			                  pragma Assert
 			                    (HC.Cfg.Local.NaCl_Cert_Len <=
 			                       N32 (Max_Cert_DER));
@@ -2154,30 +2166,27 @@ is
 			                    (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
 			                     then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512);
 			                  pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-			                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
-			                  pragma Assert (Nonce_Space_Available (S.Server_App));
-			                  pragma Assert (Reasm_Building (HC));
-			                  pragma Assert
-		                    (S.Negotiated_Suite in
+				                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
+				                  pragma Assert (Nonce_Space_Available (S.Server_App));
+				                  pragma Assert (Reasm_Building (HC));
+				                  pragma Assert (HC.Version = TLS_1_3);
+				                  pragma Assert
+			                    (S.Negotiated_Suite in
 		                       Suite_AES_128_GCM_SHA256
 		                     | Suite_AES_256_GCM_SHA384
 		                     | Suite_CHACHA20_POLY1305_SHA256);
 
-			                  --  Now proceed to build the real ServerHello flight
-				                  Build_Server_Flight (S, HC, Result);
-			                  pragma Assert
-			                    (S.State in Server_Hello_Sent | Error_State);
-			                  pragma Assert
-			                    (if S.State = Server_Hello_Sent
-			                     then Reasm_Building (HC));
-			                  pragma Assert
-			                    (S.State = Old_State
-			                     or else Valid_Transition
-		                       (Old_State, S.State));
-		                  if S.State not in Error_State | Closed then
-		                     pragma Assert (S.State = Server_Hello_Sent);
-		                     pragma Assert (Reasm_Building (HC));
-		                  end if;
+				                  --  Now proceed to build the real ServerHello flight
+					                  Build_Server_Flight (S, HC, Result);
+				                  pragma Assert
+				                    (S.State in Server_Hello_Sent | Error_State);
+				                  pragma Assert
+				                    (S.State = Old_State
+				                     or else Valid_Transition
+			                       (Old_State, S.State));
+			                  if S.State not in Error_State | Closed then
+			                     pragma Assert (S.State = Server_Hello_Sent);
+			                  end if;
 	               end;
 	            end;
 
@@ -2187,14 +2196,11 @@ is
 	              (Old_State in Wait_Client_Certificate
 	                            | Wait_Client_Cert_Verify);
 	            Process_Client_Auth (S, HC, Result);
-	            pragma Assert
-	              (S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify
-	               or else Valid_Transition (Old_State, S.State));
-	            pragma Assert
-	              (if S.State not in Error_State | Closed
-	               then Reasm_Building (HC));
+		            pragma Assert
+		              (S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify
+		               or else Valid_Transition (Old_State, S.State));
 
-	         when Wait_Client_Finished =>
+		         when Wait_Client_Finished =>
 	            pragma Assert (Old_State = Wait_Client_Finished);
             if HC.Version = TLS_1_3 then
                Process_Client_Finished (S, HC, Result);
@@ -2243,19 +2249,14 @@ is
 	            | Wait_Client_Certificate
 	            | Wait_Client_Cert_Verify
 	            | Wait_Client_Finished =>
-	            pragma Assert
-	              (if S.State not in Error_State | Closed
-	               then Reasm_Building (HC));
+	            null;
 	         when others =>
 	            pragma Assert (S.State = Error_State);
 	      end case;
 	      pragma Assert
 	        (if S.State not in Error_State | Closed
 	         then Server_Configured (HC));
-	      pragma Assert
-	        (if S.State not in Error_State | Closed
-	         then Reasm_Building (HC));
-	   end Advance_Handshake;
+		   end Advance_Handshake;
 
    --  RFC 8446 §4.1.4: Build and send a HelloRetryRequest.
    --  HRR is structurally identical to ServerHello but with:
@@ -2453,16 +2454,18 @@ is
                   (for all I in 0 .. Max_Pool_Size - 1 =>
                      HC.Cfg.Local.Ints (I).DER_Len
                        <= X509.N32 (Max_Cert_DER))
-                and then
-                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-                and then HC.Legacy_Session_ID_Len in 0 .. 32,
-	        Post => (if not Rejected
-	                 then S.State = S.State'Old
-	                      and S.Role = S.Role'Old
-	                      and Server_Configured (HC)
-	                      and HC.Transcript_Len = HC.Transcript_Len'Old
-	                      and HC.HRR_Sent = HC.HRR_Sent'Old
+	                and then
+	                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                and then HC.Legacy_Session_ID_Len in 0 .. 32
+	                and then Reasm_Building (HC),
+		        Post => (if not Rejected
+		                 then S.State = S.State'Old
+		                      and S.Role = S.Role'Old
+		                      and Server_Configured (HC)
+		                      and Reasm_Building (HC)
+		                      and HC.Transcript_Len = HC.Transcript_Len'Old
+		                      and HC.HRR_Sent = HC.HRR_Sent'Old
 	                      and HC.Legacy_Session_ID_Len in 0 .. 32
 	                      and HC.Cfg.Local.NaCl_Cert_Len
 	                        <= N32 (Max_Cert_DER)
@@ -2473,7 +2476,8 @@ is
 	                        (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
 	                         then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
 	                      and S.Negotiated_Suite = S.Negotiated_Suite'Old)
-	                 and then (if Rejected then S.State = Error_State);
+		                 and then (if Rejected then S.State = Error_State)
+		                 and then Reasm_Building (HC);
 
    procedure Verify_PSK_Binder
      (S        : in out Session;
@@ -2590,16 +2594,18 @@ is
                   (for all I in 0 .. Max_Pool_Size - 1 =>
                      HC.Cfg.Local.Ints (I).DER_Len
                        <= X509.N32 (Max_Cert_DER))
-                and then
-                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-                and then HC.Legacy_Session_ID_Len in 0 .. 32,
-        Post => (if Algo_OK
-	                 then S.State = S.State'Old
-	                      and S.Role = S.Role'Old
-	                      and S.Negotiated_Suite = S.Negotiated_Suite'Old
-	                      and Server_Configured (HC)
-	                      and HC.Transcript_Len = HC.Transcript_Len'Old
+	                and then
+	                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                and then HC.Legacy_Session_ID_Len in 0 .. 32
+	                and then Reasm_Building (HC),
+	        Post => (if Algo_OK
+		                 then S.State = S.State'Old
+		                      and S.Role = S.Role'Old
+		                      and S.Negotiated_Suite = S.Negotiated_Suite'Old
+		                      and Server_Configured (HC)
+		                      and Reasm_Building (HC)
+		                      and HC.Transcript_Len = HC.Transcript_Len'Old
 	                      and HC.HRR_Sent = HC.HRR_Sent'Old
 	                      and HC.Legacy_Session_ID_Len in 0 .. 32
 	                      and HC.Cfg.Local.NaCl_Cert_Len
@@ -2614,7 +2620,8 @@ is
 	                      and Handshake.Sig_Algo_Compatible_With_Cert
 	                        (HC.Negotiated_Sig_Algo,
 	                         HC.Cfg.Local.Sign_Algo))
-	                 and then (if not Algo_OK then S.State = Error_State);
+		                 and then (if not Algo_OK then S.State = Error_State)
+		                 and then Reasm_Building (HC);
 
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
@@ -2858,10 +2865,11 @@ is
                --  RFC 8446 §4.1.4: at-most-one-HRR invariant. After
                --  this assignment, the outer `if not HC.HRR_Sent`
                --  guard prevents any further HRR from being built
-               --  in this connection.
-               pragma Assert (HRR_Sent_At_Most_Once_RFC_8446_4_1_4 (HC));
-               Result := Has_Output;
-               return;
+	               --  in this connection.
+	               pragma Assert (HRR_Sent_At_Most_Once_RFC_8446_4_1_4 (HC));
+	               pragma Assert (Reasm_Building (HC));
+	               Result := Has_Output;
+	               return;
             end if;
          end;
       end if;
@@ -2946,10 +2954,11 @@ is
             Emitted   => Emitted);
          if not Emitted then
             return;
-         end if;
-         pragma Assert (HC.Server_HS.Counter = 1);
-         pragma Assert (Nonce_Space_Available (HC.Server_HS));
-      end;
+	         end if;
+	         pragma Assert (HC.Server_HS.Counter = 1);
+	         pragma Assert (Nonce_Space_Available (HC.Server_HS));
+	         pragma Assert (Reasm_Building (HC));
+	      end;
 
       --  Skip Certificate/CertificateVerify for PSK resumption
       if not HC.Using_PSK then
@@ -2977,10 +2986,11 @@ is
                   return;
                end if;
             end if;
-            pragma Assert (HC.Server_HS.Counter in 1 .. 2);
-            pragma Assert (Nonce_Space_Available (HC.Server_HS));
-         end;
-      end if;
+	            pragma Assert (HC.Server_HS.Counter in 1 .. 2);
+	            pragma Assert (Nonce_Space_Available (HC.Server_HS));
+	            pragma Assert (Reasm_Building (HC));
+	         end;
+	      end if;
 
       --  Build Certificate chain (leaf + intermediates, encrypted)
 	      declare
@@ -3037,9 +3047,10 @@ is
 	            S.Last_Error := Internal_Error;
 	            Set_State (S, Error_State);
 	            Result := Error_Alert;
-	            return;
-	         end if;
-	      end;
+		            return;
+		         end if;
+		         pragma Assert (Reasm_Building (HC));
+		      end;
 
       --  Build CertificateVerify (encrypted)
       declare
@@ -3106,13 +3117,15 @@ is
 	            S.Last_Error := Internal_Error;
 	            Set_State (S, Error_State);
 	            Result := Error_Alert;
-	            return;
-	         end if;
-	      end;
+		            return;
+		         end if;
+		         pragma Assert (Reasm_Building (HC));
+		      end;
 
-		      end if;  --  not Using_PSK (skip cert/cert_verify for resumption)
+			      end if;  --  not Using_PSK (skip cert/cert_verify for resumption)
 
-		      pragma Assert (Server_Configured (HC));
+			      pragma Assert (Server_Configured (HC));
+			      pragma Assert (Reasm_Building (HC));
 
 		      --  Build Finished (encrypted)
 	      declare
@@ -3146,8 +3159,9 @@ is
                   Big_Finished (3) := 16#30#;  --  48
                   Big_Finished (4 .. 51) := Verify_48;
 
-                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
-                  Append_And_Encrypt_Server_HS
+	                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
+	                  pragma Assert (Reasm_Building (HC));
+	                  Append_And_Encrypt_Server_HS
                     (S         => S,
                      HC        => HC,
                      Plaintext => Big_Finished,
@@ -3219,10 +3233,12 @@ is
       S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
 
       --  Derive application keys now (using transcript through server Finished)
-      Derive_App_Keys (S, HC);
+	      Derive_App_Keys (S, HC);
+	      pragma Assert (Reasm_Building (HC));
 
-      Set_State (S, Server_Hello_Sent);
-      Result := Has_Output;
+	      Set_State (S, Server_Hello_Sent);
+	      pragma Assert (Reasm_Building (HC));
+	      Result := Has_Output;
    end Build_Server_Flight;
 
    --  Derive handshake traffic keys from shared secret

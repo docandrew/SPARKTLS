@@ -191,11 +191,17 @@ is
       Retry_Mode : in    Boolean;
       Result    : in out Byte_Seq;
       Len       : in out N32)
-   with Pre  => Result'First = 0
-                and then Result'Last <= N32'Last - 1
-                and then Result'Length >= 600
-                and then Len > 0
-                and then Len <= N32 (Result'Length);
+	   with Pre  => Result'First = 0
+	                and then Result'Last <= N32'Last - 1
+	                and then Result'Length >= 600
+	                and then Len > 0
+	                and then Len <= N32 (Result'Length)
+	                and then Reasm_Building (HC),
+	        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+	                and then HC.Transcript_Len = HC.Transcript_Len'Old
+	                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+	                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
+	                and then Reasm_Building (HC);
 
    procedure Append_PSK_Extension
      (S         : in     Session;
@@ -947,10 +953,11 @@ is
       --  Extract serialized body and prepend handshake header
       Take_Buffer (Ctx, Buf);
 
-      if CH_Msg_Len > N32 (Result'Length) then
-         RFLX_Free (Buf);
-         return;
-      end if;
+	      if CH_Msg_Len > N32 (Result'Length) then
+	         RFLX_Free (Buf);
+	         pragma Assert (HC.Cfg.Random /= null);
+	         return;
+	      end if;
 
       Result (0) := HT_Client_Hello;
       Result (1) := Byte (CH_Body_Len / 65536);
@@ -975,11 +982,12 @@ is
       --  Binder hash matches the ticket's hash: PSK_Len=32 → SHA-256;
       --  PSK_Len=48 → SHA-384. Both paths share the same wire
       --  layout (only the binder VALUE size differs).
-      if Len > 0 then
-         Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
-      end if;
+	      if Len > 0 then
+	         Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
+	      end if;
+	      pragma Assert (HC.Cfg.Random /= null);
 
-   end Build_Client_Hello;
+	   end Build_Client_Hello;
 
    ----------------------------------------------------------------------------
    --  Parse procedures (using RecordFlux-generated parsers)
@@ -1014,7 +1022,8 @@ is
       Is_HRR_Msg : in     Boolean;
       OK         :    out Boolean)
    with Pre => Data'Length in 39 .. Max_HS_Msg
-               and then Data'Last < N32 (Natural'Last);
+	               and then Data'Last < N32 (Natural'Last),
+        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
@@ -1124,6 +1133,9 @@ is
                   return;
                end if;
                for I in 1 .. N_Ext loop
+                  pragma Loop_Invariant
+                    (if HC.Cfg.Random'Loop_Entry /= null
+                     then HC.Cfg.Random /= null);
                   if Exts (I).Tag = Tag_U16 then
                      --  RFC 8446 §4.2: duplicate ext in SH/EE →
                      --  decode_error. In HRR specifically BoringSSL
@@ -1175,6 +1187,9 @@ is
          for I in 1 .. N_Ext loop
             pragma Loop_Invariant
               (N_Ext <= Exts'Last);
+            pragma Loop_Invariant
+              (if HC.Cfg.Random'Loop_Entry /= null
+               then HC.Cfg.Random /= null);
             pragma Loop_Invariant
               (for all J in 1 .. N_Ext =>
                  Exts (J).Offset >= Data'First
@@ -1313,7 +1328,8 @@ is
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed
                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid_Next
-                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data);
+                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data),
+        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
 
    procedure Apply_SH_Key_Share
      (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;

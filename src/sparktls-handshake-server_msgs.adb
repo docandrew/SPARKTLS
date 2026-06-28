@@ -1089,9 +1089,10 @@ is
       S         : in out Session;
       HC        : in out Handshake_Context)
   with Pre =>
-     RFLX.TLS_Handshake.Cipher_Suite_TLS.Has_Buffer (Suite_Ctx)
-     and then RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
-                (Suite_Ctx),
+	     RFLX.TLS_Handshake.Cipher_Suite_TLS.Has_Buffer (Suite_Ctx)
+	     and then RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
+	                (Suite_Ctx)
+	     and then Reasm_Building (HC),
        Post =>
             S.Role = S.Role'Old
             and then S.State = S.State'Old
@@ -1099,11 +1100,15 @@ is
             and then S.Input.Write_Pos = S.Input.Write_Pos'Old
             and then S.Server_App.Counter = S.Server_App.Counter'Old
             and then S.Server_App.Suite = S.Server_App.Suite'Old
-            and then HC.HRR_Sent = HC.HRR_Sent'Old
-            and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-            and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
+	            and then HC.HRR_Sent = HC.HRR_Sent'Old
+	            and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+		            and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+		            and then HC.Legacy_Session_ID_Len =
+		                   HC.Legacy_Session_ID_Len'Old
+		            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+	            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+	            and then Reasm_Building (HC)
+	            and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
@@ -1228,7 +1233,9 @@ is
    with Pre => RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer (Ext_Ctx)
 	                    and then RFLX.TLS_Handshake.CH_Extension_TLS
 	                               .Well_Formed_Message (Ext_Ctx)
-	                    and then No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		                    and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                    and then Reasm_Building (HC),
+			      Post => Reasm_Building (HC);
 
    procedure Dispatch_CH_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1244,10 +1251,12 @@ is
                             .Well_Formed_Message (Ext_Ctx)
                  and then DLen <= N32
                                    (RFLX.TLS_Handshake.Data_Length'Last)
-	                 and then RFLX.TLS_Handshake.CH_Extension_TLS
-	                            .Get_Data_Length (Ext_Ctx)
-	                          = RFLX.TLS_Handshake.Data_Length (DLen)
-	                 and then No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+		                 and then RFLX.TLS_Handshake.CH_Extension_TLS
+		                            .Get_Data_Length (Ext_Ctx)
+		                          = RFLX.TLS_Handshake.Data_Length (DLen)
+		                 and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                 and then Reasm_Building (HC),
+			        Post => Reasm_Building (HC);
 
    procedure Dispatch_CH_Negotiation_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1266,7 +1275,9 @@ is
 	                 and then RFLX.TLS_Handshake.CH_Extension_TLS
 	                            .Get_Data_Length (Ext_Ctx)
 	                          = RFLX.TLS_Handshake.Data_Length (DLen)
-	                 and then No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+	                 and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+	                 and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Dispatch_CH_State_Extension
      (Tag     : in     RFLX.Tls_Extensiontype_Values
@@ -1367,7 +1378,9 @@ is
      (Code : in     Unsigned_32;
       HC   : in out Handshake_Context;
       OK   :    out Boolean)
-   with Pre  => No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+   with Pre  => No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+                and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Register_CH_Extension
      (Code : in     Unsigned_32;
@@ -1382,6 +1395,7 @@ is
       for I in 1 .. HC.Seen_Ext_Count loop
          pragma Loop_Invariant
            (No_Duplicate_Extensions_RFC_8446_4_2 (HC));
+         pragma Loop_Invariant (Reasm_Building (HC));
          if HC.Seen_Ext_Tags (I) = Code then
             OK := False;
             return;
@@ -2087,20 +2101,38 @@ is
    with Pre =>
      not Ctx'Constrained
      and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
-                (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS),
-		      Post =>
-		       RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-		            and then Ctx.Buffer_First = Ctx.Buffer_First'Old
-		            and then Ctx.Buffer_Last  = Ctx.Buffer_Last'Old;
+	     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
+	                (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+	     and then Reasm_Building (HC),
+				      Post =>
+				       RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+				            and then Ctx.Buffer_First = Ctx.Buffer_First'Old
+				            and then Ctx.Buffer_Last  = Ctx.Buffer_Last'Old
+				            and then Reasm_Building (HC)
+				            and then HC.HRR_Sent = HC.HRR_Sent'Old
+				            and then HC.Server_HS.Counter =
+				                       HC.Server_HS.Counter'Old
+				            and then HC.Server_HS.Suite =
+				                       HC.Server_HS.Suite'Old
+				            and then HC.Legacy_Session_ID_Len =
+				                       HC.Legacy_Session_ID_Len'Old;
 
    procedure Process_CH_Extension_Element
      (Ext_Ctx  : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
       HC       : in out Handshake_Context;
       Aborting : in out Boolean;
-      Saw_PSK  : in out Boolean)
-      with Pre => RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer (Ext_Ctx)
-	                  and then No_Duplicate_Extensions_RFC_8446_4_2 (HC);
+	      Saw_PSK  : in out Boolean)
+	      with Pre => RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer (Ext_Ctx)
+		                  and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+		                  and then Reasm_Building (HC),
+		           Post => Reasm_Building (HC)
+		                   and then HC.HRR_Sent = HC.HRR_Sent'Old
+		                   and then HC.Server_HS.Counter =
+		                              HC.Server_HS.Counter'Old
+		                   and then HC.Server_HS.Suite =
+		                              HC.Server_HS.Suite'Old
+		                   and then HC.Legacy_Session_ID_Len =
+		                              HC.Legacy_Session_ID_Len'Old;
 
    procedure Process_CH_Extension_Element
      (Ext_Ctx  : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -2177,9 +2209,16 @@ is
                   and then Valid_Next (Ctx, F_Extensions_TLS)
                   and then Exts_Ctx.First =
                              Field_First (Ctx, F_Extensions_TLS)
-	                     and then Exts_Ctx.Last  =
-	                                Field_Last  (Ctx, F_Extensions_TLS)
-		                     and then No_Duplicate_Extensions_RFC_8446_4_2 (HC));
+			                     and then Exts_Ctx.Last  =
+			                                Field_Last  (Ctx, F_Extensions_TLS)
+			                     and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+			                     and then HC.HRR_Sent = HC.HRR_Sent'Loop_Entry
+			                     and then HC.Server_HS.Counter =
+			                                HC.Server_HS.Counter'Loop_Entry
+			                     and then HC.Server_HS.Suite =
+			                                HC.Server_HS.Suite'Loop_Entry
+			                     and then HC.Legacy_Session_ID_Len =
+			                                HC.Legacy_Session_ID_Len'Loop_Entry);
             declare
                Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             begin
@@ -2215,9 +2254,10 @@ is
    with Pre =>
      not Ctx'Constrained
      and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
-                (Ctx,
-                 RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_TLS),
+	     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
+	                (Ctx,
+	                 RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_TLS)
+	     and then Reasm_Building (HC),
      Post =>
        RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
@@ -2228,11 +2268,14 @@ is
           and S.Input.Write_Pos = S.Input.Write_Pos'Old
           and S.Server_App.Counter = S.Server_App.Counter'Old
           and S.Server_App.Suite = S.Server_App.Suite'Old
-          and HC.HRR_Sent = HC.HRR_Sent'Old
-          and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-          and HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-          and (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-          and (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
+	          and HC.HRR_Sent = HC.HRR_Sent'Old
+	          and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+		          and HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+		          and HC.Legacy_Session_ID_Len =
+		                 HC.Legacy_Session_ID_Len'Old
+		          and (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+		          and (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+	          and Reasm_Building (HC);
 
    procedure Parse_CH_Cipher_Suites
      (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
@@ -2274,11 +2317,13 @@ is
                   and then S.Input.Write_Pos = S.Input.Write_Pos'Loop_Entry
                   and then S.Server_App.Counter = S.Server_App.Counter'Loop_Entry
                   and then S.Server_App.Suite = S.Server_App.Suite'Loop_Entry
-                  and then HC.HRR_Sent = HC.HRR_Sent'Loop_Entry
-                  and then HC.Server_HS.Counter = HC.Server_HS.Counter'Loop_Entry
-                  and then HC.Server_HS.Suite = HC.Server_HS.Suite'Loop_Entry
-                  and then
-                     (if HC.Cfg.Local'Loop_Entry /= null
+	                  and then HC.HRR_Sent = HC.HRR_Sent'Loop_Entry
+	                  and then HC.Server_HS.Counter = HC.Server_HS.Counter'Loop_Entry
+	                  and then HC.Server_HS.Suite = HC.Server_HS.Suite'Loop_Entry
+	                  and then HC.Legacy_Session_ID_Len =
+	                             HC.Legacy_Session_ID_Len'Loop_Entry
+	                  and then
+	                     (if HC.Cfg.Local'Loop_Entry /= null
                       then HC.Cfg.Local /= null)
                and then
                   (if HC.Cfg.Random'Loop_Entry /= null
@@ -2328,17 +2373,33 @@ is
                       and then
                         (if Saved_Local.Has_Identity
                          then HC.Cfg.Local.Has_Identity))
-		         and then
-		           (if Saved_Random /= null
-		            then HC.Cfg.Random /= null))
+			         and then
+			           (if Saved_Random /= null
+			            then HC.Cfg.Random /= null)
+			         and then
+				           (if Saved_Local /= null
+				             and then Local_Config_Valid (Saved_Local)
+				            then HC.Cfg.Local /= null
+			                 and then HC.Cfg.Local.NaCl_Cert_Len
+			                   <= N32 (Max_Cert_DER)
+			                 and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
+			                 and then
+			                   (for all I in 0 .. Max_Pool_Size - 1 =>
+			                      HC.Cfg.Local.Ints (I).DER_Len
+			                        <= X509.N32 (Max_Cert_DER))
+			                 and then
+			                   (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+			                    then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)))
       with Ghost;
    begin
       OK := False;
 
          if Data'Length < 39 then
-            S.Last_Error := Decode_Error;
-            pragma Assert (Saved_Config_Frame);
-            return;
+		            S.Last_Error := Decode_Error;
+		            pragma Assert (Saved_Config_Frame);
+		            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		            pragma Assert (Reasm_Building (HC));
+		            return;
          end if;
 
       if Data (Data'First) /= HT_Client_Hello then
@@ -2348,9 +2409,11 @@ is
          --  structurally well-formed (we read its 4-byte header to
          --  reach this point); the type byte just identifies a
             --  different message that doesn't belong here.
-            S.Last_Error := Unexpected_Message;
-            pragma Assert (Saved_Config_Frame);
-            return;
+		            S.Last_Error := Unexpected_Message;
+		            pragma Assert (Saved_Config_Frame);
+		            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		            pragma Assert (Reasm_Building (HC));
+		            return;
          end if;
 
       --  Detect "CH + trailing bytes from a next handshake message in
@@ -2369,9 +2432,11 @@ is
           + N32 (Data (Data'First + 3));
       begin
             if HS_Body_Len + 4 < N32 (Data'Length) then
-               S.Last_Error := Unexpected_Message;
-               pragma Assert (Saved_Config_Frame);
-               return;
+		               S.Last_Error := Unexpected_Message;
+		               pragma Assert (Saved_Config_Frame);
+		               pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		               pragma Assert (Reasm_Building (HC));
+		               return;
             end if;
          end;
 
@@ -2427,9 +2492,11 @@ is
       then
             Take_Buffer (Ctx, Buf);
             RFLX_Free (Buf);
-            S.Last_Error := Decode_Error;
-            pragma Assert (Saved_Config_Frame);
-            return;
+		            S.Last_Error := Decode_Error;
+		            pragma Assert (Saved_Config_Frame);
+		            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		            pragma Assert (Reasm_Building (HC));
+		            return;
          end if;
 
       if not Well_Formed_Message (Ctx) then
@@ -2486,9 +2553,11 @@ is
                   S.Last_Error := Decode_Error;
                   end if;
                end;
-            end if;
-            pragma Assert (Saved_Config_Frame);
-            return;
+		            end if;
+		            pragma Assert (Saved_Config_Frame);
+		            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		            pragma Assert (Reasm_Building (HC));
+		            return;
          end if;
 
       --  Extract client random (32 bytes)
@@ -2505,12 +2574,22 @@ is
       declare
          SID_Len : constant N32 :=
             N32 (Get_Legacy_Session_ID_Length (Ctx));
-      begin
-         HC.Legacy_Session_ID := (others => 0);
-         HC.Legacy_Session_ID_Len := SID_Len;
-         if SID_Len > 0 and SID_Len <= 32 then
-            declare
-               SID : RBT.Bytes (1 .. RBT.Index (SID_Len));
+	      begin
+	         HC.Legacy_Session_ID := (others => 0);
+	         if SID_Len > 32 then
+	            Take_Buffer (Ctx, Buf);
+	            RFLX_Free (Buf);
+	            S.Last_Error := Decode_Error;
+	            pragma Assert (Saved_Config_Frame);
+	            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+	            pragma Assert (Reasm_Building (HC));
+	            return;
+	         end if;
+	         HC.Legacy_Session_ID_Len := SID_Len;
+	         pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+	         if SID_Len > 0 then
+	            declare
+	               SID : RBT.Bytes (1 .. RBT.Index (SID_Len));
             begin
                Get_Legacy_Session_ID (Ctx, SID);
                HC.Legacy_Session_ID (0 .. SID_Len - 1) := To_NaCl (SID);
@@ -2541,9 +2620,11 @@ is
 	      --  Need at least one matching suite (either TLS 1.3 or 1.2)
          if S.Negotiated_Suite = 0 and S.Negotiated_Suite_12 = 0 then
             Take_Buffer (Ctx, Buf);
-            RFLX_Free (Buf);
-            pragma Assert (Saved_Config_Frame);
-            return;
+	            RFLX_Free (Buf);
+		            pragma Assert (Saved_Config_Frame);
+		            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		            pragma Assert (Reasm_Building (HC));
+		            return;
          end if;
 
       --  Iterate extensions to find key_share / sig_algs / etc.
@@ -2569,9 +2650,11 @@ is
                   S.Last_Error := HC.Ext_Parse_Err;
                   else
                      S.Last_Error := Decode_Error;
-                  end if;
-                  pragma Assert (Saved_Config_Frame);
-                  return;
+	                  end if;
+		                  pragma Assert (Saved_Config_Frame);
+		                  pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		                  pragma Assert (Reasm_Building (HC));
+		                  return;
                end if;
          end;
       end if;
@@ -2586,10 +2669,12 @@ is
          if HC.Saw_Supported_Versions and then not HC.SV_Has_Acceptable then
             S.Last_Error := Protocol_Version;
             OK := False;
-            pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-            pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
-            pragma Assert (Saved_Config_Frame);
-            return;
+	            pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
+	            pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
+		            pragma Assert (Saved_Config_Frame);
+		            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		            pragma Assert (Reasm_Building (HC));
+		            return;
          end if;
 
       --  Set version based on supported_versions parsing.
@@ -2612,20 +2697,24 @@ is
       then
             S.Last_Error := Missing_Extension;
             OK := False;
-            pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-            pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
-            pragma Assert (Saved_Config_Frame);
-            return;
+	            pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
+	            pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
+		            pragma Assert (Saved_Config_Frame);
+		            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		            pragma Assert (Reasm_Building (HC));
+		            return;
          end if;
 
       --  Shared secret computation deferred to Build_Server_Hello
       --  where we know which group to select.
 
          OK := True;
-         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-         pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
-         pragma Assert (Saved_Config_Frame);
-      end Parse_Client_Hello;
+	         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
+	         pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
+		         pragma Assert (Saved_Config_Frame);
+		         pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+		         pragma Assert (Reasm_Building (HC));
+	      end Parse_Client_Hello;
 
    ----------------------------------------------------------------------------
    --  Server-side build procedures

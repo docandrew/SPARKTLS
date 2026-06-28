@@ -244,12 +244,13 @@ is
       HC     : in out Handshake_Context;
       Data   : in     Byte_Seq;
       Result :    out Action)
-	   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-	                and then Data'First = 0
-	                and then Data'Length >= 4
-	                and then Data'Last < N32'Last - 4
-	                and then Data'Last < Transcript_Capacity
-		                and then HC.Transcript_Len > 0
+		   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+		                and then Data'First = 0
+		                and then Data'Length >= 4
+		                and then Data'Last < N32'Last - 4
+		                and then Data'Last < Transcript_Capacity
+			                and then Reasm_Building (HC)
+			                and then HC.Transcript_Len > 0
 		                and then Nonce_Space_Available (HC.Client_HS)
 		                and then Nonce_Space_Available (S.Client_App)
 		                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -1192,16 +1193,8 @@ is
 			                    and then HC.Cfg.Random /= null
 			                    and then HC.Transcript_Len > 0
 			                    and then HC.Transcript_Len <= Transcript_Capacity
-	                    and then HC.HRR_Cookie_Len <=
-	                      N32 (HC.HRR_Cookie'Length)
-		                    and then
-		                      (if HC.Version = TLS_1_3
-		                       and then not HC.Sent_HRR_CCS
-		                       then
-		                         S.Negotiated_Suite in
-		                           Suite_AES_128_GCM_SHA256
-		                         | Suite_AES_256_GCM_SHA384
-	                         | Suite_CHACHA20_POLY1305_SHA256));
+		                    and then HC.HRR_Cookie_Len <=
+		                      N32 (HC.HRR_Cookie'Length));
    procedure Finalize_SH_Processing
      (S      : in out Session;
       HC     : in out Handshake_Context;

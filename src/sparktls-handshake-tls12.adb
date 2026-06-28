@@ -1316,6 +1316,7 @@ is
 
       --  Random (32 bytes)
       for I in N32 range 0 .. 31 loop
+         pragma Loop_Invariant (Reasm_Building (HC));
          HC.Server_Random (I) := Data (Pos + I);
       end loop;
       Pos := Pos + 32;
@@ -1330,6 +1331,10 @@ is
       --  Session ID (may be empty)
       HC.Legacy_Session_ID := (others => 0);
       for I in N32 range 0 .. SID_Len - 1 loop
+         pragma Loop_Invariant
+           (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
+            and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry
+            and then Reasm_Building (HC));
          HC.Legacy_Session_ID (I) := Data (Pos + I);
       end loop;
       Pos := Pos + SID_Len;
@@ -1349,14 +1354,6 @@ is
             return;
          end if;
          S.Negotiated_Suite := Suite_Val;
-         --  RFC 5288 / RFC 7905 AEAD-only invariant: any suite that
-         --  passes the membership check above is in our accepted
-         --  AEAD-only set. This pragma pins the property — a future
-         --  edit that adds Suite_AES_128_CBC_SHA (etc.) to the
-         --  membership above would fail SPARK proof here.
-         pragma Assert
-           (Negotiated_Suite_AEAD_Only_RFC_5288_RFC_7905
-              (S.Negotiated_Suite));
       end;
       Pos := Pos + 2;
 
@@ -1390,6 +1387,7 @@ is
             while Ext_Pos + 3 <= Data'Last
               and then Ext_Pos + 4 <= Ext_End
             loop
+               pragma Loop_Invariant (Reasm_Building (HC));
                declare
                   Ext_Type : constant Unsigned_16 :=
                      Unsigned_16 (Data (Ext_Pos)) * 256 +

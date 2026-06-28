@@ -48,9 +48,10 @@ is
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
 	      OK   :    out Boolean)
-			      with Pre => Data'Length > 0
-			                 and then Data'Last <= N32 (Max_HS_Msg) - 1
-		                         and then Reasm_Building (HC),
+				      with Pre => Data'Length > 0
+				                 and then Data'Last <= N32 (Max_HS_Msg) - 1
+			                         and then Reasm_Building (HC)
+			                         and then HC.Legacy_Session_ID_Len in 0 .. 32,
                     Post => (if HC.Cfg.Local'Old /= null
                               then HC.Cfg.Local /= null
                                    and then
@@ -65,20 +66,46 @@ is
 	                              S.Input.Read_Pos'Old
 	                            and then S.Input.Write_Pos =
 	                              S.Input.Write_Pos'Old
-	                            and then Reasm_Building (HC)
-	                            and then HC.HRR_Sent = HC.HRR_Sent'Old
-	                            and then
-	                              (if HC.HRR_Sent'Old
-	                               then HC.Version = HC.Version'Old)
-	                            and then
-	                              (if Local_Config_Valid (HC.Cfg.Local'Old)
-	                               then Local_Config_Valid (HC.Cfg.Local))
+		                            and then Reasm_Building (HC)
+		                            and then HC.HRR_Sent = HC.HRR_Sent'Old
+			                            and then
+				                              (if HC.Cfg.Local'Old /= null
+				                                and then
+				                                  Local_Config_Valid
+				                                    (HC.Cfg.Local'Old)
+				                               then HC.Cfg.Local /= null
+			                                    and then
+			                                      HC.Cfg.Local.NaCl_Cert_Len
+			                                        <= N32 (Max_Cert_DER)
+			                                    and then
+			                                      HC.Cfg.Local.Int_Count
+			                                        <= Max_Pool_Size
+			                                    and then
+			                                      (for all I in 0 .. Max_Pool_Size - 1 =>
+			                                         HC.Cfg.Local.Ints (I).DER_Len
+			                                           <= X509.N32 (Max_Cert_DER))
+			                                    and then
+			                                      (if HC.Cfg.Local.Sign_Algo =
+			                                            Sign_RSA_PSS
+			                                       then HC.Cfg.Local.RSA_Mod_Len
+			                                            in 64 .. 512))
+	                            and then HC.Legacy_Session_ID_Len in 0 .. 32
 	                            and then
 	                              (if OK and then HC.Version = TLS_1_3
 	                               then S.Negotiated_Suite in
-	                                 Suite_AES_128_GCM_SHA256
-	                                 | Suite_AES_256_GCM_SHA384
-	                                 | Suite_CHACHA20_POLY1305_SHA256);
+	                                      Suite_AES_128_GCM_SHA256
+	                                    | Suite_AES_256_GCM_SHA384
+	                                    | Suite_CHACHA20_POLY1305_SHA256)
+			                            and then
+			                              (if Nonce_Space_Available
+		                                    (HC.Server_HS'Old)
+		                               then Nonce_Space_Available
+		                                    (HC.Server_HS))
+			                            and then
+			                              (if Nonce_Space_Available
+			                                    (S.Server_App'Old)
+			                               then Nonce_Space_Available
+			                                    (S.Server_App));
 
    --  Build a ServerHello handshake message.
    --  Includes key_share and supported_versions extensions.
@@ -91,10 +118,11 @@ is
    with Pre  => Result'First = 0
                 and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
                 and then HC.Cfg.Random /= null
-                and then HC.Legacy_Session_ID_Len in 0 .. 32
-                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                               | Suite_AES_256_GCM_SHA384
-                                               | Suite_CHACHA20_POLY1305_SHA256
+	                and then HC.Legacy_Session_ID_Len in 0 .. 32
+	                and then Reasm_Building (HC)
+	                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+	                                               | Suite_AES_256_GCM_SHA384
+	                                               | Suite_CHACHA20_POLY1305_SHA256
                 and then SPARKTLSCrypto.P384.Field.Initialized,
            Post => Len <= N32 (Result'Length)
                    and then (if Len > 0 then Len >= 4)
@@ -102,12 +130,13 @@ is
                    and then
                      (if Local_Config_Valid (HC.Cfg.Local'Old)
                       then Local_Config_Valid (HC.Cfg.Local))
-                   and then (if HC.Cfg.Local'Old /= null
-                             then HC.Cfg.Local /= null)
-                   and then (if HC.Cfg.Local'Old /= null
-                                 and then HC.Cfg.Local'Old.Has_Identity
-                             then HC.Cfg.Local /= null
-                                  and then HC.Cfg.Local.Has_Identity);
+	                   and then (if HC.Cfg.Local'Old /= null
+	                             then HC.Cfg.Local /= null)
+	                   and then (if HC.Cfg.Local'Old /= null
+	                                 and then HC.Cfg.Local'Old.Has_Identity
+	                             then HC.Cfg.Local /= null
+	                                  and then HC.Cfg.Local.Has_Identity)
+	                   and then Reasm_Building (HC);
 
    --  RFC 8446 Section 4.3.1: Build EncryptedExtensions.
    --  Sent immediately after ServerHello (encrypted with HS keys).
