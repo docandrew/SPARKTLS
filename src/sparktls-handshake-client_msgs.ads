@@ -44,12 +44,16 @@ is
 		                  (if HC.Cfg.TLS12_Resume_Ticket.Valid
 		                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
 		                        <= Max_TLS12_Ticket_Len)
-		                and then Reasm_Building (HC),
+		                and then Reasm_Coherent (HC),
 				        Post => (if HC.Cfg.Random'Old /= null
 				                          then HC.Cfg.Random /= null)
 				                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 		                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-		                and then Reasm_Building (HC);
+		                and then Reasm_Coherent (HC)
+		                and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then HC.Reasm_Need = HC.Reasm_Need'Old
+		                and then HC.Reasm_Hdr_Pending =
+		                  HC.Reasm_Hdr_Pending'Old;
 
    --  Parse a ServerHello from raw handshake message bytes.
    --  Extracts: server random, cipher suite, key share (server public key).
@@ -58,12 +62,23 @@ is
 	      HC   : in out Handshake_Context;
 	      Data : in     Byte_Seq;
 	      OK   :    out Boolean)
-		   with Pre => Data'Length > 0
-		               and then SPARKTLSCrypto.P384.Field.Initialized
-		               and then HC.HRR_Cookie_Len <=
-		                 N32 (HC.HRR_Cookie'Length)
-		               and then Reasm_Building (HC),
-						        Post => (if HC.Cfg.Random'Old /= null
-						                          then HC.Cfg.Random /= null);
+			   with Pre => Data'Length > 0
+			               and then SPARKTLSCrypto.P384.Field.Initialized
+			               and then HC.HRR_Cookie_Len <=
+			                 N32 (HC.HRR_Cookie'Length)
+			               and then Reasm_Coherent (HC),
+							        Post => (if HC.Cfg.Random'Old /= null
+							                          then HC.Cfg.Random /= null)
+							                and then HC.Transcript_Len =
+							                  HC.Transcript_Len'Old
+							                and then Reasm_Coherent (HC)
+							                and then HC.Reasm_Len =
+							                  HC.Reasm_Len'Old
+							                and then HC.Reasm_Need =
+							                  HC.Reasm_Need'Old
+							                and then HC.Reasm_Hdr_Pending =
+							                  HC.Reasm_Hdr_Pending'Old
+							                and then HC.HRR_Cookie_Len <=
+							                  N32 (HC.HRR_Cookie'Length);
 
 end SPARKTLS.Handshake.Client_Msgs;

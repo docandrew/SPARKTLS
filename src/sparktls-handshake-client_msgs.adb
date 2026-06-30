@@ -1023,8 +1023,15 @@ is
 	      OK         :    out Boolean)
 	   with Pre => Data'Length in 39 .. Max_HS_Msg
 		               and then Data'Last < N32 (Natural'Last)
-                  and then Reasm_Building (HC),
-	        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
+                  and then Reasm_Coherent (HC),
+	        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+                  and then HC.Transcript_Len = HC.Transcript_Len'Old
+                  and then Reasm_Coherent (HC)
+                  and then HC.Reasm_Len = HC.Reasm_Len'Old
+                  and then HC.Reasm_Need = HC.Reasm_Need'Old
+                  and then HC.Reasm_Hdr_Pending =
+                    HC.Reasm_Hdr_Pending'Old
+                  and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
@@ -1111,7 +1118,18 @@ is
 	         pragma Assert (N_Ext <= Exts'Last);
 	         while P <= Ext_End - 4 loop
 	            pragma Loop_Invariant (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant (Reasm_Building (HC));
+	            pragma Loop_Invariant (Reasm_Coherent (HC));
+	            pragma Loop_Invariant
+	              (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	            pragma Loop_Invariant
+	              (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	            pragma Loop_Invariant
+	              (HC.Reasm_Hdr_Pending =
+	                 HC.Reasm_Hdr_Pending'Loop_Entry);
+	            pragma Loop_Invariant
+	              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+	            pragma Loop_Invariant
+	              (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
 	            pragma Loop_Invariant (P >= Data'First);
 	            pragma Loop_Invariant (P <= Ext_End);
 	            pragma Loop_Invariant (Ext_End = Data'Last + 1);
@@ -1138,7 +1156,18 @@ is
 	                  pragma Loop_Invariant
 	                    (if HC.Cfg.Random'Loop_Entry /= null
 	                     then HC.Cfg.Random /= null);
-	                  pragma Loop_Invariant (Reasm_Building (HC));
+	                  pragma Loop_Invariant (Reasm_Coherent (HC));
+	                  pragma Loop_Invariant
+	                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	                  pragma Loop_Invariant
+	                    (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	                  pragma Loop_Invariant
+	                    (HC.Reasm_Hdr_Pending =
+	                       HC.Reasm_Hdr_Pending'Loop_Entry);
+	                  pragma Loop_Invariant
+	                    (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+	                  pragma Loop_Invariant
+	                    (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
                   if Exts (I).Tag = Tag_U16 then
                      --  RFC 8446 §4.2: duplicate ext in SH/EE →
                      --  decode_error. In HRR specifically BoringSSL
@@ -1190,7 +1219,18 @@ is
 	         for I in 1 .. N_Ext loop
 	            pragma Loop_Invariant
 	              (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant (Reasm_Building (HC));
+	            pragma Loop_Invariant (Reasm_Coherent (HC));
+	            pragma Loop_Invariant
+	              (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	            pragma Loop_Invariant
+	              (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	            pragma Loop_Invariant
+	              (HC.Reasm_Hdr_Pending =
+	                 HC.Reasm_Hdr_Pending'Loop_Entry);
+	            pragma Loop_Invariant
+	              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+	            pragma Loop_Invariant
+	              (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
             pragma Loop_Invariant
               (if HC.Cfg.Random'Loop_Entry /= null
                then HC.Cfg.Random /= null);
@@ -1302,7 +1342,20 @@ is
                      if C_Len <= N32 (HC.HRR_Cookie'Length) then
 	                        HC.HRR_Cookie_Len := C_Len;
 	                        for K in 0 .. C_Len - 1 loop
-	                           pragma Loop_Invariant (Reasm_Building (HC));
+	                           pragma Loop_Invariant (Reasm_Coherent (HC));
+	                           pragma Loop_Invariant
+	                             (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	                           pragma Loop_Invariant
+	                             (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	                           pragma Loop_Invariant
+	                             (HC.Reasm_Hdr_Pending =
+	                                HC.Reasm_Hdr_Pending'Loop_Entry);
+	                           pragma Loop_Invariant
+	                             (HC.Transcript_Len =
+	                              HC.Transcript_Len'Loop_Entry);
+	                           pragma Loop_Invariant
+	                             (HC.HRR_Cookie_Len <=
+	                              N32 (HC.HRR_Cookie'Length));
 	                           HC.HRR_Cookie (K) :=
 	                              Data (Exts (I).Offset + 2 + K);
                         end loop;
@@ -1333,8 +1386,16 @@ is
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed
                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid_Next
-                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data),
-        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
+                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
+               and then Reasm_Coherent (HC),
+        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+                and then HC.Transcript_Len = HC.Transcript_Len'Old
+                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+                and then Reasm_Coherent (HC)
+                and then HC.Reasm_Len = HC.Reasm_Len'Old
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then HC.Reasm_Hdr_Pending =
+                  HC.Reasm_Hdr_Pending'Old;
 
    procedure Apply_SH_Key_Share
      (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
@@ -1692,6 +1753,18 @@ is
 	                  pragma Loop_Invariant
 	                    (if HC.Cfg.Random'Loop_Entry /= null
 	                     then HC.Cfg.Random /= null);
+	                  pragma Loop_Invariant
+	                    (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+	                  pragma Loop_Invariant
+	                    (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
+	                  pragma Loop_Invariant (Reasm_Coherent (HC));
+	                  pragma Loop_Invariant
+	                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	                  pragma Loop_Invariant
+	                    (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	                  pragma Loop_Invariant
+	                    (HC.Reasm_Hdr_Pending =
+	                       HC.Reasm_Hdr_Pending'Loop_Entry);
                   declare
                      Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                   begin

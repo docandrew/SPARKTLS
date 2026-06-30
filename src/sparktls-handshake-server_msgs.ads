@@ -66,24 +66,31 @@ is
 	                              S.Input.Read_Pos'Old
 	                            and then S.Input.Write_Pos =
 	                              S.Input.Write_Pos'Old
-				                            and then Reasm_Building (HC)
-				                            and then
-					                              (if HC.Cfg.Local'Old /= null
+	                            and then S.Server_App.Counter =
+	                              S.Server_App.Counter'Old
+	                            and then S.Server_App.Suite =
+	                              S.Server_App.Suite'Old
+	                            and then HC.Server_HS.Counter =
+	                              HC.Server_HS.Counter'Old
+	                            and then HC.Server_HS.Suite =
+	                              HC.Server_HS.Suite'Old
+	                            and then HC.HRR_Sent = HC.HRR_Sent'Old
+					                            and then Reasm_Building (HC)
+	                            and then
+	                              (if OK and then HC.Version = TLS_1_3
+	                               then S.Negotiated_Suite in
+	                                 Suite_AES_128_GCM_SHA256
+	                               | Suite_AES_256_GCM_SHA384
+	                               | Suite_CHACHA20_POLY1305_SHA256)
+					                            and then
+						                              (if HC.Cfg.Local'Old /= null
 					                                and then
 					                                  Local_Config_Valid
 					                                    (HC.Cfg.Local'Old)
 					                               then HC.Cfg.Local /= null
 				                                    and then
-				                                      HC.Cfg.Local.NaCl_Cert_Len
-				                                        <= N32 (Max_Cert_DER)
-					                                    and then
-					                                      HC.Cfg.Local.Int_Count
-					                                        <= Max_Pool_Size
-					                                    and then
-					                                      (if HC.Cfg.Local.Sign_Algo =
-				                                            Sign_RSA_PSS
-					                                       then HC.Cfg.Local.RSA_Mod_Len
-					                                            in 64 .. 512))
+				                                      Local_Config_Valid
+				                                        (HC.Cfg.Local))
 		                            and then HC.Legacy_Session_ID_Len in 0 .. 32;
 
    --  Build a ServerHello handshake message.

@@ -656,6 +656,10 @@ is
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
 		                and then Reasm_Coherent (HC)
+                  and then HC.Reasm_Len = HC.Reasm_Len'Old
+                  and then HC.Reasm_Need = HC.Reasm_Need'Old
+                  and then HC.Reasm_Hdr_Pending =
+                    HC.Reasm_Hdr_Pending'Old
 		                and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
@@ -670,6 +674,11 @@ is
            (I in 0 .. C_Len - 1
             and RBT.Index (I + 1) in Cert_RFLX'Range);
 	         pragma Loop_Invariant (Reasm_Coherent (HC));
+         pragma Loop_Invariant (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Loop_Entry);
          HC.Peer_Cert_DER (I) :=
             Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;
@@ -801,8 +810,15 @@ is
 	                             and then HC.Cfg.Local.Has_Identity)
 	                     and then (if HC.Cfg.Random'Loop_Entry /= null
 	                               then HC.Cfg.Random /= null)
-		                     and then Reasm_Coherent (HC)
-	                     and then
+			                     and then Reasm_Coherent (HC)
+                         and then
+                           HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
+                         and then
+                           HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
+                         and then
+                           HC.Reasm_Hdr_Pending =
+                             HC.Reasm_Hdr_Pending'Loop_Entry
+		                     and then
                        (if HC.Peer_Cert_Valid
                         then HC.Peer_Cert_DER_Len
                              in 1 .. Max_Cert_DER_Len

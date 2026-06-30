@@ -129,6 +129,13 @@ is
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
 		                and then Reasm_Coherent (HC)
+                  and then HC.Reasm_Len = HC.Reasm_Len'Old
+                  and then HC.Reasm_Need = HC.Reasm_Need'Old
+                  and then
+                    (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
+                     then HC.Reasm_Len <= HC.Reasm_Need)
+                  and then HC.Reasm_Hdr_Pending =
+                    HC.Reasm_Hdr_Pending'Old
 	                and then
 	                  (if HC.Peer_Cert_Valid
 	                   then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len

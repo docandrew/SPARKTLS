@@ -1316,7 +1316,13 @@ is
 
       --  Random (32 bytes)
       for I in N32 range 0 .. 31 loop
-         pragma Loop_Invariant (Reasm_Building (HC));
+         pragma Loop_Invariant (Reasm_Coherent (HC));
+         pragma Loop_Invariant
+           (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Loop_Entry);
          HC.Server_Random (I) := Data (Pos + I);
       end loop;
       Pos := Pos + 32;
@@ -1334,7 +1340,11 @@ is
          pragma Loop_Invariant
            (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
             and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry
-            and then Reasm_Building (HC));
+            and then Reasm_Coherent (HC)
+            and then HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
+            and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
+            and then HC.Reasm_Hdr_Pending =
+              HC.Reasm_Hdr_Pending'Loop_Entry);
          HC.Legacy_Session_ID (I) := Data (Pos + I);
       end loop;
       Pos := Pos + SID_Len;
@@ -1387,7 +1397,14 @@ is
             while Ext_Pos + 3 <= Data'Last
               and then Ext_Pos + 4 <= Ext_End
             loop
-               pragma Loop_Invariant (Reasm_Building (HC));
+               pragma Loop_Invariant (Reasm_Coherent (HC));
+               pragma Loop_Invariant
+                 (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Reasm_Hdr_Pending =
+                    HC.Reasm_Hdr_Pending'Loop_Entry);
                declare
                   Ext_Type : constant Unsigned_16 :=
                      Unsigned_16 (Data (Ext_Pos)) * 256 +
