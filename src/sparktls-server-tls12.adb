@@ -255,15 +255,16 @@ is
 	                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
 	                and then S.State = Wait_Client_Hello
 	                and then S.Role = Role_Server
-	                and then S.Negotiated_Suite in
-                  Suite_ECDHE_RSA_AES128_GCM_SHA256
-                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                  | Suite_ECDHE_RSA_CHACHA20_SHA256
-                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                  (HC.Server_Seq_12),
+		                and then S.Negotiated_Suite in
+	                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+	                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
+	                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+	                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+	                  | Suite_ECDHE_RSA_CHACHA20_SHA256
+	                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+	                and then Reasm_Building (HC)
+	                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+	                  (HC.Server_Seq_12),
 	        Post => S.State in Wait_Client_Finished | Error_State
 	                and then S.Role = Role_Server
 	                and then HC.Version = TLS_1_2

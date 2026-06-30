@@ -1020,10 +1020,11 @@ is
       HC         : in out Handshake_Context;
       S          : in out Session;
       Is_HRR_Msg : in     Boolean;
-      OK         :    out Boolean)
-   with Pre => Data'Length in 39 .. Max_HS_Msg
-	               and then Data'Last < N32 (Natural'Last),
-        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
+	      OK         :    out Boolean)
+	   with Pre => Data'Length in 39 .. Max_HS_Msg
+		               and then Data'Last < N32 (Natural'Last)
+                  and then Reasm_Building (HC),
+	        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
@@ -1109,8 +1110,9 @@ is
          --  into Exts, decide TLS-1.3-vs-1.2 from supported_versions.
 	         pragma Assert (N_Ext <= Exts'Last);
 	         while P <= Ext_End - 4 loop
-            pragma Loop_Invariant (N_Ext <= Exts'Last);
-            pragma Loop_Invariant (P >= Data'First);
+	            pragma Loop_Invariant (N_Ext <= Exts'Last);
+	            pragma Loop_Invariant (Reasm_Building (HC));
+	            pragma Loop_Invariant (P >= Data'First);
 	            pragma Loop_Invariant (P <= Ext_End);
 	            pragma Loop_Invariant (Ext_End = Data'Last + 1);
             pragma Loop_Invariant
@@ -1132,10 +1134,11 @@ is
                   OK := False;
                   return;
                end if;
-               for I in 1 .. N_Ext loop
-                  pragma Loop_Invariant
-                    (if HC.Cfg.Random'Loop_Entry /= null
-                     then HC.Cfg.Random /= null);
+	               for I in 1 .. N_Ext loop
+	                  pragma Loop_Invariant
+	                    (if HC.Cfg.Random'Loop_Entry /= null
+	                     then HC.Cfg.Random /= null);
+	                  pragma Loop_Invariant (Reasm_Building (HC));
                   if Exts (I).Tag = Tag_U16 then
                      --  RFC 8446 §4.2: duplicate ext in SH/EE →
                      --  decode_error. In HRR specifically BoringSSL
@@ -1184,9 +1187,10 @@ is
             else E_SH12);
       begin
          pragma Assert (N_Ext <= Exts'Last);
-         for I in 1 .. N_Ext loop
-            pragma Loop_Invariant
-              (N_Ext <= Exts'Last);
+	         for I in 1 .. N_Ext loop
+	            pragma Loop_Invariant
+	              (N_Ext <= Exts'Last);
+	            pragma Loop_Invariant (Reasm_Building (HC));
             pragma Loop_Invariant
               (if HC.Cfg.Random'Loop_Entry /= null
                then HC.Cfg.Random /= null);
@@ -1296,10 +1300,11 @@ is
                         return;
                      end if;
                      if C_Len <= N32 (HC.HRR_Cookie'Length) then
-                        HC.HRR_Cookie_Len := C_Len;
-                        for K in 0 .. C_Len - 1 loop
-                           HC.HRR_Cookie (K) :=
-                              Data (Exts (I).Offset + 2 + K);
+	                        HC.HRR_Cookie_Len := C_Len;
+	                        for K in 0 .. C_Len - 1 loop
+	                           pragma Loop_Invariant (Reasm_Building (HC));
+	                           HC.HRR_Cookie (K) :=
+	                              Data (Exts (I).Offset + 2 + K);
                         end loop;
                      end if;
                   end;
@@ -1646,7 +1651,9 @@ is
       end;
 
       --  Iterate extensions to find key_share
-      if Well_Formed (Ctx, F_Extensions_TLS) then
+	      if Present (Ctx, F_Extensions_TLS)
+	        and then Well_Formed (Ctx, F_Extensions_TLS)
+	      then
          declare
             Exts_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
             Ctx_First : constant RFLX.RFLX_Types.Index := Ctx.Buffer_First;

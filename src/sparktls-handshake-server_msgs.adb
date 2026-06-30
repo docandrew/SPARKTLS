@@ -74,14 +74,16 @@ is
      (Data : in     Byte_Seq;
       HC   : in out Handshake_Context)
    with Pre => Data'First = 0
-               and then Data'Last in 0 .. 16_383,
+	               and then Data'Last in 0 .. 16_383
+                  and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Copy_X25519_KS
      (Data : in     Byte_Seq;
@@ -89,14 +91,16 @@ is
       HC   : in out Handshake_Context)
    with Pre => Data'First = 0
                and then Pos <= N32'Last - 35
-               and then Pos + 35 <= Data'Last,
+               and then Pos + 35 <= Data'Last
+               and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Copy_X25519_KS
      (Data : in     Byte_Seq;
@@ -116,14 +120,16 @@ is
       HC   : in out Handshake_Context)
    with Pre => Data'First = 0
                and then Pos <= N32'Last - 68
-               and then Pos + 68 <= Data'Last,
+               and then Pos + 68 <= Data'Last
+               and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Copy_P256_KS
      (Data : in     Byte_Seq;
@@ -143,14 +149,16 @@ is
       HC   : in out Handshake_Context)
    with Pre => Data'First = 0
                and then Pos <= N32'Last - 100
-               and then Pos + 100 <= Data'Last,
+               and then Pos + 100 <= Data'Last
+               and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Copy_P384_KS
      (Data : in     Byte_Seq;
@@ -201,9 +209,10 @@ is
 	              (if HC.Cfg.Local'Loop_Entry /= null
 	               then HC.Cfg.Local /= null);
 	            pragma Loop_Invariant
-	              (if HC.Cfg.Random'Loop_Entry /= null
-	               then HC.Cfg.Random /= null);
-	            pragma Loop_Variant (Increases => Pos);
+		      (if HC.Cfg.Random'Loop_Entry /= null
+		       then HC.Cfg.Random /= null);
+		            pragma Loop_Invariant (Reasm_Building (HC));
+		            pragma Loop_Variant (Increases => Pos);
             if Pos + 4 > DLen then
                Bad := True;
             else
@@ -271,9 +280,11 @@ is
    with Pre => RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer (Ext_Ctx)
               and then RFLX.TLS_Handshake.CH_Extension_TLS
                          .Well_Formed_Message (Ext_Ctx)
-	                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
-	                            (Ext_Ctx)
-	                          = RFLX.TLS_Handshake.Data_Length (DLen);
+		                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
+		                            (Ext_Ctx)
+		                          = RFLX.TLS_Handshake.Data_Length (DLen)
+              and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Parse_KS_Extension
      (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -307,9 +318,11 @@ is
                          (Ext_Ctx)
               and then RFLX.TLS_Handshake.CH_Extension_TLS
                          .Well_Formed_Message (Ext_Ctx)
-	                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
-	                            (Ext_Ctx)
-	                          = RFLX.TLS_Handshake.Data_Length (DLen);
+		                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
+		                            (Ext_Ctx)
+		                          = RFLX.TLS_Handshake.Data_Length (DLen)
+              and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Parse_Sig_Algs_Extension
      (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -380,9 +393,11 @@ is
                          (Ext_Ctx)
               and then RFLX.TLS_Handshake.CH_Extension_TLS
                          .Well_Formed_Message (Ext_Ctx)
-	                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
-	                            (Ext_Ctx)
-	                          = RFLX.TLS_Handshake.Data_Length (DLen);
+		                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
+		                            (Ext_Ctx)
+		                          = RFLX.TLS_Handshake.Data_Length (DLen)
+              and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Parse_Supported_Groups_Extension
      (Ext_Ctx : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -442,20 +457,24 @@ is
                          .Well_Formed_Message (Ext_Ctx)
                  and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
                             (Ext_Ctx)
-                          = RFLX.TLS_Handshake.Data_Length (DLen);
+                          = RFLX.TLS_Handshake.Data_Length (DLen)
+              and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Parse_Supported_Versions_Data
      (Data : in     Byte_Seq;
       HC   : in out Handshake_Context)
    with Pre => Data'First = 0
-               and then Data'Last in 2 .. 511,
+	               and then Data'Last in 2 .. 511
+               and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Parse_Supported_Versions_Data
      (Data : in     Byte_Seq;
@@ -467,14 +486,16 @@ is
       with Pre => Data'First = 0
                   and then Data'Last >= 2
                   and then Off <= Data'Last - 1
-                  and then Off < 1 + List_Len,
-           Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                   and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                   and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                   and then (if HC.Cfg.Local'Old /= null
-                             then HC.Cfg.Local /= null)
-                   and then (if HC.Cfg.Random'Old /= null
-                             then HC.Cfg.Random /= null);
+                  and then Off < 1 + List_Len
+                  and then Reasm_Building (HC),
+	           Post => HC.HRR_Sent = HC.HRR_Sent'Old
+	                   and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+	                   and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+	                   and then (if HC.Cfg.Local'Old /= null
+	                             then HC.Cfg.Local /= null)
+	                   and then (if HC.Cfg.Random'Old /= null
+	                             then HC.Cfg.Random /= null)
+	                   and then Reasm_Building (HC);
 
       procedure Check_At (Off : N32) is
       begin
@@ -549,28 +570,32 @@ is
                          .Well_Formed_Message (Ext_Ctx)
                  and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
                             (Ext_Ctx)
-                          = RFLX.TLS_Handshake.Data_Length (DLen),
+                          = RFLX.TLS_Handshake.Data_Length (DLen)
+              and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Parse_ALPN_Data
-	     (Data : in     Byte_Seq;
-	      HC   : in out Handshake_Context;
-	      OK   :    out Boolean)
-	   with Pre => Data'First = 0
-	               and then Data'Last in 3 .. 511,
+		     (Data : in     Byte_Seq;
+		      HC   : in out Handshake_Context;
+		      OK   :    out Boolean)
+		   with Pre => Data'First = 0
+		               and then Data'Last in 3 .. 511
+                  and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Copy_ALPN_Name
      (Data : in     Byte_Seq;
@@ -578,16 +603,18 @@ is
       PL   : in     N32;
       HC   : in out Handshake_Context)
    with Pre => Data'First = 0
-	               and then PL in 1 .. N32 (Max_Hostname_Len)
-	               and then P <= N32'Last - PL
-	               and then P + PL <= Data'Last,
+		               and then PL in 1 .. N32 (Max_Hostname_Len)
+		               and then P <= N32'Last - PL
+		               and then P + PL <= Data'Last
+		               and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Copy_ALPN_Name
      (Data : in     Byte_Seq;
@@ -633,6 +660,7 @@ is
            (if HC.Cfg.Local'Loop_Entry /= null then HC.Cfg.Local /= null);
          pragma Loop_Invariant
            (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
+         pragma Loop_Invariant (Reasm_Building (HC));
          pragma Loop_Variant (Increases => P);
          declare
             PL : constant N32 := N32 (Data (P));
@@ -804,12 +832,14 @@ is
       HC            : in out Handshake_Context;
       Binder_Count  :    out PSK_Entry_Count;
       OK            :    out Boolean)
-   with Pre => Ext_Data'First = 0
-               and then Ext_Data'Last in 5 .. 1023
-               and then Binders_Start in 2 .. Ext_Data'Last + 1,
-        Post => (if OK then
-                   Binder_Count > 0
-                   and then HC.PSK_Binder_Len in 32 | 48);
+	   with Pre => Ext_Data'First = 0
+	               and then Ext_Data'Last in 5 .. 1023
+	               and then Binders_Start in 2 .. Ext_Data'Last + 1
+	               and then Reasm_Building (HC),
+	        Post => (if OK then
+	                   Binder_Count > 0
+	                   and then HC.PSK_Binder_Len in 32 | 48)
+	                and then Reasm_Building (HC);
 
    procedure Store_PSK_Binder
      (Ext_Data : in     Byte_Seq;
@@ -973,15 +1003,19 @@ is
    with Pre => RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer (Ext_Ctx)
               and then RFLX.TLS_Handshake.CH_Extension_TLS
                          .Well_Formed_Message (Ext_Ctx)
-	                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
-	                            (Ext_Ctx)
-	                          = RFLX.TLS_Handshake.Data_Length (DLen);
+		                 and then RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data_Length
+		                            (Ext_Ctx)
+		                          = RFLX.TLS_Handshake.Data_Length (DLen)
+              and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Parse_PSK_Data
-	     (Ext_Data : in     Byte_Seq;
-	      HC       : in out Handshake_Context)
-	   with Pre => Ext_Data'First = 0
-	               and then Ext_Data'Last in 5 .. 1023;
+		     (Ext_Data : in     Byte_Seq;
+		      HC       : in out Handshake_Context)
+		   with Pre => Ext_Data'First = 0
+		               and then Ext_Data'Last in 5 .. 1023
+                  and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Parse_PSK_Identity_Data
      (Ext_Data       : in     Byte_Seq;
@@ -989,8 +1023,11 @@ is
       IDs_End        :    out PSK_Ext_Index;
       Continue_Parse :    out Boolean)
    with Pre => Ext_Data'First = 0
-               and then Ext_Data'Last in 5 .. 1023,
+	               and then Ext_Data'Last in 5 .. 1023
+               and then Reasm_Building (HC),
         Post =>
+          Reasm_Building (HC)
+          and then
           (if Continue_Parse then
              IDs_End in 2 .. Ext_Data'Last + 1);
 
@@ -1023,8 +1060,10 @@ is
       IDs_End  : in     PSK_Ext_Index;
       HC       : in out Handshake_Context)
    with Pre => Ext_Data'First = 0
-               and then Ext_Data'Last in 5 .. 1023
-               and then IDs_End in 2 .. Ext_Data'Last + 1;
+	               and then Ext_Data'Last in 5 .. 1023
+	               and then IDs_End in 2 .. Ext_Data'Last + 1
+               and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Parse_PSK_Binder_Data
      (Ext_Data : in     Byte_Seq;
@@ -1106,9 +1145,9 @@ is
 		            and then HC.Legacy_Session_ID_Len =
 		                   HC.Legacy_Session_ID_Len'Old
 		            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-	            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-	            and then Reasm_Building (HC)
-	            and then HC.HRR_Sent = HC.HRR_Sent'Old;
+		            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+			            and then Reasm_Building (HC)
+			            and then HC.HRR_Sent = HC.HRR_Sent'Old;
 
    procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
@@ -1435,7 +1474,9 @@ is
 	      HC       : in out Handshake_Context;
 	      OK       :    out Boolean)
 	   with Pre => Ext_Data'First = 0
-	               and then Ext_Data'Last in 1 .. 1023;
+	               and then Ext_Data'Last in 1 .. 1023
+               and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Copy_Server_Name
      (Ext_Data : in     Byte_Seq;
@@ -1446,7 +1487,9 @@ is
                and then Ext_Data'Last in 1 .. 1023
                and then P <= Ext_Data'Last - 3
                and then Name_Len in 1 .. N32 (Max_Hostname_Len)
-               and then Name_Len <= Ext_Data'Last - (P + 2);
+               and then Name_Len <= Ext_Data'Last - (P + 2)
+               and then Reasm_Building (HC),
+        Post => Reasm_Building (HC);
 
    procedure Copy_Server_Name
      (Ext_Data : in     Byte_Seq;
@@ -1486,6 +1529,7 @@ is
       --  Walk entries: name_type(1) + host_name length(2) + host_name.
       while P + 3 <= DLen loop
          pragma Loop_Invariant (P >= 2 and then P <= DLen);
+         pragma Loop_Invariant (Reasm_Building (HC));
          pragma Loop_Variant (Increases => P);
          declare
             Name_Type : constant Byte := Ext_Data (P);
@@ -1641,14 +1685,16 @@ is
      (Ext_Data : in     Byte_Seq;
       HC       : in out Handshake_Context)
    with Pre => Ext_Data'First = 0
-               and then Ext_Data'Last in 0 .. Max_TLS12_Ticket_Len - 1,
+               and then Ext_Data'Last in 0 .. Max_TLS12_Ticket_Len - 1
+               and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Store_TLS12_Ticket_Data
      (Ext_Data : in     Byte_Seq;
@@ -1667,14 +1713,16 @@ is
      (Ext_Data : in     Byte_Seq;
       HC       : in out Handshake_Context)
    with Pre => Ext_Data'First = 0
-               and then Ext_Data'Last in 1 .. 131071,
+               and then Ext_Data'Last in 1 .. 131071
+               and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                 and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null);
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
 
    procedure Parse_PSK_Key_Exchange_Modes_Data
      (Ext_Data : in     Byte_Seq;
@@ -2113,12 +2161,14 @@ is
      and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
 	     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
 	                (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-	     and then Reasm_Building (HC),
+	     and then Reasm_Building (HC)
+        and then HC.Legacy_Session_ID_Len in 0 .. 32,
 				      Post =>
 				       RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
 				            and then Ctx.Buffer_First = Ctx.Buffer_First'Old
 				            and then Ctx.Buffer_Last  = Ctx.Buffer_Last'Old
-		                   and then Reasm_Building (HC);
+		                   and then Reasm_Building (HC)
+                         and then HC.Legacy_Session_ID_Len in 0 .. 32;
 
    procedure Process_CH_Extension_Element
      (Ext_Ctx  : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -2127,10 +2177,10 @@ is
 	      Saw_PSK  : in out Boolean)
 	      with Pre => RFLX.TLS_Handshake.CH_Extension_TLS.Has_Buffer (Ext_Ctx)
 		                  and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
-		                  and then Reasm_Building (HC),
-			           Post => Reasm_Building (HC)
-			                   and then HC.Legacy_Session_ID_Len =
-			                              HC.Legacy_Session_ID_Len'Old;
+		                  and then Reasm_Building (HC)
+                        and then HC.Legacy_Session_ID_Len in 0 .. 32,
+				           Post => Reasm_Building (HC)
+                         and then HC.Legacy_Session_ID_Len in 0 .. 32;
 
    procedure Process_CH_Extension_Element
      (Ext_Ctx  : in     RFLX.TLS_Handshake.CH_Extension_TLS.Context;
@@ -2207,16 +2257,11 @@ is
                   and then Valid_Next (Ctx, F_Extensions_TLS)
                   and then Exts_Ctx.First =
                              Field_First (Ctx, F_Extensions_TLS)
-			                     and then Exts_Ctx.Last  =
-			                                Field_Last  (Ctx, F_Extensions_TLS)
-				                     and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
-				                     and then Reasm_Building (HC)
-				                     and then HC.Server_HS.Counter =
-			                                HC.Server_HS.Counter'Loop_Entry
-			                     and then HC.Server_HS.Suite =
-			                                HC.Server_HS.Suite'Loop_Entry
-			                     and then HC.Legacy_Session_ID_Len =
-			                                HC.Legacy_Session_ID_Len'Loop_Entry);
+				                     and then Exts_Ctx.Last  =
+				                                Field_Last  (Ctx, F_Extensions_TLS)
+					                     and then No_Duplicate_Extensions_RFC_8446_4_2 (HC)
+						                     and then Reasm_Building (HC)
+                                and then HC.Legacy_Session_ID_Len in 0 .. 32);
             declare
                Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
             begin
@@ -2252,10 +2297,10 @@ is
    with Pre =>
      not Ctx'Constrained
      and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-	     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
-	                (Ctx,
-	                 RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_TLS)
-	     and then Reasm_Building (HC),
+		     and then RFLX.TLS_Handshake.Client_Hello.Well_Formed
+		                (Ctx,
+		                 RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_TLS)
+			     and then Reasm_Building (HC),
      Post =>
        RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
@@ -2272,8 +2317,8 @@ is
 		          and HC.Legacy_Session_ID_Len =
 		                 HC.Legacy_Session_ID_Len'Old
 		          and (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-		          and (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-	          and Reasm_Building (HC);
+				          and (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+				          and Reasm_Building (HC);
 
    procedure Parse_CH_Cipher_Suites
      (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
@@ -2321,12 +2366,12 @@ is
 	                  and then HC.Legacy_Session_ID_Len =
 	                             HC.Legacy_Session_ID_Len'Loop_Entry
 	                  and then
-	                     (if HC.Cfg.Local'Loop_Entry /= null
-                      then HC.Cfg.Local /= null)
-	                   and then
-	                  (if HC.Cfg.Random'Loop_Entry /= null
-	                   then HC.Cfg.Random /= null)
-	               and then Reasm_Building (HC));
+	                    (if HC.Cfg.Local'Loop_Entry /= null
+	                     then HC.Cfg.Local /= null)
+	                  and then
+	                    (if HC.Cfg.Random'Loop_Entry /= null
+	                     then HC.Cfg.Random /= null)
+		               and then Reasm_Building (HC));
             declare
                Suite_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
             begin
@@ -2376,19 +2421,15 @@ is
 			           (if Saved_Random /= null
 			            then HC.Cfg.Random /= null)
 			         and then
-				           (if Saved_Local /= null
-				             and then Local_Config_Valid (Saved_Local)
-				            then HC.Cfg.Local /= null
-			                 and then HC.Cfg.Local.NaCl_Cert_Len
-			                   <= N32 (Max_Cert_DER)
-			                 and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
-			                 and then
-			                   (for all I in 0 .. Max_Pool_Size - 1 =>
-			                      HC.Cfg.Local.Ints (I).DER_Len
-			                        <= X509.N32 (Max_Cert_DER))
-			                 and then
-			                   (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-			                    then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)))
+					           (if Saved_Local /= null
+					             and then Local_Config_Valid (Saved_Local)
+					            then HC.Cfg.Local /= null
+				                 and then HC.Cfg.Local.NaCl_Cert_Len
+				                   <= N32 (Max_Cert_DER)
+				                 and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
+				                 and then
+				                   (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+				                    then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)))
       with Ghost;
    begin
       OK := False;
