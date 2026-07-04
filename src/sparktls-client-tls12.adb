@@ -99,13 +99,19 @@ is
    procedure Derive_Keys_Resumed_12
      (S : in out Session; HC : in out Handshake_Context)
 	   with Pre  => Reasm_Coherent (HC),
-					        Post => Reasm_Coherent (HC)
-		                and then S.State = S.State'Old
-		                and then (if HC.Cfg.Random'Old /= null
-		                          then HC.Cfg.Random /= null)
-		                and then HC.Reasm_Len = HC.Reasm_Len'Old
-                and then HC.Reasm_Need = HC.Reasm_Need'Old
-                and then HC.Reasm_Hdr_Pending =
+						        Post => Reasm_Coherent (HC)
+			                and then S.State = S.State'Old
+			                and then S.Negotiated_Suite =
+			                  S.Negotiated_Suite'Old
+			                and then (if HC.Cfg.Random'Old /= null
+			                          then HC.Cfg.Random /= null)
+			                and then HC.Selected_Group =
+			                  HC.Selected_Group'Old
+			                and then HC.Transcript_Len =
+			                  HC.Transcript_Len'Old
+			                and then HC.Reasm_Len = HC.Reasm_Len'Old
+	                and then HC.Reasm_Need = HC.Reasm_Need'Old
+	                and then HC.Reasm_Hdr_Pending =
                   HC.Reasm_Hdr_Pending'Old
    is
       use Key_Schedule_12;
@@ -1828,12 +1834,16 @@ is
 
       Append_Transcript (HC, Frag);
 
-      if HC.TLS12_Resuming then
-         Derive_Keys_Resumed_12 (S, HC);
-         HC.CKE_Received_12 := True;
-      end if;
-      Result := OK;
-   end Handle_NST_12;
+	      if HC.TLS12_Resuming then
+	         Derive_Keys_Resumed_12 (S, HC);
+	         HC.CKE_Received_12 := True;
+	      end if;
+	      pragma Assert
+	        (HC.Selected_Group in
+	           Group_X25519 | Group_Secp256r1 | Group_Secp384r1);
+	      pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
+	      Result := OK;
+	   end Handle_NST_12;
 
    procedure Dispatch_Server_Flight_Message
      (S        : in out Session;

@@ -583,7 +583,7 @@ is
       CH_Body_Len : constant N32 := 59 + Session_ID_Len + Ext_Total_All;
       CH_Msg_Len  : constant N32 := 4 + CH_Body_Len;
 
-      Buf      : RBT.Bytes_Ptr;
+			         Buf      : RBT.Bytes_Ptr := null;
       Ctx      : Context;
       PK_Bytes    : Byte_Seq (0 .. 31);   --  X25519 public key
       P256_PK_Enc : Byte_Seq (0 .. 64);   --  P-256 public key (uncompressed)
@@ -1638,28 +1638,38 @@ is
       Curr_Is_HRR : Boolean := False;
       Transcript_Len_At_Entry : constant N32 :=
         HC.Transcript_Len with Ghost;
-      Random_Was_Set : constant Boolean :=
-        HC.Cfg.Random /= null with Ghost;
-      Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
-   begin
-      OK := False;
+	      Random_Was_Set : constant Boolean :=
+	        HC.Cfg.Random /= null with Ghost;
+	      Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
+	      function SH_Parse_Frame return Boolean is
+	        (HC.Transcript_Len = Transcript_Len_At_Entry
+	         and then (if Random_Was_Set then HC.Cfg.Random /= null)
+	         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+	         and then Reasm_Coherent (HC))
+	      with Ghost;
+	   begin
+	      OK := False;
 
-      if Data'Length < 39 then
-         return;
-      end if;
+	      if Data'Length < 39 then
+	         pragma Assert_And_Cut (SH_Parse_Frame);
+	         return;
+	      end if;
 
-      if Data'Last >= N32 (Natural'Last) then
-         return;
-      end if;
+	      if Data'Last >= N32 (Natural'Last) then
+	         pragma Assert_And_Cut (SH_Parse_Frame);
+	         return;
+	      end if;
 
-      if Data'Length > Max_HS_Msg then
-         return;
-      end if;
+	      if Data'Length > Max_HS_Msg then
+	         pragma Assert_And_Cut (SH_Parse_Frame);
+	         return;
+	      end if;
 
-      --  Check handshake type byte
-      if Data (Data'First) /= HT_Server_Hello then
-         return;
-      end if;
+	      --  Check handshake type byte
+	      if Data (Data'First) /= HT_Server_Hello then
+	         pragma Assert_And_Cut (SH_Parse_Frame);
+	         return;
+	      end if;
 
       --  RFC 5246 §7.4.1.2 / RFC 8446 §4.1.3: legacy_session_id
       --  length field is 0..32. The full ServerHello body is
@@ -1670,10 +1680,12 @@ is
       --  (BoGo's Client-TooLongSessionID test).
       if N32 (Data'Length) - 4 >= 35
         and then N32 (Data (Data'First + 4 + 34)) > 32
-      then
-         S.Last_Error := Decode_Error;
-         return;
-      end if;
+	      then
+	         S.Last_Error := Decode_Error;
+	         pragma Assert_And_Cut
+	           (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+	         return;
+	      end if;
 
       --  RFC 8446 §4.1.4: HelloRetryRequest is on-wire a ServerHello
       --  with a magic random value. Compare here so the SH parser
@@ -1695,10 +1707,13 @@ is
             if Sentinel_Match then
                --  RFC 8446 §4.1.4: a server MUST send at most one
                --  HRR. A second HRR is unexpected_message.
-               if HC.Got_HRR then
-                  S.Last_Error := Unexpected_Message;
-                  return;
-               end if;
+	               if HC.Got_HRR then
+	                  S.Last_Error := Unexpected_Message;
+	                  pragma Assert_And_Cut
+	                    (if OK or else S.Last_Error = No_Error
+	                     then SH_Parse_Frame);
+	                  return;
+	               end if;
 	               HC.Got_HRR  := True;
 	               Curr_Is_HRR := True;
 	               pragma Assert (not Got_HRR_At_Entry);
@@ -1711,9 +1726,12 @@ is
       begin
          Pre_Scan_SH_Extensions
            (Data, HC, S, Is_HRR_Msg => Curr_Is_HRR, OK => Pre_OK);
-         if not Pre_OK then
-            return;
-         end if;
+	         if not Pre_OK then
+	            pragma Assert_And_Cut
+	              (if OK or else S.Last_Error = No_Error
+	               then SH_Parse_Frame);
+	            return;
+	         end if;
       end;
 
       --  RFC 8446 §4.1.4: a valid HRR must contain at least one of
@@ -1722,10 +1740,12 @@ is
       if Curr_Is_HRR
         and then HC.HRR_Selected_Group = 0
         and then HC.HRR_Cookie_Len = 0
-      then
-         S.Last_Error := Illegal_Parameter;
-         return;
-      end if;
+	      then
+	         S.Last_Error := Illegal_Parameter;
+	         pragma Assert_And_Cut
+	           (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+	         return;
+	      end if;
 
       --  RFC 8446 §4.1.4: "Clients MUST abort the handshake with an
       --  'illegal_parameter' alert if the HelloRetryRequest would
@@ -1736,10 +1756,12 @@ is
       --  BoGo UnnecessaryHelloRetryRequest-TLS13.
       if Curr_Is_HRR
         and then HC.HRR_Selected_Group = 16#001D#
-      then
-         S.Last_Error := Illegal_Parameter;
-         return;
-      end if;
+	      then
+	         S.Last_Error := Illegal_Parameter;
+	         pragma Assert_And_Cut
+	           (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+	         return;
+	      end if;
 
       --  HRR is well-formed. Return OK := True; the caller in
       --  sparktls-client.adb sees HC.Got_HRR and runs the retry
@@ -1752,10 +1774,13 @@ is
 	         declare
 	            Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
 	         begin
-	            if N32 (Data'Length) < 41 + Sid_Len then
-	               S.Last_Error := Decode_Error;
-	               return;
-	            end if;
+		            if N32 (Data'Length) < 41 + Sid_Len then
+		               S.Last_Error := Decode_Error;
+		               pragma Assert_And_Cut
+		                 (if OK or else S.Last_Error = No_Error
+		                  then SH_Parse_Frame);
+		               return;
+		            end if;
 	            declare
 	               Cs_Off : constant N32 := Data'First + 39 + Sid_Len;
 	               Suite_Val : constant Unsigned_16 :=
@@ -1766,10 +1791,13 @@ is
 	               if Suite_Val not in Suite_AES_128_GCM_SHA256
 	                                 | Suite_AES_256_GCM_SHA384
 	                                 | Suite_CHACHA20_POLY1305_SHA256
-	               then
-	                  S.Last_Error := Illegal_Parameter;
-	                  return;
-	               end if;
+		               then
+		                  S.Last_Error := Illegal_Parameter;
+		                  pragma Assert_And_Cut
+		                    (if OK or else S.Last_Error = No_Error
+		                     then SH_Parse_Frame);
+		                  return;
+		               end if;
 	               HC.HRR_Cipher_Suite := Suite_Val;
 	               S.Negotiated_Suite := Suite_Val;
 	               HC.Version := TLS_1_3;
@@ -1827,6 +1855,7 @@ is
       Verify_Message (Ctx);
 
 	      if not Well_Formed_Message (Ctx) then
+	         pragma Assert_And_Cut (SH_Parse_Frame);
 	         goto Cleanup;
 	      end if;
 
@@ -1838,10 +1867,11 @@ is
          HC.Server_Random := To_NaCl (Random_Bytes);
       end;
 
-      --  Extract and validate cipher suite
-	      if not Well_Formed (Ctx, F_Cipher_Suite_TLS_Suite) then
-	         goto Cleanup;
-	      end if;
+	      --  Extract and validate cipher suite
+		      if not Well_Formed (Ctx, F_Cipher_Suite_TLS_Suite) then
+		         pragma Assert_And_Cut (SH_Parse_Frame);
+		         goto Cleanup;
+		      end if;
 
       declare
          Suite     : constant RFLX.Tls_Parameters.TLS_Cipher_Suites :=
@@ -1857,11 +1887,12 @@ is
                            | Suite_ECDHE_RSA_AES256_GCM_SHA384
                            | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                           | Suite_ECDHE_RSA_CHACHA20_SHA256
-                           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-	         then
-	            goto Cleanup;
-	         end if;
+	                           | Suite_ECDHE_RSA_CHACHA20_SHA256
+	                           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+		         then
+		            pragma Assert_And_Cut (SH_Parse_Frame);
+		            goto Cleanup;
+		         end if;
          --  RFC 8446 §4.1.4: after HRR, the cipher_suite in SH2 MUST
          --  match the cipher_suite the server chose in HRR. BoGo
          --  HelloRetryRequest-CipherChange-TLS13.
@@ -2140,10 +2171,11 @@ is
                OK      => P384_OK,
                SK      => HC.P384_Local_SK,
                Peer_PK => HC.P384_Peer_PK);
-	            if not P384_OK then
-	               OK := False;
-	               goto Cleanup;
-	            end if;
+		            if not P384_OK then
+		               OK := False;
+		               pragma Assert_And_Cut (SH_Parse_Frame);
+		               goto Cleanup;
+		            end if;
             HC.Shared_Secret := Secret_384;
          end;
       elsif HC.Use_P256_KE then
@@ -2155,10 +2187,11 @@ is
          begin
             SPARKTLSCrypto.P256.Point.P256_Decode
               (Peer_Pt, HC.P256_Peer_PK, Valid);
-	            if Valid = 0 then
-	               OK := False;
-	               goto Cleanup;
-	            end if;
+		            if Valid = 0 then
+		               OK := False;
+		               pragma Assert_And_Cut (SH_Parse_Frame);
+		               goto Cleanup;
+		            end if;
             --  Multiply peer's public key by our private scalar
             SPARKTLSCrypto.P256.Point.P256_Mul
               (Peer_Pt, HC.P256_Local_SK, 32);
@@ -2208,7 +2241,6 @@ is
 	         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
 	         and then
 	           (if HC.Version = TLS_1_3
-	                and then (not HC.Got_HRR or else Got_HRR_At_Entry)
 	            then S.Negotiated_Suite in
 		              Suite_AES_128_GCM_SHA256
 		            | Suite_AES_256_GCM_SHA384
@@ -2219,12 +2251,14 @@ is
 	         RFLX_Free (Buf);
 	      end if;
 	      pragma Assert (Buf = null);
-	      if Has_Buffer (Ctx) then
-	         Release_SH_Buffer (Ctx, Buf);
-	      end if;
-	      pragma Assert (Buf = null);
-	      pragma Assert (not Has_Buffer (Ctx));
-	      return;
+		      if Has_Buffer (Ctx) then
+		         Release_SH_Buffer (Ctx, Buf);
+		      end if;
+		      pragma Assert (Buf = null);
+		      pragma Assert (not Has_Buffer (Ctx));
+		      pragma Assert
+		        (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+		      return;
 	      end;
    end Parse_Server_Hello;
 

@@ -68,12 +68,11 @@ is
 			                 N32 (HC.HRR_Cookie'Length)
 			               and then Reasm_Coherent (HC),
 										        Post =>
-										                  (if OK
-										                     or else
-										                       S.Last_Error = No_Error
-										                   then
-										                     (if HC.Cfg.Random'Old /= null
-										                      then HC.Cfg.Random /= null)
+											                  (if OK
+											                   or else S.Last_Error = No_Error
+											                   then
+											                     (if HC.Cfg.Random'Old /= null
+											                      then HC.Cfg.Random /= null)
 										                     and then HC.Transcript_Len =
 										                       HC.Transcript_Len'Old
 										                     and then HC.HRR_Cookie_Len <=
