@@ -45,9 +45,9 @@ is
 		                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
 		                        <= Max_TLS12_Ticket_Len)
 		                and then Reasm_Coherent (HC),
-				        Post => (if HC.Cfg.Random'Old /= null
-				                          then HC.Cfg.Random /= null)
-				                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+					        Post => (if HC.Cfg.Random'Old /= null
+					                          then HC.Cfg.Random /= null)
+						                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 		                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
 		                and then Reasm_Coherent (HC)
 		                and then HC.Reasm_Len = HC.Reasm_Len'Old
@@ -67,18 +67,25 @@ is
 			               and then HC.HRR_Cookie_Len <=
 			                 N32 (HC.HRR_Cookie'Length)
 			               and then Reasm_Coherent (HC),
-							        Post => (if HC.Cfg.Random'Old /= null
-							                          then HC.Cfg.Random /= null)
-							                and then HC.Transcript_Len =
-							                  HC.Transcript_Len'Old
-							                and then Reasm_Coherent (HC)
-							                and then HC.Reasm_Len =
-							                  HC.Reasm_Len'Old
-							                and then HC.Reasm_Need =
-							                  HC.Reasm_Need'Old
-							                and then HC.Reasm_Hdr_Pending =
-							                  HC.Reasm_Hdr_Pending'Old
-							                and then HC.HRR_Cookie_Len <=
-							                  N32 (HC.HRR_Cookie'Length);
+										        Post =>
+										                  (if OK
+										                     or else
+										                       S.Last_Error = No_Error
+										                   then
+										                     (if HC.Cfg.Random'Old /= null
+										                      then HC.Cfg.Random /= null)
+										                     and then HC.Transcript_Len =
+										                       HC.Transcript_Len'Old
+										                     and then HC.HRR_Cookie_Len <=
+										                       N32 (HC.HRR_Cookie'Length)
+										                     and then Reasm_Coherent (HC))
+											                and then
+											                  (if OK
+											                   and then HC.Version = TLS_1_3
+										                   then S.Negotiated_Suite in
+										                     Suite_AES_128_GCM_SHA256
+									                   | Suite_AES_256_GCM_SHA384
+									                   | Suite_CHACHA20_POLY1305_SHA256)
+												                ;
 
 end SPARKTLS.Handshake.Client_Msgs;

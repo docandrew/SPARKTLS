@@ -44,17 +44,14 @@ is
       HC : Handshake_Context) return Boolean is
      ((S.State = Wait_Client_Hello
        or else Valid_Transition (Wait_Client_Hello, S.State))
-      and then
-        (if S.State in Wait_Client_Hello
-                     | Wait_Client_Hello_Retry
-                     | Server_Hello_Sent
-                     | Wait_Client_Finished
-         then Server_Configured (HC))
 	      and then
 	        (if S.State in Wait_Client_Hello
 	                     | Wait_Client_Hello_Retry
 	                     | Server_Hello_Sent
 	                     | Wait_Client_Finished
+		         then Server_Configured (HC))
+		      and then
+		        (if S.State = Wait_Client_Hello
 		         then Reasm_Building (HC))
 		      and then
 		        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
@@ -177,10 +174,14 @@ is
 			                and then Reasm_Building (HC)
 			                and then HC.Legacy_Session_ID_Len in 0 .. 32
 			                and then
-			                  (if S.State = Wait_Client_Hello
-		                     and then HC.Reasm_Need > 0
-		                   then HC.Reasm_Len < HC.Reasm_Need)
-		                and then Server_State_Keys_Ready (S, HC),
+				                  (if S.State = Wait_Client_Hello
+			                     and then HC.Reasm_Need > 0
+			                   then HC.Reasm_Len < HC.Reasm_Need)
+			                and then
+			                  (if S.State in Wait_Client_Certificate
+			                               | Wait_Client_Cert_Verify
+			                   then HC.Reasm_Len <= HC.Reasm_Need)
+			                and then Server_State_Keys_Ready (S, HC),
 		        Post => S.State = S.State'Old
 		                or else Valid_Transition (S.State'Old, S.State);
 
@@ -219,12 +220,14 @@ is
 	                                  | Server_Hello_Sent
 	                                  | Error_State
 	                  else S.State in Server_Hello_Sent | Error_State)
-				                and then (if S.State not in Error_State | Closed
-				                          then Server_Configured (HC))
-				                and then
-			                  (if S.State = Wait_Client_Hello
-		                     and then HC.Reasm_Need > 0
-		                   then HC.Reasm_Len < HC.Reasm_Need);
+						                and then (if S.State not in Error_State | Closed
+						                          then Server_Configured (HC))
+						                and then (if S.State = Wait_Client_Hello
+						                          then Reasm_Building (HC))
+					                and then
+				                  (if S.State = Wait_Client_Hello
+			                     and then HC.Reasm_Need > 0
+			                   then HC.Reasm_Len < HC.Reasm_Need);
 
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
@@ -236,16 +239,16 @@ is
 	   with Pre  => Server_Active (S)
 	                and then Server_Configured (HC)
 	                and then Reasm_Building (HC),
-	        Post => (if HRR_Len > 0
-	                 then HRR_Buf'First = 0
-	                   and then HRR_Len - 1 <= HRR_Buf'Last)
-	                and then (S.State = S.State'Old
-                          or else Valid_Transition (S.State'Old, S.State))
+		        Post => (if HRR_Len > 0
+		                 then HRR_Buf'First = 0
+		                   and then HRR_Len - 1 <= HRR_Buf'Last)
+		                and then S.State = S.State'Old
+		                and then (S.State = S.State'Old
+	                          or else Valid_Transition (S.State'Old, S.State))
                 and then (if S.State not in Error_State | Closed
                           then Server_Configured (HC))
-	                and then (if HRR_Len > 0 then S.State = S.State'Old)
-	                and then (if HRR_Len > 0
-	                          then HC.Transcript_Len > 0)
+		                and then (if HRR_Len > 0
+		                          then HC.Transcript_Len > 0)
 	                and then Reasm_Building (HC);
 
    procedure Append_And_Encrypt_Server_HS
@@ -328,10 +331,11 @@ is
                   (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                    then HC.Hash_Len = 48
                    else HC.Hash_Len = 32)
-	                and then HC.Transcript_Len > 0
-	                and then Reasm_Building (HC)
-	                and then
-                  (if S.State = Wait_Client_Cert_Verify then
+		                and then HC.Transcript_Len > 0
+		                and then Reasm_Building (HC)
+		                and then HC.Reasm_Len <= HC.Reasm_Need
+		                and then
+	                  (if S.State = Wait_Client_Cert_Verify then
                      HC.Peer_Cert_Valid
 	                     and then HC.Peer_Cert_DER_Len > 0
 	                     and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
@@ -505,9 +509,11 @@ is
 	   with Pre => S.State not in Idle | Closed | Closing | Error_State,
 		        Post => S.State = Error_State
 		                and then Valid_Transition (S.State'Old, S.State)
-		                and then S.Last_Error = Err
-		                and then Result in Has_Output | Error_Alert
-	                and then S.Input.Read_Pos = S.Input.Read_Pos'Old
+			                and then S.Last_Error = Err
+			                and then S.Role = S.Role'Old
+			                and then Result in Has_Output | Error_Alert
+			                and then S.Role = S.Role'Old
+			                and then S.Input.Read_Pos = S.Input.Read_Pos'Old
 	                and then S.Input.Write_Pos = S.Input.Write_Pos'Old
 	   is
       Dummy : N32;
@@ -621,10 +627,14 @@ is
 		                and (if Server_Configured (HC)'Old
 		                     then Server_Configured (HC))
 			                and
-			                  (if Handshake.Server_Msgs.Local_Config_Valid
-			                        (HC.Cfg.Local'Old)
-			                   then Handshake.Server_Msgs.Local_Config_Valid
-			                        (HC.Cfg.Local))
+				                  (if HC.Cfg.Local'Old /= null
+				                     and then
+				                       Handshake.Server_Msgs.Local_Config_Valid
+				                         (HC.Cfg.Local'Old)
+				                   then HC.Cfg.Local /= null
+				                     and then
+				                       Handshake.Server_Msgs.Local_Config_Valid
+				                         (HC.Cfg.Local))
 			                and HC.Hash_Len = HC.Hash_Len'Old
 		                and
 		                  (if HC.Cfg.Ticket_Store /= null
@@ -877,8 +887,7 @@ is
 	               and then Reasm_Building (HC)
 	               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-		        Post => Result in Action
-		                and then Wait_Client_Hello_Post (S, HC);
+				                       Post => Wait_Client_Hello_Post (S, HC);
 
    procedure Complete_Client_Hello
      (S      : in out Session;
@@ -979,12 +988,9 @@ is
                                  | Server_Hello_Sent
                                  | Wait_Client_Finished
                      then Server_Configured (HC));
-                  pragma Assert
-                    (if S.State in Wait_Client_Hello
-                                 | Wait_Client_Hello_Retry
-                                 | Server_Hello_Sent
-                                 | Wait_Client_Finished
-                     then Reasm_Building (HC));
+				            pragma Assert
+				              (if S.State = Wait_Client_Hello
+				               then Reasm_Building (HC));
                else
                   Send_Alert_And_Error (S, Handshake_Failure, Result);
                   pragma Assert
@@ -1012,12 +1018,9 @@ is
                               | Server_Hello_Sent
                               | Wait_Client_Finished
                   then Server_Configured (HC));
-               pragma Assert
-                 (if S.State in Wait_Client_Hello
-                              | Wait_Client_Hello_Retry
-                              | Server_Hello_Sent
-                              | Wait_Client_Finished
-                  then Reasm_Building (HC));
+	               pragma Assert
+	                 (if S.State = Wait_Client_Hello
+	                  then Reasm_Building (HC));
             end if;
             pragma Assert
               (if S.State in Wait_Client_Hello
@@ -1025,12 +1028,9 @@ is
                            | Server_Hello_Sent
                            | Wait_Client_Finished
                then Server_Configured (HC));
-            pragma Assert
-              (if S.State in Wait_Client_Hello
-                           | Wait_Client_Hello_Retry
-                           | Server_Hello_Sent
-                           | Wait_Client_Finished
-               then Reasm_Building (HC));
+	            pragma Assert
+	              (if S.State = Wait_Client_Hello
+	               then Reasm_Building (HC));
             return;
          elsif Want_12 and S.Negotiated_Suite_12 /= 0 then
 	            HC.Version := TLS_1_2;
@@ -1118,8 +1118,7 @@ is
 		                 (if HC.Reasm_Need > 0
 		                  then HC.Reasm_Len < HC.Reasm_Need)
 		               and then Server_State_Keys_Ready (S, HC),
-	        Post => Result in Action
-	                and then Wait_Client_Hello_Post (S, HC);
+	        Post => Wait_Client_Hello_Post (S, HC);
 
    procedure Handle_Wait_Client_Hello
 	     (S      : in out Session;
@@ -1131,7 +1130,7 @@ is
 	               Result := Need_Input;
 		               pragma Assert (S.State = Wait_Client_Hello);
 		               pragma Assert (Server_Configured (HC));
-		               pragma Assert (Reasm_Building (HC));
+		               pragma Assert_And_Cut (Reasm_Building (HC));
 		               pragma Assert (Wait_Client_Hello_Post (S, HC));
 		               return;
 	            end if;
@@ -1249,7 +1248,7 @@ is
 		                              and then Rec.Record_Len <=
 		                                Available (S.Input)
                                       and then Wait_Client_Hello_Post (S, HC),
-		                       Post => Wait_Client_Hello_Post (S, HC);
+			                       Post => Wait_Client_Hello_Post (S, HC);
 
 		                  procedure Process_Handshake_Record
 		                  is
@@ -1261,15 +1260,29 @@ is
                   --  Larger messages are rejected.
                   Max_HS_Msg : constant N32 := 131072;
 
-	                  procedure Free_Reasm
-	                  with Pre  => Server_Active (S)
-		                               and then Server_Configured (HC)
-		                               and then Server_State_Keys_Ready (S, HC),
-			                       Post => Server_Active (S)
-			                               and then Server_Configured (HC)
-			                               and then Server_State_Keys_Ready
-			                                 (S, HC)
-			                               and then HC.Reasm_Buf = null
+		                  procedure Free_Reasm
+		                  with Pre  => Server_Active (S)
+				                               and then Server_Configured (HC)
+					                               and then HC.Legacy_Session_ID_Len
+					                                 in 0 .. 32,
+					                       Post => Server_Active (S)
+					                               and then S.Role = S.Role'Old
+					                               and then S.State = S.State'Old
+					                               and then S.Negotiated_Suite =
+					                                 S.Negotiated_Suite'Old
+					                               and then S.Server_App.Counter =
+					                                 S.Server_App.Counter'Old
+					                               and then Server_Configured (HC)
+					                               and then HC.Version = HC.Version'Old
+					                               and then HC.Transcript_Len =
+					                                 HC.Transcript_Len'Old
+					                               and then HC.HRR_Sent =
+					                                 HC.HRR_Sent'Old
+					                               and then HC.Server_HS.Counter =
+					                                 HC.Server_HS.Counter'Old
+					                               and then HC.Legacy_Session_ID_Len
+					                                 in 0 .. 32
+				                               and then HC.Reasm_Buf = null
 	                               and then HC.Reasm_Len = 0
 	                               and then HC.Reasm_Need = 0
 	                               and then not HC.Reasm_Hdr_Pending
@@ -1282,12 +1295,13 @@ is
                      HC.Reasm_Hdr_Pending := False;
                   end Free_Reasm;
 
-	                  procedure Continue_Reassembly
-	                  with Pre => S.State = Wait_Client_Hello
-	                              and then S.Role = Role_Server
-	                              and then Server_Configured (HC)
-	                              and then Reasm_Building (HC)
-	                              and then Server_State_Keys_Ready (S, HC)
+			                  procedure Continue_Reassembly
+		                  with Pre => S.State = Wait_Client_Hello
+		                              and then S.Role = Role_Server
+		                              and then Server_Configured (HC)
+		                              and then Reasm_Building (HC)
+		                              and then HC.Legacy_Session_ID_Len in 0 .. 32
+		                              and then Server_State_Keys_Ready (S, HC)
 	                              and then Handshake_Record_Fragment_Ready
 	                                (Rec)
 	                              and then Rec.Record_Len <=
@@ -1304,37 +1318,48 @@ is
 	                                N32 (HC.Reasm_Buf'Length)
 	                              and then Frag_Start <=
 	                                S.Input.Write_Pos - 1
-	                              and then Frag_Len <=
-	                                S.Input.Write_Pos - Frag_Start,
-	                       Post => Wait_Client_Hello_Post (S, HC);
+		                              and then Frag_Len <=
+		                                S.Input.Write_Pos - Frag_Start,
+			                       Post => Result in Action
+			                               and then S.Role = Role_Server
+			                               and then Wait_Client_Hello_Post (S, HC);
 
 		                  procedure Continue_Reassembly
 		                  is
 		                     More_Input_Needed : Boolean;
 
-		                     procedure Decode_Pending_Reassembly_Header
-			                     with Pre => S.State = Wait_Client_Hello
-			                                 and then S.Role = Role_Server
-			                                 and then Server_Configured (HC)
-			                                 and then Server_State_Keys_Ready (S, HC)
-			                                 and then Reasm_Building (HC)
-			                                 and then HC.Reasm_Hdr_Pending
-		                                 and then HC.Reasm_Len >= 4
-					                                 and then HC.Reasm_Need = 4
-					                                 and then HC.Reasm_Buf /= null
-					                                 and then HC.Reasm_Buf'First = 0
-					                                 and then HC.Reasm_Buf'Length =
-					                                   131072,
-					                          Post =>
-						                            (S.State = Wait_Client_Hello
-                                             or else Valid_Transition
-                                               (Wait_Client_Hello, S.State))
-					                            and then
-					                              (if S.State = Wait_Client_Hello
-				                               then Server_Configured (HC)
-		                                    and then Reasm_Building (HC)
-	                                    and then Server_State_Keys_Ready (S, HC)
-	                                    and then not HC.Reasm_Hdr_Pending);
+			                     procedure Decode_Pending_Reassembly_Header
+					                     with Pre => S.State = Wait_Client_Hello
+					                                 and then S.Role = Role_Server
+					                                 and then Server_Configured (HC)
+					                                 and then HC.Legacy_Session_ID_Len
+					                                   in 0 .. 32
+							                                 and then HC.Reasm_Hdr_Pending
+				                                 and then HC.Reasm_Len = 4
+							                                 and then HC.Reasm_Need = 4
+						                                 and then HC.Reasm_Buf /= null
+						                                 and then HC.Reasm_Buf'First = 0
+						                                 and then HC.Reasm_Buf'Length =
+						                                   131072,
+													                          Post =>
+											                              S.State in Wait_Client_Hello | Error_State
+										                              and then S.Role = Role_Server
+										                              and then
+									                              (if S.State = Wait_Client_Hello
+							                               then Server_Configured (HC)
+							                                    and then Reasm_Building (HC)
+							                                    and then
+							                                      HC.Legacy_Session_ID_Len
+							                                        in 0 .. 32
+				                                    and then not HC.Reasm_Hdr_Pending
+				                                    and then HC.Reasm_Buf /= null
+				                                    and then HC.Reasm_Buf'First = 0
+				                                    and then HC.Reasm_Buf'Length <=
+				                                      Max_HS_Msg
+				                                    and then HC.Reasm_Buf'Length <=
+				                                      N32'Last
+				                                    and then HC.Reasm_Len <=
+				                                      N32 (HC.Reasm_Buf'Length));
 
 	                     procedure Decode_Pending_Reassembly_Header
 	                     is
@@ -1345,14 +1370,39 @@ is
 	                     begin
 	                        HC.Reasm_Hdr_Pending := False;
 	                        if HS_Total < 4 or HS_Total > Max_HS_Msg then
-	                           Free_Reasm;
-	                           Send_Alert_And_Error
-	                             (S, Decode_Error, Result);
-	                           pragma Assert
-	                             (S.State = Wait_Client_Hello
-	                              or else Valid_Transition
-	                                (Wait_Client_Hello, S.State));
-	                           return;
+		                           Free_Reasm;
+		                           Send_Alert_And_Error
+		                             (S, Decode_Error, Result);
+			                           pragma Assert (S.State = Error_State);
+			                           pragma Assert (S.Role = Role_Server);
+				                           pragma Assert
+				                             (S.State = Wait_Client_Hello
+		                              or else Valid_Transition
+		                                (Wait_Client_Hello, S.State));
+				                           pragma Assert_And_Cut
+					                             (S.Role = Role_Server
+					                              and then S.State in Wait_Client_Hello
+					                                                  | Error_State
+					                              and then
+					                                (if S.State /= Wait_Client_Hello
+					                                 then S.State = Error_State)
+					                              and then Server_Configured (HC)
+				                              and then Reasm_Building (HC)
+				                              and then HC.Legacy_Session_ID_Len
+				                                in 0 .. 32
+				                              and then not HC.Reasm_Hdr_Pending
+				                              and then Wait_Client_Hello_Post
+				                                (S, HC));
+			                           pragma Assert_And_Cut
+			                             (if S.State = Wait_Client_Hello
+			                              then Server_Configured (HC)
+			                                   and then Reasm_Building (HC)
+			                                   and then HC.Legacy_Session_ID_Len
+			                                     in 0 .. 32
+								                           and then not HC.Reasm_Hdr_Pending
+								                           and then Wait_Client_Hello_Post
+								                             (S, HC));
+			                           return;
 		                        end if;
 		                        HC.Reasm_Need := HS_Total;
 		                        pragma Assert (S.State = Wait_Client_Hello);
@@ -1371,18 +1421,52 @@ is
 		                        pragma Assert
 		                          (HC.Reasm_Len <=
 		                           N32 (HC.Reasm_Buf'Length));
-		                        pragma Assert (Reasm_Building (HC));
-		                        pragma Assert (Server_State_Keys_Ready (S, HC));
-		                        pragma Assert (not HC.Reasm_Hdr_Pending);
-		                     end Decode_Pending_Reassembly_Header;
+			                        pragma Assert (Reasm_Building (HC));
+					                        pragma Assert (not HC.Reasm_Hdr_Pending);
+					                        pragma Assert (S.State = Wait_Client_Hello);
+					                        pragma Assert_And_Cut
+						                          (S.Role = Role_Server
+						                           and then S.State in Wait_Client_Hello
+						                                               | Error_State
+						                           and then Server_Configured (HC)
+						                           and then Reasm_Building (HC)
+						                           and then HC.Legacy_Session_ID_Len
+						                             in 0 .. 32
+								                           and then not HC.Reasm_Hdr_Pending
+						                           and then HC.Reasm_Buf /= null
+						                           and then HC.Reasm_Buf'First = 0
+						                           and then HC.Reasm_Buf'Length <=
+						                             Max_HS_Msg
+						                           and then HC.Reasm_Buf'Length <=
+						                             N32'Last
+						                           and then HC.Reasm_Len <=
+						                             N32 (HC.Reasm_Buf'Length));
+						                        pragma Assert_And_Cut
+							                          (S.Role = Role_Server
+							                           and then
+							                           (if S.State = Wait_Client_Hello
+								                           then Server_Configured (HC)
+								                                and then Reasm_Building (HC)
+								                                and then HC.Legacy_Session_ID_Len
+							                                  in 0 .. 32
+							                                and then not HC.Reasm_Hdr_Pending
+							                                and then HC.Reasm_Buf /= null
+							                                and then HC.Reasm_Buf'First = 0
+								                                and then HC.Reasm_Buf'Length <= Max_HS_Msg
+								                                and then HC.Reasm_Buf'Length <= N32'Last
+								                                and then HC.Reasm_Len <=
+								                                  N32 (HC.Reasm_Buf'Length)));
+						                        pragma Assert (S.Role = Role_Server);
+							                     end Decode_Pending_Reassembly_Header;
 
 	                     procedure Append_Reassembly_Fragment
-	                     with Pre => S.State = Wait_Client_Hello
+	   with Pre => S.State = Wait_Client_Hello
 	                                 and then S.Role = Role_Server
-	                                 and then Server_Configured (HC)
-	                                 and then Reasm_Building (HC)
-	                                 and then Server_State_Keys_Ready (S, HC)
-	                                 and then Handshake_Record_Fragment_Ready
+				                              and then Server_Configured (HC)
+				                              and then Reasm_Building (HC)
+				                              and then HC.Legacy_Session_ID_Len
+				                                in 0 .. 32
+		                                 and then Handshake_Record_Fragment_Ready
 	                                   (Rec)
 		                                 and then Rec.Record_Len <=
 		                                   Available (S.Input)
@@ -1402,19 +1486,17 @@ is
 		                                   S.Input.Write_Pos - 1
 		                                 and then Frag_Len <=
 		                                   S.Input.Write_Pos - Frag_Start,
-						                          Post =>
-						                            Result in Action
-						                            and then S.Role = Role_Server
+									                          Post =>
+								                              S.Role = Role_Server
 						                            and then
-						                              (if S.State /= Wait_Client_Hello
-						                                   or else More_Input_Needed
+								                              (if S.State /= Wait_Client_Hello
+							                                   or else More_Input_Needed
 						                               then Wait_Client_Hello_Post (S, HC))
 					                            and then
 					                              (if S.State = Wait_Client_Hello
 				                               then Server_Configured (HC)
 				                                    and then Reasm_Building (HC)
-				                                    and then Server_State_Keys_Ready (S, HC)
-			                                    and then
+				                                    and then
 			                                      (if More_Input_Needed
 			                                       then HC.Reasm_Len < HC.Reasm_Need
 			                                       else HC.Reasm_Len >= HC.Reasm_Need
@@ -1424,14 +1506,18 @@ is
 			                                              Max_HS_Msg
 			                                            and then HC.Reasm_Buf'Length <=
 			                                              N32'Last
-			                                            and then HC.Reasm_Len <=
-			                                              N32 (HC.Reasm_Buf'Length)));
+					                                            and then HC.Reasm_Len <=
+					                                              N32 (HC.Reasm_Buf'Length)
+					                                            and then
+					                                              HC.Legacy_Session_ID_Len
+					                                                in 0 .. 32));
 
 	                     procedure Append_Reassembly_Fragment
 	                     is
-	                     begin
-	                        More_Input_Needed := False;
-		                     pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
+		                     begin
+		                        Result := OK;
+		                        More_Input_Needed := False;
+			                     pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
 		                     pragma Assert (HC.Reasm_Buf /= null);
 		                     pragma Assert (HC.Reasm_Buf'First = 0);
 		                     pragma Assert
@@ -1496,12 +1582,11 @@ is
 			                        pragma Assert
 			                          (HC.Reasm_Buf'Length = 131072);
 			                        pragma Assert (HC.Reasm_Len = HC.Reasm_Need);
-			                        pragma Assert (Server_State_Keys_Ready (S, HC));
-			                        Decode_Pending_Reassembly_Header;
-			                        if S.State /= Wait_Client_Hello then
-		                           pragma Assert (Wait_Client_Hello_Post (S, HC));
-		                           return;
-		                        end if;
+					                        Decode_Pending_Reassembly_Header;
+				                        if S.State /= Wait_Client_Hello then
+			                           pragma Assert (S.Role = Role_Server);
+			                           return;
+			                        end if;
 		                     end if;
 		                     pragma Assert (S.State = Wait_Client_Hello);
 		                     pragma Assert (HC.Reasm_Buf /= null);
@@ -1516,29 +1601,43 @@ is
 		                        Result := OK;
 		                        More_Input_Needed := True;
 		                        pragma Assert (S.State = Wait_Client_Hello);
-		                        pragma Assert (Server_Configured (HC));
-		                        pragma Assert (Reasm_Building (HC));
-			                        pragma Assert (Wait_Client_Hello_Post (S, HC));
-			                        return;
-			                     end if;
-		                     pragma Assert (HC.Reasm_Len >= HC.Reasm_Need);
-			                  end Append_Reassembly_Fragment;
+			                        pragma Assert (Server_Configured (HC));
+			                        pragma Assert (Reasm_Building (HC));
+			                        pragma Assert (S.Role = Role_Server);
+				                        pragma Assert
+				                          (S.State = Wait_Client_Hello);
+					                        return;
+				                     end if;
+			                     pragma Assert (HC.Reasm_Len >= HC.Reasm_Need);
+			                     pragma Assert (S.Role = Role_Server);
+			                     pragma Assert (Server_Configured (HC));
+			                     pragma Assert (Reasm_Building (HC));
+				                     pragma Assert (HC.Reasm_Buf /= null);
+			                     pragma Assert (HC.Reasm_Buf'First = 0);
+			                     pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
+			                     pragma Assert (HC.Reasm_Buf'Length <= N32'Last);
+			                     pragma Assert
+			                       (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+				                  end Append_Reassembly_Fragment;
 
-		                  procedure Parse_Completed_Reassembly
-		                  with Pre => S.State = Wait_Client_Hello
-			                              and then S.Role = Role_Server
-			                              and then Server_Configured (HC)
-			                              and then Reasm_Building (HC)
-			                              and then Server_State_Keys_Ready (S, HC)
-			                              and then HC.Reasm_Buf /= null
+			                  procedure Parse_Completed_Reassembly
+			                  with Pre => S.State = Wait_Client_Hello
+				                              and then S.Role = Role_Server
+				                              and then Server_Configured (HC)
+				                              and then Reasm_Building (HC)
+				                              and then SPARKTLSCrypto.P384.Field.Initialized
+				                              and then SPARKTLSCrypto.P384.ECDSA.Initialized
+					                              and then HC.Reasm_Buf /= null
 		                              and then HC.Reasm_Buf'First = 0
 		                              and then HC.Reasm_Buf'Length <= Max_HS_Msg
 		                              and then HC.Reasm_Buf'Length <= N32'Last
-		                              and then HC.Reasm_Len >= HC.Reasm_Need
-		                              and then HC.Reasm_Len <=
-		                                N32 (HC.Reasm_Buf'Length),
-		                       Post => Result in Action
-		                               and then Wait_Client_Hello_Post (S, HC);
+			                              and then HC.Reasm_Len >= HC.Reasm_Need
+			                              and then HC.Legacy_Session_ID_Len
+			                                in 0 .. 32
+			                              and then HC.Reasm_Len <=
+			                                N32 (HC.Reasm_Buf'Length),
+				                       Post => S.Role = Role_Server
+				                               and then Wait_Client_Hello_Post (S, HC);
 
 		                  procedure Parse_Completed_Reassembly
 		                  is
@@ -1567,25 +1666,14 @@ is
 	                     begin
 		                        Handshake.Server_Msgs.Parse_Client_Hello
 		                          (S, HC, Full_Msg, Parse_OK);
-		                        if Parse_OK then
-			                           pragma Assert (Server_Configured (HC));
-			                           pragma Assert
-			                             (HC.Legacy_Session_ID_Len in 0 .. 32);
-			                           pragma Assert
-			                             (Nonce_Space_Available
-			                                (HC.Server_HS));
-			                           pragma Assert
-			                             (Nonce_Space_Available
-			                                (S.Server_App));
-			                           pragma Assert
-			                             (SPARKTLS.Records.TLS12
-			                                .Nonce_Space_Available_12
-			                                  (HC.Server_Seq_12));
-			                           Append_Transcript (HC, Full_Msg);
-			                           pragma Assert (HC.Transcript_Len > 0);
-			                        end if;
-			                     end;
-			                     pragma Assert (Server_State_Keys_Ready (S, HC));
+			                        if Parse_OK then
+				                           pragma Assert (Server_Configured (HC));
+				                           pragma Assert
+				                             (HC.Legacy_Session_ID_Len in 0 .. 32);
+				                           Append_Transcript (HC, Full_Msg);
+				                           pragma Assert (HC.Transcript_Len > 0);
+				                        end if;
+				                     end;
 			                     Free_Reasm;
 		                     pragma Assert (Reasm_Building (HC));
 
@@ -1602,11 +1690,7 @@ is
 		                     pragma Assert (Server_Configured (HC));
 		                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
 		                     pragma Assert (Reasm_Building (HC));
-		                     pragma Assert
-		                       (SPARKTLS.Records.TLS12
-		                          .Nonce_Space_Available_12
-		                            (HC.Server_Seq_12));
-		                     pragma Assert (HC.Transcript_Len > 0);
+			                     pragma Assert (HC.Transcript_Len > 0);
 		                     pragma Assert
 		                       (if HC.Version = TLS_1_3
 		                        then S.Negotiated_Suite in
@@ -1636,8 +1720,7 @@ is
 				                     pragma Assert (not More_Input_Needed);
 			                     pragma Assert (Server_Configured (HC));
 			                     pragma Assert (Reasm_Building (HC));
-			                     pragma Assert (Server_State_Keys_Ready (S, HC));
-			                     pragma Assert (HC.Reasm_Buf /= null);
+				                     pragma Assert (HC.Reasm_Buf /= null);
 			                     pragma Assert (HC.Reasm_Buf'First = 0);
 			                     pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
 			                     pragma Assert (HC.Reasm_Buf'Length <= N32'Last);
@@ -1692,8 +1775,8 @@ is
 		                              and then Frag_Len <=
 		                                S.Input.Write_Pos - Frag_Start
 		                              and then Frag_Len < Transcript_Capacity,
-			                       Post => Result in Action
-			                               and then Wait_Client_Hello_Post (S, HC);
+					                       Post => S.Role = Role_Server
+					                               and then Wait_Client_Hello_Post (S, HC);
 
 		                  procedure Parse_Single_Record_Client_Hello
 		                  is
@@ -1762,8 +1845,7 @@ is
 		                                S.Input.Write_Pos - 1
 		                              and then Frag_Len <=
 		                                S.Input.Write_Pos - Frag_Start,
-			                       Post => Result in Action
-			                               and then Wait_Client_Hello_Post (S, HC);
+			                       Post => Wait_Client_Hello_Post (S, HC);
 
 		                  procedure Start_Header_Pending_Reassembly
 		                  is
@@ -1803,8 +1885,7 @@ is
 		                                S.Input.Write_Pos - 1
 		                              and then Frag_Len <=
 		                                S.Input.Write_Pos - Frag_Start,
-			                       Post => Result in Action
-			                               and then Wait_Client_Hello_Post (S, HC);
+			                       Post => Wait_Client_Hello_Post (S, HC);
 
 		                  procedure Start_Known_Length_Reassembly
 		                    (HS_Total : N32)
@@ -1884,6 +1965,7 @@ is
 		                              S.Input.Read_Pos + Rec.Record_Len;
 		                           Send_Alert_And_Error
 		                             (S, Decode_Error, Result);
+		                           pragma Assert (S.State = Error_State);
 		                           pragma Assert
 		                             (S.State = Wait_Client_Hello
 		                              or else Valid_Transition
@@ -1943,12 +2025,9 @@ is
 			                         | Server_Hello_Sent
 			                         | Wait_Client_Finished
 			               then Server_Configured (HC));
-			            pragma Assert
-			              (if S.State in Wait_Client_Hello
-			                         | Wait_Client_Hello_Retry
-			                         | Server_Hello_Sent
-			                         | Wait_Client_Finished
-			               then Reasm_Building (HC));
+				            pragma Assert
+				              (if S.State = Wait_Client_Hello
+				               then Reasm_Building (HC));
 			            pragma Assert
 			              (if S.State = Wait_Client_Hello
 			                  and then HC.Reasm_Need > 0
@@ -1972,9 +2051,9 @@ is
 	            pragma Assert
 	              (S.State = Old_State
 	               or else Valid_Transition (Old_State, S.State));
-	            pragma Assert
-	              (if S.State not in Error_State | Closed
-	               then Reasm_Building (HC));
+		            pragma Assert
+		              (if S.State = Wait_Client_Hello
+		               then Reasm_Building (HC));
 
 	         when Server_Hello_Sent =>
 	            pragma Assert (Old_State = Server_Hello_Sent);
@@ -1997,9 +2076,9 @@ is
 	            pragma Assert
 	              (S.State = Old_State
 	               or else Valid_Transition (Old_State, S.State));
-	            pragma Assert
-	              (if S.State not in Error_State | Closed
-	               then Reasm_Building (HC));
+		            pragma Assert
+		              (if S.State = Wait_Client_Hello
+		               then Reasm_Building (HC));
 
 	         when Wait_Client_Hello_Retry =>
 	            pragma Assert (Old_State = Wait_Client_Hello_Retry);
@@ -2102,7 +2181,7 @@ is
 			                     or else Valid_Transition
 			                       (Old_State, S.State));
 			                  pragma Assert
-			                    (if S.State not in Error_State | Closed
+			                    (if S.State = Wait_Client_Hello
 			                     then Reasm_Building (HC));
 		                  return;
 	               end if;
@@ -2154,9 +2233,9 @@ is
 			                          (S.State = Old_State
 			                           or else Valid_Transition
 			                             (Old_State, S.State));
-			                        pragma Assert
-			                          (if S.State not in Error_State | Closed
-			                           then Reasm_Building (HC));
+			                  pragma Assert
+			                    (if S.State = Wait_Client_Hello
+			                     then Reasm_Building (HC));
 			                        return;
 			                     end if;
 			                     pragma Assert (Parse_OK);
@@ -2170,9 +2249,9 @@ is
 			                          (S.State = Old_State
 			                           or else Valid_Transition
 			                             (Old_State, S.State));
-			                        pragma Assert
-			                          (if S.State not in Error_State | Closed
-			                           then Reasm_Building (HC));
+			                     pragma Assert
+			                       (if S.State = Wait_Client_Hello
+			                        then Reasm_Building (HC));
 			                        return;
 			                     end if;
 			                     pragma Assert (HC.Version = TLS_1_3);
@@ -2190,9 +2269,9 @@ is
 			                          (S.State = Old_State
 			                           or else Valid_Transition
 			                             (Old_State, S.State));
-			                        pragma Assert
-			                          (if S.State not in Error_State | Closed
-			                           then Reasm_Building (HC));
+			                     pragma Assert
+			                       (if S.State = Wait_Client_Hello
+			                        then Reasm_Building (HC));
 			                        return;
 			                     end if;
 		                  end;
@@ -2221,9 +2300,9 @@ is
 					                       (S.State = Old_State
 					                        or else Valid_Transition
 					                          (Old_State, S.State));
-					                     pragma Assert
-					                       (if S.State not in Error_State | Closed
-					                        then Reasm_Building (HC));
+				                  pragma Assert
+				                    (if S.State = Wait_Client_Hello
+				                     then Reasm_Building (HC));
 					                     return;
 						                  end if;
 						                  pragma Assert (S.State = Wait_Client_Hello_Retry);
@@ -2304,18 +2383,18 @@ is
 	            pragma Assert
 	              (S.State = Old_State
 	               or else Valid_Transition (Old_State, S.State));
-	            pragma Assert
-	              (if S.State not in Error_State | Closed
-	               then Reasm_Building (HC));
+				                        pragma Assert
+				                          (if S.State = Wait_Client_Hello
+				                           then Reasm_Building (HC));
 
 	         when others =>
 	            S.Last_Error := Internal_Error;
 	            Set_State (S, Error_State);
 	            Result := Error_Alert;
 	            pragma Assert (Valid_Transition (Old_State, S.State));
-	            pragma Assert
-	              (if S.State not in Error_State | Closed
-	               then Reasm_Building (HC));
+				                        pragma Assert
+				                          (if S.State = Wait_Client_Hello
+				                           then Reasm_Building (HC));
 	      end case;
 	      pragma Assert
 	        (S.State = Old_State
@@ -2934,9 +3013,9 @@ is
 		                  end if;
 		                  return;
 		               end if;
-	               pragma Assert (S.State = Wait_Client_Hello);
-	               Set_State (S, Wait_Client_Hello_Retry);
-	               HC.HRR_Sent := True;
+		               pragma Assert (S.State = Wait_Client_Hello);
+		               Set_State (S, Wait_Client_Hello_Retry);
+		               HC.HRR_Sent := True;
                --  RFC 8446 §4.1.4: at-most-one-HRR invariant. After
                --  this assignment, the outer `if not HC.HRR_Sent`
                --  guard prevents any further HRR from being built
@@ -3311,10 +3390,10 @@ is
 	      Derive_App_Keys (S, HC);
 	      pragma Assert (Reasm_Building (HC));
 
-	      Set_State (S, Server_Hello_Sent);
-	      pragma Assert (Reasm_Building (HC));
-	      Result := Has_Output;
-   end Build_Server_Flight;
+		      Set_State (S, Server_Hello_Sent);
+		      pragma Assert (Reasm_Building (HC));
+		      Result := Has_Output;
+	   end Build_Server_Flight;
 
    --  Derive handshake traffic keys from shared secret
    procedure Derive_Handshake_Keys
@@ -3506,10 +3585,10 @@ is
                 and then Data'Last < N32'Last - 4
                 and then Data'Last < Transcript_Capacity
 	                and then S.State = Wait_Client_Certificate
-	                and then Nonce_Space_Available (S.Server_App)
-	                and then Server_Configured (HC)
-	                and then Reasm_Building (HC)
-	                and then HC.Reasm_Len <= HC.Reasm_Need,
+			                and then Nonce_Space_Available (S.Server_App)
+			                and then Server_Configured (HC)
+			                and then Reasm_Building (HC)
+			                and then HC.Reasm_Len <= HC.Reasm_Need,
 	        Post => (S.State = S.State'Old
 	                 or else Valid_Transition (S.State'Old, S.State))
 	                and then (if S.State not in Error_State | Closed
@@ -3526,16 +3605,13 @@ is
       Parse_Err : Error_Code;
 	   begin
 		      Result := OK;
-		      pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
-		      Append_Transcript (HC, Data);
-		      pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
-	      Handshake.Certs.Parse_Certificate_Chain_13
+			      Append_Transcript (HC, Data);
+		      Handshake.Certs.Parse_Certificate_Chain_13
 	        (HC                     => HC,
 	         HS_Msg                 => Data,
 	         Reject_Cert_Extensions => False,
 	         OK                     => Parse_OK,
 	         Err                    => Parse_Err);
-	      pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
 	      pragma Assert (Reasm_Building (HC));
 	      if not Parse_OK then
          Send_Encrypted_Alert (S, Parse_Err, Result);
@@ -3935,12 +4011,14 @@ is
                      return;
                   end if;
 
-                  if Plain_Len_Const < 4 then
-                     Send_Encrypted_Alert (S, Decode_Error, Result);
-                     return;
-                  end if;
+	                  if Plain_Len_Const < 4 then
+	                     Send_Encrypted_Alert (S, Decode_Error, Result);
+	                     return;
+	                  end if;
 
-                  case S.State is
+	                  pragma Assert (Reasm_Building (HC));
+
+	                  case S.State is
                      when Wait_Client_Certificate =>
                         if Msg_Type /= Handshake.HT_Certificate then
                            Send_Encrypted_Alert
@@ -3963,9 +4041,9 @@ is
                         Set_State (S, Error_State);
                         Result := Error_Alert;
                   end case;
-                  pragma Assert
-                    (if S.State not in Error_State | Closed
-                     then Reasm_Building (HC));
+				                        pragma Assert
+				                          (if S.State = Wait_Client_Hello
+				                           then Reasm_Building (HC));
                end;
             end;
 
@@ -4294,9 +4372,9 @@ is
                if Frag_Len < Records.Tag_Size + 1 then
 	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
-	                  pragma Assert
-	                    (if S.State not in Error_State | Closed
-	                     then Reasm_Building (HC));
+						                     pragma Assert
+						                       (if S.State = Wait_Client_Hello
+						                        then Reasm_Building (HC));
 	                  return;
                end if;
 
@@ -4307,9 +4385,9 @@ is
                then
 	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	                  Send_Encrypted_Alert (S, Record_Overflow, Result);
-	                  pragma Assert
-	                    (if S.State not in Error_State | Closed
-	                     then Reasm_Building (HC));
+		            pragma Assert
+		              (if S.State = Wait_Client_Hello
+		               then Reasm_Building (HC));
 	                  return;
                end if;
 
@@ -4361,9 +4439,9 @@ is
 	                  else
 	                     Result := Error_Alert;
 	                  end if;
-	                  pragma Assert
-	                    (if S.State not in Error_State | Closed
-	                     then Reasm_Building (HC));
+		            pragma Assert
+		              (if S.State = Wait_Client_Hello
+		               then Reasm_Building (HC));
 	                  return;
                end if;
 

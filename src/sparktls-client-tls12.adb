@@ -98,9 +98,12 @@ is
    --  it into traffic keys + IVs for this connection's randoms.
    procedure Derive_Keys_Resumed_12
      (S : in out Session; HC : in out Handshake_Context)
-   with Pre  => Reasm_Coherent (HC),
-        Post => Reasm_Coherent (HC)
-                and then HC.Reasm_Len = HC.Reasm_Len'Old
+	   with Pre  => Reasm_Coherent (HC),
+					        Post => Reasm_Coherent (HC)
+		                and then S.State = S.State'Old
+		                and then (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
+		                and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then HC.Reasm_Hdr_Pending =
                   HC.Reasm_Hdr_Pending'Old
@@ -350,18 +353,21 @@ is
       HC        : in out Handshake_Context;
       C_Len     : in     N32)
 		   with Pre  => Cert_RFLX'First = 1
-		                and then Cert_RFLX'Length = RBT.Length (C_Len)
-		                and then C_Len > 0
-		                and then C_Len <= N32 (Max_Cert_DER)
-		                and then Reasm_Building (HC),
+			                and then Cert_RFLX'Length = RBT.Length (C_Len)
+			                and then C_Len > 0
+			                and then C_Len <= N32 (Max_Cert_DER)
+			                and then Reasm_Coherent (HC),
 	        Post => HC.Client_HS = HC.Client_HS'Old
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
-	                and then HC.Hash_Len = HC.Hash_Len'Old
-	                and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then HC.Hash_Len = HC.Hash_Len'Old
+		                and then HC.Selected_Group = HC.Selected_Group'Old
+		                and then HC.Reasm_Len = HC.Reasm_Len'Old
 		                and then HC.Reasm_Need = HC.Reasm_Need'Old
 		                and then HC.Reasm_Hdr_Pending =
 		                  HC.Reasm_Hdr_Pending'Old
-		                and then Reasm_Building (HC)
+				                and then Reasm_Coherent (HC)
+                        and then (if HC.Cfg.Random'Old /= null
+                                  then HC.Cfg.Random /= null)
 	                and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
@@ -380,7 +386,7 @@ is
 	            and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
 	            and then HC.Reasm_Hdr_Pending =
 	              HC.Reasm_Hdr_Pending'Loop_Entry
-	            and then Reasm_Building (HC));
+		            and then Reasm_Coherent (HC));
          HC.Peer_Cert_DER (I) :=
             Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;
@@ -430,22 +436,25 @@ is
 	     (HC  : in out Handshake_Context;
 	      Idx : in     Natural;
 	      PE  : in     Pool_Entry)
-   with Pre  => Idx = HC.Peer_Int_Count
-                and then HC.Peer_Int_Count < Max_Pool_Size
-	                and then PE.Present
-	                and then Reasm_Building (HC)
+		   with Pre  => Idx = HC.Peer_Int_Count
+	                and then HC.Peer_Int_Count < Max_Pool_Size
+		                and then PE.Present
+		                and then Reasm_Coherent (HC)
 	                and then (if HC.Peer_Cert_Valid then
                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                     and then X509.Spans_Valid
                       (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1)),
         Post => HC.Peer_Int_Count = HC.Peer_Int_Count'Old + 1
-                and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
-                and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
-                and then HC.Peer_Cert = HC.Peer_Cert'Old
-		                and then HC.Reasm_Len = HC.Reasm_Len'Old
+	                and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
+	                and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
+	                and then HC.Peer_Cert = HC.Peer_Cert'Old
+	                and then HC.Selected_Group = HC.Selected_Group'Old
+			                and then HC.Reasm_Len = HC.Reasm_Len'Old
 		                and then HC.Reasm_Need = HC.Reasm_Need'Old
 		                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
-		                and then Reasm_Building (HC)
+			                and then Reasm_Coherent (HC)
+                        and then (if HC.Cfg.Random'Old /= null
+                                  then HC.Cfg.Random /= null)
 	                and then (if HC.Peer_Cert_Valid then
                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                     and then X509.Spans_Valid
@@ -464,13 +473,17 @@ is
 		   procedure Reset_Peer_Cert_Chain_12
 		     (HC : in out Handshake_Context)
 			   with Pre  => Reasm_Coherent (HC),
-			        Post => Reasm_Coherent (HC)
-		                and then HC.Reasm_Len = HC.Reasm_Len'Old
-		                and then HC.Reasm_Need = HC.Reasm_Need'Old
-		                and then HC.Reasm_Hdr_Pending =
-		                  HC.Reasm_Hdr_Pending'Old
-		                and then not HC.Peer_Cert_Valid
-		                and then HC.Peer_Int_Count = 0;
+				        Post => Reasm_Coherent (HC)
+				                and then HC.Reasm_Len = HC.Reasm_Len'Old
+				                and then HC.Reasm_Need = HC.Reasm_Need'Old
+				                and then HC.Reasm_Hdr_Pending =
+				                  HC.Reasm_Hdr_Pending'Old
+				                and then HC.Selected_Group =
+				                  HC.Selected_Group'Old
+	                            and then (if HC.Cfg.Random'Old /= null
+	                                      then HC.Cfg.Random /= null)
+			                and then not HC.Peer_Cert_Valid
+			                and then HC.Peer_Int_Count = 0;
 
 	   procedure Reset_Peer_Cert_Chain_12
 	     (HC : in out Handshake_Context)
@@ -491,12 +504,16 @@ is
 	                and then
 	                  (if OK then
 	                     X509.Spans_Valid (Cert, X509.N32 (C_Len) - 1)),
-			        Post => Reasm_Coherent (HC)
-		                and then HC.Reasm_Len = HC.Reasm_Len'Old
-		                and then HC.Reasm_Need = HC.Reasm_Need'Old
-		                and then HC.Reasm_Hdr_Pending =
-		                  HC.Reasm_Hdr_Pending'Old
-		                and then HC.Peer_Cert_Valid = OK
+					        Post => Reasm_Coherent (HC)
+				                and then HC.Reasm_Len = HC.Reasm_Len'Old
+				                and then HC.Reasm_Need = HC.Reasm_Need'Old
+				                and then HC.Reasm_Hdr_Pending =
+				                  HC.Reasm_Hdr_Pending'Old
+				                and then HC.Selected_Group =
+				                  HC.Selected_Group'Old
+	                            and then (if HC.Cfg.Random'Old /= null
+	                                      then HC.Cfg.Random /= null)
+			                and then HC.Peer_Cert_Valid = OK
 	                and then
 	                  (if HC.Peer_Cert_Valid then
 	                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
@@ -515,10 +532,6 @@ is
       Saved_Reasm_Hdr_Pending : constant Boolean :=
         HC.Reasm_Hdr_Pending with Ghost;
 	   begin
-      pragma Assert
-        (if HC.Reasm_Buf /= null then HC.Reasm_Len <= HC.Reasm_Need);
-      pragma Assert
-        (if HC.Reasm_Buf /= null then Saved_Reasm_Len <= Saved_Reasm_Need);
       if OK then
 	         HC.Peer_Cert := Cert;
 	         HC.Peer_Cert_Valid := True;
@@ -529,10 +542,6 @@ is
       pragma Assert (HC.Reasm_Need = Saved_Reasm_Need);
       pragma Assert
         (HC.Reasm_Hdr_Pending = Saved_Reasm_Hdr_Pending);
-      pragma Assert
-        (if HC.Reasm_Buf /= null then Saved_Reasm_Len <= Saved_Reasm_Need);
-      pragma Assert
-        (if HC.Reasm_Buf /= null then HC.Reasm_Len <= HC.Reasm_Need);
       if HC.Reasm_Buf /= null then
          pragma Assert (HC.Reasm_Buf'First = 0);
          pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
@@ -570,15 +579,23 @@ is
                          and then Frag'First <= N32'Last - 4
                          and then Msg_Len <= N32'Last - Frag'First - 4
                          and then Frag'First + 3 + Msg_Len <= Frag'Last,
-	        Post => HC.Reasm_Len = HC.Reasm_Len'Old
-	                and then HC.Reasm_Need = HC.Reasm_Need'Old
-		                and then HC.Reasm_Hdr_Pending =
-		                  HC.Reasm_Hdr_Pending'Old
-			                and then Reasm_Coherent (HC)
-		                and then (if HC.Peer_Cert_Valid then
-	                    HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-	                    and then X509.Spans_Valid
-	                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+			        Post => (if OK then
+	                            Reasm_Coherent (HC)
+	                            and then HC.Reasm_Len = HC.Reasm_Len'Old
+			                    and then HC.Reasm_Need = HC.Reasm_Need'Old
+				                and then HC.Reasm_Hdr_Pending =
+				                  HC.Reasm_Hdr_Pending'Old
+				                and then HC.Selected_Group =
+				                  HC.Selected_Group'Old
+	                            and then
+	                              (if HC.Cfg.Random'Old /= null
+                               then HC.Cfg.Random /= null)
+			                and then
+                              (if HC.Peer_Cert_Valid then
+		                         HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+		                         and then X509.Spans_Valid
+		                           (HC.Peer_Cert,
+                                    X509.N32 (HC.Peer_Cert_DER_Len) - 1)));
 
    procedure Parse_Cert_Chain_12
      (HC      : in out Handshake_Context;
@@ -595,10 +612,18 @@ is
       Buf : RBT.Bytes_Ptr;
       Ctx : C12.Context;
       B   : constant N32 := Frag'First + 4;
-      Body_Bytes : Byte_Seq (0 .. Msg_Len - 1);
-      Cert_Idx : Natural := 0;
-   begin
-	      Reset_Peer_Cert_Chain_12 (HC);
+	      Body_Bytes : Byte_Seq (0 .. Msg_Len - 1);
+	      Cert_Idx : Natural := 0;
+         Saved_Reasm_Len : constant N32 := HC.Reasm_Len with Ghost;
+         Saved_Reasm_Need : constant N32 := HC.Reasm_Need with Ghost;
+	         Saved_Reasm_Hdr_Pending : constant Boolean :=
+	           HC.Reasm_Hdr_Pending with Ghost;
+	         Saved_Selected_Group : constant Unsigned_16 :=
+	           HC.Selected_Group with Ghost;
+	         Random_Was_Set : constant Boolean :=
+	           HC.Cfg.Random /= null with Ghost;
+	   begin
+		      Reset_Peer_Cert_Chain_12 (HC);
       OK := False;
 
       if Msg_Len < 3 then
@@ -668,12 +693,22 @@ is
 	                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 	                  pragma Loop_Invariant
 	                    (if HC.Peer_Cert_Valid then Cert_Idx > 0);
-	                  pragma Loop_Invariant
-	                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
-		                     and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
-		                     and then HC.Reasm_Hdr_Pending =
-		                       HC.Reasm_Hdr_Pending'Loop_Entry
-		                     and then Reasm_Building (HC));
+			                  pragma Loop_Invariant
+			                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
+				                     and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
+				                     and then HC.Reasm_Hdr_Pending =
+				                       HC.Reasm_Hdr_Pending'Loop_Entry
+				                     and then Reasm_Coherent (HC));
+	                              pragma Loop_Invariant
+	                                (HC.Reasm_Len = Saved_Reasm_Len
+	                                 and then HC.Reasm_Need = Saved_Reasm_Need
+	                                 and then HC.Reasm_Hdr_Pending =
+	                                   Saved_Reasm_Hdr_Pending
+	                                 and then HC.Selected_Group =
+	                                   Saved_Selected_Group
+	                                 and then
+	                                   (if Random_Was_Set
+	                                    then HC.Cfg.Random /= null));
                      declare
                         E_Ctx : C12_Entry.Context;
                   begin
@@ -741,17 +776,21 @@ is
 	                              end if;
 	                              Cert_Idx := Cert_Idx + 1;
 	                           end if;
-	                        end;
-	                     end if;
-	                     pragma Assert
-	                       (if HC.Peer_Cert_Valid
+		                        end;
+		                     end if;
+		                     pragma Assert
+		                       (HC.Selected_Group = Saved_Selected_Group);
+		                     pragma Assert
+		                       (if HC.Peer_Cert_Valid
 	                        then HC.Peer_Cert_DER_Len
 	                             in 1 .. Max_Cert_DER_Len
 	                             and then X509.Spans_Valid
 	                               (HC.Peer_Cert,
 	                                X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-		                     C12_Entries.Update (Entries_Ctx, E_Ctx);
-	                     pragma Assert
+			                     C12_Entries.Update (Entries_Ctx, E_Ctx);
+		                     pragma Assert
+		                       (HC.Selected_Group = Saved_Selected_Group);
+		                     pragma Assert
 	                       (if HC.Peer_Cert_Valid
 	                        then HC.Peer_Cert_DER_Len
 	                             in 1 .. Max_Cert_DER_Len
@@ -759,18 +798,28 @@ is
 	                               (HC.Peer_Cert,
 	                                X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 		                  end;
-		               end loop;
-	               C12_Entries.Take_Buffer (Entries_Ctx, Buf);
-	               RFLX_Free_Local (Buf);
+			               end loop;
+                       pragma Assert (Reasm_Coherent (HC));
+                       pragma Assert (HC.Reasm_Len = Saved_Reasm_Len);
+                       pragma Assert (HC.Reasm_Need = Saved_Reasm_Need);
+	                       pragma Assert
+	                         (HC.Reasm_Hdr_Pending = Saved_Reasm_Hdr_Pending);
+	                       pragma Assert
+	                         (HC.Selected_Group = Saved_Selected_Group);
+	                       pragma Assert
+	                         (if Random_Was_Set then HC.Cfg.Random /= null);
+		               C12_Entries.Take_Buffer (Entries_Ctx, Buf);
+		               RFLX_Free_Local (Buf);
 	               OK := True;
 	               return;
 	            end;
 	         end if;
 	      end;
 
-      C12.Take_Buffer (Ctx, Buf);
-      RFLX_Free_Local (Buf);
-      OK := True;
+	      C12.Take_Buffer (Ctx, Buf);
+	      RFLX_Free_Local (Buf);
+	      pragma Assert (HC.Selected_Group = Saved_Selected_Group);
+	      OK := True;
    end Parse_Cert_Chain_12;
 
    --  RFC 5246 §7.4.2 leaf-cert validation (TLS 1.2): keyUsage,
@@ -797,9 +846,20 @@ is
 	                               X509.N32 (HC.Peer_Cert_DER_Len) - 1))
 	                and then SPARKTLSCrypto.P384.Field.Initialized
 	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-		        Post => Reasm_Coherent (HC)
-	                and (if Result = OK then
-	                       S.State not in Idle | Closing | Closed | Error_State);
+					        Post => Reasm_Coherent (HC)
+				                and then (if Result = OK then
+				                       S.State not in Idle | Closing | Closed | Error_State
+				                       and then HC.Reasm_Len = HC.Reasm_Len'Old
+				                       and then HC.Reasm_Need = HC.Reasm_Need'Old
+				                       and then HC.Reasm_Hdr_Pending =
+				                         HC.Reasm_Hdr_Pending'Old
+				                       and then HC.Selected_Group =
+				                         HC.Selected_Group'Old
+				                       and then S.Negotiated_Suite =
+				                         S.Negotiated_Suite'Old
+								                     and then
+								                       (if HC.Cfg.Random'Old /= null
+							                        then HC.Cfg.Random /= null));
 
    procedure Validate_Server_Cert_12
      (S      : in out Session;
@@ -926,9 +986,42 @@ is
                 and then Msg_Len <= N32 (Frag'Length) - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
 	                and then Frag'Last - Frag'First < Transcript_Capacity
-		                and then S.State not in Idle | Closing | Closed | Error_State
-			                and then Reasm_Coherent (HC),
-			        Post => Reasm_Coherent (HC);
+			                and then S.State not in Idle | Closing | Closed | Error_State
+					                and then Reasm_Coherent (HC)
+	                        and then HC.Cfg.Random /= null
+	                        and then HC.Selected_Group in
+	                          Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+	                        and then Valid_ECDHE_Group (HC.Selected_Group)
+	                        and then HC.Transcript_Len > 0
+	                        and then HC.Transcript_Len <= Transcript_Capacity
+	                        and then S.Negotiated_Suite in
+	                          Suite_ECDHE_RSA_AES128_GCM_SHA256
+	                        | Suite_ECDHE_RSA_AES256_GCM_SHA384
+	                        | Suite_ECDHE_RSA_CHACHA20_SHA256
+	                        | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+	                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+	                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+					        Post => Reasm_Coherent (HC)
+					                and then
+								                  (if Result = OK then
+								                     S.State not in Idle | Closing
+								                       | Closed | Error_State
+								                     and then HC.Cfg.Random /= null
+							                     and then HC.Selected_Group in
+						                       Group_X25519 | Group_Secp256r1
+						                       | Group_Secp384r1
+							                     and then Valid_ECDHE_Group
+							                       (HC.Selected_Group)
+							                     and then
+							                       (if HC.Transcript_Len'Old > 0
+							                        then HC.Transcript_Len > 0)
+							                     and then S.Negotiated_Suite in
+							                       Suite_ECDHE_RSA_AES128_GCM_SHA256
+							                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
+							                     | Suite_ECDHE_RSA_CHACHA20_SHA256
+							                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+							                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+							                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
 
    procedure Handle_CertReq_12
      (S       : in out Session;
@@ -936,9 +1029,11 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   is
-      Body_OK : Boolean := False;
-      B       : constant N32 := Frag'First + 4;
+	   is
+	      Body_OK : Boolean := False;
+	      B       : constant N32 := Frag'First + 4;
+	      Transcript_Was_Nonempty : constant Boolean :=
+	        HC.Transcript_Len > 0 with Ghost;
    begin
       Result := OK;
       --  Body-length structural validation.
@@ -985,9 +1080,14 @@ is
          Free_Byte_Seq (HC.Reasm_Buf);
          HC.Reasm_Len := 0; HC.Reasm_Need := 0;
          HC.Reasm_Hdr_Pending := False;
-         Send_Alert_And_Error (S, Decode_Error, Result);
-         pragma Assert (Reasm_Building (HC));
-         return;
+	         Send_Alert_And_Error (S, Decode_Error, Result);
+	         pragma Assert (Reasm_Building (HC));
+	         pragma Assert (Result /= OK);
+	         pragma Assert_And_Cut
+	           (Result /= OK
+	            and then S.State = Error_State
+	            and then Reasm_Coherent (HC));
+	         return;
       end if;
       HC.Cert_Request_Received := True;
 
@@ -1036,10 +1136,15 @@ is
             end;
          end if;
          if SA_Empty then
-            Free_Byte_Seq (HC.Reasm_Buf);
-            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-            Send_Alert_And_Error (S, Decode_Error, Result);
-            return;
+	            Free_Byte_Seq (HC.Reasm_Buf);
+	            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+	            Send_Alert_And_Error (S, Decode_Error, Result);
+	            pragma Assert (Result /= OK);
+	            pragma Assert_And_Cut
+	              (Result /= OK
+	               and then S.State = Error_State
+	               and then Reasm_Coherent (HC));
+	            return;
          end if;
          if HC.Cfg.Local /= null then
             if Picked /= 0 then
@@ -1060,8 +1165,31 @@ is
             end if;
          end if;
       end;
-      Append_Transcript (HC, Frag);
-   end Handle_CertReq_12;
+	      Append_Transcript (HC, Frag);
+	      pragma Assert (S.State not in Idle | Closing | Closed | Error_State);
+	      pragma Assert
+	        (HC.Selected_Group in
+	           Group_X25519 | Group_Secp256r1 | Group_Secp384r1);
+	      pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
+			      pragma Assert
+			        (if Transcript_Was_Nonempty then HC.Transcript_Len > 0);
+			      pragma Assert_And_Cut
+			        (Reasm_Coherent (HC)
+			         and then S.State not in Idle | Closing | Closed | Error_State
+			         and then HC.Cfg.Random /= null
+			         and then HC.Selected_Group in
+			           Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+			         and then Valid_ECDHE_Group (HC.Selected_Group)
+			         and then
+			           (if Transcript_Was_Nonempty then HC.Transcript_Len > 0)
+			         and then S.Negotiated_Suite in
+			           Suite_ECDHE_RSA_AES128_GCM_SHA256
+			         | Suite_ECDHE_RSA_AES256_GCM_SHA384
+			         | Suite_ECDHE_RSA_CHACHA20_SHA256
+			         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+			         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+			         | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
+	   end Handle_CertReq_12;
 
    --  RFC 5246 §7.4.3 ServerKeyExchange (HS type 0x0C). Length-validates
    --  the body shape first (curve_type/curve/pt_len/pt + sig_hash/alg/
@@ -1083,11 +1211,45 @@ is
                 and then Msg_Len <= N32'Last - Frag'First - 4
                 and then Msg_Len <= N32 (Frag'Length) - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
-	                and then Frag'Last - Frag'First < Transcript_Capacity
+                and then Frag'Last - Frag'First < Transcript_Capacity
 	                and then S.State not in Idle | Closing | Closed | Error_State
-		                and then Reasm_Coherent (HC)
+	                and then Reasm_Coherent (HC)
+	                and then HC.Cfg.Random /= null
+	                and then S.Negotiated_Suite in
+	                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+	                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+	                | Suite_ECDHE_RSA_CHACHA20_SHA256
+	                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+	                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+	                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
 		                and then SPARKTLSCrypto.P384.Field.Initialized
-		                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+			        Post => Reasm_Coherent (HC)
+			                and then
+		                  (if Result = OK then
+		                     S.State = S.State'Old
+		                     and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                     and then HC.Reasm_Need = HC.Reasm_Need'Old
+			                     and then HC.Reasm_Hdr_Pending =
+			                       HC.Reasm_Hdr_Pending'Old
+			                     and then HC.Selected_Group in
+			                       Group_X25519 | Group_Secp256r1
+			                       | Group_Secp384r1
+			                     and then Valid_ECDHE_Group
+			                       (HC.Selected_Group)
+			                     and then
+			                       (if HC.Transcript_Len'Old > 0
+			                        then HC.Transcript_Len > 0)
+			                     and then S.Negotiated_Suite in
+			                       Suite_ECDHE_RSA_AES128_GCM_SHA256
+			                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
+			                     | Suite_ECDHE_RSA_CHACHA20_SHA256
+			                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+			                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+			                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+			                     and then
+			                       (if HC.Cfg.Random'Old /= null
+			                        then HC.Cfg.Random /= null));
 
    procedure Handle_SKE_12
      (S       : in out Session;
@@ -1154,9 +1316,14 @@ is
             Send_Alert_And_Error (S, Handshake_Failure, Result);
             return;
          end if;
-      end;
-      Append_Transcript (HC, Frag);
-   end Handle_SKE_12;
+	      end;
+	      Append_Transcript (HC, Frag);
+	      pragma Assert (HC.Cfg.Random /= null);
+	      pragma Assert
+	        (HC.Selected_Group in
+	           Group_X25519 | Group_Secp256r1 | Group_Secp384r1);
+	      pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
+	   end Handle_SKE_12;
 
    --  RFC 5246 §7.4.5 ServerHelloDone (HS type 0x0E). End of the
    --  server's pre-CCS flight. Computes the ECDHE shared secret,
@@ -1194,8 +1361,28 @@ is
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
 		                     and then HC.Transcript_Len > 0
-		                     and then HC.Transcript_Len <= Transcript_Capacity,
-		        Post => Reasm_Coherent (HC);
+		                     and then HC.Transcript_Len <= Transcript_Capacity
+	                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+								        Post => Reasm_Coherent (HC)
+								                and then
+								                  (if Result = OK then
+								                     S.State not in Idle | Closing
+								                       | Closed | Error_State
+								                     and then HC.Cfg.Random /= null
+								                     and then HC.Selected_Group in
+								                       Group_X25519 | Group_Secp256r1
+								                       | Group_Secp384r1
+								                     and then Valid_ECDHE_Group
+								                       (HC.Selected_Group)
+								                     and then HC.Transcript_Len > 0
+								                     and then S.Negotiated_Suite in
+								                       Suite_ECDHE_RSA_AES128_GCM_SHA256
+								                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
+								                     | Suite_ECDHE_RSA_CHACHA20_SHA256
+								                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+								                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+								                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
 
    procedure Handle_SHD_12
      (S       : in out Session;
@@ -1210,20 +1397,26 @@ is
          Free_Byte_Seq (HC.Reasm_Buf);
          HC.Reasm_Len := 0; HC.Reasm_Need := 0;
          HC.Reasm_Hdr_Pending := False;
-         Send_Alert_And_Error (S, Decode_Error, Result);
-         pragma Assert (Reasm_Building (HC));
-         return;
+		        Send_Alert_And_Error (S, Decode_Error, Result);
+		        pragma Assert (Reasm_Building (HC));
+		        pragma Assert (Result /= OK);
+			        pragma Assert_And_Cut
+			          (Result /= OK and then Reasm_Coherent (HC));
+		        return;
       end if;
       if HC.Reasm_Len > HC.Reasm_Need then
          Free_Byte_Seq (HC.Reasm_Buf);
          HC.Reasm_Len := 0; HC.Reasm_Need := 0;
          HC.Reasm_Hdr_Pending := False;
-         Send_Alert_And_Error (S, Unexpected_Message, Result);
-         pragma Assert (Reasm_Building (HC));
-         return;
-      end if;
-      Append_Transcript (HC, Frag);
-      pragma Assert (Reasm_Building (HC));
+		        Send_Alert_And_Error (S, Unexpected_Message, Result);
+		        pragma Assert (Reasm_Building (HC));
+		        pragma Assert (Result /= OK);
+			        pragma Assert_And_Cut
+			          (Result /= OK and then Reasm_Coherent (HC));
+	         return;
+	      end if;
+	      Append_Transcript (HC, Frag);
+	      pragma Assert (Reasm_Coherent (HC));
 
       --  Compute ECDHE shared secret per Selected_Group.
       declare
@@ -1280,9 +1473,12 @@ is
             Free_Byte_Seq (HC.Reasm_Buf);
             HC.Reasm_Len := 0; HC.Reasm_Need := 0;
             HC.Reasm_Hdr_Pending := False;
-            Send_Alert_And_Error (S, SS_Err, Result);
-            pragma Assert (Reasm_Building (HC));
-            return;
+		            Send_Alert_And_Error (S, SS_Err, Result);
+		            pragma Assert (Reasm_Building (HC));
+		            pragma Assert (Result /= OK);
+			            pragma Assert_And_Cut
+			              (Result /= OK and then Reasm_Coherent (HC));
+	            return;
          end if;
       end;
       pragma Assert (Reasm_Building (HC));
@@ -1329,10 +1525,13 @@ is
                      Free_Byte_Seq (HC.Reasm_Buf);
                      HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                      HC.Reasm_Hdr_Pending := False;
-                     Send_Alert_And_Error
-                       (S, Insufficient_Buffer, Result);
-                     pragma Assert (Reasm_Building (HC));
-                     return;
+		                     Send_Alert_And_Error
+		                       (S, Insufficient_Buffer, Result);
+		                     pragma Assert (Reasm_Building (HC));
+		                     pragma Assert (Result /= OK);
+			                     pragma Assert_And_Cut
+			                       (Result /= OK and then Reasm_Coherent (HC));
+	                     return;
                   end if;
                end if;
             end;
@@ -1347,9 +1546,12 @@ is
                Free_Byte_Seq (HC.Reasm_Buf);
                HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                HC.Reasm_Hdr_Pending := False;
-               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-               pragma Assert (Reasm_Building (HC));
-               return;
+		               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+		               pragma Assert (Reasm_Building (HC));
+		               pragma Assert (Result /= OK);
+			               pragma Assert_And_Cut
+			                 (Result /= OK and then Reasm_Coherent (HC));
+	               return;
             end if;
          end if;
 
@@ -1416,9 +1618,12 @@ is
                   Free_Byte_Seq (HC.Reasm_Buf);
                   HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                   HC.Reasm_Hdr_Pending := False;
-                  Send_Alert_And_Error (S, Internal_Error, Result);
-                  pragma Assert (Reasm_Building (HC));
-                  return;
+		                  Send_Alert_And_Error (S, Internal_Error, Result);
+		                  pragma Assert (Reasm_Building (HC));
+		                  pragma Assert (Result /= OK);
+			                  pragma Assert_And_Cut
+			                    (Result /= OK and then Reasm_Coherent (HC));
+	                  return;
                end if;
                Append_Transcript (HC, CV_Buf (0 .. CV_Len - 1));
                Records.Build_Handshake_Record
@@ -1427,10 +1632,13 @@ is
                   Free_Byte_Seq (HC.Reasm_Buf);
                   HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                   HC.Reasm_Hdr_Pending := False;
-                  Send_Alert_And_Error
-                    (S, Insufficient_Buffer, Result);
-                  pragma Assert (Reasm_Building (HC));
-                  return;
+		                  Send_Alert_And_Error
+		                    (S, Insufficient_Buffer, Result);
+		                  pragma Assert (Reasm_Building (HC));
+		                  pragma Assert (Result /= OK);
+			                  pragma Assert_And_Cut
+			                    (Result /= OK and then Reasm_Coherent (HC));
+	                  return;
                end if;
             end;
          end if;
@@ -1443,9 +1651,12 @@ is
             Free_Byte_Seq (HC.Reasm_Buf);
             HC.Reasm_Len := 0; HC.Reasm_Need := 0;
             HC.Reasm_Hdr_Pending := False;
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            pragma Assert (Reasm_Building (HC));
-            return;
+		            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+		            pragma Assert (Reasm_Building (HC));
+		            pragma Assert (Result /= OK);
+			            pragma Assert_And_Cut
+			              (Result /= OK and then Reasm_Coherent (HC));
+	            return;
          end if;
 
          if Use_384 then
@@ -1473,9 +1684,12 @@ is
             Free_Byte_Seq (HC.Reasm_Buf);
             HC.Reasm_Len := 0; HC.Reasm_Need := 0;
             HC.Reasm_Hdr_Pending := False;
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            pragma Assert (Reasm_Building (HC));
-            return;
+		            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+		            pragma Assert (Reasm_Building (HC));
+		            pragma Assert (Result /= OK);
+			            pragma Assert_And_Cut
+			              (Result /= OK and then Reasm_Coherent (HC));
+	            return;
          end if;
 
          if Free_Space (S.Output) < Scratch.Write_Pos then
@@ -1483,9 +1697,12 @@ is
             Free_Byte_Seq (HC.Reasm_Buf);
             HC.Reasm_Len := 0; HC.Reasm_Need := 0;
             HC.Reasm_Hdr_Pending := False;
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            pragma Assert (Reasm_Building (HC));
-            return;
+		            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+		            pragma Assert (Reasm_Building (HC));
+		            pragma Assert (Result /= OK);
+			            pragma Assert_And_Cut
+			              (Result /= OK and then Reasm_Coherent (HC));
+	            return;
          end if;
          S.Output.Data
            (S.Output.Write_Pos ..
@@ -1497,10 +1714,13 @@ is
 
       HC.CKE_Received_12 := True;
       pragma Assert (Reasm_Building (HC));
-      Result := (if Output_Pending (S) > 0
-                 then Has_Output else Need_Input);
-      pragma Assert (Reasm_Building (HC));
-   end Handle_SHD_12;
+			      Result := (if Output_Pending (S) > 0
+			                 then Has_Output else Need_Input);
+			      pragma Assert (Reasm_Building (HC));
+			      pragma Assert (Result /= OK);
+			      pragma Assert_And_Cut
+			        (Result /= OK and then Reasm_Coherent (HC));
+	   end Handle_SHD_12;
 
    --  RFC 5077 §3.3 NewSessionTicket (HS type 0x04). Two arrival times:
    --    * Abbreviated handshake (HC.TLS12_Resuming): right after SH,
@@ -1527,10 +1747,48 @@ is
                 and then Msg_Len <= N32'Last - Frag'First - 4
                 and then Msg_Len <= N32 (Frag'Length) - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
-                and then Frag'Last - Frag'First < Transcript_Capacity
-	                and then S.State not in Idle | Closing | Closed | Error_State
-		                and then Reasm_Coherent (HC),
-		        Post => Reasm_Coherent (HC);
+	                and then Frag'Last - Frag'First < Transcript_Capacity
+			                and then S.State not in Idle | Closing | Closed | Error_State
+				                and then Reasm_Coherent (HC)
+			                and then HC.Selected_Group in
+			                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+			                and then Valid_ECDHE_Group (HC.Selected_Group)
+			                and then S.Negotiated_Suite in
+			                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+			                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+			                | Suite_ECDHE_RSA_CHACHA20_SHA256
+			                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+			                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+			                | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+			        Post => Reasm_Coherent (HC)
+		                and then
+		                  (if Result = OK then
+				                     S.State not in Idle | Closing | Closed
+				                       | Error_State
+				                     and then HC.Reasm_Len =
+				                       HC.Reasm_Len'Old
+				                     and then HC.Reasm_Need =
+				                       HC.Reasm_Need'Old
+					                     and then HC.Reasm_Hdr_Pending =
+					                       HC.Reasm_Hdr_Pending'Old
+					                     and then HC.Selected_Group in
+					                       Group_X25519 | Group_Secp256r1
+					                       | Group_Secp384r1
+					                     and then Valid_ECDHE_Group
+					                       (HC.Selected_Group)
+					                     and then
+					                       (if HC.Transcript_Len'Old > 0
+					                        then HC.Transcript_Len > 0)
+					                     and then S.Negotiated_Suite in
+					                       Suite_ECDHE_RSA_AES128_GCM_SHA256
+					                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
+					                     | Suite_ECDHE_RSA_CHACHA20_SHA256
+					                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+					                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+					                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+					                     and then
+					                       (if HC.Cfg.Random'Old /= null
+					                        then HC.Cfg.Random /= null));
 
    procedure Handle_NST_12
      (S       : in out Session;
@@ -1599,16 +1857,36 @@ is
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                 and then Valid_ECDHE_Group (HC.Selected_Group)
-		                     and then HC.Transcript_Len > 0
-		                     and then HC.Transcript_Len <= Transcript_Capacity,
+			                     and then HC.Transcript_Len > 0
+			                     and then HC.Transcript_Len <= Transcript_Capacity
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 	        Post => Reasm_Coherent (HC)
                 and then
-                  (if Result = OK then
-                     S.State not in Idle | Closing | Closed | Error_State
-                     and then HC.Reasm_Len = HC.Reasm_Len'Old
-                     and then HC.Reasm_Need = HC.Reasm_Need'Old
-                     and then HC.Reasm_Hdr_Pending =
-                       HC.Reasm_Hdr_Pending'Old);
+		                  (if Result = OK then
+		                     S.State not in Idle | Closing | Closed | Error_State
+				                     and then HC.Cfg.Random /= null
+				                     and then HC.Selected_Group in
+			                       Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+			                     and then Valid_ECDHE_Group (HC.Selected_Group)
+			                     and then
+			                       (if HC.Transcript_Len'Old > 0
+			                        then HC.Transcript_Len > 0)
+			                     and then
+			                       S.Negotiated_Suite in
+			                         Suite_ECDHE_RSA_AES128_GCM_SHA256
+			                       | Suite_ECDHE_RSA_AES256_GCM_SHA384
+			                       | Suite_ECDHE_RSA_CHACHA20_SHA256
+			                       | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+			                       | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+			                       | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
 
    procedure Dispatch_Server_Flight_Message
      (S        : in out Session;
@@ -1619,7 +1897,7 @@ is
       Result   :    out Action)
    is
    begin
-      case Msg_Type is
+	      case Msg_Type is
          when 16#0B# =>
             --  Certificate (RFC 5246 §7.4.2). Parsing happens in
             --  Parse_Cert_Chain_12; subsequent validation gates
@@ -1670,18 +1948,35 @@ is
                Send_Alert_And_Error (S, Decode_Error, Result);
                return;
             end if;
-            Handle_NST_12 (S, HC, Frag, Msg_Len, Result);
+	            Handle_NST_12 (S, HC, Frag, Msg_Len, Result);
 
-         when others =>
-            --  RFC 5246 §7.4: unknown handshake type during the
+	         when others =>
+	            --  RFC 5246 §7.4: unknown handshake type during the
             --  flight is unexpected_message (BoGo WrongMessageType-*
             --  injects type+42). Pre-CCS so the alert is plaintext.
             Free_Byte_Seq (HC.Reasm_Buf);
             HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-            HC.Reasm_Hdr_Pending := False;
-            Send_Alert_And_Error (S, Unexpected_Message, Result);
-      end case;
-   end Dispatch_Server_Flight_Message;
+	            HC.Reasm_Hdr_Pending := False;
+		            Send_Alert_And_Error (S, Unexpected_Message, Result);
+		      end case;
+		      pragma Assert_And_Cut
+		        (Reasm_Coherent (HC)
+		         and then
+		           (if Result = OK then
+		              S.State not in Idle | Closing | Closed | Error_State
+		              and then HC.Cfg.Random /= null
+		              and then HC.Selected_Group in
+		                Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+		              and then Valid_ECDHE_Group (HC.Selected_Group)
+		              and then HC.Transcript_Len > 0
+		              and then S.Negotiated_Suite in
+		                Suite_ECDHE_RSA_AES128_GCM_SHA256
+		              | Suite_ECDHE_RSA_AES256_GCM_SHA384
+		              | Suite_ECDHE_RSA_CHACHA20_SHA256
+		              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+		              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+		              | Suite_ECDHE_ECDSA_CHACHA20_SHA256));
+		   end Dispatch_Server_Flight_Message;
 
    procedure Drain_Packed_Server_Flight
      (S        : in out Session;
@@ -1706,8 +2001,33 @@ is
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                 and then Valid_ECDHE_Group (HC.Selected_Group)
 		                     and then HC.Transcript_Len > 0
-		                     and then HC.Transcript_Len <= Transcript_Capacity,
-        Post => Reasm_Coherent (HC);
+		                     and then HC.Transcript_Len <= Transcript_Capacity
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+	        Post => Reasm_Coherent (HC)
+	                and then
+	                  (if Result = OK then
+	                     S.State not in Idle | Closing | Closed | Error_State
+	                     and then HC.Cfg.Random /= null
+	                     and then HC.Selected_Group in
+	                       Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+	                     and then Valid_ECDHE_Group (HC.Selected_Group)
+	                     and then HC.Transcript_Len > 0
+	                     and then HC.Transcript_Len <= Transcript_Capacity
+	                     and then S.Negotiated_Suite in
+	                       Suite_ECDHE_RSA_AES128_GCM_SHA256
+	                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
+	                     | Suite_ECDHE_RSA_CHACHA20_SHA256
+	                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+	                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+	                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
 
    procedure Drain_Packed_Server_Flight
      (S        : in out Session;
@@ -1719,9 +2039,7 @@ is
       More_Packed : Boolean := True;
    begin
       Result := OK;
-      while More_Packed loop
-         pragma Loop_Variant
-           (Decreases => HC.Reasm_Len);
+	      while More_Packed loop
          pragma Loop_Invariant
            (if More_Packed then Result = OK);
          pragma Loop_Invariant
@@ -1875,8 +2193,17 @@ is
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                 and then Valid_ECDHE_Group (HC.Selected_Group)
-		                     and then HC.Transcript_Len > 0
-		                     and then HC.Transcript_Len <= Transcript_Capacity,
+			                     and then HC.Transcript_Len > 0
+			                     and then HC.Transcript_Len <= Transcript_Capacity
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
                 and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
@@ -2685,6 +3012,13 @@ is
                 and then Valid_ECDHE_Group (HC.Selected_Group)
                 and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
@@ -2703,6 +3037,13 @@ is
                 and then Valid_ECDHE_Group (HC.Selected_Group)
                 and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized;
 

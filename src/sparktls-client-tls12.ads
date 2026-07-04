@@ -38,7 +38,8 @@ is
                and then Reasm_Coherent (HC)
                and then
                  (if not HC.CKE_Received_12 then
-                    HC.Cfg.Random /= null
+                    Reasm_Building (HC)
+                    and then HC.Cfg.Random /= null
                     and then HC.Selected_Group in
                       Group_X25519 | Group_Secp256r1 | Group_Secp384r1
 	                    and then Valid_ECDHE_Group (HC.Selected_Group)

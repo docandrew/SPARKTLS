@@ -1227,15 +1227,18 @@ is
 		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
 	        Post => (if Result = OK then
 		                    Reasm_Coherent (HC)
-				                    and then HC.Cfg.Random /= null
-				                    and then HC.Transcript_Len > 0
-				                    and then HC.Transcript_Len <= Transcript_Capacity
-			                    and then HC.HRR_Cookie_Len <=
-			                      N32 (HC.HRR_Cookie'Length)
-			                    and then
-			                      (if S.State = Wait_Server_Hello
-			                       then S.Negotiated_Suite in
-			                         Suite_AES_128_GCM_SHA256
+						                    and then HC.Cfg.Random /= null
+						                    and then HC.Transcript_Len > 0
+						                    and then HC.Transcript_Len <= Transcript_Capacity
+							                    and then
+							                      (if S.State = Wait_Server_Hello
+							                       then HC.HRR_Cookie_Len <=
+							                         N32 (HC.HRR_Cookie'Length))
+						                    and then
+						                      (if S.State = Wait_Server_Hello
+					                           and then HC.Version = TLS_1_3
+				                       then S.Negotiated_Suite in
+				                         Suite_AES_128_GCM_SHA256
 			                       | Suite_AES_256_GCM_SHA384
 			                       | Suite_CHACHA20_POLY1305_SHA256));
    procedure Finalize_SH_Processing
@@ -1260,10 +1263,13 @@ is
       HC     : in out Handshake_Context;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
-	   with Pre => S.State = Wait_Server_Hello
-	               and then Reasm_Coherent (HC)
-	               and then HC.Cfg.Random /= null
-	               and then Rec.OK
+		   with Pre => S.State = Wait_Server_Hello
+		               and then Reasm_Coherent (HC)
+		               and then HC.Cfg.Random /= null
+		               and then HC.Transcript_Len > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		               and then Rec.OK
                and then Rec.Content = Records.Content_Handshake
                and then Rec.Fragment_Pos = Records.Record_Header_Size
                and then Rec.Fragment_Len >= 1
@@ -1284,11 +1290,10 @@ is
 		                    S.State = Wait_Server_Hello
 			                    and then Reasm_Coherent (HC)
 			                    and then HC.Cfg.Random /= null
-			                    and then HC.Transcript_Len =
-			                      HC.Transcript_Len'Old
-			                    and then HC.HRR_Cookie_Len =
-			                      HC.HRR_Cookie_Len'Old
-			                    and then HC.Transcript_Len <= Transcript_Capacity
+				                    and then HC.Transcript_Len > 0
+				                    and then HC.Transcript_Len <= Transcript_Capacity
+				                    and then HC.HRR_Cookie_Len <=
+				                      N32 (HC.HRR_Cookie'Length)
 			                    and then
 		                      (if HC.Reasm_Len >= HC.Reasm_Need then
 		                         HC.Reasm_Buf /= null
@@ -1304,10 +1309,13 @@ is
       Frag_Start : in     N32;
       Max_HS_Msg : in     N32;
       Result     :    out Action)
-	   with Pre => S.State = Wait_Server_Hello
-	               and then Reasm_Coherent (HC)
-	               and then HC.Cfg.Random /= null
-	               and then Rec.OK
+		   with Pre => S.State = Wait_Server_Hello
+		               and then Reasm_Coherent (HC)
+		               and then HC.Cfg.Random /= null
+		               and then HC.Transcript_Len > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		               and then Rec.OK
                and then Rec.Content = Records.Content_Handshake
                and then Rec.Fragment_Pos = Records.Record_Header_Size
                and then Rec.Fragment_Len = Frag_Len
@@ -1331,6 +1339,10 @@ is
 	                    S.State = Wait_Server_Hello
 	                    and then Reasm_Coherent (HC)
 		                    and then HC.Cfg.Random /= null
+			                    and then HC.Transcript_Len > 0
+			                    and then HC.Transcript_Len <= Transcript_Capacity
+			                    and then HC.HRR_Cookie_Len <=
+			                      N32 (HC.HRR_Cookie'Length)
 		                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
 		                                 HC.Reasm_Buf /= null
 	                                 and then HC.Reasm_Need > 0
@@ -1355,6 +1367,11 @@ is
 	                and then HC.Transcript_Len <= Transcript_Capacity
 		                and then Reasm_Coherent (HC),
         Post => HC.Transcript_Len >= HC.Transcript_Len'Old
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then
+                  (if HC.Transcript_Len'Old > 0
+                     or else Data'First <= Data'Last
+                   then HC.Transcript_Len > 0)
                 and then HC.Client_HS = HC.Client_HS'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null
@@ -1375,9 +1392,10 @@ is
                           then HC.Cfg.Random /= null)
                 and then HC.Cert_Request_Received =
                   HC.Cert_Request_Received'Old
-                and then HC.Negotiated_Sig_Algo =
-                  HC.Negotiated_Sig_Algo'Old
-                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+	                and then HC.Negotiated_Sig_Algo =
+	                  HC.Negotiated_Sig_Algo'Old
+	                and then HC.Version = HC.Version'Old
+	                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
                 and then (if HC.HRR_Cookie_Len'Old <=
                             N32 (HC.HRR_Cookie'Length)
                           then HC.HRR_Cookie_Len <=
@@ -3093,8 +3111,11 @@ is
       Len  : in     N32)
    with Pre => HC.Reasm_Buf /= null
                and then HC.Reasm_Buf'First = 0
-               and then Reasm_Coherent (HC)
-               and then Len >= 1
+	               and then Reasm_Coherent (HC)
+	               and then HC.Transcript_Len > 0
+	               and then HC.Transcript_Len <= Transcript_Capacity
+	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+	               and then Len >= 1
                and then Len - 1 <= HC.Reasm_Buf'Last
                and then From <= N32'Last - Len
                and then From + Len <= IO_Buffer_Capacity,
@@ -3102,8 +3123,11 @@ is
                 and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
-                and then HC.Reasm_Buf /= null
-                and then
+	                and then HC.Reasm_Buf /= null
+	                and then HC.Transcript_Len > 0
+	                and then HC.Transcript_Len <= Transcript_Capacity
+	                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+	                and then
                   (if HC.Cfg.Random'Old /= null
                    then HC.Cfg.Random /= null);
 
@@ -3129,18 +3153,24 @@ is
       Next_Read  : in     Buffer_Size;
       Result     :    out Action)
 	   with Pre => S.State = Wait_Server_Hello
-	               and then Reasm_Coherent (HC)
-	               and then HC.Cfg.Random /= null
-	               and then Frag_Len in 1 .. 3
+		               and then Reasm_Coherent (HC)
+		               and then HC.Cfg.Random /= null
+		               and then HC.Transcript_Len > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		               and then Frag_Len in 1 .. 3
                and then Frag_Start <= N32'Last - Frag_Len
                and then Frag_Start + Frag_Len <= IO_Buffer_Capacity
                and then Next_Read <= S.Input.Write_Pos
                and then Max_HS_Msg = 131072,
 	        Post => Result = OK
 	                and then S.State = Wait_Server_Hello
-	                and then Reasm_Coherent (HC)
-	                and then HC.Cfg.Random /= null
-	                and then HC.Reasm_Len < HC.Reasm_Need;
+		                and then Reasm_Coherent (HC)
+		                and then HC.Cfg.Random /= null
+		                and then HC.Transcript_Len > 0
+		                and then HC.Transcript_Len <= Transcript_Capacity
+		                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		                and then HC.Reasm_Len < HC.Reasm_Need;
 
    procedure Start_Pending_SH_Reassembly
      (S          : in out Session;
@@ -3173,9 +3203,12 @@ is
       Next_Read  : in     Buffer_Size;
       Result     :    out Action)
 	   with Pre => S.State = Wait_Server_Hello
-	               and then Reasm_Coherent (HC)
-	               and then HC.Cfg.Random /= null
-	               and then Frag_Len >= 4
+		               and then Reasm_Coherent (HC)
+		               and then HC.Cfg.Random /= null
+		               and then HC.Transcript_Len > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		               and then Frag_Len >= 4
 	               and then HS_Total > Frag_Len
 	               and then HS_Total <= 131072
 	               and then HS_Total <= Transcript_Capacity
@@ -3184,9 +3217,12 @@ is
                and then Next_Read <= S.Input.Write_Pos,
 	        Post => Result = OK
 	                and then S.State = Wait_Server_Hello
-		                and then Reasm_Coherent (HC)
-		                and then HC.Cfg.Random /= null
-		                and then HC.Reasm_Len < HC.Reasm_Need
+			                and then Reasm_Coherent (HC)
+			                and then HC.Cfg.Random /= null
+			                and then HC.Transcript_Len > 0
+			                and then HC.Transcript_Len <= Transcript_Capacity
+			                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+			                and then HC.Reasm_Len < HC.Reasm_Need
 		                and then HC.Reasm_Need - 1 < Transcript_Capacity;
 
    procedure Start_Spanning_SH_Reassembly
@@ -3219,19 +3255,25 @@ is
       HS_Total   : in     N32;
       Next_Read  : in     Buffer_Size)
 	   with Pre => S.State = Wait_Server_Hello
-	               and then Reasm_Coherent (HC)
-	               and then HC.Cfg.Random /= null
-	               and then Frag_Len >= 4
+		               and then Reasm_Coherent (HC)
+		               and then HC.Cfg.Random /= null
+		               and then HC.Transcript_Len > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		               and then Frag_Len >= 4
 	               and then HS_Total >= 4
 	               and then HS_Total <= Frag_Len
 	               and then HS_Total <= Transcript_Capacity
                and then Frag_Start <= N32'Last - Frag_Len
                and then Frag_Start + Frag_Len <= IO_Buffer_Capacity
                and then Next_Read <= S.Input.Write_Pos,
-	        Post => S.State = Wait_Server_Hello
-	                and then Reasm_Coherent (HC)
-		                and then HC.Cfg.Random /= null
-		                and then HC.Reasm_Buf /= null
+		        Post => S.State = Wait_Server_Hello
+		                and then Reasm_Coherent (HC)
+			                and then HC.Cfg.Random /= null
+			                and then HC.Transcript_Len > 0
+			                and then HC.Transcript_Len <= Transcript_Capacity
+			                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+			                and then HC.Reasm_Buf /= null
 		                and then HC.Reasm_Need > 0
 		                and then HC.Reasm_Need - 1 < Transcript_Capacity;
 
@@ -3578,7 +3620,9 @@ is
 	                              HC.Version := TLS_1_2;
 	                              Handshake.TLS12.Parse_Server_Hello_12
 	                                (S, HC, Frag, Parse_OK);
-                           end if;
+	                              pragma Assert
+	                                (if Parse_OK then HC.Version = TLS_1_2);
+	                           end if;
 
                            if not Parse_OK then
                               if S.Last_Error = No_Error then
@@ -3604,11 +3648,11 @@ is
                               Free_Byte_Seq (HC.Reasm_Buf);
                               HC.Reasm_Len := 0;
                               HC.Reasm_Need := 0;
-                              HC.Reasm_Hdr_Pending := False;
-                              return;
-                           end if;
+	                              HC.Reasm_Hdr_Pending := False;
+	                              return;
+	                           end if;
 
-                           --  RFC 8446 §4.1.4 HelloRetryRequest: if
+		                           --  RFC 8446 §4.1.4 HelloRetryRequest: if
                            --  the SH was actually an HRR (sentinel
                            --  random recognised by Parse_Server_Hello),
                            --  replace the CH1 transcript with a
@@ -3649,17 +3693,20 @@ is
 			                                     HC.Cfg.TLS12_Resume_Ticket
 			                                       .Ticket_Len >
 			                                         Max_TLS12_Ticket_Len)
-			                              then
-		                                 S.Last_Error := Internal_Error;
-		                                 S.State := Error_State;
+				                              then
+			                                 S.Last_Error := Internal_Error;
+			                                 S.State := Error_State;
 		                                 Result := Error_Alert;
 		                                 Free_Byte_Seq (HC.Reasm_Buf);
 		                                 HC.Reasm_Len := 0;
 		                                 HC.Reasm_Need := 0;
 		                                 HC.Reasm_Hdr_Pending := False;
-		                                 return;
-		                              end if;
-		                              --  Build and send CH2.
+			                                 return;
+			                              end if;
+			                              pragma Assert
+			                                (HC.HRR_Cookie_Len <=
+			                                   N32 (HC.HRR_Cookie'Length));
+			                              --  Build and send CH2.
 	                              declare
                                  CH2_Buf : Byte_Seq
                                    (0 .. Handshake.Client_Msgs
@@ -3683,9 +3730,10 @@ is
                                     HC.Reasm_Hdr_Pending := False;
                                     return;
                                  end if;
-                                 Append_Transcript
-                                   (HC, CH2_Buf (0 .. CH2_Len - 1));
-                                 --  RFC 8446 §D.4 middlebox-compat:
+	                                 Append_Transcript
+	                                   (HC, CH2_Buf (0 .. CH2_Len - 1));
+	                                 pragma Assert (HC.Transcript_Len > 0);
+	                                 --  RFC 8446 §D.4 middlebox-compat:
                                  --  emit dummy CCS between HRR and
                                  --  CH2 so the server's
                                  --  expectChangeCipherSpec is
@@ -3713,14 +3761,23 @@ is
                               --  parse re-derives it; without this,
                               --  the second SH's matrix lookup uses
                               --  a stale Where.
-		                              HC.Has_TLS_1_3 := False;
-			                              Result := (if Output_Pending (S) > 0
-			                                         then Has_Output else OK);
-	                              return;
-	                           end if;
+			                              HC.Has_TLS_1_3 := False;
+				                              Result := Has_Output;
+		                              return;
+		                           end if;
 
-	                           Append_Transcript (HC, Frag);
-	                        end;
+				                           Append_Transcript (HC, Frag);
+				                           pragma Assert (HC.Transcript_Len > 0);
+		                           pragma Assert
+		                             (if HC.Version = TLS_1_3
+		                              then S.Negotiated_Suite in
+		                                Suite_AES_128_GCM_SHA256
+		                              | Suite_AES_256_GCM_SHA384
+		                              | Suite_CHACHA20_POLY1305_SHA256);
+		                           pragma Assert
+		                             (HC.HRR_Cookie_Len <=
+		                                N32 (HC.HRR_Cookie'Length));
+				                        end;
    end Parse_SH_From_Reasm_13;
 
    procedure Handle_WSH_HS_Frame
