@@ -25,6 +25,13 @@ with X509;
 package body SPARKTLS.Client with
    SPARK_Mode => On
 is
+   function Client_Config_Can_Start (Cfg : Config) return Boolean is
+     (Cfg.Random /= null
+      and then
+        (Cfg.Skip_Verify
+         or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
+         or else Cfg.Resume_Ticket.Valid));
+
    --  Send a fatal alert encrypted under the client_handshake_
    --  traffic_secret, then transition to Error_State. Prepends the
    --  legacy CCS record (RFC 8446 §D.4 / "middlebox-compat") because
@@ -1621,11 +1628,7 @@ is
       Cfg.Random      := Random;
       Cfg.Trust       := Trust;
       Cfg.Local       := Local;
-      --  Skip_Verify defaults to True when no trust store is given
-      --  (otherwise the handshake would fail with a confusing
-      --  "missing trust store" rather than the intended "validation
-      --  off"). An explicit Skip_Verify=True overrides both cases.
-      Cfg.Skip_Verify := Trust = null or Skip_Verify;
+      Cfg.Skip_Verify := Skip_Verify;
       Cfg.Skip_Hostname_Verify := Skip_Hostname_Verify;
       Cfg.Get_Time    := Clock;
       Cfg.Verify_Mode := Mode;
@@ -1657,9 +1660,15 @@ is
             Role      => Role_Client,
             others    => <>);
 
+      if not Client_Config_Can_Start (Cfg) then
+         Set_State (S, Error_State);
+         S.Last_Error := Internal_Error;
+         return;
+      end if;
+
       S.HC_Ptr := HC_Alloc.Allocate;
       if S.HC_Ptr = null then
-	                              S.State := Error_State;
+         S.State := Error_State;
          S.Last_Error := Internal_Error;
          return;
       end if;
@@ -2185,17 +2194,19 @@ is
          end;
       end if;
 
-      if not HC.Cfg.Skip_Verify
-         and then HC.Cfg.Trust /= null
-         and then HC.Cfg.Get_Time /= null
-         and then HC.Peer_Cert_Valid
-	      then
-	         pragma Assert
-	           (HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len);
-	         pragma Assert
-	           (X509.Spans_Valid
-	              (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-	         declare
+      if not HC.Cfg.Skip_Verify and then HC.Peer_Cert_Valid then
+         if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
+            S.Last_Error := Bad_Certificate;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
+         pragma Assert
+           (HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len);
+         pragma Assert
+           (X509.Spans_Valid
+              (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+         declare
             Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
             Cert_X : X509.Byte_Seq
                (0 .. X509.N32 (Cert_DER_Len_Const) - 1) := (others => 0);

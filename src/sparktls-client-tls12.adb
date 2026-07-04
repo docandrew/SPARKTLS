@@ -934,11 +934,11 @@ is
          end;
       end if;
 
-      if not HC.Cfg.Skip_Verify
-         and then HC.Cfg.Trust /= null
-         and then HC.Cfg.Get_Time /= null
-         and then HC.Peer_Cert_Valid
-      then
+      if not HC.Cfg.Skip_Verify and then HC.Peer_Cert_Valid then
+         if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
+            Send_Alert_And_Error (S, Bad_Certificate, Result);
+            return;
+         end if;
          declare
             PCDL : constant N32 := HC.Peer_Cert_DER_Len;
             Cert_X : X509.Byte_Seq

@@ -87,11 +87,12 @@ begin
 
    --  Initialize TLS client session (skip verification for test)
    SPARKTLS.Client.Configure
-     (S        => S,
-      Hostname => Host,
-      Trust    => null,
-      Random   => Entropy_Random.Random'Access,
-      Clock    => Current_Time'Unrestricted_Access);
+     (S           => S,
+      Hostname    => Host,
+      Trust       => null,
+      Random      => Entropy_Random.Random'Access,
+      Clock       => Current_Time'Unrestricted_Access,
+      Skip_Verify => True);
    Put_Line ("ClientHello built, output pending:" &
       SPARKTLS.Output_Pending (S)'Image & " bytes");
 

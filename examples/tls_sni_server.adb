@@ -37,7 +37,7 @@ procedure TLS_SNI_Server is
    --  the function with the bytes the client sent — we case-fold to
    --  lowercase before substring matching to be RFC 1035-friendly.
    function Pick_Identity (Server_Name : in String)
-      return SPARKTLS.Identity_Access
+      return SPARKTLS.Selected_Identity_Access
    is
       Lower : String (Server_Name'Range);
    begin

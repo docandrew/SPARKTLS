@@ -19,7 +19,8 @@ project Unit_Tests is
                  "test_aes_gcm_seq.adb",
                  "test_psk_resume.adb",
                  "test_tickets_12.adb",
-                 "test_tek_rotation.adb");
+                 "test_tek_rotation.adb",
+                 "test_validation_config.adb");
 
    package Compiler is
       for Default_Switches ("Ada") use ("-O2", "-gnatn", "-gnatp");

@@ -28,10 +28,18 @@ with SPARKTLS.Handshake.TLS12;
 package body SPARKTLS.Server with
    SPARK_Mode => On
 is
+   function Server_Config_Can_Start (Cfg : Config) return Boolean is
+     (Cfg.Local /= null
+      and then Cfg.Local.Has_Identity
+      and then Cfg.Random /= null
+      and then
+        (not Cfg.Request_Client_Cert
+         or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
+
    function Server_Configured (HC : Handshake_Context) return Boolean is
-		     (HC.Cfg.Local /= null
-		      and then HC.Cfg.Local.Has_Identity
-		      and then HC.Cfg.Random /= null)
+     (HC.Cfg.Local /= null
+      and then HC.Cfg.Local.Has_Identity
+      and then HC.Cfg.Random /= null)
    with Ghost;
 
    function Server_Active (S : Session) return Boolean is
@@ -743,9 +751,15 @@ is
    with SPARK_Mode => Off
    is
    begin
-      S := (State     => Wait_Client_Hello,
-            Role => Role_Server,
-            others    => <>);
+      S := (State  => Wait_Client_Hello,
+            Role   => Role_Server,
+            others => <>);
+
+      if not Server_Config_Can_Start (Cfg) then
+         Set_State (S, Error_State);
+         S.Last_Error := Internal_Error;
+         return;
+      end if;
 
       S.HC_Ptr := HC_Alloc.Allocate;
       if S.HC_Ptr = null then
@@ -3769,50 +3783,58 @@ is
          end if;
       end;
 
-      --  Trust-store chain validation, if configured.
-      if HC.Cfg.Trust /= null
-         and then HC.Cfg.Get_Time /= null
-         and then HC.Peer_Cert_Valid
-	      then
-	         declare
-	            Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
-	            Leaf_Last : constant X509.N32 :=
-	               X509.N32 (Cert_DER_Len_Const) - 1;
-	            Cert_X : X509.Byte_Seq
-	               (0 .. Leaf_Last) :=
-	                 (others => 0);
-	            VR : Validation_Result;
-	         begin
-	            pragma Assert (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
-	            pragma Assert
-	              (Leaf_Last = X509.N32 (HC.Peer_Cert_DER_Len) - 1);
-	            for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
-	               pragma Loop_Invariant
-	                 (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
-	               pragma Loop_Invariant
-	                 (HC.Peer_Cert = HC.Peer_Cert'Loop_Entry);
-	               pragma Loop_Invariant
-	                 (HC.Peer_Cert_DER_Len =
-	                    HC.Peer_Cert_DER_Len'Loop_Entry);
-	               pragma Loop_Invariant
-	                 (Leaf_Last =
-	                    X509.N32 (HC.Peer_Cert_DER_Len) - 1);
-	               pragma Loop_Invariant (Leaf_Last < X509.N32'Last);
-	               pragma Loop_Invariant
-	                 (X509.Spans_Valid
-	                    (HC.Peer_Cert'Loop_Entry,
-	                     X509.N32 (HC.Peer_Cert_DER_Len'Loop_Entry) - 1));
-	               Cert_X (X509.N32 (I)) :=
-	                  X509.Byte (HC.Peer_Cert_DER (I));
-	            end loop;
-		            pragma Assert (Leaf_Last < X509.N32'Last);
-		            pragma Assert
-		              (X509.N32 (HC.Peer_Cert_DER_Len) - 1 < X509.N32'Last);
-		            VR := Validate_Chain
-		              (Leaf_DER   =>
-		                  Cert_X
-		                    (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
-	               Leaf       => HC.Peer_Cert,
+      --  Trust-store chain validation. Requesting a client certificate
+      --  requires enough configuration to validate the presented chain.
+      if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
+         Send_Encrypted_Alert (S, Bad_Certificate, Result);
+         pragma Assert (S.Last_Error /= Unexpected_Message);
+         pragma Assert (Output_Pending (S) > 0);
+         pragma Assert
+           (Cert_Validation_Alerted_RFC_5246_7_4_2
+              (S.State, Output_Pending (S), S.Last_Error));
+         return;
+      end if;
+
+      if HC.Peer_Cert_Valid then
+         declare
+            Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
+            Leaf_Last : constant X509.N32 :=
+               X509.N32 (Cert_DER_Len_Const) - 1;
+            Cert_X : X509.Byte_Seq
+               (0 .. Leaf_Last) :=
+                 (others => 0);
+            VR : Validation_Result;
+         begin
+            pragma Assert (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
+            pragma Assert
+              (Leaf_Last = X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+            for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
+               pragma Loop_Invariant
+                 (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
+               pragma Loop_Invariant
+                 (HC.Peer_Cert = HC.Peer_Cert'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Peer_Cert_DER_Len =
+                    HC.Peer_Cert_DER_Len'Loop_Entry);
+               pragma Loop_Invariant
+                 (Leaf_Last =
+                    X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+               pragma Loop_Invariant (Leaf_Last < X509.N32'Last);
+               pragma Loop_Invariant
+                 (X509.Spans_Valid
+                    (HC.Peer_Cert'Loop_Entry,
+                     X509.N32 (HC.Peer_Cert_DER_Len'Loop_Entry) - 1));
+               Cert_X (X509.N32 (I)) :=
+                  X509.Byte (HC.Peer_Cert_DER (I));
+            end loop;
+            pragma Assert (Leaf_Last < X509.N32'Last);
+            pragma Assert
+              (X509.N32 (HC.Peer_Cert_DER_Len) - 1 < X509.N32'Last);
+            VR := Validate_Chain
+              (Leaf_DER   =>
+                  Cert_X
+                    (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
+               Leaf       => HC.Peer_Cert,
                Ints       => HC.Peer_Ints,
                Int_Count  => HC.Peer_Int_Count,
                Roots      => HC.Cfg.Trust.Roots,

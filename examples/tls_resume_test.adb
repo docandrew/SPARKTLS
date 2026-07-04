@@ -94,6 +94,8 @@ procedure TLS_Resume_Test is
       Cfg.Random := Entropy_Random.Random'Access;
       Cfg.Suite  := TLS_AES_128_GCM_SHA256;
       Cfg.Versions := TLS_1_3_Only;
+      --  Integration test runs against an OpenSSL self-signed test cert.
+      Cfg.Skip_Verify := True;
       declare
          H : constant String := Host (1 .. Host_Len);
       begin

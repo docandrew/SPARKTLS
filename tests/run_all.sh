@@ -272,6 +272,16 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # Validation configuration fail-closed checks
+    if [ -f bin/tests/test_validation_config ]; then
+        output=$(bin/tests/test_validation_config 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_validation_config: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # AES-NI hardware path: FIPS 197 KAT + 1024 random equivalence cases
     # vs SPARKNaCl software AES (skipped on non-AES-NI CPUs)
     if [ -f bin/tests/test_aes_ni ]; then
