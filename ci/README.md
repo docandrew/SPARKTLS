@@ -11,15 +11,12 @@ Run:
 nix develop --command bash ci/check.sh
 ```
 
-This prints tool versions, builds the library, examples, and unit test
-binaries, then runs:
+This prints tool versions and runs the full release-mode suite:
 
-- `tests/run_all.sh unit`
-- `tests/integration/run.sh` through `ci/integration.sh`
+- `tests/run_all.sh`
 
-`ci/integration.sh` is strict about unexpected regressions, but accepts the
-current known integration gap: the missing `tests/integration/dos_ch_flood.py`
-case, reported as `82/83 passed, 1 failed`.
+That covers build, unit, integration, protocol, and x509-limbo checks. The
+GitHub Actions workflow runs this lane on both x86_64 and aarch64 Linux.
 
 ## Timing Lane
 
@@ -29,9 +26,10 @@ Run:
 nix develop --command bash ci/timing.sh ctgrind
 ```
 
-The GitHub Actions workflow runs `ctgrind` as a separate job. `dudect` remains
-available through `ci/timing.sh dudect`, but is not a default PR gate because it
-is statistical and more host-noise-sensitive.
+The GitHub Actions workflow runs `ci/timing.sh all` as a separate x86_64 job,
+covering both ctgrind and dudect. This lane is kept off ARM because the ctgrind
+harness is currently x86_64-only: its project file pins baseline x86 code
+generation to keep Valgrind away from unsupported AVX-512 instructions.
 
 ## Proof
 

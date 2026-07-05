@@ -234,6 +234,61 @@ for suite in ECDHE-RSA-AES128-GCM-SHA256 ECDHE-RSA-AES256-GCM-SHA384; do
     fi
 done
 
+echo ""
+echo "--- TLS 1.2: SKE tamper rejection ---"
+
+TAMPER_PROXY="$DIR/tamper_tls12_ske.py"
+if [ ! -f "$TAMPER_PROXY" ] || ! command -v python3 >/dev/null 2>&1; then
+    echo "  (skipped — Python SKE tamper proxy unavailable)"
+else
+    for mode in signature point; do
+        cleanup
+        server_port=$PORT
+        openssl s_server -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" \
+            -accept $server_port -tls1_2 \
+            -cipher ECDHE-RSA-AES128-GCM-SHA256 -www \
+            >/tmp/sparktls_ske_tamper_server.log 2>&1 &
+        server_pid=$!
+        if ! wait_for_port "$server_port"; then
+            fail "TLS1.2 SKE tamper ${mode}: OpenSSL server did not start"
+            kill "$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+            continue
+        fi
+
+        next_port
+        proxy_port=$PORT
+        python3 "$TAMPER_PROXY" \
+            --listen-port "$proxy_port" \
+            --target-port "$server_port" \
+            --mode "$mode" \
+            >/tmp/sparktls_ske_tamper_proxy.log 2>&1 &
+        proxy_pid=$!
+        if ! wait_for_port "$proxy_port"; then
+            fail "TLS1.2 SKE tamper ${mode}: proxy did not start"
+            kill "$proxy_pid" "$server_pid" 2>/dev/null || true
+            wait "$proxy_pid" "$server_pid" 2>/dev/null || true
+            continue
+        fi
+
+        output=$(timeout 10 "$FETCH" --cafile "$CERT_DIR/rsa.crt" --rfc5280 \
+            "https://localhost:$proxy_port/" 2>&1 || true)
+        wait "$proxy_pid" 2>/dev/null
+        proxy_status=$?
+        kill "$server_pid" 2>/dev/null || true
+        wait "$server_pid" 2>/dev/null || true
+
+        if [ "$proxy_status" -eq 0 ] \
+           && ! echo "$output" | grep -qi "HTTP/1\|200\|html"; then
+            pass "TLS1.2 rejects tampered SKE ${mode}"
+        else
+            fail "TLS1.2 rejects tampered SKE ${mode}"
+            echo "    client: $(echo "$output" | head -1)"
+            echo "    proxy:  $(cat /tmp/sparktls_ske_tamper_proxy.log | head -1)"
+        fi
+    done
+fi
+
 # ===================================================================
 # mTLS Verify_Mode (Required) — server should reject clients that
 # do not present a cert. Validates the security fix for the bypass

@@ -18,14 +18,9 @@ if [ "$rc" -eq 0 ]; then
   exit 0
 fi
 
-if [ "$summary" = "=== Integration: 82/83 passed, 1 failed ===" ] \
-   && grep -q "DoS: 1000-cipher-suite CH handling" "$OUT" \
-   && grep -q "dos_ch_flood.py" "$OUT"; then
-  echo ""
-  echo "Integration matched current known failure: missing dos_ch_flood.py."
-  exit 0
-fi
-
 echo ""
 echo "Unexpected integration failure set."
+if [ -n "$summary" ]; then
+  echo "$summary"
+fi
 exit "$rc"
