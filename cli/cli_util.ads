@@ -14,6 +14,13 @@ package CLI_Util is
       Data : out Byte_Seq_Access;
       OK   : out Boolean);
 
+   --  Read a certificate file as PEM or raw DER into a heap-allocated
+   --  DER Byte_Seq (0-based).
+   procedure Read_Cert_File
+     (Path : String;
+      Data : out Byte_Seq_Access;
+      OK   : out Boolean);
+
    --  Convert a Span to a String by reading bytes from DER.
    function Span_To_String
      (DER : X509.Byte_Seq;

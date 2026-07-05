@@ -4,6 +4,7 @@ with Ada.Streams.Stream_IO;
 with Ada.Text_IO;         use Ada.Text_IO;
 with Ada.Directories;
 with Interfaces;          use Interfaces;
+with SPARKTLS.PEM;
 
 package body CLI_Util is
 
@@ -73,6 +74,93 @@ package body CLI_Util is
             Put_Line (Standard_Error, "Error: cannot read: " & Path);
       end;
    end Read_DER_File;
+
+   ----------------------------------------------------------------
+   --  Read_Cert_File
+   ----------------------------------------------------------------
+
+   procedure Read_Cert_File
+     (Path : String;
+      Data : out Byte_Seq_Access;
+      OK   : out Boolean)
+   is
+      use Ada.Streams.Stream_IO;
+      use type SPARKTLS.PEM.PEM_Label;
+   begin
+      Data := null;
+      OK := False;
+
+      if not Ada.Directories.Exists (Path) then
+         Put_Line (Standard_Error, "Error: file not found: " & Path);
+         return;
+      end if;
+
+      declare
+         Size : constant Natural :=
+            Natural (Ada.Directories.Size (Path));
+         File : Ada.Streams.Stream_IO.File_Type;
+         Buf  : Ada.Streams.Stream_Element_Array
+           (1 .. Stream_Element_Offset (Size));
+         Last : Stream_Element_Offset;
+      begin
+         if Size = 0 then
+            Put_Line (Standard_Error, "Error: file is empty: " & Path);
+            return;
+         end if;
+
+         Open (File, In_File, Path);
+         Read (File, Buf, Last);
+         Close (File);
+
+         if Last > 0 and then Character'Val (Buf (1)) = '-' then
+            if Natural (Last) > SPARKTLS.PEM.Max_PEM_Input then
+               Put_Line (Standard_Error, "Error: PEM file is too large: " &
+                         Path);
+               return;
+            end if;
+
+            declare
+               Text : String (1 .. Natural (Last));
+               PEM  : SPARKTLS.PEM.Decode_Result;
+            begin
+               for I in 1 .. Last loop
+                  Text (Natural (I)) := Character'Val (Buf (I));
+               end loop;
+
+               SPARKTLS.PEM.Decode (Text, PEM);
+               if not PEM.OK then
+                  Put_Line (Standard_Error,
+                            "Error: failed to decode PEM certificate: " &
+                            Path);
+                  return;
+               end if;
+
+               if PEM.Label /= SPARKTLS.PEM.Label_Certificate then
+                  Put_Line (Standard_Error,
+                            "Error: PEM block is not a certificate: " &
+                            Path);
+                  return;
+               end if;
+
+               Data := new X509.Byte_Seq (0 .. PEM.DER_Len - 1);
+               Data.all := PEM.DER (0 .. PEM.DER_Len - 1);
+               OK := True;
+            end;
+         else
+            Data := new X509.Byte_Seq (0 .. X509.N32 (Last) - 1);
+            for I in 1 .. Last loop
+               Data (X509.N32 (I - 1)) := X509.Byte (Buf (I));
+            end loop;
+            OK := True;
+         end if;
+      exception
+         when others =>
+            if Is_Open (File) then
+               Close (File);
+            end if;
+            Put_Line (Standard_Error, "Error: cannot read: " & Path);
+      end;
+   end Read_Cert_File;
 
    ----------------------------------------------------------------
    --  Span_To_String

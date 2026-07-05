@@ -12,20 +12,46 @@ procedure SPARKTLS_CLI is
 
    procedure Print_Usage is
    begin
-      Put_Line ("sparktls - certificate inspection and validation tool");
+      Put_Line ("sparktls_cli - SPARKTLS certificate utility");
       New_Line;
-      Put_Line ("Usage: sparktls <command> [options]");
+      Put_Line ("Usage: sparktls_cli <command> [options]");
       New_Line;
       Put_Line ("Commands:");
-      Put_Line ("  show <cert.pem>                     Display certificate fields");
-      Put_Line ("  verify <cert.pem> --ca <ca.pem>     Validate certificate chain");
+      Put_Line ("  generate <algo> key to <file>");
+      Put_Line ("      Generate a PEM private key. algo: ed25519, p256, p384");
+      Put_Line ("  devcert <name> to <key-file> <cert-file> [options]");
+      Put_Line ("      Generate a key and self-signed development certificate");
       New_Line;
-      Put_Line ("  generate <algo> key to <file>        Generate a keypair");
-      Put_Line ("    algo: ed25519, p256, p384");
+      Put_Line ("  create cert for <name> using <key> to <file> [options]");
+      Put_Line ("      Create a self-signed leaf certificate");
+      Put_Line ("  create ca for <name> using <key> to <file> [options]");
+      Put_Line ("      Create a self-signed CA certificate");
+      Put_Line ("  sign <leaf-key> with-ca <ca-key> <ca-cert> for <name> to <file> [options]");
+      Put_Line ("      Issue a leaf certificate from an existing CA");
+      New_Line;
+      Put_Line ("  create csr for <name> using <key> to <file> [with-san <names>]");
+      Put_Line ("      Create a PEM certificate signing request");
+      Put_Line ("  sign-csr <csr.pem> with-ca <ca-key> <ca-cert> to <file> [valid-for <days>]");
+      Put_Line ("      Sign a PEM CSR with an existing CA");
+      New_Line;
+      Put_Line ("  show <cert.pem|cert.der> [--brief]");
+      Put_Line ("      Display parsed certificate fields");
+      Put_Line ("  verify <cert.pem|cert.der> --ca <ca.pem|ca.der> [--ca <int>] [--host <name>]");
+      Put_Line ("      Validate a certificate chain and optional hostname");
+      New_Line;
+      Put_Line ("Common options:");
+      Put_Line ("  valid-for <days>       Certificate validity period");
+      Put_Line ("  with-san <n1,n2,...>   DNS names or IPv4 addresses");
+      Put_Line ("  with-org <org>         Organization name");
+      Put_Line ("  algo <ed25519|p256|p384>  devcert key algorithm");
       New_Line;
       Put_Line ("Examples:");
-      Put_Line ("  sparktls generate p256 key to server.key");
-      Put_Line ("  sparktls show server.crt");
+      Put_Line ("  sparktls_cli devcert localhost to server.key server.crt");
+      Put_Line ("  sparktls_cli generate p256 key to ca.key");
+      Put_Line ("  sparktls_cli create ca for ""Local Test CA"" using ca.key to ca.crt");
+      Put_Line ("  sparktls_cli sign server.key with-ca ca.key ca.crt for localhost to server.crt");
+      New_Line;
+      Put_Line ("Note: certificate inputs may be PEM or DER.");
    end Print_Usage;
 
 begin

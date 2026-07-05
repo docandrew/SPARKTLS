@@ -350,7 +350,7 @@ package body Cmd_Show is
       Brief     : Boolean := False;
       I         : Natural := 2;
    begin
-      --  Parse arguments: sparktls show <file> [--brief]
+      --  Parse arguments: sparktls_cli show <file> [--brief]
       while I <= Argument_Count loop
          declare
             Arg : constant String := Argument (I);
@@ -377,7 +377,7 @@ package body Cmd_Show is
 
       if File_Path = null then
          Put_Line (Standard_Error,
-                   "Usage: sparktls show <cert.der> [--brief]");
+                   "Usage: sparktls_cli show <cert.pem|cert.der> [--brief]");
          Ada.Command_Line.Set_Exit_Status (2);
          return;
       end if;
@@ -388,7 +388,7 @@ package body Cmd_Show is
          OK   : Boolean;
          Cert : X509.Certificate;
       begin
-         Read_DER_File (File_Path.all, Data, OK);
+         Read_Cert_File (File_Path.all, Data, OK);
          if not OK then
             Ada.Command_Line.Set_Exit_Status (1);
             return;

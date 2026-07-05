@@ -1,5 +1,5 @@
---  sparktls create csr for <name> using <key> to <file> [with-san ...]
---  sparktls sign-csr <csr> with-ca <ca-key> <ca-cert> to <file> [valid-for N]
+--  sparktls_cli create csr for <name> using <key> to <file> [with-san ...]
+--  sparktls_cli sign-csr <csr> with-ca <ca-key> <ca-cert> to <file> [valid-for N]
 
 with Ada.Command_Line;
 with Ada.Text_IO;    use Ada.Text_IO;
@@ -37,7 +37,7 @@ package body Cmd_CSR is
       when others => return "";
    end Read_Text_File;
 
-   --  sparktls create csr for <name> using <key> to <file> [with-san ...]
+   --  sparktls_cli create csr for <name> using <key> to <file> [with-san ...]
    --  Args: 1=create 2=csr 3=for 4=name 5=using 6=key 7=to 8=file [9+]
    procedure Run_Create is
       use Ada.Command_Line;
@@ -56,7 +56,7 @@ package body Cmd_CSR is
          or else Argument (5) /= "using"
          or else Argument (7) /= "to"
       then
-         Put_Line ("Usage: sparktls create csr for <name> using <key> to <file>");
+         Put_Line ("Usage: sparktls_cli create csr for <name> using <key> to <file>");
          Set_Exit_Status (2);
          return;
       end if;
@@ -168,7 +168,7 @@ package body Cmd_CSR is
       end;
    end Run_Create;
 
-   --  sparktls sign-csr <csr> with-ca <ca-key> <ca-cert> to <file> [valid-for N]
+   --  sparktls_cli sign-csr <csr> with-ca <ca-key> <ca-cert> to <file> [valid-for N]
    --  Args: 1=sign-csr 2=csr 3=with-ca 4=ca-key 5=ca-cert 6=to 7=file [8+]
    procedure Run_Sign is
       use Ada.Command_Line;
@@ -178,7 +178,7 @@ package body Cmd_CSR is
          or else Argument (3) /= "with-ca"
          or else Argument (6) /= "to"
       then
-         Put_Line ("Usage: sparktls sign-csr <csr.pem> with-ca <ca.key> <ca.crt> to <cert.pem>");
+         Put_Line ("Usage: sparktls_cli sign-csr <csr.pem> with-ca <ca.key> <ca.crt> to <cert.pem>");
          Set_Exit_Status (2);
          return;
       end if;

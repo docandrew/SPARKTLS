@@ -93,12 +93,15 @@ all heap allocation.
 cd /tmp && unzip /path/to/186-4ecdsatestvectors.zip
 alr exec -- gprbuild -P tests/ecdhe_p384_test.gpr && tests/ecdhe_p384_test
 
-# Test against OpenSSL s_server with self-signed cert
-openssl ecparam -name secp384r1 -genkey -noout -out /tmp/key.pem
-openssl req -new -x509 -key /tmp/key.pem -out /tmp/cert.pem -days 1 -subj "/CN=localhost"
-openssl s_server -cert /tmp/cert.pem -key /tmp/key.pem -groups P-384 -accept 8443 -www
+# Generate a local development certificate with the CLI
+cd cli && alr -n --no-tty build
+../bin/sparktls_cli devcert localhost to /tmp/key.pem /tmp/cert.pem
+
+# Run the example SPARKTLS server
+cd ..
+bin/examples/tls_test_server /tmp/cert.pem /tmp/key.pem
 # In another terminal:
-obj/examples/tls_fetch https://127.0.0.1:8443/ -k
+bin/examples/tls_fetch https://127.0.0.1:8443/ -k
 ```
 
 ## Architecture

@@ -1,5 +1,5 @@
---  sparktls create cert for <name> using <key> to <file> [options]
---  sparktls create ca for <name> using <key> to <file> [options]
+--  sparktls_cli create cert for <name> using <key> to <file> [options]
+--  sparktls_cli create ca for <name> using <key> to <file> [options]
 
 with Ada.Command_Line;
 with Ada.Text_IO;    use Ada.Text_IO;
@@ -13,8 +13,8 @@ package body Cmd_Create is
    procedure Print_Usage is
    begin
       Put_Line ("Usage:");
-      Put_Line ("  sparktls create cert for <name> using <key> to <file> [options]");
-      Put_Line ("  sparktls create ca for <name> using <key> to <file> [options]");
+      Put_Line ("  sparktls_cli create cert for <name> using <key> to <file> [options]");
+      Put_Line ("  sparktls_cli create ca for <name> using <key> to <file> [options]");
       New_Line;
       Put_Line ("Options:");
       Put_Line ("  valid-for <days>           Validity period (default: 365)");
@@ -22,8 +22,8 @@ package body Cmd_Create is
       Put_Line ("  with-org <org>             Organization name");
       New_Line;
       Put_Line ("Examples:");
-      Put_Line ("  sparktls create cert for localhost using server.key to server.crt");
-      Put_Line ("  sparktls create ca for ""My CA"" using ca.key to ca.crt valid-for 3650");
+      Put_Line ("  sparktls_cli create cert for localhost using server.key to server.crt");
+      Put_Line ("  sparktls_cli create ca for ""My CA"" using ca.key to ca.crt valid-for 3650");
    end Print_Usage;
 
    procedure Run is

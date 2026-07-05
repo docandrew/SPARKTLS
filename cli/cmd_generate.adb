@@ -1,4 +1,4 @@
---  sparktls generate <algo> key to <file>
+--  sparktls_cli generate <algo> key to <file>
 
 with Ada.Command_Line;
 with Ada.Text_IO;    use Ada.Text_IO;
@@ -10,13 +10,13 @@ package body Cmd_Generate is
 
    procedure Print_Usage is
    begin
-      Put_Line ("Usage: sparktls generate <algo> key to <file>");
+      Put_Line ("Usage: sparktls_cli generate <algo> key to <file>");
       New_Line;
       Put_Line ("  algo: ed25519, p256, p384");
       New_Line;
       Put_Line ("Examples:");
-      Put_Line ("  sparktls generate p256 key to server.key");
-      Put_Line ("  sparktls generate ed25519 key to ca.key");
+      Put_Line ("  sparktls_cli generate p256 key to server.key");
+      Put_Line ("  sparktls_cli generate ed25519 key to ca.key");
    end Print_Usage;
 
    procedure Run is

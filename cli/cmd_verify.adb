@@ -33,7 +33,7 @@ package body Cmd_Verify is
 
       All_OK  : Boolean := True;
    begin
-      --  Parse arguments: sparktls verify <cert.der> --ca <ca.der> [--host name]
+      --  Parse arguments: sparktls_cli verify <cert> --ca <ca> [--host name]
       while I <= Argument_Count loop
          declare
             Arg : constant String := Argument (I);
@@ -79,8 +79,9 @@ package body Cmd_Verify is
 
       if Leaf_Path = null then
          Put_Line (Standard_Error,
-                   "Usage: sparktls verify <cert.der> --ca <ca.der>" &
-                   " [--ca <int.der>] [--host hostname]");
+                   "Usage: sparktls_cli verify <cert.pem|cert.der>" &
+                   " --ca <ca.pem|ca.der> [--ca <int.pem|int.der>]" &
+                   " [--host hostname]");
          Set_Exit_Status (2);
          return;
       end if;
@@ -96,7 +97,7 @@ package body Cmd_Verify is
       declare
          OK : Boolean;
       begin
-         Read_DER_File (Leaf_Path.all, Chain (0).Data, OK);
+         Read_Cert_File (Leaf_Path.all, Chain (0).Data, OK);
          if not OK then
             Set_Exit_Status (1);
             return;
@@ -117,7 +118,7 @@ package body Cmd_Verify is
          declare
             OK : Boolean;
          begin
-            Read_DER_File (CA_Paths (J).all, Chain (J).Data, OK);
+            Read_Cert_File (CA_Paths (J).all, Chain (J).Data, OK);
             if not OK then
                Set_Exit_Status (1);
                return;

@@ -1,4 +1,4 @@
---  sparktls sign <leaf-key> with-ca <ca-key> <ca-cert> for <name> to <file> [opts]
+--  sparktls_cli sign <leaf-key> with-ca <ca-key> <ca-cert> for <name> to <file> [opts]
 
 with Ada.Command_Line;
 with Ada.Text_IO;    use Ada.Text_IO;
@@ -14,7 +14,7 @@ package body Cmd_Sign is
    procedure Print_Usage is
    begin
       Put_Line ("Usage:");
-      Put_Line ("  sparktls sign <leaf-key> with-ca <ca-key> <ca-cert>");
+      Put_Line ("  sparktls_cli sign <leaf-key> with-ca <ca-key> <ca-cert>");
       Put_Line ("    for <name> to <file> [options]");
       New_Line;
       Put_Line ("Options:");
@@ -23,7 +23,7 @@ package body Cmd_Sign is
       Put_Line ("  with-org <org>             Organization name");
       New_Line;
       Put_Line ("Examples:");
-      Put_Line ("  sparktls sign server.key with-ca ca.key ca.crt \");
+      Put_Line ("  sparktls_cli sign server.key with-ca ca.key ca.crt \");
       Put_Line ("    for localhost to server.crt with-san localhost,127.0.0.1");
    end Print_Usage;
 

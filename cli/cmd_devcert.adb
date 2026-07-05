@@ -1,4 +1,4 @@
---  sparktls devcert <name> to <key-file> <cert-file> [options]
+--  sparktls_cli devcert <name> to <key-file> <cert-file> [options]
 --
 --  One command to generate a key + self-signed cert for dev/testing.
 --  Defaults: P-256, 365 days, SANs auto-populated.
@@ -14,7 +14,7 @@ package body Cmd_Devcert is
 
    procedure Print_Usage is
    begin
-      Put_Line ("Usage: sparktls devcert <name> to <key-file> <cert-file> [options]");
+      Put_Line ("Usage: sparktls_cli devcert <name> to <key-file> <cert-file> [options]");
       New_Line;
       Put_Line ("Options:");
       Put_Line ("  algo <ed25519|p256|p384>    Key algorithm (default: p256)");
@@ -22,8 +22,8 @@ package body Cmd_Devcert is
       Put_Line ("  with-san <n1,n2,...>         Extra SANs (auto-adds name + localhost)");
       New_Line;
       Put_Line ("Examples:");
-      Put_Line ("  sparktls devcert localhost to server.key server.crt");
-      Put_Line ("  sparktls devcert myapp.local to app.key app.crt algo ed25519");
+      Put_Line ("  sparktls_cli devcert localhost to server.key server.crt");
+      Put_Line ("  sparktls_cli devcert myapp.local to app.key app.crt algo ed25519");
    end Print_Usage;
 
    function Is_IP (S : String) return Boolean is
