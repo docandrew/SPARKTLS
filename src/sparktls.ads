@@ -1163,8 +1163,11 @@ is
       Get_Time : Get_Time_Fn := null;
 
       --  Trust store for verifying the peer's certificate chain.
-      --  Required for client (unless Skip_Verify).
-      --  Optional for server (only needed for mTLS).
+      --  Required for verified client handshakes unless Skip_Verify
+      --  is explicitly enabled or a valid TLS 1.3 resume ticket is
+      --  supplied. Required on the server when Request_Client_Cert is
+      --  True, so presented client certificates are validated instead
+      --  of accepted anonymously.
       Trust : Trust_Store_Access := null;
 
       --  Local identity (certificate + signing key).

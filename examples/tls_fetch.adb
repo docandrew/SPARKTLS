@@ -318,6 +318,13 @@ begin
          if Verbose then
             Put_Line ("* Loaded" & Root_Count'Image & " root CAs");
          end if;
+         if not Roots_OK then
+            Put_Line
+              (Standard_Error,
+               "Error: failed to load trust roots; use --cafile or --insecure");
+            GNAT.Sockets.Close_Socket (Sock);
+            return;
+         end if;
       end if;
 
       --  TLS handshake

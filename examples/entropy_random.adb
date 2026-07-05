@@ -18,13 +18,13 @@ package body Entropy_Random is
       Open (F, In_File, "/dev/urandom");
       Read (F, Buf, Last);
       Close (F);
+      if Last /= Buf'Last then
+         raise Program_Error with "short read from /dev/urandom";
+      end if;
       for I in 0 .. Output'Length - 1 loop
          Output (Output'First + SPARKNaCl.N32 (I)) :=
             SPARKNaCl.Byte (Buf (Stream_Element_Offset (I) + 1));
       end loop;
-   exception
-      when others =>
-         Output := (others => 0);
    end Random;
 
 end Entropy_Random;

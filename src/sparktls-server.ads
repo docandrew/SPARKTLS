@@ -64,10 +64,11 @@ is
    --  non-null result overrides `Local` for this session. A null
    --  result causes fallback to `Local` (permissive default; openssl-
    --  compatible behaviour rather than `unrecognized_name` alert).
-   --  Get_Time: optional UTC wall-clock callback. Required for
+   --  Get_Time: optional UTC wall-clock callback. Required when
+   --  Request_Client_Cert is True, because mTLS chain validation
+   --  checks certificate notBefore / notAfter. Also required for
    --  TLS 1.2 session-ticket expiry enforcement (without it the
-   --  Decrypt_Ticket path skips the age window check). Also used
-   --  by X.509 chain validation for notBefore / notAfter.
+   --  Decrypt_Ticket path skips the age window check).
    --  Note: 0-RTT (RFC 8446 §2.3 / §4.2.10) is intentionally not
    --  supported on either side. NST omits the early_data extension,
    --  EE never echoes it, and any client that speculatively sends

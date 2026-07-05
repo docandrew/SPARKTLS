@@ -75,9 +75,11 @@ is
                 S.Role = Role_Client and
                 Output_Pending (S) > 0;
    --  Skip_Verify: skip full X.509 chain validation against Trust
-   --  (development / self-signed certs). Hostname binding (§6.4) is
-   --  NOT affected by this flag — set Skip_Hostname_Verify to opt
-   --  out of hostname binding as well.
+   --  (development / self-signed certs). Without Skip_Verify, a trust
+   --  store and clock must be configured before the handshake can
+   --  start, except for valid TLS 1.3 ticket resumption. Hostname
+   --  binding (§6.4) is NOT affected by this flag — set
+   --  Skip_Hostname_Verify to opt out of hostname binding as well.
    --
    --  Skip_Hostname_Verify: skip RFC 6125 §6.4 SAN/CN matching even
    --  when Hostname is non-empty. The usual opt-out is to pass
