@@ -24,15 +24,6 @@
               [ pkgs.alire ]
             else
               [ ];
-          python = pkgs.python3.withPackages (
-            ps: with ps; [
-              dpkt
-              matplotlib
-              numpy
-              pandas
-              scipy
-            ]
-          );
         in
         {
           default = pkgs.mkShell {
@@ -50,15 +41,13 @@
               iproute2
               openssl
               procps
-              python
+              python3
               tcpdump
               valgrind
               which
             ]);
 
             shellHook = ''
-              export MPLCONFIGDIR="''${TMPDIR:-/tmp}/sparktls-matplotlib"
-              mkdir -p "$MPLCONFIGDIR"
               echo "SPARKTLS dev shell: use ci/check.sh for the reproducible CI lane."
             '';
           };

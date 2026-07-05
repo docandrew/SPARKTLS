@@ -25,13 +25,5 @@ if command -v alr >/dev/null 2>&1; then
   alr -n --no-tty exec -- gnatprove --version 2>/dev/null | sed -n '1,2p' || true
 fi
 
-show "python timing modules"
-python3 - <<'PY' || true
-mods = ["dpkt", "numpy", "scipy", "matplotlib", "pandas"]
-for name in mods:
-    try:
-        mod = __import__(name)
-        print(f"{name} {getattr(mod, '__version__', 'unknown')}")
-    except Exception as exc:
-        print(f"{name} unavailable: {exc}")
-PY
+show "python"
+command -v python3 >/dev/null 2>&1 && python3 --version || true
