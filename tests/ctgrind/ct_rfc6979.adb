@@ -37,10 +37,12 @@ procedure Ct_RFC6979 is
 
    K256 : Bytes_32;
    K384 : Bytes_48;
+   OK256 : Boolean;
+   OK384 : Boolean;
 begin
    Ctgrind.Make_Undefined
      (D256'Address, Interfaces.C.size_t (D256'Length));
-   SPARKTLSCrypto.RFC6979.Derive_K_P256 (D256, H256, K256);
+   SPARKTLSCrypto.RFC6979.Derive_K_P256 (D256, H256, K256, OK256);
    --  K is also secret-derived — re-mark defined for the use sink.
    Ctgrind.Make_Defined
      (K256'Address, Interfaces.C.size_t (K256'Length));
@@ -49,12 +51,13 @@ begin
 
    Ctgrind.Make_Undefined
      (D384'Address, Interfaces.C.size_t (D384'Length));
-   SPARKTLSCrypto.RFC6979.Derive_K_P384 (D384, H384, K384);
+   SPARKTLSCrypto.RFC6979.Derive_K_P384 (D384, H384, K384, OK384);
    Ctgrind.Make_Defined
      (K384'Address, Interfaces.C.size_t (K384'Length));
    Ctgrind.Use_Output
      (K384'Address, Interfaces.C.size_t (K384'Length));
 
+   pragma Unreferenced (OK256, OK384);
    Put_Line ("ct_rfc6979: Derive_K_P256 + Derive_K_P384 completed");
    Ada.Command_Line.Set_Exit_Status (0);
 end Ct_RFC6979;

@@ -327,13 +327,19 @@ is
                     SPARKTLSCrypto.Hashing.SHA256.Hash
                       (Sig_Input (0 .. Sig_Input_Len - 1));
                   K_Bytes : Bytes_32;
+                  K_OK    : Boolean;
                   R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                begin
                   --  RFC 6979 deterministic nonce.
                   SPARKTLSCrypto.RFC6979.Derive_K_P256
                     (D => Bytes_32 (Id.ECDSA_P256_Key),
                      H => Bytes_32 (H),
-                     K => K_Bytes);
+                     K => K_Bytes,
+                     OK => K_OK);
+                  if not K_OK then
+                     Sig_OK := False;
+                     return;
+                  end if;
                   SPARKTLSCrypto.P256.ECDSA.Sign
                     (Hash  => H,
                      D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
@@ -356,6 +362,7 @@ is
                      SPARKNaCl.Hashing.SHA384.Hash
                        (Sig_Input (0 .. Sig_Input_Len - 1));
                   K_Bytes : Bytes_48;
+                  K_OK    : Boolean;
                   R_Half  : Byte_Seq (0 .. 47);
                   S_Half  : Byte_Seq (0 .. 47);
                begin
@@ -363,7 +370,12 @@ is
                   SPARKTLSCrypto.RFC6979.Derive_K_P384
                     (D => Bytes_48 (Id.ECDSA_P384_Key),
                      H => Bytes_48 (H),
-                     K => K_Bytes);
+                     K => K_Bytes,
+                     OK => K_OK);
+                  if not K_OK then
+                     Sig_OK := False;
+                     return;
+                  end if;
                   SPARKTLSCrypto.P384.ECDSA.Sign
                     (Hash  => H,
                      D     => Byte_Seq (Id.ECDSA_P384_Key),
@@ -973,13 +985,19 @@ is
             if Transcript_Hash'Length /= 48 then return; end if;
             declare
                K_Bytes : Bytes_48;
+               K_OK    : Boolean;
                R_Half  : Byte_Seq (0 .. 47);
                S_Half  : Byte_Seq (0 .. 47);
             begin
                SPARKTLSCrypto.RFC6979.Derive_K_P384
                  (D => Bytes_48 (Id.ECDSA_P384_Key),
                   H => Bytes_48 (Transcript_Hash (0 .. 47)),
-                  K => K_Bytes);
+                  K => K_Bytes,
+                  OK => K_OK);
+               if not K_OK then
+                  Sig_OK := False;
+                  return;
+               end if;
                SPARKTLSCrypto.P384.ECDSA.Sign
                  (Hash  => Bytes_48 (Transcript_Hash (0 .. 47)),
                   D     => Byte_Seq (Id.ECDSA_P384_Key),
@@ -1011,13 +1029,19 @@ is
             Hash_Algo := 4; Sig_Algo := 3;
             declare
                K_Bytes : Bytes_32;
+               K_OK    : Boolean;
                R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
                --  RFC 6979 deterministic nonce.
                SPARKTLSCrypto.RFC6979.Derive_K_P256
                  (D => Bytes_32 (Id.ECDSA_P256_Key),
                   H => Bytes_32 (Transcript_Hash (0 .. 31)),
-                  K => K_Bytes);
+                  K => K_Bytes,
+                  OK => K_OK);
+               if not K_OK then
+                  Sig_OK := False;
+                  return;
+               end if;
                SPARKTLSCrypto.P256.ECDSA.Sign
                  (Hash  => Bytes_32 (Transcript_Hash (0 .. 31)),
                   D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
