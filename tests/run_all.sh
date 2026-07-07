@@ -164,9 +164,20 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # RSA-PSS signing KAT: catches non-canonical private exponent padding.
+    if [ -f bin/tests/test_rsa_pss_sign_kat ]; then
+        output=$(bin/tests/test_rsa_pss_sign_kat 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_rsa_pss_sign_kat: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # Project Wycheproof: adversarial test vectors for crypto primitives.
-    # Skipped if test vectors haven't been fetched (large external dep).
-    if [ -d tests/wycheproof/wycheproof/testvectors_v1 ]; then
+    # The runner performs a sparse clone on first run when git is available.
+    if [ -d tests/wycheproof/wycheproof/testvectors_v1 ] ||
+       command -v git >/dev/null; then
         output=$(bash tests/wycheproof/run.sh 2>&1 || true)
         wp_total=$(echo "$output" | grep -oE "[0-9]+/[0-9]+ passed" | tail -1 | cut -d'/' -f1)
         wp_count=$(echo "$output" | grep -oE "[0-9]+ failed" | tail -1 | awk '{print $1}')
@@ -175,6 +186,8 @@ if echo "$SUITES" | grep -q "unit"; then
         echo "  wycheproof: $wp_total tests, $wp_count failed"
         UNIT_PASS=$((UNIT_PASS + wp_total))
         UNIT_FAIL=$((UNIT_FAIL + wp_count))
+    else
+        echo "  wycheproof: skipped (git unavailable)"
     fi
 
     # NIST CAVP: ECDSA SigVer (FIPS 186-4) for P-256 + P-384.
@@ -345,14 +358,6 @@ fi
 if echo "$SUITES" | grep -q "protocol"; then
     section "Protocol Compliance Tests (tlsfuzzer)"
     bash tests/protocol/run.sh
-    echo ""
-    echo "Known expected failures:"
-    echo "  psk_dhe_ke:          PSK resumption not implemented (performance only)"
-    echo "  session-resumption:  Client doesn't resume with tickets yet"
-    echo "  non-support:         Different error codes than tlsfuzzer expects (no security impact)"
-    echo "  version-negotiation: TLS 1.0/1.1 intentionally unsupported"
-    echo "  symetric-ciphers:    CCM/NULL ciphers intentionally unsupported"
-    echo "  ecdhe-curves:        Unsupported curves intentionally rejected"
     OVERALL_PASS=$((OVERALL_PASS + 1))
 fi
 

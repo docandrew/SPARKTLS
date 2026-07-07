@@ -3428,8 +3428,13 @@ is
             Server_Sec : OKM384_Seq (0 .. 47);
          begin
             Key_Schedule.Derive_Early_Secret_384 (Early, HC.PSK_Value);
-            Key_Schedule.Derive_Handshake_Secret_384
-              (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
+            if HC.Selected_Group = 16#0018# then
+               Key_Schedule.Derive_Handshake_Secret_384
+                 (HS_Secret, Byte_Seq (HC.Shared_Secret), Early);
+            else
+               Key_Schedule.Derive_Handshake_Secret_384
+                 (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
+            end if;
 
             HC.Handshake_Secret := Bytes_48 (HS_Secret);
             HC.Hash_Len := 48;
@@ -3455,8 +3460,13 @@ is
          begin
             Key_Schedule.Derive_Early_Secret
               (Early, Bytes_32 (HC.PSK_Value (0 .. 31)));
-            Key_Schedule.Derive_Handshake_Secret
-              (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
+            if HC.Selected_Group = 16#0018# then
+               Key_Schedule.Derive_Handshake_Secret
+                 (HS_Secret, Byte_Seq (HC.Shared_Secret), Early);
+            else
+               Key_Schedule.Derive_Handshake_Secret
+                 (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
+            end if;
 
             HC.Handshake_Secret := (others => 0);
             HC.Handshake_Secret (0 .. 31) := Bytes_32 (Digest (HS_Secret));

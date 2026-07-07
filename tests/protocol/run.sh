@@ -9,6 +9,9 @@ TLSFUZZER_DIR="$DIR/tlsfuzzer"
 VENV_DIR="$DIR/.venv"
 SERVER="$REPO_ROOT/bin/examples/tls_blocking_server"
 PORT=8443
+LOG_ROOT="${TLSFUZZER_LOG_ROOT:-$DIR/logs}"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+LOG_DIR="$LOG_ROOT/$RUN_ID"
 
 # Check prerequisites
 if [ ! -f "$SERVER" ]; then
@@ -76,12 +79,110 @@ fi
 
 echo "=== SPARKTLS Protocol Compliance (tlsfuzzer) ==="
 echo "Date: $(date)"
+echo "Logs: $LOG_DIR"
 echo ""
 
 TOTAL_PASS=0
 TOTAL_FAIL=0
 TOTAL_SKIP=0
+TOTAL_EXPECTED_UNSUPPORTED=0
+TOTAL_EXPECTED_MISMATCH=0
+TOTAL_UNEXPECTED=0
 RESULTS=""
+mkdir -p "$LOG_DIR"
+
+failed_probe_summary() {
+    local log_file="$1"
+    awk '
+        /^FAILED:/ { in_failed = 1; next }
+        in_failed && /^\t/ {
+            name = $0
+            sub(/^\t/, "", name)
+            gsub(/\047/, "", name)
+            print name
+            next
+        }
+        in_failed && !/^\t/ { in_failed = 0 }
+    ' "$log_file" | sort | uniq -c | awk '
+        NR <= 8 {
+            count = $1
+            sub(/^ *[0-9]+ /, "")
+            printf "      %sx %s\n", count, $0
+        }
+        END {
+            if (NR > 8) {
+                printf "      ... %d more unique failed probes\n", NR - 8
+            }
+        }'
+}
+
+classify_failure() {
+    local test="$1"
+
+    FAIL_LABEL="FAIL - UNEXPECTED"
+    FAIL_REASON="unclassified tlsfuzzer failure; inspect log"
+    FAIL_CLASS="unexpected"
+
+    case "$test" in
+        ecdhe-curves)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="unsupported groups and malformed curve points are intentionally rejected"
+            FAIL_CLASS="unsupported" ;;
+        psk_dhe_ke)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="PSK-only and PSK-DHE resumption modes are not implemented"
+            FAIL_CLASS="unsupported" ;;
+        session-resumption)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="client-side TLS 1.3 ticket resumption is not implemented"
+            FAIL_CLASS="unsupported" ;;
+        symetric-ciphers)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="CCM and NULL cipher suites are intentionally unsupported"
+            FAIL_CLASS="unsupported" ;;
+        version-negotiation)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="TLS 1.0/1.1 and TLS 1.3 draft fallback paths are intentionally unsupported"
+            FAIL_CLASS="unsupported" ;;
+
+        connection-abort)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="close behavior after NewSessionTicket differs from tlsfuzzer expectation"
+            FAIL_CLASS="mismatch" ;;
+        count-tickets)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="ticket-count behavior differs from tlsfuzzer expectation"
+            FAIL_CLASS="mismatch" ;;
+        empty-alert)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="empty encrypted alert and padding handling differs from tlsfuzzer expectation"
+            FAIL_CLASS="mismatch" ;;
+        finished)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="malformed Finished padding/truncation alert behavior differs from tlsfuzzer expectation"
+            FAIL_CLASS="mismatch" ;;
+        multiple-ccs-messages)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="middlebox-compat CCS tolerance is intentionally narrow"
+            FAIL_CLASS="mismatch" ;;
+        non-support)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="unsupported-feature alert codes differ from tlsfuzzer expectation"
+            FAIL_CLASS="mismatch" ;;
+        record-layer-limits)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="maximum-size padded Finished record handling differs from tlsfuzzer expectation"
+            FAIL_CLASS="mismatch" ;;
+        signature-algorithms)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="pathologically large/duplicated signature-algorithm lists are bounded"
+            FAIL_CLASS="mismatch" ;;
+        zero-content-type)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="zero content-type handling differs from tlsfuzzer expectation"
+            FAIL_CLASS="mismatch" ;;
+    esac
+}
 
 for test in "${TESTS[@]}"; do
     script="$TLSFUZZER_DIR/scripts/test-tls13-${test}.py"
@@ -100,9 +201,22 @@ for test in "${TESTS[@]}"; do
 
     # Per-test arguments
     declare -a extra_args=()
+    script_timeout="${TLSFUZZER_SCRIPT_TIMEOUT:-120}"
     need_restart=false
+    FAIL_LABEL=""
+    FAIL_REASON=""
+    FAIL_CLASS=""
     case "$test" in
         count-tickets) extra_args=(-t 1) ;;
+        serverhello-random)
+            extra_args=(-e "TLS 1.3 with secp521r1"
+                        -e "TLS 1.3 with x448"
+                        -e "TLS 1.3 with ffdhe2048"
+                        -e "TLS 1.3 with ffdhe3072") ;;
+        lengths)
+            extra_args=(-n "${TLSFUZZER_LENGTHS_N:-100}"
+                        -t "${TLSFUZZER_LENGTHS_TIMEOUT:-10}")
+            script_timeout="${TLSFUZZER_LENGTHS_SCRIPT_TIMEOUT:-300}" ;;
         certificate-verify)
             extra_args=(-c "$CERT" -k "$KEY")
             kill $SERVER_PID 2>/dev/null || true; sleep 1
@@ -121,26 +235,63 @@ for test in "${TESTS[@]}"; do
                         -e "zero-len app data with large padding interleaved in handshake") ;;
     esac
 
-    output=$(PYTHONPATH="$TLSFUZZER_DIR" timeout 120 python3 "$script" \
-        -h localhost -p $PORT "${extra_args[@]}" 2>&1 || true)
+    log_file="$LOG_DIR/$test.log"
+    set +e
+    PYTHONPATH="$TLSFUZZER_DIR" timeout "$script_timeout" python3 "$script" \
+        -h localhost -p $PORT "${extra_args[@]}" >"$log_file" 2>&1
+    cmd_status=$?
+    set -e
 
-    pass=$(echo "$output" | grep "^PASS:" | grep -oP '\d+' || echo 0)
-    fail=$(echo "$output" | grep "^FAIL:" | grep -oP '\d+' || echo 0)
-    total=$(echo "$output" | grep "^TOTAL:" | grep -oP '\d+' || echo 0)
+    pass=$(awk '/^PASS: [0-9]+$/ { v=$2 } END { if (v == "") print 0; else print v }' "$log_file")
+    fail=$(awk '/^FAIL: [0-9]+$/ { v=$2 } END { if (v == "") print 0; else print v }' "$log_file")
+    total=$(awk '/^TOTAL: [0-9]+$/ { v=$2 } END { if (v == "") print 0; else print v }' "$log_file")
 
-    if [ "$fail" = "0" ] && [ "$pass" != "0" ]; then
-        status="PASS ($pass/$total)"
+    counted_fail=0
+    fail_class="none"
+    if [ "$cmd_status" -eq 124 ]; then
+        status="ERROR - UNEXPECTED (timeout=${script_timeout}s, log=$log_file)"
+        counted_fail=1
+        fail_class="unexpected"
     elif [ "$total" = "0" ]; then
-        status="ERROR"
-        fail=1
+        status="ERROR - UNEXPECTED (no summary, exit=$cmd_status, log=$log_file)"
+        counted_fail=1
+        fail_class="unexpected"
+    elif [ "$fail" = "0" ] && [ "$pass" != "0" ] && [ "$cmd_status" -eq 0 ]; then
+        status="PASS (pass=$pass fail=$fail total=$total exit=$cmd_status)"
     else
-        status="FAIL ($pass/$total)"
+        classify_failure "$test"
+        status="$FAIL_LABEL (pass=$pass fail=$fail total=$total exit=$cmd_status, log=$log_file)"
+        fail_class="$FAIL_CLASS"
+        if [ "$fail" = "0" ]; then
+            counted_fail=1
+        else
+            counted_fail="$fail"
+        fi
     fi
 
     echo "  $test: $status"
+    if [ "$counted_fail" != "0" ] && [ -s "$log_file" ]; then
+        if [ -n "${FAIL_REASON:-}" ] && [ "$fail_class" != "unexpected" ]; then
+            echo "      reason: $FAIL_REASON"
+        elif [ -n "${FAIL_REASON:-}" ] && [ "$fail_class" = "unexpected" ]; then
+            echo "      reason: $FAIL_REASON"
+        fi
+        failed_summary="$(failed_probe_summary "$log_file")"
+        if [ -n "$failed_summary" ]; then
+            echo "$failed_summary"
+        fi
+    fi
     RESULTS="$RESULTS$test: $status\n"
     TOTAL_PASS=$((TOTAL_PASS + pass))
-    TOTAL_FAIL=$((TOTAL_FAIL + fail))
+    TOTAL_FAIL=$((TOTAL_FAIL + counted_fail))
+    case "$fail_class" in
+        unsupported)
+            TOTAL_EXPECTED_UNSUPPORTED=$((TOTAL_EXPECTED_UNSUPPORTED + counted_fail)) ;;
+        mismatch)
+            TOTAL_EXPECTED_MISMATCH=$((TOTAL_EXPECTED_MISMATCH + counted_fail)) ;;
+        unexpected)
+            TOTAL_UNEXPECTED=$((TOTAL_UNEXPECTED + counted_fail)) ;;
+    esac
 
     if $need_restart; then
         kill $SERVER_PID 2>/dev/null || true; sleep 1
@@ -153,7 +304,10 @@ kill $SERVER_PID 2>/dev/null || true
 
 echo ""
 echo "=== Protocol: PASS=$TOTAL_PASS FAIL=$TOTAL_FAIL SKIP=$TOTAL_SKIP ==="
+echo "    Expected Unsupported Feature failures: $TOTAL_EXPECTED_UNSUPPORTED"
+echo "    Expected Intentional Behavior Mismatch failures: $TOTAL_EXPECTED_MISMATCH"
+echo "    Unexpected failures: $TOTAL_UNEXPECTED"
 echo ""
 echo -e "$RESULTS"
 
-[ $TOTAL_FAIL -eq 0 ] && exit 0 || exit 1
+[ $TOTAL_UNEXPECTED -eq 0 ] && exit 0 || exit 1

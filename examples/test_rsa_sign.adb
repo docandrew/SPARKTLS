@@ -5,7 +5,7 @@ with SPARKNaCl;             use SPARKNaCl;
 with SPARKNaCl.Hashing.SHA256;
 with SPARKTLS;              use SPARKTLS;
 with SPARKTLS.Credentials;
-with SPARKTLS.RSA;
+with SPARKTLSCrypto.RSA;
 
 procedure Test_RSA_Sign is
 
@@ -59,10 +59,10 @@ begin
 
    --  Sign
    Put_Line ("Signing with RSA-PSS-SHA256...");
-   SPARKTLS.RSA.Sign_PSS
+   SPARKTLSCrypto.RSA.Sign_PSS
      (M_Hash    => Byte_Seq (H),
       Hash_Len  => 32,
-      Hash_Alg  => SPARKTLS.RSA.PSS_SHA256,
+      Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA256,
       Modulus   => Id.RSA_Modulus,
       Mod_Len   => Id.RSA_Mod_Len,
       Priv_Exp  => Id.RSA_Priv_Exp,
@@ -80,7 +80,7 @@ begin
 
    --  Verify
    Put_Line ("Verifying...");
-   Vfy_OK := SPARKTLS.RSA.Verify_PSS_SHA256
+   Vfy_OK := SPARKTLSCrypto.RSA.Verify_PSS_SHA256
      (Hash      => H,
       Modulus   => Id.RSA_Modulus,
       Mod_Len   => Id.RSA_Mod_Len,
