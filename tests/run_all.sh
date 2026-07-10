@@ -2,7 +2,7 @@
 # SPARKTLS comprehensive test suite.
 #
 # Usage:
-#   ./tests/run_all.sh              # release build, all suites (incl integration)
+#   ./tests/run_all.sh              # release build, all suites (incl integration + BoGo)
 #   ./tests/run_all.sh integration  # release build, only integration
 #   ./tests/run_all.sh protocol     # release build, only protocol compliance
 #   ./tests/run_all.sh unit         # release build, only unit tests
@@ -66,7 +66,7 @@ if [ "$CHECKED_BUILD" = "1" ]; then
     # stestall covers. Integration is release-only (see comment above).
     SUITES="${SUITES_ARG[*]:-unit protocol x509}"
 else
-    SUITES="${SUITES_ARG[*]:-unit integration protocol x509}"
+    SUITES="${SUITES_ARG[*]:-unit integration protocol x509 bogo}"
 fi
 OVERALL_PASS=0
 OVERALL_FAIL=0
@@ -295,6 +295,16 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # TLS 1.2 ECDSA signature-scheme compatibility
+    if [ -f bin/tests/test_tls12_ecdsa ]; then
+        output=$(bin/tests/test_tls12_ecdsa 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_tls12_ecdsa: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # AES-NI hardware path: FIPS 197 KAT + 1024 random equivalence cases
     # vs SPARKNaCl software AES (skipped on non-AES-NI CPUs)
     if [ -f bin/tests/test_aes_ni ]; then
@@ -375,13 +385,18 @@ if echo "$SUITES" | grep -q "x509"; then
     OVERALL_PASS=$((OVERALL_PASS + 1))
 fi
 
-#  BoGo (BoringSSL adversarial tests). Opt-in via the "bogo" suite
-#  selector because first run downloads ~150 MB (Go + BoringSSL) and
-#  full test set is 7880 cases. After first run, ~10 sec wall time.
+#  BoGo (BoringSSL adversarial tests). Included in the default release
+#  suite because it covers a broad set of adversarial edge cases. The
+#  first run downloads ~150 MB (Go + BoringSSL) and builds the runner;
+#  after first run, cache reuse keeps this much faster. The "bogo"
+#  selector still runs it by itself.
 if echo "$SUITES" | grep -q "bogo"; then
     section "BoGo Adversarial Tests"
-    bash tests/bogo/run.sh
-    OVERALL_PASS=$((OVERALL_PASS + 1))
+    if bash tests/bogo/run.sh; then
+        OVERALL_PASS=$((OVERALL_PASS + 1))
+    else
+        OVERALL_FAIL=$((OVERALL_FAIL + 1))
+    fi
 fi
 
 # --- Summary ---

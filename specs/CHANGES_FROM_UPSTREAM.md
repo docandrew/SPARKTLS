@@ -53,6 +53,22 @@ to `tls_parameters.rflx`'s `TLS_HandshakeType` would be required for
 refinements but is not strictly necessary; the caller handles
 dispatch already based on the parsed handshake header.
 
+## tls_handshake.rflx — ClientHello compression list length
+
+**Upstream** models the TLS 1.3 `legacy_compression_methods` invariant
+directly by constraining `Legacy_Compression_Methods_Length` to `1 .. 1`.
+
+**Our change**: widened `Legacy_Compression_Methods_Length` to `1 .. 255`.
+
+**Why**: TLS 1.2 ClientHello carries `compression_methods<1..2^8-1>`.
+SPARKTLS still only negotiates null compression, but TLS 1.2 peers may offer a
+larger list as long as null compression is present. TLS 1.3's stricter
+single-null requirement is enforced in `Parse_Client_Hello` after
+`supported_versions` is parsed.
+
+When regenerating, make sure the generated
+`Valid_Legacy_Compression_Methods_Length` predicate also accepts `1 .. 255`.
+
 ## tls_handshake.rflx — `Tls_Extension_TLS` Tag constraint
 
 **Upstream** (RecordFlux `main`, around line 94 of the `Tls_Extension_TLS`

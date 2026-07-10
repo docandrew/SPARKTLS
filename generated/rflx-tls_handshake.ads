@@ -123,13 +123,13 @@ is
      Pre =>
        Valid_Cipher_Suites_Length (Val);
 
-   type Legacy_Compression_Methods_Length is range 1 .. 1
+   type Legacy_Compression_Methods_Length is range 1 .. 255
    with
      Size =>
        8;
 
    function Valid_Legacy_Compression_Methods_Length (Val : RFLX.RFLX_Types.Base_Integer) return Boolean is
-     (Val = 1);
+     (Val in 1 .. 255);
 
    function To_Base_Integer (Val : RFLX.TLS_Handshake.Legacy_Compression_Methods_Length) return RFLX.RFLX_Types.Base_Integer is
      (RFLX.RFLX_Types.Base_Integer (Val));

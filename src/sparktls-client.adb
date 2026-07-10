@@ -2338,11 +2338,6 @@ is
             return;
          end if;
 
-	         if HC.Cfg.Skip_Verify then
-	            Set_State (S, Wait_Server_Finished);
-	            return;
-         end if;
-
          declare
             Context_Str : constant String :=
                "TLS 1.3, server CertificateVerify";
@@ -3676,6 +3671,29 @@ is
                            --  send CH2. Stay in Wait_Server_Hello to
                            --  receive the real SH.
                            if HC.Got_HRR and then not HC.Sent_HRR_CCS then
+                              if HC.Reasm_Len > HC.Reasm_Need then
+                                 declare
+                                    A : N32;
+                                 begin
+                                    Records.Build_Plaintext_Alert
+                                      (Level     => 2,
+                                       Desc      =>
+                                         Alert_Desc (Unexpected_Message),
+                                       Output    => S.Output,
+                                       Bytes_Out => A);
+                                 end;
+                                 S.Last_Error := Unexpected_Message;
+                                 S.State := Error_State;
+                                 Result := (if Output_Pending (S) > 0
+                                            then Has_Output
+                                            else Error_Alert);
+                                 Free_Byte_Seq (HC.Reasm_Buf);
+                                 HC.Reasm_Len := 0;
+                                 HC.Reasm_Need := 0;
+                                 HC.Reasm_Hdr_Pending := False;
+                                 return;
+                              end if;
+
                               declare
                                  H : SPARKTLSCrypto.Hashing.SHA256.Digest;
                               begin
@@ -3886,16 +3904,17 @@ is
                            HC.CCS_Received := True;
                            Result := OK;
                         else
-                           --  Pre-key state: plaintext alert.
-                           declare
-                              A : N32;
-                           begin
-                              Records.Build_Plaintext_Alert
-                                (Level     => 2,
-                                 Desc      => Alert_Desc (Unexpected_Message),
-                                 Output    => S.Output,
-                                 Bytes_Out => A);
-                           end;
+	                           --  Pre-key state: plaintext alert.
+	                           declare
+	                              A : N32;
+	                           begin
+	                              Records.Build_Plaintext_Alert
+	                                (Level     => 2,
+	                                 Desc      => Alert_Desc (Unexpected_Message),
+	                                 Output    => S.Output,
+	                                 Bytes_Out => A);
+	                              pragma Assert (A <= N32 (S.Output.Data'Length));
+	                           end;
                            S.Last_Error := Unexpected_Message;
                            Set_State (S, Error_State);
                            Result := (if Output_Pending (S) > 0
@@ -3903,16 +3922,42 @@ is
                         end if;
                      end;
 
-                  when Records.Content_Alert =>
-                     --  Plaintext alert before keys are established
-                     --  (e.g. server's close_notify or fatal alert).
-                     --  Process by closing — keep parity with the
-                     --  later alert-handling sites.
-                     S.Input.Read_Pos :=
-                        S.Input.Read_Pos + Rec.Record_Len;
-                     S.Last_Error := Unexpected_Message;
-                     Set_State (S, Error_State);
-                     Result := Error_Alert;
+	                  when Records.Content_Alert =>
+	                     --  Plaintext alert before keys are established
+	                     --  (e.g. server's close_notify, warning alert,
+	                     --  or fatal alert). TLS 1.2 peers may send
+	                     --  warning-level unrecognized_name before
+	                     --  ServerHello; tolerate bounded warning alerts
+	                     --  like the later TLS 1.2 alert-handling paths.
+	                     declare
+	                        Alert_Pos : constant N32 :=
+	                           S.Input.Read_Pos + Rec.Fragment_Pos;
+	                     begin
+	                        S.Input.Read_Pos :=
+	                           S.Input.Read_Pos + Rec.Record_Len;
+	                        if Rec.Fragment_Len /= 2 then
+	                           S.Last_Error := Decode_Error;
+	                           Set_State (S, Error_State);
+	                           Result := Error_Alert;
+	                        elsif S.Input.Data (Alert_Pos) = 1
+	                          and then S.Input.Data (Alert_Pos + 1) /= 0
+	                        then
+	                           if S.Warning_Alerts_Recvd >= Max_Warning_Alerts
+	                           then
+	                              S.Last_Error := Decode_Error;
+	                              Set_State (S, Error_State);
+	                              Result := Error_Alert;
+	                           else
+	                              S.Warning_Alerts_Recvd :=
+	                                 S.Warning_Alerts_Recvd + 1;
+	                              Result := OK;
+	                           end if;
+	                        else
+	                           S.Last_Error := Unexpected_Message;
+	                           Set_State (S, Error_State);
+	                           Result := Error_Alert;
+	                        end if;
+	                     end;
 
                   when others =>
                      --  RFC 8446 §6.2: any other record type — most
@@ -5422,38 +5467,6 @@ is
 
       Handle_Connected_App_Record (S, Rec, Result);
    end Process_Connected;
-
-   procedure Write_Plaintext
-     (S              : in out Session;
-      Plaintext      : in     Byte_Seq;
-      Bytes_Written  :    out N32)
-   is
-      Enc_Out : N32;
-   begin
-      if S.Negotiated_Version = TLS_1_2 then
-         Records.TLS12.Build_Encrypted_Record_12
-           (Plaintext    => Plaintext,
-            Content_Type => 16#17#,
-            Keys         => S.Client_App,
-            Implicit_IV  => S.Client_IV_12,
-            Seq_Num      => S.Client_Seq_12,
-            Output       => S.Output,
-            Bytes_Out    => Enc_Out);
-      else
-         Records.Build_Encrypted_Record
-           (Plaintext  => Plaintext,
-            Inner_Type => 16#17#,
-            Keys       => S.Client_App,
-            Output     => S.Output,
-            Bytes_Out  => Enc_Out);
-      end if;
-
-      if Enc_Out > 0 then
-         Bytes_Written := N32 (Plaintext'Length);
-      else
-         Bytes_Written := 0;
-      end if;
-   end Write_Plaintext;
 
    procedure Close_Notify (S : in out Session) is
       Alert_Out : N32;

@@ -54,6 +54,23 @@ is
 	                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256
 	                    and then SPARKTLSCrypto.P384.Field.Initialized
 	                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+               and then
+                 (if HC.CKE_Received_12 and then not HC.CCS_Received then
+                    HC.Cfg.Random /= null
+                    and then HC.Selected_Group in
+                      Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                    and then Valid_ECDHE_Group (HC.Selected_Group)
+                    and then HC.Transcript_Len > 0
+                    and then HC.Transcript_Len <= Transcript_Capacity
+                    and then S.Negotiated_Suite in
+                      Suite_ECDHE_RSA_AES128_GCM_SHA256
+                    | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                    | Suite_ECDHE_RSA_CHACHA20_SHA256
+                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                    and then SPARKTLSCrypto.P384.Field.Initialized
+                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
                and then (if HC.CKE_Received_12 and HC.CCS_Received
                          then Reasm_Building (HC)
                               and then S.State in Wait_Server_Finished
@@ -73,6 +90,7 @@ is
       Result :    out Action)
    with Pre => S.State = Connected
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+               and then Empty_Records_Bounded_RFC_8446_5_2 (S)
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                  (S.Server_Seq_12);
 

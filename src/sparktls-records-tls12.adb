@@ -1,7 +1,9 @@
 with Interfaces;             use Interfaces;
 with SPARKNaCl.AES;
 with SPARKNaCl.Core;         use SPARKNaCl.Core;
+with SPARKNaCl.MAC;
 with SPARKNaCl.Secretbox;
+with SPARKNaCl.Stream;
 with SPARKTLSCrypto.AES_GCM;
 use SPARKTLSCrypto;
 
@@ -140,6 +142,35 @@ is
 
       return AAD;
    end Build_AAD;
+
+   procedure Verify_ChaCha20_Empty_Ciphertext
+     (Tag : Bytes_16;
+      N   : ChaCha20_IETF_Nonce;
+      K   : ChaCha20_Key;
+      AAD : Byte_Seq;
+      Valid : out Boolean)
+   with Pre => AAD'First = 0
+               and AAD'Length = AAD_Len
+               and AAD'Last < N32'Last,
+        Always_Terminates => False
+   is
+      OTK_Bytes : Bytes_32;
+      OTK       : SPARKNaCl.MAC.Poly_1305_Key;
+      Auth      : Byte_Seq (0 .. 31) := (others => 0);
+      L         : Unsigned_64 := Unsigned_64 (AAD'Length);
+   begin
+      SPARKNaCl.Stream.ChaCha20_IETF (OTK_Bytes, N, K, 0);
+      SPARKNaCl.MAC.Construct (OTK, OTK_Bytes);
+
+      Auth (0 .. AAD_Len - 1) := AAD;
+
+      for I in N32 range 16 .. 23 loop
+         Auth (I) := Byte (L and 16#FF#);
+         L := Shift_Right (L, 8);
+      end loop;
+
+      Valid := SPARKNaCl.MAC.Onetimeauth_Verify (Tag, Auth, OTK);
+   end Verify_ChaCha20_Empty_Ciphertext;
 
    --  Encode sequence number as 8-byte big-endian explicit nonce
    function Seq_To_Bytes (Seq : Unsigned_64) return Byte_Seq
@@ -322,7 +353,7 @@ is
       --  Defense-in-depth: verify input is large enough for [nonce] + tag,
       --  and (for ChaCha20-Poly1305 per RFC 7905 §2, body = ct + tag[16])
       --  reject records whose ciphertext would exceed Max_Record_Plaintext.
-      if N32 (Encrypted'Length) < Wire_Exp_Nonce_Len + GCM_Tag_Len + 1
+      if N32 (Encrypted'Length) < Wire_Exp_Nonce_Len + GCM_Tag_Len
         or else N32 (Encrypted'Length) >
                   Max_Record_Plaintext + Wire_Exp_Nonce_Len + GCM_Tag_Len
       then
@@ -336,9 +367,6 @@ is
          Nonce : Bytes_12 := (others => 0);
          AAD   : Byte_Seq (0 .. AAD_Len - 1);
          Tag   : Bytes_16;
-         --  0-based copy of ciphertext for AEAD (requires First = 0)
-         CT_Copy   : Byte_Seq (0 .. CT_Len - 1);
-         Decrypted : Byte_Seq (0 .. CT_Len - 1);
       begin
       --  Extract explicit nonce (GCM only), ciphertext, and tag.
       if not Is_ChaCha20 then
@@ -346,9 +374,6 @@ is
             Exp_Nonce (I) := Encrypted (I);
          end loop;
       end if;
-      for I in N32 range 0 .. CT_Len - 1 loop
-         CT_Copy (I) := Encrypted (Wire_Exp_Nonce_Len + I);
-      end loop;
       for I in N32 range 0 .. 15 loop
          Tag (I) := Encrypted (Wire_Exp_Nonce_Len + CT_Len + I);
       end loop;
@@ -373,62 +398,112 @@ is
       AAD := Build_AAD
                (Original_Seq, Record_Hdr (Record_Hdr'First), CT_Len);
 
-      --  Decrypt
-      case Keys.Suite is
-         when Suite_AES_128_GCM_SHA256 =>
-            declare
-               AES_Key : constant AES128_Key :=
-                  Construct (Keys.Key (0 .. 15));
-            begin
-               AES_GCM.Decrypt
-                 (M      => Decrypted,
-                  Status => Valid,
-                  Tag    => Tag,
-                  C      => CT_Copy,
-                  N      => Nonce,
-                  K      => AES_Key,
-                  AAD    => AAD);
-            end;
+      if CT_Len = 0 then
+         case Keys.Suite is
+            when Suite_AES_128_GCM_SHA256 =>
+               declare
+                  AES_Key : constant AES128_Key :=
+                     Construct (Keys.Key (0 .. 15));
+               begin
+                  AES_GCM.Verify_Empty_Ciphertext
+                    (Status => Valid,
+                     Tag    => Tag,
+                     N      => Nonce,
+                     K      => AES_Key,
+                     AAD    => AAD);
+               end;
 
-         when Suite_AES_256_GCM_SHA384 =>
-            declare
-               AES_Key : constant AES256_Key := Construct (Keys.Key);
-            begin
-               AES_GCM.Decrypt_256
-                 (M      => Decrypted,
-                  Status => Valid,
-                  Tag    => Tag,
-                  C      => CT_Copy,
-                  N      => Nonce,
-                  K      => AES_Key,
-                  AAD    => AAD);
-            end;
+            when Suite_AES_256_GCM_SHA384 =>
+               declare
+                  AES_Key : constant AES256_Key := Construct (Keys.Key);
+               begin
+                  AES_GCM.Verify_Empty_Ciphertext_256
+                    (Status => Valid,
+                     Tag    => Tag,
+                     N      => Nonce,
+                     K      => AES_Key,
+                     AAD    => AAD);
+               end;
 
-         when others =>
-            declare
-               Key : constant ChaCha20_Key := Construct (Keys.Key);
-            begin
-               SPARKNaCl.Secretbox.Open
-                 (M      => Decrypted,
-                  Status => Valid,
-                  Tag    => Tag,
-                  C      => CT_Copy,
-                  N      => ChaCha20_IETF_Nonce (Nonce),
-                  K      => Key,
-                  AAD    => AAD);
-            end;
-      end case;
-
-      if not Valid then
+	            when others =>
+	               declare
+	                  Key : constant ChaCha20_Key := Construct (Keys.Key);
+	               begin
+                  Verify_ChaCha20_Empty_Ciphertext
+                    (Tag => Tag,
+                     N   => ChaCha20_IETF_Nonce (Nonce),
+                     K   => Key,
+                     AAD => AAD,
+                     Valid => Valid);
+               end;
+	         end case;
          return;
       end if;
 
-      --  TLS 1.2: no inner content type, no zero padding.
-      --  The decrypted data IS the plaintext directly.
-      Plain_Len := CT_Len;
-      if CT_Len > 0 then
+      --  Decrypt
+      declare
+         --  0-based copy of ciphertext for AEAD (requires First = 0).
+         CT_Copy   : Byte_Seq (0 .. CT_Len - 1);
+         Decrypted : Byte_Seq (0 .. CT_Len - 1);
+      begin
+         for I in N32 range 0 .. CT_Len - 1 loop
+            CT_Copy (I) := Encrypted (Wire_Exp_Nonce_Len + I);
+         end loop;
+
+         case Keys.Suite is
+            when Suite_AES_128_GCM_SHA256 =>
+               declare
+                  AES_Key : constant AES128_Key :=
+                     Construct (Keys.Key (0 .. 15));
+               begin
+                  AES_GCM.Decrypt
+                    (M      => Decrypted,
+                     Status => Valid,
+                     Tag    => Tag,
+                     C      => CT_Copy,
+                     N      => Nonce,
+                     K      => AES_Key,
+                     AAD    => AAD);
+               end;
+
+            when Suite_AES_256_GCM_SHA384 =>
+               declare
+                  AES_Key : constant AES256_Key := Construct (Keys.Key);
+               begin
+                  AES_GCM.Decrypt_256
+                    (M      => Decrypted,
+                     Status => Valid,
+                     Tag    => Tag,
+                     C      => CT_Copy,
+                     N      => Nonce,
+                     K      => AES_Key,
+                     AAD    => AAD);
+               end;
+
+            when others =>
+               declare
+                  Key : constant ChaCha20_Key := Construct (Keys.Key);
+               begin
+                  SPARKNaCl.Secretbox.Open
+                    (M      => Decrypted,
+                     Status => Valid,
+                     Tag    => Tag,
+                     C      => CT_Copy,
+                     N      => ChaCha20_IETF_Nonce (Nonce),
+                     K      => Key,
+                     AAD    => AAD);
+               end;
+         end case;
+
+         if not Valid then
+            return;
+         end if;
+
+         --  TLS 1.2: no inner content type, no zero padding.
+         --  The decrypted data IS the plaintext directly.
+         Plain_Len := CT_Len;
          Plaintext (0 .. CT_Len - 1) := Decrypted;
-      end if;
+      end;
       end;
    end Decrypt_Record_12;
 

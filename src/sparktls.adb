@@ -1,4 +1,6 @@
 with Ada.Unchecked_Deallocation;
+with SPARKTLS.Records;
+with SPARKTLS.Records.TLS12;
 
 package body SPARKTLS with
    SPARK_Mode => On
@@ -192,6 +194,112 @@ is
       S.App_Data_Len := S.App_Data_Len - Count;
       Bytes_Read := Count;
    end Read_Plaintext;
+
+   ----------------------------------------------------------------------------
+   --  Write_Plaintext
+   ----------------------------------------------------------------------------
+   procedure Write_Plaintext
+     (S              : in out Session;
+      Plaintext      : in     Byte_Seq;
+      Bytes_Written  :    out N32)
+   is
+      --  RFC 8446 §5.1 caps a single TLS record at 2^14 bytes of
+      --  plaintext. Larger writes are queued as multiple records.
+      --
+      --  Check output capacity before encryption. The record builders
+      --  own nonce/sequence advancement, so this procedure only calls
+      --  them when the whole record can fit in S.Output.
+      Total      : constant N32 := N32 (Plaintext'Length);
+      Pos        : N32 := 0;
+      Chunk      : N32;
+      Enc_Out    : N32;
+      TLS13_Overhead : constant N32 := 22; -- header + inner type + tag
+      TLS12_Overhead : constant N32 := 29; -- header + explicit nonce + tag
+      Overhead   : constant N32 :=
+         (if S.Negotiated_Version = TLS_1_2
+          then TLS12_Overhead else TLS13_Overhead);
+   begin
+      while Pos < Total loop
+         pragma Loop_Invariant
+           (Pos in 0 .. Total
+            and S.Role = S.Role'Loop_Entry
+            and S.Negotiated_Version = S.Negotiated_Version'Loop_Entry);
+         pragma Loop_Variant (Increases => Pos);
+
+         Chunk := N32'Min (Max_Record_Plaintext, Total - Pos);
+
+         if Free_Space (S.Output) < Chunk + Overhead then
+            exit;
+         end if;
+
+         if S.Role = Role_Client then
+            exit when not Nonce_Space_Available (S.Client_App);
+            if S.Negotiated_Version = TLS_1_2
+               and then S.Client_Seq_12 = Unsigned_64'Last
+            then
+               exit;
+            end if;
+         else
+            exit when not Nonce_Space_Available (S.Server_App);
+            if S.Negotiated_Version = TLS_1_2
+               and then S.Server_Seq_12 = Unsigned_64'Last
+            then
+               exit;
+            end if;
+         end if;
+
+         declare
+            Frag_Len : constant N32 := Chunk;
+            Frag     : Byte_Seq (0 .. Frag_Len - 1);
+         begin
+            Frag := Plaintext (Plaintext'First + Pos ..
+                               Plaintext'First + Pos + Frag_Len - 1);
+
+            if S.Role = Role_Client then
+               if S.Negotiated_Version = TLS_1_2 then
+                  Records.TLS12.Build_Encrypted_Record_12
+                    (Plaintext    => Frag,
+                     Content_Type => 16#17#,
+                     Keys         => S.Client_App,
+                     Implicit_IV  => S.Client_IV_12,
+                     Seq_Num      => S.Client_Seq_12,
+                     Output       => S.Output,
+                     Bytes_Out    => Enc_Out);
+               else
+                  Records.Build_Encrypted_Record
+                    (Plaintext  => Frag,
+                     Inner_Type => 16#17#,
+                     Keys       => S.Client_App,
+                     Output     => S.Output,
+                     Bytes_Out  => Enc_Out);
+               end if;
+            else
+               if S.Negotiated_Version = TLS_1_2 then
+                  Records.TLS12.Build_Encrypted_Record_12
+                    (Plaintext    => Frag,
+                     Content_Type => 16#17#,
+                     Keys         => S.Server_App,
+                     Implicit_IV  => S.Server_IV_12,
+                     Seq_Num      => S.Server_Seq_12,
+                     Output       => S.Output,
+                     Bytes_Out    => Enc_Out);
+               else
+                  Records.Build_Encrypted_Record
+                    (Plaintext  => Frag,
+                     Inner_Type => 16#17#,
+                     Keys       => S.Server_App,
+                     Output     => S.Output,
+                     Bytes_Out  => Enc_Out);
+               end if;
+            end if;
+         end;
+
+         exit when Enc_Out = 0;
+         Pos := Pos + Chunk;
+      end loop;
+
+      Bytes_Written := Pos;
+   end Write_Plaintext;
 
    procedure Sanitize_Keys (S : in out Session) is
    begin

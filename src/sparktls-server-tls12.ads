@@ -234,6 +234,7 @@ is
      (S      : in out Session;
       Result :    out Action)
    with Pre => S.State = Connected
+               and then Empty_Records_Bounded_RFC_8446_5_2 (S)
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                  (S.Client_Seq_12)
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12

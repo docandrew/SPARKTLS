@@ -5,6 +5,7 @@ with SPARKTLS.Handshake.Client_Msgs;
 with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
+with X509;
 
 --  TLS 1.2 Handshake Messages (RFC 5246 §7.4, RFC 8422)
 --
@@ -29,6 +30,8 @@ with SPARKTLSCrypto.P384.ECDSA;
 package SPARKTLS.Handshake.TLS12 with
    SPARK_Mode => On
 is
+   use type X509.Algorithm_ID;
+
    ----------------------------------------------------------------------------
    --  Constants from RFC 5246 and RFC 8422
    ----------------------------------------------------------------------------
@@ -73,6 +76,33 @@ is
    --  RFC 8422: Valid ECDHE group for our implementation.
    function Valid_ECDHE_Group (G : Unsigned_16) return Boolean is
      (G in Group_Secp256r1 | Group_Secp384r1 | Group_X25519);
+
+   --  RFC 8422 §5.1.1: in TLS 1.2, supported_groups constrains the
+   --  EC parameters that may appear in an ECDSA server certificate.
+   --  Group = 0 means "default policy" (all supported groups advertised).
+   function ECDSA_Cert_Curve_Allowed_TLS12
+     (Group : Unsigned_16;
+      PK    : X509.Algorithm_ID) return Boolean is
+     ((Group = 0)
+      or else
+      (Group = Group_Secp256r1 and then PK /= X509.Algo_EC_P384)
+      or else
+      (Group = Group_Secp384r1 and then PK /= X509.Algo_EC_P256)
+      or else
+      (Group = Group_X25519
+       and then PK not in X509.Algo_EC_P256 | X509.Algo_EC_P384)
+      or else
+      (not Valid_ECDHE_Group (Group)));
+
+   --  RFC 8422 §5.1.1: a TLS 1.2 ECDHE server must select a group
+   --  offered by the client. Offered = 0 means the default client offer
+   --  (all implemented groups).
+   function Selected_Group_Allowed_TLS12
+     (Offered  : Unsigned_16;
+      Selected : Unsigned_16) return Boolean is
+     (Offered = 0
+      or else not Valid_ECDHE_Group (Offered)
+      or else Selected = Offered);
 
    --  RFC 8422 §5.4: ECPoint byte length for a given group.
    function Point_Len_For_Group (G : Unsigned_16) return N32 is
@@ -423,8 +453,9 @@ is
 	                and then HC.Cfg.Local.Has_Identity
 	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                           (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null
+                and then HC.Cfg.Random /= null
                 and then HC.Version = TLS_1_2
+                and then HC.Legacy_Session_ID_Len <= 32
                 and then Reasm_Building (HC),
         --  Frame postcondition: ServerHello construction does not
         --  touch S.State, the configuration pointer/identity, or the

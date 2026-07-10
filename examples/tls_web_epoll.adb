@@ -395,7 +395,7 @@ procedure TLS_Web_Epoll is
                                           Total_Sent : N32 := 0;
                                        begin
                                           while Total_Sent < Hdr_Bytes'Length loop
-                                             SPARKTLS.Server.Write_Plaintext
+                                             SPARKTLS.Write_Plaintext
                                                (Conn.S,
                                                 Hdr_Bytes (Total_Sent .. Hdr_Bytes'Last),
                                                 Written);
@@ -427,7 +427,7 @@ procedure TLS_Web_Epoll is
                                                 N32 (Body_Ref'Length);
                                           begin
                                              while Total_Sent < B_Len loop
-                                                SPARKTLS.Server.Write_Plaintext
+                                                SPARKTLS.Write_Plaintext
                                                   (Conn.S,
                                                    Body_Ref
                                                      (B_First + Total_Sent .. B_Last),

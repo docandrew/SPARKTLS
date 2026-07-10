@@ -140,7 +140,7 @@ procedure TLS_SNI_Server is
                      declare
                         Written : N32;
                      begin
-                        Server.Write_Plaintext
+                        SPARKTLS.Write_Plaintext
                           (S, App (0 .. App_N - 1), Written);
                         Send_Output;
                      end;

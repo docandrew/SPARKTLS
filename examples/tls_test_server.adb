@@ -216,7 +216,7 @@ begin
                      Put_Line ("Received: " & Msg);
                   end;
                   --  Echo back
-                  SPARKTLS.Server.Write_Plaintext
+                  SPARKTLS.Write_Plaintext
                     (S, App (0 .. App_N - 1), Written);
                end if;
             end;

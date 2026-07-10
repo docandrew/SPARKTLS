@@ -127,23 +127,6 @@ is
                 and (if Result = Error_Alert then
                        S.State = Closed);
 
-   --  RFC 8446 §7.5: Encrypt and queue application data.
-   procedure Write_Plaintext
-     (S              : in out Session;
-      Plaintext      : in     Byte_Seq;
-      Bytes_Written  :    out N32)
-   with Pre  => S.State = Connected and
-                S.Role = Role_Client and
-                In_App_Key_Phase (S.State) and     --  RFC 8446 §7.5
-                Plaintext'First = 0 and
-                Plaintext'Length > 0 and
-                Plaintext'Last < Max_Record_Plaintext and
-                Nonce_Space_Available (S.Client_App) and
-                SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                  (S.Client_Seq_12),
-        Post => Bytes_Written <= N32 (Plaintext'Length) and
-                S.State = Connected;
-
    --  RFC 8446 §6.1: Send a close_notify alert.
    procedure Close_Notify (S : in out Session)
    with Pre  => (S.State = Connected or S.State = Closing)

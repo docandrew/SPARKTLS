@@ -141,7 +141,7 @@ is
       Plain_Len   :    out N32;
       Valid       :    out Boolean)
    with Pre  => Encrypted'First = 0
-                and Encrypted'Last >= GCM_Tag_Len
+                and Encrypted'Last >= GCM_Tag_Len - 1
                 and Encrypted'Last < Max_Record_Plaintext + TLS12_Record_Overhead
                 and Record_Hdr'First = 0
                 and Record_Hdr'Length = Record_Header_Size

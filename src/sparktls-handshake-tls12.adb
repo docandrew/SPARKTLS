@@ -579,10 +579,16 @@ is
       begin
          if Curve = 0
            or not Valid_ECDHE_Group (Curve)
-           or Pt_Len /= Point_Len_For_Group (Curve)
            or Sig_Len = 0
            or Sig_Len > Max_Sig
          then
+            SKE.Take_Buffer (Ctx, Buf);
+            RFLX_Free_Local (Buf);
+            return;
+         end if;
+
+         if Pt_Len /= Point_Len_For_Group (Curve) then
+            HC.Ext_Parse_Err := Illegal_Parameter;
             SKE.Take_Buffer (Ctx, Buf);
             RFLX_Free_Local (Buf);
             return;
@@ -607,6 +613,12 @@ is
 
                when Group_Secp256r1 =>
                   pragma Assert (Pt_Len = P256_Point_Len);
+                  if Byte (Pt_RFLX (1)) /= 16#04# then
+                     HC.Ext_Parse_Err := Illegal_Parameter;
+                     SKE.Take_Buffer (Ctx, Buf);
+                     RFLX_Free_Local (Buf);
+                     return;
+                  end if;
                   for I in N32 range 0 .. 64 loop
                      HC.P256_Peer_PK (I) :=
                         Byte (Pt_RFLX (RBT.Index (I + 1)));
@@ -615,6 +627,12 @@ is
 
                when Group_Secp384r1 =>
                   pragma Assert (Pt_Len = P384_Point_Len);
+                  if Byte (Pt_RFLX (1)) /= 16#04# then
+                     HC.Ext_Parse_Err := Illegal_Parameter;
+                     SKE.Take_Buffer (Ctx, Buf);
+                     RFLX_Free_Local (Buf);
+                     return;
+                  end if;
                   for I in N32 range 0 .. 96 loop
                      HC.P384_Peer_PK (I) :=
                         Byte (Pt_RFLX (RBT.Index (I + 1)));
@@ -680,16 +698,16 @@ is
             end loop;
 
             if HC.Peer_Cert_Valid then
-               Sig_OK := Cert_Verify.Verify_Signature
+               Sig_OK := Cert_Verify.Verify_Signature_TLS12
                  (Data       => Sig_Input,
                   Sig        => Sig_Bytes,
                   Cert       => HC.Peer_Cert,
                   Sig_Scheme => Sig_Scheme);
             else
-               Sig_OK := HC.Cfg.Skip_Verify;
+               Sig_OK := False;
             end if;
 
-            if not Sig_OK and not HC.Cfg.Skip_Verify then
+            if not Sig_OK then
                SKE.Take_Buffer (Ctx, Buf);
                RFLX_Free_Local (Buf);
                return;
@@ -753,9 +771,15 @@ is
          --  RFC 5246 §7.4.7: body ends exactly at 1 + Pt_Len bytes.
          --  Trailing bytes (BoGo TrailingMessageData-ClientKeyExchange)
          --  are a protocol error.
-         if Pt_Len /= Point_Len_For_Group (HC.Selected_Group)
-           or Data'Length /= 1 + Pt_Len
-         then
+         if Data'Length /= 1 + Pt_Len then
+            CKE.Take_Buffer (Ctx, Buf);
+            RFLX_Free_Local (Buf);
+            pragma Assert (Reasm_Building (HC));
+            return;
+         end if;
+
+         if Pt_Len /= Point_Len_For_Group (HC.Selected_Group) then
+            HC.Ext_Parse_Err := Illegal_Parameter;
             CKE.Take_Buffer (Ctx, Buf);
             RFLX_Free_Local (Buf);
             pragma Assert (Reasm_Building (HC));
@@ -771,6 +795,13 @@ is
                end loop;
 
             when Group_Secp256r1 =>
+               if Byte (Pt_RFLX (1)) /= 16#04# then
+                  HC.Ext_Parse_Err := Illegal_Parameter;
+                  CKE.Take_Buffer (Ctx, Buf);
+                  RFLX_Free_Local (Buf);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
                for I in N32 range 0 .. 64 loop
                   HC.P256_Peer_PK (I) :=
                      Byte (Pt_RFLX (RBT.Index (I + 1)));
@@ -778,6 +809,13 @@ is
                HC.Use_P256_KE := True;
 
             when Group_Secp384r1 =>
+               if Byte (Pt_RFLX (1)) /= 16#04# then
+                  HC.Ext_Parse_Err := Illegal_Parameter;
+                  CKE.Take_Buffer (Ctx, Buf);
+                  RFLX_Free_Local (Buf);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
                for I in N32 range 0 .. 96 loop
                   HC.P384_Peer_PK (I) :=
                      Byte (Pt_RFLX (RBT.Index (I + 1)));
@@ -1115,6 +1153,13 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
+      subtype TLS12_SID_Len is N32 range 0 .. 32;
+      subtype TLS12_ALPN_Data_Len is N32 range 0 .. 258;
+      subtype TLS12_ALPN_Ext_Len is N32 range 0 .. 262;
+      subtype TLS12_SH_Ext_Total is N32 range 0 .. 279;
+      subtype TLS12_SH_Body_Len is N32 range 40 .. 351;
+      subtype TLS12_SH_Msg_Len is N32 range 44 .. 355;
+
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Renegotiation info (0xFF01): data = 1 byte (length=0).
@@ -1136,6 +1181,9 @@ is
       --  Extended master secret (0x0017): no data (empty extension)
       EMS_Data_Len : constant := 0;
 
+      --  Server name (0x0000): empty ack when the client sent SNI.
+      SNI_Ext_Len : constant N32 := (if HC.Peer_SNI.Len > 0 then 4 else 0);
+
       --  ALPN (0x0010): if client offered and server configured
       --  Data: list_len(2) + proto_len(1) + proto(N)
       ALPN_Match : constant Boolean :=
@@ -1143,9 +1191,9 @@ is
          and then HC.Cfg.ALPN.Len > 0
          and then HC.Client_ALPN.Data (1 .. HC.Client_ALPN.Len) =
                   HC.Cfg.ALPN.Data (1 .. HC.Cfg.ALPN.Len);
-      ALPN_Data_Len : constant N32 :=
+      ALPN_Data_Len : constant TLS12_ALPN_Data_Len :=
          (if ALPN_Match then N32 (3 + HC.Cfg.ALPN.Len) else 0);
-      ALPN_Ext_Len : constant N32 :=
+      ALPN_Ext_Len : constant TLS12_ALPN_Ext_Len :=
          (if ALPN_Match then 4 + ALPN_Data_Len else 0);
 
       --  EMS extension is only echoed in ServerHello when the
@@ -1167,14 +1215,17 @@ is
       ST_Ext_Len : constant N32 := (if Emit_ST_Ext then 4 else 0);
 
       --  Extensions total
-      Ext_Total   : constant N32 :=
-         RI_Ext_Len + EMS_Ext_Len + ALPN_Ext_Len + ST_Ext_Len;
+      Ext_Total   : constant TLS12_SH_Ext_Total :=
+         RI_Ext_Len + EMS_Ext_Len + SNI_Ext_Len + ALPN_Ext_Len + ST_Ext_Len;
 
       --  ServerHello body size:
-      --  version(2) + random(32) + sid_len(1) + sid(32) + suite(2) + comp(1) + ext_len(2)
-      --  = 72 + extensions
-      SH_Body_Len : constant N32 := 72 + Ext_Total;
-      SH_Msg_Len  : constant N32 := 4 + SH_Body_Len;
+      --  version(2) + random(32) + sid_len(1) + sid(N) + suite(2)
+      --  + comp(1) + ext_len(2) = 40 + N + extensions.
+      SID_Out_Len : constant TLS12_SID_Len :=
+         (if HC.TLS12_Resuming then HC.Legacy_Session_ID_Len else 32);
+      SH_Body_Len : constant TLS12_SH_Body_Len :=
+         40 + SID_Out_Len + Ext_Total;
+      SH_Msg_Len  : constant TLS12_SH_Msg_Len := 4 + SH_Body_Len;
 
       Pos : N32;
    begin
@@ -1196,6 +1247,7 @@ is
          if not HC.TLS12_Resuming then
             Gen_Random (Byte_Seq (Tmp_SID));
             HC.Legacy_Session_ID := Tmp_SID;
+            HC.Legacy_Session_ID_Len := 32;
          end if;
       end;
 
@@ -1223,10 +1275,14 @@ is
       Result (Pos .. Pos + 31) := Byte_Seq (HC.Server_Random);
       Pos := Pos + 32;
 
-      Result (Pos) := 32;
+      pragma Assert (SID_Out_Len in 0 .. 32);
+      Result (Pos) := Byte (SID_Out_Len);
       Pos := Pos + 1;
-      Result (Pos .. Pos + 31) := Byte_Seq (HC.Legacy_Session_ID);
-      Pos := Pos + 32;
+      if SID_Out_Len > 0 then
+         Result (Pos .. Pos + SID_Out_Len - 1) :=
+           Byte_Seq (HC.Legacy_Session_ID (0 .. SID_Out_Len - 1));
+      end if;
+      Pos := Pos + SID_Out_Len;
 
       Put16 (Result, Pos, S.Negotiated_Suite);
       Pos := Pos + 2;
@@ -1266,6 +1322,13 @@ is
          Put16 (Result, Pos, 16#0017#);
          Put16 (Result, Pos + 2, 0);
          Pos := Pos + EMS_Ext_Len;
+      end if;
+
+      --  RFC 6066 §3 server_name acknowledgement: empty body.
+      if HC.Peer_SNI.Len > 0 then
+         Put16 (Result, Pos, 16#0000#);
+         Put16 (Result, Pos + 2, 0);
+         Pos := Pos + SNI_Ext_Len;
       end if;
 
       --  RFC 5077 §3.3 session_ticket (0x0023) — empty body.
@@ -1350,6 +1413,56 @@ is
          HC.Server_Random (I) := Data (Pos + I);
       end loop;
       Pos := Pos + 32;
+
+      --  RFC 8446 §4.1.3 downgrade protection. If this client offered
+      --  TLS 1.3 but the server negotiated TLS 1.2 and set either the
+      --  standard downgrade marker or the JDK 11 compatibility marker,
+      --  abort. A TLS_1_2_Only client accepts the JDK 11 marker because
+      --  it did not offer TLS 1.3 in the first place.
+      if HC.Cfg.Versions /= TLS_1_2_Only then
+         declare
+            type Sentinel_T is array (N32 range 0 .. 7) of Byte;
+            S13 : constant Sentinel_T :=
+              (16#44#, 16#4F#, 16#57#, 16#4E#,
+               16#47#, 16#52#, 16#44#, 16#01#);
+            S12 : constant Sentinel_T :=
+              (16#44#, 16#4F#, 16#57#, 16#4E#,
+               16#47#, 16#52#, 16#44#, 16#00#);
+            S_JDK : constant Sentinel_T :=
+              (16#ED#, 16#BF#, 16#B4#, 16#A8#,
+               16#C2#, 16#47#, 16#10#, 16#FF#);
+            M13, M12, MJ : Boolean := True;
+         begin
+            for I in N32 range 0 .. 7 loop
+               pragma Loop_Invariant (Reasm_Coherent (HC));
+               pragma Loop_Invariant
+                 (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Reasm_Hdr_Pending =
+                    HC.Reasm_Hdr_Pending'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
+                  and then HC.HRR_Cookie_Len =
+                    HC.HRR_Cookie_Len'Loop_Entry);
+               if HC.Server_Random (24 + I) /= S13 (I) then
+                  M13 := False;
+               end if;
+               if HC.Server_Random (24 + I) /= S12 (I) then
+                  M12 := False;
+               end if;
+               if HC.Server_Random (24 + I) /= S_JDK (I) then
+                  MJ  := False;
+               end if;
+            end loop;
+
+            if M13 or else M12 or else MJ then
+               S.Last_Error := Illegal_Parameter;
+               return;
+            end if;
+         end;
+      end if;
 
       --  Session ID length
       SID_Len := N32 (Data (Pos));

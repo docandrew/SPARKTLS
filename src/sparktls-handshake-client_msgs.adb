@@ -221,6 +221,17 @@ is
       then
          return;
       end if;
+      if Retry_Mode and then HC.HRR_Cipher_Suite /= 0 then
+         declare
+            Needed_PSK_Len : constant N32 :=
+              (if HC.HRR_Cipher_Suite = Suite_AES_256_GCM_SHA384
+               then 48 else 32);
+         begin
+            if S.Ticket.PSK_Len /= Needed_PSK_Len then
+               return;
+            end if;
+         end;
+      end if;
       HC.PSK_Offered := True;
       if S.Ticket.Ticket_Len > Max_Ticket_Len
         or else Len > N32 (Result'Length) - 319
@@ -465,13 +476,24 @@ is
          elsif HC.HRR_Selected_Group = 16#0017# then 69
          elsif HC.HRR_Selected_Group = 16#0018# then 101
          else 0);
+      Initial_Key_Share_Group : constant Unsigned_16 :=
+        (if HC.Cfg.Client_Key_Share_Group in 16#001D# | 16#0017# | 16#0018#
+         then HC.Cfg.Client_Key_Share_Group
+         else 16#001D#);
+      Initial_KS_Entry : constant N32 :=
+        (if Initial_Key_Share_Group = 16#001D# then 36
+         elsif Initial_Key_Share_Group = 16#0017# then 69
+         else 101);
+      Restrict_Groups : constant Boolean :=
+        HC.Cfg.Client_Key_Share_Group in 16#001D# | 16#0017# | 16#0018#;
+      SG_Group_Count : constant N32 := (if Restrict_Groups then 1 else 3);
 
       --  Extension data sizes
       Host_Len : constant N32 := N32 (HC.Cfg.Server_Name.Len);
       --  SNI data: sni_list_len(2) + host_type(1) + host_len(2) + host
       SNI_Data_Len : constant N32 := 5 + Host_Len;
-      --  supported_groups data: list_len(2) + group(2) * 3
-      SG_Data_Len  : constant N32 := 8;
+      --  supported_groups data: list_len(2) + group(2) * count.
+      SG_Data_Len  : constant N32 := 2 + 2 * SG_Group_Count;
       --  signature_algorithms data: list_len(2) + alg(2) * 6
       SA_Data_Len  : constant N32 := 14;
       --  key_share data: shares_len(2) + entries.
@@ -489,7 +511,7 @@ is
       --  Retry with no curve change (cookie-only HRR): same as CH1
       --  = X25519 single share = 38 bytes.
       KS_Data_Len  : constant N32 :=
-        (if Retry_KS_Single then 2 + Retry_KS_Entry else 38);
+        (if Retry_KS_Single then 2 + Retry_KS_Entry else 2 + Initial_KS_Entry);
       --  psk_key_exchange_modes data: list_len(1) + mode(1)
       PSK_Data_Len : constant N32 := 2;
       --  supported_versions data: list_len(1) + version(2) * N.
@@ -539,12 +561,18 @@ is
          else 0);
       TLS12_Ticket_Ext_Len : constant N32 :=
         (if Offer_TLS12_Ticket then 4 + TLS12_Ticket_Data_Len else 0);
+      --  TLS 1.2 EMS support is parsed/validated, but the client-side
+      --  EMS Finished path is not yet interoperable with OpenSSL/BoringSSL.
+      --  Do not advertise EMS until that path is fixed.
+      Offer_EMS : constant Boolean := False;
+      EMS_Ext_Len : constant N32 := (if Offer_EMS then 4 else 0);
 
       --  Each extension: tag(2) + data_length(2) + data
       Ext_Total : constant N32 :=
          (4 + SNI_Data_Len) + (4 + SG_Data_Len) + (4 + SA_Data_Len) +
          (4 + KS_Data_Len) + (4 + PSK_Data_Len) + (4 + SV_Data_Len) +
          (4 + EPF_Data_Len) +
+         EMS_Ext_Len +
          ALPN_Ext_Len +
          Cookie_Ext_Len +
          TLS12_Ticket_Ext_Len;
@@ -591,6 +619,8 @@ is
    begin
       Result := (others => 0);
       Len    := 0;
+      HC.PSK_Offered := False;
+      HC.Using_PSK := False;
 
       --  Generate ephemeral X25519 keypair (Fiat X25519).
       --  In retry mode (CH2 for HRR), reuse the CH1 SK so the server
@@ -756,12 +786,21 @@ is
 
          --  Extension 2: supported_groups (0x000A)
          declare
-            SG_Raw : constant Byte_Seq (0 .. SG_Data_Len - 1) :=
-               (16#00#, 16#06#,          --  list_len=6 (3 groups)
-                16#00#, 16#1D#,          --  X25519
-                16#00#, 16#17#,          --  secp256r1
-                16#00#, 16#18#);         --  secp384r1
+            SG_Raw : Byte_Seq (0 .. SG_Data_Len - 1) := (others => 0);
          begin
+            SG_Raw (0) := Byte ((2 * SG_Group_Count) / 256);
+            SG_Raw (1) := Byte ((2 * SG_Group_Count) mod 256);
+            if Restrict_Groups then
+               SG_Raw (2) := Byte (Initial_Key_Share_Group / 256);
+               SG_Raw (3) := Byte (Initial_Key_Share_Group mod 256);
+            else
+               SG_Raw (2) := 16#00#;
+               SG_Raw (3) := 16#1D#;  --  X25519
+               SG_Raw (4) := 16#00#;
+               SG_Raw (5) := 16#17#;  --  secp256r1
+               SG_Raw (6) := 16#00#;
+               SG_Raw (7) := 16#18#;  --  secp384r1
+            end if;
             Append_CH_Extension
               (Exts_Ctx,
                RFLX.Tls_Extensiontype_Values.Supported_Groups,
@@ -816,15 +855,24 @@ is
                   KS_Raw (6 .. 102) := P384_PK_Enc;
                end if;
             else
-               --  CH1 / cookie-only retry: single X25519 entry.
-               --  shares_len(2) = 36
-               KS_Raw (0) := 16#00#;
-               KS_Raw (1) := 16#24#;
-               KS_Raw (2) := 16#00#;
-               KS_Raw (3) := 16#1D#;
-               KS_Raw (4) := 16#00#;
-               KS_Raw (5) := 16#20#;
-               KS_Raw (6 .. 37) := PK_Bytes;
+               --  CH1 / cookie-only retry: single configured initial entry.
+               KS_Raw (0) := Byte (Initial_KS_Entry / 256);
+               KS_Raw (1) := Byte (Initial_KS_Entry mod 256);
+               KS_Raw (2) := Byte (Initial_Key_Share_Group / 256);
+               KS_Raw (3) := Byte (Initial_Key_Share_Group mod 256);
+               if Initial_Key_Share_Group = 16#001D# then
+                  KS_Raw (4) := 16#00#;
+                  KS_Raw (5) := 16#20#;
+                  KS_Raw (6 .. 37) := PK_Bytes;
+               elsif Initial_Key_Share_Group = 16#0017# then
+                  KS_Raw (4) := 16#00#;
+                  KS_Raw (5) := 16#41#;
+                  KS_Raw (6 .. 70) := P256_PK_Enc;
+               else
+                  KS_Raw (4) := 16#00#;
+                  KS_Raw (5) := 16#61#;
+                  KS_Raw (6 .. 102) := P384_PK_Enc;
+               end if;
             end if;
             Append_CH_Extension
               (Exts_Ctx,
@@ -894,7 +942,19 @@ is
                EPF_Raw);
          end;
 
-         --  Extension 8: ALPN (0x0010) — if configured
+         --  Extension 8: extended_master_secret (0x0017), empty body.
+         if Offer_EMS then
+            declare
+               Empty : constant Byte_Seq (1 .. 0) := (others => 0);
+            begin
+               Append_CH_Extension
+                 (Exts_Ctx,
+                  RFLX.Tls_Extensiontype_Values.Extended_Master_Secret,
+                  Empty);
+            end;
+         end if;
+
+         --  Extension 9: ALPN (0x0010) — if configured
          if ALPN_Len > 0 then
             declare
                ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
@@ -915,7 +975,7 @@ is
             end;
          end if;
 
-         --  Extension 8b (conditional): RFC 5077 session_ticket (0x0023).
+         --  Extension 9b (conditional): RFC 5077 session_ticket (0x0023).
          --  Empty data on initial CH; resume ticket bytes when resuming.
          if Offer_TLS12_Ticket then
             if TLS12_Ticket_Data_Len > 0 then
@@ -1372,6 +1432,70 @@ is
                   end if;
                end if;
 
+               --  RFC 8422 §5.1.2: if a TLS 1.2 server sends
+               --  ec_point_formats, the vector must be well-formed and
+               --  include uncompressed(0), the only point format this
+               --  implementation accepts.
+               if Where = E_SH12
+                 and then Exts (I).Tag = 16#000B#
+                 and then Exts (I).Offset + Exts (I).E_Len <=
+                            Data'Last + 1
+               then
+                  if Exts (I).E_Len = 0 then
+                     S.Last_Error := Decode_Error;
+                     OK := False;
+                     pragma Assert_And_Cut (Reasm_Coherent (HC)
+                              and then (if Random_Was_Set
+                                        then HC.Cfg.Random /= null)
+                              and then HC.Transcript_Len =
+                                Saved_Transcript_Len
+                              and then
+                                (if Saved_Got_HRR then HC.Got_HRR));
+                     return;
+                  end if;
+
+                  declare
+                     List_Len : constant N32 :=
+                        N32 (Data (Exts (I).Offset));
+                  begin
+                     if List_Len = 0
+                       or else List_Len /= Exts (I).E_Len - 1
+                     then
+                        S.Last_Error := Decode_Error;
+                        OK := False;
+                        pragma Assert_And_Cut (Reasm_Coherent (HC)
+                              and then (if Random_Was_Set
+                                        then HC.Cfg.Random /= null)
+                              and then HC.Transcript_Len =
+                                Saved_Transcript_Len
+                              and then
+                                (if Saved_Got_HRR then HC.Got_HRR));
+                        return;
+                     end if;
+
+                     pragma Assert (Exts (I).E_Len >= 2);
+                     pragma Assert
+                       (Exts (I).Offset + Exts (I).E_Len - 1 <=
+                          Data'Last);
+                     if not EC_Point_Formats_Acceptable
+                              (Data
+                                 (Exts (I).Offset + 1 ..
+                                  Exts (I).Offset + Exts (I).E_Len - 1))
+                     then
+                        S.Last_Error := Decode_Error;
+                        OK := False;
+                        pragma Assert_And_Cut (Reasm_Coherent (HC)
+                              and then (if Random_Was_Set
+                                        then HC.Cfg.Random /= null)
+                              and then HC.Transcript_Len =
+                                Saved_Transcript_Len
+                              and then
+                                (if Saved_Got_HRR then HC.Got_HRR));
+                        return;
+                     end if;
+                  end;
+               end if;
+
                --  RFC 8446 §4.1.4 HRR-specific body extraction.
                --  In HRR, key_share body is just `selected_group(2)`
                --  (no key_exchange); cookie body is `cookie_len(2) +
@@ -1751,11 +1875,17 @@ is
       --  'illegal_parameter' alert if the HelloRetryRequest would
       --  not result in any change in the ClientHello." Concretely,
       --  if HRR.selected_group names a group we already offered in
-      --  CH1's key_share, the HRR is unnecessary. CH1 carries only
-      --  X25519 (0x001D), so a HRR selecting X25519 is rejected.
+      --  CH1's key_share, the HRR is unnecessary. In the default
+      --  client profile CH1 carries only X25519. When the caller
+      --  restricts Client_Key_Share_Group, CH1 carries only that
+      --  configured group and supported_groups advertises only that
+      --  configured group.
       --  BoGo UnnecessaryHelloRetryRequest-TLS13.
       if Curr_Is_HRR
-        and then HC.HRR_Selected_Group = 16#001D#
+        and then
+          (if HC.Cfg.Client_Key_Share_Group in 16#001D# | 16#0017# | 16#0018#
+           then True
+           else HC.HRR_Selected_Group = 16#001D#)
 	      then
 	         S.Last_Error := Illegal_Parameter;
 	         pragma Assert_And_Cut

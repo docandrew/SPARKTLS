@@ -230,6 +230,24 @@ is
                and SPARKTLSCrypto.P384.Field.Initialized
                and SPARKTLSCrypto.P384.ECDSA.Initialized;
 
+   --  TLS 1.2 signs ServerKeyExchange with hash_algorithm ||
+   --  signature_algorithm.  The ECDSA signature algorithm does not bind
+   --  the certificate curve; for example, a P-256 ECDSA key may sign a
+   --  SHA-384 digest.  TLS 1.3 SignatureScheme values remain stricter and
+   --  are handled by Verify_Signature above.
+   function Verify_Signature_TLS12
+     (Data       : Byte_Seq;
+      Sig        : Byte_Seq;
+      Cert       : X509.Certificate;
+      Sig_Scheme : Unsigned_16) return Boolean
+   with Pre => Data'First = 0
+               and Data'Last < N32'Last - 64
+               and Sig'First = 0
+               and Sig'Length > 0
+               and Sig'Last < N32'Last
+               and SPARKTLSCrypto.P384.Field.Initialized
+               and SPARKTLSCrypto.P384.ECDSA.Initialized;
+
    ----------------------------------------------------------------------------
    --  Credential loading helpers
    --

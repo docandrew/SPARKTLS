@@ -130,8 +130,9 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
-                and then Result'Last in 267 .. N32'Last - 1,
-   --  Header(4) + ext_list_len(2) + ALPN ext(7 + Max_Hostname_Len=255) = 268
+                and then Result'Last in 271 .. N32'Last - 1,
+   --  Header(4) + ext_list_len(2) + SNI ack(4)
+   --  + ALPN ext(7 + Max_Hostname_Len=255) = 272
         Post => S.State = S.State'Old
                 and then S.Role = S.Role'Old
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old

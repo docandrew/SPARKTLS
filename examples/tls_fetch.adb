@@ -458,7 +458,7 @@ begin
                end;
             end if;
 
-            SPARKTLS.Client.Write_Plaintext (S, Req_Bytes, Written);
+            SPARKTLS.Write_Plaintext (S, Req_Bytes, Written);
             SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
             if N > 0 then
                Byte_Seq'Write (Channel, Net_Buf (0 .. N - 1));

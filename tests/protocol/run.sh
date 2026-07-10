@@ -208,6 +208,8 @@ for test in "${TESTS[@]}"; do
     FAIL_CLASS=""
     case "$test" in
         count-tickets) extra_args=(-t 1) ;;
+        finished)
+            script_timeout="${TLSFUZZER_FINISHED_SCRIPT_TIMEOUT:-300}" ;;
         serverhello-random)
             extra_args=(-e "TLS 1.3 with secp521r1"
                         -e "TLS 1.3 with x448"

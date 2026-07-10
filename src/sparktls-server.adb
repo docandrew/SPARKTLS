@@ -975,6 +975,21 @@ is
            and Policy /= TLS_1_3_Only;
       begin
          if Want_13 then
+            if S.Negotiated_Suite in
+                 Suite_AES_128_GCM_SHA256
+               | Suite_AES_256_GCM_SHA384
+               | Suite_CHACHA20_POLY1305_SHA256
+              and then
+                (not HC.Client_Saw_Key_Share
+                 or else not HC.Client_Saw_Supported_Groups)
+            then
+               Send_Alert_And_Error (S, Missing_Extension, Result);
+               pragma Assert
+                 (S.State = Wait_Client_Hello
+                  or else Valid_Transition (Wait_Client_Hello, S.State));
+               return;
+            end if;
+
 	            if S.Negotiated_Suite not in
 	                 Suite_AES_128_GCM_SHA256
 	               | Suite_AES_256_GCM_SHA384
@@ -2221,9 +2236,14 @@ is
                      --  caller emits illegal_parameter. RFC 8446 §4.2
                      --  duplicate semantics are intra-CH-message, so
                      --  resetting between CH1 and CH2 is correct.
+                     HC.Client_Saw_Key_Share := False;
                      HC.Client_Has_X25519 := False;
                      HC.Client_Has_P256 := False;
                      HC.Client_Has_P384 := False;
+                     HC.Client_Saw_Supported_Groups := False;
+                     HC.Client_Supports_X25519 := False;
+                     HC.Client_Supports_P256 := False;
+                     HC.Client_Supports_P384 := False;
                      HC.CH_Ext_Hash := 0;
 		                     HC.CH_Ext_Count := 0;
 		                     HC.Seen_Ext_Count := 0;
@@ -3001,6 +3021,11 @@ is
             Need_HRR    : Boolean := False;
             HRR_Group   : Unsigned_16 := 0;
          begin
+            if not HC.Client_Saw_Key_Share then
+               Send_Alert_And_Error (S, Missing_Extension, Result);
+               return;
+            end if;
+
             --  Only HRR if no usable key_share AT ALL.
             if not (HC.Client_Has_X25519 or HC.Client_Has_P256
                     or HC.Client_Has_P384)
@@ -3101,7 +3126,7 @@ is
 
       --  Build EncryptedExtensions (encrypted with server HS keys)
       declare
-         EE_Buf : Byte_Seq (0 .. 267);
+         EE_Buf : Byte_Seq (0 .. 271);
          EE_Len : N32;
          Emitted : Boolean;
       begin
@@ -4304,16 +4329,17 @@ is
                            declare
                               --  NST format: type(1) + len(3) + lifetime(4) +
                               --  age_add(4) + nonce_len(1) + nonce(2) +
-                              --  ticket_len(2) + ticket(16) + ext_len(2) = 35.
+                              --  ticket_len(2) + ticket(16) + ext_len(2) +
+                              --  GREASE extension(4) = 39.
                               --  We never emit the early_data extension —
                               --  0-RTT is intentionally out of scope (see
                               --  Cfg.Resume_Ticket comment in sparktls.ads).
-                              NST : Byte_Seq (0 .. 34) := (others => 0);
+                              NST : Byte_Seq (0 .. 38) := (others => 0);
                            begin
                               --  Handshake type: NewSessionTicket (0x04)
                               NST (0) := 16#04#;
-                              --  Length: 31 bytes
-                              NST (1) := 0; NST (2) := 0; NST (3) := 31;
+                              --  Length: 35 bytes
+                              NST (1) := 0; NST (2) := 0; NST (3) := 35;
                               --  ticket_lifetime: 3600 seconds (1 hour)
                               NST (4) := 0; NST (5) := 0;
                               NST (6) := 16#0E#; NST (7) := 16#10#;
@@ -4329,8 +4355,11 @@ is
                               NST (15) := 0; NST (16) := 16;
                               --  ticket (the cache ID)
                               NST (17 .. 32) := TID;
-                              --  extensions_length: 0
-                              NST (33) := 0; NST (34) := 0;
+                              --  extensions_length: 4
+                              NST (33) := 0; NST (34) := 4;
+                              --  GREASE extension 0x0a0a, empty body.
+                              NST (35) := 16#0A#; NST (36) := 16#0A#;
+                              NST (37) := 0; NST (38) := 0;
 
                               --  NewSessionTicket is a post-handshake
                               --  optimisation (RFC 8446 §4.6.1); it is
@@ -4978,95 +5007,6 @@ is
          end case;
       end;
    end Process_Connected;
-
-   procedure Write_Plaintext
-     (S              : in out Session;
-      Plaintext      : in     Byte_Seq;
-      Bytes_Written  :    out N32)
-   is
-      --  RFC 8446 §5.1 caps a single TLS record at 2^14 bytes of
-      --  plaintext (Max_Record_Plaintext = 16384). Anything larger has
-      --  to be split across multiple records, each with its own header,
-      --  AEAD tag, and (for TLS 1.3) per-record nonce.
-      --
-      --  The loop:
-      --    * Slices Plaintext into ≤ Max_Record_Plaintext chunks.
-      --    * Pre-checks Free_Space (S.Output) ≥ chunk + record-overhead
-      --      BEFORE encrypting, so we never advance the AEAD counter
-      --      for a record that won't fit. (Build_Encrypted_Record's
-      --      Post is `Counter = Counter'Old + 1` unconditionally — it
-      --      bumps the counter even on Bytes_Out := 0. Same shape as
-      --      the silent buffer-overflow Bug #2 fixed earlier; we
-      --      avoid it here by gating BEFORE the call.)
-      --    * Returns Bytes_Written < Plaintext'Length when S.Output
-      --      runs out of room. Caller drains and re-calls on the
-      --      remaining suffix.
-      Total      : constant N32 := N32 (Plaintext'Length);
-      Pos        : N32 := 0;
-      Chunk      : N32;
-      Enc_Out    : N32;
-      --  TLS 1.3 record on the wire: Header(5) + InnerType(1) + Tag(16) = 22.
-      --  TLS 1.2 record on the wire: Header(5) + ExplicitNonce(8) + Tag(16) = 29.
-      TLS13_Overhead : constant N32 := 22;
-      TLS12_Overhead : constant N32 := 29;
-      Overhead   : constant N32 :=
-         (if S.Negotiated_Version = TLS_1_2
-          then TLS12_Overhead else TLS13_Overhead);
-   begin
-      while Pos < Total loop
-         pragma Loop_Invariant
-           (Pos in 0 .. Total
-            and S.Negotiated_Version = S.Negotiated_Version'Loop_Entry);
-         pragma Loop_Variant (Increases => Pos);
-
-         Chunk := N32'Min (Max_Record_Plaintext, Total - Pos);
-
-         --  Bail if S.Output can't hold this record. Caller drains.
-         if Free_Space (S.Output) < Chunk + Overhead then
-            exit;
-         end if;
-
-         --  RFC 8446 §5.3 / RFC 5246 §6.1: stop emitting once nonce
-         --  space exhausts on this leg.
-         exit when not Nonce_Space_Available (S.Server_App);
-         if S.Negotiated_Version = TLS_1_2
-            and then S.Server_Seq_12 = Unsigned_64'Last
-         then
-            exit;
-         end if;
-
-         --  Copy slice to 0-based scratch so AEAD builders' Pre is
-         --  satisfied (Plaintext'First = 0).
-         declare
-            Frag_Len : constant N32 := Chunk;
-            Frag     : Byte_Seq (0 .. Frag_Len - 1);
-         begin
-            Frag := Plaintext (Plaintext'First + Pos ..
-                               Plaintext'First + Pos + Frag_Len - 1);
-            if S.Negotiated_Version = TLS_1_2 then
-               Records.TLS12.Build_Encrypted_Record_12
-                 (Plaintext    => Frag,
-                  Content_Type => 16#17#,  --  application_data
-                  Keys         => S.Server_App,
-                  Implicit_IV  => S.Server_IV_12,
-                  Seq_Num      => S.Server_Seq_12,
-                  Output       => S.Output,
-                  Bytes_Out    => Enc_Out);
-            else
-               Records.Build_Encrypted_Record
-                 (Plaintext  => Frag,
-                  Inner_Type => 16#17#,
-                  Keys       => S.Server_App,
-                  Output     => S.Output,
-                  Bytes_Out  => Enc_Out);
-            end if;
-         end;
-
-         exit when Enc_Out = 0;
-         Pos := Pos + Chunk;
-      end loop;
-      Bytes_Written := Pos;
-   end Write_Plaintext;
 
    procedure Close_Notify (S : in out Session) is
       Alert_Out : N32;

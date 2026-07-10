@@ -1157,6 +1157,13 @@ is
       DoS_Caps : SPARKTLS.DoS_Caps := Default_DoS_Caps;
       Versions     : Version_Policy  := Allow_Both;  --  TLS version control
 
+      --  Client: preferred initial TLS 1.3 key_share group. Zero keeps
+      --  the default browser-like behavior: advertise X25519/P-256/P-384
+      --  in supported_groups and send an initial X25519 key_share. Set to
+      --  16#001D# (X25519), 16#0017# (secp256r1), or 16#0018#
+      --  (secp384r1) to advertise and send only that group in CH1.
+      Client_Key_Share_Group : Unsigned_16 := 0;
+
       --  Validation settings
       Verify_Mode     : Validation_Mode := Mode_WebPKI;
       Verify_Purpose  : Validation_Purpose := Purpose_Server;
@@ -1358,8 +1365,14 @@ is
       Client_Has_X25519 : Boolean := False;
       Client_Has_P256   : Boolean := False;
       Client_Has_P384   : Boolean := False;
+      --  TLS 1.3 client sent the key_share extension at all. This is
+      --  distinct from Client_Has_*: an empty key_share vector can be
+      --  HRR-recoverable, while an absent key_share extension is a
+      --  missing_extension error.
+      Client_Saw_Key_Share : Boolean := False;
       --  Which groups did the client offer in supported_groups?
       --  (may not have key_share data — triggers HRR if preferred)
+      Client_Saw_Supported_Groups : Boolean := False;
       Client_Supports_X25519 : Boolean := False;
       Client_Supports_P256   : Boolean := False;
       Client_Supports_P384   : Boolean := False;
@@ -1452,6 +1465,9 @@ is
       --  Handshake tracking
       CCS_Received          : Boolean := False;
       Cert_Request_Received : Boolean := False;
+      --  TLS 1.2 client side: the configured local identity matches both
+      --  CertificateRequest.certificate_types and signature_algorithms.
+      TLS12_Client_Cert_Allowed : Boolean := False;
 
       --  Version negotiation (set during Parse_Client_Hello)
       --  True if the client's supported_versions extension contains 0x0304.
@@ -1508,6 +1524,11 @@ is
 
       --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
       Use_EMS : Boolean := False;
+      --  RFC 7627 §3: EMS session_hash covers ClientHello through
+      --  ClientKeyExchange, inclusive. Capture that transcript length
+      --  immediately after CKE so later CertificateVerify / Finished
+      --  appends cannot affect master_secret derivation.
+      TLS12_EMS_Transcript_Len : N32 := 0;
 
       --  TLS 1.2: client offered renegotiation_info extension (RFC 5746)
       --  or sent the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) in
@@ -2374,5 +2395,24 @@ is
         Post => Bytes_Read <= N32 (Dest'Length)
                 and (for all I in 0 .. Bytes_Read - 1 =>
                        Dest (I)'Initialized);
+
+   --  RFC 8446 §7.5: Encrypt and queue application data.
+   procedure Write_Plaintext
+     (S              : in out Session;
+      Plaintext      : in     Byte_Seq;
+      Bytes_Written  :    out N32)
+   with Pre  => S.State = Connected and
+                In_App_Key_Phase (S.State) and
+                Plaintext'First = 0 and
+                Plaintext'Length > 0 and
+                Plaintext'Last < N32'Last and
+                (if S.Role = Role_Client then
+                   Nonce_Space_Available (S.Client_App) and
+                   S.Client_Seq_12 < Unsigned_64'Last
+                 else
+                   Nonce_Space_Available (S.Server_App) and
+                   S.Server_Seq_12 < Unsigned_64'Last),
+        Post => Bytes_Written <= N32 (Plaintext'Length) and
+                S.State = Connected;
 
 end SPARKTLS;

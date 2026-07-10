@@ -383,7 +383,7 @@ begin
                      Cfg_Message (Cfg_Message'First + I)));
                end loop;
                pragma Unreferenced (Msg);
-               SPARKTLS.Client.Write_Plaintext (S, Buf, Written);
+               SPARKTLS.Write_Plaintext (S, Buf, Written);
                Send_Pending;
                App_Sent := True;
             end;

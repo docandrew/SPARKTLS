@@ -216,17 +216,21 @@ is
          --  RFC 7627: Extended Master Secret
          --  master_secret = PRF(pms, "extended master secret", Hash(hs_msgs))
          declare
+            EMS_Len : constant N32 :=
+              (if HC.TLS12_EMS_Transcript_Len > 0
+               then HC.TLS12_EMS_Transcript_Len
+               else HC.Transcript_Len);
             TH     : Digest;
             TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
          begin
             if Use_384 then
                SPARKNaCl.Hashing.SHA384.Hash
-                 (TH_384, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                 (TH_384, HC.Transcript (0 .. EMS_Len - 1));
                PRF_SHA384 (Byte_Seq (HC.Master_Secret_12),
                            HC.Shared_Secret (0 .. Shared_Len - 1),
                            "extended master secret", Byte_Seq (TH_384));
             else
-               Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+               Hash (TH, HC.Transcript (0 .. EMS_Len - 1));
                PRF_SHA256 (Byte_Seq (HC.Master_Secret_12),
                            HC.Shared_Secret (0 .. Shared_Len - 1),
                            "extended master secret", Byte_Seq (TH));
@@ -909,6 +913,19 @@ is
             Send_Alert_And_Error (S, Bad_Certificate, Result);
             return;
          end if;
+
+         --  RFC 8422 §5.1.1: in TLS 1.2 the supported_groups extension
+         --  also constrains the EC parameters accepted in an ECDSA server
+         --  certificate. The default client advertises every supported
+         --  group; a configured single-group offer must not accept a leaf
+         --  on a different NIST curve.
+         if Suite_Needs_ECDSA
+           and then not ECDSA_Cert_Curve_Allowed_TLS12
+             (HC.Cfg.Client_Key_Share_Group, PK)
+         then
+            Send_Alert_And_Error (S, Bad_Certificate, Result);
+            return;
+         end if;
       end;
 
       if HC.Cfg.Server_Name.Len > 0
@@ -1096,18 +1113,41 @@ is
 	         return;
       end if;
       HC.Cert_Request_Received := True;
+      HC.TLS12_Client_Cert_Allowed := False;
 
       --  Sig-algs selection. Empty sig_algs list is malformed per
       --  RFC 5246 §7.4.1.4.1.
       declare
          Picked   : Unsigned_16 := 0;
          SA_Empty : Boolean := True;
+         CT_OK    : Boolean := False;
       begin
          if B < Frag'Last then
             declare
                CT_Len : constant N32 := N32 (Frag (B));
             begin
                if CT_Len <= Frag'Last - B - 1 then
+                  if HC.Cfg.Local /= null
+                    and then HC.Cfg.Local.Has_Identity
+                    and then CT_Len > 0
+                  then
+                     declare
+                        Required_CT : constant Byte :=
+                          (case HC.Cfg.Local.Sign_Algo is
+                              when Sign_RSA_PSS => 1,   --  rsa_sign
+                              when Sign_ECDSA_P256
+                                 | Sign_ECDSA_P384
+                                 | Sign_Ed25519  => 64,  --  ecdsa_sign
+                              when Sign_None => 0);
+                     begin
+                        pragma Assert (B + CT_Len < Frag'Last);
+                        CT_OK :=
+                          Required_CT /= 0
+                          and then
+                            (for some I in B + 1 .. B + CT_Len =>
+                               Frag (I) = Required_CT);
+                     end;
+                  end if;
                   declare
                      SA_Off : constant N32 := B + 1 + CT_Len;
                   begin
@@ -1155,6 +1195,7 @@ is
          if HC.Cfg.Local /= null then
             if Picked /= 0 then
                HC.Negotiated_Sig_Algo := Picked;
+               HC.TLS12_Client_Cert_Allowed := CT_OK;
             else
                case HC.Cfg.Local.Sign_Algo is
                   when Sign_RSA_PSS =>
@@ -1169,6 +1210,20 @@ is
                      null;
                end case;
             end if;
+         end if;
+         if HC.Cfg.Local /= null
+           and then HC.Cfg.Local.Has_Identity
+           and then not HC.TLS12_Client_Cert_Allowed
+         then
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            Send_Alert_And_Error (S, Illegal_Parameter, Result);
+            pragma Assert (Result /= OK);
+            pragma Assert_And_Cut
+              (Result /= OK
+               and then S.State = Error_State
+               and then Reasm_Coherent (HC));
+            return;
          end if;
       end;
 	      Append_Transcript (HC, Frag);
@@ -1319,7 +1374,20 @@ is
          if not SKE_OK then
             Free_Byte_Seq (HC.Reasm_Buf);
             HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-            Send_Alert_And_Error (S, Handshake_Failure, Result);
+            if HC.Ext_Parse_Err /= No_Error then
+               Send_Alert_And_Error (S, HC.Ext_Parse_Err, Result);
+            else
+               Send_Alert_And_Error (S, Handshake_Failure, Result);
+            end if;
+            return;
+         end if;
+
+         if not Selected_Group_Allowed_TLS12
+           (HC.Cfg.Client_Key_Share_Group, HC.Selected_Group)
+         then
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0; HC.Reasm_Need := 0;
+            Send_Alert_And_Error (S, Illegal_Parameter, Result);
             return;
          end if;
 	      end;
@@ -1514,6 +1582,7 @@ is
             begin
                if HC.Cfg.Local /= null
                  and then HC.Cfg.Local.Has_Identity
+                 and then HC.TLS12_Client_Cert_Allowed
                then
                   Build_Certificate_Chain_12
                     (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
@@ -1546,6 +1615,7 @@ is
          Build_Client_Key_Exchange (HC, CKE, CKE_Len);
          if CKE_Len > 0 then
             Append_Transcript (HC, CKE (0 .. CKE_Len - 1));
+            HC.TLS12_EMS_Transcript_Len := HC.Transcript_Len;
             Records.Build_Handshake_Record
               (CKE (0 .. CKE_Len - 1), Scratch, Rec_Out);
             if Rec_Out = 0 then
@@ -1564,6 +1634,7 @@ is
          if HC.Cert_Request_Received
            and then HC.Cfg.Local /= null
            and then HC.Cfg.Local.Has_Identity
+           and then HC.TLS12_Client_Cert_Allowed
          then
             declare
                CV_Buf : Byte_Seq (0 .. 523);
@@ -3376,12 +3447,130 @@ is
    procedure Process_Server_CCS
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then Reasm_Coherent (HC),
+                and then Reasm_Coherent (HC)
+                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
    is
       Rec : Records.Parse_Result;
+
+      procedure Consume_Reassembled_NST
+        (Msg_Len : in N32;
+         Result  : out Action)
+      with Pre  => Reasm_Coherent (HC)
+                   and then HC.Reasm_Buf /= null
+                   and then HC.Reasm_Need >= 4
+                   and then HC.Reasm_Need <= HC.Reasm_Len
+                   and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+                   and then Msg_Len <= HC.Reasm_Need - 4,
+           Post => Reasm_Coherent (HC);
+
+      procedure Consume_Reassembled_NST
+        (Msg_Len : in N32;
+         Result  : out Action)
+      is
+      begin
+         if HC.Reasm_Buf (0) /= 16#04# or else Msg_Len < 6 then
+            Send_Alert_And_Error
+              (S,
+               (if HC.Reasm_Buf (0) = 16#04#
+                then Decode_Error else Unexpected_Message),
+               Result);
+            return;
+         end if;
+
+         declare
+            NST_Body   : constant Byte_Seq (0 .. Msg_Len - 1) :=
+              HC.Reasm_Buf (4 .. 4 + Msg_Len - 1);
+            Lifetime   : Unsigned_32;
+            Ticket_Len : N32;
+            Parse_OK   : Boolean;
+         begin
+            SPARKTLS.Handshake.TLS12.Parse_New_Session_Ticket_12
+              (NST_Body      => NST_Body,
+               Lifetime_Hint => Lifetime,
+               Ticket_Len    => Ticket_Len,
+               OK            => Parse_OK);
+            if not Parse_OK or Ticket_Len > Max_TLS12_Ticket_Len then
+               Send_Alert_And_Error (S, Decode_Error, Result);
+               return;
+            end if;
+            if Ticket_Len > 0 then
+               S.TLS12_New_Ticket.Ticket (0 .. Ticket_Len - 1) :=
+                  NST_Body (6 .. 6 + Ticket_Len - 1);
+            end if;
+            S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
+            S.TLS12_New_Ticket.Suite := S.Negotiated_Suite_12;
+            S.TLS12_New_Ticket.Master_Secret := HC.Master_Secret_12;
+            S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
+            S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
+            S.TLS12_New_Ticket.Valid := True;
+
+            Append_Transcript
+              (HC, HC.Reasm_Buf (0 .. HC.Reasm_Need - 1));
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0;
+            HC.Reasm_Need := 0;
+            HC.Reasm_Hdr_Pending := False;
+            Result := OK;
+         end;
+      end Consume_Reassembled_NST;
    begin
       if Input_Available (S) = 0 then Result := Need_Input; return; end if;
+
+      if HC.Reasm_Need > 0 and then HC.Reasm_Buf /= null then
+         declare
+            Msg_Type : Byte;
+            Msg_Len  : N32;
+            Ready    : Boolean;
+         begin
+            pragma Assert (HC.Cfg.Random /= null);
+            pragma Assert
+              (HC.Selected_Group in
+                 Group_X25519 | Group_Secp256r1 | Group_Secp384r1);
+            pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
+            pragma Assert (HC.Transcript_Len > 0);
+            pragma Assert (HC.Transcript_Len <= Transcript_Capacity);
+            pragma Assert
+              (S.Negotiated_Suite in
+                 Suite_ECDHE_RSA_AES128_GCM_SHA256
+               | Suite_ECDHE_RSA_AES256_GCM_SHA384
+               | Suite_ECDHE_RSA_CHACHA20_SHA256
+               | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+               | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+               | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
+            Prepare_Server_Flight_Message
+              (S        => S,
+               HC       => HC,
+               Msg_Type => Msg_Type,
+               Msg_Len  => Msg_Len,
+               Ready    => Ready,
+               Result   => Result);
+            if Result /= OK or else not Ready then
+               return;
+            end if;
+            if Msg_Type /= 16#04# then
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               return;
+            end if;
+            Consume_Reassembled_NST (Msg_Len, Result);
+            return;
+         end;
+      end if;
 
       Records.Parse_Record_Header
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
@@ -3403,6 +3592,16 @@ is
                and then S.Input.Data (CCS_Pos) = 16#01#;
          begin
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if HC.TLS12_Server_Will_Issue
+              and then not HC.TLS12_Resuming
+              and then not S.TLS12_New_Ticket.Valid
+            then
+               --  RFC 5077 §3.3: if the server echoed the empty
+               --  session_ticket extension in ServerHello, it MUST send
+               --  NewSessionTicket before its ChangeCipherSpec.
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               return;
+            end if;
             if CCS_Byte_OK then
                HC.CCS_Received := True;
                Result := OK;
@@ -3417,77 +3616,45 @@ is
          --  RFC 5077 §3.3 full-handshake NewSessionTicket arrives
          --  AFTER client CCS+Finished but BEFORE server CCS. The
          --  dispatcher routes here (post-client-CKE-flight, waiting
-         --  for server CCS) so we need to consume the NST here.
-         --  Parse + cache + skip; dispatcher will call us again to
-         --  read the actual CCS that follows.
+         --  for server CCS) so we need to consume the NST here. BoGo
+         --  MaxHandshakeRecordLength=1 can split the NST across many
+         --  handshake records, so reuse the server-flight reassembler
+         --  rather than assuming the whole message is in this record.
          declare
-            FS       : constant N32 :=
-              S.Input.Read_Pos + Rec.Fragment_Pos;
-            Frag_Len : constant N32 := Rec.Fragment_Len;
+            Msg_Type : Byte;
+            Msg_Len  : N32;
+            Ready    : Boolean;
          begin
-            --  Minimum: HS header(4) + lifetime(4) + ticket_len(2) = 10
-            if Frag_Len < 10 then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result);
+            pragma Assert (HC.Cfg.Random /= null);
+            pragma Assert
+              (HC.Selected_Group in
+                 Group_X25519 | Group_Secp256r1 | Group_Secp384r1);
+            pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
+            pragma Assert (HC.Transcript_Len > 0);
+            pragma Assert (HC.Transcript_Len <= Transcript_Capacity);
+            pragma Assert
+              (S.Negotiated_Suite in
+                 Suite_ECDHE_RSA_AES128_GCM_SHA256
+               | Suite_ECDHE_RSA_AES256_GCM_SHA384
+               | Suite_ECDHE_RSA_CHACHA20_SHA256
+               | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+               | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+               | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
+            Prepare_Server_Flight_Message
+              (S        => S,
+               HC       => HC,
+               Msg_Type => Msg_Type,
+               Msg_Len  => Msg_Len,
+               Ready    => Ready,
+               Result   => Result);
+            if Result /= OK or else not Ready then
                return;
             end if;
-            if S.Input.Data (FS) /= 16#04# then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if Msg_Type /= 16#04# then
                Send_Alert_And_Error (S, Unexpected_Message, Result);
                return;
             end if;
-            declare
-               Body_Len : constant N32 :=
-                  N32 (S.Input.Data (FS + 1)) * 65536
-                  + N32 (S.Input.Data (FS + 2)) * 256
-                  + N32 (S.Input.Data (FS + 3));
-            begin
-               if 4 + Body_Len /= Frag_Len then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, Decode_Error, Result);
-                  return;
-               end if;
-               declare
-                  NST_Body   : constant Byte_Seq (0 .. Body_Len - 1) :=
-                    S.Input.Data (FS + 4 .. FS + 4 + Body_Len - 1);
-                  Lifetime   : Unsigned_32;
-                  Ticket_Len : N32;
-                  Parse_OK   : Boolean;
-               begin
-                  SPARKTLS.Handshake.TLS12.Parse_New_Session_Ticket_12
-                    (NST_Body      => NST_Body,
-                     Lifetime_Hint => Lifetime,
-                     Ticket_Len    => Ticket_Len,
-                     OK            => Parse_OK);
-                  if not Parse_OK or Ticket_Len > Max_TLS12_Ticket_Len then
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-                  if Ticket_Len > 0 then
-                     S.TLS12_New_Ticket.Ticket (0 .. Ticket_Len - 1) :=
-                        NST_Body (6 .. 6 + Ticket_Len - 1);
-                  end if;
-                  S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
-                  S.TLS12_New_Ticket.Suite := S.Negotiated_Suite_12;
-                  S.TLS12_New_Ticket.Master_Secret :=
-                     HC.Master_Secret_12;
-                  S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
-                  S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
-                  S.TLS12_New_Ticket.Valid := True;
-
-                  --  RFC 5077 §3.3 + RFC 5246 §7.4.9: NST is hashed
-                  --  into the handshake transcript before server's
-                  --  Finished, so client Finished verify_data uses
-                  --  the same hash. Without this, server's Finished
-                  --  fails to verify in the full-HS session-ticket
-                  --  flow.
-                  Append_Transcript
-                    (HC, S.Input.Data (FS .. FS + Frag_Len - 1));
-               end;
-            end;
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
+            Consume_Reassembled_NST (Msg_Len, Result);
             --  Dispatcher will call us again to consume the CCS
             --  that follows the NST.
          end;
@@ -4151,8 +4318,8 @@ is
             declare
                Min_Frag : constant N32 :=
                  (if S.Server_App.Suite = Suite_CHACHA20_POLY1305_SHA256
-                  then GCM_Tag_Len + 1
-                  else Explicit_Nonce_Len + GCM_Tag_Len + 1);
+                  then GCM_Tag_Len
+                  else Explicit_Nonce_Len + GCM_Tag_Len);
             begin
                if Frag_Len < Min_Frag then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -4192,9 +4359,20 @@ is
                        (S.App_Data_Len .. S.App_Data_Len + PL - 1) :=
                         Plaintext (0 .. PL - 1);
                      S.App_Data_Len := S.App_Data_Len + PL;
+                     S.Empty_Records_Recvd := 0;
                      Result := Plaintext_Ready;
                   else
-                     Result := OK;
+                     S.Empty_Records_Recvd :=
+                        S.Empty_Records_Recvd + 1;
+                     if S.Empty_Records_Recvd > Max_Empty_Records then
+                        S.Last_Error := Unexpected_Message;
+                        Set_State (S, Error_State);
+                        Result := Error_Alert;
+                     else
+                        Result := OK;
+                     end if;
+                     pragma Assert
+                       (Empty_Records_Bounded_RFC_8446_5_2 (S));
                   end if;
                when Records.Content_Alert =>
                   --  RFC 5246 §7.2: alerts have (level, description).

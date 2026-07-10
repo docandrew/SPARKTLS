@@ -65,6 +65,7 @@ procedure Test_Parse_Client_Hello is
    function Build_Min_CH_Body
      (SID_Len : N32 := 0;
       Suites  : Byte_Seq := (1 .. 0 => 0);  --  empty default
+      Compression : Byte_Seq := (0 => 0);
       Exts    : Byte_Seq := (1 .. 0 => 0))
       return Byte_Seq
    is
@@ -83,14 +84,16 @@ procedure Test_Parse_Client_Hello is
          others => 0);     --  32-byte all-zero pubkey
       Use_Suites : constant Byte_Seq :=
         (if Suites'Length = 0 then Default_Suites else Suites);
+      Use_Compression : constant Byte_Seq := Compression;
       Use_Exts : constant Byte_Seq :=
         (if Exts'Length = 0 then Default_Exts else Exts);
       Suites_Len : constant N32 := Use_Suites'Length;
+      Compression_Len : constant N32 := Use_Compression'Length;
       Exts_Len : constant N32 := Use_Exts'Length;
       Body_Len : constant N32 :=
          2 + 32 + 1 + SID_Len
          + 2 + Suites_Len
-         + 2  --  comp_len(1) + comp(0x00)
+         + 1 + Compression_Len
          + 2 + Exts_Len;
       B   : Byte_Seq (0 .. Body_Len - 1) := (others => 0);
       Pos : N32 := 0;
@@ -108,10 +111,11 @@ procedure Test_Parse_Client_Hello is
       Pos := Pos + 2;
       B (Pos .. Pos + Suites_Len - 1) := Use_Suites;
       Pos := Pos + Suites_Len;
-      --  Compression methods: length 1, value 0x00 (null)
-      B (Pos)     := 1;
-      B (Pos + 1) := 0;
-      Pos := Pos + 2;
+      --  Compression methods.
+      B (Pos) := Byte (Compression_Len);
+      Pos := Pos + 1;
+      B (Pos .. Pos + Compression_Len - 1) := Use_Compression;
+      Pos := Pos + Compression_Len;
       --  Extensions: total length + extension list bytes
       Put_U16 (B, Pos, Unsigned_16 (Exts_Len));
       Pos := Pos + 2;
@@ -363,6 +367,50 @@ procedure Test_Parse_Client_Hello is
                        Suite_ECDHE_RSA_AES128_GCM_SHA256));
    end Test_Suite_TLS12;
 
+   procedure Test_TLS12_Compression_List_With_Null is
+      --  TLS 1.2 clients may offer multiple compression methods as long as
+      --  the server selects null compression.
+      S    : Session;
+      HC   : Handshake_Context;
+      Suites : constant Byte_Seq (0 .. 1) := (16#C0#, 16#2F#);
+      Compression : constant Byte_Seq (0 .. 6) :=
+        (1, 2, 3, 0, 4, 5, 6);
+      Body_Bs : constant Byte_Seq :=
+        Build_Min_CH_Body (Suites => Suites, Compression => Compression);
+      OK : Boolean;
+   begin
+      Init_Context (S, HC);
+      declare
+         Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
+      begin
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+      end;
+      Check ("TLS 1.2 compression list containing null is accepted",
+             OK and then S.Negotiated_Suite_12 =
+               Suite_ECDHE_RSA_AES128_GCM_SHA256);
+   end Test_TLS12_Compression_List_With_Null;
+
+   procedure Test_TLS13_Compression_List_With_Extra_Rejected is
+      S    : Session;
+      HC   : Handshake_Context;
+      Compression : constant Byte_Seq (0 .. 1) := (0, 1);
+      Vers : constant Byte_Seq (0 .. 1) := (16#03#, 16#04#);
+      Body_Bs : constant Byte_Seq :=
+        Build_Min_CH_Body
+          (Compression => Compression,
+           Exts        => Build_Supported_Versions_Ext (Vers));
+      OK : Boolean;
+   begin
+      Init_Context (S, HC);
+      declare
+         Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
+      begin
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+      end;
+      Check ("TLS 1.3 compression list with extra method is rejected",
+             not OK and then S.Last_Error = Illegal_Parameter);
+   end Test_TLS13_Compression_List_With_Extra_Rejected;
+
    procedure Test_KS_X25519 is
       S    : Session;
       HC   : Handshake_Context;
@@ -385,6 +433,8 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("X25519 key_share parsed → Client_Has_X25519",
              OK and HC.Client_Has_X25519);
+      Check ("X25519 key_share marks extension present",
+             HC.Client_Saw_Key_Share);
       Check ("X25519 Peer_PK matches",
              (for all I in N32 range 0 .. 31 =>
                 HC.Peer_PK (I) = Byte (16#80# + Natural (I) mod 16)));
@@ -410,6 +460,8 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("P-256 key_share → Client_Has_P256",
              OK and HC.Client_Has_P256);
+      Check ("P-256 key_share marks extension present",
+             HC.Client_Saw_Key_Share);
       Check ("P-256 Peer_PK first byte = 0x04",
              HC.P256_Peer_PK (0) = 16#04#);
    end Test_KS_P256;
@@ -434,9 +486,57 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("P-384 key_share → Client_Has_P384",
              OK and HC.Client_Has_P384);
+      Check ("P-384 key_share marks extension present",
+             HC.Client_Saw_Key_Share);
       Check ("P-384 Peer_PK first byte = 0x04",
              HC.P384_Peer_PK (0) = 16#04#);
    end Test_KS_P384;
+
+   procedure Test_Missing_Key_Share_State is
+      S    : Session;
+      HC   : Handshake_Context;
+      Vers : constant Byte_Seq (0 .. 1) := (16#03#, 16#04#);
+      Groups : constant Byte_Seq (0 .. 1) := (16#00#, 16#1D#);
+      OK : Boolean;
+   begin
+      Init_Context (S, HC);
+      declare
+         Exts : constant Byte_Seq :=
+           Cat (Build_Supported_Versions_Ext (Vers),
+                Build_Supported_Groups_Ext (Groups));
+         Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Exts => Exts);
+         Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
+      begin
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+      end;
+      Check ("Missing key_share leaves extension-present flag clear",
+             OK and then not HC.Client_Saw_Key_Share);
+      Check ("Missing key_share still records supported group",
+             HC.Client_Supports_X25519 and then not HC.Client_Has_X25519);
+   end Test_Missing_Key_Share_State;
+
+   procedure Test_Missing_Supported_Groups_State is
+      S    : Session;
+      HC   : Handshake_Context;
+      KS   : Byte_Seq (0 .. 31) := (others => 16#33#);
+      Vers : constant Byte_Seq (0 .. 1) := (16#03#, 16#04#);
+      OK : Boolean;
+   begin
+      Init_Context (S, HC);
+      declare
+         Exts : constant Byte_Seq :=
+           Cat (Build_KS_Ext (16#001D#, KS),
+                Build_Supported_Versions_Ext (Vers));
+         Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Exts => Exts);
+         Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
+      begin
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+      end;
+      Check ("Missing supported_groups leaves extension-present flag clear",
+             OK and then not HC.Client_Saw_Supported_Groups);
+      Check ("Missing supported_groups still records key_share",
+             HC.Client_Has_X25519 and then HC.Client_Saw_Key_Share);
+   end Test_Missing_Supported_Groups_State;
 
    procedure Test_Sig_Algs is
       --  Offer Ed25519 (0x0807) + ECDSA-P256 (0x0403) + RSA-PSS-256 (0x0804)
@@ -482,6 +582,8 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("Supported_Groups: x25519",
              OK and HC.Client_Supports_X25519);
+      Check ("Supported_Groups marks extension present",
+             HC.Client_Saw_Supported_Groups);
       Check ("Supported_Groups: P-256",
              HC.Client_Supports_P256);
       Check ("Supported_Groups: P-384",
@@ -591,9 +693,13 @@ begin
    Test_Suite_TLS13_AES256;
    Test_Suite_Prefers_ChaCha;
    Test_Suite_TLS12;
+   Test_TLS12_Compression_List_With_Null;
+   Test_TLS13_Compression_List_With_Extra_Rejected;
    Test_KS_X25519;
    Test_KS_P256;
    Test_KS_P384;
+   Test_Missing_Key_Share_State;
+   Test_Missing_Supported_Groups_State;
    Test_Sig_Algs;
    Test_Supported_Groups;
    Test_Supported_Versions;

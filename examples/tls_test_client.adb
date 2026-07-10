@@ -227,7 +227,7 @@ begin
                Byte (Character'Pos (Msg (I)));
          end loop;
 
-         SPARKTLS.Client.Write_Plaintext (S, Msg_Bytes, Written);
+         SPARKTLS.Write_Plaintext (S, Msg_Bytes, Written);
          Put_Line ("Queued" & Written'Image &
             " bytes of app data for sending");
 

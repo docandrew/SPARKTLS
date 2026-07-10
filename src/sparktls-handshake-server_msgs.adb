@@ -39,6 +39,70 @@ is
    --  Spec is On so SPARK can verify call sites.
    use type RBT.Bytes_Ptr;
 
+   function Compression_Methods_OK
+     (Data     : Byte_Seq;
+      Is_TLS13 : Boolean) return Boolean
+   is
+      BS, P : N32;
+      Sid_Len, Cs_Len, Cm_Len : N32;
+      First_Method, Last_Method : N32;
+      Has_Null : Boolean := False;
+   begin
+      --  Data includes the 4-byte handshake header.
+      if Data'Length < 4 + 35 then
+         return False;
+      end if;
+
+      BS := Data'First + 4;
+      if BS + 34 > Data'Last then
+         return False;
+      end if;
+
+      Sid_Len := N32 (Data (BS + 34));
+      P := BS + 35;
+      if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
+         return False;
+      end if;
+      P := P + Sid_Len;
+
+      if P > Data'Last or else Data'Last - P < 1 then
+         return False;
+      end if;
+      Cs_Len := N32 (Data (P)) * 256 + N32 (Data (P + 1));
+      P := P + 2;
+      if P > Data'Last or else Cs_Len > Data'Last - P + 1 then
+         return False;
+      end if;
+      P := P + Cs_Len;
+
+      if P > Data'Last then
+         return False;
+      end if;
+      Cm_Len := N32 (Data (P));
+      if Cm_Len = 0 then
+         return False;
+      end if;
+
+      First_Method := P + 1;
+      if First_Method > Data'Last
+        or else Cm_Len > Data'Last - First_Method + 1
+      then
+         return False;
+      end if;
+      Last_Method := First_Method + Cm_Len - 1;
+
+      if Is_TLS13 then
+         return Cm_Len = 1 and then Data (First_Method) = 0;
+      end if;
+
+      for I in N32 range First_Method .. Last_Method loop
+         if Data (I) = 0 then
+            Has_Null := True;
+         end if;
+      end loop;
+      return Has_Null;
+   end Compression_Methods_OK;
+
    procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
    with Post => Buf = null;
 
@@ -308,30 +372,36 @@ is
                         HC.Ext_Parse_Err := Illegal_Parameter;
                         return;
                      end if;
-                     if KL = 32 then
-                        pragma Assert (Pos + 35 <= Data'Last);
-                        Copy_X25519_KS (Data, Pos, HC);
+                     if KL /= 32 then
+                        HC.Ext_Parse_Err := Illegal_Parameter;
+                        return;
                      end if;
+                     pragma Assert (Pos + 35 <= Data'Last);
+                     Copy_X25519_KS (Data, Pos, HC);
                      Pos := Pos + 4 + KL;
                   elsif Group = 16#0017# then
                      if HC.Client_Has_P256 then
                         HC.Ext_Parse_Err := Illegal_Parameter;
                         return;
                      end if;
-                     if KL = 65 then
-                        pragma Assert (Pos + 68 <= Data'Last);
-                        Copy_P256_KS (Data, Pos, HC);
+                     if KL /= 65 then
+                        HC.Ext_Parse_Err := Illegal_Parameter;
+                        return;
                      end if;
+                     pragma Assert (Pos + 68 <= Data'Last);
+                     Copy_P256_KS (Data, Pos, HC);
                      Pos := Pos + 4 + KL;
                   elsif Group = 16#0018# then
                      if HC.Client_Has_P384 then
                         HC.Ext_Parse_Err := Illegal_Parameter;
                         return;
                      end if;
-                     if KL = 97 then
-                        pragma Assert (Pos + 100 <= Data'Last);
-                        Copy_P384_KS (Data, Pos, HC);
+                     if KL /= 97 then
+                        HC.Ext_Parse_Err := Illegal_Parameter;
+                        return;
                      end if;
+                     pragma Assert (Pos + 100 <= Data'Last);
+                     Copy_P384_KS (Data, Pos, HC);
                      Pos := Pos + 4 + KL;
                   else
                      Pos := Pos + 4 + KL;
@@ -2161,6 +2231,7 @@ is
       OK := True;
       case Tag.Enum is
          when RFLX.Tls_Extensiontype_Values.Key_Share =>
+            HC.Client_Saw_Key_Share := True;
             if DLen in Wire_Key_Share_Len then
                Parse_KS_Extension (Ext_Ctx, DLen, HC);
                --  Parse_KS_Extension → Apply_KS_Entry stashes
@@ -2191,6 +2262,7 @@ is
             end;
 
          when RFLX.Tls_Extensiontype_Values.Supported_Groups =>
+            HC.Client_Saw_Supported_Groups := True;
             if DLen in Wire_Small_Ext_Len and then DLen >= 4 then
                Parse_Supported_Groups_Extension (Ext_Ctx, DLen, HC);
             end if;
@@ -3099,6 +3171,19 @@ is
 	         HC.Version := TLS_1_2;
 	      end if;
 
+	      if not Compression_Methods_OK
+	              (Data, Is_TLS13 => HC.Version = TLS_1_3)
+	      then
+	            S.Last_Error := Illegal_Parameter;
+	            OK := False;
+	            pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
+	            pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
+	            pragma Assert (Saved_Config_Frame);
+	            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+	            pragma Assert (Reasm_Building (HC));
+	            return;
+	      end if;
+
 	      if HC.Version = TLS_1_3
 	        and then S.Negotiated_Suite not in
 	          Suite_AES_128_GCM_SHA256
@@ -3283,6 +3368,7 @@ is
       --  Shared secret: x-coord of [our_sk] * peer_pk
       P256_Decode (Peer_Pt, HC.P256_Peer_PK, Valid);
       if Valid = 0 then
+         HC.Ext_Parse_Err := Illegal_Parameter;
          return;  --  invalid peer pubkey
       end if;
       P256_Mul (Peer_Pt, HC.P256_Local_SK, 32);
@@ -3350,6 +3436,7 @@ is
          SK      => HC.P384_Local_SK,
          Peer_PK => HC.P384_Peer_PK);
       if not SS_OK then
+         HC.Ext_Parse_Err := Illegal_Parameter;
          return;
       end if;
       HC.Shared_Secret := SS;
@@ -3907,15 +3994,28 @@ is
          and then HC.Cfg.ALPN.Len > 0
          and then HC.Client_ALPN.Data (1 .. HC.Client_ALPN.Len) =
                   HC.Cfg.ALPN.Data (1 .. HC.Cfg.ALPN.Len);
-      ALPN_PL : constant Natural :=
+      subtype EE_ALPN_Protocol_Len is Natural range 0 .. Max_Hostname_Len;
+      subtype EE_ALPN_Ext_Len is N32 range 0 .. 262;
+      subtype EE_SNI_Ext_Len is N32 range 0 .. 4;
+      subtype EE_Ext_List_Len is N32 range 0 .. 266;
+      subtype EE_Body_Len is N32 range 2 .. 268;
+      subtype EE_Msg_Len is N32 range 6 .. 272;
+
+      ALPN_PL : constant EE_ALPN_Protocol_Len :=
          (if ALPN_Match then HC.Cfg.ALPN.Len else 0);
       --  ALPN ext: tag(2) + len(2) + list_len(2) + proto_len(1) + proto(N)
-      ALPN_Ext_Len : constant N32 :=
+      ALPN_Ext_Len : constant EE_ALPN_Ext_Len :=
          (if ALPN_Match then N32 (7 + ALPN_PL) else 0);
+      --  RFC 6066 §3 / RFC 8446 §4.2: server_name acknowledgement
+      --  has an empty extension_data body.  RFC 8446 §4.6.1 omits it
+      --  on resumption unless the server accepts early data, which this
+      --  implementation does not.
+      SNI_Ext_Len : constant EE_SNI_Ext_Len :=
+         (if HC.Peer_SNI.Len > 0 and then not HC.Using_PSK then 4 else 0);
 
-      Ext_Len : constant N32 := ALPN_Ext_Len;
-      Body_Len : constant N32 := 2 + Ext_Len;  --  ext_list_len(2) + exts
-      Msg_Len  : constant N32 := 4 + Body_Len;
+      Ext_Len : constant EE_Ext_List_Len := SNI_Ext_Len + ALPN_Ext_Len;
+      Body_Len : constant EE_Body_Len := 2 + Ext_Len;  --  ext_list_len(2) + exts
+      Msg_Len  : constant EE_Msg_Len := 4 + Body_Len;
       Pos : N32;
    begin
       Result := (others => 0);
@@ -3931,6 +4031,16 @@ is
       Result (5) := Byte (Ext_Len mod 256);
 
       Pos := 6;
+
+      --  server_name acknowledgement (if client sent SNI and this is not
+      --  a PSK resumption)
+      if SNI_Ext_Len > 0 then
+         Result (Pos) := 0;
+         Result (Pos + 1) := 0;
+         Result (Pos + 2) := 0;
+         Result (Pos + 3) := 0;
+         Pos := Pos + SNI_Ext_Len;
+      end if;
 
       --  ALPN extension (if matched)
       if ALPN_Match then
@@ -3951,6 +4061,7 @@ is
          Result (Pos + 6) := Byte (ALPN_PL);
          --  Protocol name
          for I in 1 .. ALPN_PL loop
+            pragma Assert (Pos + N32 (6 + I) <= Result'Last);
             Result (Pos + N32 (6 + I)) :=
                Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
          end loop;

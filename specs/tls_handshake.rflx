@@ -458,7 +458,7 @@ package TLS_Handshake is
 
    type Cipher_Suites_DTLS is sequence of Cipher_Suite_DTLS;
 
-   type Legacy_Compression_Methods_Length is range 1 .. 1 with Size => 8;
+   type Legacy_Compression_Methods_Length is range 1 .. 255 with Size => 8;
 
    type Client_Hello_Extensions_Length is range 8 .. 2 ** 16 - 1 with Size => 16;
 
