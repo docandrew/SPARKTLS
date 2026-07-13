@@ -2295,17 +2295,25 @@ is
          declare
             Secret_384 : Bytes_48;
             P384_OK    : Boolean;
+            Local_SK   : constant Bytes_48 := HC.P384_Local_SK;
+            Peer_PK    : constant Byte_Seq (0 .. 96) := HC.P384_Peer_PK;
          begin
+            pragma Assert (SH_Parse_Frame);
+            pragma Assert (Local_SK'First = 0);
+            pragma Assert (Local_SK'Length = 48);
+            pragma Assert (Peer_PK'First = 0);
+            pragma Assert (Peer_PK'Length = 97);
             SPARKTLSCrypto.P384.Point.P384_ECDHE
               (Secret  => Secret_384,
                OK      => P384_OK,
-               SK      => HC.P384_Local_SK,
-               Peer_PK => HC.P384_Peer_PK);
-		            if not P384_OK then
-		               OK := False;
-		               pragma Assert_And_Cut (SH_Parse_Frame);
-		               goto Cleanup;
-		            end if;
+               SK      => Local_SK,
+               Peer_PK => Peer_PK);
+            pragma Assert (SH_Parse_Frame);
+            if not P384_OK then
+               OK := False;
+               pragma Assert_And_Cut (SH_Parse_Frame);
+               goto Cleanup;
+            end if;
             HC.Shared_Secret := Secret_384;
          end;
       elsif HC.Use_P256_KE then

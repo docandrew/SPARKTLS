@@ -26,6 +26,7 @@ is
                 and Alert_Desc (Err) /= 0
                 and Alert_Desc (Err) /= 90,
         Post => S.State = Error_State
+                and then Result in Has_Output | Error_Alert
                 and then S.Role = S.Role'Old
                 --  RFC 8446 §6.2 / RFC 5246 §7.2.2: a fatal alert
                 --  MUST be sent to the peer before the connection
@@ -941,6 +942,8 @@ is
             TH     : Digest;
             TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
          begin
+            pragma Assert (EMS_Len > 0);
+            pragma Assert (EMS_Len <= Transcript_Capacity);
             if Use_384 then
                SPARKNaCl.Hashing.SHA384.Hash
                  (TH_384, HC.Transcript (0 .. EMS_Len - 1));
@@ -1145,6 +1148,21 @@ is
          procedure Parse_Complete_CKE
            (Msg      : in     Byte_Seq;
             CKE_Good :    out Boolean)
+         with Pre => Msg'Length > 0
+                     and then Msg'Length <= N32'Last
+                     and then Msg'First <= N32'Last - 4
+                     and then HC.Cfg.Local /= null
+                     and then HC.Cfg.Local.Has_Identity
+                     and then SPARKTLS.Handshake.Server_Msgs
+                       .Local_Config_Valid (HC.Cfg.Local)
+                     and then HC.Cfg.Random /= null
+                     and then Valid_ECDHE_Group (HC.Selected_Group),
+              Post => HC.Cfg.Local /= null
+                      and then HC.Cfg.Local.Has_Identity
+                      and then SPARKTLS.Handshake.Server_Msgs
+                        .Local_Config_Valid (HC.Cfg.Local)
+                      and then HC.Cfg.Random /= null
+                      and then Valid_ECDHE_Group (HC.Selected_Group)
          is
             Msg_Type : Byte;
             Msg_Len  : N32;
@@ -1177,8 +1195,17 @@ is
          end Parse_Complete_CKE;
 
          procedure Fail_Decode
-         with Pre  => Reasm_Building (HC),
+         with Pre  => Reasm_Building (HC)
+                      and then S.State not in
+                        Idle | Closing | Closed | Error_State
+                      and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+                      and then S.Input.Read_Pos + Rec.Record_Len
+                        <= S.Input.Write_Pos
+                      and then S.Input.Read_Pos + Rec.Record_Len
+                        <= IO_Buffer_Capacity,
               Post => Reasm_Building (HC)
+                      and then S.State = Error_State
+                      and then Result /= OK
          is
          begin
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1188,8 +1215,41 @@ is
 
          procedure Finish_CKE
            (Msg : in Byte_Seq)
-         with Pre  => Reasm_Building (HC),
+         with Pre  => Reasm_Building (HC)
+                      and then Msg'Length > 0
+                      and then Msg'Length <= N32'Last
+                      and then Msg'First <= N32'Last - 4
+                      and then S.State not in
+                        Idle | Closing | Closed | Error_State
+                      and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+                      and then S.Input.Read_Pos + Rec.Record_Len
+                        <= S.Input.Write_Pos
+                      and then S.Input.Read_Pos + Rec.Record_Len
+                        <= IO_Buffer_Capacity
+                      and then HC.Cfg.Local /= null
+                      and then HC.Cfg.Local.Has_Identity
+                      and then SPARKTLS.Handshake.Server_Msgs
+                        .Local_Config_Valid (HC.Cfg.Local)
+                      and then HC.Cfg.Random /= null
+                      and then Valid_ECDHE_Group (HC.Selected_Group),
               Post => Reasm_Building (HC)
+                      and then HC.Version = HC.Version'Old
+                      and then HC.Cfg.Local /= null
+                      and then HC.Cfg.Local.Has_Identity
+                      and then SPARKTLS.Handshake.Server_Msgs
+                        .Local_Config_Valid (HC.Cfg.Local)
+                      and then HC.Cfg.Random /= null
+                      and then HC.Selected_Group = HC.Selected_Group'Old
+                      and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+                      and then
+                        (if Result = OK
+                         then S.State = S.State'Old
+                              and then HC.Transcript_Len > 0
+                              and then HC.Transcript_Len <= Transcript_Capacity
+                              and then
+                                HC.TLS12_EMS_Transcript_Len <=
+                                  Transcript_Capacity
+                         else S.State = Error_State)
          is
             CKE_OK : Boolean;
          begin
@@ -1208,6 +1268,7 @@ is
             Append_Transcript (HC, Msg);
             HC.TLS12_EMS_Transcript_Len := HC.Transcript_Len;
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Result := OK;
          end Finish_CKE;
       begin
          --  Slice bound: Parse_Record_Header Post gives Record_Len <= Avail,
@@ -1245,6 +1306,8 @@ is
                if Take /= Frag_Len then
                   --  A CKE handshake message may span records, but this
                   --  state expects exactly that one message before CCS.
+                  HC.Reasm_Hdr_Pending := False;
+                  pragma Assert (Reasm_Building (HC));
                   Fail_Decode;
                   return;
                end if;
@@ -1264,6 +1327,8 @@ is
                   if HC.Reasm_Buf (0) /= HT_Client_Key_Exchange
                     or else HS_Msg_Len > Max_Client_Key_Exchange
                   then
+                     HC.Reasm_Hdr_Pending := False;
+                     pragma Assert (Reasm_Building (HC));
                      Fail_Decode;
                      return;
                   end if;
@@ -1288,6 +1353,7 @@ is
                HC.Reasm_Len := 0;
                HC.Reasm_Need := 0;
                HC.Reasm_Hdr_Pending := False;
+               Result := OK;
                Finish_CKE (Full);
                if Result /= OK then
                   return;
@@ -1342,6 +1408,7 @@ is
                Frag : constant Byte_Seq :=
                  S.Input.Data (FS .. FS + Frag_Len - 1);
             begin
+               Result := OK;
                Finish_CKE (Frag);
                if Result /= OK then
                   return;
@@ -1351,6 +1418,9 @@ is
       end;
 
       --  Compute ECDHE shared secret
+      pragma Assert (Reasm_Building (HC));
+      pragma Assert
+        (SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group (HC.Selected_Group));
       declare
          SS_OK  : Boolean    := False;
          --  RFC 5246 §7.2.2 / RFC 8446 §6.2: invalid peer share is
@@ -1367,9 +1437,11 @@ is
                --  helper's Post is formally proven by SPARK.
                SS_OK := Shared_Secret_Is_Acceptable_X25519
                           (HC.Shared_Secret (0 .. 31));
+               pragma Assert (Reasm_Building (HC));
                if not SS_OK then
                   SS_Err := Illegal_Parameter;
                end if;
+               pragma Assert (Reasm_Building (HC));
             when Group_Secp256r1 =>
                declare
                   use SPARKTLSCrypto.P256.Point;
@@ -1386,9 +1458,11 @@ is
                         HC.Shared_Secret (0 .. 31) := E (1 .. 32);
                      end;
                      SS_OK := True;
+                     pragma Assert (Reasm_Building (HC));
                   else
                      SS_Err := Illegal_Parameter;
                   end if;
+                  pragma Assert (Reasm_Building (HC));
                end;
             when Group_Secp384r1 =>
                declare SS : Bytes_48; OK384 : Boolean;
@@ -1397,11 +1471,14 @@ is
                     (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
                   if OK384 then
                      HC.Shared_Secret := SS; SS_OK := True;
+                     pragma Assert (Reasm_Building (HC));
                   else
                      SS_Err := Illegal_Parameter;
                   end if;
+                  pragma Assert (Reasm_Building (HC));
                end;
-            when others => null;
+            when others =>
+               pragma Assert (False);
             end case;
             pragma Assert (Reasm_Coherent (HC));
             pragma Assert
@@ -1455,7 +1532,11 @@ is
          S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
    begin
-      if Input_Available (S) = 0 then Result := Need_Input; return; end if;
+      if Input_Available (S) = 0 then
+         Result := Need_Input;
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
 
       Records.Parse_Record_Header
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
@@ -1465,30 +1546,34 @@ is
          --  state. We're past the client's CCS (READ side encrypted)
          --  but before our own CCS (WRITE side still plaintext), so
          --  the alert MUST be plaintext.
-         if Rec.Bad_Version then
-            Send_Alert_And_Error (S, Protocol_Version, Result);
-         elsif Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
-         else
-            Result := Need_Input;
-         end if;
-         return;
-      end if;
+	         if Rec.Bad_Version then
+	            Send_Alert_And_Error (S, Protocol_Version, Result);
+	         elsif Rec.Overflow then
+	            Send_Alert_And_Error (S, Record_Overflow, Result);
+	         else
+	            Result := Need_Input;
+	         end if;
+	         pragma Assert (Reasm_Building (HC));
+	         return;
+	      end if;
 
-      if Rec.Content /= Records.Content_Handshake then
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Send_Alert_And_Error (S, Unexpected_Message, Result); return;
-      end if;
+	      if Rec.Content /= Records.Content_Handshake then
+	         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	         Send_Alert_And_Error (S, Unexpected_Message, Result);
+	         pragma Assert (Reasm_Building (HC));
+	         return;
+	      end if;
 
       declare
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
       begin
-         if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Record_Overflow, Result);
-            return;
-         end if;
+	         if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
+	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	            Send_Alert_And_Error (S, Record_Overflow, Result);
+	            pragma Assert (Reasm_Building (HC));
+	            return;
+	         end if;
 
          declare
             Min_Frag : constant N32 :=
@@ -1496,10 +1581,12 @@ is
                then GCM_Tag_Len + 1
                else Explicit_Nonce_Len + GCM_Tag_Len + 1);
          begin
-            if Frag_Len < Min_Frag then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result); return;
-            end if;
+	            if Frag_Len < Min_Frag then
+	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	               Send_Alert_And_Error (S, Decode_Error, Result);
+	               pragma Assert (Reasm_Building (HC));
+	               return;
+	            end if;
          end;
 
          pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
@@ -1523,16 +1610,19 @@ is
 	            pragma Assert (Reasm_Building (HC));
 	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
-            if not DV then
-               Send_Alert_And_Error (S, Bad_Record_MAC, Result); return;
-            end if;
+	            if not DV then
+	               Send_Alert_And_Error (S, Bad_Record_MAC, Result);
+	               pragma Assert (Reasm_Building (HC));
+	               return;
+	            end if;
 
             if HC.Reasm_Need > 0 or else PL < 4 then
-               if HC.Reasm_Need = 0 then
-                  if PL = 0 then
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
+	               if HC.Reasm_Need = 0 then
+	                  if PL = 0 then
+	                     Send_Alert_And_Error (S, Decode_Error, Result);
+	                     pragma Assert (Reasm_Building (HC));
+	                     return;
+	                  end if;
 
                   HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
                   HC.Reasm_Need := 4;
@@ -1540,12 +1630,13 @@ is
                   HC.Reasm_Len := PL;
                   HC.Reasm_Buf (0 .. PL - 1) := Plaintext (0 .. PL - 1);
                else
-                  if HC.Reasm_Buf = null
-                    or else HC.Reasm_Len > N32 (HC.Reasm_Buf'Length)
-                  then
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
+	                  if HC.Reasm_Buf = null
+	                    or else HC.Reasm_Len > N32 (HC.Reasm_Buf'Length)
+	                  then
+	                     Send_Alert_And_Error (S, Decode_Error, Result);
+	                     pragma Assert (Reasm_Building (HC));
+	                     return;
+	                  end if;
 
                   declare
                      Remaining : constant N32 :=
@@ -1557,20 +1648,23 @@ is
                      if Take > 0 then
                         if HC.Reasm_Len + Take >
                            N32 (HC.Reasm_Buf'Length)
-                        then
-                           Send_Alert_And_Error (S, Decode_Error, Result);
-                           return;
-                        end if;
+	                        then
+	                           Send_Alert_And_Error (S, Decode_Error, Result);
+	                           pragma Assert (Reasm_Building (HC));
+	                           return;
+	                        end if;
                         HC.Reasm_Buf
                           (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
                           Plaintext (0 .. Take - 1);
                         HC.Reasm_Len := HC.Reasm_Len + Take;
                      end if;
 
-                     if Take /= PL then
-                        Send_Alert_And_Error (S, Unexpected_Message, Result);
-                        return;
-                     end if;
+	                     if Take /= PL then
+	                        HC.Reasm_Hdr_Pending := False;
+	                        Send_Alert_And_Error (S, Unexpected_Message, Result);
+	                        pragma Assert (Reasm_Building (HC));
+	                        return;
+	                     end if;
                   end;
                end if;
 
@@ -1578,25 +1672,25 @@ is
                  and then HC.Reasm_Len >= 4
                  and then HC.Reasm_Buf /= null
                then
-                  declare
-                     Msg_Len : constant N32 :=
-                        N32 (HC.Reasm_Buf (1)) * 65536 +
-                        N32 (HC.Reasm_Buf (2)) * 256 +
-                        N32 (HC.Reasm_Buf (3));
-                  begin
-                     if HC.Reasm_Buf (0) /= HT_Finished then
-                        Send_Alert_And_Error
-                          (S, Unexpected_Message, Result);
-                        return;
-                     end if;
-                     if Msg_Len /= Finished_Verify_Len then
-                        Send_Alert_And_Error
-                          (S, Certificate_Verify_Failed, Result);
-                        return;
-                     end if;
-                     HC.Reasm_Need := 4 + Msg_Len;
-                     HC.Reasm_Hdr_Pending := False;
-                  end;
+	                  if HC.Reasm_Buf (0) /= HT_Finished then
+	                     HC.Reasm_Hdr_Pending := False;
+	                     Send_Alert_And_Error
+	                       (S, Unexpected_Message, Result);
+	                     pragma Assert (Reasm_Building (HC));
+	                     return;
+	                  end if;
+                  if HC.Reasm_Buf (1) /= 0
+                    or else HC.Reasm_Buf (2) /= 0
+                    or else HC.Reasm_Buf (3) /= Byte (Finished_Verify_Len)
+                  then
+	                     HC.Reasm_Hdr_Pending := False;
+	                     Send_Alert_And_Error
+	                       (S, Certificate_Verify_Failed, Result);
+	                     pragma Assert (Reasm_Building (HC));
+	                     return;
+	                  end if;
+                  HC.Reasm_Need := Finished_12_Total_Len;
+                  HC.Reasm_Hdr_Pending := False;
                end if;
 
                if HC.Reasm_Len < HC.Reasm_Need then
@@ -1607,11 +1701,12 @@ is
 
                declare
                   Need : constant N32 := HC.Reasm_Need;
-               begin
-                  if Need > N32 (Plaintext'Length) then
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
+	               begin
+	                  if Need > N32 (Plaintext'Length) then
+	                     Send_Alert_And_Error (S, Decode_Error, Result);
+	                     pragma Assert (Reasm_Building (HC));
+	                     return;
+	                  end if;
 
                   Plaintext (0 .. Need - 1) :=
                     HC.Reasm_Buf (0 .. Need - 1);
@@ -1622,52 +1717,51 @@ is
                   HC.Reasm_Hdr_Pending := False;
                end;
             elsif PL >= 4 then
-               declare
-                  Msg_Len : constant N32 :=
-                     N32 (Plaintext (1)) * 65536 +
-                     N32 (Plaintext (2)) * 256 +
-                     N32 (Plaintext (3));
-                  Msg_Total : constant N32 := 4 + Msg_Len;
-               begin
-                  if Plaintext (0) = HT_Finished
-                    and then Msg_Len = Finished_Verify_Len
-                    and then Msg_Total > PL
-                  then
-                     HC.Reasm_Buf :=
-                       new Byte_Seq'(0 .. Finished_12_Total_Len - 1 => 0);
-                     HC.Reasm_Need := Msg_Total;
-                     HC.Reasm_Hdr_Pending := False;
-                     HC.Reasm_Len := PL;
-                     HC.Reasm_Buf (0 .. PL - 1) := Plaintext (0 .. PL - 1);
-                     Result := (if Input_Available (S) > 0 then OK else Need_Input);
-                     pragma Assert (Reasm_Building (HC));
-                     return;
-                  end if;
-               end;
+               if Plaintext (0) = HT_Finished
+                 and then Plaintext (1) = 0
+                 and then Plaintext (2) = 0
+                 and then Plaintext (3) = Byte (Finished_Verify_Len)
+                 and then Finished_12_Total_Len > PL
+               then
+                  HC.Reasm_Buf :=
+                    new Byte_Seq'(0 .. Finished_12_Total_Len - 1 => 0);
+                  HC.Reasm_Need := Finished_12_Total_Len;
+                  HC.Reasm_Hdr_Pending := False;
+                  HC.Reasm_Len := PL;
+                  HC.Reasm_Buf (0 .. PL - 1) := Plaintext (0 .. PL - 1);
+                  Result := (if Input_Available (S) > 0 then OK else Need_Input);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
             end if;
 
-            if PL < 4 then
-               Send_Alert_And_Error (S, Decode_Error, Result); return;
-            end if;
+	            if PL < 4 then
+	               Send_Alert_And_Error (S, Decode_Error, Result);
+	               pragma Assert (Reasm_Building (HC));
+	               return;
+	            end if;
 
             declare
                Msg_Type : constant Byte := Plaintext (0);
-               Msg_Len : constant N32 := N32 (Plaintext (1)) * 65536 +
-                                    N32 (Plaintext (2)) * 256 +
-                                    N32 (Plaintext (3));
             begin
-               if Msg_Type /= HT_Finished then
-                  Send_Alert_And_Error (S, Unexpected_Message, Result); return;
-               end if;
-               if Msg_Len /= Finished_Verify_Len then
+	               if Msg_Type /= HT_Finished then
+	                  Send_Alert_And_Error (S, Unexpected_Message, Result);
+	                  pragma Assert (Reasm_Building (HC));
+	                  return;
+	               end if;
+               if Plaintext (1) /= 0
+                 or else Plaintext (2) /= 0
+                 or else Plaintext (3) /= Byte (Finished_Verify_Len)
+               then
                   --  Finished length mismatch — RFC 8446 §6.2:
                   --  decrypt_error (alert 51). BoGo
                   --  TrailingMessageData-ClientFinished expects this
                   --  rather than decode_error.
-                  Send_Alert_And_Error
-                    (S, Certificate_Verify_Failed, Result);
-                  return;
-               end if;
+	                  Send_Alert_And_Error
+	                    (S, Certificate_Verify_Failed, Result);
+	                  pragma Assert (Reasm_Building (HC));
+	                  return;
+	               end if;
                --  RFC 5246 §7.4.9: Finished is the last handshake
                --  message in the client's flight. Any plaintext bytes
                --  in the same record beyond `4 + Finished_Verify_Len`
@@ -1676,10 +1770,11 @@ is
                --  is still plaintext at this point (CCS not yet sent),
                --  so the alert MUST be plaintext — sending it encrypted
                --  leaves Go's TLS stack seeing garbage on the wire.
-               if PL /= 4 + Finished_Verify_Len then
-                  Send_Alert_And_Error (S, Unexpected_Message, Result);
-                  return;
-               end if;
+	               if PL /= 4 + Finished_Verify_Len then
+	                  Send_Alert_And_Error (S, Unexpected_Message, Result);
+	                  pragma Assert (Reasm_Building (HC));
+	                  return;
+	               end if;
 
                declare
                   Exp : Verify_Data_12;
@@ -1741,9 +1836,10 @@ is
                         --  mismatch → fatal alert. Server WRITE state
                         --  is still plaintext (no CCS sent yet) so the
                         --  alert MUST be plaintext, not encrypted.
-                        Send_Alert_And_Error
-                          (S, Handshake_Failure, Result);
-                        pragma Assert (Output_Pending (S) > 0);
+	                        Send_Alert_And_Error
+	                          (S, Handshake_Failure, Result);
+	                        pragma Assert (Reasm_Building (HC));
+	                        pragma Assert (Output_Pending (S) > 0);
                         pragma Assert
                           (S.Last_Error /= Unexpected_Message);
                         pragma Assert
@@ -1847,11 +1943,12 @@ is
                   Result        => NST_Buf,
                   Len           => NST_Total);
                if NST_Total = 0 then
-                  S.Last_Error := Insufficient_Buffer;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
-                  return;
-               end if;
+	                  S.Last_Error := Insufficient_Buffer;
+	                  Set_State (S, Error_State);
+	                  Result := Error_Alert;
+	                  pragma Assert (Reasm_Building (HC));
+	                  return;
+	               end if;
                pragma Assert (NST_Total > 0);
                pragma Assert (NST_Total - 1 <= NST_Buf'Last);
 
@@ -1870,22 +1967,24 @@ is
                   Records.Build_Handshake_Record
                     (NST_Data, Scratch, NST_Rec_Out);
                   if NST_Rec_Out = 0 then
-                     S.Last_Error := Insufficient_Buffer;
-                     Set_State (S, Error_State);
-                     Result := Error_Alert;
-                     return;
-                  end if;
+	                     S.Last_Error := Insufficient_Buffer;
+	                     Set_State (S, Error_State);
+	                     Result := Error_Alert;
+	                     pragma Assert (Reasm_Building (HC));
+	                     return;
+	                  end if;
                end;
             end;
          end if;
 
          Records.Build_CCS_Record (Scratch, CCS_Out);
          if CCS_Out = 0 then
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
-            return;
-         end if;
+	            S.Last_Error := Insufficient_Buffer;
+	            Set_State (S, Error_State);
+	            Result := Error_Alert;
+	            pragma Assert (Reasm_Building (HC));
+	            return;
+	         end if;
 
 	         if Use_384 then
 		            SPARKNaCl.Hashing.SHA384.Hash
@@ -1939,23 +2038,25 @@ is
 	         Build_Encrypted_Record_12
 	           (FB (0 .. FL - 1), 16#16#, S.Server_App,
 	            HC.Server_Write_IV_12, HC.Server_Seq_12, Scratch, EO);
-         if EO = 0 then
-            HC.Server_Seq_12 := Saved_Seq;  --  Build_Encrypted_Record_12
-                                            --  always advances; rollback.
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
-            return;
-         end if;
+	         if EO = 0 then
+	            HC.Server_Seq_12 := Saved_Seq;  --  Build_Encrypted_Record_12
+	                                            --  always advances; rollback.
+	            S.Last_Error := Insufficient_Buffer;
+	            Set_State (S, Error_State);
+	            Result := Error_Alert;
+	            pragma Assert (Reasm_Building (HC));
+	            return;
+	         end if;
 
          --  Atomic commit
-         if Free_Space (S.Output) < Scratch.Write_Pos then
-            HC.Server_Seq_12 := Saved_Seq;
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
-            return;
-         end if;
+	         if Free_Space (S.Output) < Scratch.Write_Pos then
+	            HC.Server_Seq_12 := Saved_Seq;
+	            S.Last_Error := Insufficient_Buffer;
+	            Set_State (S, Error_State);
+	            Result := Error_Alert;
+	            pragma Assert (Reasm_Building (HC));
+	            return;
+	         end if;
          S.Output.Data (S.Output.Write_Pos ..
                         S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
             Scratch.Data (0 .. Scratch.Write_Pos - 1);

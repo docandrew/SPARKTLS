@@ -2739,6 +2739,7 @@ is
             Cert_Len => HC.Cfg.Local.NaCl_Cert_Len,
             Result   => Cert_Buf,
             Len      => Cert_Len);
+         pragma Assert (Reasm_Coherent (HC));
 
          if Cert_Len > 0 then
             Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
@@ -2748,11 +2749,12 @@ is
                Keys       => HC.Client_HS,
                Output     => Scratch,
                Bytes_Out  => Enc_Out);
-	            if Enc_Out = 0 then
-	               Result := Error_Alert;
-	               pragma Assert (Reasm_Coherent (HC));
-	               return;
-	            end if;
+            if Enc_Out = 0 then
+               Result := Error_Alert;
+               pragma Assert (Reasm_Coherent (HC));
+               return;
+            end if;
+            pragma Assert (Reasm_Coherent (HC));
          end if;
       end;
 
@@ -2794,6 +2796,7 @@ is
                   Random          => HC.Cfg.Random,
                   Result          => CV_Buf,
                   Len             => CV_Len);
+               pragma Assert (Reasm_Coherent (HC));
 
                if CV_Len > 0 then
                   Append_Transcript (HC, CV_Buf (0 .. CV_Len - 1));
@@ -2803,12 +2806,13 @@ is
                      Keys       => HC.Client_HS,
                      Output     => Scratch,
                      Bytes_Out  => Enc_Out);
-	                  if Enc_Out = 0 then
-	                     Result := Error_Alert;
-	                     pragma Assert (Reasm_Coherent (HC));
-	                     return;
-	                  end if;
-	               end if;
+		                  if Enc_Out = 0 then
+		                     Result := Error_Alert;
+                     pragma Assert (Reasm_Coherent (HC));
+                     return;
+                  end if;
+                  pragma Assert (Reasm_Coherent (HC));
+               end if;
 	            end;
 	         end;
 	      end if;

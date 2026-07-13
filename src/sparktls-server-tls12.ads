@@ -118,11 +118,10 @@ is
         Post => S.State in Wait_Client_Finished | Connected | Closing
                            | Error_State
 	               and then HC.Cfg.Local /= null
-	                and then HC.Cfg.Local.Has_Identity
-	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                  (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null
-                 and then Reasm_Building (HC);
+		        and then HC.Cfg.Local.Has_Identity
+		        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+		                   (HC.Cfg.Local)
+		        and then HC.Cfg.Random /= null;
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block
@@ -168,14 +167,13 @@ is
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                           (HC.Server_Seq_12)
                and then Free_Space (S.Output) >= 7,
-        Post => S.State in Wait_Client_Finished | Connected | Closing
-                           | Error_State
-	        and then HC.Cfg.Local /= null
-	        and then HC.Cfg.Local.Has_Identity
-	        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                   (HC.Cfg.Local)
-	        and then HC.Cfg.Random /= null
-                and then Reasm_Building (HC);
+	        Post => S.State in Wait_Client_Finished | Connected | Closing
+	                           | Error_State
+		        and then HC.Cfg.Local /= null
+		        and then HC.Cfg.Local.Has_Identity
+		        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+		                   (HC.Cfg.Local)
+		        and then HC.Cfg.Random /= null;
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:
@@ -194,7 +192,11 @@ is
         and then HC.Cfg.Random /= null
         and then Reasm_Building (HC)
         --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
+        and then HC.Transcript_Len > 0
         and then HC.Transcript_Len <= Transcript_Capacity
+        and then
+          (if HC.TLS12_EMS_Transcript_Len > 0
+           then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
      --  Negotiated_Suite must be one of the six TLS 1.2 ECDHE suites
      --  we recognize, so the local mapping matches Internal_Suite_For.
      and then S.Negotiated_Suite in

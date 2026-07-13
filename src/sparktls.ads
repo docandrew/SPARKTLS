@@ -1449,7 +1449,7 @@ is
       --  legacy_session_id (whatever its length, 0..32). We store
       --  both the bytes and the length so we can echo accurately
       --  rather than always padding to 32.
-      Legacy_Session_ID_Len : N32 := 0;
+      Legacy_Session_ID_Len : N32 range 0 .. 32 := 0;
 
       --  Signature algorithm negotiation
       Peer_Sig_Algos      : Sig_Algo_List := (others => 0);
@@ -1528,7 +1528,7 @@ is
       --  ClientKeyExchange, inclusive. Capture that transcript length
       --  immediately after CKE so later CertificateVerify / Finished
       --  appends cannot affect master_secret derivation.
-      TLS12_EMS_Transcript_Len : N32 := 0;
+      TLS12_EMS_Transcript_Len : N32 range 0 .. Transcript_Capacity := 0;
 
       --  TLS 1.2: client offered renegotiation_info extension (RFC 5746)
       --  or sent the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) in

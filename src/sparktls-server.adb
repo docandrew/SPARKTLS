@@ -805,7 +805,7 @@ is
    with SPARK_Mode => Off
    is
    begin
-      case S.State is
+                  case S.State is
          when Connected =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
@@ -4099,9 +4099,10 @@ is
                         Set_State (S, Error_State);
                         Result := Error_Alert;
                   end case;
-				                        pragma Assert
-				                          (if S.State = Wait_Client_Hello
-				                           then Reasm_Building (HC));
+                  pragma Assert
+                    (if S.State not in Error_State | Closed
+                     then Server_Configured (HC)
+                          and then Reasm_Building (HC));
                end;
             end;
 

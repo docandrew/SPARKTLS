@@ -42,6 +42,8 @@ is
    function Compression_Methods_OK
      (Data     : Byte_Seq;
       Is_TLS13 : Boolean) return Boolean
+   with Pre => Data'Length > 0
+               and then Data'Last <= N32 (Max_HS_Msg) - 1
    is
       BS, P : N32;
       Sid_Len, Cs_Len, Cm_Len : N32;
@@ -63,6 +65,9 @@ is
       if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
          return False;
       end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Sid_Len <= Data'Last - P + 1);
+      pragma Assert (P + Sid_Len <= Data'Last + 1);
       P := P + Sid_Len;
 
       if P > Data'Last or else Data'Last - P < 1 then
@@ -73,6 +78,9 @@ is
       if P > Data'Last or else Cs_Len > Data'Last - P + 1 then
          return False;
       end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Cs_Len <= Data'Last - P + 1);
+      pragma Assert (P + Cs_Len <= Data'Last + 1);
       P := P + Cs_Len;
 
       if P > Data'Last then
@@ -89,6 +97,9 @@ is
       then
          return False;
       end if;
+      pragma Assert (First_Method <= Data'Last);
+      pragma Assert (Cm_Len <= Data'Last - First_Method + 1);
+      pragma Assert (First_Method + Cm_Len - 1 <= Data'Last);
       Last_Method := First_Method + Cm_Len - 1;
 
       if Is_TLS13 then
@@ -3954,9 +3965,7 @@ is
       --  (BoGo Resume-Server-TLS13 with SendBothTickets sends 16),
       --  the HS header overstated the body length, causing the
       --  peer to fail SH parse with trailing-garbage bytes.
-      SID_Echo :=
-         (if HC.Legacy_Session_ID_Len in 0 .. 32
-          then HC.Legacy_Session_ID_Len else 0);
+      SID_Echo := HC.Legacy_Session_ID_Len;
       SH_Body_Len := 40 + SID_Echo + Ext_Total;
       SH_Msg_Len := 4 + SH_Body_Len;
 

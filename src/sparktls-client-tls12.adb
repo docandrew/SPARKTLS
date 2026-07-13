@@ -61,10 +61,11 @@ is
                     Data'Last - Data'First < Transcript_Capacity)
 	                and then HC.Transcript_Len <= Transcript_Capacity
 	                and then Reasm_Coherent (HC),
-	        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
-	                and then (if HC.Transcript_Len'Old > 0
-	                             or else Data'First <= Data'Last
-	                          then HC.Transcript_Len > 0)
+		        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
+		                and then HC.Transcript_Len <= Transcript_Capacity
+		                and then (if HC.Transcript_Len'Old > 0
+		                             or else Data'First <= Data'Last
+		                          then HC.Transcript_Len > 0)
 	                and then HC.Selected_Group = HC.Selected_Group'Old
                 and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
                 and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
@@ -162,6 +163,9 @@ is
    with Pre => Reasm_Building (HC)
                and then HC.Transcript_Len > 0
                and then HC.Transcript_Len <= Transcript_Capacity
+               and then
+                 (if HC.TLS12_EMS_Transcript_Len > 0
+                  then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
                and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                and then S.Negotiated_Suite in
@@ -223,6 +227,8 @@ is
             TH     : Digest;
             TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
          begin
+            pragma Assert (EMS_Len > 0);
+            pragma Assert (EMS_Len <= Transcript_Capacity);
             if Use_384 then
                SPARKNaCl.Hashing.SHA384.Hash
                  (TH_384, HC.Transcript (0 .. EMS_Len - 1));
@@ -1935,6 +1941,9 @@ is
                 and then S.State not in Idle | Closing | Closed | Error_State
                 and then Reasm_Coherent (HC)
                 and then HC.Cfg.Random /= null
+                and then
+                  (if HC.TLS12_EMS_Transcript_Len > 0
+                   then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                 and then Valid_ECDHE_Group (HC.Selected_Group)
@@ -2072,9 +2081,10 @@ is
                 and then HC.Reasm_Buf'Length <= Max_HS_Msg
                 and then not HC.Reasm_Hdr_Pending
                 and then HC.Reasm_Need >= 4
-                and then HC.Reasm_Need <= HC.Reasm_Len
-                and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
-                and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+		                     and then HC.Reasm_Need <= HC.Reasm_Len
+		                     and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+		                     and then HC.Reasm_Need <= Transcript_Capacity
+		                     and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
                 and then Msg_Len <= HC.Reasm_Need - 4
                 and then Msg_Len <= Max_HS_Msg - 4
                 and then HC.Cfg.Random /= null
@@ -2531,6 +2541,7 @@ is
                      and then HC.Reasm_Need >= 4
                      and then HC.Reasm_Need <= HC.Reasm_Len
                      and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+                     and then HC.Reasm_Need <= Transcript_Capacity
                      and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
                      and then Msg_Len <= HC.Reasm_Need - 4
                      and then Msg_Len <= Max_HS_Msg - 4
@@ -2579,6 +2590,15 @@ is
       end if;
       pragma Assert (Msg_Len <= HC.Reasm_Need - 4);
       pragma Assert (Reasm_Coherent (HC));
+      if HC.Reasm_Need > Transcript_Capacity then
+         Free_Byte_Seq (HC.Reasm_Buf);
+         HC.Reasm_Len := 0;
+         HC.Reasm_Need := 0;
+         HC.Reasm_Hdr_Pending := False;
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         pragma Assert (Reasm_Coherent (HC));
+         return;
+      end if;
       Ready := True;
       Result := OK;
    end Prepare_Leftover_Server_Flight_Message;
@@ -2695,6 +2715,7 @@ is
                      and then HC.Reasm_Need >= 4
                      and then HC.Reasm_Need <= HC.Reasm_Len
                      and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+                     and then HC.Reasm_Need <= Transcript_Capacity
                      and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
                      and then Msg_Len <= HC.Reasm_Need - 4
                      and then Msg_Len <= Max_HS_Msg - 4
@@ -2860,6 +2881,7 @@ is
                      and then HC.Reasm_Need >= 4
                      and then HC.Reasm_Need <= HC.Reasm_Len
                      and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+                     and then HC.Reasm_Need <= Transcript_Capacity
                      and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
                      and then Msg_Len <= HC.Reasm_Need - 4
                      and then Msg_Len <= Max_HS_Msg - 4
@@ -3290,6 +3312,7 @@ is
 	                     and then HC.Reasm_Need >= 4
 	                     and then HC.Reasm_Need <= HC.Reasm_Len
 	                     and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+	                     and then HC.Reasm_Need <= Transcript_Capacity
 	                     and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
 	                     and then Msg_Len <= HC.Reasm_Need - 4
 	                     and then Msg_Len <= Max_HS_Msg - 4
@@ -3472,10 +3495,13 @@ is
         (Msg_Len : in N32;
          Result  : out Action)
       with Pre  => Reasm_Coherent (HC)
+                   and then S.State not in
+                     Idle | Closing | Closed | Error_State
                    and then HC.Reasm_Buf /= null
                    and then HC.Reasm_Need >= 4
                    and then HC.Reasm_Need <= HC.Reasm_Len
                    and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+                   and then HC.Reasm_Need <= Transcript_Capacity
                    and then Msg_Len <= HC.Reasm_Need - 4,
            Post => Reasm_Coherent (HC);
 
@@ -3520,8 +3546,12 @@ is
             S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
             S.TLS12_New_Ticket.Valid := True;
 
-            Append_Transcript
-              (HC, HC.Reasm_Buf (0 .. HC.Reasm_Need - 1));
+            declare
+               NST_Msg : constant Byte_Seq :=
+                 HC.Reasm_Buf (0 .. HC.Reasm_Need - 1);
+            begin
+               Append_Transcript (HC, NST_Msg);
+            end;
             Free_Byte_Seq (HC.Reasm_Buf);
             HC.Reasm_Len := 0;
             HC.Reasm_Need := 0;
