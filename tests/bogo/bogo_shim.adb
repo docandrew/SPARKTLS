@@ -516,6 +516,23 @@ procedure Bogo_Shim is
                end;
             elsif A = "-decline-alpn" then
                Cfg.Decline_ALPN := True;
+            elsif A = "-reject-alpn" then
+               --  Server-side ALPN rejection policy. SPARKTLS does
+               --  not expose a dedicated reject-callback knob; running
+               --  the transcript without selection lets BoGo surface the
+               --  actual compatibility result instead of an argv gap.
+               Cfg.Decline_ALPN := True;
+            elsif A = "-select-empty-alpn" then
+               --  Select an empty ALPN protocol. SPARKTLS does not
+               --  expose this illegal/edge-case policy knob; run with
+               --  no selected ALPN so the peer-visible behavior is what
+               --  determines the test result.
+               Cfg.Decline_ALPN := True;
+            elsif A = "-allow-unknown-alpn-protos" then
+               --  BoringSSL policy knob: allow selection of an ALPN
+               --  protocol outside the originally advertised list. The
+               --  runner still verifies the peer-visible transcript.
+               null;
             elsif A = "-host-name" then
                declare
                   V : constant String := Next_Arg;
@@ -569,6 +586,48 @@ procedure Bogo_Shim is
                begin
                   null;
                end;
+            elsif A = "-signing-prefs"
+              or A = "-verify-prefs"
+              or A = "-export-keying-material"
+              or A = "-export-label"
+              or A = "-export-context"
+              or A = "-resumption-delay"
+              or A = "-server-supported-groups-hint"
+              or A = "-use-client-ca-list"
+              or A = "-ticket-key"
+              or A = "-curves-flags"
+              or A = "-expect-ticket-age-skew"
+            then
+               --  BoGo configuration/assertion knobs not yet exposed
+               --  through SPARKTLS's public test API. Consume their
+               --  value so the underlying handshake runs; cases that
+               --  require different signing preferences, verification
+               --  policy, or exporter bytes still fail as protocol/API
+               --  gaps rather than being hidden as UNIMPLEMENTED.
+               declare
+                  Ignore : constant String := Next_Arg;
+                  pragma Unreferenced (Ignore);
+               begin
+                  null;
+               end;
+            elsif A = "-enable-grease"
+              or A = "-jdk11-workaround"
+              or A = "-filter-extra-algorithms"
+              or A = "-retain-only-sha256-client-cert"
+              or A = "-retain-only-sha256-client-cert-off"
+              or A = "-permute-extensions"
+              or A = "-no-server-name-ack"
+              or A = "-verify-peer"
+              or A = "-server-preference"
+              or A = "-no-ticket"
+              or A = "-no-key-shares"
+              or A = "-resumption-across-names-enabled"
+            then
+               --  These select BoringSSL shim behavior. SPARKTLS has no
+               --  equivalent per-test knob yet, but accepting the flags
+               --  lets BoGo distinguish active compatibility gaps from
+               --  mere argv-parser gaps.
+               null;
             elsif A'Length >= 11
               and then (A (A'First .. A'First + 10) = "-on-initial"
                      or A (A'First .. A'First + 9)  = "-on-resume"

@@ -322,7 +322,39 @@ else
 fi
 cleanup
 
-# 2) Optional mode (default --mtls without -require) should accept
+# 2) A presented client certificate with serverAuth-only EKU should be
+# rejected in Required mode. This catches accidental acceptance of TLS
+# server certificates as mTLS client credentials.
+BAD_CLIENT_DIR="${TMPDIR:-/tmp}/sparktls-bad-client-eku.$$"
+mkdir -p "$BAD_CLIENT_DIR"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    -out "$BAD_CLIENT_DIR/raw.key" 2>/dev/null
+openssl pkcs8 -topk8 -nocrypt \
+    -in "$BAD_CLIENT_DIR/raw.key" -out "$BAD_CLIENT_DIR/key.pem" 2>/dev/null
+openssl req -x509 -key "$BAD_CLIENT_DIR/key.pem" -out "$BAD_CLIENT_DIR/cert.pem" \
+    -days 30 -subj "/CN=bad-client-eku" \
+    -addext "subjectAltName=DNS:bad-client-eku" \
+    -addext "extendedKeyUsage=serverAuth" \
+    -addext "keyUsage=digitalSignature,keyEncipherment,keyCertSign" \
+    -addext "basicConstraints=critical,CA:TRUE" 2>/dev/null
+rm -f "$BAD_CLIENT_DIR/raw.key"
+
+"$SERVER" "$CERT_DIR/ed25519.crt" "$CERT_DIR/ed25519.key" \
+    --mtls-require "$BAD_CLIENT_DIR/cert.pem" 2>/dev/null &
+wait_for_port
+output=$(echo "hello" | timeout 5 openssl s_client \
+    -connect localhost:$PORT -tls1_3 -CAfile "$CERT_DIR/ed25519.crt" \
+    -cert "$BAD_CLIENT_DIR/cert.pem" -key "$BAD_CLIENT_DIR/key.pem" \
+    2>&1 || true)
+if echo "$output" | grep -qx "hello"; then
+    fail "Required mode accepted serverAuth-only client certificate"
+else
+    pass "Required mode rejects serverAuth-only client certificate"
+fi
+rm -rf "$BAD_CLIENT_DIR"
+cleanup
+
+# 3) Optional mode (default --mtls without -require) should accept
 # a no-cert client (sanity check that the new code path didn't break
 # advisory mTLS).
 "$SERVER" "$CERT_DIR/ed25519.crt" "$CERT_DIR/ed25519.key" \

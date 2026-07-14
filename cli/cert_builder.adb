@@ -409,16 +409,22 @@ package body Cert_Builder is
             end;
          end if;
 
-         --  Extended Key Usage (serverAuth)
+         --  Extended Key Usage (serverAuth + clientAuth)
          if Params.Has_EKU_Server_Auth then
             declare
                Ext_S : X509.N32;
-               --  SEQUENCE { OID id-kp-serverAuth (1.3.6.1.5.5.7.3.1) }
-               EKU_Value : constant X509.Byte_Seq (0 .. 11) :=
-                 (16#30#, 16#0A#,                          --  SEQUENCE, 10 bytes
+               --  SEQUENCE {
+               --    OID id-kp-serverAuth (1.3.6.1.5.5.7.3.1),
+               --    OID id-kp-clientAuth (1.3.6.1.5.5.7.3.2)
+               --  }
+               EKU_Value : constant X509.Byte_Seq (0 .. 21) :=
+                 (16#30#, 16#14#,                          --  SEQUENCE, 20 bytes
                   16#06#, 16#08#,                          --  OID, 8 bytes
                   16#2B#, 16#06#, 16#01#, 16#05#,          --  1.3.6.1.
-                  16#05#, 16#07#, 16#03#, 16#01#);         --  5.5.7.3.1
+                  16#05#, 16#07#, 16#03#, 16#01#,          --  5.5.7.3.1
+                  16#06#, 16#08#,                          --  OID, 8 bytes
+                  16#2B#, 16#06#, 16#01#, 16#05#,          --  1.3.6.1.
+                  16#05#, 16#07#, 16#03#, 16#02#);         --  5.5.7.3.2
             begin
                Start_Sequence (TBS_Buf, TBS_Pos, Ext_S);
                Put_OID (TBS_Buf, TBS_Pos,

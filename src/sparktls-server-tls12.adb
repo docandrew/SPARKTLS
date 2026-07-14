@@ -1516,8 +1516,9 @@ is
    is
       pragma Unreferenced (S, HC);
    begin
-      --  TODO: implement CCS handling per RFC 5246 §7.1 — activate client
-      --  write keys for decrypting subsequent records.
+      --  The normal TLS 1.2 server dispatcher consumes CCS inline before
+      --  Process_Client_Finished_12. Keep this stale hook reject-only so
+      --  an unexpected dispatch path fails closed.
       Result := Error_Alert;
    end Process_Client_CCS_12;
 

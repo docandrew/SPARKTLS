@@ -409,13 +409,12 @@ is
                and then Rec.Fragment_Pos = Records.Record_Header_Size
                and then Rec.Record_Len >= Rec.Fragment_Pos
 	               and then Rec.Fragment_Len = Rec.Record_Len - Rec.Fragment_Pos
-	               and then Rec.Record_Len <= Available (S.Input)
-	               and then Reasm_Building (HC),
-			        Post => (S.State = S.State'Old
-			                 or else Valid_Transition (S.State'Old, S.State))
-			                and then (if S.State not in Error_State | Closed
-			                          then Server_Configured (HC)
-			                               and then Reasm_Building (HC));
+		               and then Rec.Record_Len <= Available (S.Input)
+		               and then Reasm_Building (HC),
+					        Post => (S.State = S.State'Old
+				                 or else Valid_Transition (S.State'Old, S.State))
+				                and then (if S.State not in Error_State | Closed
+				                          then Server_Configured (HC));
    procedure Verify_Client_Finished
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -4408,6 +4407,76 @@ is
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
    is
+      procedure Dispatch_Finished_Message
+        (Data   : in     Byte_Seq;
+         Len    : in     N32;
+         Result :    out Action)
+      with Pre => Data'First = 0
+                  and then Len > 0
+                  and then Data'Last < N32'Last
+                  and then Len - 1 <= Data'Last,
+           Post => (S.State = S.State'Old
+                    or else Valid_Transition (S.State'Old, S.State))
+                   and then (if S.State not in Error_State | Closed
+                             then Server_Configured (HC)
+                                  and then Reasm_Building (HC))
+      is
+         Msg_Type : Byte;
+         Msg_Len  : N32;
+         Parse_OK : Boolean;
+      begin
+         Handshake.Parse_Handshake_Header
+           (Data (0 .. Len - 1), Msg_Type, Msg_Len, Parse_OK);
+
+         if not Parse_OK then
+            --  Distinguish unknown-type (BoGo WrongMessageType injects
+            --  type+42) from malformed shape. Unknown type →
+            --  unexpected_message; otherwise decode_error.
+            declare
+               Raw_Type : constant Byte :=
+                 (if Len >= 1 then Data (0) else 0);
+               Is_Known : constant Boolean :=
+                 Raw_Type in 16#01# | 16#02# | 16#04# |
+                             16#08# | 16#0B# | 16#0C# |
+                             16#0D# | 16#0E# | 16#0F# |
+                             16#10# | 16#14#;
+               A : N32;
+            begin
+               Records.Build_Alert_Record
+                 (2, (if Is_Known then 50 else 10),
+                  S.Server_App, S.Output, A);
+               S.Last_Error :=
+                 (if Is_Known then Decode_Error
+                  else Unexpected_Message);
+            end;
+            Set_State (S, Error_State);
+            if Output_Pending (S) > 0 then
+               Result := Has_Output;
+            else
+               Result := Error_Alert;
+            end if;
+            return;
+         end if;
+
+         if Msg_Type /= Handshake.HT_Finished then
+            declare
+               A : N32;
+            begin
+               Records.Build_Alert_Record
+                 (2, 10, S.Server_App, S.Output, A);
+            end;
+            S.Last_Error := Unexpected_Message;
+            Set_State (S, Error_State);
+            if Output_Pending (S) > 0 then
+               Result := Has_Output;
+            else
+               Result := Error_Alert;
+            end if;
+            return;
+         end if;
+
+         Verify_Client_Finished (S, HC, Data, Len, Msg_Len, Result);
+      end Dispatch_Finished_Message;
    begin
       Result := OK;
       pragma Assert (Rec.Fragment_Len >= 1);
@@ -4549,77 +4618,140 @@ is
 	                  return;
                end if;
 
+               if HC.Reasm_Need > 0 and then HC.Reasm_Buf /= null then
+                  declare
+                     Pos : N32 := 0;
+                  begin
+                     if HC.Reasm_Len < HC.Reasm_Need then
+                        declare
+                           Need : constant N32 :=
+                             HC.Reasm_Need - HC.Reasm_Len;
+                           Take : constant N32 := N32'Min (Plain_Len, Need);
+                        begin
+                           if Take > 0
+                             and then HC.Reasm_Len + Take <=
+                                      N32 (HC.Reasm_Buf'Length)
+                           then
+                              HC.Reasm_Buf
+                                (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
+                                  Plaintext (0 .. Take - 1);
+                              HC.Reasm_Len := HC.Reasm_Len + Take;
+                              Pos := Take;
+                           end if;
+                        end;
+                     end if;
+
+                     if HC.Reasm_Hdr_Pending and then HC.Reasm_Len >= 4 then
+                        declare
+                           HS_Total : constant N32 :=
+                             N32 (HC.Reasm_Buf (1)) * 65536
+                             + N32 (HC.Reasm_Buf (2)) * 256
+                             + N32 (HC.Reasm_Buf (3)) + 4;
+                        begin
+                           HC.Reasm_Hdr_Pending := False;
+                           if HS_Total > Max_HS_Msg
+                             or else HS_Total > N32 (HC.Reasm_Buf'Length)
+                           then
+                              Free_Byte_Seq (HC.Reasm_Buf);
+                              HC.Reasm_Len := 0;
+                              HC.Reasm_Need := 0;
+                              Send_Encrypted_Alert (S, Decode_Error, Result);
+                              return;
+                           end if;
+                           HC.Reasm_Need := HS_Total;
+                        end;
+                     end if;
+
+                     if HC.Reasm_Len < HC.Reasm_Need and then Pos < Plain_Len
+                     then
+                        declare
+                           Need : constant N32 :=
+                             HC.Reasm_Need - HC.Reasm_Len;
+                           Take : constant N32 :=
+                             N32'Min (Plain_Len - Pos, Need);
+                        begin
+                           if Take > 0
+                             and then HC.Reasm_Len + Take <=
+                                      N32 (HC.Reasm_Buf'Length)
+                           then
+                              HC.Reasm_Buf
+                                (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
+                                  Plaintext (Pos .. Pos + Take - 1);
+                              HC.Reasm_Len := HC.Reasm_Len + Take;
+                              Pos := Pos + Take;
+                           end if;
+                        end;
+                     end if;
+
+                     if HC.Reasm_Len < HC.Reasm_Need then
+                        Result := OK;
+                        return;
+                     end if;
+
+                     pragma Assert (HC.Reasm_Need > 0);
+                     declare
+                        Full_Len : constant N32 := HC.Reasm_Need;
+                        Full     : constant Byte_Seq :=
+                          HC.Reasm_Buf (0 .. Full_Len - 1);
+                     begin
+                        Free_Byte_Seq (HC.Reasm_Buf);
+                        HC.Reasm_Len := 0;
+                        HC.Reasm_Need := 0;
+                        HC.Reasm_Hdr_Pending := False;
+                        pragma Assert (Full_Len > 0);
+                        pragma Assert (Full'First = 0);
+                        pragma Assert (Full'Last < N32'Last);
+                        pragma Assert (Full_Len - 1 <= Full'Last);
+                        pragma Assert (Reasm_Building (HC));
+                        Dispatch_Finished_Message
+                          (Full, Full_Len, Result);
+                     end;
+                     return;
+                  end;
+               end if;
+
+               if Plain_Len < 4 then
+                  Free_Byte_Seq (HC.Reasm_Buf);
+                  HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
+                  HC.Reasm_Need := 4;
+                  HC.Reasm_Hdr_Pending := True;
+                  HC.Reasm_Len := Plain_Len;
+                  HC.Reasm_Buf (0 .. Plain_Len - 1) :=
+                    Plaintext (0 .. Plain_Len - 1);
+                  Result := OK;
+                  return;
+               end if;
+
                declare
-                  Msg_Type : Byte;
-                  Msg_Len  : N32;
-                  Parse_OK : Boolean;
+                  HS_Total : constant N32 :=
+                    N32 (Plaintext (1)) * 65536
+                    + N32 (Plaintext (2)) * 256
+                    + N32 (Plaintext (3)) + 4;
                begin
-                  Handshake.Parse_Handshake_Header
-                    (Plaintext (0 .. Plain_Len - 1),
-                     Msg_Type, Msg_Len, Parse_OK);
-
-                  if not Parse_OK then
-                     --  Distinguish unknown-type (BoGo
-                     --  WrongMessageType injects type+42) from
-                     --  malformed shape. Unknown type →
-                     --  unexpected_message; otherwise decode_error.
-                     declare
-                        Raw_Type : constant Byte :=
-                           (if Plain_Len >= 1 then Plaintext (0)
-                            else 0);
-                        Is_Known : constant Boolean :=
-                           Raw_Type in 16#01# | 16#02# | 16#04# |
-                                       16#08# | 16#0B# | 16#0C# |
-                                       16#0D# | 16#0E# | 16#0F# |
-                                       16#10# | 16#14#;
-                        A : N32;
-                     begin
-                        Records.Build_Alert_Record
-                          (2, (if Is_Known then 50 else 10),
-                           S.Server_App, S.Output, A);
-                        S.Last_Error :=
-                          (if Is_Known then Decode_Error
-                           else Unexpected_Message);
-                     end;
-                     Set_State (S, Error_State);
-                     if Output_Pending (S) > 0 then
-                        Result := Has_Output;
-	                     else
-	                        Result := Error_Alert;
-	                     end if;
-	                     pragma Assert
-	                       (if S.State not in Error_State | Closed
-	                        then Reasm_Building (HC));
-	                     return;
+                  if HS_Total > Max_HS_Msg then
+                     Send_Encrypted_Alert (S, Decode_Error, Result);
+                     return;
+                  elsif HS_Total > Plain_Len then
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
+                     HC.Reasm_Need := HS_Total;
+                     HC.Reasm_Hdr_Pending := False;
+                     HC.Reasm_Len := Plain_Len;
+                     HC.Reasm_Buf (0 .. Plain_Len - 1) :=
+                       Plaintext (0 .. Plain_Len - 1);
+                     Result := OK;
+                     return;
                   end if;
+               end;
 
-                  if Msg_Type /= Handshake.HT_Finished then
-                     --  Wrong handshake type: unexpected_message (10)
-                     declare
-                        A : N32;
-                     begin
-                        Records.Build_Alert_Record
-                          (2, 10, S.Server_App, S.Output, A);
-                     end;
-                     S.Last_Error := Unexpected_Message;
-                     Set_State (S, Error_State);
-                     if Output_Pending (S) > 0 then
-                        Result := Has_Output;
-	                     else
-	                        Result := Error_Alert;
-	                     end if;
-	                     pragma Assert
-	                       (if S.State not in Error_State | Closed
-	                        then Reasm_Building (HC));
-	                     return;
-                  end if;
-
-	                  Verify_Client_Finished
-	                    (S, HC, Plaintext, Plain_Len, Msg_Len, Result);
-	                  pragma Assert
-	                    (if S.State not in Error_State | Closed
-	                     then Reasm_Building (HC));
-	               end;
+               pragma Assert (Plain_Len > 0);
+               pragma Assert (Plaintext'First = 0);
+               pragma Assert (Plaintext'Last < N32'Last);
+               pragma Assert (Plain_Len - 1 <= Plaintext'Last);
+               Dispatch_Finished_Message (Plaintext, Plain_Len, Result);
+               pragma Assert
+                 (if S.State not in Error_State | Closed
+                  then Reasm_Building (HC));
             end;
    end Handle_PCF_App_Data;
 

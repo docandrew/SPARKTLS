@@ -14,6 +14,7 @@ designed for formal verification.
 - Signature verification: Ed25519, ECDSA P-256/P-384, RSA-PSS + RSA-PKCS1 v1.5 (SHA-256/384/512)
 - X.509 certificate parsing + chain validation via SPARKx509
 - TLS 1.3 PSK session resumption (psk_dhe_ke mode, forward-secret)
+- TLS 1.2 server-side session ticket resumption (RFC 5077)
 - ALPN with strict echo-check (RFC 7301 §3.1/§3.2)
 - Zero heap allocation — all buffers are stack or session-owned
 - RecordFlux-generated message serialization/parsing with SPARK contracts
@@ -38,7 +39,7 @@ designed for formal verification.
 
 ## Not Yet Supported
 
-- TLS 1.2 session ticket resumption (RFC 5077) — TLS 1.3 PSK only
+- TLS 1.2 client-side session ticket resumption (RFC 5077)
 - Post-quantum key exchange (ML-KEM hybrid) — see `mlkem_roadmap`
 - AES-CCM cipher suites (gating item for a FIPS-conformant profile)
 - TLS 1.3 server-side 0-RTT (see "Not Supported" above — by design)

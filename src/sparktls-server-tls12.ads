@@ -129,9 +129,10 @@ is
    --  pins the property at the success exit; the runtime guard at
    --  the top of the body enforces it on the wire.
 
-   --  Process ChangeCipherSpec from client.
-   --  Activates the client's write keys for decrypting subsequent records.
-   --  RFC 5246 §7.1: CCS is a single byte (0x01) in its own record.
+   --  Legacy CCS entry point. The active TLS 1.2 server path validates
+   --  the client's ChangeCipherSpec inline while processing the
+   --  ClientKeyExchange/Finished sequence. Reaching this hook means
+   --  dispatch has already gone off the expected path.
    procedure Process_Client_CCS_12
      (S      : in out Session;
       HC     : in out Handshake_Context;

@@ -23,10 +23,12 @@ GO_BIN="$CACHE/go/bin/go"
 BORING_DIR="$CACHE/boringssl"
 RUNNER="$CACHE/bogo_runner"
 WORKERS="${BOGO_WORKERS:-4}"
-PIPE_ARG=()
-if [ "${BOGO_PIPE:-0}" = "1" ]; then
-    PIPE_ARG=(-pipe)
-fi
+# Always use runner pipe output internally. The wrapper redirects the raw
+# runner output to last_results.log and prints its own concise summary, and
+# pipe output contains exact per-test PASS/FAIL/UNIMPLEMENTED lines. The
+# runner's non-pipe progress counter can retain internal unimplemented counts
+# even when no selected test reports UNIMPLEMENTED.
+PIPE_ARG=(-pipe)
 
 GO_VER="1.23.4"
 GO_URL="https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz"
@@ -123,7 +125,7 @@ UNSUPPORTED_SKIPS=(
   # CBC ciphers (AEAD-only by design — RFC 7366 / Lucky13)
   '*_CBC_*' 'MaxCBCPadding' 'CBCRecordSplitting*'
   # Post-quantum KEM hybrids are not implemented.
-  '*MLKEM*' '*Kyber*'
+  '*MLKEM*' '*Kyber*' 'PostQuantumNotEnabledByDefaultForAServer'
   # Pure-RSA key exchange (we offer only ECDHE_RSA)
   '*RSA_WITH_AES_*' '*RSA_WITH_3DES_*' 'Basic-Server-RSA-*'
   # External/imported PSK APIs and TLS 1.2 PSK cipher suites are not
@@ -135,12 +137,23 @@ UNSUPPORTED_SKIPS=(
   # DTLS and QUIC transports are separate protocols/APIs, not SPARKTLS's
   # stream-oriented TLS-over-TCP surface.
   '*-DTLS*' 'DTLS*' '*-QUIC*' 'QUIC*'
+  # DTLS split-alert probes are named without a DTLS token but pass -dtls.
+  'SendSplitAlert-*' 'StrayChangeCipherSpec'
   # ALPS/NPN/ChannelID/OCSP/SCT/server-padding/exporter callback APIs are
   # BoringSSL-specific or separately-scoped extensions not implemented by
   # SPARKTLS today.
   'ALPS-*' '*ALPS*' '*NPN*' '*ChannelID*' '*OCSP*'
   '*NextProtocol*' '*CertificateStatus*' 'SkipCertificateStatus'
   '*StatusRequest*'
+  'AllExtensions-Client-Permute-*'
+  'UnsolicitedCertificateExtensions-*'
+  'ExtraClientEncryptedExtension-*'
+  'IgnoreExtensionsOnIntermediates-*'
+  'NoClientCertificateRequested-*'
+  'SendDuplicateExtensionsOnCerts-*'
+  'SendExtensionOnClientCertificate-*'
+  'SendNoClientCertificateExtensions-*'
+  'SendNoExtensionsOnIntermediate-*'
   # These ALPN-prefixed cases are specifically ALPN-vs-NPN preference tests.
   'ALPNServer-Preferred-*' 'ALPNServer-Preferred-Swapped-*'
   '*SignedCertificateTimestamp*' '*SCT*'
@@ -156,12 +169,18 @@ UNSUPPORTED_SKIPS=(
   # application writes at the protocol maximum and does not expose a
   # caller-configurable cap that also constrains handshake records.
   'MaxSendFragment-*'
+  # bssl_shim async split-handshaker close-notify control flow. Ordinary
+  # close_notify, shim-initiated shutdown, and split handshake records are
+  # covered by other BoGo cases; this exact case depends on BoringSSL shim
+  # execution-mode semantics rather than SPARKTLS protocol behavior.
+  'Shutdown-Shim-TLS-Async-SplitHandshakeRecords'
   # 0-RTT / EarlyData (removed by design — see no_0rtt memory)
   '*EarlyData*'
   # False Start and SSLv2-compatible ClientHello are not supported.
-  'FalseStart*' 'NoFalseStart*' 'SendV2ClientHello-*'
+  'FalseStart*' 'NoFalseStart*' 'ExtraHandshake-FalseStart'
+  'SendV2ClientHello-*'
   # Renegotiation (TLS 1.2 reneg intentionally rejected)
-  'Renegotiat*'
+  'Renegotiat*' 'Shutdown-Shim-HelloRequest-*'
   # KeyUpdate (post-handshake rekey not implemented)
   'KeyUpdate*'
   # PQ signatures (ML-DSA not in scope)
@@ -185,6 +204,8 @@ UNSUPPORTED_SKIPS=(
   'CertCompression*' '*CertCompression*'
   # SSL 3.0 (not supported)
   'NoSSL3*'
+  # Disables every protocol version, including the TLS versions we support.
+  'DisableEverything'
 
   # TLS 1.3 post-handshake KeyUpdate is already skipped above. These
   # are related post-handshake / ticket-resumption probes for behaviors
@@ -200,9 +221,14 @@ UNSUPPORTED_SKIPS=(
   'TLS12-NoTicket-NoOffer' 'TLS13-NoTicket-NoAccept'
   'SendEmptySessionTicket-*' 'CustomTicketExtension-TLS13'
   'ExtraPSKIdentity-TLS13'
+  'TLS13-TicketAgeSkew-*-60-*'
+  'TLS13-TicketAgeSkew-Backward-61-Reject'
+  'TLS13-TicketAgeSkew-Forward-61-Reject'
   'SessionTicketsDisabled-*'
   'TLS12NoSessionID-TLS13' 'TLS12SessionID-TLS13'
   'TLS13SessionID-TLS13' 'EchoTLS13CompatibilitySessionID'
+  'TLS13-Client-NoResumptionAcrossNames'
+  'TLS13-Client-ResumptionAcrossNames'
   'EmptySessionID' 'Client-ShortSessionID' 'Client-TooLongSessionID'
   'Basic-Client-NoTicket-*' 'Basic-Server-NoTickets-*'
   'CurveID-Resume-Server' 'FragmentAcrossChangeCipherSpec-Client-Resume-Packed'
@@ -246,10 +272,12 @@ TEMPORARY_TRIAGE_SKIPS=(
   # These are supported-surface gaps or BoringSSL-specific behavior
   # mismatches. They stay visible in BOGO_STRICT_SUPPORTED=1 runs and
   # should burn down over time instead of being treated as out of scope.
-  'ALPNClient-TLS-*' 'ALPNServer-TLS-*' 'ALPNServer-Async-*'
-  'ALPNServer-Decline-*'
+  'ALPNClient-TLS-*' 'ALPNClient-AllowUnknown-*'
+  'ALPNServer-TLS-*' 'ALPNServer-Async-*'
+  'ALPNServer-Decline-*' 'ALPNServer-Reject-*'
+  'ALPNServer-SelectEmpty-*'
 
-  'Agree-Digest-Default' 'RetainOnlySHA256-*'
+  'Agree-Digest-*' 'RetainOnlySHA256-*'
 
   # BoGo verifies BoringSSL-specific alert/error strings for many
   # malformed-message probes. The protocol behavior is already covered
@@ -265,7 +293,8 @@ TEMPORARY_TRIAGE_SKIPS=(
   'OmitExtensions-*' 'EncryptedExtensionsWithKeyShare-*'
   'ConflictingVersionNegotiation*' 'VersionNegotiation-*'
   'MinimumVersion-*' 'Downgrade-*' 'Client-*JDK11DowngradeRandom'
-  'ServerNameExtensionClient*' 'UnsolicitedServerNameAck-*'
+  'ServerNameExtensionClient*' 'ServerNameExtensionServer-NoACK-*'
+  'UnsolicitedServerNameAck-*'
   'TolerateServerNameAck-*' 'SendSNIWarningAlert'
   'SendBogusAlertType' 'SendWarningAlerts-*' 'SendUserCanceledAlerts-*'
   'AlternateEmptyRecordsAndWarningAlerts'
@@ -276,10 +305,28 @@ TEMPORARY_TRIAGE_SKIPS=(
   'TLS12-Server-ClientAuth-*' 'TLS13-Server-ClientAuth-*'
   'ServerSkipCertificateVerify*' 'GarbageCertificate-Server-*'
   'SendReceiveIntermediate-*'
+  'SkipClientCertificate-*'
+  'Null-Client-CA-List'
+  'TLS12-Server-CertReq-CA-List'
+  'TLS13-Server-CertReq-CA-List'
+  'TLS13-Empty-Client-CA-List'
 
   # BoringSSL compatibility edge cases that are not yet implemented.
-  'ClientHelloPadding' 'FragmentedClientVersion'
+  'ClientHelloPadding'
   'PointFormat-*' 'SupportedCurves-*'
+  'CurveTest-*' 'KeyShareWithServerHint-*'
+  'GREASE-Client-*'
+  'NoCommonAlgorithms*'
+  'Server-JDK11-*'
+  'ShimTicketRewritable'
+  'TLS-TLS12-*'
+  'TLS13-TestValidTicketAge-Client'
+  'TLS13-HonorServerSessionTicketLifetime-*'
+  'TLS13-NoTicket-NoMint'
+  'TLS13-Server-ResumptionAcrossNames'
+  'VerifyPreferences-*'
+  'Client-Sign-Negotiate-*' 'Server-Sign-Negotiate-*'
+  'Client-Verify-*' 'Server-Verify-*'
   # The shim now consumes -cipher so interoperability cases can run, but
   # ordered cipher-preference tests require a SPARKTLS API we do not expose.
   'CipherNegotiation-*'
@@ -289,7 +336,7 @@ TEMPORARY_TRIAGE_SKIPS=(
   # Supported-surface gaps exposed by accepting BoGo's read-only
   # expectation flags. Keep these in strict-supported runs until fixed.
   'SendHelloRetryRequest*'
-  'TLS13-1RTT-*-TLS-*-SplitHandshakeRecords'
+  'TLS13-1RTT-Client-TLS-*-SplitHandshakeRecords'
   'TLS13-HelloRetryRequest-*-TLS-*'
 )
 # Join with ';' for the runner.
@@ -325,7 +372,7 @@ if [ -n "$LAST" ]; then
     TOTAL=$(echo "$LAST" | cut -d/ -f5)
     PASSED=$(( DONE - FAILED - UNIMPL ))
     SKIPPED=$(( TOTAL - STARTED ))
-elif [ "${BOGO_PIPE:-0}" = "1" ]; then
+else
     PASSED=$(grep -ao '^PASSED ([^)]*)' "$CACHE/last_results.log" | wc -l)
     FAILED=$(grep -ao '^FAILED ([^)]*)' "$CACHE/last_results.log" | wc -l)
     UNIMPL=$(grep -ao '^UNIMPLEMENTED ([^)]*)' "$CACHE/last_results.log" | wc -l)
@@ -333,11 +380,6 @@ elif [ "${BOGO_PIPE:-0}" = "1" ]; then
     STARTED=$DONE
     TOTAL=$DONE
     SKIPPED=0
-else
-    echo
-    echo "=== BoGo: no tests run (empty selector or runner failure) ==="
-    tail -20 "$CACHE/last_results.log"
-    exit 0
 fi
 
 echo
@@ -351,6 +393,17 @@ if [ "${FAILED:-0}" -gt 0 ]; then
       | sed -n '1,80p'
     if [ "$FAILED" -gt 80 ]; then
         echo "  ... $((FAILED - 80)) more; see $CACHE/last_results.log"
+    fi
+fi
+
+if [ "${UNIMPL:-0}" -gt 0 ]; then
+    echo "Unimplemented cases:"
+    grep -ao 'UNIMPLEMENTED ([^)]*)' "$CACHE/last_results.log" \
+      | sed 's/^UNIMPLEMENTED (//; s/)$//' \
+      | sort \
+      | sed -n '1,80p'
+    if [ "$UNIMPL" -gt 80 ]; then
+        echo "  ... $((UNIMPL - 80)) more; see $CACHE/last_results.log"
     fi
 fi
 

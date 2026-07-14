@@ -707,8 +707,12 @@ is
                if not X509.Has_EKU_Server_Auth (Leaf) then
                   return Err_Wrong_EKU;
                end if;
-            when Purpose_Client | Purpose_Any =>
-               null;  --  TODO: client auth EKU check
+            when Purpose_Client =>
+               if not X509.Has_EKU_Client_Auth (Leaf) then
+                  return Err_Wrong_EKU;
+               end if;
+            when Purpose_Any =>
+               null;
          end case;
       end if;
 

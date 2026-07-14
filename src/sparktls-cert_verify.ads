@@ -185,6 +185,11 @@ is
               and then not X509.Has_EKU_Server_Auth (Leaf)
            then Validate_Leaf_Policy'Result /= Valid)
           and
+          (if X509.Has_EKU (Leaf)
+              and then Purpose = Purpose_Client
+              and then not X509.Has_EKU_Client_Auth (Leaf)
+           then Validate_Leaf_Policy'Result /= Valid)
+          and
           --  WebPKI: missing EKU → reject
           (if Mode = Mode_WebPKI
               and then Purpose = Purpose_Server

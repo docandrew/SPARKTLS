@@ -378,7 +378,7 @@ if echo "$SUITES" | grep -q "x509"; then
     echo "Known expected failures:"
     echo "  pathbuilding (8):    Max_Pool_Size=8, tests need 9-35 intermediates"
     echo "  webpki--cn (9):      CN-in-SAN is a CA issuance rule, not a validator rule"
-    echo "  cve (2):             Name-constraints edge cases under triage"
+    echo "  cve (1):             CVE-2024-0567 path-building cycle under triage"
     echo "  pathlen (1):         Leaf pathLen handling policy under triage"
     echo "  rfc5280 (1):         CA-as-leaf policy under triage"
     echo "  public-suffix (1):   Would need Mozilla PSL dependency"

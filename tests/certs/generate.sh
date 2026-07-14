@@ -38,7 +38,7 @@ openssl pkcs8 -topk8 -nocrypt \
 openssl req -x509 -key "$DIR/rsa.key" -out "$DIR/rsa.crt" \
     -days 365 -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
-    -addext "extendedKeyUsage=serverAuth" \
+    -addext "extendedKeyUsage=serverAuth,clientAuth" \
     -addext "keyUsage=digitalSignature,keyEncipherment,keyCertSign" \
     -addext "basicConstraints=critical,CA:TRUE" 2>/dev/null
 rm -f "$DIR/rsa_raw.key"

@@ -130,11 +130,11 @@ classify_failure() {
             FAIL_CLASS="unsupported" ;;
         psk_dhe_ke)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
-            FAIL_REASON="PSK-only and PSK-DHE resumption modes are not implemented"
+            FAIL_REASON="tlsfuzzer external-PSK modes are outside the supported ticket-resumption path"
             FAIL_CLASS="unsupported" ;;
         session-resumption)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
-            FAIL_REASON="client-side TLS 1.3 ticket resumption is not implemented"
+            FAIL_REASON="tlsfuzzer resumption edge cases exceed the current ticket-resumption profile"
             FAIL_CLASS="unsupported" ;;
         symetric-ciphers)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
@@ -247,6 +247,10 @@ for test in "${TESTS[@]}"; do
     pass=$(awk '/^PASS: [0-9]+$/ { v=$2 } END { if (v == "") print 0; else print v }' "$log_file")
     fail=$(awk '/^FAIL: [0-9]+$/ { v=$2 } END { if (v == "") print 0; else print v }' "$log_file")
     total=$(awk '/^TOTAL: [0-9]+$/ { v=$2 } END { if (v == "") print 0; else print v }' "$log_file")
+    display_total="$total"
+    if [ $((pass + fail)) -gt "$display_total" ]; then
+        display_total=$((pass + fail))
+    fi
 
     counted_fail=0
     fail_class="none"
@@ -259,10 +263,10 @@ for test in "${TESTS[@]}"; do
         counted_fail=1
         fail_class="unexpected"
     elif [ "$fail" = "0" ] && [ "$pass" != "0" ] && [ "$cmd_status" -eq 0 ]; then
-        status="PASS (pass=$pass fail=$fail total=$total exit=$cmd_status)"
+        status="PASS (pass=$pass fail=$fail total=$display_total exit=$cmd_status)"
     else
         classify_failure "$test"
-        status="$FAIL_LABEL (pass=$pass fail=$fail total=$total exit=$cmd_status, log=$log_file)"
+        status="$FAIL_LABEL (pass=$pass fail=$fail total=$display_total exit=$cmd_status, log=$log_file)"
         fail_class="$FAIL_CLASS"
         if [ "$fail" = "0" ]; then
             counted_fail=1

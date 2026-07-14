@@ -520,8 +520,8 @@ is
    --    point[point_len]
    --    sig_hash_alg[1] || sig_alg[1] || sig_len[2] || sig[sig_len]
    --
-   --  Extracts: group, server's ephemeral ECDHE pubkey.
-   --  TODO: verify signature over client_random || server_random || params
+   --  Extracts and verifies: group, server ephemeral ECDHE pubkey, and
+   --  signature over client_random || server_random || params.
    ------------------------------------------------------------------
 
    procedure Parse_Server_Key_Exchange
