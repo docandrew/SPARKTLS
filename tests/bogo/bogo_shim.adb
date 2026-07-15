@@ -250,6 +250,8 @@ procedure Bogo_Shim is
              & " in=" & N32'Image (SPARKTLS.Input_Available (S))
              & " out=" & N32'Image (SPARKTLS.Output_Pending (S))
              & " version=" & TLS_Version'Image (S.Negotiated_Version)
+             & " suite13=" & Unsigned_16'Image (S.Negotiated_Suite)
+             & " suite12=" & Unsigned_16'Image (S.Negotiated_Suite_12)
              & " cseq12=" & Unsigned_64'Image (S.Client_Seq_12)
              & " sseq12=" & Unsigned_64'Image (S.Server_Seq_12));
    end Trace_Step;
@@ -732,6 +734,7 @@ procedure Bogo_Shim is
       procedure Send_Pending is
          N    : N32;
          Last : Stream_Element_Offset;
+         Hex  : constant String := "0123456789abcdef";
       begin
          loop
             Drain_Ciphertext (S, Net_Out, N);
@@ -748,6 +751,22 @@ procedure Bogo_Shim is
                       & " frag_len="
                       & N32'Image
                           (N32 (Net_Out (3)) * 256 + N32 (Net_Out (4))));
+               if Net_Out (0) = 16#16# then
+                  declare
+                     Dump_Len : constant N32 := N32'Min (N, 140);
+                     Dump     : String (1 .. Natural (Dump_Len) * 2);
+                     P        : Natural := 1;
+                  begin
+                     for K in 0 .. Dump_Len - 1 loop
+                        Dump (P) :=
+                          Hex (Natural (Net_Out (K) / 16) + 1);
+                        Dump (P + 1) :=
+                          Hex (Natural (Net_Out (K) mod 16) + 1);
+                        P := P + 2;
+                     end loop;
+                     Trace ("send hs hex=" & Dump);
+                  end;
+               end if;
             end if;
             declare
                SE : Stream_Element_Array (1 .. Stream_Element_Offset (N));

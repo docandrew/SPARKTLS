@@ -239,4 +239,45 @@ is
       end if;
    end Compute_Finished_12;
 
+   procedure Export_Keying_Material_12
+     (Output        :    out Byte_Seq;
+      Master        : in     Bytes_48;
+      Client_Random : in     Bytes_32;
+      Server_Random : in     Bytes_32;
+      Label         : in     String;
+      Context       : in     Byte_Seq;
+      Use_Context   : in     Boolean;
+      Use_SHA384    : in     Boolean)
+   is
+      Seed_No_Context : Byte_Seq (0 .. 63) := (others => 0);
+   begin
+      Seed_No_Context (0 .. 31) := Byte_Seq (Client_Random);
+      Seed_No_Context (32 .. 63) := Byte_Seq (Server_Random);
+
+      if Use_Context then
+         declare
+            Seed : Byte_Seq (0 .. 65 + N32 (Context'Length)) := (others => 0);
+         begin
+            Seed (0 .. 63) := Seed_No_Context;
+            Seed (64) := Byte (Context'Length / 256);
+            Seed (65) := Byte (Context'Length mod 256);
+            if Context'Length > 0 then
+               Seed (66 .. Seed'Last) := Context;
+            end if;
+
+            if Use_SHA384 then
+               PRF_SHA384 (Output, Byte_Seq (Master), Label, Seed);
+            else
+               PRF_SHA256 (Output, Byte_Seq (Master), Label, Seed);
+            end if;
+         end;
+      else
+         if Use_SHA384 then
+            PRF_SHA384 (Output, Byte_Seq (Master), Label, Seed_No_Context);
+         else
+            PRF_SHA256 (Output, Byte_Seq (Master), Label, Seed_No_Context);
+         end if;
+      end if;
+   end Export_Keying_Material_12;
+
 end SPARKTLS.Key_Schedule_12;

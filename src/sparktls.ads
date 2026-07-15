@@ -2195,6 +2195,14 @@ is
       Res_Master     : Bytes_48 := (others => 0);
       Res_Master_Len : N32 := 0;  --  32 or 48
 
+      --  RFC 5705 / RFC 8446 §7.5 exporter material retained after
+      --  the handshake context is freed. TLS 1.2 stores master_secret
+      --  plus randoms; TLS 1.3 stores exporter_master_secret.
+      Exporter_Secret        : Bytes_48 := (others => 0);
+      Exporter_Secret_Len    : N32 := 0;  --  32 or 48; 0 means unavailable
+      Exporter_Client_Random : Bytes_32 := (others => 0);
+      Exporter_Server_Random : Bytes_32 := (others => 0);
+
       --  True on first Advance in Connected state (to deliver Handshake_Done)
       Handshake_Just_Done : Boolean := False;
 
@@ -2381,7 +2389,30 @@ is
                 and S.Server_App.Key = Bytes_32'(others => 0)
                 and S.Client_App.IV = Bytes_12'(others => 0)
                 and S.Server_App.IV = Bytes_12'(others => 0)
-                and S.Res_Master = Bytes_48'(others => 0);
+                and S.Res_Master = Bytes_48'(others => 0)
+                and S.Exporter_Secret = Bytes_48'(others => 0);
+
+   --  RFC 5705 / RFC 8446 §7.5: derive application-specific exporter
+   --  bytes from a completed TLS session. Label must be a non-empty ASCII
+   --  exporter label. For TLS 1.2, Use_Context controls whether the RFC
+   --  5705 context length prefix is included. For TLS 1.3 the context is
+   --  always hashed as part of RFC 8446 exporter derivation.
+   procedure Export_Keying_Material
+     (S           : in     Session;
+      Label       : in     String;
+      Context     : in     Byte_Seq;
+      Use_Context : in     Boolean;
+      Output      :    out Byte_Seq;
+      OK          :    out Boolean)
+   with Pre => Output'First = 0
+               and Output'Length > 0
+               and Output'Length <= 256
+               and Label'Length > 0
+               and Label'Length <= 64
+               and Context'Length <= 62
+               and (if Context'Length > 0 then Context'First = 0),
+        Relaxed_Initialization => Output,
+        Post => (for all I in Output'Range => Output (I)'Initialized);
 
    --  Read decrypted application data.
    procedure Read_Plaintext

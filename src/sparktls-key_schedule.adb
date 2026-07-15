@@ -219,6 +219,41 @@ is
                     Context => Transcript_Hash);
    end Derive_Resumption_Master_Secret;
 
+   procedure Derive_Exporter_Master_Secret
+     (Exporter_Master :    out OKM_Seq;
+      Master          : in     Digest;
+      Transcript_Hash : in     Digest)
+   is
+   begin
+      Expand_Label (OKM     => Exporter_Master,
+                    PRK     => Master,
+                    Label   => "exp master",
+                    Context => Transcript_Hash);
+   end Derive_Exporter_Master_Secret;
+
+   procedure Export_Keying_Material
+     (Output          :    out OKM_Seq;
+      Exporter_Master : in     Byte_Seq;
+      Label           : in     String;
+      Context         : in     Byte_Seq)
+   is
+      Empty       : Byte_Seq (1 .. 0) := (others => 0);
+      Empty_Hash  : Digest;
+      Context_Hash : Digest;
+      Derived     : OKM_Seq (0 .. 31);
+   begin
+      Hash (Empty_Hash, Empty);
+      Hash (Context_Hash, Context);
+      Expand_Label (OKM     => Derived,
+                    PRK     => Digest (Exporter_Master),
+                    Label   => Label,
+                    Context => Empty_Hash);
+      Expand_Label (OKM     => Output,
+                    PRK     => Digest (Derived),
+                    Label   => "exporter",
+                    Context => Context_Hash);
+   end Export_Keying_Material;
+
    procedure Derive_PSK
      (PSK         :    out OKM_Seq;
       Res_Master  : in     Byte_Seq;
@@ -418,6 +453,44 @@ is
          Label   => "res master",
          Context => Transcript_Hash);
    end Derive_Resumption_Master_Secret_384;
+
+   procedure Derive_Exporter_Master_Secret_384
+     (Exporter_Master :    out HKDF384.OKM384_Seq;
+      Master          : in     Digest_384;
+      Transcript_Hash : in     Digest_384)
+   is
+   begin
+      Expand_Label_384
+        (OKM     => Exporter_Master,
+         PRK     => Master,
+         Label   => "exp master",
+         Context => Transcript_Hash);
+   end Derive_Exporter_Master_Secret_384;
+
+   procedure Export_Keying_Material_384
+     (Output          :    out HKDF384.OKM384_Seq;
+      Exporter_Master : in     Byte_Seq;
+      Label           : in     String;
+      Context         : in     Byte_Seq)
+   is
+      Empty        : Byte_Seq (1 .. 0) := (others => 0);
+      Empty_Hash   : Digest_384;
+      Context_Hash : Digest_384;
+      Derived      : HKDF384.OKM384_Seq (0 .. 47);
+   begin
+      SPARKNaCl.Hashing.SHA384.Hash (Empty_Hash, Empty);
+      SPARKNaCl.Hashing.SHA384.Hash (Context_Hash, Context);
+      Expand_Label_384
+        (OKM     => Derived,
+         PRK     => Digest_384 (Exporter_Master),
+         Label   => Label,
+         Context => Empty_Hash);
+      Expand_Label_384
+        (OKM     => Output,
+         PRK     => Digest_384 (Derived),
+         Label   => "exporter",
+         Context => Context_Hash);
+   end Export_Keying_Material_384;
 
    procedure Derive_PSK_384
      (PSK         :    out HKDF384.OKM384_Seq;

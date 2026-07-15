@@ -87,10 +87,10 @@ is
                     | Wait_Client_Finished
        then Nonce_Space_Available (S.Server_App))
 	      and then
-		        (if S.State = Wait_Client_Hello
-			         then Nonce_Space_Available (HC.Server_HS)
-			              and then Nonce_Space_Available (S.Server_App)
-			              and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+	      (if S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
+				         then Nonce_Space_Available (HC.Server_HS)
+				              and then Nonce_Space_Available (S.Server_App)
+				              and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 			                (HC.Server_Seq_12)
 			              and then SPARKTLSCrypto.P384.Field.Initialized
 			              and then SPARKTLSCrypto.P384.ECDSA.Initialized)
@@ -192,6 +192,159 @@ is
 			                and then Server_State_Keys_Ready (S, HC),
 		        Post => S.State = S.State'Old
 		                or else Valid_Transition (S.State'Old, S.State);
+
+
+	   procedure Complete_Client_Hello_Retry
+	     (S                      : in out Session;
+	      HC                     : in out Handshake_Context;
+	      Msg                    : in     Byte_Seq;
+	      Consume_Current_Record : in     Boolean;
+	      Record_Len             : in     N32;
+	      Ready_To_Build         :    out Boolean;
+	      Result                 :    out Action)
+	   with Pre  => Server_Active (S)
+	                and then S.State = Wait_Client_Hello_Retry
+	                and then S.Role = Role_Server
+	                and then Server_Configured (HC)
+	                and then Reasm_Building (HC)
+	                and then HC.Legacy_Session_ID_Len in 0 .. 32
+	                and then Server_State_Keys_Ready (S, HC)
+	                and then Msg'First = 0
+	                and then Msg'Last <= N32 (Max_HS_Msg) - 1
+	                and then
+		                  (if Consume_Current_Record
+		                   then Record_Len <= Available (S.Input)
+		                        and then S.Input.Read_Pos <= N32'Last - Record_Len),
+		        Post => (if Ready_To_Build
+		                 then Server_Active (S)
+		                   and then S.State = Wait_Client_Hello_Retry
+		                   and then S.Role = Role_Server
+		                   and then Result = OK
+		                   and then Server_Configured (HC)
+		                   and then HC.Cfg.Local.NaCl_Cert_Len
+		                     <= N32 (Max_Cert_DER)
+		                   and then
+		                     (for all I in 0 .. Max_Pool_Size - 1 =>
+		                        HC.Cfg.Local.Ints (I).DER_Len
+		                          <= X509.N32 (Max_Cert_DER))
+		                   and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
+		                   and then
+		                     (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+		                      then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+		                   and then HC.Legacy_Session_ID_Len in 0 .. 32
+		                   and then HC.Transcript_Len > 0
+		                   and then Reasm_Building (HC)
+		                   and then S.Negotiated_Suite in
+		                     Suite_AES_128_GCM_SHA256
+		                   | Suite_AES_256_GCM_SHA384
+		                   | Suite_CHACHA20_POLY1305_SHA256
+		                   and then Nonce_Space_Available (HC.Server_HS)
+		                   and then Nonce_Space_Available (S.Server_App)
+		                   and then SPARKTLSCrypto.P384.Field.Initialized
+		                   and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		                   and then HC.HRR_Sent)
+		                and then
+		                  (S.State = Wait_Client_Hello_Retry
+		                 or else Valid_Transition
+		                   (Wait_Client_Hello_Retry, S.State))
+	                and then
+	                  (if S.State not in Error_State | Closed
+	                   then Reasm_Building (HC))
+	                and then
+	                  (if S.State in Wait_Client_Hello_Retry
+		                               | Server_Hello_Sent
+		                               | Wait_Client_Finished
+		                   then Server_Configured (HC));
+
+	   procedure Validate_Client_Hello_Retry
+	     (S     : in out Session;
+	      HC    : in out Handshake_Context;
+	      Msg   : in     Byte_Seq;
+	      Valid :    out Boolean)
+	   with Pre  => Server_Active (S)
+	                and then S.State = Wait_Client_Hello_Retry
+	                and then S.Role = Role_Server
+	                and then Server_Configured (HC)
+	                and then Reasm_Building (HC)
+	                and then HC.Legacy_Session_ID_Len in 0 .. 32
+	                and then Server_State_Keys_Ready (S, HC)
+	                and then Msg'First = 0
+	                and then Msg'Length > 0
+	                and then Msg'Last <= N32 (Max_HS_Msg) - 1,
+	        Post => Server_Active (S)
+	                and then S.State = Wait_Client_Hello_Retry
+	                and then S.Role = Role_Server
+	                and then Reasm_Building (HC)
+	                and then HC.Legacy_Session_ID_Len in 0 .. 32
+	                and then HC.HRR_Sent = HC.HRR_Sent'Old
+	                and then Nonce_Space_Available (HC.Server_HS)
+	                and then Nonce_Space_Available (S.Server_App)
+	                and then
+	                  (if Valid
+	                   then Server_Configured (HC)
+	                     and then HC.Version = TLS_1_3
+	                     and then S.Negotiated_Suite in
+	                       Suite_AES_128_GCM_SHA256
+	                     | Suite_AES_256_GCM_SHA384
+	                     | Suite_CHACHA20_POLY1305_SHA256
+	                     and then HC.HRR_Sent);
+
+	   procedure Build_Server_Flight_After_Client_Hello_Retry
+	     (S      : in out Session;
+	      HC     : in out Handshake_Context;
+	      Result :    out Action)
+	   with Pre  => Server_Active (S)
+	                and then S.State = Wait_Client_Hello_Retry
+	                and then S.Role = Role_Server
+	                and then HC.HRR_Sent
+	                and then Server_Configured (HC)
+	                and then HC.Cfg.Local.NaCl_Cert_Len
+	                  <= N32 (Max_Cert_DER)
+	                and then
+	                  (for all I in 0 .. Max_Pool_Size - 1 =>
+	                     HC.Cfg.Local.Ints (I).DER_Len
+	                       <= X509.N32 (Max_Cert_DER))
+	                and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
+	                and then
+	                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+	                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
+	                and then HC.Legacy_Session_ID_Len in 0 .. 32
+	                and then HC.Transcript_Len > 0
+	                and then Reasm_Building (HC)
+	                and then S.Negotiated_Suite in
+	                  Suite_AES_128_GCM_SHA256
+	                | Suite_AES_256_GCM_SHA384
+	                | Suite_CHACHA20_POLY1305_SHA256
+	                and then Nonce_Space_Available (HC.Server_HS)
+	                and then Nonce_Space_Available (S.Server_App)
+	                and then SPARKTLSCrypto.P384.Field.Initialized
+	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+	        Post => S.State in Server_Hello_Sent | Error_State
+	                and then
+	                  (if S.State not in Error_State | Closed
+	                   then Server_Configured (HC));
+	   procedure Handle_Client_Hello_Retry
+	     (S      : in out Session;
+	      HC     : in out Handshake_Context;
+	      Result :    out Action)
+	   with Pre  => Server_Active (S)
+	                and then S.State = Wait_Client_Hello_Retry
+	                and then S.Role = Role_Server
+	                and then Server_Configured (HC)
+	                and then Reasm_Building (HC)
+	                and then HC.Legacy_Session_ID_Len in 0 .. 32
+	                and then Server_State_Keys_Ready (S, HC),
+	        Post => (S.State = Wait_Client_Hello_Retry
+	                 or else Valid_Transition
+	                   (Wait_Client_Hello_Retry, S.State))
+	                and then
+	                  (if S.State not in Error_State | Closed
+	                   then Reasm_Building (HC))
+	                and then
+	                  (if S.State in Wait_Client_Hello_Retry
+	                               | Server_Hello_Sent
+	                               | Wait_Client_Finished
+	                   then Server_Configured (HC));
 
    procedure Build_Server_Flight
      (S      : in out Session;
@@ -2058,9 +2211,495 @@ is
 			              (if S.State = Wait_Client_Hello
 			                  and then HC.Reasm_Need > 0
 			               then HC.Reasm_Len < HC.Reasm_Need);
-			            pragma Assert (Wait_Client_Hello_Post (S, HC));
-		            return;
+		            pragma Assert (Wait_Client_Hello_Post (S, HC));
+	            return;
 	   end Handle_Wait_Client_Hello;
+
+
+	   procedure Validate_Client_Hello_Retry
+	     (S     : in out Session;
+	      HC    : in out Handshake_Context;
+	      Msg   : in     Byte_Seq;
+	      Valid :    out Boolean)
+	   is
+	      Parse_OK : Boolean;
+	      CH1_Hash : constant Unsigned_32 := HC.CH_Ext_Hash;
+	   begin
+	      Valid := False;
+
+	      --  Reset for CH2 parsing. Seen_Ext_Count + Tags also reset:
+	      --  duplicate-extension checks are intra-ClientHello, not CH1 vs CH2.
+	      HC.Client_Saw_Key_Share := False;
+	      HC.Client_Has_X25519 := False;
+	      HC.Client_Has_P256 := False;
+	      HC.Client_Has_P384 := False;
+	      HC.Client_Saw_Supported_Groups := False;
+	      HC.Client_Supports_X25519 := False;
+	      HC.Client_Supports_P256 := False;
+	      HC.Client_Supports_P384 := False;
+	      HC.CH_Ext_Hash := 0;
+	      HC.CH_Ext_Count := 0;
+	      HC.Seen_Ext_Count := 0;
+	      HC.Seen_Ext_Tags := (others => 0);
+	      pragma Assert (HC.HRR_Sent);
+	      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+
+	      Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Msg, Parse_OK);
+
+	      if not Parse_OK then
+	         return;
+	      end if;
+
+	      pragma Assert (S.State = Wait_Client_Hello_Retry);
+	      if HC.Version /= TLS_1_3 then
+	         return;
+	      end if;
+
+	      --  RFC 8446 §4.1.2: CH2 extensions must be in the same order
+	      --  as CH1. Cookie is excluded from the hash in both messages.
+	      if HC.CH_Ext_Hash /= CH1_Hash then
+	         return;
+	      end if;
+
+	      pragma Assert (HC.Version = TLS_1_3);
+	      pragma Assert
+	        (S.Negotiated_Suite in
+	           Suite_AES_128_GCM_SHA256
+	         | Suite_AES_256_GCM_SHA384
+	         | Suite_CHACHA20_POLY1305_SHA256);
+	      Valid := True;
+	   end Validate_Client_Hello_Retry;
+
+
+
+	   procedure Complete_Client_Hello_Retry
+	     (S                      : in out Session;
+	      HC                     : in out Handshake_Context;
+	      Msg                    : in     Byte_Seq;
+	      Consume_Current_Record : in     Boolean;
+	      Record_Len             : in     N32;
+	      Ready_To_Build         :    out Boolean;
+	      Result                 :    out Action)
+	   is
+	      Valid_CH2 : Boolean;
+
+	      procedure Consume_Record
+	      with Post =>
+	        S.State = S.State'Old
+	        and then S.Role = S.Role'Old
+	        and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+	        and then S.Server_App.Counter = S.Server_App.Counter'Old
+	        and then S.Server_App.Suite = S.Server_App.Suite'Old
+	        and then Server_Active (S)
+	        and then Nonce_Space_Available (S.Server_App)
+	        and then
+	          (if Consume_Current_Record
+	           then S.Input.Read_Pos = S.Input.Read_Pos'Old + Record_Len
+	             and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+	           else S.Input.Read_Pos = S.Input.Read_Pos'Old
+	             and then S.Input.Write_Pos = S.Input.Write_Pos'Old)
+	   is
+	      begin
+	         if Consume_Current_Record then
+	            pragma Assert
+	              (S.Input.Read_Pos + Record_Len <= S.Input.Write_Pos);
+	            S.Input.Read_Pos := S.Input.Read_Pos + Record_Len;
+	         end if;
+	      end Consume_Record;
+
+	      procedure Free_CH2_Reasm
+	      with Post => HC.Reasm_Buf = null
+	                   and then Reasm_Building (HC)
+	                   and then HC.Version = HC.Version'Old
+	                   and then HC.HRR_Sent = HC.HRR_Sent'Old
+	                   and then HC.Legacy_Session_ID_Len =
+	                     HC.Legacy_Session_ID_Len'Old
+	                   and then HC.Transcript_Len =
+	                     HC.Transcript_Len'Old
+	                   and then HC.Server_HS.Counter =
+	                     HC.Server_HS.Counter'Old
+	                   and then HC.Server_HS.Suite =
+	                     HC.Server_HS.Suite'Old
+	                   and then Server_Configured (HC)
+	                   and then Nonce_Space_Available (HC.Server_HS)
+	   is
+	      begin
+	         Free_Byte_Seq (HC.Reasm_Buf);
+	         HC.Reasm_Len := 0;
+	         HC.Reasm_Need := 0;
+	         HC.Reasm_Hdr_Pending := False;
+	      end Free_CH2_Reasm;
+	   begin
+                     Ready_To_Build := False;
+	                     if Msg'Length = 0
+	                       or else N32 (Msg'Length) > Transcript_Capacity
+                     then
+                        Consume_Record;
+                        Free_CH2_Reasm;
+                        Send_Alert_And_Error (S, Decode_Error, Result);
+                        return;
+                     end if;
+
+	                     Validate_Client_Hello_Retry (S, HC, Msg, Valid_CH2);
+	                     if not Valid_CH2 then
+	                        --  After HRR, CH2 parse/version/order failures are
+	                        --  illegal_parameter (RFC 8446 §4.1.4).
+	                        Consume_Record;
+	                        Free_CH2_Reasm;
+	                        Send_Alert_And_Error
+	                          (S, Illegal_Parameter, Result);
+	                        pragma Assert
+	                          (S.State = Wait_Client_Hello_Retry
+	                           or else Valid_Transition
+	                             (Wait_Client_Hello_Retry, S.State));
+	                        return;
+	                     end if;
+	                     pragma Assert (S.State = Wait_Client_Hello_Retry);
+	                     pragma Assert (HC.Version = TLS_1_3);
+
+	                     --  Append CH2 to transcript
+	                     pragma Assert (Msg'First <= Msg'Last);
+	                     Append_Transcript (HC, Msg);
+	                     pragma Assert (HC.Transcript_Len > 0);
+	                     Consume_Record;
+                     Free_CH2_Reasm;
+                     if HC.Cfg.Local = null
+                       or else not HC.Cfg.Local.Has_Identity
+                       or else HC.Cfg.Random = null
+                       or else HC.Cfg.Local.NaCl_Cert_Len >
+                         N32 (Max_Cert_DER)
+                       or else HC.Cfg.Local.Int_Count > Max_Pool_Size
+                       or else
+                         (for some I in 0 .. Max_Pool_Size - 1 =>
+                            HC.Cfg.Local.Ints (I).DER_Len >
+                              X509.N32 (Max_Cert_DER))
+                       or else
+                         (HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+                          and then HC.Cfg.Local.RSA_Mod_Len
+                            not in 64 .. 512)
+                     then
+                        Send_Alert_And_Error
+                          (S, Handshake_Failure, Result);
+                        pragma Assert
+                          (S.State = Wait_Client_Hello_Retry
+                           or else Valid_Transition
+                             (Wait_Client_Hello_Retry, S.State));
+                        pragma Assert
+                          (if S.State = Wait_Client_Hello
+                           then Reasm_Building (HC));
+                        return;
+                     end if;
+                     pragma Assert (S.State = Wait_Client_Hello_Retry);
+                     pragma Assert (Server_Configured (HC));
+                     pragma Assert
+                       (Handshake.Server_Msgs.Local_Config_Valid
+                          (HC.Cfg.Local));
+                     pragma Assert
+                       (HC.Cfg.Local.NaCl_Cert_Len <=
+                        N32 (Max_Cert_DER));
+                     pragma Assert
+                       (HC.Cfg.Local.Int_Count <= Max_Pool_Size);
+                     pragma Assert
+                       (for all I in 0 .. Max_Pool_Size - 1 =>
+                          HC.Cfg.Local.Ints (I).DER_Len <=
+                            X509.N32 (Max_Cert_DER));
+                     pragma Assert
+                       (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+                        then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512);
+                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+                     pragma Assert (Nonce_Space_Available (HC.Server_HS));
+                     pragma Assert (Nonce_Space_Available (S.Server_App));
+                     pragma Assert (Reasm_Building (HC));
+                     pragma Assert
+                       (S.Negotiated_Suite in
+                          Suite_AES_128_GCM_SHA256
+                        | Suite_AES_256_GCM_SHA384
+                        | Suite_CHACHA20_POLY1305_SHA256);
+                     pragma Assert (HC.HRR_Sent);
+
+	                     Result := OK;
+	                     Ready_To_Build := True;
+	   end Complete_Client_Hello_Retry;
+
+
+	   procedure Build_Server_Flight_After_Client_Hello_Retry
+	     (S      : in out Session;
+	      HC     : in out Handshake_Context;
+	      Result :    out Action)
+	   is
+	   begin
+	      Build_Server_Flight (S, HC, Result);
+	      pragma Assert (S.State in Server_Hello_Sent | Error_State);
+	   end Build_Server_Flight_After_Client_Hello_Retry;
+
+
+	   procedure Handle_Client_Hello_Retry
+	     (S      : in out Session;
+	      HC     : in out Handshake_Context;
+	      Result :    out Action)
+	   is
+	   begin
+            --  After HRR, wait for the client's second ClientHello.
+            --  Same parsing as Wait_Client_Hello but we expect the
+            --  client to include key_share for our requested group.
+		            if Input_Available (S) = 0 then
+	               Result := Need_Input;
+	               pragma Assert (S.State = Wait_Client_Hello_Retry);
+	               pragma Assert (Reasm_Building (HC));
+	               return;
+	            end if;
+
+            declare
+               Rec : Records.Parse_Result;
+            begin
+               Records.Parse_Record_Header
+                 (Data   => S.Input.Data (S.Input.Read_Pos ..
+                                           S.Input.Write_Pos - 1),
+                  Avail  => Available (S.Input),
+                  Result => Rec);
+
+	               if Rec.Overflow then
+	                  Send_Alert_And_Error (S, Record_Overflow, Result);
+		                  pragma Assert
+		                    (S.State = Wait_Client_Hello_Retry
+		                     or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
+		                  pragma Assert
+		                    (if S.State not in Error_State | Closed
+		                     then Reasm_Building (HC));
+		                  return;
+	               end if;
+
+               if Rec.Bad_Version then
+	                  --  RFC 8446 §5.1: legacy_record_version must lie
+	                  --  in {3,1}..{3,4}. Out-of-band → protocol_version.
+	                  Send_Alert_And_Error (S, Protocol_Version, Result);
+		                  pragma Assert
+		                    (S.State = Wait_Client_Hello_Retry
+		                     or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
+		                  pragma Assert
+		                    (if S.State not in Error_State | Closed
+		                     then Reasm_Building (HC));
+		                  return;
+	               end if;
+
+               if not Rec.OK then
+                  if Rec.Record_Len > 0 then
+	                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+		                     pragma Assert
+		                       (S.State = Wait_Client_Hello_Retry
+		                        or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
+		                     pragma Assert
+		                       (if S.State not in Error_State | Closed
+		                        then Reasm_Building (HC));
+		                  else
+	                     Result := Need_Input;
+	                     pragma Assert (S.State = Wait_Client_Hello_Retry);
+	                     pragma Assert (Reasm_Building (HC));
+	                  end if;
+	                  return;
+               end if;
+
+               if Rec.Content = Records.Content_Change_Cipher_Spec then
+                  declare
+                     CCS_Pos : constant N32 :=
+                        S.Input.Read_Pos + Rec.Fragment_Pos;
+                     CCS_OK : constant Boolean :=
+                        Rec.Fragment_Len = 1
+                        and then S.Input.Data (CCS_Pos) = 16#01#;
+                  begin
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                     if CCS_OK then
+	                        Result := OK;
+	                        pragma Assert (Reasm_Building (HC));
+	                     else
+                        --  RFC 5246 §7.1 / RFC 8446 §5: CCS payload MUST
+                        --  be the single byte 0x01 (BoGo
+                        --  BadChangeCipherSpec-*).
+	                        Send_Alert_And_Error
+	                          (S, Unexpected_Message, Result);
+	                     end if;
+		                     pragma Assert
+		                       (S.State = Wait_Client_Hello_Retry
+		                        or else Valid_Transition
+		                          (Wait_Client_Hello_Retry, S.State));
+		                     pragma Assert
+		                       (if S.State not in Error_State | Closed
+		                        then Reasm_Building (HC));
+		               end;
+	                  return;
+	               end if;
+
+	               if Rec.Content /= Records.Content_Handshake then
+	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                  Send_Alert_And_Error (S, Unexpected_Message, Result);
+			                  pragma Assert
+			                    (S.State = Wait_Client_Hello_Retry
+			                     or else Valid_Transition
+			                       (Wait_Client_Hello_Retry, S.State));
+			                  pragma Assert
+			                    (if S.State = Wait_Client_Hello
+			                     then Reasm_Building (HC));
+		                  return;
+	               end if;
+
+               --  Parse second ClientHello. CH2 is allowed to span
+               --  multiple records just like CH1, including the
+               --  pathological one-byte-record split used by BoGo.
+               declare
+                  Frag_Start : constant N32 :=
+                     S.Input.Read_Pos + Rec.Fragment_Pos;
+                  Frag_Len   : constant N32 := Rec.Fragment_Len;
+	                  Rec_Consumed : Boolean := False;
+
+                  procedure Consume_Record is
+                  begin
+                     if not Rec_Consumed then
+                        S.Input.Read_Pos :=
+                           S.Input.Read_Pos + Rec.Record_Len;
+                        Rec_Consumed := True;
+                     end if;
+                  end Consume_Record;
+
+                  procedure Free_CH2_Reasm is
+                  begin
+                     Free_Byte_Seq (HC.Reasm_Buf);
+                     HC.Reasm_Len := 0;
+                     HC.Reasm_Need := 0;
+                     HC.Reasm_Hdr_Pending := False;
+                  end Free_CH2_Reasm;
+
+
+               begin
+                  if HC.Reasm_Need > 0 then
+                     if HC.Reasm_Buf = null
+                       or else HC.Reasm_Len >= HC.Reasm_Need
+                     then
+                        Consume_Record;
+                        Send_Alert_And_Error (S, Decode_Error, Result);
+                        return;
+                     end if;
+
+                     declare
+                        Remaining : constant N32 :=
+                           HC.Reasm_Need - HC.Reasm_Len;
+                        Take      : constant N32 :=
+                           N32'Min (Frag_Len, Remaining);
+                     begin
+                        if Take > 0
+                          and then HC.Reasm_Len + Take <=
+                                     N32 (HC.Reasm_Buf'Length)
+                        then
+                           HC.Reasm_Buf
+                             (HC.Reasm_Len ..
+                              HC.Reasm_Len + Take - 1) :=
+                              S.Input.Data
+                                (Frag_Start .. Frag_Start + Take - 1);
+                           HC.Reasm_Len := HC.Reasm_Len + Take;
+                        end if;
+                     end;
+                     Consume_Record;
+
+                     if HC.Reasm_Hdr_Pending and then HC.Reasm_Len >= 4 then
+                        declare
+                           HS_Total : constant N32 :=
+                              N32 (HC.Reasm_Buf (1)) * 65536
+                              + N32 (HC.Reasm_Buf (2)) * 256
+                              + N32 (HC.Reasm_Buf (3)) + 4;
+                        begin
+                           HC.Reasm_Hdr_Pending := False;
+                           if HS_Total > Max_HS_Msg
+                             or else HS_Total > N32 (HC.Reasm_Buf'Length)
+                           then
+                              Free_CH2_Reasm;
+                              Send_Alert_And_Error (S, Decode_Error, Result);
+                              return;
+                           end if;
+                           HC.Reasm_Need := HS_Total;
+                        end;
+                     end if;
+
+                     if HC.Reasm_Len < HC.Reasm_Need then
+                        Result := OK;
+                        pragma Assert (Reasm_Building (HC));
+                        return;
+                     end if;
+
+	                     declare
+	                        Full_Len : constant N32 := HC.Reasm_Need;
+	                        Full_Msg : constant Byte_Seq :=
+	                           HC.Reasm_Buf (0 .. Full_Len - 1);
+	                        Ready_To_Build : Boolean;
+	                     begin
+	                        Complete_Client_Hello_Retry
+	                          (S, HC, Full_Msg, False, 0,
+	                           Ready_To_Build, Result);
+		                        if Ready_To_Build then
+		                           Build_Server_Flight_After_Client_Hello_Retry
+		                             (S, HC, Result);
+		                        end if;
+	                     end;
+                  elsif Frag_Len = 0 then
+                     Consume_Record;
+                     Send_Alert_And_Error (S, Decode_Error, Result);
+                  elsif Frag_Len < 4 then
+                     HC.Reasm_Buf := new Byte_Seq'
+                       (0 .. Max_HS_Msg - 1 => 0);
+                     HC.Reasm_Need := 4;
+                     HC.Reasm_Hdr_Pending := True;
+                     HC.Reasm_Len := Frag_Len;
+                     HC.Reasm_Buf (0 .. Frag_Len - 1) :=
+                        S.Input.Data (Frag_Start ..
+                                      Frag_Start + Frag_Len - 1);
+                     Consume_Record;
+                     Result := OK;
+                     pragma Assert (Reasm_Building (HC));
+                  else
+                     declare
+                        HS_Msg_Len : constant N32 :=
+                           N32 (S.Input.Data (Frag_Start + 1)) * 65536 +
+                           N32 (S.Input.Data (Frag_Start + 2)) * 256 +
+                           N32 (S.Input.Data (Frag_Start + 3));
+                        HS_Total   : constant N32 := HS_Msg_Len + 4;
+                     begin
+                        if HS_Total > Max_HS_Msg then
+                           Consume_Record;
+                           Send_Alert_And_Error (S, Decode_Error, Result);
+                        elsif HS_Total > Frag_Len then
+                           HC.Reasm_Buf := new Byte_Seq'
+                             (0 .. HS_Total - 1 => 0);
+                           HC.Reasm_Need := HS_Total;
+                           HC.Reasm_Hdr_Pending := False;
+                           HC.Reasm_Len := Frag_Len;
+                           HC.Reasm_Buf (0 .. Frag_Len - 1) :=
+                              S.Input.Data (Frag_Start ..
+                                            Frag_Start + Frag_Len - 1);
+                           Consume_Record;
+                           Result := OK;
+                           pragma Assert (Reasm_Building (HC));
+                        else
+	                           declare
+	                              Frag : Byte_Seq (0 .. Frag_Len - 1);
+	                              Ready_To_Build : Boolean;
+	                           begin
+	                              Frag :=
+	                                S.Input.Data
+	                                  (Frag_Start ..
+	                                   Frag_Start + Frag_Len - 1);
+	                              Complete_Client_Hello_Retry
+	                                (S, HC, Frag, True, Rec.Record_Len,
+	                                 Ready_To_Build, Result);
+	                              if Ready_To_Build then
+	                                 Build_Server_Flight_After_Client_Hello_Retry
+	                                   (S, HC, Result);
+	                              end if;
+	                           end;
+                        end if;
+                     end;
+	                  end if;
+	               end;
+	            end;
+	   end Handle_Client_Hello_Retry;
 
    --  Dispatch handshake states to the appropriate handler
    procedure Advance_Handshake
@@ -2106,277 +2745,16 @@ is
 		              (if S.State = Wait_Client_Hello
 		               then Reasm_Building (HC));
 
+
 	         when Wait_Client_Hello_Retry =>
 	            pragma Assert (Old_State = Wait_Client_Hello_Retry);
-            --  After HRR, wait for the client's second ClientHello.
-            --  Same parsing as Wait_Client_Hello but we expect the
-            --  client to include key_share for our requested group.
-	            if Input_Available (S) = 0 then
-	               Result := Need_Input;
-	               pragma Assert (S.State = Old_State);
-	               pragma Assert (Reasm_Building (HC));
-	               return;
-	            end if;
-
-            declare
-               Rec : Records.Parse_Result;
-            begin
-               Records.Parse_Record_Header
-                 (Data   => S.Input.Data (S.Input.Read_Pos ..
-                                           S.Input.Write_Pos - 1),
-                  Avail  => Available (S.Input),
-                  Result => Rec);
-
-	               if Rec.Overflow then
-	                  Send_Alert_And_Error (S, Record_Overflow, Result);
-		                  pragma Assert
-		                    (S.State = Old_State
-		                     or else Valid_Transition (Old_State, S.State));
-		                  pragma Assert
-		                    (if S.State not in Error_State | Closed
-		                     then Reasm_Building (HC));
-		                  return;
-	               end if;
-
-               if Rec.Bad_Version then
-	                  --  RFC 8446 §5.1: legacy_record_version must lie
-	                  --  in {3,1}..{3,4}. Out-of-band → protocol_version.
-	                  Send_Alert_And_Error (S, Protocol_Version, Result);
-		                  pragma Assert
-		                    (S.State = Old_State
-		                     or else Valid_Transition (Old_State, S.State));
-		                  pragma Assert
-		                    (if S.State not in Error_State | Closed
-		                     then Reasm_Building (HC));
-		                  return;
-	               end if;
-
-               if not Rec.OK then
-                  if Rec.Record_Len > 0 then
-	                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	                     Send_Alert_And_Error (S, Unexpected_Message, Result);
-		                     pragma Assert
-		                       (S.State = Old_State
-		                        or else Valid_Transition (Old_State, S.State));
-		                     pragma Assert
-		                       (if S.State not in Error_State | Closed
-		                        then Reasm_Building (HC));
-		                  else
-	                     Result := Need_Input;
-	                     pragma Assert (S.State = Old_State);
-	                     pragma Assert (Reasm_Building (HC));
-	                  end if;
-	                  return;
-               end if;
-
-               if Rec.Content = Records.Content_Change_Cipher_Spec then
-                  declare
-                     CCS_Pos : constant N32 :=
-                        S.Input.Read_Pos + Rec.Fragment_Pos;
-                     CCS_OK : constant Boolean :=
-                        Rec.Fragment_Len = 1
-                        and then S.Input.Data (CCS_Pos) = 16#01#;
-                  begin
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	                     if CCS_OK then
-	                        Result := OK;
-	                        pragma Assert (Reasm_Building (HC));
-	                     else
-                        --  RFC 5246 §7.1 / RFC 8446 §5: CCS payload MUST
-                        --  be the single byte 0x01 (BoGo
-                        --  BadChangeCipherSpec-*).
-	                        Send_Alert_And_Error
-	                          (S, Unexpected_Message, Result);
-	                     end if;
-		                     pragma Assert
-		                       (S.State = Old_State
-		                        or else Valid_Transition
-		                          (Old_State, S.State));
-		                     pragma Assert
-		                       (if S.State not in Error_State | Closed
-		                        then Reasm_Building (HC));
-		               end;
-	                  return;
-	               end if;
-
-	               if Rec.Content /= Records.Content_Handshake then
-	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	                  Send_Alert_And_Error (S, Unexpected_Message, Result);
-			                  pragma Assert
-			                    (S.State = Old_State
-			                     or else Valid_Transition
-			                       (Old_State, S.State));
-			                  pragma Assert
-			                    (if S.State = Wait_Client_Hello
-			                     then Reasm_Building (HC));
-		                  return;
-	               end if;
-
-               --  Parse second ClientHello
-               declare
-                  Frag_Start : constant N32 :=
-                     S.Input.Read_Pos + Rec.Fragment_Pos;
-                  Frag_Len   : constant N32 := Rec.Fragment_Len;
-                  Frag : constant Byte_Seq :=
-                     S.Input.Data (Frag_Start ..
-                                    Frag_Start + Frag_Len - 1);
-                  Parse_OK : Boolean;
-               begin
-                  --  Save CH1 extension fingerprint before re-parsing
-                  declare
-                     CH1_Hash  : constant Unsigned_32 := HC.CH_Ext_Hash;
-                     CH1_Count : constant Natural := HC.CH_Ext_Count;
-                  begin
-                     --  Reset for CH2 parsing. Seen_Ext_Count + Tags
-                     --  ALSO must reset — otherwise the duplicate-ext
-                     --  check at Apply_CH_Extension fires on every
-                     --  CH2 ext (they all "match" the CH1 entries),
-                     --  Parse_Client_Hello returns OK=False, and the
-                     --  caller emits illegal_parameter. RFC 8446 §4.2
-                     --  duplicate semantics are intra-CH-message, so
-                     --  resetting between CH1 and CH2 is correct.
-                     HC.Client_Saw_Key_Share := False;
-                     HC.Client_Has_X25519 := False;
-                     HC.Client_Has_P256 := False;
-                     HC.Client_Has_P384 := False;
-                     HC.Client_Saw_Supported_Groups := False;
-                     HC.Client_Supports_X25519 := False;
-                     HC.Client_Supports_P256 := False;
-                     HC.Client_Supports_P384 := False;
-                     HC.CH_Ext_Hash := 0;
-		                     HC.CH_Ext_Count := 0;
-		                     HC.Seen_Ext_Count := 0;
-		                     HC.Seen_Ext_Tags := (others => 0);
-		                     pragma Assert (HC.HRR_Sent);
-		                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-
-			                     Handshake.Server_Msgs.Parse_Client_Hello
-		                       (S, HC, Frag, Parse_OK);
-
-			                     if not Parse_OK then
-	                        --  After HRR, CH2 parse failures are
-                        --  illegal_parameter (RFC 8446 §4.1.4)
-                        S.Input.Read_Pos :=
-                           S.Input.Read_Pos + Rec.Record_Len;
-	                        Send_Alert_And_Error
-	                          (S, Illegal_Parameter, Result);
-			                        pragma Assert
-			                          (S.State = Old_State
-			                           or else Valid_Transition
-			                             (Old_State, S.State));
-			                  pragma Assert
-			                    (if S.State = Wait_Client_Hello
-			                     then Reasm_Building (HC));
-			                        return;
-			                     end if;
-			                     pragma Assert (Parse_OK);
-			                     pragma Assert (S.State = Wait_Client_Hello_Retry);
-			                     if HC.Version /= TLS_1_3 then
-			                        S.Input.Read_Pos :=
-			                           S.Input.Read_Pos + Rec.Record_Len;
-			                        Send_Alert_And_Error
-			                          (S, Illegal_Parameter, Result);
-			                        pragma Assert
-			                          (S.State = Old_State
-			                           or else Valid_Transition
-			                             (Old_State, S.State));
-			                     pragma Assert
-			                       (if S.State = Wait_Client_Hello
-			                        then Reasm_Building (HC));
-			                        return;
-			                     end if;
-			                     pragma Assert (HC.Version = TLS_1_3);
-
-		                     --  RFC 8446 §4.1.2: CH2 extensions must be in
-                     --  the same order as CH1. Compare fingerprints.
-                     --  Cookie is excluded from the hash in both CH1
-                     --  and CH2, so adding cookie doesn't affect it.
-                     if HC.CH_Ext_Hash /= CH1_Hash then
-                        S.Input.Read_Pos :=
-                           S.Input.Read_Pos + Rec.Record_Len;
-	                        Send_Alert_And_Error
-	                          (S, Illegal_Parameter, Result);
-			                        pragma Assert
-			                          (S.State = Old_State
-			                           or else Valid_Transition
-			                             (Old_State, S.State));
-			                     pragma Assert
-			                       (if S.State = Wait_Client_Hello
-			                        then Reasm_Building (HC));
-			                        return;
-			                     end if;
-		                  end;
-
-					                  --  Append CH2 to transcript
-						                  Append_Transcript (HC, Frag);
-						                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-					                  if HC.Cfg.Local = null
-					                    or else not HC.Cfg.Local.Has_Identity
-					                    or else HC.Cfg.Random = null
-					                    or else HC.Cfg.Local.NaCl_Cert_Len >
-					                      N32 (Max_Cert_DER)
-					                    or else HC.Cfg.Local.Int_Count > Max_Pool_Size
-					                    or else
-					                      (for some I in 0 .. Max_Pool_Size - 1 =>
-					                         HC.Cfg.Local.Ints (I).DER_Len >
-					                           X509.N32 (Max_Cert_DER))
-					                    or else
-					                      (HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-					                       and then HC.Cfg.Local.RSA_Mod_Len
-					                         not in 64 .. 512)
-					                  then
-					                     Send_Alert_And_Error
-					                       (S, Handshake_Failure, Result);
-					                     pragma Assert
-					                       (S.State = Old_State
-					                        or else Valid_Transition
-					                          (Old_State, S.State));
-				                  pragma Assert
-				                    (if S.State = Wait_Client_Hello
-				                     then Reasm_Building (HC));
-					                     return;
-						                  end if;
-						                  pragma Assert (S.State = Wait_Client_Hello_Retry);
-						                  pragma Assert (Server_Configured (HC));
-					                  pragma Assert
-					                    (Handshake.Server_Msgs.Local_Config_Valid
-					                       (HC.Cfg.Local));
-					                  pragma Assert
-					                    (HC.Cfg.Local.NaCl_Cert_Len <=
-				                       N32 (Max_Cert_DER));
-			                  pragma Assert
-			                    (HC.Cfg.Local.Int_Count <= Max_Pool_Size);
-			                  pragma Assert
-			                    (for all I in 0 .. Max_Pool_Size - 1 =>
-			                       HC.Cfg.Local.Ints (I).DER_Len <=
-			                         X509.N32 (Max_Cert_DER));
-			                  pragma Assert
-			                    (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-			                     then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512);
-			                  pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-				                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
-				                  pragma Assert (Nonce_Space_Available (S.Server_App));
-				                  pragma Assert (Reasm_Building (HC));
-			                  pragma Assert
-			                    (S.Negotiated_Suite in
-		                       Suite_AES_128_GCM_SHA256
-		                     | Suite_AES_256_GCM_SHA384
-		                     | Suite_CHACHA20_POLY1305_SHA256);
-				                  pragma Assert (HC.HRR_Sent);
-
-				                  --  Now proceed to build the real ServerHello flight
-					                  Build_Server_Flight (S, HC, Result);
-				                  pragma Assert
-				                    (S.State in Server_Hello_Sent | Error_State);
-				                  pragma Assert
-				                    (S.State = Old_State
-				                     or else Valid_Transition
-			                       (Old_State, S.State));
-			                  if S.State not in Error_State | Closed then
-			                     pragma Assert (S.State = Server_Hello_Sent);
-			                  end if;
-	               end;
-	            end;
+	            Handle_Client_Hello_Retry (S, HC, Result);
+	            pragma Assert
+	              (S.State = Old_State
+	               or else Valid_Transition (Old_State, S.State));
+	            pragma Assert
+	              (if S.State not in Error_State | Closed
+	               then Reasm_Building (HC));
 
 	         when Wait_Client_Certificate
 	            | Wait_Client_Cert_Verify =>
@@ -2553,29 +2931,45 @@ is
       pragma Assert (P = Msg_Len);
 
       --  RFC 8446 §4.4.1: Replace transcript with synthetic message_hash.
-      --  transcript = Hash(message_hash(254) || length(hash_len) || Hash(CH1))
-      --  For SHA-256: message_hash type=254, length=32, then 32-byte hash.
-      declare
-         CH1_Hash : Digest;
-         Synthetic : Byte_Seq (0 .. 35) := (others => 0);  --  type(1) + len(3) + hash(32) = 36
-      begin
-         --  Hash the current transcript (which contains CH1)
-         Hash (CH1_Hash, HC.Transcript (0 .. HC.Transcript_Len - 1));
+      --  The hash algorithm is selected by the negotiated cipher suite.
+      if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384 then
+         declare
+            CH1_Hash  : SPARKNaCl.Hashing.SHA384.Digest;
+            Synthetic : Byte_Seq (0 .. 51) := (others => 0);
+         begin
+            SPARKNaCl.Hashing.SHA384.Hash
+              (CH1_Hash, HC.Transcript (0 .. HC.Transcript_Len - 1));
 
-         --  Build synthetic message_hash handshake message
-         Synthetic (0) := 254;  --  message_hash type
-         Synthetic (1) := 0;
-         Synthetic (2) := 0;
-         Synthetic (3) := 32;   --  hash length
-         Synthetic (4 .. 35) := Byte_Seq (CH1_Hash);
+            Synthetic (0) := 254;  --  message_hash type
+            Synthetic (1) := 0;
+            Synthetic (2) := 0;
+            Synthetic (3) := 48;   --  SHA-384 hash length
+            Synthetic (4 .. 51) := Byte_Seq (CH1_Hash);
 
-         --  Replace transcript
-         HC.Transcript (0 .. 35) := Synthetic;
-         HC.Transcript_Len := 36;
-      end;
+            HC.Transcript (0 .. 51) := Synthetic;
+            HC.Transcript_Len := 52;
+         end;
+      else
+         declare
+            CH1_Hash  : Digest;
+            Synthetic : Byte_Seq (0 .. 35) := (others => 0);
+         begin
+            Hash (CH1_Hash, HC.Transcript (0 .. HC.Transcript_Len - 1));
+
+            Synthetic (0) := 254;  --  message_hash type
+            Synthetic (1) := 0;
+            Synthetic (2) := 0;
+            Synthetic (3) := 32;   --  SHA-256 hash length
+            Synthetic (4 .. 35) := Byte_Seq (CH1_Hash);
+
+            HC.Transcript (0 .. 35) := Synthetic;
+            HC.Transcript_Len := 36;
+         end;
+      end if;
 
       --  Append HRR to transcript
       Append_Transcript (HC, HRR_Buf (0 .. Msg_Len - 1));
+      HC.HRR_Selected_Group := Group;
 
       HRR_Len := Msg_Len;
 
@@ -2612,6 +3006,7 @@ is
                         S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
             Scratch.Data (0 .. Scratch.Write_Pos - 1);
          S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+         HC.Sent_HRR_CCS := True;
       end;
    end Build_Hello_Retry_Request;
 
@@ -3007,39 +3402,34 @@ is
 
       --  Check if HelloRetryRequest is needed.
       --
-      --  RFC 8446 §4.1.4: HRR is sent ONLY when we cannot proceed
-      --  from the offered ClientHello — i.e. no usable key_share
-      --  was provided for any group we and the client both support.
-      --  We MUST NOT send HRR purely to express a server preference
-      --  for a different group: if the client offered P-256 and we
-      --  support X25519/P-256/P-384, we use P-256 and proceed. The
-      --  Go TLS test client (BoGo) treats preference-based HRR as
-      --  an "invalid HelloRetryRequest" and aborts.
+      --  RFC 8446 §4.1.4: choose the first mutually supported group
+      --  in server preference order. If the client did not send a
+      --  key_share for that selected group, send HRR requesting it.
       if not HC.HRR_Sent then
          declare
-            Need_HRR    : Boolean := False;
-            HRR_Group   : Unsigned_16 := 0;
+            Need_HRR            : Boolean := False;
+            HRR_Group           : Unsigned_16 := 0;
+            Preferred_Has_Share : Boolean := False;
          begin
             if not HC.Client_Saw_Key_Share then
                Send_Alert_And_Error (S, Missing_Extension, Result);
                return;
             end if;
 
-            --  Only HRR if no usable key_share AT ALL.
-            if not (HC.Client_Has_X25519 or HC.Client_Has_P256
-                    or HC.Client_Has_P384)
-            then
-               --  Pick a group from supported_groups for HRR.
-               if HC.Client_Supports_X25519 then
-                  Need_HRR := True;
-                  HRR_Group := 16#001D#;
-               elsif HC.Client_Supports_P256 then
-                  Need_HRR := True;
-                  HRR_Group := 16#0017#;
-               elsif HC.Client_Supports_P384 then
-                  Need_HRR := True;
-                  HRR_Group := 16#0018#;
-               end if;
+            --  Pick the server-preferred mutually supported group.
+            if HC.Client_Supports_X25519 then
+               HRR_Group := 16#001D#;
+               Preferred_Has_Share := HC.Client_Has_X25519;
+            elsif HC.Client_Supports_P256 then
+               HRR_Group := 16#0017#;
+               Preferred_Has_Share := HC.Client_Has_P256;
+            elsif HC.Client_Supports_P384 then
+               HRR_Group := 16#0018#;
+               Preferred_Has_Share := HC.Client_Has_P384;
+            end if;
+
+            if HRR_Group /= 0 and then not Preferred_Has_Share then
+               Need_HRR := True;
             end if;
 
             if Need_HRR then
@@ -3114,13 +3504,15 @@ is
       pragma Assert (Saved_Ctr = 0);
       pragma Assert (Nonce_Space_Available (HC.Server_HS));
 
-      --  Send CCS for middlebox compatibility
-      Records.Build_CCS_Record (Scratch, CCS_Out);
-      if CCS_Out = 0 then
-	         S.Last_Error := Insufficient_Buffer;
-	         Set_State (S, Error_State);
-	         Result := Error_Alert;
-			               return;
+      --  Send CCS for middlebox compatibility unless HRR already sent it.
+      if not HC.Sent_HRR_CCS then
+         Records.Build_CCS_Record (Scratch, CCS_Out);
+         if CCS_Out = 0 then
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
       end if;
 
       --  Build EncryptedExtensions (encrypted with server HS keys)
@@ -3529,14 +3921,21 @@ is
                Master         : Key_Schedule.Digest_384;
                Client_App_Sec : OKM384_Seq (0 .. 47);
                Server_App_Sec : OKM384_Seq (0 .. 47);
+               Exporter       : OKM384_Seq (0 .. 47);
             begin
                Key_Schedule.Derive_Master_Secret_384
                  (Master, Key_Schedule.Digest_384 (HC.Handshake_Secret));
 
                Key_Schedule.Derive_App_Traffic_Secrets_384
                  (Client_App_Sec, Server_App_Sec, Master, TS_Hash);
+               Key_Schedule.Derive_Exporter_Master_Secret_384
+                 (Exporter, Master, TS_Hash);
 
                HC.Master_Secret := Bytes_48 (Master);
+               S.Exporter_Secret := Bytes_48 (Exporter);
+               S.Exporter_Secret_Len := 48;
+               S.Exporter_Client_Random := HC.Client_Random;
+               S.Exporter_Server_Random := HC.Server_Random;
 
                Set_Traffic_Keys (S.Client_App,
                                  Bytes_48 (Byte_Seq (Client_App_Sec)),
@@ -3552,6 +3951,7 @@ is
                Master         : Digest;
                Client_App_Sec : OKM_Seq (0 .. 31);
                Server_App_Sec : OKM_Seq (0 .. 31);
+               Exporter       : OKM_Seq (0 .. 31);
                CS48           : Bytes_48 := (others => 0);
                SS48           : Bytes_48 := (others => 0);
             begin
@@ -3561,9 +3961,16 @@ is
                Key_Schedule.Derive_App_Traffic_Secrets
                  (Client_App_Sec, Server_App_Sec,
                   Master, TS_Hash);
+               Key_Schedule.Derive_Exporter_Master_Secret
+                 (Exporter, Master, TS_Hash);
 
                HC.Master_Secret := (others => 0);
                HC.Master_Secret (0 .. 31) := Bytes_32 (Digest (Master));
+               S.Exporter_Secret := (others => 0);
+               S.Exporter_Secret (0 .. 31) := Bytes_32 (Byte_Seq (Exporter));
+               S.Exporter_Secret_Len := 32;
+               S.Exporter_Client_Random := HC.Client_Random;
+               S.Exporter_Server_Random := HC.Server_Random;
 
                CS48 (0 .. 31) := Bytes_32 (Byte_Seq (Client_App_Sec));
                SS48 (0 .. 31) := Bytes_32 (Byte_Seq (Server_App_Sec));

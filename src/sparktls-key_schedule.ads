@@ -111,6 +111,33 @@ is
       Transcript_Hash : in     Digest)
    with Pre => Res_Master'First = 0 and Res_Master'Last = 31;
 
+   --  RFC 8446 §7.5: exporter master secret.
+   --  exporter_master_secret = Derive-Secret(master, "exp master",
+   --                                         Transcript-Hash(...))
+   procedure Derive_Exporter_Master_Secret
+     (Exporter_Master :    out OKM_Seq;
+      Master          : in     Digest;
+      Transcript_Hash : in     Digest)
+   with Pre => Exporter_Master'First = 0 and Exporter_Master'Last = 31;
+
+   --  RFC 8446 §7.5: TLS 1.3 exporter.
+   --  TLS-Exporter(label, context, L) =
+   --    HKDF-Expand-Label(Derive-Secret(exporter_master_secret, label, ""),
+   --                      "exporter", Hash(context), L)
+   procedure Export_Keying_Material
+     (Output          :    out OKM_Seq;
+      Exporter_Master : in     Byte_Seq;
+      Label           : in     String;
+      Context         : in     Byte_Seq)
+   with Pre => Output'First = 0
+               and Output'Length > 0
+               and Exporter_Master'First = 0
+               and Exporter_Master'Last = 31
+               and Label'Length > 0
+               and Label'Length <= 245
+               and Context'Length <= 255
+               and (if Context'Length > 0 then Context'First = 0);
+
    --  Derive PSK from resumption master secret + ticket nonce
    --  PSK = HKDF-Expand-Label(res_master, "resumption", nonce, 32)
    procedure Derive_PSK
@@ -199,6 +226,26 @@ is
       Master          : in     Digest_384;
       Transcript_Hash : in     Digest_384)
    with Pre => Res_Master'First = 0 and Res_Master'Last = 47;
+
+   procedure Derive_Exporter_Master_Secret_384
+     (Exporter_Master :    out HKDF384.OKM384_Seq;
+      Master          : in     Digest_384;
+      Transcript_Hash : in     Digest_384)
+   with Pre => Exporter_Master'First = 0 and Exporter_Master'Last = 47;
+
+   procedure Export_Keying_Material_384
+     (Output          :    out HKDF384.OKM384_Seq;
+      Exporter_Master : in     Byte_Seq;
+      Label           : in     String;
+      Context         : in     Byte_Seq)
+   with Pre => Output'First = 0
+               and Output'Length > 0
+               and Exporter_Master'First = 0
+               and Exporter_Master'Last = 47
+               and Label'Length > 0
+               and Label'Length <= 245
+               and Context'Length <= 255
+               and (if Context'Length > 0 then Context'First = 0);
 
    procedure Derive_PSK_384
      (PSK         :    out HKDF384.OKM384_Seq;

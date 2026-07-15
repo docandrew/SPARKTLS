@@ -1605,9 +1605,35 @@ is
    is
       Pos : N32;
       List_Start : N32;
+      List_Len : N32 := 0;
    begin
       Result := (others => 0);
       Len := 0;
+
+      if Id.NaCl_Cert_Len = 0
+        or else Id.NaCl_Cert_Len > Max_Cert_DER_Len
+      then
+         return;
+      end if;
+
+      --  Compute the full certificate_list length first. TLS 1.2
+      --  Certificate entries are 3-byte DER length plus DER bytes.
+      List_Len := 3 + Id.NaCl_Cert_Len;
+      for I in 0 .. Id.Int_Count - 1 loop
+         pragma Loop_Invariant
+           (List_Len <= 3 + Id.NaCl_Cert_Len
+                        + N32 (I) * (3 + N32 (Max_Cert_DER)));
+         if Id.Ints (I).Present then
+            List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len);
+         end if;
+      end loop;
+
+      --  Handshake header (4) + certificate_list_length (3) + list.
+      if List_Len >= 2**24
+        or else List_Len > N32 (Result'Length) - 7
+      then
+         return;
+      end if;
 
       --  Handshake header placeholder (fill length later)
       Result (0) := 16#0B#;  --  Certificate
@@ -1619,9 +1645,8 @@ is
 
       --  Leaf certificate (use NaCl_Cert which is SPARKNaCl.Byte_Seq)
       --  Need space for: cert_len(3) + cert_data(NaCl_Cert_Len)
-      if Id.NaCl_Cert_Len > 0
-         and then Id.NaCl_Cert_Len <= Max_Cert_DER_Len
-         and then Pos <= Result'Last - 3 - Id.NaCl_Cert_Len + 1
+      if Pos <= Result'Last
+         and then 3 + Id.NaCl_Cert_Len <= Result'Last - Pos + 1
       then
          Put24 (Result, Pos, Id.NaCl_Cert_Len);
          Pos := Pos + 3;
@@ -1633,14 +1658,37 @@ is
       end if;
 
       --  Intermediate certificates
-      --  TODO: add intermediate cert support for TLS 1.2
+      for I in 0 .. Id.Int_Count - 1 loop
+         pragma Loop_Invariant (Pos <= Result'Last + 1);
+         if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
+            declare
+               Int_Len : constant N32 := N32 (Id.Ints (I).DER_Len);
+            begin
+               if Pos <= Result'Last
+                 and then 3 + Int_Len <= Result'Last - Pos + 1
+               then
+                  Put24 (Result, Pos, Int_Len);
+                  Pos := Pos + 3;
+                  for J in N32 range 0 .. Int_Len - 1 loop
+                     pragma Loop_Invariant (Pos + J <= Result'Last);
+                     declare
+                        K : constant X509.N32 := X509.N32 (Natural (J));
+                     begin
+                        pragma Assert (K <= Id.Ints (I).DER'Last);
+                        Result (Pos + J) := Byte (Id.Ints (I).DER (K));
+                     end;
+                  end loop;
+                  Pos := Pos + Int_Len;
+               else
+                  Len := 0;
+                  return;
+               end if;
+            end;
+         end if;
+      end loop;
 
       --  Fill certificate list length
-      declare
-         List_Len : constant N32 := Pos - List_Start - 3;
-      begin
-         Put24 (Result, List_Start, List_Len);
-      end;
+      Put24 (Result, List_Start, List_Len);
 
       --  Fill handshake message length
       declare

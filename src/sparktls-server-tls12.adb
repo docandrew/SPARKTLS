@@ -236,7 +236,9 @@ is
 				                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 				                    (HC.Cfg.Local)
 				                and then HC.Cfg.Random /= null
-				                and then Reasm_Building (HC);
+				                and then
+				                  (if S.State = Server_Hello_Sent
+				                   then Reasm_Building (HC));
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
    --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
@@ -570,7 +572,8 @@ is
 
       --  2. Certificate (TLS 1.2 format)
       declare
-         Cert_Buf : Byte_Seq (0 .. 8191); Cert_Len : N32;
+         Cert_Buf : Byte_Seq (0 .. Max_Record_Plaintext - 1);
+         Cert_Len : N32;
       begin
          Build_Certificate_Chain_12 (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
          if Cert_Len > 0 then
@@ -710,6 +713,10 @@ is
       HC.Server_Write_IV_12 := SI;
       HC.Client_Seq_12 := 0;
       HC.Server_Seq_12 := 0;
+      S.Exporter_Secret := HC.Master_Secret_12;
+      S.Exporter_Secret_Len := 48;
+      S.Exporter_Client_Random := HC.Client_Random;
+      S.Exporter_Server_Random := HC.Server_Random;
    end Derive_Keys_Resumed_12;
 
    ------------------------------------------------------------------
@@ -1015,6 +1022,10 @@ is
       HC.Server_Write_IV_12 := SI;
       HC.Client_Seq_12 := 0;
       HC.Server_Seq_12 := 0;
+      S.Exporter_Secret := HC.Master_Secret_12;
+      S.Exporter_Secret_Len := 48;
+      S.Exporter_Client_Random := HC.Client_Random;
+      S.Exporter_Server_Random := HC.Server_Random;
    end Derive_Keys_12;
 
    ------------------------------------------------------------------

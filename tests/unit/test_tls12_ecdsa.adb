@@ -46,6 +46,11 @@ procedure Test_TLS12_ECDSA is
       return R;
    end From_Hex;
 
+   function U24 (B : Byte_Seq; Pos : N32) return N32 is
+     (N32 (B (Pos)) * 65536
+      + N32 (B (Pos + 1)) * 256
+      + N32 (B (Pos + 2)));
+
    Cert_DER : constant Byte_Seq := From_Hex
      ("308201313081d9a003020102020106300a06082a8648ce3d0403023020311e"
       & "301c060355040313155465737420454344534120502d32353620526f6f74301e"
@@ -86,6 +91,67 @@ procedure Test_TLS12_ECDSA is
 
    Cert : X509.Certificate;
    OK   : Boolean;
+
+   procedure Test_TLS12_Certificate_Chain_Emits_Intermediates is
+      Id      : Identity;
+      Id_OK   : Boolean;
+      Add_OK  : Boolean;
+      Key     : Byte_Seq (0 .. 31) := (0 => 1, others => 16#42#);
+      Result  : Byte_Seq (0 .. 4095) := (others => 0);
+      Len     : N32;
+      Cert_Len : constant N32 := N32 (Cert_DER'Length);
+      List_Len : constant N32 := 3 * (Cert_Len + 3);
+      P       : N32;
+   begin
+      SPARKTLS.Cert_Verify.Set_Identity
+        (Id, X509.Byte_Seq (Cert_DER), Key, Id_OK);
+      Check ("TLS 1.2 chain test identity loads", Id_OK);
+      if not Id_OK then
+         return;
+      end if;
+
+      SPARKTLS.Cert_Verify.Add_Intermediate
+        (Id, X509.Byte_Seq (Cert_DER), Add_OK);
+      Check ("TLS 1.2 chain first intermediate loads", Add_OK);
+      if not Add_OK then
+         return;
+      end if;
+
+      SPARKTLS.Cert_Verify.Add_Intermediate
+        (Id, X509.Byte_Seq (Cert_DER), Add_OK);
+      Check ("TLS 1.2 chain second intermediate loads", Add_OK);
+      if not Add_OK then
+         return;
+      end if;
+
+      SPARKTLS.Handshake.TLS12.Build_Certificate_Chain_12
+        (Id, Result, Len);
+
+      Check ("TLS 1.2 Certificate chain emits non-empty message", Len > 0);
+      if Len = 0 then
+         return;
+      end if;
+
+      Check ("TLS 1.2 Certificate type is 0x0b", Result (0) = 16#0B#);
+      Check ("TLS 1.2 Certificate handshake length includes intermediates",
+             U24 (Result, 1) = Len - 4);
+      Check ("TLS 1.2 certificate_list length includes all entries",
+             U24 (Result, 4) = List_Len);
+
+      P := 7;
+      for Entry_No in 1 .. 3 loop
+         Check ("TLS 1.2 cert entry" & Integer'Image (Entry_No)
+                & " length matches",
+                U24 (Result, P) = Cert_Len);
+         P := P + 3;
+         Check ("TLS 1.2 cert entry" & Integer'Image (Entry_No)
+                & " DER starts with SEQUENCE",
+                Result (P) = 16#30#);
+         P := P + Cert_Len;
+      end loop;
+
+      Check ("TLS 1.2 cert entries consume full message", P = Len);
+   end Test_TLS12_Certificate_Chain_Emits_Intermediates;
 begin
    X509.Parse (X509.Byte_Seq (Cert_DER), Cert, OK);
    Check ("BoGo P-256 cert parses", OK);
@@ -186,6 +252,8 @@ begin
             (not Parse_OK) and HC.Ext_Parse_Err = Illegal_Parameter);
       end;
    end if;
+
+   Test_TLS12_Certificate_Chain_Emits_Intermediates;
 
    Put_Line ("Total checks: " & Natural'Image (Total)
              & " passed" & Natural'Image (Pass)

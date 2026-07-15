@@ -241,4 +241,32 @@ is
         --  traceability.
         Post => SPARKTLS.Verify_Data_Length_TLS12_RFC_5246_7_4_9 (Verify);
 
+   --  RFC 5705: TLS 1.2 exporter.
+   --
+   --  If Use_Context is False:
+   --    PRF(master_secret, label, client_random || server_random)
+   --
+   --  If Use_Context is True:
+   --    PRF(master_secret, label,
+   --        client_random || server_random || context_length || context)
+   --
+   --  The context bound is intentionally conservative so this can reuse
+   --  the already-proven PRF seed limit.
+   procedure Export_Keying_Material_12
+     (Output        :    out Byte_Seq;
+      Master        : in     Bytes_48;
+      Client_Random : in     Bytes_32;
+      Server_Random : in     Bytes_32;
+      Label         : in     String;
+      Context       : in     Byte_Seq;
+      Use_Context   : in     Boolean;
+      Use_SHA384    : in     Boolean)
+   with Pre => Output'First = 0
+               and Output'Length > 0
+               and Output'Length <= 256
+               and Label'Length > 0
+               and Label'Length <= 64
+               and Context'Length <= 62
+               and (if Context'Length > 0 then Context'First = 0);
+
 end SPARKTLS.Key_Schedule_12;

@@ -157,6 +157,10 @@ is
       HC.Server_Write_IV_12 := SI;
       HC.Client_Seq_12 := 0;
       HC.Server_Seq_12 := 0;
+      S.Exporter_Secret := HC.Master_Secret_12;
+      S.Exporter_Secret_Len := 48;
+      S.Exporter_Client_Random := HC.Client_Random;
+      S.Exporter_Server_Random := HC.Server_Random;
    end Derive_Keys_Resumed_12;
 
    procedure Derive_Keys_12 (S : in out Session; HC : in out Handshake_Context)
@@ -283,6 +287,10 @@ is
       HC.Server_Write_IV_12 := SI;
       HC.Client_Seq_12 := 0;
       HC.Server_Seq_12 := 0;
+      S.Exporter_Secret := HC.Master_Secret_12;
+      S.Exporter_Secret_Len := 48;
+      S.Exporter_Client_Random := HC.Client_Random;
+      S.Exporter_Server_Random := HC.Server_Random;
    end Derive_Keys_12;
 
    ------------------------------------------------------------------

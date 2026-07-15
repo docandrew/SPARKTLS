@@ -40,18 +40,24 @@ echo "=== BoGo (BoringSSL adversarial TLS tests) ==="
 
 mkdir -p "$CACHE"
 
-# --- 1. Build the shim if needed -------------------------------------
-if [ ! -x "$SHIM" ]; then
-    echo "  Building bogo_shim ..."
-    if ! command -v alr >/dev/null 2>&1; then
-        echo "  SKIP: alire not found, can't build shim"
-        exit 0
-    fi
-    eval "$(cd "$REPO_ROOT" && alr -n --no-tty printenv --unix 2>/dev/null)"
-    if ! gprbuild -P "$REPO_ROOT/tests/bogo/bogo_shim.gpr" 2>&1 | tail -3; then
-        echo "  SKIP: shim build failed"
-        exit 0
-    fi
+# --- 1. Build the shim ------------------------------------------------
+# Always invoke gprbuild, not only when the binary is missing. Incremental
+# no-op rebuilds are fast, and this prevents stale shim executables from
+# reporting old flag-support behavior after source changes.
+echo "  Building bogo_shim ..."
+if ! command -v alr >/dev/null 2>&1; then
+    echo "  SKIP: alire not found, can't build shim"
+    exit 0
+fi
+if ! (cd "$REPO_ROOT" &&
+      HOME="${HOME:-/home/doc}" \
+      XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" \
+      XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}" \
+      alr exec -- gprbuild -P "$REPO_ROOT/tests/bogo/bogo_shim.gpr") \
+      2>&1 | tail -3
+then
+    echo "  SKIP: shim build failed"
+    exit 0
 fi
 
 # --- 2. Install Go locally if not on PATH and not cached -------------

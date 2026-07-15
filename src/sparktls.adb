@@ -1,6 +1,10 @@
 with Ada.Unchecked_Deallocation;
 with SPARKTLS.Records;
 with SPARKTLS.Records.TLS12;
+with SPARKTLS.Key_Schedule;
+with SPARKTLS.Key_Schedule_12;
+with SPARKTLSCrypto.HKDF;
+with SPARKTLSCrypto.HKDF384;
 
 package body SPARKTLS with
    SPARK_Mode => On
@@ -314,6 +318,12 @@ is
       --  Zero resumption master secret
       S.Res_Master     := (others => 0);
       S.Res_Master_Len := 0;
+
+      --  Zero exporter material
+      S.Exporter_Secret := (others => 0);
+      S.Exporter_Secret_Len := 0;
+      S.Exporter_Client_Random := (others => 0);
+      S.Exporter_Server_Random := (others => 0);
 
       --  Zero TLS 1.2 implicit IVs
       S.Client_IV_12 := (others => 0);
@@ -641,5 +651,65 @@ is
          end loop;
       end;
    end Validate_ALPN_Echo_Body;
+
+   procedure Export_Keying_Material
+     (S           : in     Session;
+      Label       : in     String;
+      Context     : in     Byte_Seq;
+      Use_Context : in     Boolean;
+      Output      :    out Byte_Seq;
+      OK          :    out Boolean)
+   is
+   begin
+      Output := (others => 0);
+      OK := False;
+
+      if S.State /= Connected or else S.Exporter_Secret_Len = 0 then
+         return;
+      end if;
+
+      if S.Negotiated_Version = TLS_1_2 then
+         if S.Exporter_Secret_Len /= 48 then
+            return;
+         end if;
+
+         SPARKTLS.Key_Schedule_12.Export_Keying_Material_12
+           (Output        => Output,
+            Master        => S.Exporter_Secret,
+            Client_Random => S.Exporter_Client_Random,
+            Server_Random => S.Exporter_Server_Random,
+            Label         => Label,
+            Context       => Context,
+            Use_Context   => Use_Context,
+            Use_SHA384    => S.Negotiated_Suite_12 in
+              Suite_ECDHE_RSA_AES256_GCM_SHA384
+              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384);
+         OK := True;
+      elsif S.Exporter_Secret_Len = 48 then
+         declare
+            Tmp : SPARKTLSCrypto.HKDF384.OKM384_Seq (0 .. Output'Length - 1);
+         begin
+            SPARKTLS.Key_Schedule.Export_Keying_Material_384
+              (Output          => Tmp,
+               Exporter_Master => S.Exporter_Secret,
+               Label           => Label,
+               Context         => Context);
+            Output := Byte_Seq (Tmp);
+            OK := True;
+         end;
+      elsif S.Exporter_Secret_Len = 32 then
+         declare
+            Tmp : SPARKTLSCrypto.HKDF.OKM_Seq (0 .. Output'Length - 1);
+         begin
+            SPARKTLS.Key_Schedule.Export_Keying_Material
+              (Output          => Tmp,
+               Exporter_Master => S.Exporter_Secret (0 .. 31),
+               Label           => Label,
+               Context         => Context);
+            Output := Byte_Seq (Tmp);
+            OK := True;
+         end;
+      end if;
+   end Export_Keying_Material;
 
 end SPARKTLS;

@@ -2860,6 +2860,7 @@ is
       Body_Len     : N32;
       Buf          : RBT.Bytes_Ptr;
       Ctx          : Context;
+      Raw_Legacy_Version : N32 := 0;
 		      Saved_Local  : constant Identity_Access := HC.Cfg.Local;
 			      Saved_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
 	      Saved_HRR    : constant Boolean := HC.HRR_Sent;
@@ -2941,6 +2942,10 @@ is
 
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
+      if Buf.all'Length >= 2 then
+         Raw_Legacy_Version :=
+           N32 (Buf.all (1)) * 256 + N32 (Buf.all (2));
+      end if;
 
       --  RFC 8446 §4.1.2: TLS 1.3 clients MUST set CH.legacy_version
       --  to 0x0303, but TLS 1.3 servers MUST tolerate other values
@@ -2949,9 +2954,12 @@ is
       --  TLS 1.3-tolerant high value (e.g. 0x0304 from buggy clients
       --  or 0x0400 from forward-version probes) makes Verify_Message
       --  fail. Pre-normalise to 0x0303 before parse for any value
-      --  > 0x0303; this preserves the genuine-old-client rejection
-      --  for TLS 1.0/1.1 (legacy_version < 0x0303). BoGo
-      --  ClientHelloVersionTooHigh, VersionTolerance-TLS13.
+      --  > 0x0303, or any syntactically old 0x03xx value that may be
+      --  superseded by supported_versions. Genuine old-client
+      --  rejection happens after extension parsing if there is no
+      --  acceptable supported_versions override. BoGo
+      --  ClientHelloVersionTooHigh, VersionTolerance-TLS13,
+      --  ConflictingVersionNegotiation-2.
       --
       --  ##  WARNING — buffer mutation
       --
@@ -2964,8 +2972,9 @@ is
       --  parameter (Append_Transcript runs in the caller), so the
       --  rewrite never leaks into the transcript.
       if Buf.all'Length >= 2
-        and then (N32 (Buf.all (1)) * 256
-                  + N32 (Buf.all (2))) > 16#0303#
+        and then (Raw_Legacy_Version > 16#0303#
+                  or else
+                    (Raw_Legacy_Version in 16#0301# .. 16#0302#))
       then
          Buf.all (1) := 16#03#;
          Buf.all (2) := 16#03#;
@@ -3157,6 +3166,23 @@ is
 
       Take_Buffer (Ctx, Buf);
       RFLX_Free (Buf);
+
+      --  If legacy_version was TLS 1.0/1.1 and no supported_versions
+      --  override named a version we support, reject rather than
+      --  silently treating the locally-normalized RFLX parse buffer as
+      --  a TLS 1.2 ClientHello.
+      if not HC.Saw_Supported_Versions
+        and then Raw_Legacy_Version in 16#0301# .. 16#0302#
+      then
+         S.Last_Error := Protocol_Version;
+         OK := False;
+         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
+         pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
+         pragma Assert (Saved_Config_Frame);
+         pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
 
       --  RFC 8446 §4.2.1: if the client sent supported_versions but
       --  did not list any version we can negotiate, reject with
@@ -3861,7 +3887,49 @@ is
       --  matching Client_Has_* flag so the per-branch pragma Assert
       --  proves the cross-reference.
       HC.Shared_Secret := (others => 0);
-      if HC.Client_Has_X25519 then
+      if HC.HRR_Sent and then HC.HRR_Selected_Group = 16#001D# then
+         if not HC.Client_Has_X25519 then
+            KS_Raw_Len := 0;
+            OK := False;
+            return;
+         end if;
+         HC.Selected_Group := 16#001D#;
+         pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
+         Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len, OK);
+         if not OK then
+            HC.Ext_Parse_Err := Illegal_Parameter;
+            return;
+         end if;
+      elsif HC.HRR_Sent and then HC.HRR_Selected_Group = 16#0017# then
+         if not HC.Client_Has_P256 then
+            KS_Raw_Len := 0;
+            OK := False;
+            return;
+         end if;
+         HC.Selected_Group := 16#0017#;
+         pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
+         Generate_KS_P256 (HC, KS_Raw, KS_Raw_Len, OK);
+         if not OK then
+            KS_Raw_Len := 0;
+            return;
+         end if;
+      elsif HC.HRR_Sent and then HC.HRR_Selected_Group = 16#0018# then
+         if not HC.Client_Has_P384 then
+            KS_Raw_Len := 0;
+            OK := False;
+            return;
+         end if;
+         HC.Selected_Group := 16#0018#;
+         pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
+         Generate_KS_P384 (HC, KS_Raw, KS_Raw_Len, OK);
+         if not OK then
+            KS_Raw_Len := 0;
+            return;
+         end if;
+      elsif HC.HRR_Sent then
+         KS_Raw_Len := 0;
+         OK := False;
+      elsif HC.Client_Has_X25519 then
          HC.Selected_Group := 16#001D#;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len, OK);

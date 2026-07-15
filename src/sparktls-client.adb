@@ -2854,6 +2854,7 @@ is
       Master           : Key_Schedule.Digest_384;
       Client_App_Sec   : OKM384_Seq (0 .. 47);
       Server_App_Sec   : OKM384_Seq (0 .. 47);
+      Exporter         : OKM384_Seq (0 .. 47);
       Enc_Out          : N32;
    begin
       Result := OK;
@@ -2898,8 +2899,14 @@ is
 
       Key_Schedule.Derive_App_Traffic_Secrets_384
         (Client_App_Sec, Server_App_Sec, Master, App_TS_Hash_384);
+      Key_Schedule.Derive_Exporter_Master_Secret_384
+        (Exporter, Master, App_TS_Hash_384);
 
       HC.Master_Secret := Bytes_48 (Master);
+      S.Exporter_Secret := Bytes_48 (Exporter);
+      S.Exporter_Secret_Len := 48;
+      S.Exporter_Client_Random := HC.Client_Random;
+      S.Exporter_Server_Random := HC.Server_Random;
       HC.Client_HS_Secret := Bytes_48 (Byte_Seq (Client_App_Sec));
       Set_Traffic_Keys
         (S.Client_App, Bytes_48 (Byte_Seq (Client_App_Sec)),
@@ -2945,6 +2952,7 @@ is
       Master             : Digest;
       Client_App_Sec     : OKM_Seq (0 .. 31);
       Server_App_Sec     : OKM_Seq (0 .. 31);
+      Exporter           : OKM_Seq (0 .. 31);
       Enc_Out            : N32;
    begin
       Result := OK;
@@ -2982,9 +2990,16 @@ is
 
       Key_Schedule.Derive_App_Traffic_Secrets
         (Client_App_Sec, Server_App_Sec, Master, App_TS_Hash_256);
+      Key_Schedule.Derive_Exporter_Master_Secret
+        (Exporter, Master, App_TS_Hash_256);
 
       HC.Master_Secret := (others => 0);
       HC.Master_Secret (0 .. 31) := Bytes_32 (Digest (Master));
+      S.Exporter_Secret := (others => 0);
+      S.Exporter_Secret (0 .. 31) := Bytes_32 (Byte_Seq (Exporter));
+      S.Exporter_Secret_Len := 32;
+      S.Exporter_Client_Random := HC.Client_Random;
+      S.Exporter_Server_Random := HC.Server_Random;
 
       declare
          CS48 : Bytes_48 := (others => 0);
