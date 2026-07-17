@@ -65,6 +65,41 @@ is
       Dealloc (Buf);
    end RFLX_Free;
 
+   function Effective_ALPN_Count (Cfg : Config) return Natural is
+     (if Cfg.ALPN_Count > 0 then Cfg.ALPN_Count
+      elsif Cfg.ALPN.Len > 0 then 1
+      else 0);
+
+   function Effective_ALPN_Data_Len (Cfg : Config) return N32
+   with Post => Effective_ALPN_Data_Len'Result <= 2 + N32
+                 (Max_Config_ALPN_Protocols * (Max_Hostname_Len + 1));
+
+   function Effective_ALPN_Data_Len (Cfg : Config) return N32 is
+      Count : constant Natural := Effective_ALPN_Count (Cfg);
+      Total : N32 := 0;
+   begin
+      if Count = 0 then
+         return 0;
+      end if;
+
+      Total := 2;
+      if Cfg.ALPN_Count > 0 then
+         for I in ALPN_Index loop
+            exit when I > Cfg.ALPN_Count;
+            pragma Loop_Invariant
+              (Total <= 2 + N32 ((I - 1) * (Max_Hostname_Len + 1)));
+            Total := Total + 1 + N32 (Cfg.ALPN_List (I).Len);
+         end loop;
+      else
+         Total := Total + 1 + N32 (Cfg.ALPN.Len);
+      end if;
+      return Total;
+   end Effective_ALPN_Data_Len;
+
+   function Effective_Sig_Algo_Count (Cfg : Config) return Natural is
+     (if Cfg.Verify_Sig_Algo_Count > 0 then Cfg.Verify_Sig_Algo_Count
+      else 6);
+
    ----------------------------------------------------------------------------
    --  Build procedures (keep manual serialization for simple output)
    ----------------------------------------------------------------------------
@@ -494,8 +529,9 @@ is
       SNI_Data_Len : constant N32 := 5 + Host_Len;
       --  supported_groups data: list_len(2) + group(2) * count.
       SG_Data_Len  : constant N32 := 2 + 2 * SG_Group_Count;
-      --  signature_algorithms data: list_len(2) + alg(2) * 6
-      SA_Data_Len  : constant N32 := 14;
+      --  signature_algorithms data: list_len(2) + alg(2) * N
+      SA_Count     : constant Natural := Effective_Sig_Algo_Count (HC.Cfg);
+      SA_Data_Len  : constant N32 := 2 + 2 * N32 (SA_Count);
       --  key_share data: shares_len(2) + entries.
       --
       --  CH1 strategy (RFC 8446 §9.1 + standard browser practice):
@@ -529,12 +565,13 @@ is
       --  ECDHE suite (server's `ellipticOk` is false without it).
       EPF_Data_Len : constant N32 := 2;
 
-      --  ALPN data: protocol_list_len(2) + proto_len(1) + proto(N)
-      ALPN_Len : constant Natural := HC.Cfg.ALPN.Len;
+      --  ALPN data: protocol_list_len(2) +
+      --  (proto_len(1) + proto(N))*
+      ALPN_Count : constant Natural := Effective_ALPN_Count (HC.Cfg);
       ALPN_Data_Len : constant N32 :=
-         (if ALPN_Len > 0 then N32 (3 + ALPN_Len) else 0);
+         Effective_ALPN_Data_Len (HC.Cfg);
       ALPN_Ext_Len : constant N32 :=
-         (if ALPN_Len > 0 then 4 + ALPN_Data_Len else 0);
+         (if ALPN_Count > 0 then 4 + ALPN_Data_Len else 0);
 
       --  Cookie extension (RFC 8446 §4.2.2) — only in CH2 when the
       --  HRR carried one. Body: cookie_len(2) + cookie<cookie_len>.
@@ -809,15 +846,30 @@ is
 
          --  Extension 3: signature_algorithms (0x000D)
          declare
-            SA_Raw : constant Byte_Seq (0 .. SA_Data_Len - 1) :=
-               (16#00#, 16#0C#,          --  list_len=12 (6 algorithms)
-                16#04#, 16#03#,          --  ecdsa_secp256r1_sha256
-                16#05#, 16#03#,          --  ecdsa_secp384r1_sha384
-                16#08#, 16#04#,          --  rsa_pss_rsae_sha256
-                16#08#, 16#05#,          --  rsa_pss_rsae_sha384
-                16#08#, 16#06#,          --  rsa_pss_rsae_sha512
-                16#08#, 16#07#);         --  ed25519
+            SA_Raw : Byte_Seq (0 .. SA_Data_Len - 1) := (others => 0);
+            P      : N32 := 2;
          begin
+            SA_Raw (0) := Byte ((SA_Data_Len - 2) / 256);
+            SA_Raw (1) := Byte ((SA_Data_Len - 2) mod 256);
+            if HC.Cfg.Verify_Sig_Algo_Count > 0 then
+               for J in Sig_Algo_Index loop
+                  exit when J >= HC.Cfg.Verify_Sig_Algo_Count;
+                  SA_Raw (P) :=
+                    Byte (HC.Cfg.Verify_Sig_Algos (J) / 256);
+                  SA_Raw (P + 1) :=
+                    Byte (HC.Cfg.Verify_Sig_Algos (J) mod 256);
+                  P := P + 2;
+               end loop;
+            else
+               SA_Raw :=
+                 (16#00#, 16#0C#,          --  list_len=12 (6 algorithms)
+                  16#04#, 16#03#,          --  ecdsa_secp256r1_sha256
+                  16#05#, 16#03#,          --  ecdsa_secp384r1_sha384
+                  16#08#, 16#04#,          --  rsa_pss_rsae_sha256
+                  16#08#, 16#05#,          --  rsa_pss_rsae_sha384
+                  16#08#, 16#06#,          --  rsa_pss_rsae_sha512
+                  16#08#, 16#07#);         --  ed25519
+            end if;
             Append_CH_Extension
               (Exts_Ctx,
                RFLX.Tls_Extensiontype_Values.Signature_Algorithms,
@@ -955,18 +1007,43 @@ is
          end if;
 
          --  Extension 9: ALPN (0x0010) — if configured
-         if ALPN_Len > 0 then
+         if ALPN_Count > 0 then
             declare
                ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
                              := (others => 0);
+               P : N32 := 2;
+               List_Len : constant N32 := ALPN_Data_Len - 2;
             begin
-               ALPN_Raw (0) := Byte ((ALPN_Len + 1) / 256);
-               ALPN_Raw (1) := Byte ((ALPN_Len + 1) mod 256);
-               ALPN_Raw (2) := Byte (ALPN_Len);
-               for I in 1 .. ALPN_Len loop
-                  ALPN_Raw (N32 (2 + I)) :=
-                     Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
-               end loop;
+               ALPN_Raw (0) := Byte (List_Len / 256);
+               ALPN_Raw (1) := Byte (List_Len mod 256);
+               if HC.Cfg.ALPN_Count > 0 then
+                  for J in ALPN_Index loop
+                     exit when J > HC.Cfg.ALPN_Count;
+                     declare
+                        Proto_Len : constant Natural :=
+                           HC.Cfg.ALPN_List (J).Len;
+                     begin
+                        pragma Assert (Proto_Len <= Max_Hostname_Len);
+                        ALPN_Raw (P) := Byte (Proto_Len);
+                        for I in 1 .. Proto_Len loop
+                           pragma Assert
+                             (P + N32 (I) <= ALPN_Raw'Last);
+                           ALPN_Raw (P + N32 (I)) :=
+                              Byte
+                                (Character'Pos
+                                   (HC.Cfg.ALPN_List (J).Data (I)));
+                        end loop;
+                        P := P + 1 + N32 (Proto_Len);
+                     end;
+                  end loop;
+               else
+                  ALPN_Raw (P) := Byte (HC.Cfg.ALPN.Len);
+                  for I in 1 .. HC.Cfg.ALPN.Len loop
+                     pragma Assert (P + N32 (I) <= ALPN_Raw'Last);
+                     ALPN_Raw (P + N32 (I)) :=
+                        Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
+                  end loop;
+               end if;
                Append_CH_Extension
                  (Exts_Ctx,
                   RFLX.Tls_Extensiontype_Values
@@ -1046,10 +1123,10 @@ is
       --  Binder hash matches the ticket's hash: PSK_Len=32 → SHA-256;
       --  PSK_Len=48 → SHA-384. Both paths share the same wire
       --  layout (only the binder VALUE size differs).
-	      if Len > 0 then
-	         Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
-	      end if;
-	      pragma Assert (HC.Cfg.Random /= null);
+      if Len > 0 then
+         Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
+      end if;
+      pragma Assert (HC.Cfg.Random /= null);
 
 	   end Build_Client_Hello;
 
@@ -2037,23 +2114,25 @@ is
       end;
 
       --  Iterate extensions to find key_share
-	      if Present (Ctx, F_Extensions_TLS)
-	        and then Well_Formed (Ctx, F_Extensions_TLS)
-	      then
-	         pragma Assert (Present (Ctx, F_Extensions_TLS));
-	         pragma Assert (Well_Formed (Ctx, F_Extensions_TLS));
-	         declare
-	            Exts_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
-            Ctx_First : constant RFLX.RFLX_Types.Index := Ctx.Buffer_First;
-            Ctx_Last  : constant RFLX.RFLX_Types.Index := Ctx.Buffer_Last;
-            Exts_First : constant RFLX.RFLX_Types.Bit_Index :=
-              Field_First (Ctx, F_Extensions_TLS);
-            Exts_Last  : constant RFLX.RFLX_Types.Bit_Length :=
-              Field_Last (Ctx, F_Extensions_TLS);
+      if Present (Ctx, F_Extensions_TLS)
+        and then Well_Formed (Ctx, F_Extensions_TLS)
+      then
+         pragma Assert (Present (Ctx, F_Extensions_TLS));
+         pragma Assert (Well_Formed (Ctx, F_Extensions_TLS));
+         declare
+            Exts_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
          begin
             Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
             declare
+               Ctx_First  : constant RFLX.RFLX_Types.Index :=
+                 Ctx.Buffer_First;
+               Ctx_Last   : constant RFLX.RFLX_Types.Index :=
+                 Ctx.Buffer_Last;
+               Exts_First : constant RFLX.RFLX_Types.Bit_Index :=
+                 Exts_Ctx.First;
+               Exts_Last  : constant RFLX.RFLX_Types.Bit_Length :=
+                 Exts_Ctx.Last;
             begin
                while RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element
                        (Exts_Ctx)
@@ -2072,26 +2151,26 @@ is
                   pragma Loop_Invariant
                     (Exts_Ctx.First = Exts_First
                      and then Exts_Ctx.Last = Exts_Last);
-	                  pragma Loop_Invariant
-	                    (Ctx.Buffer_First = Ctx_First
-	                     and then Ctx.Buffer_Last = Ctx_Last
-	                     and then Exts_Ctx.Buffer_First = Ctx_First
-	                     and then Exts_Ctx.Buffer_Last = Ctx_Last);
-	                  pragma Loop_Invariant
-	                    (if HC.Cfg.Random'Loop_Entry /= null
-	                     then HC.Cfg.Random /= null);
-	                  pragma Loop_Invariant
-	                    (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
-		                  pragma Loop_Invariant
-		                    (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
-			                  pragma Loop_Invariant (Reasm_Coherent (HC));
-	                  pragma Loop_Invariant
-	                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
-	                  pragma Loop_Invariant
-	                    (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
-	                  pragma Loop_Invariant
-	                    (HC.Reasm_Hdr_Pending =
-	                       HC.Reasm_Hdr_Pending'Loop_Entry);
+                  pragma Loop_Invariant
+                    (Ctx.Buffer_First = Ctx_First
+                     and then Ctx.Buffer_Last = Ctx_Last
+                     and then Exts_Ctx.Buffer_First = Ctx_First
+                     and then Exts_Ctx.Buffer_Last = Ctx_Last);
+                  pragma Loop_Invariant
+                    (if HC.Cfg.Random'Loop_Entry /= null
+                     then HC.Cfg.Random /= null);
+                  pragma Loop_Invariant
+                    (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                  pragma Loop_Invariant
+                    (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
+                  pragma Loop_Invariant (Reasm_Coherent (HC));
+                  pragma Loop_Invariant
+                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+                  pragma Loop_Invariant
+                    (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+                  pragma Loop_Invariant
+                    (HC.Reasm_Hdr_Pending =
+                       HC.Reasm_Hdr_Pending'Loop_Entry);
                   declare
                      Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                   begin
@@ -2136,27 +2215,27 @@ is
       end if;
 
       --  Set version based on supported_versions extension
-	      if HC.Has_TLS_1_3 then
-	         HC.Version := TLS_1_3;
-	      else
-	         HC.Version := TLS_1_2;
-	      end if;
-	      if HC.Version = TLS_1_3
-	        and then S.Negotiated_Suite not in
-	          Suite_AES_128_GCM_SHA256
-	        | Suite_AES_256_GCM_SHA384
-	        | Suite_CHACHA20_POLY1305_SHA256
-		      then
-		         S.Last_Error := Illegal_Parameter;
-			         OK := False;
-			         goto Cleanup;
-			      end if;
-		      pragma Assert
-		        (if HC.Version = TLS_1_3
-		         then S.Negotiated_Suite in
-		           Suite_AES_128_GCM_SHA256
-		         | Suite_AES_256_GCM_SHA384
-		         | Suite_CHACHA20_POLY1305_SHA256);
+      if HC.Has_TLS_1_3 then
+         HC.Version := TLS_1_3;
+      else
+         HC.Version := TLS_1_2;
+      end if;
+      if HC.Version = TLS_1_3
+        and then S.Negotiated_Suite not in
+          Suite_AES_128_GCM_SHA256
+        | Suite_AES_256_GCM_SHA384
+        | Suite_CHACHA20_POLY1305_SHA256
+      then
+         S.Last_Error := Illegal_Parameter;
+         OK := False;
+         goto Cleanup;
+      end if;
+      pragma Assert
+        (if HC.Version = TLS_1_3
+         then S.Negotiated_Suite in
+           Suite_AES_128_GCM_SHA256
+         | Suite_AES_256_GCM_SHA384
+         | Suite_CHACHA20_POLY1305_SHA256);
 
 	      --  RFC 8446 §4.1.3: TLS 1.3 server's legacy_session_id_echo
       --  MUST be byte-for-byte equal to the client's
@@ -2206,11 +2285,11 @@ is
       --  _versions is a SECOND_SERVERHELLO_VERSION_MISMATCH and MUST
       --  trigger an illegal_parameter alert. BoGo
       --  SecondServerHelloWrongVersion-TLS13.
-	      if HC.Got_HRR and then not HC.Has_TLS_1_3 then
-	         S.Last_Error := Illegal_Parameter;
-	         OK := False;
-	         goto Cleanup;
-	      end if;
+      if HC.Got_HRR and then not HC.Has_TLS_1_3 then
+         S.Last_Error := Illegal_Parameter;
+         OK := False;
+         goto Cleanup;
+      end if;
 
       --  RFC 8446 §4.2.1: enforce our Cfg.Versions policy on the
       --  server's choice. -min-version / -max-version / -no-tlsN may
@@ -2222,11 +2301,11 @@ is
       if (HC.Version = TLS_1_2 and HC.Cfg.Versions = TLS_1_3_Only)
         or else
          (HC.Version = TLS_1_3 and HC.Cfg.Versions = TLS_1_2_Only)
-	      then
-	         S.Last_Error := Protocol_Version;
-	         OK := False;
+      then
+         S.Last_Error := Protocol_Version;
+         OK := False;
          goto Cleanup;
-	      end if;
+      end if;
 
       --  RFC 8446 §4.1.3: Downgrade-sentinel check, independent of
       --  the negotiated version. The server MUST NOT set these
@@ -2264,17 +2343,17 @@ is
             if R (24 + I) /= S12 (I)   then M12 := False; end if;
             if R (24 + I) /= S_JDK (I) then MJ  := False; end if;
          end loop;
-	         if M13 or M12 or MJ then
-	            S.Last_Error := Illegal_Parameter;
-	            goto Cleanup;
-	         end if;
+         if M13 or M12 or MJ then
+            S.Last_Error := Illegal_Parameter;
+            goto Cleanup;
+         end if;
       end;
 
       --  For TLS 1.2, skip ECDHE shared secret here
       --  (it's computed after ServerKeyExchange)
-	      if HC.Version = TLS_1_2 then
-	         pragma Assert_And_Cut
-	           (HC.Transcript_Len = Transcript_Len_At_Entry
+      if HC.Version = TLS_1_2 then
+         pragma Assert_And_Cut
+           (HC.Transcript_Len = Transcript_Len_At_Entry
             and then (if Random_Was_Set then HC.Cfg.Random /= null)
             and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
             and then
@@ -2282,12 +2361,12 @@ is
                    and then (not HC.Got_HRR or else Got_HRR_At_Entry)
                then S.Negotiated_Suite in
                  Suite_AES_128_GCM_SHA256
-               | Suite_AES_256_GCM_SHA384
-               | Suite_CHACHA20_POLY1305_SHA256)
-	            and then Reasm_Coherent (HC));
-	         OK := True;
+	               | Suite_AES_256_GCM_SHA384
+	               | Suite_CHACHA20_POLY1305_SHA256)
+            and then Reasm_Coherent (HC));
+         OK := True;
          goto Cleanup;
-	      end if;
+      end if;
 
       --  Compute shared secret (TLS 1.3 only — key_share in ServerHello)
       if HC.Use_P384_KE then
@@ -2295,14 +2374,18 @@ is
          declare
             Secret_384 : Bytes_48;
             P384_OK    : Boolean;
-            Local_SK   : constant Bytes_48 := HC.P384_Local_SK;
-            Peer_PK    : constant Byte_Seq (0 .. 96) := HC.P384_Peer_PK;
+            subtype P384_SK_Seq is Byte_Seq (0 .. 47);
+            subtype P384_PK_Seq is Byte_Seq (0 .. 96);
+            Local_SK   : constant P384_SK_Seq := HC.P384_Local_SK;
+            Peer_PK    : constant P384_PK_Seq := HC.P384_Peer_PK;
          begin
             pragma Assert (SH_Parse_Frame);
             pragma Assert (Local_SK'First = 0);
             pragma Assert (Local_SK'Length = 48);
+            pragma Assert (Local_SK'Last = 47);
             pragma Assert (Peer_PK'First = 0);
             pragma Assert (Peer_PK'Length = 97);
+            pragma Assert (Peer_PK'Last = 96);
             SPARKTLSCrypto.P384.Point.P384_ECDHE
               (Secret  => Secret_384,
                OK      => P384_OK,
@@ -2315,6 +2398,7 @@ is
                goto Cleanup;
             end if;
             HC.Shared_Secret := Secret_384;
+            pragma Assert (Reasm_Coherent (HC));
          end;
       elsif HC.Use_P256_KE then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
@@ -2343,6 +2427,7 @@ is
             end;
             HC.Shared_Secret := (others => 0);
             HC.Shared_Secret (0 .. 31) := X_Bytes;
+            pragma Assert (Reasm_Coherent (HC));
          end;
       else
          --  X25519 ECDHE
@@ -2356,30 +2441,31 @@ is
          --  the caller would otherwise pick.
          if not Shared_Secret_Is_Acceptable_X25519
                   (HC.Shared_Secret (0 .. 31))
-	         then
-	            S.Last_Error := Illegal_Parameter;
-	            OK := False;
+         then
+            S.Last_Error := Illegal_Parameter;
+            OK := False;
             goto Cleanup;
-	         end if;
-	      end if;
+         end if;
+         pragma Assert (Reasm_Coherent (HC));
+      end if;
 
-	      --  Bubble up extension-specific protocol errors (e.g. RFC 7301
+      --  Bubble up extension-specific protocol errors (e.g. RFC 7301
       --  empty ALPN name → illegal_parameter). The caller's `if not
       --  Parse_OK` arm reads S.Last_Error to pick the alert.
-	      if HC.Ext_Parse_Err /= No_Error then
-	         S.Last_Error := HC.Ext_Parse_Err;
-	         OK := False;
+      if HC.Ext_Parse_Err /= No_Error then
+         S.Last_Error := HC.Ext_Parse_Err;
+         OK := False;
          goto Cleanup;
-	      end if;
+      end if;
 
-	      pragma Assert_And_Cut
-	        (Reasm_Coherent (HC)
-	         and then HC.Transcript_Len = Transcript_Len_At_Entry
-	         and then (if Random_Was_Set then HC.Cfg.Random /= null)
-	         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-	         and then
-	           (if HC.Version = TLS_1_3
-	            then S.Negotiated_Suite in
+      pragma Assert_And_Cut
+        (Reasm_Coherent (HC)
+         and then HC.Transcript_Len = Transcript_Len_At_Entry
+         and then (if Random_Was_Set then HC.Cfg.Random /= null)
+         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+         and then
+           (if HC.Version = TLS_1_3
+            then S.Negotiated_Suite in
 		              Suite_AES_128_GCM_SHA256
 		            | Suite_AES_256_GCM_SHA384
 		            | Suite_CHACHA20_POLY1305_SHA256));

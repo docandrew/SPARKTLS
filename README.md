@@ -37,6 +37,12 @@ designed for formal verification.
   CH→client-Finished window, then proceeds with a normal 1-RTT
   handshake. The client never offers 0-RTT.
 
+- **Active GREASE emission.** SPARKTLS aims for deterministic ClientHello
+  serialization. It tolerates unknown/reserved values where the TLS RFCs require
+  extensibility, but it does not intentionally emit reserved GREASE cipher
+  suites, groups, signature schemes, versions, or extensions to exercise peer
+  tolerance. This is a deliberate product choice, not a missing MVP feature.
+
 ## Not Yet Supported
 
 - TLS 1.2 client-side session ticket resumption (RFC 5077)

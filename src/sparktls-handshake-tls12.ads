@@ -572,9 +572,15 @@ is
      (Id     : in     Identity;
       Result :    out Byte_Seq;
       Len    :    out N32)
-   with Pre  => Result'First = 0 and Result'Last >= 15
-                and Result'Last < N32'Last
-                and Id.Has_Identity,
-        Post => Len <= N32 (Result'Length);
+	   with Pre  => Result'First = 0
+	                and then Result'Last >= 15
+	                and then Result'Last < N32'Last
+	                and then Id.Has_Identity
+	                and then Id.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+	                and then Id.Int_Count <= Max_Pool_Size
+	                and then
+	                  (for all I in 0 .. Max_Pool_Size - 1 =>
+	                     Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER)),
+	        Post => Len <= N32 (Result'Length);
 
 end SPARKTLS.Handshake.TLS12;

@@ -1051,6 +1051,13 @@ is
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
                and then S.Empty_Records_Recvd <= Max_Empty_Records
+               and then S.Post_HS_Len <= Max_Record_Plaintext
+               and then S.Post_HS_Need <= Max_Record_Plaintext
+               and then
+                 (if S.Post_HS_Need = 0
+                  then S.Post_HS_Len = 0
+                  else S.Post_HS_Need >= 4
+                    and then S.Post_HS_Len <= S.Post_HS_Need)
                and then Free_Space (S.Output) >=
                           Records.Record_Header_Size + 3 + Records.Tag_Size;
    procedure Handle_Connected_App_Record
@@ -1063,6 +1070,13 @@ is
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
                and then S.Empty_Records_Recvd <= Max_Empty_Records
+               and then S.Post_HS_Len <= Max_Record_Plaintext
+               and then S.Post_HS_Need <= Max_Record_Plaintext
+               and then
+                 (if S.Post_HS_Need = 0
+                  then S.Post_HS_Len = 0
+                  else S.Post_HS_Need >= 4
+                    and then S.Post_HS_Len <= S.Post_HS_Need)
                and then Free_Space (S.Output) >=
                           Records.Record_Header_Size + 3 + Records.Tag_Size
                and then Rec.OK
@@ -1977,10 +1991,12 @@ is
                                        Sig_Found := True;
                                        if HC.Cfg.Local /= null then
                                           Picked :=
-                                            Handshake.Pick_Sig_Algo
+                                            Handshake.Pick_Sig_Algo_With_Prefs
                                               (Data (P + 6 ..
                                                      P + 5 + List_Len),
-                                               HC.Cfg.Local.Sign_Algo);
+                                               HC.Cfg.Local.Sign_Algo,
+                                               HC.Cfg.Sign_Sig_Algos,
+                                               HC.Cfg.Sign_Sig_Algo_Count);
                                        end if;
                                     end if;
                                  end;
@@ -2367,9 +2383,19 @@ is
                      or Sig_Scheme = 16#0501#
                      or Sig_Scheme = 16#0601#
                   then
-                     S.Last_Error := Illegal_Parameter;
-                     Set_State (S, Error_State);
-                     Result := Error_Alert;
+                     Send_HS_Encrypted_Alert
+                       (S, HC, Illegal_Parameter, Result);
+                     return;
+                  end if;
+
+                  if HC.Cfg.Verify_Sig_Algo_Count > 0
+                    and then not Sig_Scheme_In_List
+                                   (Sig_Scheme,
+                                    HC.Cfg.Verify_Sig_Algos,
+                                    HC.Cfg.Verify_Sig_Algo_Count)
+                  then
+                     Send_HS_Encrypted_Alert
+                       (S, HC, Illegal_Parameter, Result);
                      return;
                   end if;
 
@@ -5116,7 +5142,12 @@ is
                and then Plaintext'Last < N32'Last / 2
                and then Plain_Len >= 0
                and then Plain_Len <= Max_Record_Plaintext
-               and then Plain_Len <= N32 (Plaintext'Length);
+               and then Plain_Len <= N32 (Plaintext'Length),
+        Post => (if Result = OK
+                 then S.State = S.State'Old
+                   and then Nonce_Space_Available (S.Client_App)
+                   and then S.Post_HS_Len = S.Post_HS_Len'Old
+                   and then S.Post_HS_Need = S.Post_HS_Need'Old);
 
    procedure Process_NST_Message
      (S         : in out Session;
@@ -5241,6 +5272,142 @@ is
       end;
    end Process_NST_Message;
 
+   procedure Reset_Post_HS_Reasm (S : in out Session)
+   with Post => S.Post_HS_Len = 0
+                and then S.Post_HS_Need = 0
+                and then S.State = S.State'Old
+                and then S.Client_App = S.Client_App'Old
+                and then
+                  (Nonce_Space_Available (S.Client_App) =
+                   Nonce_Space_Available (S.Client_App'Old));
+
+   procedure Reset_Post_HS_Reasm (S : in out Session) is
+   begin
+      S.Post_HS_Len := 0;
+      S.Post_HS_Need := 0;
+   end Reset_Post_HS_Reasm;
+
+   procedure Dispatch_Post_HS_Message
+     (S      : in out Session;
+      Result :    out Action)
+   with Pre => S.State = Connected
+               and then Nonce_Space_Available (S.Client_App)
+               and then S.Post_HS_Need in 4 .. Max_Record_Plaintext
+               and then S.Post_HS_Len = S.Post_HS_Need,
+        Post => S.Post_HS_Len = 0
+                and then S.Post_HS_Need = 0
+                and then
+                  (if Result = OK
+                   then S.State = S.State'Old
+                     and then Nonce_Space_Available (S.Client_App));
+
+   procedure Dispatch_Post_HS_Message
+     (S      : in out Session;
+      Result :    out Action)
+   is
+      Msg_Len : constant N32 := S.Post_HS_Need;
+      Msg     : constant Byte_Seq (0 .. Msg_Len - 1) :=
+        S.Post_HS_Buf (0 .. Msg_Len - 1);
+   begin
+      if Msg (0) = 16#04# then
+         Process_NST_Message (S, Msg, Msg_Len, Result);
+      else
+         Result := OK;
+      end if;
+      Reset_Post_HS_Reasm (S);
+   end Dispatch_Post_HS_Message;
+
+   procedure Process_Post_HS_Handshake_Bytes
+     (S         : in out Session;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Result    :    out Action)
+   with Pre => S.State = Connected
+               and then Nonce_Space_Available (S.Client_App)
+               and then Plaintext'First = 0
+               and then Plaintext'Last < N32'Last / 2
+               and then Plain_Len >= 0
+               and then Plain_Len <= Max_Record_Plaintext
+               and then Plain_Len <= N32 (Plaintext'Length)
+               and then S.Post_HS_Len <= Max_Record_Plaintext
+               and then S.Post_HS_Need <= Max_Record_Plaintext
+               and then
+                 (if S.Post_HS_Need = 0
+                  then S.Post_HS_Len = 0
+                  else S.Post_HS_Need >= 4
+                    and then S.Post_HS_Len <= S.Post_HS_Need);
+
+   procedure Process_Post_HS_Handshake_Bytes
+     (S         : in out Session;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Result    :    out Action)
+   is
+      Pos : N32 := 0;
+   begin
+      Result := OK;
+
+      while Pos < Plain_Len loop
+         pragma Loop_Invariant (Pos <= Plain_Len);
+         pragma Loop_Invariant (Plain_Len <= Max_Record_Plaintext);
+         pragma Loop_Invariant (S.State = Connected);
+         pragma Loop_Invariant (Nonce_Space_Available (S.Client_App));
+         pragma Loop_Invariant (S.Post_HS_Len <= Max_Record_Plaintext);
+         pragma Loop_Invariant (S.Post_HS_Need <= Max_Record_Plaintext);
+         pragma Loop_Invariant
+           (if S.Post_HS_Need = 0
+            then S.Post_HS_Len = 0
+            else S.Post_HS_Need >= 4
+              and then S.Post_HS_Len <= S.Post_HS_Need);
+
+         if S.Post_HS_Need = 0 then
+            S.Post_HS_Len := 0;
+            S.Post_HS_Need := 4;
+         end if;
+
+         declare
+            Need : constant N32 := S.Post_HS_Need - S.Post_HS_Len;
+            Take : constant N32 := N32'Min (Need, Plain_Len - Pos);
+         begin
+            if Take > 0 then
+               pragma Assert (Pos + Take <= Plain_Len);
+               pragma Assert (S.Post_HS_Len + Take <= S.Post_HS_Need);
+               S.Post_HS_Buf (S.Post_HS_Len .. S.Post_HS_Len + Take - 1) :=
+                 Plaintext (Pos .. Pos + Take - 1);
+               S.Post_HS_Len := S.Post_HS_Len + Take;
+               Pos := Pos + Take;
+            end if;
+         end;
+
+         if S.Post_HS_Len = S.Post_HS_Need then
+            if S.Post_HS_Need = 4 then
+               declare
+                  Msg_Total : constant N32 :=
+                    N32 (S.Post_HS_Buf (1)) * 65536
+                    + N32 (S.Post_HS_Buf (2)) * 256
+                    + N32 (S.Post_HS_Buf (3)) + 4;
+               begin
+                  if Msg_Total < 4
+                    or else Msg_Total > Max_Record_Plaintext
+                  then
+                     Reset_Post_HS_Reasm (S);
+                     Send_App_Encrypted_Alert (S, Decode_Error, Result);
+                     return;
+                  end if;
+                  S.Post_HS_Need := Msg_Total;
+               end;
+            end if;
+
+            if S.Post_HS_Len = S.Post_HS_Need then
+               Dispatch_Post_HS_Message (S, Result);
+               if Result /= OK then
+                  return;
+               end if;
+            end if;
+         end if;
+      end loop;
+   end Process_Post_HS_Handshake_Bytes;
+
    --  Process records in Connected state
    procedure Handle_Connected_App_Record
      (S      : in out Session;
@@ -5340,16 +5507,12 @@ is
 
             when 16#16# =>
                --  Post-handshake handshake-record: today only NST is
-               --  expected here (KeyUpdate not yet implemented). Hand
-               --  off to Process_NST_Message which parses, installs
-               --  the ticket, and queues the right alert on failure.
-               if Plain_Len >= 4
-                  and then Plaintext (0) = 16#04#  --  NewSessionTicket
-               then
-                  Process_NST_Message (S, Plaintext, Plain_Len, Result);
-                  return;
-               end if;
-               Result := OK;
+               --  expected here (KeyUpdate not yet implemented). The
+               --  handshake message itself may be split across multiple
+               --  encrypted records.
+               Process_Post_HS_Handshake_Bytes
+                 (S, Plaintext, Plain_Len, Result);
+               return;
 
             when 16#15# =>
                --  RFC 8446 §6 / RFC 5246 §7.2 alert. The 2-byte

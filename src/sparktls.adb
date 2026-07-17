@@ -618,27 +618,50 @@ is
          end if;
 
          --  RFC 7301 §3.2: chosen proto MUST be one we offered.
-         --  Single-proto offer today (Cfg.ALPN).
-         if Proto_Len /= N32 (HC.Cfg.ALPN.Len)
-           or Proto_Len > N32 (Max_Hostname_Len)
-         then
+         if Proto_Len > N32 (Max_Hostname_Len) then
             OK  := False;
             Err := Illegal_Parameter;
             return;
          end if;
 
-         for I in 1 .. Natural (Proto_Len) loop
-            pragma Loop_Invariant
-              (Proto_Len <= N32 (Max_Hostname_Len)
-               and Natural (Proto_Len) = HC.Cfg.ALPN.Len);
-            if Character'Val (Data (Body_Start + 2 + N32 (I)))
-              /= HC.Cfg.ALPN.Data (I)
-            then
+         declare
+            Match : Boolean := False;
+         begin
+            if HC.Cfg.ALPN_Count > 0 then
+               for P in ALPN_Index loop
+                  exit when P > HC.Cfg.ALPN_Count;
+                  if Proto_Len = N32 (HC.Cfg.ALPN_List (P).Len) then
+                     Match := True;
+                     for I in 1 .. Natural (Proto_Len) loop
+                        if Character'Val
+                             (Data (Body_Start + 2 + N32 (I)))
+                           /= HC.Cfg.ALPN_List (P).Data (I)
+                        then
+                           Match := False;
+                           exit;
+                        end if;
+                     end loop;
+                     exit when Match;
+                  end if;
+               end loop;
+            elsif Proto_Len = N32 (HC.Cfg.ALPN.Len) then
+               Match := True;
+               for I in 1 .. Natural (Proto_Len) loop
+                  if Character'Val (Data (Body_Start + 2 + N32 (I)))
+                    /= HC.Cfg.ALPN.Data (I)
+                  then
+                     Match := False;
+                     exit;
+                  end if;
+               end loop;
+            end if;
+
+            if not Match then
                OK  := False;
                Err := Illegal_Parameter;
                return;
             end if;
-         end loop;
+         end;
 
          --  Match — copy into Negotiated_ALPN.
          S.Negotiated_ALPN.Len := Natural (Proto_Len);

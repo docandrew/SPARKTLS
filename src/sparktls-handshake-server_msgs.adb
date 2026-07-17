@@ -810,11 +810,13 @@ is
      (Data : in     Byte_Seq;
       P    : in     N32;
       PL   : in     N32;
-      HC   : in out Handshake_Context)
+      HC   : in out Handshake_Context;
+      Slot : in     ALPN_Index)
    with Pre => Data'First = 0
 		               and then PL in 1 .. N32 (Max_Hostname_Len)
 		               and then P <= N32'Last - PL
 		               and then P + PL <= Data'Last
+                     and then Slot <= Max_Config_ALPN_Protocols
 		               and then Reasm_Building (HC),
         Post => HC.HRR_Sent = HC.HRR_Sent'Old
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
@@ -834,19 +836,23 @@ is
      (Data : in     Byte_Seq;
       P    : in     N32;
       PL   : in     N32;
-      HC   : in out Handshake_Context)
+      HC   : in out Handshake_Context;
+      Slot : in     ALPN_Index)
    is
    begin
-      HC.Client_ALPN.Len := Natural (PL);
+      HC.Client_ALPN_List (Slot).Len := Natural (PL);
       for I in 1 .. Natural (PL) loop
          pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
          pragma Loop_Invariant
            (HC.Legacy_Session_ID_Len =
             HC.Legacy_Session_ID_Len'Loop_Entry);
          pragma Loop_Invariant (Reasm_Building (HC));
-         HC.Client_ALPN.Data (I) :=
+         HC.Client_ALPN_List (Slot).Data (I) :=
             Character'Val (Data (P + N32 (I)));
       end loop;
+      if Slot = 1 then
+         HC.Client_ALPN := HC.Client_ALPN_List (Slot);
+      end if;
    end Copy_ALPN_Name;
 
    procedure Parse_ALPN_Data
@@ -857,11 +863,12 @@ is
       DLen       : constant N32 := N32 (Data'Length);
       List_Len   : constant N32 := N32 (Data (0)) * 256 + N32 (Data (1));
       P          : N32 := 2;
-      Saw_First  : Boolean := False;
       Iter_Count : N32 := 0;
       Cap        : constant N32 := HC.Cfg.DoS_Caps.Max_ALPN_Protocols;
    begin
       OK := True;
+      HC.Client_ALPN_Count := 0;
+      HC.Client_ALPN.Len := 0;
       if List_Len = 0 or else DLen /= 2 + List_Len then
          OK := False;
          return;
@@ -895,10 +902,14 @@ is
                OK := False;
                return;
             end if;
-            if not Saw_First and then PL <= N32 (Max_Hostname_Len) then
+            if PL <= N32 (Max_Hostname_Len)
+              and then HC.Client_ALPN_Count < Max_Config_ALPN_Protocols
+            then
+               HC.Client_ALPN_Count := HC.Client_ALPN_Count + 1;
                pragma Assert (P + PL <= Data'Last);
-               Copy_ALPN_Name (Data, P, PL, HC);
-               Saw_First := True;
+               Copy_ALPN_Name
+                 (Data, P, PL, HC,
+                  ALPN_Index (HC.Client_ALPN_Count));
             end if;
             P := P + 1 + PL;
          end;
@@ -1400,6 +1411,54 @@ is
    --  Apply one parsed cipher suite to the session's negotiation state:
    --  pick the best TLS 1.3 suite (preferring ChaCha20) and the first
    --  TLS 1.2 ECDHE suite we recognize.
+   function TLS12_Cipher_Group
+     (Cfg : Config;
+      Val : Unsigned_16) return Natural
+   is
+   begin
+      if Cfg.TLS12_Cipher_Count = 0 then
+         return 1;
+      end if;
+
+      for I in Cipher_Pref_Index loop
+         exit when I > Cfg.TLS12_Cipher_Count;
+
+         if Cfg.TLS12_Cipher_List (I) = Val then
+            return Cfg.TLS12_Cipher_Groups (I);
+         end if;
+      end loop;
+
+      return 0;
+   end TLS12_Cipher_Group;
+
+   function Prefer_TLS12_Candidate
+     (Cfg       : Config;
+      Current   : Unsigned_16;
+      Candidate : Unsigned_16) return Boolean
+   is
+      Candidate_Group : constant Natural :=
+        TLS12_Cipher_Group (Cfg, Candidate);
+   begin
+      if Candidate_Group = 0 then
+         return False;
+      end if;
+
+      if Current = 0 then
+         return True;
+      end if;
+
+      if Cfg.TLS12_Cipher_Count = 0 then
+         return False;
+      end if;
+
+      declare
+         Current_Group : constant Natural :=
+           TLS12_Cipher_Group (Cfg, Current);
+      begin
+         return Current_Group = 0 or else Candidate_Group < Current_Group;
+      end;
+   end Prefer_TLS12_Candidate;
+
   procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
       S         : in out Session;
@@ -1498,13 +1557,14 @@ is
       --  fall back to the original "accept any TLS 1.2 ECDHE suite"
       --  behaviour so the suite is recorded for later inspection.
       if HC.Cfg.Local = null then
-         if S.Negotiated_Suite_12 = 0
-           and then Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
+         if Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
                           | Suite_ECDHE_RSA_AES256_GCM_SHA384
                           | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                           | Suite_ECDHE_RSA_CHACHA20_SHA256
                           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+           and then Prefer_TLS12_Candidate
+                      (HC.Cfg, S.Negotiated_Suite_12, Val)
          then
             S.Negotiated_Suite_12 := Val;
          end if;
@@ -1513,22 +1573,22 @@ is
 
       --  TLS 1.2 ECDHE_ECDSA suites (0xC02B / 0xC02C / 0xCCA9):
       --  cert must be ECDSA.
-      if S.Negotiated_Suite_12 = 0
-        and then Cert_Is_ECDSA
+      if Cert_Is_ECDSA
         and then Val in Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, S.Negotiated_Suite_12, Val)
       then
          S.Negotiated_Suite_12 := Val;
       end if;
 
       --  TLS 1.2 ECDHE_RSA suites (0xC02F / 0xC030 / 0xCCA8):
       --  cert must be RSA.
-      if S.Negotiated_Suite_12 = 0
-        and then Cert_Is_RSA
+      if Cert_Is_RSA
         and then Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
                        | Suite_ECDHE_RSA_AES256_GCM_SHA384
                        | Suite_ECDHE_RSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, S.Negotiated_Suite_12, Val)
       then
          S.Negotiated_Suite_12 := Val;
       end if;
@@ -4059,18 +4119,58 @@ is
          Len         => Len);
    end Build_Server_Hello;
 
+   function Same_ALPN (A, B : Hostname_Buf) return Boolean is
+   begin
+      if A.Len = 0 or else A.Len /= B.Len then
+         return False;
+      end if;
+      for I in 1 .. A.Len loop
+         if A.Data (I) /= B.Data (I) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Same_ALPN;
+
+   function Select_ALPN (HC : Handshake_Context) return Hostname_Buf is
+      Empty : constant Hostname_Buf := (Len => 0, Data => (others => ' '));
+   begin
+      if HC.Client_ALPN_Count = 0 then
+         return Empty;
+      end if;
+
+      if HC.Cfg.ALPN_Count > 0 then
+         for C in ALPN_Index loop
+            exit when C > HC.Cfg.ALPN_Count;
+            for P in ALPN_Index loop
+               exit when P > HC.Client_ALPN_Count;
+               if Same_ALPN
+                    (HC.Cfg.ALPN_List (C), HC.Client_ALPN_List (P))
+               then
+                  return HC.Cfg.ALPN_List (C);
+               end if;
+            end loop;
+         end loop;
+      elsif HC.Cfg.ALPN.Len > 0 then
+         for P in ALPN_Index loop
+            exit when P > HC.Client_ALPN_Count;
+            if Same_ALPN (HC.Cfg.ALPN, HC.Client_ALPN_List (P)) then
+               return HC.Cfg.ALPN;
+            end if;
+         end loop;
+      end if;
+
+      return Empty;
+   end Select_ALPN;
+
    procedure Build_Encrypted_Extensions
      (HC     : in     Handshake_Context;
       S      : in out Session;
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
-      --  Check if ALPN should be included
-      ALPN_Match : constant Boolean :=
-         HC.Client_ALPN.Len > 0
-         and then HC.Cfg.ALPN.Len > 0
-         and then HC.Client_ALPN.Data (1 .. HC.Client_ALPN.Len) =
-                  HC.Cfg.ALPN.Data (1 .. HC.Cfg.ALPN.Len);
+      Selected_ALPN : constant Hostname_Buf := Select_ALPN (HC);
+      ALPN_Match : constant Boolean := Selected_ALPN.Len > 0;
       subtype EE_ALPN_Protocol_Len is Natural range 0 .. Max_Hostname_Len;
       subtype EE_ALPN_Ext_Len is N32 range 0 .. 262;
       subtype EE_SNI_Ext_Len is N32 range 0 .. 4;
@@ -4079,7 +4179,7 @@ is
       subtype EE_Msg_Len is N32 range 6 .. 272;
 
       ALPN_PL : constant EE_ALPN_Protocol_Len :=
-         (if ALPN_Match then HC.Cfg.ALPN.Len else 0);
+         (if ALPN_Match then Selected_ALPN.Len else 0);
       --  ALPN ext: tag(2) + len(2) + list_len(2) + proto_len(1) + proto(N)
       ALPN_Ext_Len : constant EE_ALPN_Ext_Len :=
          (if ALPN_Match then N32 (7 + ALPN_PL) else 0);
@@ -4088,7 +4188,11 @@ is
       --  on resumption unless the server accepts early data, which this
       --  implementation does not.
       SNI_Ext_Len : constant EE_SNI_Ext_Len :=
-         (if HC.Peer_SNI.Len > 0 and then not HC.Using_PSK then 4 else 0);
+         (if HC.Cfg.Ack_Server_Name
+             and then HC.Peer_SNI.Len > 0
+             and then not HC.Using_PSK
+          then 4
+          else 0);
 
       Ext_Len : constant EE_Ext_List_Len := SNI_Ext_Len + ALPN_Ext_Len;
       Body_Len : constant EE_Body_Len := 2 + Ext_Len;  --  ext_list_len(2) + exts
@@ -4140,10 +4244,10 @@ is
          for I in 1 .. ALPN_PL loop
             pragma Assert (Pos + N32 (6 + I) <= Result'Last);
             Result (Pos + N32 (6 + I)) :=
-               Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
+               Byte (Character'Pos (Selected_ALPN.Data (I)));
          end loop;
 
-         S.Negotiated_ALPN := HC.Cfg.ALPN;
+         S.Negotiated_ALPN := Selected_ALPN;
          Pos := Pos + ALPN_Ext_Len;
       end if;
 
@@ -4157,18 +4261,36 @@ is
    is
       use RFLX.TLS_Handshake.Certificate_Request;
       use RFLX.Tls_Extensiontype_Values;
+      use type RBT.Bytes;
 
-      --  signature_algorithms extension data:
-      --    algo_list_length(2) + Ed25519(2) + P256-SHA256(2) + P384-SHA384(2) = 8
-      Sig_Algo_Data : constant RBT.Bytes (1 .. 8) :=
-        (1 => 0, 2 => 6,           --  algo list length = 6
-         3 => 16#08#, 4 => 16#07#,  --  Ed25519
-         5 => 16#04#, 6 => 16#03#,  --  ECDSA-P256-SHA256
-         7 => 16#05#, 8 => 16#03#); --  ECDSA-P384-SHA384
+      Sig_Ed25519          : constant Unsigned_16 := 16#0807#;
+      Sig_ECDSA_P256_SHA256 : constant Unsigned_16 := 16#0403#;
+      Sig_ECDSA_P384_SHA384 : constant Unsigned_16 := 16#0503#;
+      Sig_RSA_PSS_SHA256   : constant Unsigned_16 := 16#0804#;
+      Sig_RSA_PSS_SHA384   : constant Unsigned_16 := 16#0805#;
+      Sig_RSA_PSS_SHA512   : constant Unsigned_16 := 16#0806#;
 
-      --  Extension: type(2) + data_len(2) + data(8) = 12
-      Ext_Len   : constant N32 := 12;
-      --  Body: context_len(1) + ext_list_len(2) + extension(12) = 15
+      function U16_Bytes (V : Unsigned_16) return RBT.Bytes is
+        ((1 => RBT.Byte (V / 256),
+          2 => RBT.Byte (V mod 256)));
+
+      --  TLS 1.3 CertificateRequest.signature_algorithms extension data:
+      --  vector length followed by modern schemes accepted for client
+      --  CertificateVerify. RSA in TLS 1.3 means RSA-PSS, not PKCS#1 v1.5.
+      Sig_Algo_List : constant RBT.Bytes :=
+        U16_Bytes (Sig_Ed25519)
+        & U16_Bytes (Sig_ECDSA_P256_SHA256)
+        & U16_Bytes (Sig_ECDSA_P384_SHA384)
+        & U16_Bytes (Sig_RSA_PSS_SHA256)
+        & U16_Bytes (Sig_RSA_PSS_SHA384)
+        & U16_Bytes (Sig_RSA_PSS_SHA512);
+      Sig_Algo_Data : constant RBT.Bytes :=
+        (1 => 0, 2 => RBT.Byte (Sig_Algo_List'Length))
+        & Sig_Algo_List;
+
+      --  Extension: type(2) + data_len(2) + data(14) = 18
+      Ext_Len   : constant N32 := 4 + N32 (Sig_Algo_Data'Length);
+      --  Body: context_len(1) + ext_list_len(2) + extension.
       Body_Len  : constant N32 := 1 + 2 + Ext_Len;
       Msg_Len   : constant N32 := 4 + Body_Len;
       Ctx : Context;

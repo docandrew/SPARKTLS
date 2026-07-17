@@ -132,6 +132,7 @@ UNSUPPORTED_SKIPS=(
   '*_CBC_*' 'MaxCBCPadding' 'CBCRecordSplitting*'
   # Post-quantum KEM hybrids are not implemented.
   '*MLKEM*' '*Kyber*' 'PostQuantumNotEnabledByDefaultForAServer'
+  'CurveTest-Server-EqualPreference-TLS13'
   # Pure-RSA key exchange (we offer only ECDHE_RSA)
   '*RSA_WITH_AES_*' '*RSA_WITH_3DES_*' 'Basic-Server-RSA-*'
   # External/imported PSK APIs and TLS 1.2 PSK cipher suites are not
@@ -272,15 +273,19 @@ UNSUPPORTED_SKIPS=(
   # RSA key-encipherment suites are pure-RSA key exchange, which is
   # intentionally unsupported.
   'RSAKeyUsage-Client-WantEncipherment-*'
+  # These negotiation cases expect CBC or static-RSA cipher suites from
+  # BoGo's legacy preference string. The modern ECDHE AEAD cases run.
+  'CipherNegotiation-1' 'CipherNegotiation-2' 'CipherNegotiation-3'
+  'CipherNegotiation-4' 'CipherNegotiation-7' 'CipherNegotiation-8'
 )
 
 TEMPORARY_TRIAGE_SKIPS=(
   # These are supported-surface gaps or BoringSSL-specific behavior
   # mismatches. They stay visible in BOGO_STRICT_SUPPORTED=1 runs and
   # should burn down over time instead of being treated as out of scope.
-  'ALPNClient-TLS-*' 'ALPNClient-AllowUnknown-*'
-  'ALPNServer-TLS-*' 'ALPNServer-Async-*'
-  'ALPNServer-Decline-*' 'ALPNServer-Reject-*'
+  'ALPNClient-AllowUnknown-*'
+  'ALPNServer-Async-TLS-TLS12'
+  'ALPNServer-Reject-*'
   'ALPNServer-SelectEmpty-*'
 
   'Agree-Digest-*' 'RetainOnlySHA256-*'
@@ -330,12 +335,7 @@ TEMPORARY_TRIAGE_SKIPS=(
   'TLS13-HonorServerSessionTicketLifetime-*'
   'TLS13-NoTicket-NoMint'
   'TLS13-Server-ResumptionAcrossNames'
-  'VerifyPreferences-*'
-  'Client-Sign-Negotiate-*' 'Server-Sign-Negotiate-*'
   'Client-Verify-*' 'Server-Verify-*'
-  # The shim now consumes -cipher so interoperability cases can run, but
-  # ordered cipher-preference tests require a SPARKTLS API we do not expose.
-  'CipherNegotiation-*'
   'RSAKeyUsage-*'
   'RSA-PSS-Default-Verify' 'Client-SignDefault-*'
 

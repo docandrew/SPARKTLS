@@ -8,7 +8,7 @@ package SPARKTLS.Handshake.Client_Msgs with
    SPARK_Mode => On
 is
    --  Maximum ClientHello size
-   Max_Client_Hello : constant := 1024;
+   Max_Client_Hello : constant := 4096;
 
    --  Build a TLS 1.3 ClientHello handshake message.
    --  Returns the complete handshake message (type + length + body)

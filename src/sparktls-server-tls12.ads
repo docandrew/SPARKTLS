@@ -101,9 +101,9 @@ is
 	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                          (HC.Cfg.Local)
 	               and then HC.Cfg.Random /= null
-               and then Reasm_Building (HC)
-               and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
-                 (HC.Selected_Group)
+	               and then Reasm_Building (HC)
+	               and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
+	                 (HC.Selected_Group)
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                --  Required by Derive_Keys_12 called at the end:
@@ -115,19 +115,36 @@ is
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-        Post => S.State in Wait_Client_Finished | Connected | Closing
-                           | Error_State
-	               and then HC.Cfg.Local /= null
-		        and then HC.Cfg.Local.Has_Identity
-		        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-		                   (HC.Cfg.Local)
-		        and then HC.Cfg.Random /= null;
+	        Post => S.State in Wait_Client_Finished | Connected | Closing
+	                           | Error_State
+		               and then HC.Cfg.Local /= null
+			        and then HC.Cfg.Local.Has_Identity
+			        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+			                   (HC.Cfg.Local)
+			        and then HC.Cfg.Random /= null;
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block
    --  level-1 discharge of a procedure-level Post here. The Assert
    --  pins the property at the success exit; the runtime guard at
    --  the top of the body enforces it on the wire.
+
+   --  Process the optional TLS 1.2 client Certificate message after the
+   --  server has sent CertificateRequest. This is structural only: full
+   --  TLS 1.2 server-side client-auth validation is tracked separately, but
+   --  malformed Certificate messages must fail with decode_error instead of
+   --  leaving the handshake stuck.
+   procedure Process_Client_Certificate_12
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action)
+   with Pre => HC.Version = TLS_1_2
+               and then S.State = Wait_Client_Certificate
+               and then Reasm_Building (HC),
+        Post => S.State in Wait_Client_Certificate | Wait_Client_Finished
+                          | Error_State
+                and then
+                  (if S.State /= Error_State then Reasm_Building (HC));
 
    --  Legacy CCS entry point. The active TLS 1.2 server path validates
    --  the client's ChangeCipherSpec inline while processing the

@@ -437,6 +437,29 @@ is
            HC.Client_Supports_X25519
            or else HC.Client_Supports_P256
            or else HC.Client_Supports_P384;
+
+         function Compatible_Local_Sig (Scheme : Unsigned_16) return Boolean is
+         begin
+            case HC.Cfg.Local.Sign_Algo is
+               when Sign_RSA_PSS =>
+                  return Scheme in 16#0804# | 16#0805# | 16#0806#
+                                 | 16#0401# | 16#0501# | 16#0601#;
+               when Sign_ECDSA_P256 =>
+                  return Scheme = 16#0403#
+                    and then
+                      (not Client_Sent_Recognized_Group
+                       or else HC.Client_Supports_P256);
+               when Sign_ECDSA_P384 =>
+                  return Scheme = 16#0503#
+                    and then
+                      (not Client_Sent_Recognized_Group
+                       or else HC.Client_Supports_P384);
+               when Sign_Ed25519 =>
+                  return Scheme = 16#0807#;
+               when Sign_None =>
+                  return False;
+            end case;
+         end Compatible_Local_Sig;
       begin
          if HC.Peer_Sig_Algo_Count = 0 then
             --  RFC 5246 §7.4.1.4.1: when client omits the
@@ -473,6 +496,27 @@ is
               (Negotiated = 0
                  or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1
                           (Negotiated));
+         elsif HC.Cfg.Sign_Sig_Algo_Count > 0 then
+            for J in Sig_Algo_Index loop
+               pragma Loop_Invariant
+                 (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+                    (Negotiated, HC.Peer_Sig_Algos,
+                     HC.Peer_Sig_Algo_Count));
+               exit when J >= HC.Cfg.Sign_Sig_Algo_Count;
+               if Compatible_Local_Sig (HC.Cfg.Sign_Sig_Algos (J))
+                 and then Sig_Scheme_In_List
+                            (HC.Cfg.Sign_Sig_Algos (J),
+                             HC.Peer_Sig_Algos,
+                             HC.Peer_Sig_Algo_Count)
+               then
+                  Negotiated := HC.Cfg.Sign_Sig_Algos (J);
+                  exit;
+               end if;
+            end loop;
+            pragma Assert
+              (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+                 (Negotiated, HC.Peer_Sig_Algos,
+                  HC.Peer_Sig_Algo_Count));
          else
             for I in Natural range 0 .. HC.Peer_Sig_Algo_Count - 1 loop
                pragma Loop_Invariant
@@ -605,7 +649,76 @@ is
          end if;
       end;
 
-      --  4. ServerHelloDone
+      --  4. CertificateRequest (optional client auth)
+      if HC.Cfg.Request_Client_Cert then
+         declare
+            Cert_Type_RSA_Sign   : constant Byte := 16#01#;
+            Cert_Type_ECDSA_Sign : constant Byte := 16#40#;
+            Certificate_Types    : constant Byte_Seq (0 .. 1) :=
+              (Cert_Type_RSA_Sign, Cert_Type_ECDSA_Sign);
+
+            Sig_RSA_PKCS1_SHA256 : constant Unsigned_16 := 16#0401#;
+            Sig_RSA_PKCS1_SHA384 : constant Unsigned_16 := 16#0501#;
+            Sig_RSA_PKCS1_SHA512 : constant Unsigned_16 := 16#0601#;
+            Sig_ECDSA_P256_SHA256 : constant Unsigned_16 := 16#0403#;
+            Sig_ECDSA_P384_SHA384 : constant Unsigned_16 := 16#0503#;
+            Sig_RSA_PSS_SHA256   : constant Unsigned_16 := 16#0804#;
+            Sig_RSA_PSS_SHA384   : constant Unsigned_16 := 16#0805#;
+            Sig_RSA_PSS_SHA512   : constant Unsigned_16 := 16#0806#;
+            Sig_Ed25519          : constant Unsigned_16 := 16#0807#;
+
+            function U16_Bytes (V : Unsigned_16) return Byte_Seq is
+              ((0 => Byte (V / 256),
+                1 => Byte (V mod 256)));
+
+            Signature_Algorithms : constant Byte_Seq :=
+              U16_Bytes (Sig_RSA_PKCS1_SHA256)
+              & U16_Bytes (Sig_RSA_PKCS1_SHA384)
+              & U16_Bytes (Sig_RSA_PKCS1_SHA512)
+              & U16_Bytes (Sig_ECDSA_P256_SHA256)
+              & U16_Bytes (Sig_ECDSA_P384_SHA384)
+              & U16_Bytes (Sig_RSA_PSS_SHA256)
+              & U16_Bytes (Sig_RSA_PSS_SHA384)
+              & U16_Bytes (Sig_RSA_PSS_SHA512)
+              & U16_Bytes (Sig_Ed25519);
+
+            Certificate_Authorities : constant Byte_Seq (0 .. 1) :=
+              (16#00#, 16#00#);
+            CR_Body_Len : constant N32 :=
+              1 + N32 (Certificate_Types'Length)
+              + 2 + N32 (Signature_Algorithms'Length)
+              + N32 (Certificate_Authorities'Length);
+            CR_Buf : Byte_Seq (0 .. 4 + CR_Body_Len - 1) :=
+              (others => 0);
+         begin
+            pragma Assert (CR_Body_Len = 25);
+            CR_Buf (0) := Handshake.HT_Certificate_Request;
+            CR_Buf (1) := Byte (CR_Body_Len / 65536);
+            CR_Buf (2) := Byte ((CR_Body_Len / 256) mod 256);
+            CR_Buf (3) := Byte (CR_Body_Len mod 256);
+
+            --  certificate_types<1..2^8-1>
+            CR_Buf (4) := Byte (Certificate_Types'Length);
+            CR_Buf (5 .. 6) := Certificate_Types;
+
+            --  supported_signature_algorithms<2..2^16-2>
+            CR_Buf (7) := Byte (Signature_Algorithms'Length / 256);
+            CR_Buf (8) := Byte (Signature_Algorithms'Length mod 256);
+            CR_Buf (9 .. 26) := Signature_Algorithms;
+
+            --  certificate_authorities<0..2^16-1>, empty.
+            CR_Buf (27 .. 28) := Certificate_Authorities;
+
+            Append_Transcript (HC, CR_Buf);
+            Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out);
+            if Rec_Out = 0 then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
+         end;
+      end if;
+
+      --  5. ServerHelloDone
       declare
          Done_Buf : Byte_Seq (0 .. 3); Done_Len : N32;
       begin
@@ -1146,6 +1259,57 @@ is
       --  CKE is a state-machine violation — fatal alert.
       --  TLS-Anvil's secondClientKeyExchange test (XSM-zmpmr7nVki).
       if HC.CKE_Received_12 then
+         if Rec.Content = Records.Content_Handshake
+           and then Rec.Fragment_Len >= 4
+         then
+            declare
+               FS       : constant N32 :=
+                 S.Input.Read_Pos + Rec.Fragment_Pos;
+               Frag_Len : constant N32 := Rec.Fragment_Len;
+            begin
+               pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+               declare
+                  Frag     : constant Byte_Seq :=
+                    S.Input.Data (FS .. FS + Frag_Len - 1);
+                  Msg_Type : Byte;
+                  Msg_Len  : N32;
+                  Parse_OK : Boolean;
+               begin
+                  Handshake.Parse_Handshake_Header
+                    (Frag, Msg_Type, Msg_Len, Parse_OK);
+                  if not Parse_OK then
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     Send_Alert_And_Error (S, Decode_Error, Result);
+                     pragma Assert (Reasm_Building (HC));
+                     return;
+                  end if;
+
+                  if Msg_Type = Handshake.HT_Certificate_Verify then
+                     if Msg_Len < 4
+                       or else Msg_Len + 4 /= Frag_Len
+                     then
+                        S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                        Send_Alert_And_Error (S, Decode_Error, Result);
+                        pragma Assert (Reasm_Building (HC));
+                        return;
+                     end if;
+
+                     declare
+                        Sig_Len : constant N32 :=
+                          N32 (Frag (6)) * 256 + N32 (Frag (7));
+                     begin
+                        if Sig_Len /= Msg_Len - 4 then
+                           S.Input.Read_Pos :=
+                             S.Input.Read_Pos + Rec.Record_Len;
+                           Send_Alert_And_Error (S, Decode_Error, Result);
+                           pragma Assert (Reasm_Building (HC));
+                           return;
+                        end if;
+                     end;
+                  end if;
+               end;
+            end;
+         end if;
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);
          pragma Assert (Reasm_Building (HC));
@@ -1156,24 +1320,28 @@ is
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
 
-         procedure Parse_Complete_CKE
-           (Msg      : in     Byte_Seq;
-            CKE_Good :    out Boolean)
-         with Pre => Msg'Length > 0
-                     and then Msg'Length <= N32'Last
-                     and then Msg'First <= N32'Last - 4
-                     and then HC.Cfg.Local /= null
-                     and then HC.Cfg.Local.Has_Identity
-                     and then SPARKTLS.Handshake.Server_Msgs
+	         procedure Parse_Complete_CKE
+	           (Msg      : in     Byte_Seq;
+	            CKE_Good :    out Boolean)
+	         with Pre => Msg'Length > 0
+	                     and then Msg'Length <= HC.Transcript'Length
+	                     and then Msg'Last < N32 (Natural'Last)
+	                     and then Reasm_Building (HC)
+	                     and then HC.Cfg.Local /= null
+	                     and then HC.Cfg.Local.Has_Identity
+	                     and then SPARKTLS.Handshake.Server_Msgs
                        .Local_Config_Valid (HC.Cfg.Local)
                      and then HC.Cfg.Random /= null
                      and then Valid_ECDHE_Group (HC.Selected_Group),
-              Post => HC.Cfg.Local /= null
-                      and then HC.Cfg.Local.Has_Identity
-                      and then SPARKTLS.Handshake.Server_Msgs
-                        .Local_Config_Valid (HC.Cfg.Local)
-                      and then HC.Cfg.Random /= null
-                      and then Valid_ECDHE_Group (HC.Selected_Group)
+	              Post => HC.Version = HC.Version'Old
+	                      and then Reasm_Building (HC)
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                      and then SPARKTLS.Handshake.Server_Msgs
+	                        .Local_Config_Valid (HC.Cfg.Local)
+	                      and then HC.Cfg.Random /= null
+	                      and then HC.Selected_Group = HC.Selected_Group'Old
+	                      and then Valid_ECDHE_Group (HC.Selected_Group)
          is
             Msg_Type : Byte;
             Msg_Len  : N32;
@@ -1195,13 +1363,16 @@ is
                return;
             end if;
 
-            declare
-               Msg_Len_Const : constant N32 := Msg_Len;
-               Body_Data     : Byte_Seq (0 .. Msg_Len_Const - 1);
-            begin
-               Body_Data :=
-                 Msg (Msg'First + 4 .. Msg'First + 4 + Msg_Len - 1);
-               Parse_Client_Key_Exchange (HC, Body_Data, CKE_Good);
+	            declare
+	               Msg_Len_Const : constant N32 := Msg_Len;
+	               Body_Data     : Byte_Seq (0 .. Msg_Len_Const - 1);
+	            begin
+	               pragma Assert (Msg'First + 4 <= Msg'Last);
+	               pragma Assert
+	                 (Msg'First + 4 + Msg_Len - 1 = Msg'Last);
+	               Body_Data :=
+	                 Msg (Msg'First + 4 .. Msg'First + 4 + Msg_Len - 1);
+	               Parse_Client_Key_Exchange (HC, Body_Data, CKE_Good);
             end;
          end Parse_Complete_CKE;
 
@@ -1226,11 +1397,11 @@ is
 
          procedure Finish_CKE
            (Msg : in Byte_Seq)
-         with Pre  => Reasm_Building (HC)
-                      and then Msg'Length > 0
-                      and then Msg'Length <= N32'Last
-                      and then Msg'First <= N32'Last - 4
-                      and then S.State not in
+	         with Pre  => Reasm_Building (HC)
+	                      and then Msg'Length > 0
+	                      and then Msg'Length <= HC.Transcript'Length
+	                      and then Msg'Last < N32 (Natural'Last)
+	                      and then S.State not in
                         Idle | Closing | Closed | Error_State
                       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
                       and then S.Input.Read_Pos + Rec.Record_Len
@@ -1249,10 +1420,9 @@ is
                       and then HC.Cfg.Local.Has_Identity
                       and then SPARKTLS.Handshake.Server_Msgs
                         .Local_Config_Valid (HC.Cfg.Local)
-                      and then HC.Cfg.Random /= null
-                      and then HC.Selected_Group = HC.Selected_Group'Old
-                      and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                      and then
+	                      and then HC.Cfg.Random /= null
+	                      and then HC.Selected_Group = HC.Selected_Group'Old
+	                      and then
                         (if Result = OK
                          then S.State = S.State'Old
                               and then HC.Transcript_Len > 0
@@ -1356,20 +1526,29 @@ is
                return;
             end if;
 
-            declare
-               Need : constant N32 := HC.Reasm_Need;
-               Full : constant Byte_Seq := HC.Reasm_Buf (0 .. Need - 1);
-            begin
-               Free_Byte_Seq (HC.Reasm_Buf);
-               HC.Reasm_Len := 0;
-               HC.Reasm_Need := 0;
-               HC.Reasm_Hdr_Pending := False;
-               Result := OK;
-               Finish_CKE (Full);
-               if Result /= OK then
-                  return;
-               end if;
-            end;
+	            declare
+	               Need : constant N32 := HC.Reasm_Need;
+	            begin
+	               if Need > HC.Transcript'Length then
+	                  Fail_Decode;
+	                  return;
+	               end if;
+
+	               declare
+	                  Full : constant Byte_Seq :=
+	                    HC.Reasm_Buf (0 .. Need - 1);
+	               begin
+	                  Free_Byte_Seq (HC.Reasm_Buf);
+	                  HC.Reasm_Len := 0;
+	                  HC.Reasm_Need := 0;
+	                  HC.Reasm_Hdr_Pending := False;
+	                  Result := OK;
+	                  Finish_CKE (Full);
+	                  if Result /= OK then
+	                     return;
+	                  end if;
+	               end;
+	            end;
          elsif Frag_Len < 4 then
             if Frag_Len = 0 then
                Fail_Decode;
@@ -1520,6 +1699,110 @@ is
          pragma Assert (Single_CKE_RFC_5246_7_4_7 (HC));
          pragma Assert (Reasm_Building (HC));
       end Process_Client_Key_Exchange_12;
+
+   ------------------------------------------------------------------
+   procedure Process_Client_Certificate_12
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   is
+      Rec : Records.Parse_Result;
+   begin
+      if Input_Available (S) = 0 then
+         Result := Need_Input;
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
+
+      Records.Parse_Record_Header
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+         Available (S.Input), Rec);
+
+      if not Rec.OK then
+         if Rec.Bad_Version then
+            Send_Alert_And_Error (S, Protocol_Version, Result);
+         elsif Rec.Overflow then
+            Send_Alert_And_Error (S, Record_Overflow, Result);
+         else
+            Result := Need_Input;
+         end if;
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
+
+      if Rec.Content /= Records.Content_Handshake then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
+
+      declare
+         Frag_Len : constant N32 := Rec.Fragment_Len;
+         FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+      begin
+         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+
+         if Frag_Len < 7 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Decode_Error, Result);
+            pragma Assert (Reasm_Building (HC));
+            return;
+         end if;
+
+         declare
+            Frag     : constant Byte_Seq :=
+              S.Input.Data (FS .. FS + Frag_Len - 1);
+            Msg_Type : Byte;
+            Msg_Len  : N32;
+            Parse_OK : Boolean;
+         begin
+            Handshake.Parse_Handshake_Header
+              (Frag, Msg_Type, Msg_Len, Parse_OK);
+
+            if not Parse_OK then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Decode_Error, Result);
+               pragma Assert (Reasm_Building (HC));
+               return;
+            end if;
+
+            if Msg_Type /= Handshake.HT_Certificate then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               pragma Assert (Reasm_Building (HC));
+               return;
+            end if;
+
+            if Msg_Len < 3
+              or else Msg_Len + 4 /= Frag_Len
+            then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Decode_Error, Result);
+               pragma Assert (Reasm_Building (HC));
+               return;
+            end if;
+
+            declare
+               List_Len : constant N32 :=
+                 N32 (Frag (4)) * 65536
+                 + N32 (Frag (5)) * 256
+                 + N32 (Frag (6));
+            begin
+               if List_Len /= Msg_Len - 3 then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
+            end;
+
+            Append_Transcript (HC, Frag);
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Set_State (S, Wait_Client_Finished);
+            Result := (if Input_Available (S) > 0 then OK else Need_Input);
+            pragma Assert (Reasm_Building (HC));
+         end;
+      end;
+   end Process_Client_Certificate_12;
 
    ------------------------------------------------------------------
    procedure Process_Client_CCS_12

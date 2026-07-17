@@ -85,6 +85,12 @@ is
    Max_Sig_Algos : constant := 16;
    subtype Sig_Algo_Index is Natural range 0 .. Max_Sig_Algos - 1;
    type Sig_Algo_List is array (Sig_Algo_Index) of Unsigned_16;
+   function Sig_Scheme_In_List
+     (Scheme : Unsigned_16;
+      List   : Sig_Algo_List;
+      Count  : Natural) return Boolean is
+     (Count <= Max_Sig_Algos
+        and then (for some I in 0 .. Count - 1 => List (I) = Scheme));
 
    --  CH1 extension order tracking (for HRR CH2 validation)
    --  Uses a rolling polynomial hash (fingerprint * 31 xor code).
@@ -116,6 +122,12 @@ is
    Suite_ECDHE_ECDSA_AES256_GCM_SHA384 : constant Unsigned_16 := 16#C02C#;
    Suite_ECDHE_RSA_CHACHA20_SHA256     : constant Unsigned_16 := 16#CCA8#;
    Suite_ECDHE_ECDSA_CHACHA20_SHA256   : constant Unsigned_16 := 16#CCA9#;
+
+   Max_Config_Cipher_Suites : constant := 16;
+   subtype Cipher_Pref_Index is Natural range 1 .. Max_Config_Cipher_Suites;
+   type Cipher_Suite_List is array (Cipher_Pref_Index) of Unsigned_16;
+   type Cipher_Suite_Preference_Groups is
+     array (Cipher_Pref_Index) of Natural range 0 .. Max_Config_Cipher_Suites;
 
    ----------------------------------------------------------------------------
    --  Connection state
@@ -763,6 +775,10 @@ is
    end record
      with Predicate => Hostname_Buf.Len <= Max_Hostname_Len;
 
+   Max_Config_ALPN_Protocols : constant := 8;
+   subtype ALPN_Index is Natural range 1 .. Max_Config_ALPN_Protocols;
+   type ALPN_Protocol_List is array (ALPN_Index) of Hostname_Buf;
+
    ----------------------------------------------------------------------------
    --  Traffic keys for one direction (key + IV + nonce counter)
    ----------------------------------------------------------------------------
@@ -1184,6 +1200,12 @@ is
       --  for the client's SNI hostname.
       Local : Identity_Access := null;
 
+      --  Server-side SNI acknowledgement. When True, the server emits
+      --  the empty server_name extension if the client sent SNI. Set
+      --  False to parse SNI and allow SNI-based identity selection
+      --  without acknowledging it in ServerHello / EncryptedExtensions.
+      Ack_Server_Name : Boolean := True;
+
       --  Server-side SNI-based identity selector. When non-null AND
       --  the client sent a non-empty server_name extension, the
       --  callback fires after CH parse and the returned identity
@@ -1193,8 +1215,43 @@ is
 
       --  ALPN: Application-Layer Protocol Negotiation (RFC 7301).
       --  Set to e.g. "h2" for HTTP/2 or "http/1.1" for HTTP/1.1.
-      --  Empty (Len=0) means no ALPN extension is sent.
+      --  Empty (Len=0) means no ALPN extension is sent unless
+      --  ALPN_Count > 0.
       ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
+      --  Optional ordered ALPN preference list. When ALPN_Count > 0,
+      --  clients advertise ALPN_List (1 .. ALPN_Count), and servers
+      --  select the first configured entry also offered by the client.
+      --  ALPN remains as the backwards-compatible single-protocol API.
+      ALPN_List  : ALPN_Protocol_List :=
+        (others => (Len => 0, Data => (others => ' ')));
+      ALPN_Count : Natural range 0 .. Max_Config_ALPN_Protocols := 0;
+
+      --  Optional ordered TLS 1.2 server cipher policy. When
+      --  TLS12_Cipher_Count = 0, the server preserves the historical
+      --  behavior of selecting the first compatible client-offered
+      --  modern ECDHE AEAD suite. Otherwise, only suites in
+      --  TLS12_Cipher_List (1 .. TLS12_Cipher_Count) are eligible.
+      --  Lower group numbers are preferred; equal group numbers use
+      --  the client's order as the tie-breaker.
+      TLS12_Cipher_List : Cipher_Suite_List := (others => 0);
+      TLS12_Cipher_Groups : Cipher_Suite_Preference_Groups := (others => 0);
+      TLS12_Cipher_Count : Natural range 0 .. Max_Config_Cipher_Suites := 0;
+
+      --  Optional signature_algorithms preference/allow-list. When
+      --  Verify_Sig_Algo_Count = 0, the client advertises SPARKTLS's default
+      --  modern list. Otherwise, clients advertise exactly
+      --  Verify_Sig_Algos (0 .. Count - 1), and CertificateVerify messages
+      --  from peers must use a listed scheme.
+      Verify_Sig_Algos      : Sig_Algo_List := (others => 0);
+      Verify_Sig_Algo_Count : Natural range 0 .. Max_Sig_Algos := 0;
+
+      --  Optional local signing preference/allow-list. When
+      --  Sign_Sig_Algo_Count = 0, the signer uses the peer's offered order
+      --  and the local identity's key type. Otherwise, signing selects the
+      --  first configured scheme that is also peer-offered and compatible with
+      --  the local identity.
+      Sign_Sig_Algos      : Sig_Algo_List := (others => 0);
+      Sign_Sig_Algo_Count : Natural range 0 .. Max_Sig_Algos := 0;
 
       --  Server: request a client certificate (mTLS). When True the
       --  server sends a CertificateRequest in the handshake.
@@ -1551,6 +1608,9 @@ is
 
       --  Client's offered ALPN protocol (parsed from ClientHello)
       Client_ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
+      Client_ALPN_List : ALPN_Protocol_List :=
+        (others => (Len => 0, Data => (others => ' ')));
+      Client_ALPN_Count : Natural range 0 .. Max_Config_ALPN_Protocols := 0;
 
       --  TLS 1.2 key material (set during Derive_Keys_12)
       Master_Secret_12   : Bytes_48 := (others => 0);
@@ -2205,6 +2265,13 @@ is
 
       --  True on first Advance in Connected state (to deliver Handshake_Done)
       Handshake_Just_Done : Boolean := False;
+
+      --  TLS 1.3 post-handshake handshake-message reassembly. Servers may
+      --  fragment NewSessionTicket across encrypted application_data records.
+      Post_HS_Buf  : Byte_Seq (0 .. Max_Record_Plaintext - 1)
+                       := (others => 0);
+      Post_HS_Len  : N32 := 0;
+      Post_HS_Need : N32 := 0;
 
       --  Counter for received warning-level user_canceled alerts.
       --  RFC 8446 §6.1: TLS 1.3 deprecates warning alerts but keeps

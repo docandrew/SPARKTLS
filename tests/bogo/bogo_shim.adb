@@ -59,11 +59,22 @@ procedure Bogo_Shim is
       Require_Client_Cert  : Boolean := False;
       Expect_Hs_Fails      : Boolean := False;
       Resume_Count         : Natural := 0;
-      --  ALPN (RFC 7301). BoGo wire-encodes -advertise-alpn already
-      --  (e.g. "\x03foo"); we strip the 1-byte length prefix and store
-      --  the bare protocol name. Multi-protocol lists pick the FIRST.
+      --  ALPN (RFC 7301). BoGo wire-encodes -advertise-alpn as a
+      --  protocol_name_list (e.g. "\x03foo\x03bar"). Store both the
+      --  legacy first protocol and the full ordered list.
       ALPN_Proto           : Unbounded_Text := (others => Character'Val (0));
       ALPN_Proto_Len       : Natural := 0;
+      ALPN_List            : SPARKTLS.ALPN_Protocol_List :=
+        (others => (Len => 0, Data => (others => ' ')));
+      ALPN_Count           : Natural range 0 .. Max_Config_ALPN_Protocols := 0;
+      TLS12_Cipher_List    : SPARKTLS.Cipher_Suite_List := (others => 0);
+      TLS12_Cipher_Groups  : SPARKTLS.Cipher_Suite_Preference_Groups :=
+        (others => 0);
+      TLS12_Cipher_Count   : Natural range 0 .. Max_Config_Cipher_Suites := 0;
+      Verify_Sig_Algos     : SPARKTLS.Sig_Algo_List := (others => 0);
+      Verify_Sig_Count     : Natural range 0 .. Max_Sig_Algos := 0;
+      Sign_Sig_Algos       : SPARKTLS.Sig_Algo_List := (others => 0);
+      Sign_Sig_Count       : Natural range 0 .. Max_Sig_Algos := 0;
       Expect_ALPN          : Unbounded_Text := (others => Character'Val (0));
       Expect_ALPN_Len      : Natural := 0;
       Decline_ALPN         : Boolean := False;
@@ -72,6 +83,7 @@ procedure Bogo_Shim is
       --  when no -host-name flag was given.
       Host_Name            : Unbounded_Text := (others => Character'Val (0));
       Host_Name_Len        : Natural := 0;
+      Ack_Server_Name      : Boolean := True;
       Preferred_Group      : Unsigned_16 := 0;
    end record;
 
@@ -316,6 +328,92 @@ procedure Bogo_Shim is
          end if;
       end Maybe_Set_Preferred_Group;
 
+      procedure Add_Cipher_Token
+        (Token : String;
+         Group : Natural)
+      is
+         Suite : Unsigned_16 := 0;
+      begin
+         if Token = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" then
+            Suite := Suite_ECDHE_RSA_AES128_GCM_SHA256;
+         elsif Token = "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" then
+            Suite := Suite_ECDHE_RSA_AES256_GCM_SHA384;
+         elsif Token = "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256" then
+            Suite := Suite_ECDHE_RSA_CHACHA20_SHA256;
+         elsif Token = "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" then
+            Suite := Suite_ECDHE_ECDSA_AES128_GCM_SHA256;
+         elsif Token = "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384" then
+            Suite := Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+         elsif Token = "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256" then
+            Suite := Suite_ECDHE_ECDSA_CHACHA20_SHA256;
+         end if;
+
+         if Suite /= 0
+           and then Cfg.TLS12_Cipher_Count < Max_Config_Cipher_Suites
+           and then Group in 1 .. Max_Config_Cipher_Suites
+         then
+            Cfg.TLS12_Cipher_Count := Cfg.TLS12_Cipher_Count + 1;
+            Cfg.TLS12_Cipher_List (Cfg.TLS12_Cipher_Count) := Suite;
+            Cfg.TLS12_Cipher_Groups (Cfg.TLS12_Cipher_Count) := Group;
+         end if;
+      end Add_Cipher_Token;
+
+      procedure Parse_Cipher_List (S : String) is
+         Token_First : Positive := S'First;
+         Group       : Natural := 1;
+
+         procedure Flush_Token (Last : Natural) is
+         begin
+            if Last >= Token_First then
+               Add_Cipher_Token (S (Token_First .. Last), Group);
+            end if;
+         end Flush_Token;
+      begin
+         Cfg.TLS12_Cipher_Count := 0;
+         Cfg.TLS12_Cipher_List := (others => 0);
+         Cfg.TLS12_Cipher_Groups := (others => 0);
+
+         for J in S'Range loop
+            if S (J) = ':'
+              or else S (J) = '['
+              or else S (J) = ']'
+              or else S (J) = '|'
+            then
+               Flush_Token (J - 1);
+               Token_First := J + 1;
+               if S (J) = ':' and then Group < Max_Config_Cipher_Suites then
+                  Group := Group + 1;
+               end if;
+            end if;
+         end loop;
+         Flush_Token (S'Last);
+      end Parse_Cipher_List;
+
+      procedure Add_Verify_Sig_Algo (S : String) is
+         Scheme : constant Unsigned_16 := Dec_To_U16 (S);
+      begin
+         if Scheme in 16#0807# | 16#0403# | 16#0503#
+                    | 16#0804# | 16#0805# | 16#0806#
+           and then Cfg.Verify_Sig_Count < Max_Sig_Algos
+         then
+            Cfg.Verify_Sig_Algos (Cfg.Verify_Sig_Count) := Scheme;
+            Cfg.Verify_Sig_Count := Cfg.Verify_Sig_Count + 1;
+         end if;
+      end Add_Verify_Sig_Algo;
+
+      procedure Add_Sign_Sig_Algo (S : String) is
+         Scheme : constant Unsigned_16 := Dec_To_U16 (S);
+      begin
+         if Scheme in 16#0807# | 16#0403# | 16#0503#
+                    | 16#0804# | 16#0805# | 16#0806#
+                    | 16#0401# | 16#0501# | 16#0601#
+           and then Cfg.Sign_Sig_Count < Max_Sig_Algos
+         then
+            Cfg.Sign_Sig_Algos (Cfg.Sign_Sig_Count) := Scheme;
+            Cfg.Sign_Sig_Count := Cfg.Sign_Sig_Count + 1;
+         end if;
+      end Add_Sign_Sig_Algo;
+
    begin
       Trace_Args;
       while I <= Argument_Count loop
@@ -450,19 +548,10 @@ procedure Bogo_Shim is
                   null;
                end;
             elsif A = "-cipher" then
-               --  BoringSSL cipher-list syntax can express ordered
-               --  preference groups and suites SPARKTLS intentionally
-               --  does not implement. SPARKTLS currently exposes a
-               --  fixed modern AEAD suite set, not a per-test cipher
-               --  preference list. Consume the flag so supported
-               --  interoperability tests can run; cases that require a
-               --  different negotiated suite still fail via the peer's
-               --  transcript checks.
                declare
-                  Ignore : constant String := Next_Arg;
-                  pragma Unreferenced (Ignore);
+                  V : constant String := Next_Arg;
                begin
-                  null;
+                  Parse_Cipher_List (V);
                end;
             elsif A = "-advertise-alpn"
               or else A = "-select-alpn"
@@ -482,24 +571,42 @@ procedure Bogo_Shim is
                begin
                   if A = "-advertise-alpn" or A = "-expect-advertised-alpn"
                   then
-                     --  Length-prefix-delimited; first protocol only.
-                     if V'Length >= 1 then
-                        declare
-                           N : constant Natural := Character'Pos (V (V'First));
-                        begin
-                           if N > 0 and N <= 255
-                             and V'Length >= 1 + N
-                           then
-                              Plen := N;
-                              Proto (1 .. N) := V (V'First + 1 .. V'First + N);
-                           end if;
-                        end;
-                     end if;
+                     --  Length-prefix-delimited protocol_name_list.
+                     declare
+                        P : Natural := V'First;
+                        Slot : Natural := 0;
+                     begin
+                        Cfg.ALPN_Count := 0;
+                        while P <= V'Last
+                          and then Slot < Max_Config_ALPN_Protocols
+                        loop
+                           declare
+                              N : constant Natural :=
+                                Character'Pos (V (P));
+                           begin
+                              exit when N = 0 or else N > 255;
+                              exit when P + N > V'Last;
+                              Slot := Slot + 1;
+                              Cfg.ALPN_List (Slot).Len := N;
+                              Cfg.ALPN_List (Slot).Data (1 .. N) :=
+                                V (P + 1 .. P + N);
+                              if Plen = 0 then
+                                 Plen := N;
+                                 Proto (1 .. N) := V (P + 1 .. P + N);
+                              end if;
+                              P := P + 1 + N;
+                           end;
+                        end loop;
+                        Cfg.ALPN_Count := Slot;
+                     end;
                   else
                      --  -select-alpn: bare protocol name.
                      if V'Length <= 255 then
                         Plen := V'Length;
                         Proto (1 .. Plen) := V;
+                        Cfg.ALPN_Count := 1;
+                        Cfg.ALPN_List (1).Len := Plen;
+                        Cfg.ALPN_List (1).Data (1 .. Plen) := V;
                      end if;
                   end if;
                   if Plen > 0 then
@@ -588,9 +695,11 @@ procedure Bogo_Shim is
                begin
                   null;
                end;
-            elsif A = "-signing-prefs"
-              or A = "-verify-prefs"
-              or A = "-export-keying-material"
+            elsif A = "-verify-prefs" then
+               Add_Verify_Sig_Algo (Next_Arg);
+            elsif A = "-signing-prefs" then
+               Add_Sign_Sig_Algo (Next_Arg);
+            elsif A = "-export-keying-material"
               or A = "-export-label"
               or A = "-export-context"
               or A = "-resumption-delay"
@@ -612,13 +721,14 @@ procedure Bogo_Shim is
                begin
                   null;
                end;
+            elsif A = "-no-server-name-ack" then
+               Cfg.Ack_Server_Name := False;
             elsif A = "-enable-grease"
               or A = "-jdk11-workaround"
               or A = "-filter-extra-algorithms"
               or A = "-retain-only-sha256-client-cert"
               or A = "-retain-only-sha256-client-cert-off"
               or A = "-permute-extensions"
-              or A = "-no-server-name-ack"
               or A = "-verify-peer"
               or A = "-server-preference"
               or A = "-no-ticket"
@@ -907,23 +1017,39 @@ procedure Bogo_Shim is
                   (if Cfg.Decline_ALPN or Cfg.ALPN_Proto_Len = 0
                    then ""
                    else Cfg.ALPN_Proto (1 .. Cfg.ALPN_Proto_Len));
+               Server_Cfg : SPARKTLS.Config;
             begin
-               SPARKTLS.Server.Configure
-                 (S        => S,
-                  Local    => Id'Unchecked_Access,
-                  Random   => Entropy_Random.Random'Access,
-                  Trust    => (if Trust /= ""
-                               then Roots'Unchecked_Access else null),
-                  Request_Client_Cert => Cfg.Require_Client_Cert,
-                  Require_Client_Cert => Cfg.Require_Client_Cert,
-                  Tickets  => Tickets,
-                  TLS12_Ticket_Keys => TLS12_Keys'Unchecked_Access,
-                  ALPN     => Server_ALPN,
-                  Versions => Policy,
-                  Get_Time =>
-                    (if Cfg.Require_Client_Cert
-                     then Current_Time'Unrestricted_Access
-                     else null));
+               Server_Cfg.Random := Entropy_Random.Random'Access;
+               Server_Cfg.Local := Id'Unchecked_Access;
+               Server_Cfg.Trust :=
+                 (if Trust /= "" then Roots'Unchecked_Access else null);
+               Server_Cfg.Request_Client_Cert := Cfg.Require_Client_Cert;
+               Server_Cfg.Require_Client_Cert := Cfg.Require_Client_Cert;
+               Server_Cfg.Ticket_Store := Tickets;
+               Server_Cfg.TLS12_Ticket_Keys := TLS12_Keys'Unchecked_Access;
+               Server_Cfg.Versions := Policy;
+               Server_Cfg.TLS12_Cipher_List := Cfg.TLS12_Cipher_List;
+               Server_Cfg.TLS12_Cipher_Groups := Cfg.TLS12_Cipher_Groups;
+               Server_Cfg.TLS12_Cipher_Count := Cfg.TLS12_Cipher_Count;
+               Server_Cfg.Ack_Server_Name := Cfg.Ack_Server_Name;
+               Server_Cfg.Verify_Sig_Algos := Cfg.Verify_Sig_Algos;
+               Server_Cfg.Verify_Sig_Algo_Count := Cfg.Verify_Sig_Count;
+               Server_Cfg.Sign_Sig_Algos := Cfg.Sign_Sig_Algos;
+               Server_Cfg.Sign_Sig_Algo_Count := Cfg.Sign_Sig_Count;
+               Server_Cfg.Get_Time :=
+                 (if Cfg.Require_Client_Cert
+                  then Current_Time'Unrestricted_Access
+                  else null);
+
+               if Server_ALPN'Length > 0 then
+                  Server_Cfg.ALPN.Data (1 .. Server_ALPN'Length) :=
+                    Server_ALPN;
+                  Server_Cfg.ALPN.Len := Server_ALPN'Length;
+                  Server_Cfg.ALPN_List (1) := Server_Cfg.ALPN;
+                  Server_Cfg.ALPN_Count := 1;
+               end if;
+
+               SPARKTLS.Server.Init (S, Server_Cfg);
             end;
          end;
       else
@@ -971,6 +1097,10 @@ procedure Bogo_Shim is
                Client_Cfg.TLS12_Resume_Ticket := Saved_Ticket_12;
                Client_Cfg.Skip_Verify := True;
                Client_Cfg.Skip_Hostname_Verify := True;
+               Client_Cfg.Verify_Sig_Algos := Cfg.Verify_Sig_Algos;
+               Client_Cfg.Verify_Sig_Algo_Count := Cfg.Verify_Sig_Count;
+               Client_Cfg.Sign_Sig_Algos := Cfg.Sign_Sig_Algos;
+               Client_Cfg.Sign_Sig_Algo_Count := Cfg.Sign_Sig_Count;
                Client_Cfg.Trust :=
                  (if Trust /= "" then Roots'Unchecked_Access else null);
                Client_Cfg.Local :=
@@ -986,6 +1116,8 @@ procedure Bogo_Shim is
                   Client_Cfg.ALPN.Data (1 .. Client_ALPN'Length) :=
                     Client_ALPN;
                   Client_Cfg.ALPN.Len := Client_ALPN'Length;
+                  Client_Cfg.ALPN_Count := Cfg.ALPN_Count;
+                  Client_Cfg.ALPN_List := Cfg.ALPN_List;
                end if;
 
                SPARKTLS.Client.Init (S, Client_Cfg);
@@ -1028,6 +1160,12 @@ procedure Bogo_Shim is
             when Error_Alert =>
                Err_State ("bogo_shim: handshake error", S);
                Send_Pending;
+               --  BoGo malformed-message tests often expect the runner
+               --  side to observe the fatal alert while it is still writing
+               --  the remainder of its scripted flight. Give the TCP peer a
+               --  short chance to read the alert before process exit closes
+               --  the socket.
+               delay 0.05;
                Ada.Command_Line.Set_Exit_Status
                  (Ada.Command_Line.Exit_Status
                     (if Cfg.Expect_Hs_Fails then Exit_Success else Exit_Failure));

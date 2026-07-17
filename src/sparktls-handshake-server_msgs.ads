@@ -66,16 +66,12 @@ is
 	                              S.Input.Read_Pos'Old
 	                            and then S.Input.Write_Pos =
 	                              S.Input.Write_Pos'Old
-		                            and then S.Server_App.Counter =
-		                              S.Server_App.Counter'Old
-			                            and then S.Server_App.Suite =
-			                              S.Server_App.Suite'Old
-		                            and then HC.Server_HS.Counter =
-		                              HC.Server_HS.Counter'Old
-			                            and then HC.Server_HS.Suite =
-			                              HC.Server_HS.Suite'Old
-					                            and then HC.HRR_Sent = HC.HRR_Sent'Old
-					                            and then Reasm_Building (HC)
+			                            and then S.Server_App.Counter =
+			                              S.Server_App.Counter'Old
+				                            and then S.Server_App.Suite =
+				                              S.Server_App.Suite'Old
+						                            and then HC.HRR_Sent = HC.HRR_Sent'Old
+						                            and then Reasm_Building (HC)
 	                            and then
 	                              (if OK and then HC.Version = TLS_1_3
 	                               then S.Negotiated_Suite in

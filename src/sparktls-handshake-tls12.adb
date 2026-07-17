@@ -1147,6 +1147,50 @@ is
    --  No key_share extension (ECDHE is in ServerKeyExchange).
    ------------------------------------------------------------------
 
+   function Same_ALPN_12 (A, B : Hostname_Buf) return Boolean is
+   begin
+      if A.Len = 0 or else A.Len /= B.Len then
+         return False;
+      end if;
+      for I in 1 .. A.Len loop
+         if A.Data (I) /= B.Data (I) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Same_ALPN_12;
+
+   function Select_ALPN_12 (HC : Handshake_Context) return Hostname_Buf is
+      Empty : constant Hostname_Buf := (Len => 0, Data => (others => ' '));
+   begin
+      if HC.Client_ALPN_Count = 0 then
+         return Empty;
+      end if;
+
+      if HC.Cfg.ALPN_Count > 0 then
+         for C in ALPN_Index loop
+            exit when C > HC.Cfg.ALPN_Count;
+            for P in ALPN_Index loop
+               exit when P > HC.Client_ALPN_Count;
+               if Same_ALPN_12
+                    (HC.Cfg.ALPN_List (C), HC.Client_ALPN_List (P))
+               then
+                  return HC.Cfg.ALPN_List (C);
+               end if;
+            end loop;
+         end loop;
+      elsif HC.Cfg.ALPN.Len > 0 then
+         for P in ALPN_Index loop
+            exit when P > HC.Client_ALPN_Count;
+            if Same_ALPN_12 (HC.Cfg.ALPN, HC.Client_ALPN_List (P)) then
+               return HC.Cfg.ALPN;
+            end if;
+         end loop;
+      end if;
+
+      return Empty;
+   end Select_ALPN_12;
+
    procedure Build_Server_Hello_12
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -1181,18 +1225,17 @@ is
       --  Extended master secret (0x0017): no data (empty extension)
       EMS_Data_Len : constant := 0;
 
-      --  Server name (0x0000): empty ack when the client sent SNI.
-      SNI_Ext_Len : constant N32 := (if HC.Peer_SNI.Len > 0 then 4 else 0);
+      --  Server name (0x0000): empty ack when configured and the
+      --  client sent SNI.
+      SNI_Ext_Len : constant N32 :=
+        (if HC.Cfg.Ack_Server_Name and then HC.Peer_SNI.Len > 0 then 4 else 0);
 
       --  ALPN (0x0010): if client offered and server configured
       --  Data: list_len(2) + proto_len(1) + proto(N)
-      ALPN_Match : constant Boolean :=
-         HC.Client_ALPN.Len > 0
-         and then HC.Cfg.ALPN.Len > 0
-         and then HC.Client_ALPN.Data (1 .. HC.Client_ALPN.Len) =
-                  HC.Cfg.ALPN.Data (1 .. HC.Cfg.ALPN.Len);
+      Selected_ALPN : constant Hostname_Buf := Select_ALPN_12 (HC);
+      ALPN_Match : constant Boolean := Selected_ALPN.Len > 0;
       ALPN_Data_Len : constant TLS12_ALPN_Data_Len :=
-         (if ALPN_Match then N32 (3 + HC.Cfg.ALPN.Len) else 0);
+         (if ALPN_Match then N32 (3 + Selected_ALPN.Len) else 0);
       ALPN_Ext_Len : constant TLS12_ALPN_Ext_Len :=
          (if ALPN_Match then 4 + ALPN_Data_Len else 0);
 
@@ -1341,7 +1384,7 @@ is
       --  ALPN (0x0010) — if client offered and server matches.
       if ALPN_Match then
          declare
-            Proto_Len : constant Natural := HC.Cfg.ALPN.Len;
+            Proto_Len : constant Natural := Selected_ALPN.Len;
          begin
             Put16 (Result, Pos, 16#0010#);
             Put16 (Result, Pos + 2, Unsigned_16 (ALPN_Data_Len));
@@ -1351,12 +1394,12 @@ is
             for I in 1 .. Proto_Len loop
                pragma Loop_Invariant (I in 1 .. Proto_Len);
                Result (Pos + N32 (6 + I)) :=
-                  Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
+                  Byte (Character'Pos (Selected_ALPN.Data (I)));
             end loop;
             Pos := Pos + ALPN_Ext_Len;
 
             --  Store negotiated ALPN in session.
-            S.Negotiated_ALPN := HC.Cfg.ALPN;
+            S.Negotiated_ALPN := Selected_ALPN;
          end;
       end if;
 
@@ -1602,10 +1645,10 @@ is
      (Id     : in     Identity;
       Result :    out Byte_Seq;
       Len    :    out N32)
-   is
-      Pos : N32;
-      List_Start : N32;
-      List_Len : N32 := 0;
+	   is
+	      Pos : N32;
+	      List_Start : N32;
+	      List_Len : N32;
    begin
       Result := (others => 0);
       Len := 0;
@@ -1619,21 +1662,22 @@ is
       --  Compute the full certificate_list length first. TLS 1.2
       --  Certificate entries are 3-byte DER length plus DER bytes.
       List_Len := 3 + Id.NaCl_Cert_Len;
-      for I in 0 .. Id.Int_Count - 1 loop
-         pragma Loop_Invariant
-           (List_Len <= 3 + Id.NaCl_Cert_Len
-                        + N32 (I) * (3 + N32 (Max_Cert_DER)));
+	      for I in 0 .. Id.Int_Count - 1 loop
+	         pragma Loop_Invariant
+	           (List_Len <= 3 + Id.NaCl_Cert_Len
+	                        + N32 (I) * (3 + N32 (Max_Cert_DER)));
          if Id.Ints (I).Present then
             List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len);
          end if;
       end loop;
 
       --  Handshake header (4) + certificate_list_length (3) + list.
-      if List_Len >= 2**24
-        or else List_Len > N32 (Result'Length) - 7
-      then
-         return;
-      end if;
+	      if List_Len > 2**24 - 4
+	        or else List_Len > N32 (Result'Length) - 7
+	      then
+	         return;
+	      end if;
+	      pragma Assert (List_Len + 3 < 2**24);
 
       --  Handshake header placeholder (fill length later)
       Result (0) := 16#0B#;  --  Certificate
@@ -1657,10 +1701,11 @@ is
          return;
       end if;
 
-      --  Intermediate certificates
-      for I in 0 .. Id.Int_Count - 1 loop
-         pragma Loop_Invariant (Pos <= Result'Last + 1);
-         if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
+	      --  Intermediate certificates
+	      for I in 0 .. Id.Int_Count - 1 loop
+	         pragma Loop_Invariant (Pos >= 7);
+	         pragma Loop_Invariant (Pos <= Result'Last + 1);
+	         if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
             declare
                Int_Len : constant N32 := N32 (Id.Ints (I).DER_Len);
             begin
@@ -1690,15 +1735,11 @@ is
       --  Fill certificate list length
       Put24 (Result, List_Start, List_Len);
 
-      --  Fill handshake message length
-      declare
-         Msg_Body_Len : constant N32 := Pos - 4;
-      begin
-         Put24 (Result, 1, Msg_Body_Len);
-      end;
+	      --  Fill handshake message length
+	      Put24 (Result, 1, List_Len + 3);
 
-      Len := Pos;
-   end Build_Certificate_Chain_12;
+	      Len := List_Len + 7;
+	   end Build_Certificate_Chain_12;
 
    ------------------------------------------------------------------
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket build/parse via RFLX

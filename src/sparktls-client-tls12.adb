@@ -10,6 +10,7 @@ with SPARKTLS.Records;           use SPARKTLS.Records;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.TLS12;
+with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Client.TLS12.Packed;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.Cert_Verify;       use SPARKTLS.Cert_Verify;
@@ -654,6 +655,17 @@ is
          return;
       end if;
 
+      declare
+         List_Len : constant N32 :=
+           N32 (Frag (B)) * 65536
+           + N32 (Frag (B + 1)) * 256
+           + N32 (Frag (B + 2));
+      begin
+         if List_Len /= Msg_Len - 3 then
+            return;
+         end if;
+      end;
+
       Body_Bytes := Frag (B .. B + Msg_Len - 1);
 
       Buf := new RBT.Bytes'(1 .. RBT.Index (Msg_Len) => 0);
@@ -1182,9 +1194,11 @@ is
                                        Frag (SA_Off + 2 ..
                                              SA_Off + 1 + SA_Len);
                                  begin
-                                    Picked := Handshake.Pick_Sig_Algo
+                                    Picked := Handshake.Pick_Sig_Algo_With_Prefs
                                       (SA_Slice,
                                        HC.Cfg.Local.Sign_Algo,
+                                       HC.Cfg.Sign_Sig_Algos,
+                                       HC.Cfg.Sign_Sig_Algo_Count,
                                        Allow_PKCS1_v1_5 => True);
                                  end;
                               end if;
@@ -1448,10 +1462,19 @@ is
                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-		                     and then HC.Transcript_Len > 0
-		                     and then HC.Transcript_Len <= Transcript_Capacity
-	                and then SPARKTLSCrypto.P384.Field.Initialized
-		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then
+                  (if HC.Cert_Request_Received
+                       and then HC.Cfg.Local /= null
+                       and then HC.Cfg.Local.Has_Identity
+                       and then HC.TLS12_Client_Cert_Allowed
+                   then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                          (HC.Cfg.Local))
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized
+                and then Records.TLS12.Nonce_Space_Available_12
+                  (HC.Client_Seq_12),
 								        Post => Reasm_Coherent (HC)
 								                and then
 								                  (if Result = OK then
@@ -1598,6 +1621,11 @@ is
                  and then HC.Cfg.Local.Has_Identity
                  and then HC.TLS12_Client_Cert_Allowed
                then
+                  pragma Assert
+                    (SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                       (HC.Cfg.Local));
+                  pragma Assert
+                    (HC.Cfg.Local.NaCl_Cert_Len <= N32 (Max_Cert_DER));
                   Build_Certificate_Chain_12
                     (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
                else
@@ -1824,6 +1852,21 @@ is
    --
    --  Frag is the reassembled HS message bytes (header + body), Msg_Len
    --  the declared body length from the HS header.
+   procedure Send_Encrypted_Finished_Error_12
+     (S         : in out Session;
+      HC        : in out Handshake_Context;
+      Desc_Code : in     Byte;
+      Err       : in     Error_Code;
+      Result    :    out Action)
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+                and Reasm_Building (HC)
+                and Desc_Code /= 0
+                and Records.TLS12.Nonce_Space_Available_12
+                      (HC.Client_Seq_12),
+        Post => S.State = Error_State
+                and Reasm_Building (HC)
+                and Result in Has_Output | Error_Alert;
+
    procedure Handle_NST_12
      (S       : in out Session;
       HC      : in out Handshake_Context;
@@ -1850,7 +1893,9 @@ is
 			                | Suite_ECDHE_RSA_CHACHA20_SHA256
 			                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
 			                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-			                | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+			                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+			                and then Records.TLS12.Nonce_Space_Available_12
+			                  (HC.Client_Seq_12),
 			        Post => Reasm_Coherent (HC)
 		                and then
 		                  (if Result = OK then
@@ -1903,7 +1948,12 @@ is
       if not Parse_OK or Ticket_Len > Max_TLS12_Ticket_Len then
          Free_Byte_Seq (HC.Reasm_Buf);
          HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-         Send_Alert_And_Error (S, Decode_Error, Result);
+         if HC.TLS12_Resuming then
+            Send_Alert_And_Error (S, Decode_Error, Result);
+         else
+            Send_Encrypted_Finished_Error_12
+              (S, HC, 50, Decode_Error, Result);
+         end if;
          return;
       end if;
       if Ticket_Len > 0 then
@@ -3139,6 +3189,7 @@ is
                 and then HC.Reasm_Buf'First = 0
                 and then HC.Reasm_Buf'Length = Frag_Len
                 and then HC.Reasm_Need = Msg_Len + 4
+                and then HC.Reasm_Need <= Max_HS_Msg
                 and then HC.Reasm_Len = Frag_Len
                 and then HC.Reasm_Need <= HC.Reasm_Len
                 and then not HC.Reasm_Hdr_Pending
@@ -3519,11 +3570,12 @@ is
       is
       begin
          if HC.Reasm_Buf (0) /= 16#04# or else Msg_Len < 6 then
-            Send_Alert_And_Error
-              (S,
+            Send_Encrypted_Finished_Error_12
+              (S, HC,
+               (if HC.Reasm_Buf (0) = 16#04# then 50 else 10),
                (if HC.Reasm_Buf (0) = 16#04#
                 then Decode_Error else Unexpected_Message),
-               Result);
+                Result);
             return;
          end if;
 
@@ -3540,7 +3592,8 @@ is
                Ticket_Len    => Ticket_Len,
                OK            => Parse_OK);
             if not Parse_OK or Ticket_Len > Max_TLS12_Ticket_Len then
-               Send_Alert_And_Error (S, Decode_Error, Result);
+               Send_Encrypted_Finished_Error_12
+                 (S, HC, 50, Decode_Error, Result);
                return;
             end if;
             if Ticket_Len > 0 then
@@ -3705,21 +3758,6 @@ is
    ------------------------------------------------------------------
    --  Process_Server_Finished: decrypt + verify server Finished
    ------------------------------------------------------------------
-
-   procedure Send_Encrypted_Finished_Error_12
-     (S         : in out Session;
-      HC        : in out Handshake_Context;
-      Desc_Code : in     Byte;
-      Err       : in     Error_Code;
-      Result    :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and Reasm_Building (HC)
-                and Desc_Code /= 0
-                and Records.TLS12.Nonce_Space_Available_12
-                      (HC.Client_Seq_12),
-        Post => S.State = Error_State
-                and Reasm_Building (HC)
-                and Result in Has_Output | Error_Alert;
 
    procedure Send_Encrypted_Finished_Error_12
      (S         : in out Session;

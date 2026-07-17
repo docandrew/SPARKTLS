@@ -244,4 +244,41 @@ is
       return 0;
    end Pick_Sig_Algo;
 
+   function Pick_Sig_Algo_With_Prefs
+     (Sig_Algs           : Byte_Seq;
+      Cert               : Signing_Algorithm;
+      Prefs              : Sig_Algo_List;
+      Count              : Natural;
+      Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
+   is
+      Pos : N32;
+   begin
+      if Count = 0 then
+         return Pick_Sig_Algo (Sig_Algs, Cert, Allow_PKCS1_v1_5);
+      end if;
+
+      for J in Sig_Algo_Index loop
+         exit when J >= Count;
+         if Sig_Algo_Compatible_With_Cert
+              (Prefs (J), Cert, Allow_PKCS1_v1_5)
+         then
+            Pos := Sig_Algs'First;
+            while Pos < Sig_Algs'Last loop
+               pragma Loop_Invariant
+                 (Pos >= Sig_Algs'First and Pos < Sig_Algs'Last);
+               pragma Loop_Variant (Increases => Pos);
+               if Prefs (J) =
+                    Unsigned_16 (Sig_Algs (Pos)) * 256
+                    + Unsigned_16 (Sig_Algs (Pos + 1))
+               then
+                  return Prefs (J);
+               end if;
+               Pos := Pos + 2;
+            end loop;
+         end if;
+      end loop;
+
+      return 0;
+   end Pick_Sig_Algo_With_Prefs;
+
 end SPARKTLS.Handshake;

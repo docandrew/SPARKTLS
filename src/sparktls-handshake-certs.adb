@@ -756,6 +756,27 @@ is
          return;
       end if;
 
+      declare
+         Ctx_Len : constant N32 := N32 (HS_Msg (HS_Msg'First + 4));
+      begin
+         if Ctx_Len > Body_Len - 4 then
+            return;
+         end if;
+
+         declare
+            List_Off : constant N32 := HS_Msg'First + 5 + Ctx_Len;
+            List_Len : constant N32 :=
+              N32 (HS_Msg (List_Off)) * 65536
+              + N32 (HS_Msg (List_Off + 1)) * 256
+              + N32 (HS_Msg (List_Off + 2));
+         begin
+            if List_Len /= Body_Len - 4 - Ctx_Len
+            then
+               return;
+            end if;
+         end;
+      end;
+
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 ..
                                    HS_Msg'First + 4 + Body_Len - 1));

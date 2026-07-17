@@ -118,8 +118,7 @@ is
                   and then (Scheme = 16#0401# or else Scheme = 16#0501#
                             or else Scheme = 16#0601#)),
             when Sign_None =>
-               False))
-   with Ghost;
+               False));
 
    function Pick_Sig_Algo
      (Sig_Algs           : Byte_Seq;
@@ -129,5 +128,19 @@ is
                and then Sig_Algs'Last < N32'Last,
         Post => Sig_Algo_Compatible_With_Cert
                   (Pick_Sig_Algo'Result, Cert, Allow_PKCS1_v1_5);
+
+   function Pick_Sig_Algo_With_Prefs
+     (Sig_Algs           : Byte_Seq;
+      Cert               : Signing_Algorithm;
+      Prefs              : Sig_Algo_List;
+      Count              : Natural;
+      Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
+   with Pre => Sig_Algs'First >= 0
+               and then Sig_Algs'Last < N32'Last
+               and then Count <= Max_Sig_Algos,
+        Post => Sig_Algo_Compatible_With_Cert
+                  (Pick_Sig_Algo_With_Prefs'Result,
+                   Cert,
+                   Allow_PKCS1_v1_5);
 
 end SPARKTLS.Handshake;
