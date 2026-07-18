@@ -1294,18 +1294,26 @@ is
                         return;
                      end if;
 
-                     declare
-                        Sig_Len : constant N32 :=
-                          N32 (Frag (6)) * 256 + N32 (Frag (7));
-                     begin
-                        if Sig_Len /= Msg_Len - 4 then
-                           S.Input.Read_Pos :=
-                             S.Input.Read_Pos + Rec.Record_Len;
-                           Send_Alert_And_Error (S, Decode_Error, Result);
-                           pragma Assert (Reasm_Building (HC));
-                           return;
-                        end if;
-                     end;
+	                     declare
+	                        F : constant N32 := Frag'First;
+	                     begin
+	                        pragma Assert (Frag_Len >= 8);
+	                        pragma Assert (F + 7 <= Frag'Last);
+	                        declare
+	                           Sig_Len : constant N32 :=
+	                             N32 (Frag (F + 6)) * 256
+	                             + N32 (Frag (F + 7));
+	                        begin
+	                           if Sig_Len /= Msg_Len - 4 then
+	                              S.Input.Read_Pos :=
+	                                S.Input.Read_Pos + Rec.Record_Len;
+	                              Send_Alert_And_Error
+	                                (S, Decode_Error, Result);
+	                              pragma Assert (Reasm_Building (HC));
+	                              return;
+	                           end if;
+	                        end;
+	                     end;
                   end if;
                end;
             end;
@@ -1781,18 +1789,25 @@ is
                return;
             end if;
 
-            declare
-               List_Len : constant N32 :=
-                 N32 (Frag (4)) * 65536
-                 + N32 (Frag (5)) * 256
-                 + N32 (Frag (6));
-            begin
-               if List_Len /= Msg_Len - 3 then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, Decode_Error, Result);
-                  pragma Assert (Reasm_Building (HC));
-                  return;
-               end if;
+	            declare
+	               F : constant N32 := Frag'First;
+	            begin
+	               pragma Assert (Frag_Len >= 7);
+	               pragma Assert (F + 6 <= Frag'Last);
+	               declare
+	                  List_Len : constant N32 :=
+	                    N32 (Frag (F + 4)) * 65536
+	                    + N32 (Frag (F + 5)) * 256
+	                    + N32 (Frag (F + 6));
+	               begin
+	                  if List_Len /= Msg_Len - 3 then
+	                     S.Input.Read_Pos :=
+	                       S.Input.Read_Pos + Rec.Record_Len;
+	                     Send_Alert_And_Error (S, Decode_Error, Result);
+	                     pragma Assert (Reasm_Building (HC));
+	                     return;
+	                  end if;
+	               end;
             end;
 
             Append_Transcript (HC, Frag);

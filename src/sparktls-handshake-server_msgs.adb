@@ -2937,17 +2937,12 @@ is
 				         and then
 				           (if Saved_Random /= null
 				            then HC.Cfg.Random /= null)
-				         and then HC.HRR_Sent = Saved_HRR
-				         and then HC.Server_HS.Counter =
-				           Saved_Server_HS_Counter
-				         and then HC.Server_HS.Suite =
-				           Saved_Server_HS_Suite
-				         and then
-						           (if Saved_Local /= null
-						             and then Local_Config_Valid (Saved_Local)
-						            then HC.Cfg.Local /= null
-					                 and then Local_Config_Valid (HC.Cfg.Local)))
-      with Ghost;
+					         and then HC.HRR_Sent = Saved_HRR
+					         and then HC.Server_HS.Counter =
+					           Saved_Server_HS_Counter
+					         and then HC.Server_HS.Suite =
+					           Saved_Server_HS_Suite)
+	      with Ghost;
    begin
       OK := False;
 

@@ -70,9 +70,14 @@ is
 	                and then HC.Selected_Group = HC.Selected_Group'Old
                 and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
                 and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
-                and then
-                  (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-                and then HC.Reasm_Len = HC.Reasm_Len'Old
+	                and then
+	                  (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+	                and then
+	                  (if SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                         (HC.Cfg.Local'Old)
+	                   then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                          (HC.Cfg.Local))
+	                and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then HC.Reasm_Hdr_Pending =
                   HC.Reasm_Hdr_Pending'Old
@@ -1496,13 +1501,14 @@ is
 								                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
 
    procedure Handle_SHD_12
-     (S       : in out Session;
-      HC      : in out Handshake_Context;
-      Frag    : in     Byte_Seq;
-      Msg_Len : in     N32;
-      Result  :    out Action)
-   is
-   begin
+	     (S       : in out Session;
+	      HC      : in out Handshake_Context;
+	      Frag    : in     Byte_Seq;
+	      Msg_Len : in     N32;
+	      Result  :    out Action)
+	   is
+	      Saved_Local : constant Identity_Access := HC.Cfg.Local;
+	   begin
       Result := OK;
       if Msg_Len /= 0 then
          Free_Byte_Seq (HC.Reasm_Buf);
@@ -1595,9 +1601,9 @@ is
       pragma Assert (Reasm_Building (HC));
 
       --  Build + atomically commit the client flight.
-      declare
-         use Key_Schedule_12;
-         use Records.TLS12;
+	      declare
+	         use Key_Schedule_12;
+	         use Records.TLS12;
          Scratch : IO_Buffer;
          CKE : Byte_Seq (0 .. Max_Client_Key_Exchange - 1);
          CKE_Len : N32;
@@ -1610,24 +1616,25 @@ is
          Use_384 : constant Boolean :=
             S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
                                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
-         Saved_Seq : Unsigned_64;
-      begin
-         if HC.Cert_Request_Received then
+	         Saved_Seq : Unsigned_64;
+	      begin
+	         HC.Cfg.Local := Saved_Local;
+	         if HC.Cert_Request_Received then
             declare
                Cert_Buf : Byte_Seq (0 .. 4 + 3 + Max_Cert_DER - 1);
                Cert_Len : N32;
             begin
-               if HC.Cfg.Local /= null
-                 and then HC.Cfg.Local.Has_Identity
-                 and then HC.TLS12_Client_Cert_Allowed
-               then
-                  pragma Assert
-                    (SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                       (HC.Cfg.Local));
-                  pragma Assert
-                    (HC.Cfg.Local.NaCl_Cert_Len <= N32 (Max_Cert_DER));
-                  Build_Certificate_Chain_12
-                    (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
+	               if Saved_Local /= null
+	                 and then Saved_Local.Has_Identity
+	                 and then HC.TLS12_Client_Cert_Allowed
+	               then
+	                  pragma Assert
+	                    (SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                       (Saved_Local));
+	                  pragma Assert
+	                    (Saved_Local.NaCl_Cert_Len <= N32 (Max_Cert_DER));
+	                  Build_Certificate_Chain_12
+	                    (Saved_Local.all, Cert_Buf, Cert_Len);
                else
                   Cert_Buf := (others => 0);
                   Cert_Buf (0) := 16#0B#;
@@ -1858,11 +1865,10 @@ is
       Desc_Code : in     Byte;
       Err       : in     Error_Code;
       Result    :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and Reasm_Building (HC)
-                and Desc_Code /= 0
-                and Records.TLS12.Nonce_Space_Available_12
-                      (HC.Client_Seq_12),
+	   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+	                and Desc_Code /= 0
+	                and Records.TLS12.Nonce_Space_Available_12
+	                      (HC.Client_Seq_12),
         Post => S.State = Error_State
                 and Reasm_Building (HC)
                 and Result in Has_Output | Error_Alert;

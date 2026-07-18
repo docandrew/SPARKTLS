@@ -1661,14 +1661,58 @@ is
       Init (S, Cfg);
    end Configure;
 
+   procedure Initialize_Client_Handshake
+     (S   : in out Session;
+      HC  : in out Handshake_Context;
+      OK  :    out Boolean)
+   with Pre => S.State = Client_Hello_Sent
+               and then S.Role = Role_Client
+               and then HC.Cfg.Random /= null
+               and then SPARKTLSCrypto.P384.Field.Initialized
+               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+               and then
+                 (if HC.Cfg.TLS12_Resume_Ticket.Valid
+                  then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
+                       <= Max_TLS12_Ticket_Len)
+               and then Reasm_Coherent (HC)
+   is
+      CH_Buf    : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
+      CH_Len    : N32;
+      Rec_Out   : N32;
+   begin
+      OK := False;
+      Handshake.Client_Msgs.Build_Client_Hello (S, HC, CH_Buf, CH_Len);
+
+      if CH_Len = 0 then
+         Set_State (S, Error_State);
+         S.Last_Error := Internal_Error;
+         return;
+      end if;
+
+      Append_Transcript (HC, CH_Buf (0 .. CH_Len - 1));
+
+      --  RFC 8446 §5.1: initial ClientHello uses record version 0x0301
+      --  (TLS 1.0) for middlebox compatibility, even though the actual
+      --  protocol is negotiated via supported_versions.
+      Records.Build_Initial_ClientHello_Record
+        (Fragment  => CH_Buf (0 .. CH_Len - 1),
+         Output    => S.Output,
+         Bytes_Out => Rec_Out);
+
+      if Rec_Out = 0 then
+         Set_State (S, Error_State);
+         S.Last_Error := Insufficient_Buffer;
+      else
+         OK := True;
+      end if;
+   end Initialize_Client_Handshake;
+
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
    with SPARK_Mode => Off
    is
-      CH_Buf    : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
-      CH_Len    : N32;
-      Rec_Out   : N32;
+      OK : Boolean;
    begin
       S := (State     => Client_Hello_Sent,
             Role      => Role_Client,
@@ -1700,28 +1744,8 @@ is
          S.Ticket := Cfg.Resume_Ticket;
       end if;
 
-      Handshake.Client_Msgs.Build_Client_Hello (S, S.HC_Ptr.all, CH_Buf, CH_Len);
-
-      if CH_Len = 0 then
-         Set_State (S, Error_State);
-         S.Last_Error := Internal_Error;
-         HC_Alloc.Free (S.HC_Ptr);
-         return;
-      end if;
-
-      Append_Transcript (S.HC_Ptr.all, CH_Buf (0 .. CH_Len - 1));
-
-      --  RFC 8446 §5.1: initial ClientHello uses record version 0x0301
-      --  (TLS 1.0) for middlebox compatibility, even though the actual
-      --  protocol is negotiated via supported_versions.
-      Records.Build_Initial_ClientHello_Record
-        (Fragment  => CH_Buf (0 .. CH_Len - 1),
-         Output    => S.Output,
-         Bytes_Out => Rec_Out);
-
-      if Rec_Out = 0 then
-         Set_State (S, Error_State);
-         S.Last_Error := Insufficient_Buffer;
+      Initialize_Client_Handshake (S, S.HC_Ptr.all, OK);
+      if not OK then
          HC_Alloc.Free (S.HC_Ptr);
       end if;
    end Init;
@@ -4092,12 +4116,52 @@ is
       end case;
    end Advance_Handshake;
 
-   procedure Advance
-     (S      : in out Session;
-      Result :    out Action)
-   with SPARK_Mode => Off
+   procedure Scrub_Handshake_Context (HC : in out Handshake_Context)
    is
    begin
+      HC.Shared_Secret := (others => 0);
+      HC.Client_HS_Secret := (others => 0);
+      HC.Server_HS_Secret := (others => 0);
+      HC.Handshake_Secret := (others => 0);
+      HC.Master_Secret := (others => 0);
+      HC.Master_Secret_12 := (others => 0);
+      HC.Local_SK := (others => 0);
+      HC.P256_Local_SK := (others => 0);
+      HC.P384_Local_SK := (others => 0);
+      HC.Transcript (0 .. HC.Transcript_Len) := (others => 0);
+      HC.Transcript_Len := 0;
+      HC.PSK_Value := (others => 0);
+      HC.PSK_Binder := (others => 0);
+      HC.PSK_Ticket_ID := (others => 0);
+      HC.Client_Random := (others => 0);
+      HC.Server_Random := (others => 0);
+      Free_Byte_Seq (HC.Reasm_Buf);
+   end Scrub_Handshake_Context;
+
+   procedure Advance_Client_Non_Handshake
+     (S       : in out Session;
+      Result  :    out Action;
+      Handled :    out Boolean)
+   with Pre => S.Role = Role_Client
+               and then Nonce_Space_Available (S.Client_App)
+               and then Nonce_Space_Available (S.Server_App)
+               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                 (S.Server_Seq_12)
+               and then S.App_Data_Len <= Max_Record_Plaintext
+               and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+               and then Empty_Records_Bounded_RFC_8446_5_2 (S)
+               and then S.Post_HS_Len <= Max_Record_Plaintext
+               and then S.Post_HS_Need <= Max_Record_Plaintext
+               and then
+                 (if S.Post_HS_Need = 0
+                  then S.Post_HS_Len = 0
+                  else S.Post_HS_Need >= 4
+                    and then S.Post_HS_Len <= S.Post_HS_Need)
+               and then Free_Space (S.Output) >=
+                          Records.Record_Header_Size + 3 + Records.Tag_Size
+   is
+   begin
+      Handled := True;
       case S.State is
          when Connected =>
             if Output_Pending (S) > 0 then
@@ -4132,67 +4196,60 @@ is
             end if;
 
          when others =>
-            if S.HC_Ptr = null then
-               S.Last_Error := Internal_Error;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-
-            --  Version dispatch for handshake states.
-            --  HC.Version is set after Parse_Server_Hello.
-            --  Before ServerHello, Version defaults to TLS_1_3
-            --  (ClientHello is version-agnostic).
-            if S.HC_Ptr.Version = TLS_1_2
-               and S.State /= Client_Hello_Sent
-               and S.State /= Wait_Server_Hello
-            then
-               SPARKTLS.Client.TLS12.Advance_Handshake_12
-                 (S, S.HC_Ptr.all, Result);
-            else
-               Advance_Handshake (S, S.HC_Ptr.all, Result);
-            end if;
-
-            if S.State = Connected or S.State = Error_State then
-               S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
-               --  Persist resumption flags out of HC before free.
-               S.Resumed_From_PSK := S.HC_Ptr.Using_PSK;
-               --  Zero traffic keys on error (Connected path keeps them)
-               if S.State = Error_State then
-                  S.Server_App.Key := (others => 0);
-                  S.Server_App.IV := (others => 0);
-                  S.Client_App.Key := (others => 0);
-                  S.Client_App.IV := (others => 0);
-               end if;
-               --  Zero ALL key material before freeing HC.
-               --  This includes ephemeral keys (forward secrecy),
-               --  transcript (contains plaintext handshake), and
-               --  PSK material (resumption secrets).
-               S.HC_Ptr.Shared_Secret := (others => 0);
-               S.HC_Ptr.Client_HS_Secret := (others => 0);
-               S.HC_Ptr.Server_HS_Secret := (others => 0);
-               S.HC_Ptr.Handshake_Secret := (others => 0);
-               S.HC_Ptr.Master_Secret := (others => 0);
-               S.HC_Ptr.Master_Secret_12 := (others => 0);
-               --  Ephemeral private keys
-               S.HC_Ptr.Local_SK := (others => 0);
-               S.HC_Ptr.P256_Local_SK := (others => 0);
-               S.HC_Ptr.P384_Local_SK := (others => 0);
-               --  Transcript (32 KB of plaintext handshake messages)
-               S.HC_Ptr.Transcript
-                 (0 .. S.HC_Ptr.Transcript_Len) := (others => 0);
-               S.HC_Ptr.Transcript_Len := 0;
-               --  PSK material
-               S.HC_Ptr.PSK_Value := (others => 0);
-               S.HC_Ptr.PSK_Binder := (others => 0);
-               S.HC_Ptr.PSK_Ticket_ID := (others => 0);
-               --  Client/server random
-               S.HC_Ptr.Client_Random := (others => 0);
-               S.HC_Ptr.Server_Random := (others => 0);
-               Free_Byte_Seq (S.HC_Ptr.Reasm_Buf);
-               HC_Alloc.Free (S.HC_Ptr);
-            end if;
+            Handled := False;
+            Result := Need_Input;
       end case;
+   end Advance_Client_Non_Handshake;
+
+   procedure Advance
+     (S      : in out Session;
+      Result :    out Action)
+   with SPARK_Mode => Off
+   is
+      Handled : Boolean;
+   begin
+      Advance_Client_Non_Handshake (S, Result, Handled);
+      if not Handled then
+         if S.HC_Ptr = null then
+            S.Last_Error := Internal_Error;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
+
+         --  Version dispatch for handshake states.
+         --  HC.Version is set after Parse_Server_Hello.
+         --  Before ServerHello, Version defaults to TLS_1_3
+         --  (ClientHello is version-agnostic).
+         if S.HC_Ptr.Version = TLS_1_2
+            and S.State /= Client_Hello_Sent
+            and S.State /= Wait_Server_Hello
+         then
+            SPARKTLS.Client.TLS12.Advance_Handshake_12
+              (S, S.HC_Ptr.all, Result);
+         else
+            Advance_Handshake (S, S.HC_Ptr.all, Result);
+         end if;
+
+         if S.State = Connected or S.State = Error_State then
+            S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+            --  Persist resumption flags out of HC before free.
+            S.Resumed_From_PSK := S.HC_Ptr.Using_PSK;
+            --  Zero traffic keys on error (Connected path keeps them)
+            if S.State = Error_State then
+               S.Server_App.Key := (others => 0);
+               S.Server_App.IV := (others => 0);
+               S.Client_App.Key := (others => 0);
+               S.Client_App.IV := (others => 0);
+            end if;
+            --  Zero ALL key material before freeing HC.
+            --  This includes ephemeral keys (forward secrecy),
+            --  transcript (contains plaintext handshake), and
+            --  PSK material (resumption secrets).
+            Scrub_Handshake_Context (S.HC_Ptr.all);
+            HC_Alloc.Free (S.HC_Ptr);
+         end if;
+      end if;
    end Advance;
 
    --  Helper: derive key/IV and set Traffic_Keys based on suite.

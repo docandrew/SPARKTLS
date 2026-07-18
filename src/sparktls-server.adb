@@ -948,13 +948,48 @@ is
       Active_Idx := New_Idx;
    end Rotate_TLS12_Ticket_Key;
 
-   procedure Advance
-     (S      : in out Session;
-      Result :    out Action)
-   with SPARK_Mode => Off
+   procedure Scrub_Handshake_Context (HC : in out Handshake_Context)
    is
    begin
-                  case S.State is
+      HC.Shared_Secret := (others => 0);
+      HC.Client_HS_Secret := (others => 0);
+      HC.Server_HS_Secret := (others => 0);
+      HC.Handshake_Secret := (others => 0);
+      HC.Master_Secret := (others => 0);
+      HC.Master_Secret_12 := (others => 0);
+      HC.Local_SK := (others => 0);
+      HC.P256_Local_SK := (others => 0);
+      HC.P384_Local_SK := (others => 0);
+      HC.Transcript (0 .. HC.Transcript_Len) := (others => 0);
+      HC.Transcript_Len := 0;
+      HC.PSK_Value := (others => 0);
+      HC.PSK_Binder := (others => 0);
+      HC.PSK_Ticket_ID := (others => 0);
+      HC.Client_Random := (others => 0);
+      HC.Server_Random := (others => 0);
+      Free_Byte_Seq (HC.Reasm_Buf);
+   end Scrub_Handshake_Context;
+
+   procedure Advance_Server_Non_Handshake
+     (S       : in out Session;
+      Result  :    out Action;
+      Handled :    out Boolean)
+   with Pre => S.Role = Role_Server
+               and then Nonce_Space_Available (S.Server_App)
+               and then Nonce_Space_Available (S.Client_App)
+               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                 (S.Client_Seq_12)
+               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                 (S.Server_Seq_12)
+               and then S.App_Data_Len <= Max_Record_Plaintext
+               and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+               and then Empty_Records_Bounded_RFC_8446_5_2 (S)
+               and then Free_Space (S.Output) >=
+                          Records.Record_Header_Size + 3 + Records.Tag_Size
+   is
+   begin
+      Handled := True;
+      case S.State is
          when Connected =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
@@ -1000,44 +1035,41 @@ is
 
          when Closed | Idle =>
             S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
+            S.State := Error_State;
             Result := Error_Alert;
 
          when others =>
-            if S.HC_Ptr = null then
-		            S.Last_Error := Internal_Error;
-		            Set_State (S, Error_State);
-		            Result := Error_Alert;
-		            return;
-            end if;
+            Handled := False;
+            Result := Need_Input;
+      end case;
+   end Advance_Server_Non_Handshake;
 
-            Advance_Handshake (S, S.HC_Ptr.all, Result);
+   procedure Advance
+     (S      : in out Session;
+      Result :    out Action)
+   with SPARK_Mode => Off
+   is
+      Handled : Boolean;
+   begin
+      Advance_Server_Non_Handshake (S, Result, Handled);
+      if not Handled then
+         if S.HC_Ptr = null then
+            S.Last_Error := Internal_Error;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
 
-            if S.State in Connected | Error_State | Closed then
-               S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
-               --  Zero ALL key material before freeing HC.
-               S.HC_Ptr.Shared_Secret := (others => 0);
-               S.HC_Ptr.Client_HS_Secret := (others => 0);
-               S.HC_Ptr.Server_HS_Secret := (others => 0);
-               S.HC_Ptr.Handshake_Secret := (others => 0);
-               S.HC_Ptr.Master_Secret := (others => 0);
-               S.HC_Ptr.Master_Secret_12 := (others => 0);
-               S.HC_Ptr.Local_SK := (others => 0);
-               S.HC_Ptr.P256_Local_SK := (others => 0);
-               S.HC_Ptr.P384_Local_SK := (others => 0);
-               S.HC_Ptr.Transcript
-                 (0 .. S.HC_Ptr.Transcript_Len) := (others => 0);
-               S.HC_Ptr.Transcript_Len := 0;
-               S.HC_Ptr.PSK_Value := (others => 0);
-               S.HC_Ptr.PSK_Binder := (others => 0);
-               S.HC_Ptr.PSK_Ticket_ID := (others => 0);
-               S.HC_Ptr.Client_Random := (others => 0);
-               S.HC_Ptr.Server_Random := (others => 0);
-               Free_Byte_Seq (S.HC_Ptr.Reasm_Buf);
-               HC_Alloc.Free (S.HC_Ptr);
-            end if;
-	      end case;
-	   end Advance;
+         Advance_Handshake (S, S.HC_Ptr.all, Result);
+
+         if S.State in Connected | Error_State | Closed then
+            S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+            --  Zero ALL key material before freeing HC.
+            Scrub_Handshake_Context (S.HC_Ptr.all);
+            HC_Alloc.Free (S.HC_Ptr);
+         end if;
+      end if;
+   end Advance;
 
    procedure Complete_Client_Hello
      (S      : in out Session;

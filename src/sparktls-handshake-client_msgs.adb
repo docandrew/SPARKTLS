@@ -29,6 +29,8 @@ use SPARKTLSCrypto;
 package body SPARKTLS.Handshake.Client_Msgs with
    SPARK_Mode => On
 is
+   pragma Unevaluated_Use_Of_Old (Allow);
+
    use type RBT.Length;
    use type RBT.Index;
    use type RBT.Bit_Length;
@@ -171,14 +173,21 @@ is
                     >= RBT.Bit_Length (8) *
                        (RBT.Bit_Length (4) +
                         RBT.Bit_Length (Data'Length)),
-        Post => RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Buffer
-                  (Exts_Ctx)
-                and then RFLX.TLS_Handshake.CH_Extensions_TLS.Valid
-                  (Exts_Ctx)
-                and then Exts_Ctx.Buffer_First = Exts_Ctx.Buffer_First'Old
-                and then Exts_Ctx.Buffer_Last = Exts_Ctx.Buffer_Last'Old
-                and then Exts_Ctx.First = Exts_Ctx.First'Old
-                and then Exts_Ctx.Last = Exts_Ctx.Last'Old;
+	        Post => RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Buffer
+	                  (Exts_Ctx)
+	                and then RFLX.TLS_Handshake.CH_Extensions_TLS.Valid
+	                  (Exts_Ctx)
+	                and then Exts_Ctx.Buffer_First = Exts_Ctx.Buffer_First'Old
+	                and then Exts_Ctx.Buffer_Last = Exts_Ctx.Buffer_Last'Old
+	                and then Exts_Ctx.First = Exts_Ctx.First'Old
+	                and then Exts_Ctx.Last = Exts_Ctx.Last'Old
+	                and then RFLX.TLS_Handshake.CH_Extensions_TLS
+	                  .Available_Space (Exts_Ctx)
+	                  = RFLX.TLS_Handshake.CH_Extensions_TLS
+	                      .Available_Space (Exts_Ctx)'Old
+	                    - RBT.Bit_Length (8)
+	                      * (RBT.Bit_Length (4)
+	                         + RBT.Bit_Length (Data'Length));
 
    procedure Append_CH_Extension
      (Exts_Ctx : in out RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
@@ -795,16 +804,16 @@ is
         (Ctx,
          RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
 
-      --  Build extensions sequence
-      declare
-         Exts_Ctx : RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
-      begin
-         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
+	      --  Build extensions sequence
+	      declare
+	         Exts_Ctx : RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
+	      begin
+	         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
 
-         --  Extension 1: server_name (0x0000)
-         declare
-            SNI_Raw : Byte_Seq (0 .. SNI_Data_Len - 1) := (others => 0);
-         begin
+	         --  Extension 1: server_name (0x0000)
+	         declare
+	            SNI_Raw : Byte_Seq (0 .. SNI_Data_Len - 1) := (others => 0);
+	         begin
             --  SNI list: list_len(2) + type(1) + name_len(2) + name
             SNI_Raw (0) := Byte ((Host_Len + 3) / 256);
             SNI_Raw (1) := Byte ((Host_Len + 3) mod 256);
@@ -815,11 +824,11 @@ is
                SNI_Raw (4 + N32 (I)) :=
                   Byte (Character'Pos (HC.Cfg.Server_Name.Data (I)));
             end loop;
-            Append_CH_Extension
-              (Exts_Ctx,
-               RFLX.Tls_Extensiontype_Values.Server_Name,
-               SNI_Raw);
-         end;
+	            Append_CH_Extension
+	              (Exts_Ctx,
+	               RFLX.Tls_Extensiontype_Values.Server_Name,
+	               SNI_Raw);
+	         end;
 
          --  Extension 2: supported_groups (0x000A)
          declare
@@ -838,11 +847,11 @@ is
                SG_Raw (6) := 16#00#;
                SG_Raw (7) := 16#18#;  --  secp384r1
             end if;
-            Append_CH_Extension
-              (Exts_Ctx,
-               RFLX.Tls_Extensiontype_Values.Supported_Groups,
-               SG_Raw);
-         end;
+	            Append_CH_Extension
+	              (Exts_Ctx,
+	               RFLX.Tls_Extensiontype_Values.Supported_Groups,
+	               SG_Raw);
+	         end;
 
          --  Extension 3: signature_algorithms (0x000D)
          declare
@@ -870,11 +879,11 @@ is
                   16#08#, 16#06#,          --  rsa_pss_rsae_sha512
                   16#08#, 16#07#);         --  ed25519
             end if;
-            Append_CH_Extension
-              (Exts_Ctx,
-               RFLX.Tls_Extensiontype_Values.Signature_Algorithms,
-               SA_Raw);
-         end;
+	            Append_CH_Extension
+	              (Exts_Ctx,
+	               RFLX.Tls_Extensiontype_Values.Signature_Algorithms,
+	               SA_Raw);
+	         end;
 
          --  Extension 4: key_share (0x0033).
          --  CH1 / retry-no-group-change: three KeyShareEntry (X25519
@@ -926,11 +935,11 @@ is
                   KS_Raw (6 .. 102) := P384_PK_Enc;
                end if;
             end if;
-            Append_CH_Extension
-              (Exts_Ctx,
-               RFLX.Tls_Extensiontype_Values.Key_Share,
-               KS_Raw);
-         end;
+	            Append_CH_Extension
+	              (Exts_Ctx,
+	               RFLX.Tls_Extensiontype_Values.Key_Share,
+	               KS_Raw);
+	         end;
 
          --  Extension 4.5 (retry only): cookie (0x002C) — echo back
          --  the cookie the server sent in HRR. RFC 8446 §4.2.2.
@@ -944,23 +953,23 @@ is
                for I in 0 .. Cookie_Bytes_Len - 1 loop
                   Cookie_Raw (2 + I) := HC.HRR_Cookie (I);
                end loop;
-               Append_CH_Extension
-                 (Exts_Ctx,
-                  RFLX.Tls_Extensiontype_Values.Cookie,
-                  Cookie_Raw);
-            end;
-         end if;
+	               Append_CH_Extension
+	                 (Exts_Ctx,
+	                  RFLX.Tls_Extensiontype_Values.Cookie,
+	                  Cookie_Raw);
+	            end;
+	         end if;
 
          --  Extension 5: psk_key_exchange_modes (0x002D)
          declare
             PSK_Raw : constant Byte_Seq (0 .. PSK_Data_Len - 1) :=
                (16#01#, 16#01#);  --  list_len=1, psk_dhe_ke
          begin
-            Append_CH_Extension
-              (Exts_Ctx,
-               RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes,
-               PSK_Raw);
-         end;
+	            Append_CH_Extension
+	              (Exts_Ctx,
+	               RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes,
+	               PSK_Raw);
+	         end;
 
          --  Extension 6: supported_versions (0x002B).
          declare
@@ -977,34 +986,34 @@ is
                      Byte_Seq'(16#02#,
                                16#03#, 16#03#));
          begin
-            Append_CH_Extension
-              (Exts_Ctx,
-               RFLX.Tls_Extensiontype_Values.Supported_Versions,
-               SV_Raw);
-         end;
+	            Append_CH_Extension
+	              (Exts_Ctx,
+	               RFLX.Tls_Extensiontype_Values.Supported_Versions,
+	               SV_Raw);
+	         end;
 
          --  Extension 7: ec_point_formats (0x000B) — RFC 8422 §5.1.2.
          declare
             EPF_Raw : constant Byte_Seq (0 .. EPF_Data_Len - 1) :=
                (16#01#, 16#00#);
          begin
-            Append_CH_Extension
-              (Exts_Ctx,
-               RFLX.Tls_Extensiontype_Values.Ec_Point_Formats,
-               EPF_Raw);
-         end;
+	            Append_CH_Extension
+	              (Exts_Ctx,
+	               RFLX.Tls_Extensiontype_Values.Ec_Point_Formats,
+	               EPF_Raw);
+	         end;
 
          --  Extension 8: extended_master_secret (0x0017), empty body.
          if Offer_EMS then
             declare
                Empty : constant Byte_Seq (1 .. 0) := (others => 0);
             begin
-               Append_CH_Extension
-                 (Exts_Ctx,
-                  RFLX.Tls_Extensiontype_Values.Extended_Master_Secret,
-                  Empty);
-            end;
-         end if;
+	               Append_CH_Extension
+	                 (Exts_Ctx,
+	                  RFLX.Tls_Extensiontype_Values.Extended_Master_Secret,
+	                  Empty);
+	            end;
+	         end if;
 
          --  Extension 9: ALPN (0x0010) — if configured
          if ALPN_Count > 0 then
@@ -1044,34 +1053,34 @@ is
                         Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
                   end loop;
                end if;
-               Append_CH_Extension
-                 (Exts_Ctx,
-                  RFLX.Tls_Extensiontype_Values
-                    .Application_Layer_Protocol_Negotiation,
-                  ALPN_Raw);
-            end;
-         end if;
+	               Append_CH_Extension
+	                 (Exts_Ctx,
+	                  RFLX.Tls_Extensiontype_Values
+	                    .Application_Layer_Protocol_Negotiation,
+	                  ALPN_Raw);
+	            end;
+	         end if;
 
          --  Extension 9b (conditional): RFC 5077 session_ticket (0x0023).
          --  Empty data on initial CH; resume ticket bytes when resuming.
          if Offer_TLS12_Ticket then
             if TLS12_Ticket_Data_Len > 0 then
-               Append_CH_Extension
-                 (Exts_Ctx,
-                  RFLX.Tls_Extensiontype_Values.Session_Ticket,
-                  HC.Cfg.TLS12_Resume_Ticket.Ticket
-                    (0 .. TLS12_Ticket_Data_Len - 1));
-            else
+	               Append_CH_Extension
+	                 (Exts_Ctx,
+	                  RFLX.Tls_Extensiontype_Values.Session_Ticket,
+	                  HC.Cfg.TLS12_Resume_Ticket.Ticket
+	                    (0 .. TLS12_Ticket_Data_Len - 1));
+	            else
                --  Empty body: Append_CH_Extension's Data is zero-len.
                declare
                   Empty : constant Byte_Seq (1 .. 0) := (others => 0);
                begin
-                  Append_CH_Extension
-                    (Exts_Ctx,
-                     RFLX.Tls_Extensiontype_Values.Session_Ticket,
-                     Empty);
-               end;
-            end if;
+	                  Append_CH_Extension
+	                    (Exts_Ctx,
+	                     RFLX.Tls_Extensiontype_Values.Session_Ticket,
+	                     Empty);
+	               end;
+	            end if;
             HC.TLS12_Sent_Ticket_Ext := True;
          end if;
 
@@ -1081,15 +1090,15 @@ is
                Pad_Raw : constant Byte_Seq (0 .. Pad_Data_Len - 1) :=
                  (others => 0);
             begin
-               Append_CH_Extension
-                 (Exts_Ctx,
-                  RFLX.Tls_Extensiontype_Values.Padding,
-                  Pad_Raw);
-            end;
-         end if;
+	               Append_CH_Extension
+	                 (Exts_Ctx,
+	                  RFLX.Tls_Extensiontype_Values.Padding,
+	                  Pad_Raw);
+	            end;
+	         end if;
 
-         Update_Extensions_TLS (Ctx, Exts_Ctx);
-      end;
+	         Update_Extensions_TLS (Ctx, Exts_Ctx);
+	      end;
 
       --  Extract serialized body and prepend handshake header
       Take_Buffer (Ctx, Buf);
