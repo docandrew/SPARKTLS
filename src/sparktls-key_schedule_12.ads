@@ -115,11 +115,10 @@ is
       Seed   : in  Byte_Seq)
    with Pre  => Output'First = 0
                 and Output'Length > 0
-                and Output'Length <= 256    --  practical bound (covers key_block)
+                and Output'Length <= 1024
                 and Secret'First = 0
                 and Secret'Length > 0
                 and Secret'Length <= 48     --  master secret is largest input
-                and Label'Length > 0
                 and Label'Length <= 64
                 and Seed'First = 0
                 and Seed'Length > 0
@@ -135,11 +134,10 @@ is
       Seed   : in  Byte_Seq)
    with Pre  => Output'First = 0
                 and Output'Length > 0
-                and Output'Length <= 256
+                and Output'Length <= 1024
                 and Secret'First = 0
                 and Secret'Length > 0
                 and Secret'Length <= 48
-                and Label'Length > 0
                 and Label'Length <= 64
                 and Seed'First = 0
                 and Seed'Length > 0
@@ -263,8 +261,7 @@ is
       Use_SHA384    : in     Boolean)
    with Pre => Output'First = 0
                and Output'Length > 0
-               and Output'Length <= 256
-               and Label'Length > 0
+               and Output'Length <= 1024
                and Label'Length <= 64
                and Context'Length <= 62
                and (if Context'Length > 0 then Context'First = 0);

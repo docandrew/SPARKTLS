@@ -143,4 +143,45 @@ is
 	                          (HC.Peer_Cert,
 	                           X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 
+   --  RFC 5246 §7.4.2 TLS 1.2 Certificate parser. Takes the complete
+   --  handshake message bytes (4-byte header + cert_list_len(3) +
+   --  entries). On wire-format errors, OK := False and Err := Decode_Error.
+   --  X.509 parse failures leave OK = True but HC.Peer_Cert_Valid = False,
+   --  matching the TLS 1.3 parser's split between wire syntax and cert
+   --  semantic validity.
+   procedure Parse_Certificate_Chain_12
+     (HC     : in out Handshake_Context;
+      HS_Msg : in     Byte_Seq;
+      OK     :    out Boolean;
+      Err    :    out Error_Code)
+   with Pre => HS_Msg'First = 0
+               and then HS_Msg'Length >= 7
+               and then HS_Msg'Length <= Max_Cert_Msg
+               and then Reasm_Coherent (HC),
+        Post => HC.Client_HS = HC.Client_HS'Old
+                and then HC.Transcript_Len = HC.Transcript_Len'Old
+                and then HC.Hash_Len = HC.Hash_Len'Old
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Local'Old /= null
+                              and then HC.Cfg.Local'Old.Has_Identity
+                          then HC.Cfg.Local /= null
+                               and then HC.Cfg.Local.Has_Identity)
+                and then (if HC.Cfg.Random'Old /= null
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Coherent (HC)
+                and then HC.Reasm_Len = HC.Reasm_Len'Old
+                and then HC.Reasm_Need = HC.Reasm_Need'Old
+                and then
+                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
+                   then HC.Reasm_Len <= HC.Reasm_Need)
+                and then HC.Reasm_Hdr_Pending =
+                  HC.Reasm_Hdr_Pending'Old
+                and then
+                  (if HC.Peer_Cert_Valid
+                   then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                        and then X509.Spans_Valid
+                          (HC.Peer_Cert,
+                           X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+
 end SPARKTLS.Handshake.Certs;

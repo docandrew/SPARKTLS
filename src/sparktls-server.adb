@@ -34,6 +34,7 @@ is
       and then Cfg.Random /= null
       and then
         (not Cfg.Request_Client_Cert
+         or else Cfg.Skip_Verify
          or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
 
    function Server_Configured (HC : Handshake_Context) return Boolean is
@@ -2805,11 +2806,17 @@ is
 	            pragma Assert
 	              (Old_State in Wait_Client_Certificate
 	                            | Wait_Client_Cert_Verify);
-	            if HC.Version = TLS_1_2
-	              and then S.State = Wait_Client_Certificate
-	            then
-	               SPARKTLS.Server.TLS12.Process_Client_Certificate_12
-	                 (S, HC, Result);
+	            if HC.Version = TLS_1_2 then
+	               if S.State = Wait_Client_Certificate then
+	                  SPARKTLS.Server.TLS12.Process_Client_Certificate_12
+	                    (S, HC, Result);
+	               elsif not HC.CKE_Received_12 then
+	                  SPARKTLS.Server.TLS12.Process_Client_Key_Exchange_12
+	                    (S, HC, Result);
+	               else
+	                  SPARKTLS.Server.TLS12.Process_Client_CertVerify_12
+	                    (S, HC, Result);
+	               end if;
 	            else
 	               Process_Client_Auth (S, HC, Result);
 	            end if;
@@ -3567,6 +3574,13 @@ is
 		               return;
             end if;
          end;
+      end if;
+
+      if HC.Cfg.Require_ALPN
+        and then not Handshake.Server_Msgs.Has_ALPN_Match (HC)
+      then
+         Send_Alert_And_Error (S, No_Application_Protocol, Result);
+         return;
       end if;
 
       --  Build ServerHello
@@ -4351,18 +4365,6 @@ is
          end if;
       end;
 
-      --  Trust-store chain validation. Requesting a client certificate
-      --  requires enough configuration to validate the presented chain.
-      if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
-         Send_Encrypted_Alert (S, Bad_Certificate, Result);
-         pragma Assert (S.Last_Error /= Unexpected_Message);
-         pragma Assert (Output_Pending (S) > 0);
-         pragma Assert
-           (Cert_Validation_Alerted_RFC_5246_7_4_2
-              (S.State, Output_Pending (S), S.Last_Error));
-         return;
-      end if;
-
       if HC.Peer_Cert_Valid then
          declare
             Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
@@ -4398,19 +4400,15 @@ is
             pragma Assert (Leaf_Last < X509.N32'Last);
             pragma Assert
               (X509.N32 (HC.Peer_Cert_DER_Len) - 1 < X509.N32'Last);
-            VR := Validate_Chain
-              (Leaf_DER   =>
+
+            VR := Validate_Leaf_Policy
+              (Leaf     => HC.Peer_Cert,
+               Leaf_DER =>
                   Cert_X
                     (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
-               Leaf       => HC.Peer_Cert,
-               Ints       => HC.Peer_Ints,
-               Int_Count  => HC.Peer_Int_Count,
-               Roots      => HC.Cfg.Trust.Roots,
-               Root_Count => HC.Cfg.Trust.Root_Count,
-               Now        => HC.Cfg.Get_Time.all,
-               Hostname   => "",
-               Purpose    => Purpose_Client,
-               Mode       => HC.Cfg.Verify_Mode);
+               Hostname => "",
+               Purpose  => Purpose_Client,
+               Mode     => HC.Cfg.Verify_Mode);
             if VR /= Valid then
                Send_Encrypted_Alert (S, Bad_Certificate, Result);
                pragma Assert (S.Last_Error /= Unexpected_Message);
@@ -4419,6 +4417,44 @@ is
                  (Cert_Validation_Alerted_RFC_5246_7_4_2
                     (S.State, Output_Pending (S), S.Last_Error));
                return;
+            end if;
+
+            --  Skip_Verify is the explicit "require any client
+            --  certificate" mode: enforce leaf policy and proof of
+            --  possession, but do not require a trusted issuer chain.
+            if not HC.Cfg.Skip_Verify then
+               if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
+                  Send_Encrypted_Alert (S, Bad_Certificate, Result);
+                  pragma Assert (S.Last_Error /= Unexpected_Message);
+                  pragma Assert (Output_Pending (S) > 0);
+                  pragma Assert
+                    (Cert_Validation_Alerted_RFC_5246_7_4_2
+                       (S.State, Output_Pending (S), S.Last_Error));
+                  return;
+               end if;
+
+               VR := Validate_Chain
+                 (Leaf_DER   =>
+                     Cert_X
+                       (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
+                  Leaf       => HC.Peer_Cert,
+                  Ints       => HC.Peer_Ints,
+                  Int_Count  => HC.Peer_Int_Count,
+                  Roots      => HC.Cfg.Trust.Roots,
+                  Root_Count => HC.Cfg.Trust.Root_Count,
+                  Now        => HC.Cfg.Get_Time.all,
+                  Hostname   => "",
+                  Purpose    => Purpose_Client,
+                  Mode       => HC.Cfg.Verify_Mode);
+               if VR /= Valid then
+                  Send_Encrypted_Alert (S, Bad_Certificate, Result);
+                  pragma Assert (S.Last_Error /= Unexpected_Message);
+                  pragma Assert (Output_Pending (S) > 0);
+                  pragma Assert
+                    (Cert_Validation_Alerted_RFC_5246_7_4_2
+                       (S.State, Output_Pending (S), S.Last_Error));
+                  return;
+               end if;
             end if;
          end;
       end if;

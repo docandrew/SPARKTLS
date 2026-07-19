@@ -384,6 +384,7 @@ is
       Protocol_Version,
       Unsupported_Extension,       --  RFC 8446 §6 alert 110
       Missing_Extension,           --  RFC 8446 §6 alert 109
+      No_Application_Protocol,     --  RFC 7301 §3.2 alert 120
       Internal_Error,
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
@@ -728,6 +729,7 @@ is
          when Unsupported_Extension    => 110,
          when Missing_Extension        => 109,
          when Certificate_Required     => 116,
+         when No_Application_Protocol  => 120,
          when Internal_Error
             | Insufficient_Buffer
             | No_Error                 => 80,
@@ -1189,8 +1191,8 @@ is
       --  Required for verified client handshakes unless Skip_Verify
       --  is explicitly enabled or a valid TLS 1.3 resume ticket is
       --  supplied. Required on the server when Request_Client_Cert is
-      --  True, so presented client certificates are validated instead
-      --  of accepted anonymously.
+      --  True unless Skip_Verify is explicitly enabled for
+      --  "require any client certificate" deployments.
       Trust : Trust_Store_Access := null;
 
       --  Local identity (certificate + signing key).
@@ -1225,6 +1227,11 @@ is
       ALPN_List  : ALPN_Protocol_List :=
         (others => (Len => 0, Data => (others => ' ')));
       ALPN_Count : Natural range 0 .. Max_Config_ALPN_Protocols := 0;
+      --  Server-side ALPN policy. When True, abort the handshake with
+      --  no_application_protocol if no configured ALPN value overlaps the
+      --  client offer. The default False keeps RFC 7301's ordinary "decline
+      --  ALPN by omitting the extension" behavior.
+      Require_ALPN : Boolean := False;
 
       --  Optional ordered TLS 1.2 server cipher policy. When
       --  TLS12_Cipher_Count = 0, the server preserves the historical
@@ -1257,11 +1264,14 @@ is
       --  server sends a CertificateRequest in the handshake.
       Request_Client_Cert : Boolean := False;
 
-      --  Server: also REQUIRE that the client present a valid cert.
+      --  Server: also REQUIRE that the client present a cert.
       --  Only meaningful when Request_Client_Cert is True. When True
       --  and the client sends an empty Certificate or one that fails
       --  to parse / validate, the server aborts the handshake with
       --  certificate_required (TLS 1.3) or handshake_failure (TLS 1.2).
+      --  If Skip_Verify is True, a non-empty client certificate still
+      --  must prove possession with CertificateVerify, but chain
+      --  validation is skipped.
       --  When False (default) the server falls back to anonymous
       --  authentication if the client doesn't present a cert — the
       --  classic OpenSSL SSL_VERIFY_PEER vs
@@ -2430,8 +2440,10 @@ is
                 and S.Exporter_Secret = Bytes_48'(others => 0);
 
    --  RFC 5705 / RFC 8446 §7.5: derive application-specific exporter
-   --  bytes from a completed TLS session. Label must be a non-empty ASCII
-   --  exporter label. For TLS 1.2, Use_Context controls whether the RFC
+   --  bytes from a completed TLS session. Label is an ASCII exporter label.
+   --  TLS 1.2 permits an empty label; TLS 1.3 requires a non-empty label
+   --  because it is embedded in an HKDF label. For TLS 1.2,
+   --  Use_Context controls whether the RFC
    --  5705 context length prefix is included. For TLS 1.3 the context is
    --  always hashed as part of RFC 8446 exporter derivation.
    procedure Export_Keying_Material
@@ -2443,8 +2455,7 @@ is
       OK          :    out Boolean)
    with Pre => Output'First = 0
                and Output'Length > 0
-               and Output'Length <= 256
-               and Label'Length > 0
+               and Output'Length <= 1024
                and Label'Length <= 64
                and Context'Length <= 62
                and (if Context'Length > 0 then Context'First = 0),

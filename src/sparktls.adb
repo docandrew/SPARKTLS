@@ -706,8 +706,13 @@ is
             Use_Context   => Use_Context,
             Use_SHA384    => S.Negotiated_Suite_12 in
               Suite_ECDHE_RSA_AES256_GCM_SHA384
+              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+              or else S.Negotiated_Suite in
+              Suite_ECDHE_RSA_AES256_GCM_SHA384
               | Suite_ECDHE_ECDSA_AES256_GCM_SHA384);
          OK := True;
+      elsif Label'Length = 0 then
+         return;
       elsif S.Exporter_Secret_Len = 48 then
          declare
             Tmp : SPARKTLSCrypto.HKDF384.OKM384_Seq (0 .. Output'Length - 1);

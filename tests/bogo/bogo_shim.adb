@@ -78,6 +78,13 @@ procedure Bogo_Shim is
       Expect_ALPN          : Unbounded_Text := (others => Character'Val (0));
       Expect_ALPN_Len      : Natural := 0;
       Decline_ALPN         : Boolean := False;
+      Reject_ALPN          : Boolean := False;
+      Export_Len           : Natural range 0 .. 1024 := 0;
+      Export_Label         : Unbounded_Text := (others => Character'Val (0));
+      Export_Label_Len     : Natural range 0 .. 64 := 0;
+      Export_Context       : Unbounded_Text := (others => Character'Val (0));
+      Export_Context_Len   : Natural range 0 .. 62 := 0;
+      Export_Use_Context   : Boolean := False;
       --  RFC 6066 SNI: only offer the hostname if -host-name was set.
       --  BoGo UnsolicitedServerNameAck-* relies on us not sending SNI
       --  when no -host-name flag was given.
@@ -85,6 +92,7 @@ procedure Bogo_Shim is
       Host_Name_Len        : Natural := 0;
       Ack_Server_Name      : Boolean := True;
       Preferred_Group      : Unsigned_16 := 0;
+      Curve_Count          : Natural := 0;
    end record;
 
    Cfg : Config_T;
@@ -226,6 +234,7 @@ procedure Bogo_Shim is
          when Protocol_Version         => return "Protocol_Version";
          when Unsupported_Extension    => return "Unsupported_Extension";
          when Missing_Extension        => return "Missing_Extension";
+         when No_Application_Protocol  => return "No_Application_Protocol";
          when Internal_Error           => return "Internal_Error";
          when Insufficient_Buffer      => return "Insufficient_Buffer";
          when Unsupported_Cipher_Suite => return "Unsupported_Cipher_Suite";
@@ -321,10 +330,18 @@ procedure Bogo_Shim is
 
       procedure Maybe_Set_Preferred_Group (V : Unsigned_16) is
       begin
-         if Cfg.Preferred_Group = 0
-           and then V in 16#001D# | 16#0017# | 16#0018#
-         then
-            Cfg.Preferred_Group := V;
+         if V in 16#001D# | 16#0017# | 16#0018# then
+            Cfg.Curve_Count := Cfg.Curve_Count + 1;
+            if Cfg.Curve_Count = 1 then
+               Cfg.Preferred_Group := V;
+            else
+               --  SPARKTLS's public config currently exposes either a
+               --  single restricted client group or the default full
+               --  group set. BoGo often passes multiple -curves flags;
+               --  do not collapse those to the first curve or TLS 1.2
+               --  ECDSA certificate-curve validation becomes too strict.
+               Cfg.Preferred_Group := 0;
+            end if;
          end if;
       end Maybe_Set_Preferred_Group;
 
@@ -626,11 +643,9 @@ procedure Bogo_Shim is
             elsif A = "-decline-alpn" then
                Cfg.Decline_ALPN := True;
             elsif A = "-reject-alpn" then
-               --  Server-side ALPN rejection policy. SPARKTLS does
-               --  not expose a dedicated reject-callback knob; running
-               --  the transcript without selection lets BoGo surface the
-               --  actual compatibility result instead of an argv gap.
-               Cfg.Decline_ALPN := True;
+               --  Server-side ALPN rejection policy: no overlap is fatal
+               --  no_application_protocol rather than a silent decline.
+               Cfg.Reject_ALPN := True;
             elsif A = "-select-empty-alpn" then
                --  Select an empty ALPN protocol. SPARKTLS does not
                --  expose this illegal/edge-case policy knob; run with
@@ -699,10 +714,39 @@ procedure Bogo_Shim is
                Add_Verify_Sig_Algo (Next_Arg);
             elsif A = "-signing-prefs" then
                Add_Sign_Sig_Algo (Next_Arg);
-            elsif A = "-export-keying-material"
-              or A = "-export-label"
-              or A = "-export-context"
-              or A = "-resumption-delay"
+            elsif A = "-export-keying-material" then
+               declare
+                  V : constant Natural := Natural'Value (Next_Arg);
+               begin
+                  if V <= 1024 then
+                     Cfg.Export_Len := V;
+                  end if;
+               end;
+            elsif A = "-export-label" then
+               declare
+                  V : constant String := Next_Arg;
+               begin
+                  if V'Length <= 64 then
+                     Cfg.Export_Label_Len := V'Length;
+                     if V'Length > 0 then
+                        Cfg.Export_Label (1 .. V'Length) := V;
+                     end if;
+                  end if;
+               end;
+            elsif A = "-export-context" then
+               declare
+                  V : constant String := Next_Arg;
+               begin
+                  if V'Length <= 62 then
+                     Cfg.Export_Context_Len := V'Length;
+                     if V'Length > 0 then
+                        Cfg.Export_Context (1 .. V'Length) := V;
+                     end if;
+                  end if;
+               end;
+            elsif A = "-use-export-context" then
+               Cfg.Export_Use_Context := True;
+            elsif A = "-resumption-delay"
               or A = "-server-supported-groups-hint"
               or A = "-use-client-ca-list"
               or A = "-ticket-key"
@@ -713,7 +757,7 @@ procedure Bogo_Shim is
                --  through SPARKTLS's public test API. Consume their
                --  value so the underlying handshake runs; cases that
                --  require different signing preferences, verification
-               --  policy, or exporter bytes still fail as protocol/API
+               --  policy, or ticket-age values still fail as protocol/API
                --  gaps rather than being hidden as UNIMPLEMENTED.
                declare
                   Ignore : constant String := Next_Arg;
@@ -1025,6 +1069,7 @@ procedure Bogo_Shim is
                  (if Trust /= "" then Roots'Unchecked_Access else null);
                Server_Cfg.Request_Client_Cert := Cfg.Require_Client_Cert;
                Server_Cfg.Require_Client_Cert := Cfg.Require_Client_Cert;
+               Server_Cfg.Skip_Verify := Cfg.Require_Client_Cert;
                Server_Cfg.Ticket_Store := Tickets;
                Server_Cfg.TLS12_Ticket_Keys := TLS12_Keys'Unchecked_Access;
                Server_Cfg.Versions := Policy;
@@ -1032,6 +1077,7 @@ procedure Bogo_Shim is
                Server_Cfg.TLS12_Cipher_Groups := Cfg.TLS12_Cipher_Groups;
                Server_Cfg.TLS12_Cipher_Count := Cfg.TLS12_Cipher_Count;
                Server_Cfg.Ack_Server_Name := Cfg.Ack_Server_Name;
+               Server_Cfg.Require_ALPN := Cfg.Reject_ALPN;
                Server_Cfg.Verify_Sig_Algos := Cfg.Verify_Sig_Algos;
                Server_Cfg.Verify_Sig_Algo_Count := Cfg.Verify_Sig_Count;
                Server_Cfg.Sign_Sig_Algos := Cfg.Sign_Sig_Algos;
@@ -1244,6 +1290,56 @@ procedure Bogo_Shim is
             Written : N32;
          begin
             SPARKTLS.Write_Plaintext (S, Hello, Written);
+            Send_Pending;
+         end;
+      end if;
+
+      if Cfg.Export_Len > 0 then
+         declare
+            Exported : Byte_Seq (0 .. N32 (Cfg.Export_Len) - 1);
+            OK       : Boolean;
+            Written  : N32;
+         begin
+            if Cfg.Export_Context_Len = 0 then
+               declare
+                  Empty : Byte_Seq (1 .. 0);
+               begin
+                  SPARKTLS.Export_Keying_Material
+                    (S           => S,
+                     Label       =>
+                       Cfg.Export_Label (1 .. Cfg.Export_Label_Len),
+                     Context     => Empty,
+                     Use_Context => Cfg.Export_Use_Context,
+                     Output      => Exported,
+                     OK          => OK);
+               end;
+            else
+               declare
+                  Ctx : Byte_Seq (0 .. N32 (Cfg.Export_Context_Len) - 1);
+               begin
+                  for I in N32 range 0 .. N32 (Cfg.Export_Context_Len) - 1 loop
+                     Ctx (I) :=
+                       Byte (Character'Pos
+                         (Cfg.Export_Context (Natural (I) + 1)));
+                  end loop;
+                  SPARKTLS.Export_Keying_Material
+                    (S           => S,
+                     Label       =>
+                       Cfg.Export_Label (1 .. Cfg.Export_Label_Len),
+                     Context     => Ctx,
+                     Use_Context => Cfg.Export_Use_Context,
+                     Output      => Exported,
+                     OK          => OK);
+               end;
+            end if;
+            if not OK then
+               Err ("bogo_shim: exporter failed");
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               Run_Failed := True;
+               return;
+            end if;
+            SPARKTLS.Write_Plaintext (S, Exported, Written);
             Send_Pending;
          end;
       end if;

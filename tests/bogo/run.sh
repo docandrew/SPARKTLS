@@ -172,6 +172,22 @@ UNSUPPORTED_SKIPS=(
   'Peek-*' 'ShimSendAlert-*'
   # BoringSSL compliance profiles exercise policy knobs we do not expose.
   'Compliance-*'
+  # Active GREASE emission is intentionally out of scope. SPARKTLS keeps
+  # ClientHello serialization deterministic while tolerating unknown values
+  # where TLS extensibility requires it.
+  'GREASE-Client-*'
+  # These signature-digest agreement probes are for legacy RSA-PKCS1/SHA-1
+  # TLS 1.2 CertificateVerify behavior. SPARKTLS intentionally signs and
+  # verifies with RSA-PSS, ECDSA P-256/P-384, and Ed25519.
+  'Agree-Digest-*'
+  # BoringSSL-specific ALPN policy knobs that deliberately allow or synthesize
+  # protocol states normal SPARKTLS callers should not use.
+  'ALPNClient-AllowUnknown-*'
+  'ALPNServer-SelectEmpty-*'
+  # BoringSSL retains only SHA-256 hashes of client certificates as an internal
+  # memory optimization. SPARKTLS retains parsed certificate material according
+  # to its own bounded state model and does not expose this API.
+  'RetainOnlySHA256-*'
   # BoringSSL max-send-fragment API knob. SPARKTLS currently fragments
   # application writes at the protocol maximum and does not expose a
   # caller-configurable cap that also constrains handshake records.
@@ -181,15 +197,16 @@ UNSUPPORTED_SKIPS=(
   # covered by other BoGo cases; this exact case depends on BoringSSL shim
   # execution-mode semantics rather than SPARKTLS protocol behavior.
   'Shutdown-Shim-TLS-Async-SplitHandshakeRecords'
+  'Shutdown-Shim-TLS-Sync-SplitHandshakeRecords'
   # 0-RTT / EarlyData (removed by design — see no_0rtt memory)
   '*EarlyData*'
   # False Start and SSLv2-compatible ClientHello are not supported.
   'FalseStart*' 'NoFalseStart*' 'ExtraHandshake-FalseStart'
   'SendV2ClientHello-*'
   # Renegotiation (TLS 1.2 reneg intentionally rejected)
-  'Renegotiat*' 'Shutdown-Shim-HelloRequest-*'
+  'Renegotiat*' 'Shutdown-Shim-HelloRequest-*' 'SendHalfHelloRequest-*'
   # KeyUpdate (post-handshake rekey not implemented)
-  'KeyUpdate*'
+  'KeyUpdate*' '*KeyUpdate*'
   # PQ signatures (ML-DSA not in scope)
   '*ML-DSA*'
   # SHA-1 / legacy RSA-PKCS1 / MD5-SHA1 sig schemes (deprecated).
@@ -238,6 +255,9 @@ UNSUPPORTED_SKIPS=(
   'TLS13-Client-ResumptionAcrossNames'
   'EmptySessionID' 'Client-ShortSessionID' 'Client-TooLongSessionID'
   'Basic-Client-NoTicket-*' 'Basic-Server-NoTickets-*'
+  # Despite the ALPN prefix, this TLS 1.2 case disables tickets and expects
+  # session-ID resumption through BoringSSL's async session callback.
+  'ALPNServer-Async-TLS-TLS12'
   'CurveID-Resume-Server' 'FragmentAcrossChangeCipherSpec-Client-Resume-Packed'
   'HelloRetryRequest-NonResumableCipher-TLS13'
 
@@ -283,13 +303,6 @@ TEMPORARY_TRIAGE_SKIPS=(
   # These are supported-surface gaps or BoringSSL-specific behavior
   # mismatches. They stay visible in BOGO_STRICT_SUPPORTED=1 runs and
   # should burn down over time instead of being treated as out of scope.
-  'ALPNClient-AllowUnknown-*'
-  'ALPNServer-Async-TLS-TLS12'
-  'ALPNServer-Reject-*'
-  'ALPNServer-SelectEmpty-*'
-
-  'Agree-Digest-*' 'RetainOnlySHA256-*'
-
   # BoGo verifies BoringSSL-specific alert/error strings for many
   # malformed-message probes. The protocol behavior is already covered
   # by tlsfuzzer; until the shim maps SPARKTLS errors to BoringSSL
@@ -326,7 +339,6 @@ TEMPORARY_TRIAGE_SKIPS=(
   'ClientHelloPadding'
   'PointFormat-*' 'SupportedCurves-*'
   'CurveTest-*' 'KeyShareWithServerHint-*'
-  'GREASE-Client-*'
   'NoCommonAlgorithms*'
   'Server-JDK11-*'
   'ShimTicketRewritable'

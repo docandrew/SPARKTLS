@@ -4,6 +4,7 @@ with SPARKTLSCrypto.P384.ECDSA;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Records.TLS12;
+with X509;
 
 --  TLS 1.2 Server State Machine (RFC 5246)
 --
@@ -95,7 +96,8 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
-               and then S.State = Wait_Client_Finished
+               and then S.State in Wait_Client_Cert_Verify
+                                 | Wait_Client_Finished
 	               and then HC.Cfg.Local /= null
 	               and then HC.Cfg.Local.Has_Identity
 	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
@@ -115,8 +117,8 @@ is
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-	        Post => S.State in Wait_Client_Finished | Connected | Closing
-	                           | Error_State
+	        Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
+	                           | Connected | Closing | Error_State
 		               and then HC.Cfg.Local /= null
 			        and then HC.Cfg.Local.Has_Identity
 			        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
@@ -130,18 +132,59 @@ is
    --  the top of the body enforces it on the wire.
 
    --  Process the optional TLS 1.2 client Certificate message after the
-   --  server has sent CertificateRequest. This is structural only: full
-   --  TLS 1.2 server-side client-auth validation is tracked separately, but
-   --  malformed Certificate messages must fail with decode_error instead of
-   --  leaving the handshake stuck.
+   --  server has sent CertificateRequest. A non-empty, parseable leaf moves
+   --  the handshake to Wait_Client_Cert_Verify so the client proves private
+   --  key possession before Finished.
    procedure Process_Client_Certificate_12
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
                and then S.State = Wait_Client_Certificate
-               and then Reasm_Building (HC),
-        Post => S.State in Wait_Client_Certificate | Wait_Client_Finished
+               and then Reasm_Building (HC)
+               and then HC.Cfg.Local /= null
+               and then HC.Cfg.Local.Has_Identity
+               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                          (HC.Cfg.Local)
+               and then HC.Cfg.Random /= null,
+        Post => S.State in Wait_Client_Certificate
+                          | Wait_Client_Cert_Verify
+                          | Wait_Client_Finished
+                          | Error_State
+                and then
+                  (if S.State /= Error_State
+                   then Reasm_Building (HC)
+                        and then HC.Cfg.Local /= null
+                        and then HC.Cfg.Local.Has_Identity
+                        and then
+                          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                            (HC.Cfg.Local)
+                        and then HC.Cfg.Random /= null)
+                and then
+                  (if S.State = Wait_Client_Cert_Verify
+                   then HC.Peer_Cert_Valid
+                        and then HC.Peer_Cert_DER_Len
+                                  in 1 .. Max_Cert_DER_Len
+                        and then X509.Spans_Valid
+                          (HC.Peer_Cert,
+                           X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+
+   --  Process TLS 1.2 CertificateVerify from a client-authenticated peer.
+   procedure Process_Client_CertVerify_12
+     (S      : in out Session;
+      HC     : in out Handshake_Context;
+      Result :    out Action)
+   with Pre => HC.Version = TLS_1_2
+               and then S.State = Wait_Client_Cert_Verify
+               and then Reasm_Building (HC)
+               and then HC.Transcript_Len in 1 .. Transcript_Capacity
+               and then HC.Peer_Cert_Valid
+               and then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+               and then X509.Spans_Valid
+                 (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1)
+               and then SPARKTLSCrypto.P384.Field.Initialized
+               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
                           | Error_State
                 and then
                   (if S.State /= Error_State then Reasm_Building (HC));

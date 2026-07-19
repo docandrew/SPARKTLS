@@ -111,6 +111,8 @@ is
 	                                  and then HC.Cfg.Local.Has_Identity)
 	                   and then Reasm_Building (HC);
 
+   function Has_ALPN_Match (HC : Handshake_Context) return Boolean;
+
    --  RFC 8446 Section 4.3.1: Build EncryptedExtensions.
    --  Sent immediately after ServerHello (encrypted with HS keys).
    --  May include ALPN extension if client offered and server matches.

@@ -90,6 +90,31 @@ procedure Test_Exporter is
          Check ("TLS 1.2 exporter no-context succeeds", OK);
          Check ("TLS 1.2 context flag changes output", No_Ctx /= Outp);
       end;
+
+      declare
+         Wide     : SPARKNaCl.Byte_Seq (0 .. 1023);
+         Expected_Wide : SPARKNaCl.Byte_Seq (0 .. 1023);
+         Empty_Label   : SPARKNaCl.Byte_Seq (0 .. 31);
+         Expected_Empty : SPARKNaCl.Byte_Seq (0 .. 31);
+      begin
+         Export_Keying_Material
+           (S, "EXPORTER-test", Ctx, True, Wide, OK);
+         SPARKTLS.Key_Schedule_12.Export_Keying_Material_12
+           (Expected_Wide, S.Exporter_Secret, S.Exporter_Client_Random,
+            S.Exporter_Server_Random, "EXPORTER-test", Ctx, True, False);
+         Check ("TLS 1.2 1024-byte exporter succeeds", OK);
+         Check ("TLS 1.2 1024-byte exporter matches RFC5705 helper",
+                Wide = Expected_Wide);
+
+         Export_Keying_Material
+           (S, "", Ctx, False, Empty_Label, OK);
+         SPARKTLS.Key_Schedule_12.Export_Keying_Material_12
+           (Expected_Empty, S.Exporter_Secret, S.Exporter_Client_Random,
+            S.Exporter_Server_Random, "", Ctx, False, False);
+         Check ("TLS 1.2 empty-label exporter succeeds", OK);
+         Check ("TLS 1.2 empty-label exporter matches RFC5705 helper",
+                Empty_Label = Expected_Empty);
+      end;
    end Test_TLS12;
 
    procedure Test_TLS13 is

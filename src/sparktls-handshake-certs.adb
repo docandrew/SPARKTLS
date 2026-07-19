@@ -13,6 +13,9 @@ with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with RFLX.TLS_Handshake.Certificate;
 with RFLX.TLS_Handshake.Certificate_Entries;
 with RFLX.TLS_Handshake.Certificate_Entry;
+with RFLX.TLS_Handshake.TLS_1_2_Certificate;
+with RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
+with RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
 with RFLX.TLS_Handshake.Certificate_Verify;
 with RFLX.Tls_Parameters;
 with RFLX.RFLX_Types;
@@ -1023,5 +1026,221 @@ is
 	                (HC.Peer_Cert,
 	                 X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 	   end Parse_Certificate_Chain_13;
+
+   procedure Parse_Certificate_Chain_12
+     (HC     : in out Handshake_Context;
+      HS_Msg : in     Byte_Seq;
+      OK     :    out Boolean;
+      Err    :    out Error_Code)
+   is
+      package C12 renames RFLX.TLS_Handshake.TLS_1_2_Certificate;
+      package C12_Entries renames
+        RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
+      package C12_Entry renames
+        RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
+      Body_Len : constant N32 := N32 (HS_Msg'Length) - 4;
+      Buf      : RBT.Bytes_Ptr;
+      Ctx      : C12.Context;
+      Cert_Idx : Natural := 0;
+   begin
+      HC.Peer_Cert_Valid := False;
+      HC.Peer_Int_Count := 0;
+      OK := False;
+      Err := Decode_Error;
+
+      if Body_Len < 3 then
+         return;
+      end if;
+
+      declare
+         List_Len : constant N32 :=
+           N32 (HS_Msg (HS_Msg'First + 4)) * 65536
+           + N32 (HS_Msg (HS_Msg'First + 5)) * 256
+           + N32 (HS_Msg (HS_Msg'First + 6));
+      begin
+         if List_Len /= Body_Len - 3 then
+            return;
+         end if;
+      end;
+
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 ..
+                                   HS_Msg'First + 4 + Body_Len - 1));
+      C12.Initialize
+        (Ctx, Buf,
+         Written_Last => RBT.Bit_Length (Body_Len) * 8);
+      C12.Verify_Message (Ctx);
+
+      if not C12.Well_Formed_Message (Ctx) then
+         C12.Take_Buffer (Ctx, Buf);
+         RFLX_Free (Buf);
+         return;
+      end if;
+
+      if C12.Field_Size (Ctx, C12.F_Certificate_List) > 0 then
+         declare
+            Entries_Ctx : C12_Entries.Context;
+         begin
+            if not C12.Has_Buffer (Ctx) then
+               return;
+            end if;
+            if not
+              (C12.Valid_Next (Ctx, C12.F_Certificate_List)
+               and then C12.Field_First
+                          (Ctx, C12.F_Certificate_List)
+                        rem RBT.Byte'Size = 1
+               and then C12.Available_Space
+                          (Ctx, C12.F_Certificate_List)
+                        >= C12.Field_Size
+                             (Ctx, C12.F_Certificate_List)
+               and then C12.Field_Condition
+                          (Ctx, C12.F_Certificate_List))
+            then
+               C12.Take_Buffer (Ctx, Buf);
+               RFLX_Free (Buf);
+               return;
+            end if;
+
+            C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
+            while C12_Entries.Has_Element (Entries_Ctx)
+              and then Cert_Idx <= Max_Pool_Size
+            loop
+               pragma Loop_Invariant
+                 (C12_Entries.Has_Buffer (Entries_Ctx)
+                  and then C12_Entries.Valid (Entries_Ctx)
+                  and then HC.Client_HS = HC.Client_HS'Loop_Entry
+                  and then HC.Transcript_Len =
+                    HC.Transcript_Len'Loop_Entry
+                  and then HC.Hash_Len = HC.Hash_Len'Loop_Entry
+                  and then (if HC.Cfg.Local'Loop_Entry /= null
+                            then HC.Cfg.Local /= null)
+                  and then
+                    (if HC.Cfg.Local'Loop_Entry /= null
+                        and then HC.Cfg.Local'Loop_Entry.Has_Identity
+                     then HC.Cfg.Local /= null
+                          and then HC.Cfg.Local.Has_Identity)
+                  and then (if HC.Cfg.Random'Loop_Entry /= null
+                            then HC.Cfg.Random /= null)
+                  and then Reasm_Coherent (HC)
+                  and then HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
+                  and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
+                  and then HC.Reasm_Hdr_Pending =
+                    HC.Reasm_Hdr_Pending'Loop_Entry
+                  and then
+                    (if HC.Peer_Cert_Valid
+                     then HC.Peer_Cert_DER_Len
+                          in 1 .. Max_Cert_DER_Len
+                          and then X509.Spans_Valid
+                            (HC.Peer_Cert,
+                             X509.N32 (HC.Peer_Cert_DER_Len) - 1)));
+               declare
+                  E_Ctx : C12_Entry.Context;
+               begin
+                  C12_Entries.Switch (Entries_Ctx, E_Ctx);
+                  C12_Entry.Verify_Message (E_Ctx);
+
+                  if C12_Entry.Well_Formed_Message (E_Ctx) then
+                     declare
+                        C_Len : constant N32 :=
+                          N32 (C12_Entry.Get_Cert_Data_Length (E_Ctx));
+                     begin
+                        if C_Len > 0
+                          and then C_Len <= N32 (Max_Cert_DER)
+                        then
+                           declare
+                              Cert_RFLX : RBT.Bytes
+                                (1 .. RBT.Index (C_Len));
+                           begin
+                              C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
+                              if Cert_Idx = 0 then
+                                 Copy_Cert_To_Peer_DER
+                                   (Cert_RFLX, HC, C_Len);
+                                 declare
+                                    P_OK : Boolean;
+                                 begin
+                                    Parse_X509_From_RFLX
+                                      (Cert_RFLX, C_Len, HC.Peer_Cert, P_OK);
+                                    HC.Peer_Cert_Valid :=
+                                      P_OK
+                                      and then X509.Is_Valid (HC.Peer_Cert);
+                                    pragma Assert
+                                      (if HC.Peer_Cert_Valid
+                                       then HC.Peer_Cert_DER_Len
+                                            in 1 .. Max_Cert_DER_Len
+                                            and then X509.Spans_Valid
+                                              (HC.Peer_Cert,
+                                               X509.N32
+                                                 (HC.Peer_Cert_DER_Len)
+                                               - 1));
+                                 end;
+                              elsif HC.Peer_Int_Count < Max_Pool_Size then
+                                 declare
+                                    Idx  : constant Natural :=
+                                      HC.Peer_Int_Count;
+                                    C    : X509.Certificate;
+                                    P_OK : Boolean;
+                                 begin
+                                    Parse_X509_From_RFLX
+                                      (Cert_RFLX, C_Len, C, P_OK);
+                                    if P_OK and then X509.Is_Valid (C) then
+                                       Store_Intermediate
+                                         (Cert_RFLX, C, C_Len,
+                                          HC.Peer_Ints (Idx));
+                                       HC.Peer_Int_Count :=
+                                         HC.Peer_Int_Count + 1;
+                                    end if;
+                                 end;
+                              end if;
+                           end;
+                           Cert_Idx := Cert_Idx + 1;
+                        end if;
+                     end;
+                  end if;
+
+                  C12_Entries.Update (Entries_Ctx, E_Ctx);
+                  if not C12_Entries.Has_Buffer (Entries_Ctx) then
+                     pragma Assert
+                       (if HC.Peer_Cert_Valid
+                        then HC.Peer_Cert_DER_Len
+                             in 1 .. Max_Cert_DER_Len
+                             and then X509.Spans_Valid
+                               (HC.Peer_Cert,
+                                X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                     return;
+                  end if;
+                  if not C12_Entries.Valid (Entries_Ctx) then
+                     C12_Entries.Take_Buffer (Entries_Ctx, Buf);
+                     RFLX_Free (Buf);
+                     pragma Assert
+                       (if HC.Peer_Cert_Valid
+                        then HC.Peer_Cert_DER_Len
+                             in 1 .. Max_Cert_DER_Len
+                             and then X509.Spans_Valid
+                               (HC.Peer_Cert,
+                                X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                     return;
+                  end if;
+               end;
+            end loop;
+
+            C12_Entries.Take_Buffer (Entries_Ctx, Buf);
+            RFLX_Free (Buf);
+            OK := True;
+            Err := No_Error;
+            pragma Assert
+              (if HC.Peer_Cert_Valid
+               then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                    and then X509.Spans_Valid
+                      (HC.Peer_Cert,
+                       X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+            return;
+         end;
+      end if;
+
+      C12.Take_Buffer (Ctx, Buf);
+      RFLX_Free (Buf);
+      OK := True;
+      Err := No_Error;
+   end Parse_Certificate_Chain_12;
 
 end SPARKTLS.Handshake.Certs;

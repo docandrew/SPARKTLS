@@ -1191,6 +1191,11 @@ is
       return Empty;
    end Select_ALPN_12;
 
+   function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean is
+   begin
+      return Select_ALPN_12 (HC).Len > 0;
+   end Has_ALPN_Match_12;
+
    procedure Build_Server_Hello_12
      (S      : in out Session;
       HC     : in out Handshake_Context;

@@ -477,6 +477,8 @@ is
                 and HC.Selected_Group = HC.Selected_Group'Old
                 and Reasm_Building (HC);
 
+   function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean;
+
    --  RFC 5246 §7.4.1.2: Parse TLS 1.2 ServerHello.
    --
    --  Validates:

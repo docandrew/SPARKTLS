@@ -932,7 +932,8 @@ is
          Cert_Is_ECDSA : constant Boolean :=
             PK = X509.Algo_EC_P256 or PK = X509.Algo_EC_P384;
          Cert_Is_RSA     : constant Boolean := PK = X509.Algo_RSA;
-         Cert_Is_Ed25519 : constant Boolean := PK = X509.Algo_EC_Ed25519;
+         Cert_Is_Ed25519 : constant Boolean :=
+            PK in X509.Algo_Ed25519 | X509.Algo_EC_Ed25519;
       begin
          if Suite_Needs_ECDSA
            and then not (Cert_Is_ECDSA or Cert_Is_Ed25519)

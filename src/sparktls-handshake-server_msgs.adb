@@ -4158,6 +4158,11 @@ is
       return Empty;
    end Select_ALPN;
 
+   function Has_ALPN_Match (HC : Handshake_Context) return Boolean is
+   begin
+      return Select_ALPN (HC).Len > 0;
+   end Has_ALPN_Match;
+
    procedure Build_Encrypted_Extensions
      (HC     : in     Handshake_Context;
       S      : in out Session;

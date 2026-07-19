@@ -2,18 +2,23 @@ with Interfaces;                 use Interfaces;
 with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
+with SPARKNaCl.Hashing.SHA512;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
 with SPARKTLS.Records;           use SPARKTLS.Records;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Handshake;
+with SPARKTLS.Handshake.Certs;
 with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.Tickets_12;
+with SPARKTLS.Cert_Verify;       use SPARKTLS.Cert_Verify;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
 use SPARKTLSCrypto;
+with X509;
+use type X509.Certificate;
 
 package body SPARKTLS.Server.TLS12 with
    SPARK_Mode => On
@@ -596,6 +601,13 @@ is
          when others => null;
       end case;
 
+      if HC.Cfg.Require_ALPN
+        and then not Has_ALPN_Match_12 (HC)
+      then
+         Send_Alert_And_Error (S, No_Application_Protocol, Result);
+         return;
+      end if;
+
       --  1. ServerHello
       declare
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1); Hello_Len : N32;
@@ -871,6 +883,13 @@ is
 	         Gen_Random (Byte_Seq (Server_Random));
 	         Set_Server_Random_12 (HC, Server_Random);
 	      end;
+
+      if HC.Cfg.Require_ALPN
+        and then not Has_ALPN_Match_12 (HC)
+      then
+         Send_Alert_And_Error (S, No_Application_Protocol, Result);
+         return;
+      end if;
 
       --  1. ServerHello (with empty session_ticket ext, since
       --     TLS12_Ticket_Offered + TLS12_Ticket_Keys are set).
@@ -1688,7 +1707,7 @@ is
             end if;
       end;
 
-      pragma Assert (S.State = Wait_Client_Finished);
+      pragma Assert (S.State in Wait_Client_Cert_Verify | Wait_Client_Finished);
       pragma Assert
         (S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
                             | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -1807,7 +1826,252 @@ is
 	                     pragma Assert (Reasm_Building (HC));
 	                     return;
 	                  end if;
+                     if List_Len = 0 and then HC.Cfg.Require_Client_Cert then
+                        S.Input.Read_Pos :=
+                          S.Input.Read_Pos + Rec.Record_Len;
+                        Send_Alert_And_Error (S, Handshake_Failure, Result);
+                        pragma Assert (Reasm_Building (HC));
+                        return;
+                     end if;
 	               end;
+            end;
+
+            declare
+               HS_Msg    : Byte_Seq (0 .. Frag_Len - 1);
+               Chain_OK  : Boolean;
+               Chain_Err : Error_Code;
+            begin
+               for I in N32 range 0 .. Frag_Len - 1 loop
+                  HS_Msg (I) := Frag (Frag'First + I);
+               end loop;
+
+               SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
+                 (HC     => HC,
+                  HS_Msg => HS_Msg,
+                  OK     => Chain_OK,
+                  Err    => Chain_Err);
+               pragma Assert (Reasm_Building (HC));
+
+               if not Chain_OK then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error (S, Chain_Err, Result);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
+            end;
+
+            Append_Transcript (HC, Frag);
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if HC.Peer_Cert_Valid then
+               pragma Assert
+                 (HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                  and then X509.Spans_Valid
+                    (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+               Set_State (S, Wait_Client_Cert_Verify);
+            elsif HC.Cfg.Require_Client_Cert then
+               Send_Alert_And_Error (S, Handshake_Failure, Result);
+               pragma Assert (Reasm_Building (HC));
+               return;
+            else
+               Set_State (S, Wait_Client_Finished);
+            end if;
+            Result := (if Input_Available (S) > 0 then OK else Need_Input);
+            pragma Assert (Reasm_Building (HC));
+         end;
+      end;
+   end Process_Client_Certificate_12;
+
+   ------------------------------------------------------------------
+   procedure Process_Client_CertVerify_12
+     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+   is
+      Rec : Records.Parse_Result;
+   begin
+      if Input_Available (S) = 0 then
+         Result := Need_Input;
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
+
+      Records.Parse_Record_Header
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+         Available (S.Input), Rec);
+
+      if not Rec.OK then
+         if Rec.Bad_Version then
+            Send_Alert_And_Error (S, Protocol_Version, Result);
+         elsif Rec.Overflow then
+            Send_Alert_And_Error (S, Record_Overflow, Result);
+         else
+            Result := Need_Input;
+         end if;
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
+
+      if Rec.Content /= Records.Content_Handshake then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
+
+      declare
+         Frag_Len : constant N32 := Rec.Fragment_Len;
+         FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+      begin
+         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+
+         if Frag_Len < 8 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Decode_Error, Result);
+            pragma Assert (Reasm_Building (HC));
+            return;
+         end if;
+
+         declare
+            Frag     : constant Byte_Seq :=
+              S.Input.Data (FS .. FS + Frag_Len - 1);
+            Msg_Type : Byte;
+            Msg_Len  : N32;
+            Parse_OK : Boolean;
+         begin
+            Handshake.Parse_Handshake_Header
+              (Frag, Msg_Type, Msg_Len, Parse_OK);
+
+            if not Parse_OK
+              or else Msg_Type /= Handshake.HT_Certificate_Verify
+              or else Msg_Len < 4
+              or else Msg_Len + 4 /= Frag_Len
+            then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Decode_Error, Result);
+               pragma Assert (Reasm_Building (HC));
+               return;
+            end if;
+
+            declare
+               F          : constant N32 := Frag'First;
+               Sig_Scheme : constant Unsigned_16 :=
+                 Unsigned_16 (Frag (F + 4)) * 256
+                 + Unsigned_16 (Frag (F + 5));
+               Sig_Len    : constant N32 :=
+                 N32 (Frag (F + 6)) * 256 + N32 (Frag (F + 7));
+               Verified   : Boolean := False;
+            begin
+               if Sig_Len = 0
+                 or else Sig_Len /= Msg_Len - 4
+                 or else F + 8 + Sig_Len - 1 > Frag'Last
+               then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
+
+               if HC.Cfg.Verify_Sig_Algo_Count > 0
+                 and then not Sig_Scheme_In_List
+                                (Sig_Scheme,
+                                 HC.Cfg.Verify_Sig_Algos,
+                                 HC.Cfg.Verify_Sig_Algo_Count)
+               then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error (S, Illegal_Parameter, Result);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
+
+               declare
+                  Sig : Byte_Seq (0 .. Sig_Len - 1);
+               begin
+                  for I in N32 range 0 .. Sig_Len - 1 loop
+                     Sig (I) := Frag (F + 8 + I);
+                  end loop;
+
+                  Verified := Cert_Verify.Verify_Signature_TLS12
+                    (Data       => HC.Transcript (0 .. HC.Transcript_Len - 1),
+                     Sig        => Sig,
+                     Cert       => HC.Peer_Cert,
+                     Sig_Scheme => Sig_Scheme);
+               end;
+
+               if not Verified then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error
+                    (S, Certificate_Verify_Failed, Result);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
+            end;
+
+            declare
+               Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
+               Leaf_Last : constant X509.N32 :=
+                 X509.N32 (Cert_DER_Len_Const) - 1;
+               Cert_X : X509.Byte_Seq (0 .. Leaf_Last) := (others => 0);
+               VR : Validation_Result;
+            begin
+               for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
+                  pragma Loop_Invariant
+                    (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
+                  pragma Loop_Invariant
+                    (HC.Peer_Cert = HC.Peer_Cert'Loop_Entry);
+                  pragma Loop_Invariant
+                    (HC.Peer_Cert_DER_Len =
+                       HC.Peer_Cert_DER_Len'Loop_Entry);
+                  pragma Loop_Invariant
+                    (Leaf_Last = X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+                  pragma Loop_Invariant (Leaf_Last < X509.N32'Last);
+                  pragma Loop_Invariant
+                    (X509.Spans_Valid
+                       (HC.Peer_Cert'Loop_Entry,
+                        X509.N32 (HC.Peer_Cert_DER_Len'Loop_Entry) - 1));
+                  Cert_X (X509.N32 (I)) :=
+                    X509.Byte (HC.Peer_Cert_DER (I));
+               end loop;
+
+               VR := Validate_Leaf_Policy
+                 (Leaf     => HC.Peer_Cert,
+                  Leaf_DER => Cert_X
+                    (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
+                  Hostname => "",
+                  Purpose  => Purpose_Client,
+                  Mode     => HC.Cfg.Verify_Mode);
+               if VR /= Valid then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error (S, Bad_Certificate, Result);
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
+
+               if not HC.Cfg.Skip_Verify then
+                  if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     Send_Alert_And_Error (S, Bad_Certificate, Result);
+                     pragma Assert (Reasm_Building (HC));
+                     return;
+                  end if;
+
+                  VR := Validate_Chain
+                    (Leaf_DER   =>
+                       Cert_X
+                         (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
+                     Leaf       => HC.Peer_Cert,
+                     Ints       => HC.Peer_Ints,
+                     Int_Count  => HC.Peer_Int_Count,
+                     Roots      => HC.Cfg.Trust.Roots,
+                     Root_Count => HC.Cfg.Trust.Root_Count,
+                     Now        => HC.Cfg.Get_Time.all,
+                     Hostname   => "",
+                     Purpose    => Purpose_Client,
+                     Mode       => HC.Cfg.Verify_Mode);
+                  if VR /= Valid then
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     Send_Alert_And_Error (S, Bad_Certificate, Result);
+                     pragma Assert (Reasm_Building (HC));
+                     return;
+                  end if;
+               end if;
             end;
 
             Append_Transcript (HC, Frag);
@@ -1817,7 +2081,7 @@ is
             pragma Assert (Reasm_Building (HC));
          end;
       end;
-   end Process_Client_Certificate_12;
+   end Process_Client_CertVerify_12;
 
    ------------------------------------------------------------------
    procedure Process_Client_CCS_12
