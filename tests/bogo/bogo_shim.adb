@@ -943,6 +943,7 @@ procedure Bogo_Shim is
          SE   : Stream_Element_Array (1 .. 16384);
          Last : Stream_Element_Offset;
          Fed  : N32;
+         Hex  : constant String := "0123456789abcdef";
       begin
          Done := False;
          GNAT.Sockets.Receive_Socket (Sock, SE, Last);
@@ -956,6 +957,30 @@ procedure Bogo_Shim is
             for K in 0 .. Avail - 1 loop
                Net_In (K) := Byte (SE (SE'First + Stream_Element_Offset (K)));
             end loop;
+            if Avail >= 5 then
+               Trace ("recv record"
+                      & " len=" & N32'Image (Avail)
+                      & " type=" & Byte'Image (Net_In (0))
+                      & " frag_len="
+                      & N32'Image
+                          (N32 (Net_In (3)) * 256 + N32 (Net_In (4))));
+               if Net_In (0) = 16#16# then
+                  declare
+                     Dump_Len : constant N32 := N32'Min (Avail, 220);
+                     Dump     : String (1 .. Natural (Dump_Len) * 2);
+                     P        : Natural := 1;
+                  begin
+                     for K in 0 .. Dump_Len - 1 loop
+                        Dump (P) :=
+                          Hex (Natural (Net_In (K) / 16) + 1);
+                        Dump (P + 1) :=
+                          Hex (Natural (Net_In (K) mod 16) + 1);
+                        P := P + 2;
+                     end loop;
+                     Trace ("recv hs hex=" & Dump);
+                  end;
+               end if;
+            end if;
             --  Client-mode peek: examine the first server message.
             --  TLS 1.0/1.1 servers send ServerHello with body
             --  legacy_version < 0x0303. Our client only speaks
@@ -1075,6 +1100,7 @@ procedure Bogo_Shim is
                Server_Cfg.Skip_Verify := Cfg.Request_Client_Cert;
                Server_Cfg.Ticket_Store := Tickets;
                Server_Cfg.TLS12_Ticket_Keys := TLS12_Keys'Unchecked_Access;
+               Server_Cfg.Auto_Rotate_TEK := False;
                Server_Cfg.Versions := Policy;
                Server_Cfg.TLS12_Cipher_List := Cfg.TLS12_Cipher_List;
                Server_Cfg.TLS12_Cipher_Groups := Cfg.TLS12_Cipher_Groups;

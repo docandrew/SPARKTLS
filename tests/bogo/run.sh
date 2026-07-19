@@ -343,7 +343,7 @@ TEMPORARY_TRIAGE_SKIPS=(
   'TLS13-HonorServerSessionTicketLifetime-*'
   'TLS13-NoTicket-NoMint'
   'TLS13-Server-ResumptionAcrossNames'
-  'Client-Verify-*' 'Server-Verify-*'
+  'Client-Verify-*'
   'RSAKeyUsage-*'
   'RSA-PSS-Default-Verify' 'Client-SignDefault-*'
 
