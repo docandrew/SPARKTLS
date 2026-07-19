@@ -56,6 +56,7 @@ procedure Bogo_Shim is
       Max_Version          : Unsigned_16 := 16#0304#;  --  TLS 1.3
       Shim_Writes_First    : Boolean := False;
       Shim_Shuts_Down      : Boolean := False;
+      Request_Client_Cert  : Boolean := False;
       Require_Client_Cert  : Boolean := False;
       Expect_Hs_Fails      : Boolean := False;
       Resume_Count         : Natural := 0;
@@ -530,7 +531,10 @@ procedure Bogo_Shim is
             elsif A = "-expect-handshake-fails" then
                Cfg.Expect_Hs_Fails := True;
             elsif A = "-require-any-client-certificate" then
+               Cfg.Request_Client_Cert := True;
                Cfg.Require_Client_Cert := True;
+            elsif A = "-verify-peer" then
+               Cfg.Request_Client_Cert := True;
             elsif A = "-resume-count" then
                Cfg.Resume_Count := Natural'Value (Next_Arg);
             elsif A = "-curves"
@@ -773,7 +777,6 @@ procedure Bogo_Shim is
               or A = "-retain-only-sha256-client-cert"
               or A = "-retain-only-sha256-client-cert-off"
               or A = "-permute-extensions"
-              or A = "-verify-peer"
               or A = "-server-preference"
               or A = "-no-ticket"
               or A = "-no-key-shares"
@@ -1067,9 +1070,9 @@ procedure Bogo_Shim is
                Server_Cfg.Local := Id'Unchecked_Access;
                Server_Cfg.Trust :=
                  (if Trust /= "" then Roots'Unchecked_Access else null);
-               Server_Cfg.Request_Client_Cert := Cfg.Require_Client_Cert;
+               Server_Cfg.Request_Client_Cert := Cfg.Request_Client_Cert;
                Server_Cfg.Require_Client_Cert := Cfg.Require_Client_Cert;
-               Server_Cfg.Skip_Verify := Cfg.Require_Client_Cert;
+               Server_Cfg.Skip_Verify := Cfg.Request_Client_Cert;
                Server_Cfg.Ticket_Store := Tickets;
                Server_Cfg.TLS12_Ticket_Keys := TLS12_Keys'Unchecked_Access;
                Server_Cfg.Versions := Policy;
@@ -1083,7 +1086,7 @@ procedure Bogo_Shim is
                Server_Cfg.Sign_Sig_Algos := Cfg.Sign_Sig_Algos;
                Server_Cfg.Sign_Sig_Algo_Count := Cfg.Sign_Sig_Count;
                Server_Cfg.Get_Time :=
-                 (if Cfg.Require_Client_Cert
+                 (if Cfg.Request_Client_Cert
                   then Current_Time'Unrestricted_Access
                   else null);
 

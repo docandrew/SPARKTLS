@@ -322,7 +322,57 @@ else
 fi
 cleanup
 
-# 2) A presented client certificate with serverAuth-only EKU should be
+# Generate a proper mTLS client-auth leaf under a temporary CA. The
+# self-signed fixture certs are CA:TRUE, and WebPKI mode correctly
+# rejects CA certificates in leaf position.
+GOOD_CLIENT_DIR="${TMPDIR:-/tmp}/sparktls-good-client-eku.$$"
+mkdir -p "$GOOD_CLIENT_DIR"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    -out "$GOOD_CLIENT_DIR/ca.key" 2>/dev/null
+openssl req -x509 -new -key "$GOOD_CLIENT_DIR/ca.key" \
+    -out "$GOOD_CLIENT_DIR/ca.pem" -days 30 \
+    -subj "/CN=sparktls-mtls-test-ca" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "subjectKeyIdentifier=hash" \
+    -addext "authorityKeyIdentifier=keyid:always" 2>/dev/null
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    -out "$GOOD_CLIENT_DIR/client.key" 2>/dev/null
+openssl req -new -key "$GOOD_CLIENT_DIR/client.key" \
+    -out "$GOOD_CLIENT_DIR/client.csr" \
+    -subj "/CN=sparktls-mtls-client" \
+    -addext "subjectAltName=DNS:sparktls-mtls-client" 2>/dev/null
+cat > "$GOOD_CLIENT_DIR/client.ext" <<EOF
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+subjectAltName=DNS:sparktls-mtls-client
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid
+EOF
+openssl x509 -req -in "$GOOD_CLIENT_DIR/client.csr" \
+    -CA "$GOOD_CLIENT_DIR/ca.pem" -CAkey "$GOOD_CLIENT_DIR/ca.key" \
+    -CAcreateserial -out "$GOOD_CLIENT_DIR/client.pem" -days 30 \
+    -extfile "$GOOD_CLIENT_DIR/client.ext" 2>/dev/null
+
+# 2) A valid client certificate should be accepted in TLS 1.3 required mode.
+"$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+    --mtls-require "$GOOD_CLIENT_DIR/ca.pem" 2>/dev/null &
+wait_for_port
+output=$(echo "hello" | timeout 5 openssl s_client -quiet \
+    -connect localhost:$PORT -tls1_3 -CAfile "$CERT_DIR/rsa.crt" \
+    -cert "$GOOD_CLIENT_DIR/client.pem" \
+    -key "$GOOD_CLIENT_DIR/client.key" \
+    2>&1 || true)
+if echo "$output" | grep -qx "hello"; then
+    pass "Required mode accepts valid client certificate"
+else
+    fail "Required mode rejected valid client certificate"
+    echo "    $(echo "$output" | head -1)"
+fi
+cleanup
+
+# 3) A presented client certificate with serverAuth-only EKU should be
 # rejected in Required mode. This catches accidental acceptance of TLS
 # server certificates as mTLS client credentials.
 BAD_CLIENT_DIR="${TMPDIR:-/tmp}/sparktls-bad-client-eku.$$"
@@ -351,10 +401,9 @@ if echo "$output" | grep -qx "hello"; then
 else
     pass "Required mode rejects serverAuth-only client certificate"
 fi
-rm -rf "$BAD_CLIENT_DIR"
 cleanup
 
-# 3) Optional mode (default --mtls without -require) should accept
+# 4) Optional mode (default --mtls without -require) should accept
 # a no-cert client (sanity check that the new code path didn't break
 # advisory mTLS).
 "$SERVER" "$CERT_DIR/ed25519.crt" "$CERT_DIR/ed25519.key" \
@@ -375,6 +424,79 @@ else
     echo "    $(echo "$output" | head -1)"
 fi
 cleanup
+
+# 5) TLS 1.2 required mode should reject a no-cert client as well.
+cleanup
+"$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+    --mtls-require "$CERT_DIR/rsa.crt" 2>/dev/null &
+wait_for_port
+output=$(echo "hello" | timeout 5 openssl s_client \
+    -connect localhost:$PORT -tls1_2 \
+    -cipher ECDHE-RSA-AES128-GCM-SHA256 \
+    -CAfile "$CERT_DIR/rsa.crt" 2>&1 || true)
+if echo "$output" | grep -qE "(handshake failure|certificate required|alert.*40|alert.*116)"; then
+    pass "Required mode TLS 1.2 rejects no-cert client"
+elif echo "$output" | grep -qx "hello"; then
+    fail "Required mode TLS 1.2 incorrectly accepted no-cert client (BYPASS)"
+else
+    pass "Required mode TLS 1.2 rejects no-cert client (handshake aborted)"
+fi
+cleanup
+
+# 6) TLS 1.2 required mode should accept a valid client cert.
+"$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+    --mtls-require "$GOOD_CLIENT_DIR/ca.pem" 2>/dev/null &
+wait_for_port
+output=$(echo "hello" | timeout 5 openssl s_client -quiet \
+    -connect localhost:$PORT -tls1_2 \
+    -cipher ECDHE-RSA-AES128-GCM-SHA256 \
+    -CAfile "$CERT_DIR/rsa.crt" \
+    -cert "$GOOD_CLIENT_DIR/client.pem" \
+    -key "$GOOD_CLIENT_DIR/client.key" \
+    2>&1 || true)
+if echo "$output" | grep -qx "hello"; then
+    pass "Required mode TLS 1.2 accepts valid client certificate"
+else
+    fail "Required mode TLS 1.2 rejected valid client certificate"
+    echo "    $(echo "$output" | head -1)"
+fi
+cleanup
+
+# 7) TLS 1.2 required mode should reject a client cert without clientAuth EKU.
+"$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+    --mtls-require "$BAD_CLIENT_DIR/cert.pem" 2>/dev/null &
+wait_for_port
+output=$(echo "hello" | timeout 5 openssl s_client \
+    -connect localhost:$PORT -tls1_2 \
+    -cipher ECDHE-RSA-AES128-GCM-SHA256 \
+    -CAfile "$CERT_DIR/rsa.crt" \
+    -cert "$BAD_CLIENT_DIR/cert.pem" -key "$BAD_CLIENT_DIR/key.pem" \
+    2>&1 || true)
+if echo "$output" | grep -qx "hello"; then
+    fail "Required mode TLS 1.2 accepted serverAuth-only client certificate"
+else
+    pass "Required mode TLS 1.2 rejects serverAuth-only client certificate"
+fi
+cleanup
+
+# 8) TLS 1.2 optional mode should accept a no-cert client.
+"$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" \
+    --mtls "$CERT_DIR/rsa.crt" 2>/dev/null &
+wait_for_port
+output=$(echo "hello" | timeout 5 openssl s_client \
+    -connect localhost:$PORT -tls1_2 \
+    -cipher ECDHE-RSA-AES128-GCM-SHA256 \
+    -CAfile "$CERT_DIR/rsa.crt" 2>&1 || true)
+if echo "$output" | grep -q "BEGIN CERTIFICATE" \
+   && ! echo "$output" | grep -qiE "(certificate required|alert.*116|handshake failure)"; then
+    pass "Optional mode TLS 1.2 accepts no-cert client"
+else
+    fail "Optional mode TLS 1.2 rejected no-cert client (regression)"
+    echo "    $(echo "$output" | head -1)"
+fi
+cleanup
+rm -rf "$GOOD_CLIENT_DIR"
+rm -rf "$BAD_CLIENT_DIR"
 
 # ===================================================================
 # Client mTLS — SPARKTLS client → openssl s_server with --Verify.

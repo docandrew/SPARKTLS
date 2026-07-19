@@ -4201,6 +4201,10 @@ is
       end if;
 
       if not HC.Peer_Cert_Valid then
+         if HC.Peer_Cert_DER_Len > 0 then
+            Send_Encrypted_Alert (S, Decode_Error, Result);
+            return;
+         end if;
          if HC.Cfg.Require_Client_Cert then
             --  RFC 8446 §6 cert reject after server Finished — keys
             --  are live, MUST be encrypted alert.

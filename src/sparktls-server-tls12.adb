@@ -1868,6 +1868,10 @@ is
                   and then X509.Spans_Valid
                     (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                Set_State (S, Wait_Client_Cert_Verify);
+            elsif HC.Peer_Cert_DER_Len > 0 then
+               Send_Alert_And_Error (S, Decode_Error, Result);
+               pragma Assert (Reasm_Building (HC));
+               return;
             elsif HC.Cfg.Require_Client_Cert then
                Send_Alert_And_Error (S, Handshake_Failure, Result);
                pragma Assert (Reasm_Building (HC));

@@ -750,6 +750,7 @@ is
       Ext_Reject : Boolean := False;
    begin
       HC.Peer_Cert_Valid := False;
+      HC.Peer_Cert_DER_Len := 0;
       HC.Peer_Int_Count := 0;
       OK := False;
       Err := Decode_Error;
@@ -1044,6 +1045,7 @@ is
       Cert_Idx : Natural := 0;
    begin
       HC.Peer_Cert_Valid := False;
+      HC.Peer_Cert_DER_Len := 0;
       HC.Peer_Int_Count := 0;
       OK := False;
       Err := Decode_Error;
