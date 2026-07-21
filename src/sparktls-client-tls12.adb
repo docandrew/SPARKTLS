@@ -54,6 +54,30 @@ is
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
 
+   procedure Send_Encrypted_Alert_Connected_12
+     (S      : in out Session;
+      Err    : Error_Code;
+      Result : out Action)
+   with Pre => Records.TLS12.Nonce_Space_Available_12 (S.Client_Seq_12)
+               and S.State not in Idle | Closed | Error_State
+               and Alert_Desc (Err) /= 0
+               and Alert_Desc (Err) /= 90
+   is
+      Dummy : N32;
+   begin
+      Set_State (S, Error_State);
+      S.Last_Error := Err;
+      Records.TLS12.Build_Alert_Record_12
+        (Level       => 2,
+         Desc        => Alert_Desc (Err),
+         Keys        => S.Client_App,
+         Implicit_IV => S.Client_IV_12,
+         Seq_Num     => S.Client_Seq_12,
+         Output      => S.Output,
+         Bytes_Out   => Dummy);
+      Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
+   end Send_Encrypted_Alert_Connected_12;
+
    procedure Append_Transcript (HC : in out Handshake_Context; Data : Byte_Seq)
    --  RFC 5246 §7.4.9 transcript-monotonicity: bytes already
    --  appended cannot be removed. The Post pins this; a future
@@ -2100,20 +2124,31 @@ is
                Free_Byte_Seq (HC.Reasm_Buf);
                HC.Reasm_Len := 0; HC.Reasm_Need := 0;
                HC.Reasm_Hdr_Pending := False;
-               Send_Alert_And_Error (S, Decode_Error, Result);
+               if HC.CKE_Received_12 then
+                  Send_Encrypted_Finished_Error_12
+                    (S, HC, 50, Decode_Error, Result);
+               else
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+               end if;
                return;
             end if;
-	            Handle_NST_12 (S, HC, Frag, Msg_Len, Result);
+            Handle_NST_12 (S, HC, Frag, Msg_Len, Result);
 
-	         when others =>
-	            --  RFC 5246 §7.4: unknown handshake type during the
+		         when others =>
+		            --  RFC 5246 §7.4: unknown handshake type during the
             --  flight is unexpected_message (BoGo WrongMessageType-*
-            --  injects type+42). Pre-CCS so the alert is plaintext.
+            --  injects type+42). After the client CCS+Finished flight,
+            --  the peer expects encrypted alerts.
             Free_Byte_Seq (HC.Reasm_Buf);
             HC.Reasm_Len := 0; HC.Reasm_Need := 0;
-	            HC.Reasm_Hdr_Pending := False;
-		            Send_Alert_And_Error (S, Unexpected_Message, Result);
-		      end case;
+            HC.Reasm_Hdr_Pending := False;
+            if HC.CKE_Received_12 then
+               Send_Encrypted_Finished_Error_12
+                 (S, HC, 10, Unexpected_Message, Result);
+            else
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+            end if;
+	      end case;
 		      pragma Assert_And_Cut
 		        (Reasm_Coherent (HC)
 		         and then
@@ -2645,11 +2680,27 @@ is
         (HC.Reasm_Buf (0 .. HC.Reasm_Need - 1),
          Msg_Type, Msg_Len, Parse_OK);
       if not Parse_OK then
-         Free_Byte_Seq (HC.Reasm_Buf);
-         HC.Reasm_Len := 0;
-         HC.Reasm_Need := 0;
-         HC.Reasm_Hdr_Pending := False;
-         Send_Alert_And_Error (S, Decode_Error, Result);
+         declare
+            Raw_Type : constant Byte := HC.Reasm_Buf (0);
+            Is_Known : constant Boolean :=
+              Raw_Type in 16#01# | 16#02# | 16#04# | 16#08# |
+                          16#0B# | 16#0C# | 16#0D# | 16#0E# |
+                          16#0F# | 16#10# | 16#14#;
+            Err      : constant Error_Code :=
+              (if Is_Known then Decode_Error else Unexpected_Message);
+            Desc     : constant Byte :=
+              (if Is_Known then 50 else 10);
+         begin
+            Free_Byte_Seq (HC.Reasm_Buf);
+            HC.Reasm_Len := 0;
+            HC.Reasm_Need := 0;
+            HC.Reasm_Hdr_Pending := False;
+            if HC.CKE_Received_12 then
+               Send_Encrypted_Finished_Error_12 (S, HC, Desc, Err, Result);
+            else
+               Send_Alert_And_Error (S, Err, Result);
+            end if;
+         end;
          pragma Assert (Reasm_Coherent (HC));
          return;
       end if;
@@ -2932,6 +2983,10 @@ is
 	                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
 	                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
 	                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                   and then
+                     (if HC.CKE_Received_12 then
+                        Records.TLS12.Nonce_Space_Available_12
+                          (HC.Client_Seq_12))
 	                and then SPARKTLSCrypto.P384.Field.Initialized
 	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
@@ -3294,12 +3349,15 @@ is
                Raw_Type in 16#01# | 16#02# | 16#04# | 16#08# |
                            16#0B# | 16#0C# | 16#0D# | 16#0E# |
                            16#0F# | 16#10# | 16#14#;
+            Err      : constant Error_Code :=
+              (if Is_Known then Decode_Error else Unexpected_Message);
+            Desc     : constant Byte :=
+              (if Is_Known then 50 else 10);
          begin
-            if Is_Known then
-               Send_Alert_And_Error (S, Decode_Error, Result);
+            if HC.CKE_Received_12 then
+               Send_Encrypted_Finished_Error_12 (S, HC, Desc, Err, Result);
             else
-               Send_Alert_And_Error
-                 (S, Unexpected_Message, Result);
+               Send_Alert_And_Error (S, Err, Result);
             end if;
          end;
          pragma Assert (Reasm_Coherent (HC));
@@ -3307,13 +3365,18 @@ is
       end if;
       pragma Assert (Msg_Len <= Frag_Len - 4);
 
-      if Msg_Len + 4 > Frag_Len then
-         if Msg_Len + 4 > Max_HS_Msg then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Decode_Error, Result);
-            pragma Assert (Reasm_Coherent (HC));
-            return;
-         end if;
+	      if Msg_Len + 4 > Frag_Len then
+	         if Msg_Len + 4 > Max_HS_Msg then
+	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               if HC.CKE_Received_12 then
+                  Send_Encrypted_Finished_Error_12
+                    (S, HC, 50, Decode_Error, Result);
+               else
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+               end if;
+	            pragma Assert (Reasm_Coherent (HC));
+	            return;
+	         end if;
          Start_Fresh_Spanning_Reassembly
            (S        => S,
             HC       => HC,
@@ -3322,10 +3385,22 @@ is
             Frag_Len => Frag_Len,
             Msg_Len  => Msg_Len,
             Result   => Result);
-         return;
-      end if;
+	         return;
+	      end if;
 
-      Start_Fresh_Complete_Message
+         if Msg_Len + 4 > Transcript_Capacity then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            if HC.CKE_Received_12 then
+               Send_Encrypted_Finished_Error_12
+                 (S, HC, 50, Decode_Error, Result);
+            else
+               Send_Alert_And_Error (S, Decode_Error, Result);
+            end if;
+            pragma Assert (Reasm_Coherent (HC));
+            return;
+         end if;
+
+	      Start_Fresh_Complete_Message
         (S        => S,
          HC       => HC,
          Rec      => Rec,
@@ -3662,7 +3737,8 @@ is
                return;
             end if;
             if Msg_Type /= 16#04# then
-               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               Send_Encrypted_Finished_Error_12
+                 (S, HC, 10, Unexpected_Message, Result);
                return;
             end if;
             Consume_Reassembled_NST (Msg_Len, Result);
@@ -3749,7 +3825,8 @@ is
                return;
             end if;
             if Msg_Type /= 16#04# then
-               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               Send_Encrypted_Finished_Error_12
+                 (S, HC, 10, Unexpected_Message, Result);
                return;
             end if;
             Consume_Reassembled_NST (Msg_Len, Result);
@@ -4375,7 +4452,7 @@ is
          --  Max_Record_Plaintext + TLS12_Record_Overhead`).
          if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Encrypted_Alert_Connected_12 (S, Record_Overflow, Result);
             return;
          end if;
          --  FS + Frag_Len = Read_Pos + Fragment_Pos + Fragment_Len
@@ -4419,7 +4496,7 @@ is
             --  requires Seq_Num < Unsigned_64'Last so increment is
             --  safe. 2^64 records is practically unreachable.
             if S.Server_Seq_12 = Unsigned_64'Last then
-               Send_Alert_And_Error (S, Internal_Error, Result);
+               Send_Encrypted_Alert_Connected_12 (S, Internal_Error, Result);
                return;
             end if;
 
@@ -4429,13 +4506,16 @@ is
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
             if not DV then
-               Send_Alert_And_Error (S, Bad_Record_MAC, Result);
+               Send_Encrypted_Alert_Connected_12 (S, Bad_Record_MAC, Result);
                return;
             end if;
 
             case Rec.Content is
                when Records.Content_Application_Data =>
-                  if PL > 0
+                  if S.State = Closing and then PL > 0 then
+                     Send_Encrypted_Alert_Connected_12
+                       (S, Unexpected_Message, Result);
+                  elsif PL > 0
                     and then S.App_Data_Len <= S.App_Data'Length - PL
                   then
                      S.App_Data

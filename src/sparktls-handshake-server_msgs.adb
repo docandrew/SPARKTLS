@@ -114,6 +114,134 @@ is
       return Has_Null;
    end Compression_Methods_OK;
 
+   function TLS12_Client_Hello_Omits_Extensions
+     (Data : Byte_Seq) return Boolean
+   with Pre => Data'Length > 0
+               and then Data'Last <= N32 (Max_HS_Msg) - 1
+   is
+      BS, P : N32;
+      Sid_Len, Cs_Len, Cm_Len : N32;
+   begin
+      --  Data includes the 4-byte handshake header. A TLS 1.2
+      --  ClientHello may end immediately after legacy_compression_methods;
+      --  TLS 1.3 cannot, because supported_versions is mandatory.
+      if Data'Length < 4 + 35 then
+         return False;
+      end if;
+
+      if Data (Data'First + 4) /= 16#03#
+        or else Data (Data'First + 5) /= 16#03#
+      then
+         return False;
+      end if;
+
+      BS := Data'First + 4;
+      if BS + 34 > Data'Last then
+         return False;
+      end if;
+
+      Sid_Len := N32 (Data (BS + 34));
+      P := BS + 35;
+      if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
+         return False;
+      end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Sid_Len <= Data'Last - P + 1);
+      pragma Assert (P + Sid_Len <= Data'Last + 1);
+      P := P + Sid_Len;
+
+      if P > Data'Last or else Data'Last - P < 1 then
+         return False;
+      end if;
+      Cs_Len := N32 (Data (P)) * 256 + N32 (Data (P + 1));
+      P := P + 2;
+      if P > Data'Last or else Cs_Len > Data'Last - P + 1 then
+         return False;
+      end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Cs_Len <= Data'Last - P + 1);
+      pragma Assert (P + Cs_Len <= Data'Last + 1);
+      P := P + Cs_Len;
+
+      if P > Data'Last then
+         return False;
+      end if;
+      Cm_Len := N32 (Data (P));
+      P := P + 1;
+      if P > Data'Last or else Cm_Len > Data'Last - P + 1 then
+         return False;
+      end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Cm_Len <= Data'Last - P + 1);
+      pragma Assert (P + Cm_Len <= Data'Last + 1);
+
+      return P + Cm_Len = Data'Last + 1;
+   end TLS12_Client_Hello_Omits_Extensions;
+
+   function TLS12_Client_Hello_Has_Empty_Extensions
+     (Data : Byte_Seq) return Boolean
+   with Pre => Data'Length > 0
+               and then Data'Last <= N32 (Max_HS_Msg) - 1
+   is
+      BS, P : N32;
+      Sid_Len, Cs_Len, Cm_Len : N32;
+   begin
+      if Data'Length < 4 + 37 then
+         return False;
+      end if;
+
+      if Data (Data'First + 4) /= 16#03#
+        or else Data (Data'First + 5) /= 16#03#
+      then
+         return False;
+      end if;
+
+      BS := Data'First + 4;
+      if BS + 34 > Data'Last then
+         return False;
+      end if;
+
+      Sid_Len := N32 (Data (BS + 34));
+      P := BS + 35;
+      if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
+         return False;
+      end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Sid_Len <= Data'Last - P + 1);
+      pragma Assert (P + Sid_Len <= Data'Last + 1);
+      P := P + Sid_Len;
+
+      if P > Data'Last or else Data'Last - P < 1 then
+         return False;
+      end if;
+      Cs_Len := N32 (Data (P)) * 256 + N32 (Data (P + 1));
+      P := P + 2;
+      if P > Data'Last or else Cs_Len > Data'Last - P + 1 then
+         return False;
+      end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Cs_Len <= Data'Last - P + 1);
+      pragma Assert (P + Cs_Len <= Data'Last + 1);
+      P := P + Cs_Len;
+
+      if P > Data'Last then
+         return False;
+      end if;
+      Cm_Len := N32 (Data (P));
+      P := P + 1;
+      if P > Data'Last or else Cm_Len > Data'Last - P + 1 then
+         return False;
+      end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Cm_Len <= Data'Last - P + 1);
+      pragma Assert (P + Cm_Len <= Data'Last + 1);
+      P := P + Cm_Len;
+
+      return P + 1 = Data'Last
+        and then Data (P) = 0
+        and then Data (P + 1) = 0;
+   end TLS12_Client_Hello_Has_Empty_Extensions;
+
    procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
    with Post => Buf = null;
 
@@ -1459,6 +1587,91 @@ is
       end;
    end Prefer_TLS12_Candidate;
 
+   procedure Apply_Raw_Cipher_Suite
+     (Val : in     Unsigned_16;
+      S   : in out Session;
+      HC  : in out Handshake_Context)
+   with Pre => Reasm_Building (HC),
+        Post =>
+            S.Role = S.Role'Old
+            and then S.State = S.State'Old
+            and then S.Input.Read_Pos = S.Input.Read_Pos'Old
+            and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+            and then S.Server_App.Counter = S.Server_App.Counter'Old
+            and then S.Server_App.Suite = S.Server_App.Suite'Old
+            and then HC.HRR_Sent = HC.HRR_Sent'Old
+            and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+            and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+            and then HC.Legacy_Session_ID_Len =
+                   HC.Legacy_Session_ID_Len'Old
+            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+            and then Reasm_Building (HC)
+            and then HC.HRR_Sent = HC.HRR_Sent'Old;
+
+   procedure Apply_Raw_Cipher_Suite
+     (Val : in     Unsigned_16;
+      S   : in out Session;
+      HC  : in out Handshake_Context)
+   is
+      Cert_Is_ECDSA : constant Boolean :=
+         HC.Cfg.Local /= null
+         and then HC.Cfg.Local.Sign_Algo in
+                    Sign_ECDSA_P256 | Sign_ECDSA_P384 | Sign_Ed25519;
+      Cert_Is_RSA : constant Boolean :=
+         HC.Cfg.Local /= null
+         and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS;
+   begin
+      if Val = 16#00FF# then
+         HC.Saw_Reneg_Info := True;
+         return;
+      end if;
+
+      if Val in Suite_AES_256_GCM_SHA384
+              | Suite_AES_128_GCM_SHA256
+              | Suite_CHACHA20_POLY1305_SHA256
+      then
+         if S.Negotiated_Suite = 0 then
+            S.Negotiated_Suite := Val;
+         elsif Val = Suite_CHACHA20_POLY1305_SHA256 then
+            S.Negotiated_Suite := Val;
+         end if;
+      end if;
+
+      if HC.Cfg.Local = null then
+         if Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                          | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                          | Suite_ECDHE_RSA_CHACHA20_SHA256
+                          | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+           and then Prefer_TLS12_Candidate
+                      (HC.Cfg, S.Negotiated_Suite_12, Val)
+         then
+            S.Negotiated_Suite_12 := Val;
+         end if;
+         return;
+      end if;
+
+      if Cert_Is_ECDSA
+        and then Val in Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                       | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                       | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, S.Negotiated_Suite_12, Val)
+      then
+         S.Negotiated_Suite_12 := Val;
+      end if;
+
+      if Cert_Is_RSA
+        and then Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                       | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                       | Suite_ECDHE_RSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, S.Negotiated_Suite_12, Val)
+      then
+         S.Negotiated_Suite_12 := Val;
+      end if;
+   end Apply_Raw_Cipher_Suite;
+
   procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
       S         : in out Session;
@@ -1498,23 +1711,6 @@ is
       Suite_Code : constant RFLX.RFLX_Types.Base_Integer :=
                      RFLX.Tls_Parameters.To_Base_Integer (Suite);
       Val   : Unsigned_16;
-      --  Cert algorithm gating (RFC 5246 §7.4.2 / RFC 8422 §5.4).
-      --  ECDHE_ECDSA and ECDHE_RSA require certs of the matching
-      --  signature type. Picking a suite our cert can't sign blocks
-      --  the client side ("ECDHE_ECDSA requires ECDSA / Ed25519
-      --  server public key" or equivalent). Was: any TLS 1.2 suite
-      --  in the offered list was accepted, regardless of cert.
-      --  RFC 8422 §5.4: Ed25519 server certs negotiate via the
-      --  ECDHE_ECDSA cipher suites even though the suite name says
-      --  "ECDSA" — the suite identifies key exchange + AEAD; the
-      --  cert algorithm comes from the certificate itself.
-      Cert_Is_ECDSA : constant Boolean :=
-         HC.Cfg.Local /= null
-         and then HC.Cfg.Local.Sign_Algo in
-                    Sign_ECDSA_P256 | Sign_ECDSA_P384 | Sign_Ed25519;
-      Cert_Is_RSA : constant Boolean :=
-         HC.Cfg.Local /= null
-         and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS;
    begin
       --  RFC 5746 §3.6: TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF)
       --  is a *signaling* cipher suite value, not a real suite, so
@@ -1539,59 +1735,7 @@ is
          return;
       end if;
       Val := Unsigned_16 (Suite_Code);
-      --  TLS 1.3 suites (0x13xx). Prefer ChaCha20 over AES-GCM.
-      --  TLS 1.3 cipher selection is independent of cert type
-      --  (signature comes from signature_algorithms extension).
-      if Val in Suite_AES_256_GCM_SHA384
-              | Suite_AES_128_GCM_SHA256
-              | Suite_CHACHA20_POLY1305_SHA256
-      then
-         if S.Negotiated_Suite = 0 then
-            S.Negotiated_Suite := Val;
-         elsif Val = Suite_CHACHA20_POLY1305_SHA256 then
-            S.Negotiated_Suite := Val;
-         end if;
-      end if;
-
-      --  When no cert is configured (unit-test path or pre-configure),
-      --  fall back to the original "accept any TLS 1.2 ECDHE suite"
-      --  behaviour so the suite is recorded for later inspection.
-      if HC.Cfg.Local = null then
-         if Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
-                          | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                          | Suite_ECDHE_RSA_CHACHA20_SHA256
-                          | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-           and then Prefer_TLS12_Candidate
-                      (HC.Cfg, S.Negotiated_Suite_12, Val)
-         then
-            S.Negotiated_Suite_12 := Val;
-         end if;
-         return;
-      end if;
-
-      --  TLS 1.2 ECDHE_ECDSA suites (0xC02B / 0xC02C / 0xCCA9):
-      --  cert must be ECDSA.
-      if Cert_Is_ECDSA
-        and then Val in Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                       | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                       | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-        and then Prefer_TLS12_Candidate (HC.Cfg, S.Negotiated_Suite_12, Val)
-      then
-         S.Negotiated_Suite_12 := Val;
-      end if;
-
-      --  TLS 1.2 ECDHE_RSA suites (0xC02F / 0xC030 / 0xCCA8):
-      --  cert must be RSA.
-      if Cert_Is_RSA
-        and then Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
-                       | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                       | Suite_ECDHE_RSA_CHACHA20_SHA256
-        and then Prefer_TLS12_Candidate (HC.Cfg, S.Negotiated_Suite_12, Val)
-      then
-         S.Negotiated_Suite_12 := Val;
-      end if;
+      Apply_Raw_Cipher_Suite (Val, S, HC);
    end Apply_Cipher_Suite;
 
    --  Dispatch a single CH extension by Tag and update HC accordingly.
@@ -2910,6 +3054,286 @@ is
       end;
    end Parse_CH_Cipher_Suites;
 
+   procedure Copy_TLS12_No_Ext_Client_Random
+     (Data : in     Byte_Seq;
+      BS   : in     N32;
+      HC   : in out Handshake_Context)
+   with Pre => Data'Length > 0
+               and then Data'Last <= N32 (Max_HS_Msg) - 1
+               and then Data'Last >= 33
+               and then BS >= Data'First
+               and then BS <= Data'Last - 33
+               and then Reasm_Building (HC),
+        Post => HC.HRR_Sent = HC.HRR_Sent'Old
+                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+                and then HC.Legacy_Session_ID_Len =
+                  HC.Legacy_Session_ID_Len'Old
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Random'Old /= null
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
+
+   procedure Copy_TLS12_No_Ext_Client_Random
+     (Data : in     Byte_Seq;
+      BS   : in     N32;
+      HC   : in out Handshake_Context)
+   is
+   begin
+      for I in N32 range 0 .. 31 loop
+         pragma Loop_Invariant (I <= 31);
+         pragma Loop_Invariant (BS >= Data'First);
+         pragma Loop_Invariant (BS <= Data'Last - 33);
+         pragma Loop_Invariant (BS + 2 + I <= Data'Last);
+         HC.Client_Random (I) := Data (BS + 2 + I);
+      end loop;
+   end Copy_TLS12_No_Ext_Client_Random;
+
+   procedure Copy_TLS12_No_Ext_Session_ID
+     (Data    : in     Byte_Seq;
+      P       : in     N32;
+      Sid_Len : in     N32;
+      HC      : in out Handshake_Context)
+   with Pre => Data'Length > 0
+               and then Data'Last <= N32 (Max_HS_Msg) - 1
+               and then Sid_Len <= 32
+               and then P >= Data'First
+               and then P <= Data'Last
+               and then Sid_Len <= Data'Last - P + 1
+               and then Reasm_Building (HC),
+        Post => HC.HRR_Sent = HC.HRR_Sent'Old
+                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+                and then HC.Legacy_Session_ID_Len = Sid_Len
+                and then (if HC.Cfg.Local'Old /= null
+                          then HC.Cfg.Local /= null)
+                and then (if HC.Cfg.Random'Old /= null
+                          then HC.Cfg.Random /= null)
+                and then Reasm_Building (HC);
+
+   procedure Copy_TLS12_No_Ext_Session_ID
+     (Data    : in     Byte_Seq;
+      P       : in     N32;
+      Sid_Len : in     N32;
+      HC      : in out Handshake_Context)
+   is
+   begin
+      HC.Legacy_Session_ID := (others => 0);
+      HC.Legacy_Session_ID_Len := Sid_Len;
+      if Sid_Len > 0 then
+         for I in N32 range 0 .. Sid_Len - 1 loop
+            pragma Loop_Invariant (I < Sid_Len);
+            pragma Loop_Invariant (P >= Data'First);
+            pragma Loop_Invariant (P + I <= Data'Last);
+            HC.Legacy_Session_ID (I) := Data (P + I);
+         end loop;
+      end if;
+   end Copy_TLS12_No_Ext_Session_ID;
+
+   procedure Parse_TLS12_No_Ext_Cipher_Suites
+     (Data   : in     Byte_Seq;
+      P      : in     N32;
+      Cs_Len : in     N32;
+      S      : in out Session;
+      HC     : in out Handshake_Context)
+   with Pre => Data'Length > 0
+               and then Data'Last <= N32 (Max_HS_Msg) - 1
+	               and then Cs_Len > 0
+	               and then Cs_Len mod 2 = 0
+                  and then P >= Data'First
+	               and then P <= Data'Last
+	               and then Cs_Len <= Data'Last - P + 1
+               and then Reasm_Building (HC),
+        Post =>
+            S.Role = S.Role'Old
+            and then S.State = S.State'Old
+            and then S.Input.Read_Pos = S.Input.Read_Pos'Old
+            and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+            and then S.Server_App.Counter = S.Server_App.Counter'Old
+            and then S.Server_App.Suite = S.Server_App.Suite'Old
+            and then HC.HRR_Sent = HC.HRR_Sent'Old
+            and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+            and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+            and then HC.Legacy_Session_ID_Len =
+                   HC.Legacy_Session_ID_Len'Old
+            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+            and then Reasm_Building (HC);
+
+   procedure Parse_TLS12_No_Ext_Cipher_Suites
+     (Data   : in     Byte_Seq;
+      P      : in     N32;
+      Cs_Len : in     N32;
+      S      : in out Session;
+      HC     : in out Handshake_Context)
+   is
+   begin
+      S.Negotiated_Suite := 0;
+      S.Negotiated_Suite_12 := 0;
+
+      for J in N32 range 0 .. (Cs_Len / 2) - 1 loop
+         pragma Loop_Invariant (J < Cs_Len / 2);
+         pragma Loop_Invariant (P >= Data'First);
+         pragma Loop_Invariant (J * 2 + 1 < Cs_Len);
+         pragma Loop_Invariant (P + J * 2 + 1 <= Data'Last);
+         pragma Loop_Invariant (Reasm_Building (HC));
+         pragma Loop_Invariant (S.Role = S.Role'Loop_Entry);
+         pragma Loop_Invariant (S.State = S.State'Loop_Entry);
+         pragma Loop_Invariant
+           (S.Input.Read_Pos = S.Input.Read_Pos'Loop_Entry);
+         pragma Loop_Invariant
+           (S.Input.Write_Pos = S.Input.Write_Pos'Loop_Entry);
+         pragma Loop_Invariant
+           (S.Server_App.Counter = S.Server_App.Counter'Loop_Entry);
+         pragma Loop_Invariant
+           (S.Server_App.Suite = S.Server_App.Suite'Loop_Entry);
+         pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Server_HS.Counter = HC.Server_HS.Counter'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Server_HS.Suite = HC.Server_HS.Suite'Loop_Entry);
+         pragma Loop_Invariant
+           (HC.Legacy_Session_ID_Len =
+              HC.Legacy_Session_ID_Len'Loop_Entry);
+         pragma Loop_Invariant
+           (if HC.Cfg.Local'Loop_Entry /= null then HC.Cfg.Local /= null);
+         pragma Loop_Invariant
+           (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
+         declare
+            Suite_Pos : constant N32 := P + J * 2;
+            Val       : constant Unsigned_16 :=
+               Unsigned_16 (Data (Suite_Pos)) * 256
+               + Unsigned_16 (Data (Suite_Pos + 1));
+         begin
+            Apply_Raw_Cipher_Suite (Val, S, HC);
+         end;
+      end loop;
+   end Parse_TLS12_No_Ext_Cipher_Suites;
+
+   procedure Parse_TLS12_Client_Hello_No_Extensions
+     (S    : in out Session;
+      HC   : in out Handshake_Context;
+      Data : in     Byte_Seq;
+      OK   :    out Boolean)
+   with Pre => Data'Length > 0
+               and then Data'Last <= N32 (Max_HS_Msg) - 1
+               and then Reasm_Building (HC),
+        Post =>
+            S.Role = S.Role'Old
+            and then S.State = S.State'Old
+            and then S.Input.Read_Pos = S.Input.Read_Pos'Old
+            and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+            and then S.Server_App.Counter = S.Server_App.Counter'Old
+            and then S.Server_App.Suite = S.Server_App.Suite'Old
+            and then HC.HRR_Sent = HC.HRR_Sent'Old
+            and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+            and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
+            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+            and then HC.Legacy_Session_ID_Len in 0 .. 32
+            and then Reasm_Building (HC);
+
+   procedure Parse_TLS12_Client_Hello_No_Extensions
+     (S    : in out Session;
+      HC   : in out Handshake_Context;
+      Data : in     Byte_Seq;
+      OK   :    out Boolean)
+   is
+      BS  : constant N32 := Data'First + 4;
+      P   : N32;
+      Sid_Len, Cs_Len, Cm_Len : N32;
+   begin
+      OK := False;
+
+      if Data'Length < 4 + 35 then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+
+      if Data (Data'First + 4) /= 16#03#
+        or else Data (Data'First + 5) /= 16#03#
+      then
+         S.Last_Error := Protocol_Version;
+         return;
+      end if;
+
+      if not Compression_Methods_OK (Data, Is_TLS13 => False) then
+         S.Last_Error := Illegal_Parameter;
+         return;
+      end if;
+
+      if Data'Last < 34 or else BS > Data'Last - 34 then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+      pragma Assert (Data'Last >= 33);
+      pragma Assert (BS >= Data'First);
+      pragma Assert (BS <= Data'Last - 33);
+      Copy_TLS12_No_Ext_Client_Random (Data, BS, HC);
+
+      Sid_Len := N32 (Data (BS + 34));
+      if Sid_Len > 32 then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+
+      P := BS + 35;
+      if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (P >= Data'First);
+      pragma Assert (Sid_Len <= Data'Last - P + 1);
+      pragma Assert (P + Sid_Len <= Data'Last + 1);
+      Copy_TLS12_No_Ext_Session_ID (Data, P, Sid_Len, HC);
+      P := P + Sid_Len;
+
+      if P > Data'Last or else Data'Last - P < 1 then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+
+      Cs_Len := N32 (Data (P)) * 256 + N32 (Data (P + 1));
+      P := P + 2;
+      if Cs_Len = 0
+        or else Cs_Len mod 2 /= 0
+        or else P > Data'Last
+        or else Cs_Len > Data'Last - P + 1
+      then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+      pragma Assert (P <= Data'Last);
+      pragma Assert (Cs_Len <= Data'Last - P + 1);
+      pragma Assert (P + Cs_Len <= Data'Last + 1);
+      Parse_TLS12_No_Ext_Cipher_Suites (Data, P, Cs_Len, S, HC);
+      P := P + Cs_Len;
+
+      if P > Data'Last then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+      Cm_Len := N32 (Data (P));
+      P := P + 1;
+      if P > Data'Last or else Cm_Len > Data'Last - P + 1 then
+         S.Last_Error := Decode_Error;
+         return;
+      end if;
+
+      if S.Negotiated_Suite_12 = 0 then
+         return;
+      end if;
+
+      HC.Version := TLS_1_2;
+      HC.Has_TLS_1_3 := False;
+      HC.Saw_Supported_Versions := False;
+      HC.SV_Has_Acceptable := False;
+      HC.Client_Supports_X25519 := True;
+      OK := True;
+   end Parse_TLS12_Client_Hello_No_Extensions;
+
    procedure Parse_Client_Hello
      (S    : in out Session;
       HC   : in out Handshake_Context;
@@ -2994,6 +3418,16 @@ is
 
       --  Skip 4-byte handshake header, pass body to Client_Hello context
       Body_Len := N32 (Data'Length) - 4;
+
+      if TLS12_Client_Hello_Omits_Extensions (Data)
+        or else TLS12_Client_Hello_Has_Empty_Extensions (Data)
+      then
+         Parse_TLS12_Client_Hello_No_Extensions (S, HC, Data, OK);
+         pragma Assert (Saved_Config_Frame);
+         pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+         pragma Assert (Reasm_Building (HC));
+         return;
+      end if;
 
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));

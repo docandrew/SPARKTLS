@@ -20,6 +20,7 @@ with Interfaces;           use Interfaces;
 with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Client;
+with SPARKTLS.Tickets_12;
 with Det_Random_Lib;
 with X509;
 
@@ -41,10 +42,12 @@ procedure Test_PSK_Resume is
       end if;
    end Check;
 
+   Now_Second : Natural := 0;
+
    --  Fixed clock for the test (no cert validation needed at CH time).
    function Fixed_Now return X509.Date_Time is
      ((Year => 2026, Month => 5, Day => 15,
-       Hour => 0, Minute => 0, Second => 0));
+       Hour => 0, Minute => 0, Second => Now_Second));
 
    --  Build a synthetic Session_Ticket. The PSK bytes are arbitrary;
    --  the test only checks that the ticket flows through to the
@@ -58,6 +61,9 @@ procedure Test_PSK_Resume is
       end loop;
       T.Lifetime := 7200;
       T.Age_Add  := 16#DEADBEEF#;
+      T.Received_At := SPARKTLS.Tickets_12.To_Unix_Seconds
+        ((Year => 2026, Month => 5, Day => 15,
+          Hour => 0, Minute => 0, Second => 0));
       T.PSK_Len  := 32;
       for I in N32 range 0 .. 31 loop
          T.PSK (I) := Byte (16#A0# + (Natural (I) mod 16));
@@ -129,6 +135,8 @@ begin
       Cfg.Server_Name.Len := H'Length;
    end;
    Cfg.Resume_Ticket := Make_Ticket;
+   Cfg.Get_Time := Fixed_Now'Unrestricted_Access;
+   Now_Second := 10;
 
    --  Init builds CH and queues it in S.Output.
    SPARKTLS.Client.Init (S, Cfg);
@@ -175,6 +183,21 @@ begin
                   Check ("PSK identity carries 32-byte ticket",
                          Ticket_Len_Field = 32);
                end;
+
+               if PSK_Pos + 39 <= N32 (CH'Last) then
+                  declare
+                     Age : constant Unsigned_32 :=
+                       Unsigned_32 (CH (PSK_Pos + 36)) * 2**24
+                       + Unsigned_32 (CH (PSK_Pos + 37)) * 2**16
+                       + Unsigned_32 (CH (PSK_Pos + 38)) * 2**8
+                       + Unsigned_32 (CH (PSK_Pos + 39));
+                  begin
+                     Check ("PSK identity age includes elapsed ticket age",
+                            Age = 16#DEADE5FF#);
+                  end;
+               else
+                  Check ("PSK identity age field present", False);
+               end if;
             end if;
          end;
       end if;

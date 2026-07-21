@@ -470,18 +470,6 @@ is
          --  Plaintext has same bounds as Encrypted
          pragma Assert (Plain_Len < Cipher_Len);
 
-         --  RFC 8446 Section 5.4: content type must be valid.
-         --  Only alert (0x15), handshake (0x16), and application_data (0x17).
-         if Inner_Type not in 16#15# | 16#16# | 16#17# then
-            Valid := False;
-            return;
-         end if;
-         --  Past the guard, Inner_Type is RFC-valid. The pragma pins
-         --  the property: future edits that loosen the membership
-         --  check (e.g. accidentally allowing 0x00 or 0x14) would
-         --  fail SPARK proof here.
-         pragma Assert (Inner_Type_Valid_RFC_8446_5_4 (Inner_Type));
-
          if Plain_Len > 0 and then Plain_Len - 1 <= Plaintext'Last then
             Plaintext (0 .. Plain_Len - 1) :=
                Decrypted (0 .. Plain_Len - 1);

@@ -9,6 +9,7 @@ with SPARKTLSCrypto.HKDF;    use SPARKTLSCrypto.HKDF;
 with SPARKTLSCrypto.MAC;     use SPARKTLSCrypto.MAC;
 with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
 with SPARKTLS.Key_Schedule;
+with SPARKTLS.Tickets_12;
 with RFLX.TLS_Handshake.Client_Hello;
 with RFLX.TLS_Handshake.Server_Hello;
 with RFLX.TLS_Handshake.SH_Extensions_TLS;
@@ -378,12 +379,42 @@ is
                                 S.Ticket.Ticket (0 .. Tick_Len - 1);
                               P := P + Tick_Len;
                               declare
-                                 A : constant Unsigned_32 := S.Ticket.Age_Add;
+                                 Age_MS : Unsigned_64 := 0;
                               begin
-                                 Result (P)     := Byte (A / 2**24 mod 256);
-                                 Result (P + 1) := Byte (A / 2**16 mod 256);
-                                 Result (P + 2) := Byte (A / 2**8 mod 256);
-                                 Result (P + 3) := Byte (A mod 256);
+                                 if S.Get_Time /= null
+                                   and then S.Ticket.Received_At /= 0
+                                 then
+                                    declare
+                                       Now : constant Unsigned_64 :=
+                                         Tickets_12.To_Unix_Seconds
+                                           (S.Get_Time.all);
+                                    begin
+                                       if Now >= S.Ticket.Received_At
+                                         and then
+                                           Now - S.Ticket.Received_At
+                                           <= Unsigned_64'Last / 1000
+                                       then
+                                          Age_MS :=
+                                            (Now - S.Ticket.Received_At)
+                                            * 1000;
+                                       end if;
+                                    end;
+                                 end if;
+
+                                 declare
+                                    Age_Mod : constant Unsigned_32 :=
+                                      Unsigned_32 (Age_MS mod 2**32);
+                                    A : constant Unsigned_32 :=
+                                      S.Ticket.Age_Add + Age_Mod;
+                                 begin
+                                    Result (P) :=
+                                      Byte (A / 2**24 mod 256);
+                                    Result (P + 1) :=
+                                      Byte (A / 2**16 mod 256);
+                                    Result (P + 2) :=
+                                      Byte (A / 2**8 mod 256);
+                                    Result (P + 3) := Byte (A mod 256);
+                                 end;
                               end;
                               P := P + 4;
                               Result (P) := Byte (Binder_Entry_Len / 256);

@@ -246,7 +246,7 @@ is
         when Connected =>
            To in Closing | Error_State | Closed,
         when Closing =>
-           To in Closed,
+           To in Closed | Error_State,
         when Closed =>
            False,
         when Error_State =>
@@ -1013,6 +1013,7 @@ is
       Ticket_Len   : N32 := 0;
       Lifetime     : Unsigned_32 := 0;       --  seconds
       Age_Add      : Unsigned_32 := 0;       --  obfuscation value
+      Received_At  : Unsigned_64 := 0;       --  Unix seconds, 0 if unknown
       PSK          : Bytes_48 := (others => 0);  --  derived PSK
       PSK_Len      : N32 := 0;              --  32 (SHA-256) or 48 (SHA-384)
       Suite        : Unsigned_16 := 0;       --  cipher suite
@@ -2234,6 +2235,11 @@ is
       --  needed to derive PSK when NewSessionTicket arrives post-handshake)
       Res_Master     : Bytes_48 := (others => 0);
       Res_Master_Len : N32 := 0;  --  32 or 48
+
+      --  Session-level wall clock mirror. Client TLS 1.3 tickets arrive
+      --  post-handshake, after HC is freed, and later resumption attempts
+      --  need the same configured clock to serialize obfuscated_ticket_age.
+      Get_Time : Get_Time_Fn := null;
 
       --  RFC 5705 / RFC 8446 §7.5 exporter material retained after
       --  the handshake context is freed. TLS 1.2 stores master_secret

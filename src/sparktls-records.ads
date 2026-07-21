@@ -145,9 +145,9 @@ is
                         and then Available (Output) > 0);
 
    --  Decrypt a TLS 1.3 encrypted record.
-   --  RFC 8446 Section 5.4: After decryption, the inner plaintext
-   --  MUST be non-empty (at least the content type byte), and
-   --  Inner_Type MUST NOT be zero (content type of zero is invalid).
+   --  RFC 8446 Section 5.4: Valid reports AEAD authentication and
+   --  decryption success. Callers still validate the recovered inner
+   --  content type and map invalid values to the right protocol alert.
    procedure Decrypt_Record
      (Encrypted   : in     Byte_Seq;
       Record_Hdr  : in     Byte_Seq;

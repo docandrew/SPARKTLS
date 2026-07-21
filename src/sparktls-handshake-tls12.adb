@@ -1206,8 +1206,9 @@ is
       subtype TLS12_ALPN_Data_Len is N32 range 0 .. 258;
       subtype TLS12_ALPN_Ext_Len is N32 range 0 .. 262;
       subtype TLS12_SH_Ext_Total is N32 range 0 .. 279;
-      subtype TLS12_SH_Body_Len is N32 range 40 .. 351;
-      subtype TLS12_SH_Msg_Len is N32 range 44 .. 355;
+      subtype TLS12_SH_Ext_Block_Len is N32 range 0 .. 281;
+      subtype TLS12_SH_Body_Len is N32 range 38 .. 351;
+      subtype TLS12_SH_Msg_Len is N32 range 42 .. 355;
 
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
@@ -1265,14 +1266,16 @@ is
       --  Extensions total
       Ext_Total   : constant TLS12_SH_Ext_Total :=
          RI_Ext_Len + EMS_Ext_Len + SNI_Ext_Len + ALPN_Ext_Len + ST_Ext_Len;
+      Ext_Block_Len : constant TLS12_SH_Ext_Block_Len :=
+         (if Ext_Total > 0 then 2 + Ext_Total else 0);
 
       --  ServerHello body size:
       --  version(2) + random(32) + sid_len(1) + sid(N) + suite(2)
-      --  + comp(1) + ext_len(2) = 40 + N + extensions.
+      --  + comp(1) + optional ext_len(2) + extensions.
       SID_Out_Len : constant TLS12_SID_Len :=
          (if HC.TLS12_Resuming then HC.Legacy_Session_ID_Len else 32);
       SH_Body_Len : constant TLS12_SH_Body_Len :=
-         40 + SID_Out_Len + Ext_Total;
+         38 + SID_Out_Len + Ext_Block_Len;
       SH_Msg_Len  : constant TLS12_SH_Msg_Len := 4 + SH_Body_Len;
 
       Pos : N32;
@@ -1286,6 +1289,18 @@ is
          Tmp_SID : Bytes_32;
       begin
          Gen_Random (Byte_Seq (Tmp_SR));
+         if HC.Cfg.Versions /= TLS_1_2_Only then
+            --  RFC 8446 §4.1.3: a TLS 1.3-capable server negotiating
+            --  TLS 1.2 MUST mark ServerHello.random with DOWNGRD\x01.
+            Tmp_SR (24) := 16#44#;
+            Tmp_SR (25) := 16#4F#;
+            Tmp_SR (26) := 16#57#;
+            Tmp_SR (27) := 16#4E#;
+            Tmp_SR (28) := 16#47#;
+            Tmp_SR (29) := 16#52#;
+            Tmp_SR (30) := 16#44#;
+            Tmp_SR (31) := 16#01#;
+         end if;
          HC.Server_Random := Tmp_SR;
          --  RFC 5246 §7.4.1.3 / RFC 5077 §3.4: when resuming a session
          --  the server MUST echo the client's offered session_id in SH.
@@ -1342,8 +1357,10 @@ is
       Result (Pos) := 0;
       Pos := Pos + 1;
 
-      Put16 (Result, Pos, Unsigned_16 (Ext_Total));
-      Pos := Pos + 2;
+      if Ext_Total > 0 then
+         Put16 (Result, Pos, Unsigned_16 (Ext_Total));
+         Pos := Pos + 2;
+      end if;
 
       --  renegotiation_info (0xFF01). RFC 5746 §3.6: emit only when
       --  the client signalled support — via the extension itself or

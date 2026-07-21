@@ -88,7 +88,7 @@ is
    procedure Process_Connected_12
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State = Connected
+   with Pre => S.State in Connected | Closing
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                and then Empty_Records_Bounded_RFC_8446_5_2 (S)
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12

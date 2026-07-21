@@ -129,7 +129,7 @@ is
       Err    : Error_Code;
       Result : out Action)
    with Pre => Records.TLS12.Nonce_Space_Available_12 (S.Server_Seq_12)
-               and S.State not in Idle | Closing | Closed | Error_State
+               and S.State not in Idle | Closed | Error_State
    is
       Dummy : N32;
    begin
@@ -1296,12 +1296,19 @@ is
                begin
                   Handshake.Parse_Handshake_Header
                     (Frag, Msg_Type, Msg_Len, Parse_OK);
-                  if not Parse_OK then
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     pragma Assert (Reasm_Building (HC));
-                     return;
-                  end if;
+	            if not Parse_OK then
+	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	               Send_Alert_And_Error
+	                 (S,
+	                  (if Frag (Frag'First) in
+	                     16#01# | 16#02# | 16#04# | 16#08# |
+	                     16#0B# | 16#0C# | 16#0D# | 16#0E# |
+	                     16#0F# | 16#10# | 16#14#
+	                   then Decode_Error else Unexpected_Message),
+	                  Result);
+	               pragma Assert (Reasm_Building (HC));
+	               return;
+	            end if;
 
                   if Msg_Type = Handshake.HT_Certificate_Verify then
                      if Msg_Len < 4
@@ -1403,7 +1410,7 @@ is
             end;
          end Parse_Complete_CKE;
 
-         procedure Fail_Decode
+	         procedure Fail_Decode
          with Pre  => Reasm_Building (HC)
                       and then S.State not in
                         Idle | Closing | Closed | Error_State
@@ -1420,7 +1427,26 @@ is
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Decode_Error, Result);
             pragma Assert (Reasm_Building (HC));
-         end Fail_Decode;
+	         end Fail_Decode;
+
+	         procedure Fail_Unexpected
+	         with Pre  => Reasm_Building (HC)
+	                      and then S.State not in
+	                        Idle | Closing | Closed | Error_State
+	                      and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+	                      and then S.Input.Read_Pos + Rec.Record_Len
+	                        <= S.Input.Write_Pos
+	                      and then S.Input.Read_Pos + Rec.Record_Len
+	                        <= IO_Buffer_Capacity,
+	              Post => Reasm_Building (HC)
+	                      and then S.State = Error_State
+	                      and then Result /= OK
+	         is
+	         begin
+	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	            Send_Alert_And_Error (S, Unexpected_Message, Result);
+	            pragma Assert (Reasm_Building (HC));
+	         end Fail_Unexpected;
 
          procedure Finish_CKE
            (Msg : in Byte_Seq)
@@ -1532,14 +1558,18 @@ is
                      N32 (HC.Reasm_Buf (3));
                   HS_Total : constant N32 := HS_Msg_Len + 4;
                begin
-                  if HC.Reasm_Buf (0) /= HT_Client_Key_Exchange
-                    or else HS_Msg_Len > Max_Client_Key_Exchange
-                  then
-                     HC.Reasm_Hdr_Pending := False;
-                     pragma Assert (Reasm_Building (HC));
-                     Fail_Decode;
-                     return;
-                  end if;
+	                  if HC.Reasm_Buf (0) /= HT_Client_Key_Exchange then
+	                     HC.Reasm_Hdr_Pending := False;
+	                     pragma Assert (Reasm_Building (HC));
+	                     Fail_Unexpected;
+	                     return;
+	                  end if;
+	                  if HS_Msg_Len > Max_Client_Key_Exchange then
+	                     HC.Reasm_Hdr_Pending := False;
+	                     pragma Assert (Reasm_Building (HC));
+	                     Fail_Decode;
+	                     return;
+	                  end if;
 
                   HC.Reasm_Need := HS_Total;
                   HC.Reasm_Hdr_Pending := False;
@@ -1600,12 +1630,14 @@ is
                   N32 (S.Input.Data (FS + 3));
                HS_Total : constant N32 := HS_Msg_Len + 4;
             begin
-               if S.Input.Data (FS) /= HT_Client_Key_Exchange
-                 or else HS_Msg_Len > Max_Client_Key_Exchange
-               then
-                  Fail_Decode;
-                  return;
-               end if;
+	               if S.Input.Data (FS) /= HT_Client_Key_Exchange then
+	                  Fail_Unexpected;
+	                  return;
+	               end if;
+	               if HS_Msg_Len > Max_Client_Key_Exchange then
+	                  Fail_Decode;
+	                  return;
+	               end if;
 
                if HS_Total > Frag_Len then
                   HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
@@ -1787,7 +1819,14 @@ is
 
             if not Parse_OK then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result);
+               Send_Alert_And_Error
+                 (S,
+                  (if Frag (Frag'First) in
+                     16#01# | 16#02# | 16#04# | 16#08# |
+                     16#0B# | 16#0C# | 16#0D# | 16#0E# |
+                     16#0F# | 16#10# | 16#14#
+                   then Decode_Error else Unexpected_Message),
+                  Result);
                pragma Assert (Reasm_Building (HC));
                return;
             end if;
@@ -1943,16 +1982,35 @@ is
             Handshake.Parse_Handshake_Header
               (Frag, Msg_Type, Msg_Len, Parse_OK);
 
-            if not Parse_OK
-              or else Msg_Type /= Handshake.HT_Certificate_Verify
-              or else Msg_Len < 4
-              or else Msg_Len + 4 /= Frag_Len
-            then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result);
-               pragma Assert (Reasm_Building (HC));
-               return;
-            end if;
+	            if not Parse_OK then
+	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	               Send_Alert_And_Error
+	                 (S,
+	                  (if Frag (Frag'First) in
+	                     16#01# | 16#02# | 16#04# | 16#08# |
+	                     16#0B# | 16#0C# | 16#0D# | 16#0E# |
+	                     16#0F# | 16#10# | 16#14#
+	                   then Decode_Error else Unexpected_Message),
+	                  Result);
+	               pragma Assert (Reasm_Building (HC));
+	               return;
+	            end if;
+
+	            if Msg_Type /= Handshake.HT_Certificate_Verify then
+	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	               Send_Alert_And_Error (S, Unexpected_Message, Result);
+	               pragma Assert (Reasm_Building (HC));
+	               return;
+	            end if;
+
+	            if Msg_Len < 4
+	              or else Msg_Len + 4 /= Frag_Len
+	            then
+	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	               Send_Alert_And_Error (S, Decode_Error, Result);
+	               pragma Assert (Reasm_Building (HC));
+	               return;
+	            end if;
 
             declare
                F          : constant N32 := Frag'First;
@@ -2791,7 +2849,10 @@ is
 
             case Rec.Content is
                when Records.Content_Application_Data =>
-                  if PL > 0
+                  if S.State = Closing and then PL > 0 then
+                     Send_Encrypted_Alert_Connected_12
+                       (S, Unexpected_Message, Result);
+                  elsif PL > 0
                      and then S.App_Data_Len <= S.App_Data'Length
                      and then PL <= S.App_Data'Length - S.App_Data_Len
                   then
@@ -2835,7 +2896,9 @@ is
 	                           Bytes_Out   => A);
                         pragma Assert (A <= N32 (S.Output.Data'Length));
 	                     end;
-                     Set_State (S, Closing);
+                     if S.State = Connected then
+                        Set_State (S, Closing);
+                     end if;
                      if Output_Pending (S) > 0 then
                         Result := Has_Output;
                      else

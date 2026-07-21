@@ -56,6 +56,7 @@ procedure Bogo_Shim is
       Max_Version          : Unsigned_16 := 16#0304#;  --  TLS 1.3
       Shim_Writes_First    : Boolean := False;
       Shim_Shuts_Down      : Boolean := False;
+      Check_Close_Notify   : Boolean := False;
       Request_Client_Cert  : Boolean := False;
       Require_Client_Cert  : Boolean := False;
       Expect_Hs_Fails      : Boolean := False;
@@ -94,6 +95,9 @@ procedure Bogo_Shim is
       Ack_Server_Name      : Boolean := True;
       Preferred_Group      : Unsigned_16 := 0;
       Curve_Count          : Natural := 0;
+      Resumption_Delay_Seconds : Natural := 0;
+      Time_Offset_Seconds      : Natural := 0;
+      No_Ticket                 : Boolean := False;
    end record;
 
    Cfg : Config_T;
@@ -175,7 +179,7 @@ procedure Bogo_Shim is
 
    function Current_Time return X509.Date_Time is
       use Ada.Calendar;
-      Now : constant Time := Clock;
+      Now : constant Time := Clock + Duration (Cfg.Time_Offset_Seconds);
       Y   : Year_Number;
       Mo  : Month_Number;
       D   : Day_Number;
@@ -290,6 +294,7 @@ procedure Bogo_Shim is
          I := I + 1;
          if I > Argument_Count then
             Err ("bogo_shim: missing value after " & Argument (I - 1));
+            Trace ("exit 89: missing value after " & Argument (I - 1));
             Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
             raise Program_Error;
          end if;
@@ -507,8 +512,9 @@ procedure Bogo_Shim is
                Cfg.Shim_Shuts_Down := True;
             elsif A = "-check-close-notify" then
                --  BoGo's runner side checks for our close_notify. The
-               --  shim just needs to run the transcript.
-               null;
+               --  shim must continue reading after sending close_notify
+               --  so post-close application data is observed and rejected.
+               Cfg.Check_Close_Notify := True;
             elsif A = "-renegotiate-ignore"
               or else A = "-renegotiate-freely"
               or else A = "-renegotiate-explicit"
@@ -750,8 +756,9 @@ procedure Bogo_Shim is
                end;
             elsif A = "-use-export-context" then
                Cfg.Export_Use_Context := True;
-            elsif A = "-resumption-delay"
-              or A = "-server-supported-groups-hint"
+            elsif A = "-resumption-delay" then
+               Cfg.Resumption_Delay_Seconds := Natural'Value (Next_Arg);
+            elsif A = "-server-supported-groups-hint"
               or A = "-use-client-ca-list"
               or A = "-ticket-key"
               or A = "-curves-flags"
@@ -771,6 +778,8 @@ procedure Bogo_Shim is
                end;
             elsif A = "-no-server-name-ack" then
                Cfg.Ack_Server_Name := False;
+            elsif A = "-no-ticket" then
+               Cfg.No_Ticket := True;
             elsif A = "-enable-grease"
               or A = "-jdk11-workaround"
               or A = "-filter-extra-algorithms"
@@ -778,7 +787,6 @@ procedure Bogo_Shim is
               or A = "-retain-only-sha256-client-cert-off"
               or A = "-permute-extensions"
               or A = "-server-preference"
-              or A = "-no-ticket"
               or A = "-no-key-shares"
               or A = "-resumption-across-names-enabled"
             then
@@ -814,7 +822,7 @@ procedure Bogo_Shim is
                end if;
             else
                Err ("bogo_shim: unimplemented flag: " & A);
-               Trace ("unimplemented flag: " & A);
+               Trace ("exit 89: unimplemented flag: " & A);
                Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
                raise Program_Error;
             end if;
@@ -874,6 +882,7 @@ procedure Bogo_Shim is
    procedure Run_Handshake is
       S   : SPARKTLS.Session;
       Res : SPARKTLS.Action;
+      Close_Drain_Reads : Natural := 0;
 
       Net_In  : Byte_Seq (0 .. 16383);
       Net_Out : Byte_Seq (0 .. 16383);
@@ -999,24 +1008,30 @@ procedure Bogo_Shim is
             --  Only the SH body's legacy_version is authoritative.
             if not First_Server_Bytes_Seen
               and then not Cfg.Is_Server
-              and then Avail >= 11
+              and then Avail >= 5
               and then Net_In (0) = 16#16#  --  handshake record
-              and then Net_In (5) = 16#02#  --  ServerHello type
             then
                First_Server_Bytes_Seen := True;
-               declare
-                  Lv : constant Unsigned_16 :=
-                    Unsigned_16 (Net_In (9)) * 256 +
-                    Unsigned_16 (Net_In (10));
-               begin
-                  if Lv < 16#0303# then
-                     Err ("bogo_shim: server speaks TLS 1.0/1.1 — "
-                          & "unimplemented");
-                     Ada.Command_Line.Set_Exit_Status
-                       (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
-                     raise Program_Error;
-                  end if;
-               end;
+               if Avail >= 11
+                 and then N32 (Net_In (3)) * 256 + N32 (Net_In (4)) >= 6
+                 and then Net_In (5) = 16#02#  --  ServerHello type
+               then
+                  declare
+                     Lv : constant Unsigned_16 :=
+                       Unsigned_16 (Net_In (9)) * 256 +
+                       Unsigned_16 (Net_In (10));
+                  begin
+                     if Lv < 16#0303# then
+                        Err ("bogo_shim: server speaks TLS 1.0/1.1 — "
+                             & "unimplemented");
+                        Trace ("exit 89: server legacy_version="
+                               & Unsigned_16'Image (Lv));
+                        Ada.Command_Line.Set_Exit_Status
+                          (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
+                        raise Program_Error;
+                     end if;
+                  end;
+               end if;
             end if;
             Feed_Ciphertext (S, Net_In (0 .. Avail - 1), Fed);
          end;
@@ -1029,12 +1044,14 @@ procedure Bogo_Shim is
       --  above 0x0304 also exit 89.
       if Cfg.Max_Version < 16#0303# then
          Err ("bogo_shim: TLS 1.0/1.1 not supported (max < 0x0303)");
+         Trace ("exit 89: max-version < 0x0303");
          Ada.Command_Line.Set_Exit_Status
            (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
          return;
       end if;
       if Cfg.Min_Version > 16#0304# then
          Err ("bogo_shim: min-version > 0x0304 unsupported");
+         Trace ("exit 89: min-version > 0x0304");
          Ada.Command_Line.Set_Exit_Status
            (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
          return;
@@ -1044,6 +1061,7 @@ procedure Bogo_Shim is
       --  fail in an unrelated way.
       if Cfg.Min_Version > Cfg.Max_Version then
          Err ("bogo_shim: empty version range — unimplemented");
+         Trace ("exit 89: empty version range");
          Ada.Command_Line.Set_Exit_Status
            (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
          return;
@@ -1098,7 +1116,8 @@ procedure Bogo_Shim is
                Server_Cfg.Request_Client_Cert := Cfg.Request_Client_Cert;
                Server_Cfg.Require_Client_Cert := Cfg.Require_Client_Cert;
                Server_Cfg.Skip_Verify := Cfg.Request_Client_Cert;
-               Server_Cfg.Ticket_Store := Tickets;
+               Server_Cfg.Ticket_Store :=
+                 (if Cfg.No_Ticket then null else Tickets);
                Server_Cfg.TLS12_Ticket_Keys := TLS12_Keys'Unchecked_Access;
                Server_Cfg.Auto_Rotate_TEK := False;
                Server_Cfg.Versions := Policy;
@@ -1380,6 +1399,13 @@ procedure Bogo_Shim is
             SPARKTLS.Client.Close_Notify (S);
          end if;
          Send_Pending;
+         if Cfg.Check_Close_Notify then
+            declare
+               Done : Boolean;
+            begin
+               Recv_Once (Done);
+            end;
+         end if;
       end if;
 
       Echo_Loop :
@@ -1425,7 +1451,17 @@ procedure Bogo_Shim is
                null;  --  shouldn't recur after first time
             when Shutdown =>
                Send_Pending;
-               exit Echo_Loop;
+               if Cfg.Check_Close_Notify and then Close_Drain_Reads < 4 then
+                  declare
+                     Done : Boolean;
+                  begin
+                     Close_Drain_Reads := Close_Drain_Reads + 1;
+                     Recv_Once (Done);
+                     exit Echo_Loop when Done;
+                  end;
+               else
+                  exit Echo_Loop;
+               end if;
             when Error_Alert =>
                Err_State ("bogo_shim: application error", S);
                Send_Pending;
@@ -1476,6 +1512,13 @@ begin
          GNAT.Sockets.Close_Socket (Sock);
       exception when others => null;
       end;
+      if Cfg.Resumption_Delay_Seconds > 0
+        and then Cfg.Time_Offset_Seconds
+                 <= Natural'Last - Cfg.Resumption_Delay_Seconds
+      then
+         Cfg.Time_Offset_Seconds :=
+           Cfg.Time_Offset_Seconds + Cfg.Resumption_Delay_Seconds;
+      end if;
    end loop;
 
 exception

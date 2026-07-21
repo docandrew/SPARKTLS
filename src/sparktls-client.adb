@@ -11,6 +11,7 @@ with SPARKTLS.Handshake.Client_Msgs;
 with SPARKTLS.Handshake.Certs;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule;
+with SPARKTLS.Tickets_12;
 with SPARKTLSCrypto.HMAC384;
 with SPARKTLSCrypto.HKDF384;
 with SPARKTLSCrypto.P384.Field;
@@ -25,12 +26,38 @@ with X509;
 package body SPARKTLS.Client with
    SPARK_Mode => On
 is
+   function Resume_Ticket_Usable
+     (T     : Session_Ticket;
+      Clock : Get_Time_Fn) return Boolean
+   is
+   begin
+      if not T.Valid
+        or else T.PSK_Len = 0
+        or else T.Ticket_Len = 0
+        or else T.Lifetime = 0
+      then
+         return False;
+      end if;
+
+      if Clock = null or else T.Received_At = 0 then
+         return True;
+      end if;
+
+      declare
+         Now : constant Unsigned_64 :=
+           SPARKTLS.Tickets_12.To_Unix_Seconds (Clock.all);
+      begin
+         return Now < T.Received_At
+           or else Now - T.Received_At < Unsigned_64 (T.Lifetime);
+      end;
+   end Resume_Ticket_Usable;
+
    function Client_Config_Can_Start (Cfg : Config) return Boolean is
      (Cfg.Random /= null
       and then
         (Cfg.Skip_Verify
          or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
-         or else Cfg.Resume_Ticket.Valid));
+         or else Resume_Ticket_Usable (Cfg.Resume_Ticket, Cfg.Get_Time)));
 
    --  Send a fatal alert encrypted under the client_handshake_
    --  traffic_secret, then transition to Error_State. Prepends the
@@ -1045,7 +1072,7 @@ is
    procedure Process_Connected
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State = Connected
+   with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Client_App)
                and then Nonce_Space_Available (S.Server_App)
                and then S.App_Data_Len <= Max_Record_Plaintext
@@ -1064,7 +1091,7 @@ is
      (S      : in out Session;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
-   with Pre => S.State = Connected
+   with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Client_App)
                and then Nonce_Space_Available (S.Server_App)
                and then S.App_Data_Len <= Max_Record_Plaintext
@@ -1717,6 +1744,7 @@ is
       S := (State     => Client_Hello_Sent,
             Role      => Role_Client,
             others    => <>);
+      S.Get_Time := Cfg.Get_Time;
 
       if not Client_Config_Can_Start (Cfg) then
          Set_State (S, Error_State);
@@ -1737,9 +1765,7 @@ is
       --  resumption ticket via Cfg, copy it into S.Ticket before
       --  Build_Client_Hello so the CH carries the pre_shared_key
       --  extension and the binder is computed from the ticket's PSK.
-      if Cfg.Resume_Ticket.Valid
-        and then Cfg.Resume_Ticket.PSK_Len > 0
-        and then Cfg.Resume_Ticket.Ticket_Len > 0
+      if Resume_Ticket_Usable (Cfg.Resume_Ticket, Cfg.Get_Time)
       then
          S.Ticket := Cfg.Resume_Ticket;
       end if;
@@ -2778,19 +2804,44 @@ is
 	         return;
 	      end if;
 
-      --  Send our Certificate
+      if HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
+        or else HC.Cfg.Local.Int_Count > Max_Pool_Size
+        or else
+          (for some I in 0 .. Max_Pool_Size - 1 =>
+             HC.Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
+      then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         pragma Assert (Reasm_Coherent (HC));
+         return;
+      end if;
+
+      --  Send our Certificate chain (leaf + configured intermediates).
       declare
-         Nacl_Cert_Len : constant N32 := HC.Cfg.Local.NaCl_Cert_Len;
-         Cert_Buf : Byte_Seq (0 .. Nacl_Cert_Len + 15);
+         --  Max: leaf + 8 intermediates, each up to 8 KB + 5 bytes overhead.
+         Cert_Buf : Byte_Seq (0 .. 9 * (Max_Cert_DER_Len + 5) + 10);
          Cert_Len : N32;
       begin
-         Handshake.Certs.Build_Certificate
-           (Cert_DER => HC.Cfg.Local.NaCl_Cert_DER,
-            Cert_Len => HC.Cfg.Local.NaCl_Cert_Len,
-            Result   => Cert_Buf,
-            Len      => Cert_Len);
+         Handshake.Certs.Build_Certificate_Chain
+           (Id     => HC.Cfg.Local.all,
+            Result => Cert_Buf,
+            Len    => Cert_Len);
          pragma Assert (Reasm_Coherent (HC));
 
+         if Cert_Len = 0
+           or else Cert_Len >= Transcript_Capacity
+           or else Cert_Len > Max_Fragment
+         then
+            S.Last_Error := Internal_Error;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            pragma Assert (Reasm_Coherent (HC));
+            return;
+         end if;
+
+         pragma Assert (Cert_Len < Transcript_Capacity);
+         pragma Assert (Cert_Len <= Max_Fragment);
          if Cert_Len > 0 then
             Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
             Records.Build_Encrypted_Record
@@ -4185,6 +4236,12 @@ is
          when Closing =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
+            elsif Input_Available (S) > 0 then
+               if S.Negotiated_Version = TLS_1_2 then
+                  SPARKTLS.Client.TLS12.Process_Connected_12 (S, Result);
+               else
+                  Process_Connected (S, Result);
+               end if;
             else
                --  Zero traffic keys before closing
                S.Server_App.Key := (others => 0);
@@ -5270,6 +5327,10 @@ is
             S.Ticket.Ticket_Len := Tick_Len;
             S.Ticket.Lifetime   := Lifetime;
             S.Ticket.Age_Add    := Age_Add;
+            S.Ticket.Received_At :=
+              (if S.Get_Time /= null
+               then SPARKTLS.Tickets_12.To_Unix_Seconds (S.Get_Time.all)
+               else 0);
             S.Ticket.Suite      := S.Negotiated_Suite;
 
             case S.Negotiated_Suite is
@@ -5472,7 +5533,6 @@ is
       Result :    out Action)
    is
    begin
-      Result := OK;
       declare
          Frag_Len : constant N32 := Rec.Fragment_Len;
          Frag_Start : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
@@ -5535,7 +5595,9 @@ is
          case Inner_Type is
             when 16#17# =>
                --  Application data
-               if Plain_Len > 0 and then
+               if S.State = Closing and then Plain_Len > 0 then
+                  Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+               elsif Plain_Len > 0 and then
                   S.App_Data_Len + Plain_Len <= S.App_Data'Length
                then
                   S.App_Data (S.App_Data_Len ..
@@ -5595,6 +5657,7 @@ is
                         Keys      => S.Client_App,
                         Output    => S.Output,
                         Bytes_Out => A);
+                     pragma Assert (A <= N32 (S.Output.Data'Length));
                   end;
                   Set_State (S, Closing);
                   if Output_Pending (S) > 0 then
@@ -5637,7 +5700,11 @@ is
                end if;
 
             when others =>
-               Result := OK;
+               --  RFC 8446 §5.4: after decryption, the inner
+               --  content type must be application_data, alert, or
+               --  handshake. Encrypted CCS and any other value are
+               --  unexpected post-handshake records.
+               Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
          end case;
       end;
    end Handle_Connected_App_Record;

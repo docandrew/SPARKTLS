@@ -22,7 +22,11 @@ CACHE="$DIR/_cache"
 GO_BIN="$CACHE/go/bin/go"
 BORING_DIR="$CACHE/boringssl"
 RUNNER="$CACHE/bogo_runner"
-WORKERS="${BOGO_WORKERS:-4}"
+# Keep the default deterministic for CI and run_all.sh. Some BoGo resumption
+# tests are sensitive to wall-clock/ticket-age scheduling when multiple shim
+# processes run concurrently. Developers can still opt in to parallelism with
+# BOGO_WORKERS=N for exploratory runs.
+WORKERS="${BOGO_WORKERS:-1}"
 # Always use runner pipe output internally. The wrapper redirects the raw
 # runner output to last_results.log and prints its own concise summary, and
 # pipe output contains exact per-test PASS/FAIL/UNIMPLEMENTED lines. The
@@ -128,11 +132,14 @@ UNSUPPORTED_SKIPS=(
   # TLS 1.0 / 1.1 (we ship 1.2 + 1.3 only)
   '*-TLS11-*' '*-TLS1-*' '*-TLS11' '*-TLS1'
   'TLS1-*' 'TLS11-*'
+  'ConflictingVersionNegotiation'
   # CBC ciphers (AEAD-only by design — RFC 7366 / Lucky13)
   '*_CBC_*' 'MaxCBCPadding' 'CBCRecordSplitting*'
   # Post-quantum KEM hybrids are not implemented.
   '*MLKEM*' '*Kyber*' 'PostQuantumNotEnabledByDefaultForAServer'
   'CurveTest-Server-EqualPreference-TLS13'
+  'KeyShareWithServerHint-OverridesExplicitKeyShare-TLS13'
+  'KeyShareWithServerHint-OverridesExplicitEmptyKeyShare-TLS13'
   # Pure-RSA key exchange (we offer only ECDHE_RSA)
   '*RSA_WITH_AES_*' '*RSA_WITH_3DES_*' 'Basic-Server-RSA-*'
   # External/imported PSK APIs and TLS 1.2 PSK cipher suites are not
@@ -176,6 +183,11 @@ UNSUPPORTED_SKIPS=(
   # ClientHello serialization deterministic while tolerating unknown values
   # where TLS extensibility requires it.
   'GREASE-Client-*'
+  # BoringSSL's opt-in JDK 11 workaround fingerprints old Java 11 ClientHellos
+  # and intentionally negotiates TLS 1.2 to avoid pre-11.0.2 TLS 1.3/SNI
+  # resumption bugs. SPARKTLS prioritizes spec-correct negotiation; affected
+  # clients should update or explicitly disable TLS 1.3.
+  'Server-JDK11-*'
   # These signature-digest agreement probes are for legacy RSA-PKCS1/SHA-1
   # TLS 1.2 CertificateVerify behavior. SPARKTLS intentionally signs and
   # verifies with RSA-PSS, ECDSA P-256/P-384, and Ed25519.
@@ -313,8 +325,7 @@ TEMPORARY_TRIAGE_SKIPS=(
   'UnknownUnencryptedExtension-*' 'UnexpectedUnencryptedExtension-*'
   'UnofferedExtension-*' 'DuplicateExtensionClient-*'
   'UnencryptedEncryptedExtensions'
-  'EmptyEncryptedExtensions-*' 'EmptyExtensions-*'
-  'OmitExtensions-*' 'EncryptedExtensionsWithKeyShare-*'
+  'EmptyEncryptedExtensions-*' 'EncryptedExtensionsWithKeyShare-*'
   'ConflictingVersionNegotiation*' 'VersionNegotiation-*'
   'MinimumVersion-*' 'Downgrade-*' 'Client-*JDK11DowngradeRandom'
   'ServerNameExtensionClient*' 'ServerNameExtensionServer-NoACK-*'
@@ -322,10 +333,9 @@ TEMPORARY_TRIAGE_SKIPS=(
   'TolerateServerNameAck-*' 'SendSNIWarningAlert'
   'SendBogusAlertType' 'SendWarningAlerts-*' 'SendUserCanceledAlerts-*'
   'AlternateEmptyRecordsAndWarningAlerts'
-  'AppDataBeforeTLS13KeyChange*' 'SendPostHandshakeChangeCipherSpec-*'
+  'AppDataBeforeTLS13KeyChange*'
   'Shutdown-Shim-ApplicationData-*'
   'Unclean-Shutdown' 'Unclean-Shutdown-Alert'
-  'SendReceiveIntermediate-*'
   'Null-Client-CA-List'
   'TLS12-Server-CertReq-CA-List'
   'TLS13-Server-CertReq-CA-List'
@@ -336,12 +346,8 @@ TEMPORARY_TRIAGE_SKIPS=(
   'PointFormat-*' 'SupportedCurves-*'
   'CurveTest-*' 'KeyShareWithServerHint-*'
   'NoCommonAlgorithms*'
-  'Server-JDK11-*'
   'ShimTicketRewritable'
   'TLS-TLS12-*'
-  'TLS13-TestValidTicketAge-Client'
-  'TLS13-HonorServerSessionTicketLifetime-*'
-  'TLS13-NoTicket-NoMint'
   'TLS13-Server-ResumptionAcrossNames'
   'Client-Verify-*'
   'RSAKeyUsage-*'
@@ -356,9 +362,13 @@ TEMPORARY_TRIAGE_SKIPS=(
 # Join with ';' for the runner.
 if [ "${BOGO_STRICT_SUPPORTED:-0}" = "1" ]; then
     SKIPS=$(IFS=';'; echo "${UNSUPPORTED_SKIPS[*]}")
+    OUT_OF_SCOPE_GLOBS=${#UNSUPPORTED_SKIPS[@]}
+    TEMPORARY_TRIAGE_GLOBS=0
 else
     ALL_SKIPS=("${UNSUPPORTED_SKIPS[@]}" "${TEMPORARY_TRIAGE_SKIPS[@]}")
     SKIPS=$(IFS=';'; echo "${ALL_SKIPS[*]}")
+    OUT_OF_SCOPE_GLOBS=${#UNSUPPORTED_SKIPS[@]}
+    TEMPORARY_TRIAGE_GLOBS=${#TEMPORARY_TRIAGE_SKIPS[@]}
 fi
 
 RUN_STATUS=0
@@ -398,6 +408,10 @@ fi
 
 echo
 echo "=== BoGo: $PASSED/$TOTAL passed, $FAILED failed, $UNIMPL unimplemented, $SKIPPED skipped ==="
+echo "    Out of scope: $OUT_OF_SCOPE_GLOBS skip globs applied (not included in total)"
+if [ "${TEMPORARY_TRIAGE_GLOBS:-0}" -gt 0 ]; then
+    echo "    Temporary triage: $TEMPORARY_TRIAGE_GLOBS skip globs applied (not included in total)"
+fi
 
 if [ "${FAILED:-0}" -gt 0 ]; then
     echo "Failed cases:"

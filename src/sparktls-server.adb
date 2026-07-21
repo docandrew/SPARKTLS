@@ -596,7 +596,7 @@ is
 
 
    procedure Process_Connected (S : in out Session; Result : out Action)
-   with Pre => S.State = Connected
+   with Pre => S.State in Connected | Closing
                and then S.Role = Role_Server
                and then Nonce_Space_Available (S.Server_App)
                and then Nonce_Space_Available (S.Client_App)
@@ -1012,6 +1012,12 @@ is
          when Closing =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
+            elsif Input_Available (S) > 0 then
+               if S.Negotiated_Version = TLS_1_2 then
+                  SPARKTLS.Server.TLS12.Process_Connected_12 (S, Result);
+               else
+                  Process_Connected (S, Result);
+               end if;
             else
                --  Zero traffic keys before closing
                S.Server_App.Key := (others => 0);
@@ -4633,14 +4639,27 @@ is
                   Handshake.Parse_Handshake_Header
                     (Data, Msg_Type, Msg_Len, Parse_OK);
 
-                  if not Parse_OK then
-                     --  RFC 8446 §6.2: malformed handshake → fatal
-                     --  decode_error alert. We're past keys, so use
-                     --  the encrypted alert path. Was missing the
-	                     --  alert entirely (peer saw TCP RST).
-	                     Send_Encrypted_Alert (S, Decode_Error, Result);
-                     return;
-                  end if;
+	                  if not Parse_OK then
+	                     --  Unknown handshake type is a state-machine error
+	                     --  (unexpected_message); malformed shape for a known
+	                     --  handshake type is decode_error.
+	                     declare
+	                        Raw_Type : constant Byte :=
+	                          (if Plain_Len_Const >= 1 then Data (0) else 0);
+	                        Is_Known : constant Boolean :=
+	                          Raw_Type in 16#01# | 16#02# | 16#04# |
+	                                      16#08# | 16#0B# | 16#0C# |
+	                                      16#0D# | 16#0E# | 16#0F# |
+	                                      16#10# | 16#14#;
+	                     begin
+	                        Send_Encrypted_Alert
+	                          (S,
+	                           (if Is_Known then Decode_Error
+	                            else Unexpected_Message),
+	                           Result);
+	                     end;
+	                     return;
+	                  end if;
 
 	                  if Plain_Len_Const < 4 then
 	                     Send_Encrypted_Alert (S, Decode_Error, Result);
@@ -5590,7 +5609,9 @@ is
          case Inner_Type is
             when 16#17# =>
                --  Application data
-               if Plain_Len > 0 and then
+               if S.State = Closing and then Plain_Len > 0 then
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+               elsif Plain_Len > 0 and then
                   S.App_Data_Len + Plain_Len <= S.App_Data'Length
                then
                   S.App_Data (S.App_Data_Len ..

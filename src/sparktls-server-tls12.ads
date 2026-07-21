@@ -296,7 +296,7 @@ is
    procedure Process_Connected_12
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State = Connected
+   with Pre => S.State in Connected | Closing
                and then Empty_Records_Bounded_RFC_8446_5_2 (S)
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                  (S.Client_Seq_12)
