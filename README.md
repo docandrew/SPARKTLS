@@ -43,6 +43,18 @@ designed for formal verification.
   suites, groups, signature schemes, versions, or extensions to exercise peer
   tolerance. This is a deliberate product choice, not a missing MVP feature.
 
+## Session Ticket Policy
+
+TLS 1.3 session tickets are hostname-scoped by default. Servers only mark
+NewSessionTicket values with the `resumption_across_names` ticket flag when
+`Config.TLS13_Resumption_Across_Names` is set to `True`.
+
+Leave this setting disabled unless the deployment intentionally shares a ticket
+store and resumption policy across the relevant hostnames, such as a single
+service fleet serving multiple names inside the same trust boundary. Enabling it
+asks clients that honor the flag to treat the ticket as reusable across names, so
+it should not be used to bridge unrelated services or administrative domains.
+
 ## Not Yet Supported
 
 - TLS 1.2 client-side session ticket resumption (RFC 5077)

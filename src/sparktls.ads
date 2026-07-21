@@ -1283,6 +1283,14 @@ is
       --  If non-null, server sends NewSessionTicket after handshake.
       Ticket_Store : Ticket_Store_Access := null;
 
+      --  Server: mark TLS 1.3 NewSessionTicket values as usable across
+      --  hostnames via the ticket_flags resumption_across_names bit.
+      --  Default False is the conservative policy: tickets are scoped to
+      --  the name the client verified. Set True only for an intentionally
+      --  shared deployment where the same trust boundary, ticket store, and
+      --  resumption policy apply across those hostnames.
+      TLS13_Resumption_Across_Names : Boolean := False;
+
       --  Server: TLS 1.2 ticket encryption keys (RFC 5077).
       --  When non-null and at least one key has Valid=True, the server
       --  parses session_ticket extension on CH and emits a stateless

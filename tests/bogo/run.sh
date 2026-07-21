@@ -272,6 +272,11 @@ UNSUPPORTED_SKIPS=(
   'ALPNServer-Async-TLS-TLS12'
   'CurveID-Resume-Server' 'FragmentAcrossChangeCipherSpec-Client-Resume-Packed'
   'HelloRetryRequest-NonResumableCipher-TLS13'
+  # BoringSSL rewrites its own serialized shim ticket internals for this test.
+  # SPARKTLS TLS 1.2 tickets use RFC 5077 stateless TEKs, and TLS 1.3 tickets
+  # are bounded ticket-store identifiers, so there is no compatible public API
+  # to expose here.
+  'ShimTicketRewritable'
 
   # BoringSSL client-auth matrix exercises shim behaviors and
   # per-iteration assertions we do not currently model. SPARKTLS mTLS
@@ -346,9 +351,7 @@ TEMPORARY_TRIAGE_SKIPS=(
   'PointFormat-*' 'SupportedCurves-*'
   'CurveTest-*' 'KeyShareWithServerHint-*'
   'NoCommonAlgorithms*'
-  'ShimTicketRewritable'
   'TLS-TLS12-*'
-  'TLS13-Server-ResumptionAcrossNames'
   'Client-Verify-*'
   'RSAKeyUsage-*'
   'RSA-PSS-Default-Verify' 'Client-SignDefault-*'

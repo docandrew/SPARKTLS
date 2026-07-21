@@ -2019,7 +2019,7 @@ is
                  + Unsigned_16 (Frag (F + 5));
                Sig_Len    : constant N32 :=
                  N32 (Frag (F + 6)) * 256 + N32 (Frag (F + 7));
-               Verified   : Boolean := False;
+               Verified   : Boolean;
             begin
                if Sig_Len = 0
                  or else Sig_Len /= Msg_Len - 4
@@ -2399,18 +2399,22 @@ is
 	                  return;
 	               end if;
                --  RFC 5246 §7.4.9: Finished is the last handshake
-               --  message in the client's flight. Any plaintext bytes
-               --  in the same record beyond `4 + Finished_Verify_Len`
-               --  is excess data → fatal unexpected_message
-               --  (BoGo TrailingDataWithFinished). Server's WRITE state
-               --  is still plaintext at this point (CCS not yet sent),
-               --  so the alert MUST be plaintext — sending it encrypted
-               --  leaves Go's TLS stack seeing garbage on the wire.
-	               if PL /= 4 + Finished_Verify_Len then
-	                  Send_Alert_And_Error (S, Unexpected_Message, Result);
-	                  pragma Assert (Reasm_Building (HC));
-	                  return;
-	               end if;
+               --  message in the client's flight. Any bytes in the same
+               --  record beyond `4 + Finished_Verify_Len` are excess
+               --  data and therefore fatal unexpected_message. In the
+               --  abbreviated resume flow, the server has already sent
+               --  CCS+Finished, so the alert must use the encrypted
+               --  write epoch. In the full flow, the server has not sent
+               --  CCS yet, so the alert remains plaintext.
+               if PL /= 4 + Finished_Verify_Len then
+                  if HC.TLS12_Resuming then
+                     Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result);
+                  else
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                  end if;
+                  pragma Assert (Reasm_Building (HC));
+                  return;
+               end if;
 
                declare
                   Exp : Verify_Data_12;

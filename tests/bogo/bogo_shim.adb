@@ -98,6 +98,7 @@ procedure Bogo_Shim is
       Resumption_Delay_Seconds : Natural := 0;
       Time_Offset_Seconds      : Natural := 0;
       No_Ticket                 : Boolean := False;
+      Resumption_Across_Names   : Boolean := False;
    end record;
 
    Cfg : Config_T;
@@ -788,13 +789,14 @@ procedure Bogo_Shim is
               or A = "-permute-extensions"
               or A = "-server-preference"
               or A = "-no-key-shares"
-              or A = "-resumption-across-names-enabled"
             then
                --  These select BoringSSL shim behavior. SPARKTLS has no
                --  equivalent per-test knob yet, but accepting the flags
                --  lets BoGo distinguish active compatibility gaps from
                --  mere argv-parser gaps.
                null;
+            elsif A = "-resumption-across-names-enabled" then
+               Cfg.Resumption_Across_Names := True;
             elsif A'Length >= 11
               and then (A (A'First .. A'First + 10) = "-on-initial"
                      or A (A'First .. A'First + 9)  = "-on-resume"
@@ -1118,6 +1120,8 @@ procedure Bogo_Shim is
                Server_Cfg.Skip_Verify := Cfg.Request_Client_Cert;
                Server_Cfg.Ticket_Store :=
                  (if Cfg.No_Ticket then null else Tickets);
+               Server_Cfg.TLS13_Resumption_Across_Names :=
+                 Cfg.Resumption_Across_Names;
                Server_Cfg.TLS12_Ticket_Keys := TLS12_Keys'Unchecked_Access;
                Server_Cfg.Auto_Rotate_TEK := False;
                Server_Cfg.Versions := Policy;
@@ -1231,6 +1235,16 @@ procedure Bogo_Shim is
          case Res is
             when Has_Output =>
                Send_Pending;
+               if S.State = Error_State then
+                  delay 0.05;
+                  Ada.Command_Line.Set_Exit_Status
+                    (Ada.Command_Line.Exit_Status
+                       (if Cfg.Expect_Hs_Fails then Exit_Success else Exit_Failure));
+                  if not Cfg.Expect_Hs_Fails then
+                     Run_Failed := True;
+                  end if;
+                  return;
+               end if;
             when Need_Input =>
                declare
                   Done : Boolean;

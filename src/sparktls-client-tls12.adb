@@ -329,25 +329,29 @@ is
 
    procedure Process_Server_Flight
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-			         with Pre  => Reasm_Building (HC)
-                   and then (S.State not in Idle | Closing | Closed | Error_State)
-                   and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
-                   and then HC.Cfg.Random /= null
-                   and then HC.Selected_Group in
-                     Group_X25519 | Group_Secp256r1 | Group_Secp384r1
-		                   and then Valid_ECDHE_Group (HC.Selected_Group)
-			                     and then HC.Transcript_Len > 0
-			                     and then HC.Transcript_Len <= Transcript_Capacity
-		                   and then S.Negotiated_Suite in
-		                     Suite_ECDHE_RSA_AES128_GCM_SHA256
-		                   | Suite_ECDHE_RSA_AES256_GCM_SHA384
-		                   | Suite_ECDHE_RSA_CHACHA20_SHA256
-		                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-		                   | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-		                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-		                   and then SPARKTLSCrypto.P384.Field.Initialized
-		                   and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-           Post => Reasm_Coherent (HC);
+   with Pre  => Reasm_Building (HC)
+                and then (S.State not in Idle | Closing | Closed | Error_State)
+                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+                and then HC.Cfg.Random /= null
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Transcript_Len > 0
+                and then HC.Transcript_Len <= Transcript_Capacity
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                and then
+                  (if HC.CKE_Received_12 then
+                     Records.TLS12.Nonce_Space_Available_12
+                       (HC.Client_Seq_12))
+                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+        Post => Reasm_Coherent (HC);
 
    procedure Copy_Cert_To_X509
      (Cert_RFLX : in     RBT.Bytes;
@@ -3843,6 +3847,19 @@ is
    --  Process_Server_Finished: decrypt + verify server Finished
    ------------------------------------------------------------------
 
+   function Finished_Reasm_Shape_12 (HC : Handshake_Context) return Boolean is
+     (HC.Reasm_Buf = null
+      or else
+        (HC.Reasm_Buf'First = 0
+         and then HC.Reasm_Buf'Last <= Max_HS_Msg - 1
+         and then HC.Reasm_Need >= 4
+         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+         and then
+           (if HC.Reasm_Hdr_Pending then
+              HC.Reasm_Need = 4
+              and then HC.Reasm_Len <= 4)))
+   with Ghost;
+
    procedure Send_Encrypted_Finished_Error_12
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -3876,11 +3893,12 @@ is
 
    procedure Ensure_Finished_Reasm_Buffer_12
      (HC : in out Handshake_Context)
-	   with Pre  => Reasm_Building (HC),
-	        Post => Reasm_Building (HC)
-	                and HC.Reasm_Buf /= null
-	                and HC.Reasm_Len <= HC.Reasm_Need
-	                and HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+   with Pre  => Reasm_Building (HC),
+        Post => Reasm_Building (HC)
+                and HC.Reasm_Buf /= null
+                and Finished_Reasm_Shape_12 (HC)
+                and HC.Reasm_Len <= HC.Reasm_Need
+                and HC.Client_Seq_12 = HC.Client_Seq_12'Old;
 
    procedure Ensure_Finished_Reasm_Buffer_12
      (HC : in out Handshake_Context)
@@ -3947,12 +3965,14 @@ is
       Result    :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and Reasm_Building (HC)
+                and Finished_Reasm_Shape_12 (HC)
                 and Plaintext'First = 0
                 and PL > 0
                 and PL - 1 <= Plaintext'Last
                 and Records.TLS12.Nonce_Space_Available_12
                       (HC.Client_Seq_12),
         Post => Reasm_Building (HC)
+                and then Finished_Reasm_Shape_12 (HC)
                 and then
                   (if Result = OK then
                      S.State = S.State'Old
@@ -4043,14 +4063,21 @@ is
             --  handshake message and must be the last thing in its
             --  TLS record. Any leftover plaintext after the Finished
             --  body is fatal unexpected_message (BoGo
-            --  TrailingDataWithFinished-Client-TLS12). The alert is
-            --  encrypted under client_write_key since we're post-CCS.
+            --  TrailingDataWithFinished-Client-TLS12). In the full
+            --  handshake the client already sent CCS before waiting for
+            --  the server Finished, so the alert is encrypted. In the
+            --  abbreviated resume flow the client sends CCS after the
+            --  server Finished, so the alert is still plaintext.
             if HC.Reasm_Len = HC.Reasm_Need and P_Pos < PL then
-	               Send_Encrypted_Finished_Error_12
-	                 (S, HC, 10, Unexpected_Message, Result);
-	               pragma Assert (Reasm_Building (HC));
-	               return;
-	            end if;
+               if HC.TLS12_Resuming then
+                  Send_Alert_And_Error (S, Unexpected_Message, Result);
+               else
+                  Send_Encrypted_Finished_Error_12
+                    (S, HC, 10, Unexpected_Message, Result);
+               end if;
+               pragma Assert (Reasm_Building (HC));
+               return;
+            end if;
          end if;
       end;
 
@@ -4141,6 +4168,7 @@ is
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => S.State in Wait_Server_Finished | Client_Finished_Sent
                 and Reasm_Building (HC)
+                and Finished_Reasm_Shape_12 (HC)
                 and HC.Transcript_Len > 0
                 and Records.TLS12.Nonce_Space_Available_12
                       (HC.Client_Seq_12)

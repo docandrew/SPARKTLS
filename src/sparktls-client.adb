@@ -5064,7 +5064,6 @@ is
    is
       Rec : Records.Parse_Result;
    begin
-      Result := OK;   --  default; overwritten by every code path below
       if Input_Available (S) = 0 then
          Result := Need_Input;
          return;
@@ -5126,9 +5125,12 @@ is
             Handle_Encrypted_App_Data (S, HC, Rec, Result);
 
          when others =>
-            --  Skip unexpected
+            --  Once TLS 1.3 handshake traffic keys are active, handshake
+            --  messages must arrive as encrypted application_data records.
+            --  A plaintext record in this epoch is equivalent to a failed
+            --  protected record.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
+            Send_HS_Encrypted_Alert (S, HC, Bad_Record_MAC, Result);
       end case;
    end Process_Encrypted_Handshake;
 

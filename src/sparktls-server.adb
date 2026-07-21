@@ -4923,16 +4923,26 @@ is
                               --  NST format: type(1) + len(3) + lifetime(4) +
                               --  age_add(4) + nonce_len(1) + nonce(2) +
                               --  ticket_len(2) + ticket(16) + ext_len(2) +
-                              --  GREASE extension(4) = 39.
+                              --  GREASE extension(4) + optional
+                              --  ticket_flags(7) = 39 or 46.
                               --  We never emit the early_data extension —
                               --  0-RTT is intentionally out of scope (see
                               --  Cfg.Resume_Ticket comment in sparktls.ads).
-                              NST : Byte_Seq (0 .. 38) := (others => 0);
+                              Include_Flags : constant Boolean :=
+                                 HC.Cfg.TLS13_Resumption_Across_Names;
+                              NST_Total : constant N32 :=
+                                 (if Include_Flags then 46 else 39);
+                              NST_Body_Len : constant N32 :=
+                                 NST_Total - 4;
+                              NST_Ext_Len : constant N32 :=
+                                 (if Include_Flags then 11 else 4);
+                              NST : Byte_Seq (0 .. 45) := (others => 0);
                            begin
                               --  Handshake type: NewSessionTicket (0x04)
                               NST (0) := 16#04#;
-                              --  Length: 35 bytes
-                              NST (1) := 0; NST (2) := 0; NST (3) := 35;
+                              --  Length: 35 or 42 bytes
+                              NST (1) := 0; NST (2) := 0;
+                              NST (3) := Byte (NST_Body_Len);
                               --  ticket_lifetime: 3600 seconds (1 hour)
                               NST (4) := 0; NST (5) := 0;
                               NST (6) := 16#0E#; NST (7) := 16#10#;
@@ -4948,11 +4958,22 @@ is
                               NST (15) := 0; NST (16) := 16;
                               --  ticket (the cache ID)
                               NST (17 .. 32) := TID;
-                              --  extensions_length: 4
-                              NST (33) := 0; NST (34) := 4;
+                              --  extensions_length: 4 or 11
+                              NST (33) := 0; NST (34) := Byte (NST_Ext_Len);
                               --  GREASE extension 0x0a0a, empty body.
                               NST (35) := 16#0A#; NST (36) := 16#0A#;
                               NST (37) := 0; NST (38) := 0;
+                              if Include_Flags then
+                                 --  ticket_flags extension (0x003E), body
+                                 --  opaque flags<1..255>. Bit 8
+                                 --  resumption_across_names is encoded as
+                                 --  two minimally-encoded flag bytes: 00 01.
+                                 NST (39) := 0; NST (40) := 16#3E#;
+                                 NST (41) := 0; NST (42) := 3;
+                                 NST (43) := 2;
+                                 NST (44) := 0;
+                                 NST (45) := 1;
+                              end if;
 
                               --  NewSessionTicket is a post-handshake
                               --  optimisation (RFC 8446 §4.6.1); it is
@@ -4967,7 +4988,7 @@ is
                                     S.Server_App.Counter;
                               begin
                                  Records.Build_Encrypted_Record
-                                   (Plaintext  => NST,
+                                   (Plaintext  => NST (0 .. NST_Total - 1),
                                     Inner_Type => 16#16#,  --  handshake
                                     Keys       => S.Server_App,
                                     Output     => S.Output,
