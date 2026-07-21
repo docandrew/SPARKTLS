@@ -748,7 +748,7 @@ fi
 # ===================================================================
 echo ""
 echo "--- SNI: cert selection by hostname ---"
-SNI_SERVER=/home/doc/git/tls_proj/sparktls/bin/examples/tls_sni_server
+SNI_SERVER="$REPO_ROOT/bin/examples/tls_sni_server"
 if [ ! -x "$SNI_SERVER" ]; then
     echo "  (skipped — tls_sni_server not built)"
 else
@@ -896,7 +896,7 @@ fi
 # ===================================================================
 echo ""
 echo "--- TLS 1.2 ticket resumption: SPARKTLS client → openssl s_server ---"
-RESUME_TEST=/home/doc/git/tls_proj/sparktls/bin/examples/tls12_resume_test
+RESUME_TEST="$REPO_ROOT/bin/examples/tls12_resume_test"
 if [ ! -x "$RESUME_TEST" ]; then
     echo "  (skipped — tls12_resume_test not built)"
 else

@@ -338,7 +338,8 @@ begin
          Clock    => Current_Time'Unrestricted_Access,
          Mode     => (if Use_RFC5280
                       then SPARKTLS.Mode_RFC5280
-                      else SPARKTLS.Mode_WebPKI));
+                      else SPARKTLS.Mode_WebPKI),
+         Skip_Verify => Insecure);
 
       Handshake : loop
          SPARKTLS.Client.Advance (S, Res);

@@ -14,7 +14,7 @@ designed for formal verification.
 - Signature verification: Ed25519, ECDSA P-256/P-384, RSA-PSS + RSA-PKCS1 v1.5 (SHA-256/384/512)
 - X.509 certificate parsing + chain validation via SPARKx509
 - TLS 1.3 PSK session resumption (psk_dhe_ke mode, forward-secret)
-- TLS 1.2 server-side session ticket resumption (RFC 5077)
+- TLS 1.2 client + server session ticket resumption (RFC 5077 tickets)
 - ALPN with strict echo-check (RFC 7301 §3.1/§3.2)
 - Zero heap allocation — all buffers are stack or session-owned
 - RecordFlux-generated message serialization/parsing with SPARK contracts
@@ -55,9 +55,31 @@ service fleet serving multiple names inside the same trust boundary. Enabling it
 asks clients that honor the flag to treat the ticket as reusable across names, so
 it should not be used to bridge unrelated services or administrative domains.
 
+TLS 1.2 resumption uses RFC 5077 session tickets. TLS 1.2 session-ID
+resumption is intentionally not implemented.
+
+## Certificate Validation Policy
+
+`Mode_WebPKI` is the default validation mode for public web-style TLS. It
+applies RFC 5280 chain validation plus WebPKI-oriented leaf policy checks.
+`Mode_RFC5280` is available for private PKI and development certificates where
+WebPKI issuance policy is not the right compatibility target.
+
+`Skip_Verify` is only a chain-validation opt-out. When `Server_Name` is set,
+hostname verification still runs even with `Skip_Verify => True`, so a
+self-signed development certificate for the wrong hostname is rejected. Set
+`Skip_Hostname_Verify => True` as a separate explicit opt-out only when hostname
+binding is not desired.
+
+Current x509-limbo expected failures are documented in
+`PRODUCTION_READINESS.md`. The release policy treats the path-building capacity
+limit and public-suffix dependency as compatibility limits, and the remaining
+false-reject policy cases as conservative behavior to resolve or document before
+a production-facing release.
+
 ## Not Yet Supported
 
-- TLS 1.2 client-side session ticket resumption (RFC 5077)
+- TLS 1.2 session-ID resumption
 - Post-quantum key exchange (ML-KEM hybrid) — see `mlkem_roadmap`
 - AES-CCM cipher suites (gating item for a FIPS-conformant profile)
 - TLS 1.3 server-side 0-RTT (see "Not Supported" above — by design)

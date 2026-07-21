@@ -26,15 +26,42 @@ with X509;
 package body SPARKTLS.Client with
    SPARK_Mode => On
 is
+   function Lower_ASCII (C : Character) return Character is
+     (if C in 'A' .. 'Z'
+      then Character'Val (Character'Pos (C) + 32)
+      else C);
+
+   function Same_Hostname (Left, Right : Hostname_Buf) return Boolean is
+   begin
+      if Left.Len /= Right.Len then
+         return False;
+      end if;
+
+      for I in 1 .. Left.Len loop
+         if Lower_ASCII (Left.Data (I)) /= Lower_ASCII (Right.Data (I)) then
+            return False;
+         end if;
+      end loop;
+
+      return True;
+   end Same_Hostname;
+
    function Resume_Ticket_Usable
      (T     : Session_Ticket;
-      Clock : Get_Time_Fn) return Boolean
+      Clock : Get_Time_Fn;
+      Server_Name : Hostname_Buf) return Boolean
    is
    begin
       if not T.Valid
         or else T.PSK_Len = 0
         or else T.Ticket_Len = 0
         or else T.Lifetime = 0
+      then
+         return False;
+      end if;
+
+      if not T.Resumption_Across_Names
+        and then not Same_Hostname (T.Server_Name, Server_Name)
       then
          return False;
       end if;
@@ -57,7 +84,8 @@ is
       and then
         (Cfg.Skip_Verify
          or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
-         or else Resume_Ticket_Usable (Cfg.Resume_Ticket, Cfg.Get_Time)));
+         or else Resume_Ticket_Usable
+                   (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name)));
 
    --  Send a fatal alert encrypted under the client_handshake_
    --  traffic_secret, then transition to Error_State. Prepends the
@@ -1745,6 +1773,7 @@ is
             Role      => Role_Client,
             others    => <>);
       S.Get_Time := Cfg.Get_Time;
+      S.Server_Name := Cfg.Server_Name;
 
       if not Client_Config_Can_Start (Cfg) then
          Set_State (S, Error_State);
@@ -1765,7 +1794,8 @@ is
       --  resumption ticket via Cfg, copy it into S.Ticket before
       --  Build_Client_Hello so the CH carries the pre_shared_key
       --  extension and the binder is computed from the ticket's PSK.
-      if Resume_Ticket_Usable (Cfg.Resume_Ticket, Cfg.Get_Time)
+      if Resume_Ticket_Usable
+           (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name)
       then
          S.Ticket := Cfg.Resume_Ticket;
       end if;
@@ -5158,6 +5188,7 @@ is
      (Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Start_Off : in     N32;
+      Resumption_Across_Names : out Boolean;
       Status    :    out NST_Status)
    with Pre => Plaintext'First = 0
                and Plaintext'Last < N32'Last / 2
@@ -5171,6 +5202,7 @@ is
      (Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Start_Off : in     N32;
+      Resumption_Across_Names : out Boolean;
       Status    :    out NST_Status)
    is
       type Tag_Array is array (1 .. 16) of Unsigned_16;
@@ -5179,6 +5211,7 @@ is
       EP        : N32       := Start_Off;
    begin
       Status := NST_OK;
+      Resumption_Across_Names := False;
 
       if EP + 2 > Plain_Len then
          return;
@@ -5189,9 +5222,13 @@ is
       declare
          Ext_Total : constant N32 :=
             N32 (Plaintext (EP)) * 256 + N32 (Plaintext (EP + 1));
-         Ext_End   : constant N32 :=
-            N32'Min (EP + 2 + Ext_Total, Plain_Len);
+         Ext_End   : constant N32 := EP + 2 + Ext_Total;
       begin
+         if Ext_End > Plain_Len then
+            Status := NST_Decode_Err;
+            return;
+         end if;
+
          EP := EP + 2;
          pragma Assert (EP <= Ext_End);
          pragma Assert (Ext_End <= Plain_Len);
@@ -5208,6 +5245,11 @@ is
                   N32 (Plaintext (EP + 2)) * 256
                   + N32 (Plaintext (EP + 3));
             begin
+               if E_Len > Ext_End - (EP + 4) then
+                  Status := NST_Decode_Err;
+                  return;
+               end if;
+
                --  RFC 8446 §4.2: duplicate extension types in any HS
                --  message are forbidden (BoGo TLS13-DuplicateTicket
                --  EarlyDataSupport).
@@ -5229,11 +5271,24 @@ is
                --  (BoGo TLS13-Client-EmptyTicketFlags).
                if Tag = 16#003E#
                  and then (E_Len < 2
-                           or else (EP + 4 < Ext_End
-                                    and then N32 (Plaintext (EP + 4)) = 0))
+                           or else N32 (Plaintext (EP + 4)) = 0
+                           or else N32 (Plaintext (EP + 4)) /= E_Len - 1)
                then
                   Status := NST_Decode_Err;
                   return;
+               end if;
+
+               if Tag = 16#003E# then
+                  declare
+                     Inner_Len : constant N32 := N32 (Plaintext (EP + 4));
+                  begin
+                     if Inner_Len >= 2
+                       and then
+                         (Plaintext (EP + 4 + Inner_Len) and 16#01#) /= 0
+                     then
+                        Resumption_Across_Names := True;
+                     end if;
+                  end;
                end if;
 
                --  early_data ext (0x002A) in NST signals server
@@ -5244,6 +5299,9 @@ is
                EP := EP + 4 + E_Len;
             end;
          end loop;
+         if EP /= Ext_End then
+            Status := NST_Decode_Err;
+         end if;
       end;
    end Walk_NST_Extensions;
 
@@ -5334,6 +5392,8 @@ is
                then SPARKTLS.Tickets_12.To_Unix_Seconds (S.Get_Time.all)
                else 0);
             S.Ticket.Suite      := S.Negotiated_Suite;
+            S.Ticket.Server_Name := S.Server_Name;
+            S.Ticket.Resumption_Across_Names := False;
 
             case S.Negotiated_Suite is
                when Suite_AES_256_GCM_SHA384 =>
@@ -5369,15 +5429,17 @@ is
             --  advertised limit is irrelevant.
             declare
                Status : NST_Status;
+               Across_Names : Boolean;
             begin
                Walk_NST_Extensions
                  (Plaintext => Plaintext,
                   Plain_Len => Plain_Len,
                   Start_Off => P + Tick_Len,
+                  Resumption_Across_Names => Across_Names,
                   Status    => Status);
                case Status is
                   when NST_OK =>
-                     null;
+                     S.Ticket.Resumption_Across_Names := Across_Names;
                   when NST_Decode_Err =>
                      S.Ticket.Valid := False;
                      Send_App_Encrypted_Alert

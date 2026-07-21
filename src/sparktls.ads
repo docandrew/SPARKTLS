@@ -1017,6 +1017,8 @@ is
       PSK          : Bytes_48 := (others => 0);  --  derived PSK
       PSK_Len      : N32 := 0;              --  32 (SHA-256) or 48 (SHA-384)
       Suite        : Unsigned_16 := 0;       --  cipher suite
+      Server_Name  : Hostname_Buf := (Len => 0, Data => (others => ' '));
+      Resumption_Across_Names : Boolean := False;
       Valid        : Boolean := False;
    end record;
 
@@ -2224,6 +2226,11 @@ is
 
       --  Resumption: cached session ticket (client side, TLS 1.3 PSK)
       Ticket : Session_Ticket;
+
+      --  Client-side server name mirror. TLS 1.3 tickets can arrive after
+      --  the handshake context has been freed, so the session keeps the
+      --  configured name needed to bind future resumption tickets.
+      Server_Name : Hostname_Buf := (Len => 0, Data => (others => ' '));
 
       --  Resumption: cached session ticket (client side, TLS 1.2 RFC 5077).
       --  Populated by the TLS 1.2 client when it receives a

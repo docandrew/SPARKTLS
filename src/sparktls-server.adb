@@ -4841,10 +4841,20 @@ is
                      --  Derive resumption master secret and send NewSessionTicket
                      declare
                         use SPARKTLS.Ticket_Cache;
-                        Nonce    : Byte_Seq (0 .. 1) := (0, 0);
-                        TID : Ticket_ID := (others => 0);
-                        Enc_Out  : N32;
+                        Ticket_Random : Byte_Seq (0 .. 5);
+                        Nonce         : Byte_Seq (0 .. 1);
+                        Age_Add       : Unsigned_32;
+                        TID           : Ticket_ID := (others => 0);
+                        Enc_Out       : N32;
                      begin
+                        HC.Cfg.Random.all (Ticket_Random);
+                        Nonce := Ticket_Random (0 .. 1);
+                        Age_Add :=
+                          Unsigned_32 (Ticket_Random (2)) * 2**24
+                          + Unsigned_32 (Ticket_Random (3)) * 2**16
+                          + Unsigned_32 (Ticket_Random (4)) * 2**8
+                          + Unsigned_32 (Ticket_Random (5));
+
                         case S.Negotiated_Suite is
                            when Suite_AES_256_GCM_SHA384 =>
                               declare
@@ -4865,7 +4875,7 @@ is
                                     Ticket_Cache.Store
                                       (HC.Cfg.Ticket_Store.all,
                                        Bytes_48 (PSK_Out), 48,
-                                       S.Negotiated_Suite, 0, TID);
+                                       S.Negotiated_Suite, Age_Add, TID);
                                     pragma Warnings
                                       (On, "value conversion implemented by copy");
                                  end if;
@@ -4899,7 +4909,7 @@ is
                                        Ticket_Cache.Store
                                          (HC.Cfg.Ticket_Store.all,
                                           PSK_48, 32,
-                                          S.Negotiated_Suite, 0, TID);
+                                          S.Negotiated_Suite, Age_Add, TID);
                                     end;
                                  end if;
                                  S.Res_Master := (others => 0);
@@ -4946,9 +4956,13 @@ is
                               --  ticket_lifetime: 3600 seconds (1 hour)
                               NST (4) := 0; NST (5) := 0;
                               NST (6) := 16#0E#; NST (7) := 16#10#;
-                              --  ticket_age_add: 0 (simplified)
-                              NST (8) := 0; NST (9) := 0;
-                              NST (10) := 0; NST (11) := 0;
+                              --  ticket_age_add
+                              NST (8) := Byte (Shift_Right (Age_Add, 24));
+                              NST (9) := Byte
+                                (Shift_Right (Age_Add, 16) and 16#FF#);
+                              NST (10) := Byte
+                                (Shift_Right (Age_Add, 8) and 16#FF#);
+                              NST (11) := Byte (Age_Add and 16#FF#);
                               --  ticket_nonce_length: 2
                               NST (12) := 2;
                               --  ticket_nonce

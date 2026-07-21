@@ -42,6 +42,19 @@ jobs:
       - name: Build and test
         run: nix develop --command bash ci/check.sh
 
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sparktls-build-test-logs-${{ matrix.arch }}
+          if-no-files-found: ignore
+          path: |
+            tests/protocol/logs/**
+            tests/bogo/_cache/last_results.log
+            tests/bogo/_cache/transcripts/**
+            tests/bogo/obj/*.stdout
+            tests/bogo/obj/*.stderr
+
   timing:
     env:
       ALR_NON_INTERACTIVE: "1"
@@ -57,3 +70,14 @@ jobs:
 
       - name: Timing checks
         run: nix develop --command bash ci/timing.sh all
+
+      - name: Upload timing failure logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sparktls-timing-logs
+          if-no-files-found: ignore
+          path: |
+            tests/ctgrind/obj/*.stdout
+            tests/ctgrind/obj/*.stderr
+            tests/ctgrind/obj/*.cswi

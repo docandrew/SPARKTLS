@@ -69,6 +69,12 @@ procedure Test_PSK_Resume is
          T.PSK (I) := Byte (16#A0# + (Natural (I) mod 16));
       end loop;
       T.Suite := Suite_AES_128_GCM_SHA256;
+      declare
+         H : constant String := "localhost";
+      begin
+         T.Server_Name.Data (1 .. H'Length) := H;
+         T.Server_Name.Len := H'Length;
+      end;
       T.Valid := True;
       return T;
    end Make_Ticket;
@@ -207,6 +213,32 @@ begin
    --  echo pre_shared_key).
    Check ("HC.PSK_Offered = True after Init with valid ticket",
           S.HC_Ptr /= null and then S.HC_Ptr.PSK_Offered);
+
+   declare
+      S_Mismatch   : Session;
+      Cfg_Mismatch : Config := Cfg;
+      H            : constant String := "example.com";
+      Net          : Byte_Seq (0 .. 16383);
+      Drained      : N32;
+      Has_PSK      : Boolean := False;
+   begin
+      Cfg_Mismatch.Server_Name :=
+        (Len => 0, Data => (others => ' '));
+      Cfg_Mismatch.Server_Name.Data (1 .. H'Length) := H;
+      Cfg_Mismatch.Server_Name.Len := H'Length;
+      Cfg_Mismatch.Skip_Verify := True;
+
+      SPARKTLS.Client.Init (S_Mismatch, Cfg_Mismatch);
+      Drain_Ciphertext (S_Mismatch, Net, Drained);
+      if Drained > 5 then
+         Has_PSK := Find_Ext (Net (5 .. Drained - 1), 16#0029#) /= Not_Found;
+      end if;
+      Check ("mismatched ticket hostname is not offered",
+             not S_Mismatch.Ticket.Valid
+             and then S_Mismatch.HC_Ptr /= null
+             and then not S_Mismatch.HC_Ptr.PSK_Offered
+             and then not Has_PSK);
+   end;
 
    --  0-RTT is intentionally not supported (see Cfg.Resume_Ticket
    --  comment in sparktls.ads). The CH must NEVER carry the
