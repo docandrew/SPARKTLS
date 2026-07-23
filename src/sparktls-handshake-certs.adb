@@ -653,11 +653,11 @@ is
      (Cert_RFLX : in     RBT.Bytes;
       HC        : in out Handshake_Context;
       C_Len     : in     N32)
-   with Pre  => Cert_RFLX'First = 1
-                and then Cert_RFLX'Length = RBT.Length (C_Len)
-                and then C_Len > 0
-			                and then C_Len <= N32 (Max_Cert_DER)
-			                and then Reasm_Coherent (HC),
+	   with Pre  => Cert_RFLX'First = 1
+	                and then Cert_RFLX'Length = RBT.Length (C_Len)
+	                and then C_Len > 0
+	                and then C_Len <= N32 (Max_Cert_DER)
+	                and then Reasm_Building (HC),
 	        Post => HC.Client_HS = HC.Client_HS'Old
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
@@ -665,11 +665,19 @@ is
 	                          then HC.Cfg.Local /= null)
 	                and then (if HC.Cfg.Local'Old /= null
 	                              and then HC.Cfg.Local'Old.Has_Identity
-	                          then HC.Cfg.Local /= null
-	                               and then HC.Cfg.Local.Has_Identity)
+		                          then HC.Cfg.Local /= null
+		                               and then HC.Cfg.Local.Has_Identity)
+	                and then
+	                  (if HC.Cfg.Local'Old /= null
+	                      and then SPARKTLS.Handshake.Server_Msgs
+	                        .Local_Config_Valid (HC.Cfg.Local'Old)
+	                   then HC.Cfg.Local /= null
+	                        and then SPARKTLS.Handshake.Server_Msgs
+	                          .Local_Config_Valid (HC.Cfg.Local))
 	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
-				                and then Reasm_Coherent (HC)
+		                          then HC.Cfg.Random /= null)
+	                and then Reasm_Coherent (HC)
+	                and then Reasm_Building (HC)
                   and then HC.Reasm_Len = HC.Reasm_Len'Old
                   and then HC.Reasm_Need = HC.Reasm_Need'Old
                   and then HC.Reasm_Hdr_Pending =
@@ -687,7 +695,8 @@ is
          pragma Loop_Invariant
            (I in 0 .. C_Len - 1
             and RBT.Index (I + 1) in Cert_RFLX'Range);
-			         pragma Loop_Invariant (Reasm_Coherent (HC));
+	         pragma Loop_Invariant (Reasm_Coherent (HC));
+            pragma Loop_Invariant (Reasm_Building (HC));
          pragma Loop_Invariant (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
          pragma Loop_Invariant
            (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
@@ -842,11 +851,19 @@ is
 	                     and then
 	                       (if HC.Cfg.Local'Loop_Entry /= null
 	                           and then HC.Cfg.Local'Loop_Entry.Has_Identity
-	                        then HC.Cfg.Local /= null
-	                             and then HC.Cfg.Local.Has_Identity)
-	                     and then (if HC.Cfg.Random'Loop_Entry /= null
-	                               then HC.Cfg.Random /= null)
-						                     and then Reasm_Coherent (HC)
+	                     then HC.Cfg.Local /= null
+	                          and then HC.Cfg.Local.Has_Identity)
+	                  and then
+	                    (if HC.Cfg.Local'Loop_Entry /= null
+	                        and then SPARKTLS.Handshake.Server_Msgs
+	                          .Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
+	                     then HC.Cfg.Local /= null
+	                          and then SPARKTLS.Handshake.Server_Msgs
+	                            .Local_Config_Valid (HC.Cfg.Local))
+	                  and then (if HC.Cfg.Random'Loop_Entry /= null
+	                            then HC.Cfg.Random /= null)
+	                  and then Reasm_Coherent (HC)
+	                  and then Reasm_Building (HC)
 	                         and then
                            HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
                          and then

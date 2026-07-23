@@ -168,10 +168,26 @@ is
 	                   and then HC.Cfg.Random /= null
                    and then Reasm_Building (HC)
                    and then HC.Version = HC.Version'Old
-                and then HC.Selected_Group = HC.Selected_Group'Old
-                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
-                and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
-                --  RFC 5246 §7.4.9 transcript-monotonicity invariant:
+                   and then HC.Selected_Group = HC.Selected_Group'Old
+                   and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
+                   and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
+                   and then HC.Peer_Cert = HC.Peer_Cert'Old
+                   and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
+                   and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
+                   and then
+                     (if HC.Peer_Cert_Valid'Old
+                         and then HC.Peer_Cert_DER_Len'Old
+                           in 1 .. Max_Cert_DER_Len
+                         and then X509.Spans_Valid
+                           (HC.Peer_Cert'Old,
+                            X509.N32 (HC.Peer_Cert_DER_Len'Old) - 1)
+                      then HC.Peer_Cert_Valid
+                           and then HC.Peer_Cert_DER_Len
+                             in 1 .. Max_Cert_DER_Len
+                           and then X509.Spans_Valid
+                             (HC.Peer_Cert,
+                              X509.N32 (HC.Peer_Cert_DER_Len) - 1))
+                   --  RFC 5246 §7.4.9 transcript-monotonicity invariant:
                 --  the handshake transcript is the basis for Finished
                 --  verify_data. Once a byte enters the transcript it
                 --  cannot be removed or rewritten, otherwise the peer's
@@ -1905,6 +1921,12 @@ is
                   pragma Assert (Reasm_Building (HC));
                   return;
                end if;
+                  pragma Assert
+                    (if HC.Peer_Cert_Valid
+                     then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                          and then X509.Spans_Valid
+                            (HC.Peer_Cert,
+                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
             end;
 
             Append_Transcript (HC, Frag);

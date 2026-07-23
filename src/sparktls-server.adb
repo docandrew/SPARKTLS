@@ -831,10 +831,23 @@ is
 		                   then HC.Cfg.Ticket_Store.Next
 		                        in 0 .. Max_Cached_Tickets - 1)
 			                and HC.Version = HC.Version'Old
-	                and HC.Peer_Cert = HC.Peer_Cert'Old
-	                and HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
-	                and HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
-		                and HC.HRR_Sent = HC.HRR_Sent'Old
+		                and HC.Peer_Cert = HC.Peer_Cert'Old
+		                and HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
+		                and HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
+		                and
+		                  (if HC.Peer_Cert_Valid'Old
+		                      and then HC.Peer_Cert_DER_Len'Old
+		                        in 1 .. Max_Cert_DER_Len
+		                      and then X509.Spans_Valid
+		                        (HC.Peer_Cert'Old,
+		                         X509.N32 (HC.Peer_Cert_DER_Len'Old) - 1)
+		                   then HC.Peer_Cert_Valid
+		                        and then HC.Peer_Cert_DER_Len
+		                          in 1 .. Max_Cert_DER_Len
+		                        and then X509.Spans_Valid
+		                          (HC.Peer_Cert,
+		                           X509.N32 (HC.Peer_Cert_DER_Len) - 1))
+			                and HC.HRR_Sent = HC.HRR_Sent'Old
 			                and HC.Legacy_Session_ID_Len =
 			                      HC.Legacy_Session_ID_Len'Old
 				                and (if Reasm_Building (HC)'Old

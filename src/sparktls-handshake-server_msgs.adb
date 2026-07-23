@@ -3422,6 +3422,7 @@ is
       if TLS12_Client_Hello_Omits_Extensions (Data)
         or else TLS12_Client_Hello_Has_Empty_Extensions (Data)
       then
+         pragma Assert (Saved_Config_Frame);
          Parse_TLS12_Client_Hello_No_Extensions (S, HC, Data, OK);
          pragma Assert (Saved_Config_Frame);
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);

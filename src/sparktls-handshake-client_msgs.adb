@@ -75,11 +75,14 @@ is
 
    function Effective_ALPN_Data_Len (Cfg : Config) return N32
    with Post => Effective_ALPN_Data_Len'Result <= 2 + N32
-                 (Max_Config_ALPN_Protocols * (Max_Hostname_Len + 1));
+                 (Max_Config_ALPN_Protocols * (Max_Hostname_Len + 1))
+                 and then
+                   (if Effective_ALPN_Count (Cfg) > 0
+                    then Effective_ALPN_Data_Len'Result >= 3);
 
    function Effective_ALPN_Data_Len (Cfg : Config) return N32 is
       Count : constant Natural := Effective_ALPN_Count (Cfg);
-      Total : N32 := 0;
+      Total : N32;
    begin
       if Count = 0 then
          return 0;
@@ -87,15 +90,20 @@ is
 
       Total := 2;
       if Cfg.ALPN_Count > 0 then
+         Total := Total + N32 (Cfg.ALPN_Count);
          for I in ALPN_Index loop
             exit when I > Cfg.ALPN_Count;
             pragma Loop_Invariant
-              (Total <= 2 + N32 ((I - 1) * (Max_Hostname_Len + 1)));
-            Total := Total + 1 + N32 (Cfg.ALPN_List (I).Len);
+              (Total >= 2 + N32 (Cfg.ALPN_Count));
+            pragma Loop_Invariant
+              (Total <= 2 + N32 (Cfg.ALPN_Count)
+                 + N32 ((I - 1) * Max_Hostname_Len));
+            Total := Total + N32 (Cfg.ALPN_List (I).Len);
          end loop;
       else
          Total := Total + 1 + N32 (Cfg.ALPN.Len);
       end if;
+      pragma Assert (Total >= 3);
       return Total;
    end Effective_ALPN_Data_Len;
 
