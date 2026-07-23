@@ -281,9 +281,10 @@ is
 		                  S.Input.Read_Pos'Old
 		                and then S.Input.Write_Pos =
 		                  S.Input.Write_Pos'Old
-		                and then HC.Legacy_Session_ID_Len in 0 .. 32
-		                and then HC.HRR_Sent = HC.HRR_Sent'Old
-		                and then Nonce_Space_Available (HC.Server_HS)
+			                and then HC.Legacy_Session_ID_Len in 0 .. 32
+			                and then HC.HRR_Sent = HC.HRR_Sent'Old
+			                and then HC.Server_HS = HC.Server_HS'Old
+			                and then Nonce_Space_Available (HC.Server_HS)
 	                and then Nonce_Space_Available (S.Server_App)
 	                and then
 		                  (if Valid
@@ -738,7 +739,7 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
-   with Pre  => S.State not in Idle | Closed | Closing | Error_State
+	   with Pre  => S.State not in Idle | Closed | Error_State
                 and then Alert_Desc (Err) /= 0
                 and then Nonce_Space_Available (S.Server_App),
         Post => S.State = Error_State
@@ -4522,10 +4523,10 @@ is
                pragma Assert (Reasm_Building (HC));
             else
                declare
-                  A : N32;
+                  Ignored_A : N32;
                begin
                   Records.Build_Alert_Record
-                    (2, 10, S.Server_App, S.Output, A);
+                    (2, 10, S.Server_App, S.Output, Ignored_A);
                end;
                S.Last_Error := Unexpected_Message;
                Set_State (S, Error_State);
@@ -4564,10 +4565,10 @@ is
                if Frag_Len < Records.Tag_Size + 1 then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   declare
-                     A : N32;
+                     Ignored_A : N32;
                   begin
                      Records.Build_Alert_Record
-                       (2, 10, S.Server_App, S.Output, A);
+                       (2, 10, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Decode_Error;
                   Set_State (S, Error_State);
@@ -4592,10 +4593,10 @@ is
 
                if not Dec_Valid then
                   declare
-                     A : N32;
+                     Ignored_A : N32;
                   begin
                      Records.Build_Alert_Record
-                       (2, 10, S.Server_App, S.Output, A);
+                       (2, 10, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
@@ -4609,10 +4610,10 @@ is
 
                if Inner_Type /= 16#16# then
                   declare
-                     A : N32;
+                     Ignored_A : N32;
                   begin
                      Records.Build_Alert_Record
-                       (2, 10, S.Server_App, S.Output, A);
+                       (2, 10, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
@@ -4739,10 +4740,10 @@ is
                      --  expects ":DIGEST_CHECK_FAILED:" → alert 51).
                      if Msg_Len /= Expected_Len then
                         declare
-                           A : N32;
+                           Ignored_A : N32;
                         begin
                            Records.Build_Alert_Record
-                             (2, 51, S.Server_App, S.Output, A);
+                             (2, 51, S.Server_App, S.Output, Ignored_A);
                         end;
                         S.Last_Error := Certificate_Verify_Failed;
                         Set_State (S, Error_State);
@@ -4755,10 +4756,10 @@ is
                      end if;
                      if N32 (Data'Length) /= 4 + Expected_Len then
                         declare
-                           A : N32;
+                           Ignored_A : N32;
                         begin
                            Records.Build_Alert_Record
-                             (2, 10, S.Server_App, S.Output, A);
+                             (2, 10, S.Server_App, S.Output, Ignored_A);
                         end;
                         S.Last_Error := Unexpected_Message;
                         Set_State (S, Error_State);
@@ -4818,10 +4819,10 @@ is
 
                         if not Verified then
                            declare
-                              A : N32;
+                              Ignored_A : N32;
                            begin
                               Records.Build_Alert_Record
-                                (2, 51, S.Server_App, S.Output, A);
+                                (2, 51, S.Server_App, S.Output, Ignored_A);
                            end;
                            S.Last_Error := Handshake_Failure;
                            Set_State (S, Error_State);
@@ -5073,11 +5074,11 @@ is
                              16#08# | 16#0B# | 16#0C# |
                              16#0D# | 16#0E# | 16#0F# |
                              16#10# | 16#14#;
-               A : N32;
+               Ignored_A : N32;
             begin
                Records.Build_Alert_Record
                  (2, (if Is_Known then 50 else 10),
-                  S.Server_App, S.Output, A);
+                  S.Server_App, S.Output, Ignored_A);
                S.Last_Error :=
                  (if Is_Known then Decode_Error
                   else Unexpected_Message);
@@ -5093,10 +5094,10 @@ is
 
          if Msg_Type /= Handshake.HT_Finished then
             declare
-               A : N32;
+               Ignored_A : N32;
             begin
                Records.Build_Alert_Record
-                 (2, 10, S.Server_App, S.Output, A);
+                 (2, 10, S.Server_App, S.Output, Ignored_A);
             end;
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
@@ -5192,10 +5193,10 @@ is
                   --  keys after receiving our Finished).
                   --  RFC 8446 §5.2: bad_record_mac (20)
                   declare
-                     A : N32;
+                     Ignored_A : N32;
                   begin
                      Records.Build_Alert_Record
-                       (2, 20, S.Server_App, S.Output, A);
+                       (2, 20, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Bad_Record_MAC;
                   Set_State (S, Error_State);
@@ -5224,10 +5225,10 @@ is
                elsif Inner_Type /= 16#16# then
                   --  Unexpected inner type during handshake
                   declare
-                     A : N32;
+                     Ignored_A : N32;
                   begin
                      Records.Build_Alert_Record
-                       (2, 10, S.Server_App, S.Output, A);
+                       (2, 10, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
@@ -5433,10 +5434,10 @@ is
             else
                --  Invalid CCS (wrong length or duplicate)
                declare
-                  A : N32;
+                  Ignored_A : N32;
                begin
                   Records.Build_Alert_Record
-                    (2, 10, S.Server_App, S.Output, A);
+                    (2, 10, S.Server_App, S.Output, Ignored_A);
                end;
                S.Last_Error := Unexpected_Message;
                Set_State (S, Error_State);
@@ -5555,14 +5556,14 @@ is
             --  (the inner content type byte). RFC 8446 §5.4.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             declare
-               Alert_Out : N32;
+               Ignored_Alert_Out : N32;
             begin
                Records.Build_Alert_Record
                  (Level     => 2,
                   Desc      => 10,  --  unexpected_message
                   Keys      => S.Server_App,
                   Output    => S.Output,
-                  Bytes_Out => Alert_Out);
+                  Bytes_Out => Ignored_Alert_Out);
             end;
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
@@ -5581,14 +5582,14 @@ is
          then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             declare
-               Alert_Out : N32;
+               Ignored_Alert_Out : N32;
             begin
                Records.Build_Alert_Record
                  (Level     => 2,
                   Desc      => 22,  --  record_overflow
                   Keys      => S.Server_App,
                   Output    => S.Output,
-                  Bytes_Out => Alert_Out);
+                  Bytes_Out => Ignored_Alert_Out);
             end;
             S.Last_Error := Record_Overflow;
             Set_State (S, Error_State);
@@ -5615,14 +5616,14 @@ is
             --  MAC failure or empty inner plaintext (RFC 8446 §5.2/§5.4)
             --  Send encrypted bad_record_mac alert
             declare
-               Alert_Out : N32;
+               Ignored_Alert_Out : N32;
             begin
                Records.Build_Alert_Record
                  (Level     => 2,       --  fatal
                   Desc      => 20,      --  bad_record_mac
                   Keys      => S.Server_App,
                   Output    => S.Output,
-                  Bytes_Out => Alert_Out);
+                  Bytes_Out => Ignored_Alert_Out);
             end;
             Set_State (S, Error_State);
             S.Last_Error := Bad_Record_MAC;
@@ -5662,10 +5663,10 @@ is
                      S.Empty_Records_Recvd + 1;
                   if S.Empty_Records_Recvd > 32 then
                      declare
-                        A : N32;
+                        Ignored_A : N32;
                      begin
                         Records.Build_Alert_Record
-                          (2, 10, S.Server_App, S.Output, A);
+                          (2, 10, S.Server_App, S.Output, Ignored_A);
                      end;
                      S.Last_Error := Unexpected_Message;
                      Set_State (S, Error_State);
@@ -5688,10 +5689,10 @@ is
                --  reject bogus levels with illegal_parameter.
                if Plain_Len < 2 then
                   declare
-                     A : N32;
+                     Ignored_A : N32;
                   begin
                      Records.Build_Alert_Record
-                       (2, 50, S.Server_App, S.Output, A);
+                       (2, 50, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Decode_Error;
                   Set_State (S, Error_State);
@@ -5700,10 +5701,10 @@ is
                elsif Plaintext (0) /= 1 and Plaintext (0) /= 2 then
                   --  Bogus level (BoGo SendBogusAlertType: 0x42).
                   declare
-                     A : N32;
+                     Ignored_A : N32;
                   begin
                      Records.Build_Alert_Record
-                       (2, 47, S.Server_App, S.Output, A);
+                       (2, 47, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Illegal_Parameter;
                   Set_State (S, Error_State);
@@ -5712,16 +5713,18 @@ is
                elsif Plaintext (1) = 0 then
                   --  close_notify — reply in kind (warning level 1).
                   declare
-                     A : N32;
+                     Ignored_A : N32;
                   begin
                      Records.Build_Alert_Record
                        (Level     => 1,
                         Desc      => 0,
                         Keys      => S.Server_App,
                         Output    => S.Output,
-                        Bytes_Out => A);
+                        Bytes_Out => Ignored_A);
                   end;
-                  Set_State (S, Closing);
+	                  if S.State = Connected then
+	                     Set_State (S, Closing);
+	                  end if;
                   if Output_Pending (S) > 0 then
                      pragma Assert
                        (Close_Notify_Reply_State_RFC_5246_7_2_1
@@ -5739,10 +5742,10 @@ is
                         S.Warning_Alerts_Recvd + 1;
                      if S.Warning_Alerts_Recvd >= 5 then
                         declare
-                           A : N32;
+                           Ignored_A : N32;
                         begin
                            Records.Build_Alert_Record
-                             (2, 50, S.Server_App, S.Output, A);
+                             (2, 50, S.Server_App, S.Output, Ignored_A);
                         end;
                         S.Last_Error := Decode_Error;
                         Set_State (S, Error_State);
@@ -5753,10 +5756,10 @@ is
                      end if;
                   else
                      declare
-                        A : N32;
+                        Ignored_A : N32;
                      begin
                         Records.Build_Alert_Record
-                          (2, 50, S.Server_App, S.Output, A);
+                          (2, 50, S.Server_App, S.Output, Ignored_A);
                      end;
                      S.Last_Error := Decode_Error;
                      Set_State (S, Error_State);
@@ -5780,7 +5783,7 @@ is
    end Process_Connected;
 
    procedure Close_Notify (S : in out Session) is
-      Alert_Out : N32;
+      Ignored_Alert_Out : N32;
    begin
       if S.Negotiated_Version = TLS_1_2 then
          Records.TLS12.Build_Alert_Record_12
@@ -5790,14 +5793,14 @@ is
             Implicit_IV => S.Server_IV_12,
             Seq_Num     => S.Server_Seq_12,
             Output      => S.Output,
-            Bytes_Out   => Alert_Out);
+            Bytes_Out   => Ignored_Alert_Out);
       else
          Records.Build_Alert_Record
            (Level     => 1,
             Desc      => 0,
             Keys      => S.Server_App,
             Output    => S.Output,
-            Bytes_Out => Alert_Out);
+            Bytes_Out => Ignored_Alert_Out);
       end if;
       --  RFC 8446 §6.1: at most one close_notify per peer; if we
       --  already transitioned to Closing on a prior invocation, the

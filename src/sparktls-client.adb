@@ -46,10 +46,13 @@ is
       return True;
    end Same_Hostname;
 
-   function Resume_Ticket_Usable
+   procedure Check_Resume_Ticket_Usable
      (T     : Session_Ticket;
       Clock : Get_Time_Fn;
-      Server_Name : Hostname_Buf) return Boolean
+      Server_Name : Hostname_Buf;
+      Usable : out Boolean)
+   with
+     Always_Terminates => False
    is
    begin
       if not T.Valid
@@ -57,35 +60,41 @@ is
         or else T.Ticket_Len = 0
         or else T.Lifetime = 0
       then
-         return False;
+         Usable := False;
+         return;
       end if;
 
       if not T.Resumption_Across_Names
         and then not Same_Hostname (T.Server_Name, Server_Name)
       then
-         return False;
+         Usable := False;
+         return;
       end if;
 
       if Clock = null or else T.Received_At = 0 then
-         return True;
+         Usable := True;
+         return;
       end if;
 
       declare
          Now : constant Unsigned_64 :=
            SPARKTLS.Tickets_12.To_Unix_Seconds (Clock.all);
       begin
-         return Now < T.Received_At
+         Usable :=
+           Now < T.Received_At
            or else Now - T.Received_At < Unsigned_64 (T.Lifetime);
       end;
-   end Resume_Ticket_Usable;
+   end Check_Resume_Ticket_Usable;
 
-   function Client_Config_Can_Start (Cfg : Config) return Boolean is
+   function Client_Config_Can_Start
+     (Cfg : Config;
+      Resume_Usable : Boolean) return Boolean
+   is
      (Cfg.Random /= null
       and then
         (Cfg.Skip_Verify
          or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
-         or else Resume_Ticket_Usable
-                   (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name)));
+         or else Resume_Usable));
 
    --  Send a fatal alert encrypted under the client_handshake_
    --  traffic_secret, then transition to Error_State. Prepends the
@@ -126,8 +135,8 @@ is
          Output    => S.Output,
          Bytes_Out => A2);
       S.Last_Error := Err;
-	                              S.State := Error_State;
-      Result := (if Output_Pending (S) > 0
+      S.State := Error_State;
+      Result := (if A1 > 0 or else A2 > 0 or else Output_Pending (S) > 0
                  then Has_Output else Error_Alert);
    end Send_HS_Encrypted_Alert;
 
@@ -139,11 +148,11 @@ is
    --  of the client flight, and a duplicate would be a protocol
    --  violation per RFC 8446 §D.4.
    procedure Send_App_Encrypted_Alert
-     (S      : in out Session;
-      Err    : Error_Code;
-      Result :    out Action)
-   with Pre  => Nonce_Space_Available (S.Client_App)
-                and S.State not in Idle | Closing | Closed | Error_State,
+	     (S      : in out Session;
+	      Err    : Error_Code;
+	      Result :    out Action)
+	   with Pre  => Nonce_Space_Available (S.Client_App)
+	                and S.State not in Idle | Closed | Error_State,
         Post => S.State = Error_State
                 and S.Last_Error = Err
                 and Result in Has_Output | Error_Alert
@@ -160,8 +169,8 @@ is
          Output    => S.Output,
          Bytes_Out => A);
       S.Last_Error := Err;
-	                              S.State := Error_State;
-      Result := (if Output_Pending (S) > 0
+      S.State := Error_State;
+      Result := (if A > 0 or else Output_Pending (S) > 0
                  then Has_Output else Error_Alert);
    end Send_App_Encrypted_Alert;
 
@@ -1334,6 +1343,23 @@ is
 	                    Suite_AES_128_GCM_SHA256
 	                  | Suite_AES_256_GCM_SHA384
 	                  | Suite_CHACHA20_POLY1305_SHA256);
+
+   function WSH_Reasm_Shape (HC : Handshake_Context) return Boolean is
+     (HC.Reasm_Buf = null
+      or else HC.Reasm_Need = 0
+      or else
+        (HC.Reasm_Buf'First = 0
+         and then HC.Reasm_Buf'Length <= Max_HS_Msg
+         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+         and then HC.Reasm_Need - 1 < Transcript_Capacity
+         and then
+           (if HC.Reasm_Hdr_Pending then
+              HC.Reasm_Buf'Length = Max_HS_Msg
+              and then HC.Reasm_Need = 4
+              and then HC.Reasm_Len <= 4)))
+   with Ghost;
+
    procedure Reassemble_For_SH
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -1357,11 +1383,12 @@ is
 	               and then S.Input.Read_Pos + Rec.Record_Len
 		                        <= S.Input.Write_Pos
 		               and then S.Input.Read_Pos + Rec.Record_Len
-		                        <= IO_Buffer_Capacity
-		               and then
-		                 (if HC.Reasm_Buf /= null
-		                       and then HC.Reasm_Need > 0
-		                  then HC.Reasm_Need - 1 < Transcript_Capacity),
+			                        <= IO_Buffer_Capacity
+			               and then WSH_Reasm_Shape (HC)
+			               and then
+			                 (if HC.Reasm_Buf /= null
+			                       and then HC.Reasm_Need > 0
+			                  then HC.Reasm_Need - 1 < Transcript_Capacity),
 	        Post => (if Result = OK then
 		                    S.State = Wait_Server_Hello
 			                    and then Reasm_Coherent (HC)
@@ -1370,9 +1397,10 @@ is
 				                    and then HC.Transcript_Len <= Transcript_Capacity
 				                    and then HC.HRR_Cookie_Len <=
 				                      N32 (HC.HRR_Cookie'Length)
-			                    and then
-		                      (if HC.Reasm_Len >= HC.Reasm_Need then
-		                         HC.Reasm_Buf /= null
+				                    and then WSH_Reasm_Shape (HC)
+				                    and then
+			                      (if HC.Reasm_Len >= HC.Reasm_Need then
+			                         HC.Reasm_Buf /= null
 		                         and then HC.Reasm_Need > 0
 		                         and then HC.Reasm_Need - 1 <
 		                           Transcript_Capacity
@@ -1416,11 +1444,12 @@ is
 	                    and then Reasm_Coherent (HC)
 		                    and then HC.Cfg.Random /= null
 			                    and then HC.Transcript_Len > 0
-			                    and then HC.Transcript_Len <= Transcript_Capacity
-			                    and then HC.HRR_Cookie_Len <=
-			                      N32 (HC.HRR_Cookie'Length)
-		                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
-		                                 HC.Reasm_Buf /= null
+				                    and then HC.Transcript_Len <= Transcript_Capacity
+				                    and then HC.HRR_Cookie_Len <=
+				                      N32 (HC.HRR_Cookie'Length)
+			                    and then WSH_Reasm_Shape (HC)
+			                    and then (if HC.Reasm_Len >= HC.Reasm_Need then
+			                                 HC.Reasm_Buf /= null
 	                                 and then HC.Reasm_Need > 0
 	                                 and then HC.Reasm_Need - 1 <
 	                                   Transcript_Capacity));
@@ -1768,6 +1797,7 @@ is
    with SPARK_Mode => Off
    is
       OK : Boolean;
+      Resume_Usable : Boolean := False;
    begin
       S := (State     => Client_Hello_Sent,
             Role      => Role_Client,
@@ -1775,7 +1805,12 @@ is
       S.Get_Time := Cfg.Get_Time;
       S.Server_Name := Cfg.Server_Name;
 
-      if not Client_Config_Can_Start (Cfg) then
+      if Cfg.Random /= null then
+         Check_Resume_Ticket_Usable
+           (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name, Resume_Usable);
+      end if;
+
+      if not Client_Config_Can_Start (Cfg, Resume_Usable) then
          Set_State (S, Error_State);
          S.Last_Error := Internal_Error;
          return;
@@ -1794,9 +1829,7 @@ is
       --  resumption ticket via Cfg, copy it into S.Ticket before
       --  Build_Client_Hello so the CH carries the pre_shared_key
       --  extension and the binder is computed from the ticket's PSK.
-      if Resume_Ticket_Usable
-           (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name)
-      then
+      if Resume_Usable then
          S.Ticket := Cfg.Resume_Ticket;
       end if;
 
@@ -3323,10 +3356,11 @@ is
 	                and then S.State = Wait_Server_Hello
 		                and then Reasm_Coherent (HC)
 		                and then HC.Cfg.Random /= null
-		                and then HC.Transcript_Len > 0
-		                and then HC.Transcript_Len <= Transcript_Capacity
-		                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-		                and then HC.Reasm_Len < HC.Reasm_Need;
+			                and then HC.Transcript_Len > 0
+			                and then HC.Transcript_Len <= Transcript_Capacity
+			                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+			                and then WSH_Reasm_Shape (HC)
+			                and then HC.Reasm_Len < HC.Reasm_Need;
 
    procedure Start_Pending_SH_Reassembly
      (S          : in out Session;
@@ -3343,12 +3377,18 @@ is
       HC.Reasm_Need := 4;
       HC.Reasm_Hdr_Pending := True;
       HC.Reasm_Len := Frag_Len;
-      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
-	      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
-	      S.Input.Read_Pos := Next_Read;
-	      Result := OK;
-	      pragma Assert (HC.Cfg.Random /= null);
-	   end Start_Pending_SH_Reassembly;
+	      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
+		      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
+	      pragma Assert (HC.Reasm_Buf /= null);
+	      pragma Assert (HC.Reasm_Buf'First = 0);
+	      pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
+	      pragma Assert (HC.Reasm_Need = 4);
+	      pragma Assert (HC.Reasm_Len <= 4);
+	      pragma Assert (HC.Reasm_Need - 1 < Transcript_Capacity);
+		      S.Input.Read_Pos := Next_Read;
+		      Result := OK;
+		      pragma Assert (HC.Cfg.Random /= null);
+		   end Start_Pending_SH_Reassembly;
 
    procedure Start_Spanning_SH_Reassembly
      (S          : in out Session;
@@ -3375,11 +3415,12 @@ is
 	                and then S.State = Wait_Server_Hello
 			                and then Reasm_Coherent (HC)
 			                and then HC.Cfg.Random /= null
-			                and then HC.Transcript_Len > 0
-			                and then HC.Transcript_Len <= Transcript_Capacity
-			                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-			                and then HC.Reasm_Len < HC.Reasm_Need
-		                and then HC.Reasm_Need - 1 < Transcript_Capacity;
+				                and then HC.Transcript_Len > 0
+				                and then HC.Transcript_Len <= Transcript_Capacity
+				                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+				                and then WSH_Reasm_Shape (HC)
+				                and then HC.Reasm_Len < HC.Reasm_Need
+			                and then HC.Reasm_Need - 1 < Transcript_Capacity;
 
    procedure Start_Spanning_SH_Reassembly
      (S          : in out Session;
@@ -3396,12 +3437,18 @@ is
       HC.Reasm_Need := HS_Total;
       HC.Reasm_Hdr_Pending := False;
       HC.Reasm_Len := Frag_Len;
-      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
-	      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
-	      S.Input.Read_Pos := Next_Read;
-	      Result := OK;
-	      pragma Assert (HC.Cfg.Random /= null);
-	   end Start_Spanning_SH_Reassembly;
+	      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
+		      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
+	      pragma Assert (HC.Reasm_Buf /= null);
+	      pragma Assert (HC.Reasm_Buf'First = 0);
+	      pragma Assert (HC.Reasm_Buf'Length = HS_Total);
+	      pragma Assert (HC.Reasm_Need = HS_Total);
+	      pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+	      pragma Assert (HC.Reasm_Need - 1 < Transcript_Capacity);
+		      S.Input.Read_Pos := Next_Read;
+		      Result := OK;
+		      pragma Assert (HC.Cfg.Random /= null);
+		   end Start_Spanning_SH_Reassembly;
 
    procedure Start_Complete_SH_Reassembly
      (S          : in out Session;
@@ -3426,11 +3473,12 @@ is
 		        Post => S.State = Wait_Server_Hello
 		                and then Reasm_Coherent (HC)
 			                and then HC.Cfg.Random /= null
-			                and then HC.Transcript_Len > 0
-			                and then HC.Transcript_Len <= Transcript_Capacity
-			                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-			                and then HC.Reasm_Buf /= null
-		                and then HC.Reasm_Need > 0
+				                and then HC.Transcript_Len > 0
+				                and then HC.Transcript_Len <= Transcript_Capacity
+				                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+				                and then WSH_Reasm_Shape (HC)
+				                and then HC.Reasm_Buf /= null
+			                and then HC.Reasm_Need > 0
 		                and then HC.Reasm_Need - 1 < Transcript_Capacity;
 
    procedure Start_Complete_SH_Reassembly
@@ -3446,12 +3494,18 @@ is
       HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
       HC.Reasm_Need := HS_Total;
       HC.Reasm_Hdr_Pending := False;
-      HC.Reasm_Len := Frag_Len;
-	      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
-	      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
-	      S.Input.Read_Pos := Next_Read;
-	      pragma Assert (HC.Cfg.Random /= null);
-	   end Start_Complete_SH_Reassembly;
+	      HC.Reasm_Len := Frag_Len;
+		      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
+		      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
+	      pragma Assert (HC.Reasm_Buf /= null);
+	      pragma Assert (HC.Reasm_Buf'First = 0);
+	      pragma Assert (HC.Reasm_Buf'Length = Frag_Len);
+	      pragma Assert (HC.Reasm_Need = HS_Total);
+	      pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+	      pragma Assert (HC.Reasm_Need - 1 < Transcript_Capacity);
+		      S.Input.Read_Pos := Next_Read;
+		      pragma Assert (HC.Cfg.Random /= null);
+		   end Start_Complete_SH_Reassembly;
 
    procedure Reasm_Fresh_Fragment
      (S          : in out Session;
@@ -3789,14 +3843,14 @@ is
                               --  :ILLEGAL_PARAMETER: rather than TCP RST.
                               --  Pre-key state — alert is unencrypted.
                               declare
-                                 A : N32;
+                                 Ignored_A : N32;
                               begin
                                  Records.Build_Plaintext_Alert
                                    (Level     => 2,
                                     Desc      =>
                                        Alert_Desc (S.Last_Error),
                                     Output    => S.Output,
-                                    Bytes_Out => A);
+                                    Bytes_Out => Ignored_A);
                               end;
 	                              S.State := Error_State;
 	                              Result := (if Output_Pending (S) > 0
@@ -3823,14 +3877,14 @@ is
                            if HC.Got_HRR and then not HC.Sent_HRR_CCS then
                               if HC.Reasm_Len > HC.Reasm_Need then
                                  declare
-                                    A : N32;
+                                    Ignored_A : N32;
                                  begin
                                     Records.Build_Plaintext_Alert
                                       (Level     => 2,
                                        Desc      =>
                                          Alert_Desc (Unexpected_Message),
                                        Output    => S.Output,
-                                       Bytes_Out => A);
+                                       Bytes_Out => Ignored_A);
                                  end;
                                  S.Last_Error := Unexpected_Message;
                                  S.State := Error_State;
@@ -3851,7 +3905,6 @@ is
                                    (H,
                                     HC.Transcript
                                       (0 .. HC.Transcript_Len - 1));
-                                 HC.Transcript_Len := 0;
                                  HC.Transcript (0) := 16#FE#;
                                  HC.Transcript (1) := 16#00#;
                                  HC.Transcript (2) := 16#00#;
@@ -3891,7 +3944,7 @@ is
                                    (0 .. Handshake.Client_Msgs
                                             .Max_Client_Hello - 1);
                                  CH2_Len : N32;
-                                 Rec_Out : N32;
+                                 Ignored_Rec_Out : N32;
                               begin
                                  Handshake.Client_Msgs.Build_Client_Hello
                                    (S, HC, CH2_Buf, CH2_Len,
@@ -3922,15 +3975,15 @@ is
                                  --  the CCS emission it would
                                  --  normally do (handled below).
                                  declare
-                                    CCS_Bytes : N32;
+                                    Ignored_CCS_Bytes : N32;
                                  begin
                                     Records.Build_CCS_Record
-                                      (S.Output, CCS_Bytes);
+                                      (S.Output, Ignored_CCS_Bytes);
                                  end;
 	                                 HC.Sent_HRR_CCS := True;
-	                                 Records.Build_Handshake_Record
-	                                   (CH2_Buf (0 .. CH2_Len - 1),
-	                                    S.Output, Rec_Out);
+                                 Records.Build_Handshake_Record
+                                   (CH2_Buf (0 .. CH2_Len - 1),
+                                    S.Output, Ignored_Rec_Out);
 	                              end;
                               Free_Byte_Seq (HC.Reasm_Buf);
                               HC.Reasm_Len := 0;
@@ -4232,15 +4285,15 @@ is
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                and then Empty_Records_Bounded_RFC_8446_5_2 (S)
                and then S.Post_HS_Len <= Max_Record_Plaintext
-               and then S.Post_HS_Need <= Max_Record_Plaintext
-               and then
-                 (if S.Post_HS_Need = 0
-                  then S.Post_HS_Len = 0
-                  else S.Post_HS_Need >= 4
-                    and then S.Post_HS_Len <= S.Post_HS_Need)
-               and then Free_Space (S.Output) >=
-                          Records.Record_Header_Size + 3 + Records.Tag_Size
-   is
+	               and then S.Post_HS_Need <= Max_Record_Plaintext
+	               and then
+	                 (if S.Post_HS_Need = 0
+	                  then S.Post_HS_Len = 0
+	                  else S.Post_HS_Need >= 4
+	                    and then S.Post_HS_Len <= S.Post_HS_Need)
+	               and then Free_Space (S.Output) >=
+	                          Records.Record_Header_Size + 3 + Records.Tag_Size
+	   is
    begin
       Handled := True;
       case S.State is
@@ -5688,14 +5741,19 @@ is
                     (Empty_Records_Bounded_RFC_8446_5_2 (S));
                end if;
 
-            when 16#16# =>
-               --  Post-handshake handshake-record: today only NST is
-               --  expected here (KeyUpdate not yet implemented). The
-               --  handshake message itself may be split across multiple
-               --  encrypted records.
-               Process_Post_HS_Handshake_Bytes
-                 (S, Plaintext, Plain_Len, Result);
-               return;
+	            when 16#16# =>
+	               --  Post-handshake handshake-record: today only NST is
+	               --  expected here (KeyUpdate not yet implemented). The
+	               --  handshake message itself may be split across multiple
+	               --  encrypted records.
+	               if S.State = Connected then
+	                  Process_Post_HS_Handshake_Bytes
+	                    (S, Plaintext, Plain_Len, Result);
+	               else
+	                  Send_App_Encrypted_Alert
+	                    (S, Unexpected_Message, Result);
+	               end if;
+	               return;
 
             when 16#15# =>
                --  RFC 8446 §6 / RFC 5246 §7.2 alert. The 2-byte
@@ -5723,7 +5781,9 @@ is
                         Bytes_Out => A);
                      pragma Assert (A <= N32 (S.Output.Data'Length));
                   end;
-                  Set_State (S, Closing);
+	                  if S.State = Connected then
+	                     Set_State (S, Closing);
+	                  end if;
                   if Output_Pending (S) > 0 then
                      Result := Has_Output;
                   else
@@ -5839,7 +5899,7 @@ is
    end Process_Connected;
 
    procedure Close_Notify (S : in out Session) is
-      Alert_Out : N32;
+      Ignored_Alert_Out : N32;
    begin
       if S.Negotiated_Version = TLS_1_2 then
          Records.TLS12.Build_Alert_Record_12
@@ -5849,14 +5909,14 @@ is
             Implicit_IV => S.Client_IV_12,
             Seq_Num     => S.Client_Seq_12,
             Output      => S.Output,
-            Bytes_Out   => Alert_Out);
+            Bytes_Out   => Ignored_Alert_Out);
       else
          Records.Build_Alert_Record
            (Level     => 1,
             Desc      => 0,
             Keys      => S.Client_App,
             Output    => S.Output,
-            Bytes_Out => Alert_Out);
+            Bytes_Out => Ignored_Alert_Out);
       end if;
       --  See server-side comment: Set_State is a no-op when already
       --  Closing (avoids an invalid Closing → Closing transition).

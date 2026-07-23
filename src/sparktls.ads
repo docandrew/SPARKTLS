@@ -240,7 +240,7 @@ is
         when Wait_Client_Certificate =>
            To in Wait_Client_Cert_Verify | Wait_Client_Finished | Error_State,
         when Wait_Client_Cert_Verify =>
-           To in Wait_Client_Finished | Error_State,
+           To in Wait_Client_Finished | Closing | Error_State,
         when Wait_Client_Finished =>
            To in Connected | Closing | Error_State,
         when Connected =>
@@ -516,8 +516,8 @@ is
    --  Bytes_32; this ghost lifts the constraint to a named clause for
    --  RFC traceability.
    function Random_Length_RFC_5246_7_4_1_2
-     (R : Bytes_32) return Boolean is
-     (R'Length = 32)
+     (Ignored_R : Bytes_32) return Boolean is
+     (Ignored_R'Length = 32)
      with Ghost;
 
    --  RFC 5246 §6.2.2 / §7.4.1.4 / RFC 8446 §4.1.2: the only
@@ -567,8 +567,8 @@ is
    --  12 bytes (4 implicit + 8 explicit). Already type-enforced
    --  via Bytes_12.
    function GCM_Nonce_Length_RFC_5288_3
-     (N : Bytes_12) return Boolean is
-     (N'Length = 12)
+     (Ignored_N : Bytes_12) return Boolean is
+     (Ignored_N'Length = 12)
      with Ghost;
 
    --  RFC 5246 §7.4.9: TLS 1.2 Finished.verify_data is exactly
@@ -1729,7 +1729,7 @@ is
    --  to encode every valid reassembly shape in one global predicate; that
    --  created proof obligations in callers that did not need those facts.
    --  Keep concrete buffer bounds local to the code that indexes the buffer.
-   function Reasm_Coherent (HC : Handshake_Context) return Boolean is
+   function Reasm_Coherent (Ignored_HC : Handshake_Context) return Boolean is
      (True)
      with Ghost;
 

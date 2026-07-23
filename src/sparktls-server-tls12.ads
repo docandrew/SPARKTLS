@@ -98,14 +98,14 @@ is
    with Pre => HC.Version = TLS_1_2
                and then S.State in Wait_Client_Cert_Verify
                                  | Wait_Client_Finished
-	               and then HC.Cfg.Local /= null
-	               and then HC.Cfg.Local.Has_Identity
-	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                          (HC.Cfg.Local)
-	               and then HC.Cfg.Random /= null
-	               and then Reasm_Building (HC)
-	               and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
-	                 (HC.Selected_Group)
+               and then HC.Cfg.Local /= null
+               and then HC.Cfg.Local.Has_Identity
+               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                          (HC.Cfg.Local)
+               and then HC.Cfg.Random /= null
+               and then Reasm_Building (HC)
+               and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
+                 (HC.Selected_Group)
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                --  Required by Derive_Keys_12 called at the end:
@@ -276,9 +276,9 @@ is
 	                   and then HC.Cfg.Local.Has_Identity
 	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                              (HC.Cfg.Local)
-	                   and then HC.Cfg.Random /= null
-                   and then Reasm_Building (HC)
-                   and then S.State = S.State'Old
+		                   and then HC.Cfg.Random /= null
+		                   and then Reasm_Building (HC)
+		                   and then S.State = S.State'Old
                    and then S.Role = S.Role'Old
                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                    and then HC.Client_Seq_12 = 0

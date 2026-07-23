@@ -1570,6 +1570,7 @@ is
 	                     Fail_Decode;
 	                     return;
 	                  end if;
+                  pragma Assert (HS_Total <= Max_HS_Msg);
 
                   HC.Reasm_Need := HS_Total;
                   HC.Reasm_Hdr_Pending := False;
@@ -1579,6 +1580,12 @@ is
             if HC.Reasm_Len < HC.Reasm_Need then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;
+               pragma Assert (HC.Reasm_Buf /= null);
+               pragma Assert (HC.Reasm_Buf'First = 0);
+               pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
+               pragma Assert (HC.Reasm_Need > 0);
+               pragma Assert
+                 (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
                pragma Assert (Reasm_Building (HC));
                return;
             end if;
@@ -1640,6 +1647,7 @@ is
 	               end if;
 
                if HS_Total > Frag_Len then
+                  pragma Assert (HS_Total <= Max_HS_Msg);
                   HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
                   HC.Reasm_Need := HS_Total;
                   HC.Reasm_Hdr_Pending := False;

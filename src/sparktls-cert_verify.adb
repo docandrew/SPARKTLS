@@ -424,10 +424,10 @@ is
                   --  Ed25519 sig = 64 bytes, verify via Sign.Open
                   SM_Len : constant N32 := 64 + N32 (TBS_Bytes'Length);
                   SM     : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
-                  M      : Byte_Seq (0 .. SM_Len - 1);
+                  Ignored_M : Byte_Seq (0 .. SM_Len - 1);
                   PK_B   : Bytes_32 := (others => 0);
                   Verify_OK : Boolean;
-                  Verify_Len : I32;
+                  Ignored_Verify_Len : I32;
                begin
                   if Sig_Len /= 64 then return False; end if;
 
@@ -443,9 +443,9 @@ is
                   end loop;
 
                   SPARKTLSCrypto.Ed25519.Open
-                    (M      => M,
+                    (M      => Ignored_M,
                      Valid  => Verify_OK,
-                     Msg_Len => Verify_Len,
+                     Msg_Len => Ignored_Verify_Len,
                      SM     => SM,
                      PK     => PK_B);
 
@@ -1251,15 +1251,15 @@ is
       end Try_Build;
 
       R      : Validation_Result;
-      Budget : Natural := Max_Build_Calls;
+      Ignored_Budget : Natural := Max_Build_Calls;
    begin
       --  Build chain from leaf upward
       Try_Build
-        (Leaf_DER, Leaf,
+         (Leaf_DER, Leaf,
          Used     => (others => False),
          Depth    => 0,
          PL_Depth => 0,
-         Budget   => Budget,
+         Budget   => Ignored_Budget,
          Result   => R);
 
       if R /= Valid then
@@ -1494,17 +1494,18 @@ is
             declare
                SM_Len    : constant N32 := 64 + N32 (Data'Length);
                SM        : Byte_Seq (0 .. SM_Len - 1) := (others => 0);
-               M         : Byte_Seq (0 .. SM_Len - 1);
+               Ignored_M : Byte_Seq (0 .. SM_Len - 1);
                PK_Bytes  : Bytes_32 := (others => 0);
                OK        : Boolean;
-               Len       : I32;
+               Ignored_Len : I32;
             begin
                SM (0 .. 63) := Sig;
                SM (64 .. SM_Len - 1) := Data;
                for I in 0 .. 31 loop
                   PK_Bytes (N32 (I)) := Byte (PK_Data (X509.N32 (I)));
                end loop;
-               SPARKTLSCrypto.Ed25519.Open (M, OK, Len, SM, PK_Bytes);
+               SPARKTLSCrypto.Ed25519.Open
+                 (Ignored_M, OK, Ignored_Len, SM, PK_Bytes);
                return OK;
             end;
 

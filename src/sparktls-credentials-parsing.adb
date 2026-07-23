@@ -123,16 +123,33 @@ is
       Pos := Pos + 1;
       Parse_ASN1_Length (DER, Pos, Len, P_OK);
       if not P_OK then return; end if;
+      if Len = 0
+        or else Pos > DER'Last
+        or else Len > DER'Last - Pos + 1
+      then
+         return;
+      end if;
 
       --  Inner SEQUENCE tag (30)
       if Pos > DER'Last or else DER (Pos) /= 16#30# then return; end if;
       Pos := Pos + 1;
       Parse_ASN1_Length (DER, Pos, Len, P_OK);
       if not P_OK then return; end if;
+      if Len = 0
+        or else Pos > DER'Last
+        or else Len > DER'Last - Pos + 1
+      then
+         return;
+      end if;
 
       --  version INTEGER (should be 0)
       Parse_ASN1_Integer (DER, Pos, V_Pos, V_Len, P_OK);
-      if not P_OK then return; end if;
+      if not P_OK
+        or else V_Len /= 1
+        or else DER (V_Pos) /= 0
+      then
+         return;
+      end if;
 
       --  modulus n
       Parse_ASN1_Integer (DER, Pos, N_Pos, N_Len, P_OK);
@@ -143,7 +160,11 @@ is
       if not P_OK or else E_Len = 0 or else E_Len > 4 then return; end if;
 
       --  private exponent d
-      Parse_ASN1_Integer (DER, Pos, D_Pos, D_Len, P_OK);
+      declare
+         Ignored_Pos : X509.N32 := Pos;
+      begin
+         Parse_ASN1_Integer (DER, Ignored_Pos, D_Pos, D_Len, P_OK);
+      end;
       if not P_OK or else D_Len < 64 or else D_Len > 512 then return; end if;
 
       --  Pack output: n_len(2) || n || d_len(2) || d || e(4)
@@ -218,12 +239,12 @@ is
          declare
             Seed : Bytes_32;
             SK   : Bytes_64;
-            PK   : Bytes_32;
+            Ignored_PK : Bytes_32;
          begin
             for I in N32 range 0 .. 31 loop
                Seed (I) := SPARKNaCl.Byte (DER (16 + X509.N32 (I)));
             end loop;
-            SPARKTLSCrypto.Ed25519.Keypair (Seed, PK, SK);
+            SPARKTLSCrypto.Ed25519.Keypair (Seed, Ignored_PK, SK);
             if Key_Out'Length >= 64 then
                Key_Out (Key_Out'First .. Key_Out'First + 63) := SK;
                Key_Len := 64;
@@ -431,12 +452,12 @@ is
             and then Cert_Result.Label = PEM.Label_Certificate
          then
             declare
-               Int_OK : Boolean;
+               Ignored_Int_OK : Boolean;
             begin
                Cert_Verify.Add_Intermediate
-                 (Id,
-                  Cert_Result.DER (0 .. Cert_Result.DER_Len - 1),
-                  Int_OK);
+                  (Id,
+                   Cert_Result.DER (0 .. Cert_Result.DER_Len - 1),
+                  Ignored_Int_OK);
             end;
          end if;
 

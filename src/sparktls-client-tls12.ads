@@ -38,8 +38,23 @@ is
                and then Reasm_Coherent (HC)
                and then
                  (if not HC.CKE_Received_12 then
-                    Reasm_Building (HC)
-                    and then HC.Cfg.Random /= null
+	                    Reasm_Building (HC)
+	                    and then
+	                      (if HC.Reasm_Buf /= null
+	                           and then HC.Reasm_Need > 0
+	                       then HC.Reasm_Buf'First = 0
+	                            and then HC.Reasm_Buf'Length <= Max_HS_Msg
+	                            and then HC.Reasm_Need <=
+	                              N32 (HC.Reasm_Buf'Length)
+	                            and then HC.Reasm_Len <=
+	                              N32 (HC.Reasm_Buf'Length)
+	                            and then
+	                              (if HC.Reasm_Hdr_Pending
+	                               then HC.Reasm_Need = 4
+	                                    and then HC.Reasm_Len <= 4
+	                                    and then HC.Reasm_Buf'Length =
+	                                      Max_HS_Msg))
+	                    and then HC.Cfg.Random /= null
                     and then HC.Selected_Group in
                       Group_X25519 | Group_Secp256r1 | Group_Secp384r1
 	                    and then Valid_ECDHE_Group (HC.Selected_Group)
@@ -71,9 +86,25 @@ is
                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                     and then SPARKTLSCrypto.P384.Field.Initialized
                     and then SPARKTLSCrypto.P384.ECDSA.Initialized)
-               and then (if HC.CKE_Received_12 and HC.CCS_Received
-                         then Reasm_Building (HC)
-                              and then S.State in Wait_Server_Finished
+	               and then (if HC.CKE_Received_12 and then HC.CCS_Received
+	                         then Reasm_Building (HC)
+	                              and then
+	                                (HC.Reasm_Buf = null
+	                                 or else
+	                                   (HC.Reasm_Buf'First = 0
+	                                    and then HC.Reasm_Buf'Length <=
+	                                      Max_HS_Msg
+	                                    and then HC.Reasm_Len <=
+	                                      N32 (HC.Reasm_Buf'Length)
+	                                    and then HC.Reasm_Need <=
+	                                      N32 (HC.Reasm_Buf'Length)
+	                                    and then
+	                                      (if HC.Reasm_Hdr_Pending
+	                                       then HC.Reasm_Need = 4
+	                                            and then HC.Reasm_Len <= 4
+	                                            and then HC.Reasm_Buf'Length =
+	                                              Max_HS_Msg)))
+	                              and then S.State in Wait_Server_Finished
                                                   | Client_Finished_Sent
                               and then HC.Transcript_Len > 0
                               and then SPARKTLS.Records.TLS12
