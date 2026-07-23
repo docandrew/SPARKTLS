@@ -187,10 +187,35 @@ is
 			                     and then HC.Reasm_Need > 0
 			                   then HC.Reasm_Len < HC.Reasm_Need)
 			                and then
-			                  (if S.State in Wait_Client_Certificate
-			                               | Wait_Client_Cert_Verify
-			                   then HC.Reasm_Len <= HC.Reasm_Need)
-			                and then Server_State_Keys_Ready (S, HC),
+				                  (if S.State in Wait_Client_Certificate
+				                               | Wait_Client_Cert_Verify
+				                   then HC.Reasm_Len <= HC.Reasm_Need)
+				                and then
+				                  (if HC.Version = TLS_1_2
+				                   and then S.State in Wait_Client_Certificate
+				                                       | Wait_Client_Cert_Verify
+				                                       | Wait_Client_Finished
+					                   then SPARKTLS.Handshake.Server_Msgs
+					                          .Local_Config_Valid (HC.Cfg.Local))
+					                and then
+					                  (if HC.Version = TLS_1_2
+					                   and then S.State in Wait_Client_Cert_Verify
+					                                       | Wait_Client_Finished
+						                   then SPARKTLS.Handshake.TLS12
+						                          .Valid_ECDHE_Group
+						                             (HC.Selected_Group))
+						                and then
+						                  (if HC.Version = TLS_1_2
+						                   and then S.State in Wait_Client_Cert_Verify
+						                                       | Wait_Client_Finished
+						                   then S.Negotiated_Suite in
+						                      Suite_ECDHE_RSA_AES128_GCM_SHA256
+						                    | Suite_ECDHE_RSA_AES256_GCM_SHA384
+						                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+						                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+						                    | Suite_ECDHE_RSA_CHACHA20_SHA256
+						                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256)
+					                and then Server_State_Keys_Ready (S, HC),
 		        Post => S.State = S.State'Old
 		                or else Valid_Transition (S.State'Old, S.State);
 
@@ -251,11 +276,14 @@ is
 	                and then
 	                  (if S.State not in Error_State | Closed
 	                   then Reasm_Building (HC))
-	                and then
-	                  (if S.State in Wait_Client_Hello_Retry
-		                               | Server_Hello_Sent
+			                and then
+			                  (if S.State in Wait_Client_Hello_Retry
+			                               | Server_Hello_Sent
 		                               | Wait_Client_Finished
-		                   then Server_Configured (HC));
+		                   then Server_Configured (HC))
+			                and then
+			                  (if S.State not in Error_State | Closed
+			                   then Reasm_Building (HC));
 
 	   procedure Validate_Client_Hello_Retry
 	     (S     : in out Session;
@@ -281,10 +309,9 @@ is
 		                  S.Input.Read_Pos'Old
 		                and then S.Input.Write_Pos =
 		                  S.Input.Write_Pos'Old
-			                and then HC.Legacy_Session_ID_Len in 0 .. 32
-			                and then HC.HRR_Sent = HC.HRR_Sent'Old
-			                and then HC.Server_HS = HC.Server_HS'Old
-			                and then Nonce_Space_Available (HC.Server_HS)
+				                and then HC.Legacy_Session_ID_Len in 0 .. 32
+				                and then HC.HRR_Sent = HC.HRR_Sent'Old
+				                and then Nonce_Space_Available (HC.Server_HS)
 	                and then Nonce_Space_Available (S.Server_App)
 	                and then
 		                  (if Valid
@@ -340,14 +367,17 @@ is
 	                and then Reasm_Building (HC)
 	                and then HC.Legacy_Session_ID_Len in 0 .. 32
 	                and then Server_State_Keys_Ready (S, HC),
-		        Post => (S.State = Wait_Client_Hello_Retry
-		                 or else Valid_Transition
-		                   (Wait_Client_Hello_Retry, S.State))
-		                and then
-		                  (if S.State in Wait_Client_Hello_Retry
-		                               | Server_Hello_Sent
-	                               | Wait_Client_Finished
-	                   then Server_Configured (HC));
+			        Post => (S.State = Wait_Client_Hello_Retry
+			                 or else Valid_Transition
+			                   (Wait_Client_Hello_Retry, S.State))
+			                and then
+			                  (if S.State in Wait_Client_Hello_Retry
+			                               | Server_Hello_Sent
+		                               | Wait_Client_Finished
+		                   then Server_Configured (HC))
+			                and then
+			                  (if S.State not in Error_State | Closed
+			                   then Reasm_Building (HC));
 
    procedure Build_Server_Flight
      (S      : in out Session;
@@ -962,7 +992,7 @@ is
       HC.Local_SK := (others => 0);
       HC.P256_Local_SK := (others => 0);
       HC.P384_Local_SK := (others => 0);
-      HC.Transcript (0 .. HC.Transcript_Len) := (others => 0);
+      HC.Transcript := (others => 0);
       HC.Transcript_Len := 0;
       HC.PSK_Value := (others => 0);
       HC.PSK_Binder := (others => 0);

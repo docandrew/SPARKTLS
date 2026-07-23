@@ -1184,11 +1184,12 @@ is
 	                     and then HC.Cfg.Random /= null
 	                     and then SPARKTLSCrypto.P384.Field.Initialized
 	                     and then HC.Transcript_Len > 0
-	                     and then HC.Transcript_Len <= Transcript_Capacity
-	                     and then HC.HRR_Cookie_Len
-	                       <= N32 (HC.HRR_Cookie'Length)
-	                     and then
-	                       (if HC.Reasm_Buf /= null
+		                     and then HC.Transcript_Len <= Transcript_Capacity
+		                     and then HC.HRR_Cookie_Len
+		                       <= N32 (HC.HRR_Cookie'Length)
+		                     and then WSH_Reasm_Shape (HC)
+		                     and then
+		                       (if HC.Reasm_Buf /= null
 	                            and then HC.Reasm_Need > 0
 	                        then HC.Reasm_Need - 1 <
 	                             Transcript_Capacity))
@@ -1259,11 +1260,12 @@ is
 	               and then HC.Cfg.Random /= null
 	               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then HC.Transcript_Len > 0
-	               and then HC.Transcript_Len <= Transcript_Capacity
-	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-	               and then
-	                 (if HC.Reasm_Buf /= null
-	                      and then HC.Reasm_Need > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		               and then WSH_Reasm_Shape (HC)
+		               and then
+		                 (if HC.Reasm_Buf /= null
+		                      and then HC.Reasm_Need > 0
 	                  then HC.Reasm_Need - 1 < Transcript_Capacity);
    procedure Handle_WSH_HS_Frame
      (S      : in out Session;
@@ -1274,12 +1276,13 @@ is
 		               and then Reasm_Coherent (HC)
 	               and then HC.Cfg.Random /= null
 	               and then SPARKTLSCrypto.P384.Field.Initialized
-	               and then HC.Transcript_Len > 0
-	               and then HC.Transcript_Len <= Transcript_Capacity
-	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-	               and then
-	                 (if HC.Reasm_Buf /= null
-	                      and then HC.Reasm_Need > 0
+		               and then HC.Transcript_Len > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		               and then WSH_Reasm_Shape (HC)
+		               and then
+		                 (if HC.Reasm_Buf /= null
+		                      and then HC.Reasm_Need > 0
 	                  then HC.Reasm_Need - 1 < Transcript_Capacity)
 	               and then Rec.OK
                and then Rec.Content = Records.Content_Handshake
@@ -3294,13 +3297,17 @@ is
 
    --  Advance handshake states (called with dereferenced HC_Ptr)
    procedure Copy_Input_Fragment
-     (S    : in     Session;
-      HC   : in out Handshake_Context;
-      From : in     N32;
-      Len  : in     N32)
-   with Pre => HC.Reasm_Buf /= null
-               and then HC.Reasm_Buf'First = 0
-	               and then Reasm_Coherent (HC)
+	     (S    : in     Session;
+	      HC   : in out Handshake_Context;
+	      From : in     N32;
+	      Len  : in     N32)
+	   with Pre => HC.Reasm_Buf /= null
+	               and then HC.Reasm_Buf'First = 0
+	               and then HC.Reasm_Buf'Length <= Max_HS_Msg
+	               and then
+	                 (if HC.Reasm_Hdr_Pending then
+	                    HC.Reasm_Buf'Length = Max_HS_Msg)
+		               and then Reasm_Coherent (HC)
 	               and then HC.Transcript_Len > 0
 	               and then HC.Transcript_Len <= Transcript_Capacity
 	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
@@ -3308,12 +3315,17 @@ is
                and then Len - 1 <= HC.Reasm_Buf'Last
                and then From <= N32'Last - Len
                and then From + Len <= IO_Buffer_Capacity,
-        Post => Reasm_Coherent (HC)
-                and then HC.Reasm_Len = HC.Reasm_Len'Old
-                and then HC.Reasm_Need = HC.Reasm_Need'Old
-                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
-	                and then HC.Reasm_Buf /= null
-	                and then HC.Transcript_Len > 0
+	        Post => Reasm_Coherent (HC)
+	                and then HC.Reasm_Len = HC.Reasm_Len'Old
+	                and then HC.Reasm_Need = HC.Reasm_Need'Old
+	                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
+		                and then HC.Reasm_Buf /= null
+		                and then HC.Reasm_Buf'First = 0
+		                and then HC.Reasm_Buf'Length <= Max_HS_Msg
+		                and then
+		                  (if HC.Reasm_Hdr_Pending then
+		                     HC.Reasm_Buf'Length = Max_HS_Msg)
+		                and then HC.Transcript_Len > 0
 	                and then HC.Transcript_Len <= Transcript_Capacity
 	                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
 	                and then
@@ -4262,7 +4274,7 @@ is
       HC.Local_SK := (others => 0);
       HC.P256_Local_SK := (others => 0);
       HC.P384_Local_SK := (others => 0);
-      HC.Transcript (0 .. HC.Transcript_Len) := (others => 0);
+      HC.Transcript := (others => 0);
       HC.Transcript_Len := 0;
       HC.PSK_Value := (others => 0);
       HC.PSK_Binder := (others => 0);

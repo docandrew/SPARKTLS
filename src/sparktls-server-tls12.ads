@@ -117,9 +117,11 @@ is
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-	        Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-	                           | Connected | Closing | Error_State
-		               and then HC.Cfg.Local /= null
+		        Post => (S.State = S.State'Old
+                         or else Valid_Transition (S.State'Old, S.State))
+                       and then S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
+		                           | Connected | Closing | Error_State
+			               and then HC.Cfg.Local /= null
 			        and then HC.Cfg.Local.Has_Identity
 			        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 			                   (HC.Cfg.Local)
@@ -147,8 +149,10 @@ is
                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                           (HC.Cfg.Local)
                and then HC.Cfg.Random /= null,
-        Post => S.State in Wait_Client_Certificate
-                          | Wait_Client_Cert_Verify
+	        Post => (S.State = S.State'Old
+                    or else Valid_Transition (S.State'Old, S.State))
+                  and then S.State in Wait_Client_Certificate
+	                          | Wait_Client_Cert_Verify
                           | Wait_Client_Finished
                           | Error_State
                 and then
@@ -184,8 +188,10 @@ is
                  (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1)
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-                          | Error_State
+	        Post => (S.State = S.State'Old
+                    or else Valid_Transition (S.State'Old, S.State))
+                  and then S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
+	                          | Error_State
                 and then
                   (if S.State /= Error_State then Reasm_Building (HC));
 
@@ -228,8 +234,10 @@ is
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                           (HC.Server_Seq_12)
                and then Free_Space (S.Output) >= 7,
-	        Post => S.State in Wait_Client_Finished | Connected | Closing
-	                           | Error_State
+		        Post => (S.State = S.State'Old
+                       or else Valid_Transition (S.State'Old, S.State))
+                    and then S.State in Wait_Client_Finished | Connected | Closing
+		                           | Error_State
 		        and then HC.Cfg.Local /= null
 		        and then HC.Cfg.Local.Has_Identity
 		        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid

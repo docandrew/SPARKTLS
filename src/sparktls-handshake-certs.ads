@@ -2,6 +2,7 @@ with SPARKNaCl; use SPARKNaCl;
 with Interfaces; use Interfaces;
 with X509;
 with SPARKTLS.Records;
+with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
 
@@ -116,7 +117,7 @@ is
    with Pre => HS_Msg'First = 0
                and then HS_Msg'Length >= 4
 		               and then HS_Msg'Length <= Max_Cert_Msg
-			               and then Reasm_Coherent (HC),
+	               and then Reasm_Building (HC),
 	        Post => HC.Client_HS = HC.Client_HS'Old
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
@@ -126,10 +127,18 @@ is
 	                              and then HC.Cfg.Local'Old.Has_Identity
 	                          then HC.Cfg.Local /= null
 	                               and then HC.Cfg.Local.Has_Identity)
+                   and then
+                     (if HC.Cfg.Local'Old /= null
+                         and then SPARKTLS.Handshake.Server_Msgs
+                           .Local_Config_Valid (HC.Cfg.Local'Old)
+                      then HC.Cfg.Local /= null
+                           and then SPARKTLS.Handshake.Server_Msgs
+                             .Local_Config_Valid (HC.Cfg.Local))
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
-			                and then Reasm_Coherent (HC)
-	                  and then HC.Reasm_Len = HC.Reasm_Len'Old
+				                and then Reasm_Coherent (HC)
+                         and then Reasm_Building (HC)
+		                  and then HC.Reasm_Len = HC.Reasm_Len'Old
 	                  and then HC.Reasm_Need = HC.Reasm_Need'Old
 	                  and then
 	                    (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
@@ -157,20 +166,28 @@ is
    with Pre => HS_Msg'First = 0
                and then HS_Msg'Length >= 7
                and then HS_Msg'Length <= Max_Cert_Msg
-               and then Reasm_Coherent (HC),
+	               and then Reasm_Building (HC),
         Post => HC.Client_HS = HC.Client_HS'Old
                 and then HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.Hash_Len = HC.Hash_Len'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
-                and then (if HC.Cfg.Local'Old /= null
-                              and then HC.Cfg.Local'Old.Has_Identity
-                          then HC.Cfg.Local /= null
-                               and then HC.Cfg.Local.Has_Identity)
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Coherent (HC)
-                and then HC.Reasm_Len = HC.Reasm_Len'Old
+	                and then (if HC.Cfg.Local'Old /= null
+	                              and then HC.Cfg.Local'Old.Has_Identity
+	                          then HC.Cfg.Local /= null
+	                               and then HC.Cfg.Local.Has_Identity)
+                   and then
+                     (if HC.Cfg.Local'Old /= null
+                         and then SPARKTLS.Handshake.Server_Msgs
+                           .Local_Config_Valid (HC.Cfg.Local'Old)
+                      then HC.Cfg.Local /= null
+                           and then SPARKTLS.Handshake.Server_Msgs
+                             .Local_Config_Valid (HC.Cfg.Local))
+	                and then (if HC.Cfg.Random'Old /= null
+	                          then HC.Cfg.Random /= null)
+	                and then Reasm_Coherent (HC)
+                   and then Reasm_Building (HC)
+	                and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then
                   (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
