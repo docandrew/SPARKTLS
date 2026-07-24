@@ -1064,29 +1064,38 @@ is
             begin
                ALPN_Raw (0) := Byte (List_Len / 256);
                ALPN_Raw (1) := Byte (List_Len mod 256);
-               if HC.Cfg.ALPN_Count > 0 then
-                  for J in ALPN_Index loop
-                     exit when J > HC.Cfg.ALPN_Count;
-                     declare
-                        Proto_Len : constant Natural :=
-                           HC.Cfg.ALPN_List (J).Len;
-                     begin
-                        pragma Assert (Proto_Len <= Max_Hostname_Len);
-                        ALPN_Raw (P) := Byte (Proto_Len);
-                        for I in 1 .. Proto_Len loop
-                           pragma Assert
-                             (P + N32 (I) <= ALPN_Raw'Last);
+	               if HC.Cfg.ALPN_Count > 0 then
+	                  for J in ALPN_Index loop
+	                     exit when J > HC.Cfg.ALPN_Count;
+	                     pragma Loop_Invariant (P >= 2);
+	                     pragma Loop_Invariant (P <= ALPN_Data_Len - 1);
+	                     pragma Loop_Invariant (P in ALPN_Raw'Range);
+	                     declare
+	                        Proto_Len : constant Natural :=
+	                           HC.Cfg.ALPN_List (J).Len;
+	                     begin
+	                        pragma Assert (Proto_Len <= Max_Hostname_Len);
+	                        pragma Assert (P <= ALPN_Raw'Last);
+	                        pragma Assert
+	                          (P + N32 (Proto_Len) <= ALPN_Raw'Last);
+	                        ALPN_Raw (P) := Byte (Proto_Len);
+	                        for I in 1 .. Proto_Len loop
+	                           pragma Assert
+	                             (P + N32 (I) <= ALPN_Raw'Last);
                            ALPN_Raw (P + N32 (I)) :=
                               Byte
                                 (Character'Pos
                                    (HC.Cfg.ALPN_List (J).Data (I)));
                         end loop;
                         P := P + 1 + N32 (Proto_Len);
-                     end;
-                  end loop;
-               else
-                  ALPN_Raw (P) := Byte (HC.Cfg.ALPN.Len);
-                  for I in 1 .. HC.Cfg.ALPN.Len loop
+	                     end;
+	                  end loop;
+	               else
+	                  pragma Assert (P <= ALPN_Raw'Last);
+	                  pragma Assert
+	                    (P + N32 (HC.Cfg.ALPN.Len) <= ALPN_Raw'Last);
+	                  ALPN_Raw (P) := Byte (HC.Cfg.ALPN.Len);
+	                  for I in 1 .. HC.Cfg.ALPN.Len loop
                      pragma Assert (P + N32 (I) <= ALPN_Raw'Last);
                      ALPN_Raw (P + N32 (I)) :=
                         Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));

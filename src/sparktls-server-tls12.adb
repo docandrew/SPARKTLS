@@ -159,9 +159,10 @@ is
 	                and then HC.Cfg.Local.Has_Identity
 	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                           (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null
-                   and then Reasm_Building (HC),
-	           Post => HC.Cfg.Local /= null
+		                   and then HC.Cfg.Random /= null
+		                   and then Reasm_Building (HC)
+		                   and then Reasm_Buffer_Shaped (HC),
+		           Post => HC.Cfg.Local /= null
 	                   and then HC.Cfg.Local.Has_Identity
 	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                              (HC.Cfg.Local)
@@ -173,9 +174,16 @@ is
                    and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
                    and then HC.Peer_Cert = HC.Peer_Cert'Old
                    and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
-                   and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
-                   and then
-                     (if HC.Peer_Cert_Valid'Old
+	                   and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
+	                   and then
+	                     HC.Reasm_Len = HC.Reasm_Len'Old
+	                   and then HC.Reasm_Need = HC.Reasm_Need'Old
+	                   and then HC.Reasm_Hdr_Pending =
+	                     HC.Reasm_Hdr_Pending'Old
+	                   and then
+	                     Reasm_Buffer_Shaped (HC)
+	                   and then
+	                     (if HC.Peer_Cert_Valid'Old
                          and then HC.Peer_Cert_DER_Len'Old
                            in 1 .. Max_Cert_DER_Len
                          and then X509.Spans_Valid
@@ -1464,8 +1472,8 @@ is
 	            pragma Assert (Reasm_Building (HC));
 	         end Fail_Unexpected;
 
-         procedure Finish_CKE
-           (Msg : in Byte_Seq)
+	         procedure Finish_CKE
+	           (Msg : in Byte_Seq)
 	         with Pre  => Reasm_Building (HC)
 	                      and then Msg'Length > 0
 	                      and then Msg'Length <= HC.Transcript'Length
@@ -1483,17 +1491,19 @@ is
                         .Local_Config_Valid (HC.Cfg.Local)
                       and then HC.Cfg.Random /= null
                       and then Valid_ECDHE_Group (HC.Selected_Group),
-              Post => Reasm_Building (HC)
-                      and then HC.Version = HC.Version'Old
-                      and then HC.Cfg.Local /= null
-                      and then HC.Cfg.Local.Has_Identity
-                      and then SPARKTLS.Handshake.Server_Msgs
-                        .Local_Config_Valid (HC.Cfg.Local)
-	                      and then HC.Cfg.Random /= null
-	                      and then HC.Selected_Group = HC.Selected_Group'Old
-	                      and then
-                        (if Result = OK
-                         then S.State = S.State'Old
+	              Post => Reasm_Building (HC)
+	                      and then HC.Version = HC.Version'Old
+	                      and then HC.Cfg.Local /= null
+	                      and then HC.Cfg.Local.Has_Identity
+	                      and then SPARKTLS.Handshake.Server_Msgs
+	                        .Local_Config_Valid (HC.Cfg.Local)
+		                      and then HC.Cfg.Random /= null
+		                      and then S.Negotiated_Suite =
+		                        S.Negotiated_Suite'Old
+		                      and then HC.Selected_Group = HC.Selected_Group'Old
+		                      and then
+	                        (if Result = OK
+	                         then S.State = S.State'Old
                               and then HC.Transcript_Len > 0
                               and then HC.Transcript_Len <= Transcript_Capacity
                               and then
@@ -1502,8 +1512,8 @@ is
                          else S.State = Error_State)
          is
             CKE_OK : Boolean;
-         begin
-            Parse_Complete_CKE (Msg, CKE_OK);
+	         begin
+	            Parse_Complete_CKE (Msg, CKE_OK);
             if not CKE_OK then
                if HC.Ext_Parse_Err /= No_Error then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1518,9 +1528,59 @@ is
             Append_Transcript (HC, Msg);
             HC.TLS12_EMS_Transcript_Len := HC.Transcript_Len;
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
-         end Finish_CKE;
-      begin
+	            Result := OK;
+	         end Finish_CKE;
+
+	         procedure Start_CKE_Reassembly
+	           (Source         : in     Byte_Seq;
+	            New_Need       : in     N32;
+	            Buffer_Length  : in     N32;
+	            Header_Pending : in     Boolean)
+	         with Pre  => Source'Length > 0
+	                      and then Source'Length <= Natural (N32'Last)
+	                      and then Source'Last < N32'Last
+	                      and then New_Need > 0
+	                      and then New_Need <= Buffer_Length
+	                      and then Buffer_Length <= Max_HS_Msg
+	                      and then
+	                        (if Header_Pending then
+	                           New_Need = 4
+	                           and then Buffer_Length = Max_HS_Msg)
+	                      and then N32 (Source'Length) <= New_Need
+	                      and then HC.Reasm_Need = 0
+	                      and then HC.Reasm_Buf = null,
+	              Post => HC.Reasm_Buf /= null
+	                      and then HC.Reasm_Buf'First = 0
+	                      and then HC.Reasm_Buf'Length = Buffer_Length
+	                      and then HC.Reasm_Len = N32 (Source'Length)
+	                      and then HC.Reasm_Need = New_Need
+	                      and then HC.Reasm_Hdr_Pending = Header_Pending
+	                      and then Reasm_Building (HC)
+	                      and then Reasm_Buffer_Shaped (HC)
+	         is
+	            Source_Len : constant N32 := N32 (Source'Length);
+	         begin
+	            HC.Reasm_Buf :=
+	              new Byte_Seq'(0 .. Buffer_Length - 1 => 0);
+	            HC.Reasm_Need := New_Need;
+	            HC.Reasm_Hdr_Pending := Header_Pending;
+	            HC.Reasm_Len := Source_Len;
+
+	            for I in N32 range 0 .. Source_Len - 1 loop
+	               pragma Loop_Invariant (HC.Reasm_Buf /= null);
+	               pragma Loop_Invariant (HC.Reasm_Buf'First = 0);
+	               pragma Loop_Invariant
+	                 (HC.Reasm_Buf'Length = Buffer_Length);
+	               pragma Loop_Invariant (Source_Len <= New_Need);
+	               pragma Loop_Invariant (New_Need <= Buffer_Length);
+	               pragma Loop_Invariant (I <= Source_Len - 1);
+	               pragma Loop_Invariant
+	                 (Source'First + I in Source'Range);
+	               pragma Loop_Invariant (I in HC.Reasm_Buf'Range);
+	               HC.Reasm_Buf (I) := Source (Source'First + I);
+	            end loop;
+	         end Start_CKE_Reassembly;
+	      begin
          --  Slice bound: Parse_Record_Header Post gives Record_Len <= Avail,
          --  i.e., Read_Pos + Record_Len <= Write_Pos <= IO_Buffer_Capacity.
          --  So FS + Frag_Len = Read_Pos + Fragment_Pos + Fragment_Len
@@ -1630,20 +1690,21 @@ is
 	               end;
 	            end;
          elsif Frag_Len < 4 then
-            if Frag_Len = 0 then
-               Fail_Decode;
-               return;
-            end if;
+	            if Frag_Len = 0 then
+	               Fail_Decode;
+	               return;
+	            end if;
 
-            HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
-            HC.Reasm_Need := 4;
-            HC.Reasm_Hdr_Pending := True;
-            HC.Reasm_Len := Frag_Len;
-            HC.Reasm_Buf (0 .. Frag_Len - 1) :=
-              S.Input.Data (FS .. FS + Frag_Len - 1);
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
-            pragma Assert (Reasm_Building (HC));
+		            pragma Assert (HC.Reasm_Need = 0);
+		            pragma Assert (HC.Reasm_Buf = null);
+	            Start_CKE_Reassembly
+	              (Source         => S.Input.Data (FS .. FS + Frag_Len - 1),
+	               New_Need       => 4,
+	               Buffer_Length  => Max_HS_Msg,
+	               Header_Pending => True);
+	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	            Result := OK;
+	            pragma Assert (Reasm_Building (HC));
             return;
          else
             declare
@@ -1662,16 +1723,18 @@ is
 	                  return;
 	               end if;
 
-               if HS_Total > Frag_Len then
-                  pragma Assert (HS_Total <= Max_HS_Msg);
-                  HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
-                  HC.Reasm_Need := HS_Total;
-                  HC.Reasm_Hdr_Pending := False;
-                  HC.Reasm_Len := Frag_Len;
-                  HC.Reasm_Buf (0 .. Frag_Len - 1) :=
-                    S.Input.Data (FS .. FS + Frag_Len - 1);
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Result := OK;
+	               if HS_Total > Frag_Len then
+	                  pragma Assert (HS_Total <= Max_HS_Msg);
+		                  pragma Assert (HC.Reasm_Need = 0);
+		                  pragma Assert (HC.Reasm_Buf = null);
+	                  Start_CKE_Reassembly
+	                    (Source         =>
+	                       S.Input.Data (FS .. FS + Frag_Len - 1),
+	                     New_Need       => HS_Total,
+	                     Buffer_Length  => HS_Total,
+	                     Header_Pending => False);
+	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                  Result := OK;
                   pragma Assert (Reasm_Building (HC));
                   return;
                end if;

@@ -113,12 +113,18 @@ is
       Result :    out Action)
    with Pre  => Nonce_Space_Available (HC.Client_HS)
                 and then S.State not in Idle | Closing | Closed | Error_State
-                and then Reasm_Coherent (HC),
+                and then Reasm_Coherent (HC)
+                and then Reasm_Building (HC),
         Post => S.State = Error_State
                 and then S.Last_Error = Err
-                and then Result in Has_Output | Error_Alert
-                and then Reasm_Coherent (HC)
-                --  Frame: post-handshake app key is not touched (only
+	                and then Result in Has_Output | Error_Alert
+	                and then Reasm_Coherent (HC)
+	                and then HC.Reasm_Len = HC.Reasm_Len'Old
+	                and then HC.Reasm_Need = HC.Reasm_Need'Old
+	                and then HC.Reasm_Hdr_Pending =
+	                  HC.Reasm_Hdr_Pending'Old
+	                and then Reasm_Building (HC)
+	                --  Frame: post-handshake app key is not touched (only
                 --  the handshake-secret key is used to encrypt the
                 --  alert). Pin so callers can preserve
                 --  Nonce_Space_Available (S.Client_App).
@@ -453,6 +459,7 @@ is
 		                       and then HC.Client_HS.Counter
 		                         <= Unsigned_64'Last - 2)
 		               and then Reasm_Coherent (HC)
+		               and then Reasm_Building (HC)
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
                and then Rec.Fragment_Pos = Records.Record_Header_Size
@@ -501,7 +508,8 @@ is
                and then Plain_Len >= 0
                and then Plaintext'Last < N32'Last / 2
 	               and then Plain_Len <= N32 (Plaintext'Length)
-	               and then Reasm_Coherent (HC)
+				               and then Reasm_Coherent (HC)
+			               and then Reasm_Building (HC)
 		               and then (HC.Reasm_Buf = null
 	                         or else (HC.Reasm_Buf'First = 0
 	                                  and then HC.Reasm_Buf'Last in 0 .. 131071
@@ -675,10 +683,15 @@ is
                and then HC.Reasm_Need > 0
 	               and then HC.Reasm_Need >= 4
 		               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-		               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
-		               and then Reasm_Coherent (HC)
-		               and then
-	                 (if HC.Cert_Request_Received
+			               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+			               and then Reasm_Coherent (HC)
+			               and then
+			                 (if HC.Reasm_Hdr_Pending
+			                  then HC.Reasm_Buf'Length = Max_HS_Msg
+			                       and then HC.Reasm_Need = 4
+			                       and then HC.Reasm_Len < 4)
+			               and then
+		                 (if HC.Cert_Request_Received
 	                      and then HC.Cfg.Local /= null
 	                      and then HC.Cfg.Local.Has_Identity
 	                  then HC.Cfg.Random /= null
@@ -751,9 +764,14 @@ is
 	                                <= N32 (HC.Reasm_Buf'Length)
 	                             and then HC.Reasm_Need
 	                                <= N32 (HC.Reasm_Buf'Length)
-	                             and then (if HC.Reasm_Need > 0 then
-	                                          HC.Reasm_Need >= 4)
-	                             and then Reasm_Coherent (HC));
+		                             and then (if HC.Reasm_Need > 0 then
+		                                          HC.Reasm_Need >= 4)
+		                             and then
+		                               (if HC.Reasm_Hdr_Pending
+		                                then HC.Reasm_Buf'Length = Max_HS_Msg
+		                                     and then HC.Reasm_Need = 4
+		                                     and then HC.Reasm_Len < 4)
+		                             and then Reasm_Coherent (HC));
 
    procedure Copy_Decrypted_Reasm_Bytes
      (HC        : in out Handshake_Context;
@@ -766,10 +784,14 @@ is
                and then HC.Transcript_Len > 0
                and then HC.Reasm_Buf /= null
 	               and then HC.Reasm_Buf'First = 0
-	               and then HC.Reasm_Buf'Last in 0 .. 131071
-	               and then Reasm_Coherent (HC)
-	               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+		               and then HC.Reasm_Buf'Last in 0 .. 131071
+		               and then Reasm_Coherent (HC)
+		               and then Reasm_Building (HC)
+		               and then
+		                 (if HC.Reasm_Hdr_Pending then
+		                    HC.Reasm_Buf'Length = Max_HS_Msg)
+		               and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+	               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
                and then Take > 0
                and then HC.Reasm_Len <= N32'Last - Take
                and then Take <= N32 (HC.Reasm_Buf'Length) - HC.Reasm_Len
@@ -822,9 +844,9 @@ is
 		                and then (if HC.Cfg.Random'Old /= null
 		                          then HC.Cfg.Random /= null)
 		                and then HC.Negotiated_Sig_Algo =
-		                  HC.Negotiated_Sig_Algo'Old
-		                and then HC.Reasm_Buf'Last in 0 .. 131071
-	                and then HC.Reasm_Len = HC.Reasm_Len'Old + Take
+			                  HC.Negotiated_Sig_Algo'Old
+			                and then HC.Reasm_Buf'Last in 0 .. 131071
+		                and then HC.Reasm_Len = HC.Reasm_Len'Old + Take
                 and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
 	                and then HC.Reasm_Need = HC.Reasm_Need'Old
 	                and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
@@ -1255,9 +1277,10 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-		   with Pre => S.State = Wait_Server_Hello
-		               and then Reasm_Coherent (HC)
-	               and then HC.Cfg.Random /= null
+			   with Pre => S.State = Wait_Server_Hello
+			               and then Reasm_Coherent (HC)
+			               and then WSH_Reasm_Shape (HC)
+		               and then HC.Cfg.Random /= null
 	               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then HC.Transcript_Len > 0
 		               and then HC.Transcript_Len <= Transcript_Capacity
@@ -1329,6 +1352,22 @@ is
 				                         Suite_AES_128_GCM_SHA256
 			                       | Suite_AES_256_GCM_SHA384
 			                       | Suite_CHACHA20_POLY1305_SHA256));
+   function WSH_Reasm_Shape (HC : Handshake_Context) return Boolean is
+     (HC.Reasm_Buf = null
+      or else
+        (HC.Reasm_Buf'First = 0
+         and then HC.Reasm_Buf'Length <= Max_HS_Msg
+         and then HC.Reasm_Buf'Length <= N32'Last
+         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+         and then HC.Reasm_Need - 1 < Transcript_Capacity
+         and then
+           (if HC.Reasm_Hdr_Pending then
+              HC.Reasm_Buf'Length = Max_HS_Msg
+              and then HC.Reasm_Need = 4
+              and then HC.Reasm_Len <= 4)))
+   with Ghost;
+
    procedure Finalize_SH_Processing
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -1346,22 +1385,6 @@ is
 	                    Suite_AES_128_GCM_SHA256
 	                  | Suite_AES_256_GCM_SHA384
 	                  | Suite_CHACHA20_POLY1305_SHA256);
-
-   function WSH_Reasm_Shape (HC : Handshake_Context) return Boolean is
-     (HC.Reasm_Buf = null
-      or else HC.Reasm_Need = 0
-      or else
-        (HC.Reasm_Buf'First = 0
-         and then HC.Reasm_Buf'Length <= Max_HS_Msg
-         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
-         and then HC.Reasm_Need - 1 < Transcript_Capacity
-         and then
-           (if HC.Reasm_Hdr_Pending then
-              HC.Reasm_Buf'Length = Max_HS_Msg
-              and then HC.Reasm_Need = 4
-              and then HC.Reasm_Len <= 4)))
-   with Ghost;
 
    procedure Reassemble_For_SH
      (S      : in out Session;
@@ -1471,9 +1494,9 @@ is
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
 	   with Pre  => (if Data'First <= Data'Last then
-	                    Data'Last - Data'First < Transcript_Capacity)
-	                and then HC.Transcript_Len <= Transcript_Capacity
-		                and then Reasm_Coherent (HC),
+			                    Data'Last - Data'First < Transcript_Capacity)
+		                and then HC.Transcript_Len <= Transcript_Capacity
+			                and then Reasm_Coherent (HC),
         Post => HC.Transcript_Len >= HC.Transcript_Len'Old
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then
@@ -1508,9 +1531,17 @@ is
                             N32 (HC.HRR_Cookie'Length)
                           then HC.HRR_Cookie_Len <=
                             N32 (HC.HRR_Cookie'Length))
-	                and then HC.Hash_Len = HC.Hash_Len'Old
-		                and then Reasm_Coherent (HC)
-	   is
+			                and then HC.Hash_Len = HC.Hash_Len'Old
+			                and then Reasm_Coherent (HC)
+			                and then
+			                  HC.Reasm_Len = HC.Reasm_Len'Old
+			                and then HC.Reasm_Need = HC.Reasm_Need'Old
+			                and then HC.Reasm_Hdr_Pending =
+			                  HC.Reasm_Hdr_Pending'Old
+			                and then
+			                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
+			                   then HC.Reasm_Len <= HC.Reasm_Need)
+		   is
    begin
       if Data'First <= Data'Last then
          declare
@@ -1857,8 +1888,10 @@ is
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
                 and then Data'Length <= Transcript_Capacity
-                and then Reasm_Coherent (HC)
-			                and then HC.Transcript_Len > 0
+			                and then Reasm_Coherent (HC)
+			                and then Reasm_Building (HC)
+			                and then HC.Reasm_Len <= HC.Reasm_Need
+				                and then HC.Transcript_Len > 0
 	                and then Nonce_Space_Available (HC.Client_HS)
 		                and then Nonce_Space_Available (S.Client_App)
 		                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -1898,7 +1931,8 @@ is
 		                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 		                         then HC.Hash_Len = 48
 		                         else HC.Hash_Len = 32))
-                and then Reasm_Coherent (HC)
+	                and then Reasm_Coherent (HC)
+	                and then Reasm_Building (HC)
 	                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_EE_13
@@ -3303,10 +3337,11 @@ is
 	      Len  : in     N32)
 	   with Pre => HC.Reasm_Buf /= null
 	               and then HC.Reasm_Buf'First = 0
-	               and then HC.Reasm_Buf'Length <= Max_HS_Msg
-	               and then
-	                 (if HC.Reasm_Hdr_Pending then
-	                    HC.Reasm_Buf'Length = Max_HS_Msg)
+		               and then HC.Reasm_Buf'Length <= Max_HS_Msg
+		               and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+		               and then
+		                 (if HC.Reasm_Hdr_Pending then
+		                    HC.Reasm_Buf'Length = Max_HS_Msg)
 		               and then Reasm_Coherent (HC)
 	               and then HC.Transcript_Len > 0
 	               and then HC.Transcript_Len <= Transcript_Capacity
@@ -3319,11 +3354,13 @@ is
 	                and then HC.Reasm_Len = HC.Reasm_Len'Old
 	                and then HC.Reasm_Need = HC.Reasm_Need'Old
 	                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
-		                and then HC.Reasm_Buf /= null
-		                and then HC.Reasm_Buf'First = 0
-		                and then HC.Reasm_Buf'Length <= Max_HS_Msg
-		                and then
-		                  (if HC.Reasm_Hdr_Pending then
+				                and then HC.Reasm_Buf /= null
+				                and then HC.Reasm_Buf'First = 0
+				                and then HC.Reasm_Buf'Length <= Max_HS_Msg
+				                and then HC.Reasm_Need <=
+				                  N32 (HC.Reasm_Buf'Length)
+				                and then
+				                  (if HC.Reasm_Hdr_Pending then
 		                     HC.Reasm_Buf'Length = Max_HS_Msg)
 		                and then HC.Transcript_Len > 0
 	                and then HC.Transcript_Len <= Transcript_Capacity
@@ -3428,11 +3465,19 @@ is
 			                and then Reasm_Coherent (HC)
 			                and then HC.Cfg.Random /= null
 				                and then HC.Transcript_Len > 0
-				                and then HC.Transcript_Len <= Transcript_Capacity
-				                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-				                and then WSH_Reasm_Shape (HC)
-				                and then HC.Reasm_Len < HC.Reasm_Need
-			                and then HC.Reasm_Need - 1 < Transcript_Capacity;
+					                and then HC.Transcript_Len <= Transcript_Capacity
+					                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+					                and then WSH_Reasm_Shape (HC)
+					                and then HC.Reasm_Buf /= null
+					                and then HC.Reasm_Buf'First = 0
+					                and then HC.Reasm_Buf'Length = HS_Total
+					                and then HC.Reasm_Buf'Length <= Max_HS_Msg
+					                and then HC.Reasm_Len <=
+					                  N32 (HC.Reasm_Buf'Length)
+					                and then HC.Reasm_Need <=
+					                  N32 (HC.Reasm_Buf'Length)
+					                and then HC.Reasm_Len < HC.Reasm_Need
+				                and then HC.Reasm_Need - 1 < Transcript_Capacity;
 
    procedure Start_Spanning_SH_Reassembly
      (S          : in out Session;
@@ -3453,8 +3498,7 @@ is
 		      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
 	      pragma Assert (HC.Reasm_Buf /= null);
 	      pragma Assert (HC.Reasm_Buf'First = 0);
-	      pragma Assert (HC.Reasm_Buf'Length = HS_Total);
-	      pragma Assert (HC.Reasm_Need = HS_Total);
+		      pragma Assert (HC.Reasm_Need = HS_Total);
 	      pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
 	      pragma Assert (HC.Reasm_Need - 1 < Transcript_Capacity);
 		      S.Input.Read_Pos := Next_Read;
@@ -3511,8 +3555,7 @@ is
 		      Copy_Input_Fragment (S, HC, Frag_Start, Frag_Len);
 	      pragma Assert (HC.Reasm_Buf /= null);
 	      pragma Assert (HC.Reasm_Buf'First = 0);
-	      pragma Assert (HC.Reasm_Buf'Length = Frag_Len);
-	      pragma Assert (HC.Reasm_Need = HS_Total);
+		      pragma Assert (HC.Reasm_Need = HS_Total);
 	      pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
 	      pragma Assert (HC.Reasm_Need - 1 < Transcript_Capacity);
 		      S.Input.Read_Pos := Next_Read;

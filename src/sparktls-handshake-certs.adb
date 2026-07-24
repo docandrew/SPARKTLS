@@ -1131,17 +1131,25 @@ is
                   and then HC.Transcript_Len =
                     HC.Transcript_Len'Loop_Entry
                   and then HC.Hash_Len = HC.Hash_Len'Loop_Entry
-                  and then (if HC.Cfg.Local'Loop_Entry /= null
-                            then HC.Cfg.Local /= null)
-                  and then
-                    (if HC.Cfg.Local'Loop_Entry /= null
-                        and then HC.Cfg.Local'Loop_Entry.Has_Identity
-                     then HC.Cfg.Local /= null
-                          and then HC.Cfg.Local.Has_Identity)
-                  and then (if HC.Cfg.Random'Loop_Entry /= null
-                            then HC.Cfg.Random /= null)
-                  and then Reasm_Coherent (HC)
-                  and then HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
+	                  and then (if HC.Cfg.Local'Loop_Entry /= null
+	                            then HC.Cfg.Local /= null)
+	                  and then
+	                    (if HC.Cfg.Local'Loop_Entry /= null
+	                        and then HC.Cfg.Local'Loop_Entry.Has_Identity
+	                     then HC.Cfg.Local /= null
+	                          and then HC.Cfg.Local.Has_Identity)
+	                  and then
+	                    (if HC.Cfg.Local'Loop_Entry /= null
+	                        and then SPARKTLS.Handshake.Server_Msgs
+	                          .Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
+	                     then HC.Cfg.Local /= null
+	                          and then SPARKTLS.Handshake.Server_Msgs
+	                            .Local_Config_Valid (HC.Cfg.Local))
+	                  and then (if HC.Cfg.Random'Loop_Entry /= null
+	                            then HC.Cfg.Random /= null)
+	                  and then Reasm_Coherent (HC)
+	                  and then Reasm_Building (HC)
+	                  and then HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
                   and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
                   and then HC.Reasm_Hdr_Pending =
                     HC.Reasm_Hdr_Pending'Loop_Entry
@@ -1167,10 +1175,13 @@ is
                           and then C_Len <= N32 (Max_Cert_DER)
                         then
                            declare
-                              Cert_RFLX : RBT.Bytes
-                                (1 .. RBT.Index (C_Len));
-                           begin
-                              C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
+	                              Cert_RFLX : RBT.Bytes
+	                                (1 .. RBT.Index (C_Len));
+	                           begin
+	                              pragma Assert (Cert_RFLX'First = 1);
+	                              pragma Assert
+	                                (Cert_RFLX'Length = RBT.Length (C_Len));
+	                              C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
                               if Cert_Idx = 0 then
                                  Copy_Cert_To_Peer_DER
                                    (Cert_RFLX, HC, C_Len);

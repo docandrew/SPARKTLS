@@ -1739,6 +1739,21 @@ is
      (HC.Reasm_Buf = null or else HC.Reasm_Len <= HC.Reasm_Need)
      with Ghost;
 
+   function Reasm_Buffer_Shaped (HC : Handshake_Context) return Boolean is
+     (HC.Reasm_Buf = null
+      or else
+        (HC.Reasm_Buf'First = 0
+         and then HC.Reasm_Buf'Length <= Max_HS_Msg
+         and then HC.Reasm_Buf'Length <= N32'Last
+         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+         and then
+           (if HC.Reasm_Hdr_Pending then
+              HC.Reasm_Need = 4
+              and then HC.Reasm_Len <= 4
+              and then HC.Reasm_Buf'Length = Max_HS_Msg)))
+     with Ghost;
+
    --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------
    --  TLS 1.2 §7.4.7: the client sends exactly one ClientKeyExchange
    --  per handshake, immediately after the (optional) Certificate.

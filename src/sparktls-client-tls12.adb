@@ -1539,6 +1539,14 @@ is
 	      Result  :    out Action)
 	   is
 	      Saved_Local : constant Identity_Access := HC.Cfg.Local;
+	      Saved_Local_Config_Valid : constant Boolean :=
+	        HC.Cert_Request_Received
+	        and then Saved_Local /= null
+	        and then Saved_Local.Has_Identity
+	        and then HC.TLS12_Client_Cert_Allowed
+	        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                   (Saved_Local)
+	      with Ghost;
 	   begin
       Result := OK;
       if Msg_Len /= 0 then
@@ -1648,9 +1656,15 @@ is
             S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
                                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
 	         Saved_Seq : Unsigned_64;
-	      begin
-	         HC.Cfg.Local := Saved_Local;
-	         if HC.Cert_Request_Received then
+		      begin
+		         HC.Cfg.Local := Saved_Local;
+		         pragma Assert
+		           (if Saved_Local_Config_Valid
+		            then HC.Cfg.Local /= null
+		                 and then HC.Cfg.Local.Has_Identity
+		                 and then SPARKTLS.Handshake.Server_Msgs
+		                   .Local_Config_Valid (HC.Cfg.Local));
+		         if HC.Cert_Request_Received then
             declare
                Cert_Buf : Byte_Seq (0 .. 4 + 3 + Max_Cert_DER - 1);
                Cert_Len : N32;
@@ -2421,6 +2435,10 @@ is
 		   with Pre  => S.State not in Idle | Closing | Closed | Error_State
 		                and then Reasm_Coherent (HC)
 		                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+		                and then
+		                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
+		                and then
+		                  (if HC.Reasm_Buf = null then HC.Reasm_Need = 0)
 		                and then HC.Cfg.Random /= null
 		                and then HC.Selected_Group in
 		                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -3053,7 +3071,8 @@ is
                 and then Rec.Record_Len <=
                   S.Input.Write_Pos - S.Input.Read_Pos
                 and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-                and then (HC.Reasm_Buf = null or else HC.Reasm_Need = 0)
+	                and then HC.Reasm_Need = 0
+	                and then HC.Reasm_Buf = null
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -3126,7 +3145,8 @@ is
                 and then Frag_Len in 1 .. 3
                 and then FS = S.Input.Read_Pos + Rec.Fragment_Pos
                 and then FS + Frag_Len <= S.Input.Write_Pos
-                and then (HC.Reasm_Buf = null or else HC.Reasm_Need = 0)
+	                and then HC.Reasm_Need = 0
+	                and then HC.Reasm_Buf = null
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -3217,7 +3237,8 @@ is
                 and then FS + Frag_Len <= S.Input.Write_Pos
                 and then Msg_Len <= Max_HS_Msg - 4
                 and then Msg_Len + 4 > Frag_Len
-                and then (HC.Reasm_Buf = null or else HC.Reasm_Need = 0)
+	                and then HC.Reasm_Need = 0
+	                and then HC.Reasm_Buf = null
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -3646,10 +3667,11 @@ is
                   Msg_Len  => Msg_Len,
                   Ready    => Ready,
                   Result   => Result);
-            else
-               pragma Assert (not Have_Leftover_Msg);
-               pragma Assert (HC.Reasm_Buf = null or else HC.Reasm_Need = 0);
-               Prepare_Fresh_Server_Flight_Message
+	            else
+	               pragma Assert (not Have_Leftover_Msg);
+	               pragma Assert (HC.Reasm_Need = 0);
+	               pragma Assert (HC.Reasm_Buf = null);
+	               Prepare_Fresh_Server_Flight_Message
                  (S        => S,
                   HC       => HC,
                   Rec      => Rec,

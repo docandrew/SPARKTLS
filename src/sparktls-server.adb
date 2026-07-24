@@ -62,13 +62,28 @@ is
 		      and then
 		        (if S.State = Wait_Client_Hello
 		         then Reasm_Building (HC))
-		      and then
-		        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
-		         then HC.Reasm_Len < HC.Reasm_Need))
-	   with Ghost;
+	      and then
+	        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
+	         then HC.Reasm_Len < HC.Reasm_Need))
+		   with Ghost;
 
-   function Handshake_Record_Fragment_Ready
-     (Rec : Records.Parse_Result) return Boolean is
+   function Server_Reasm_Shape (HC : Handshake_Context) return Boolean is
+     (HC.Reasm_Buf = null
+      or else
+        (HC.Reasm_Buf'First = 0
+         and then HC.Reasm_Buf'Length <= Max_HS_Msg
+         and then HC.Reasm_Buf'Length <= N32'Last
+         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+         and then
+           (if HC.Reasm_Hdr_Pending then
+              HC.Reasm_Need = 4
+              and then HC.Reasm_Len <= 4
+              and then HC.Reasm_Buf'Length = Max_HS_Msg)))
+   with Ghost;
+
+	   function Handshake_Record_Fragment_Ready
+	     (Rec : Records.Parse_Result) return Boolean is
      (Rec.OK
 	      and then Rec.Content = Records.Content_Handshake
 	      and then Rec.Fragment_Pos = Records.Record_Header_Size
@@ -182,26 +197,41 @@ is
 			                and then Server_Configured (HC)
 			                and then Reasm_Building (HC)
 			                and then HC.Legacy_Session_ID_Len in 0 .. 32
-			                and then
-				                  (if S.State = Wait_Client_Hello
-			                     and then HC.Reasm_Need > 0
-			                   then HC.Reasm_Len < HC.Reasm_Need)
-			                and then
-				                  (if S.State in Wait_Client_Certificate
-				                               | Wait_Client_Cert_Verify
-				                   then HC.Reasm_Len <= HC.Reasm_Need)
 				                and then
-				                  (if HC.Version = TLS_1_2
-				                   and then S.State in Wait_Client_Certificate
-				                                       | Wait_Client_Cert_Verify
-				                                       | Wait_Client_Finished
-					                   then SPARKTLS.Handshake.Server_Msgs
-					                          .Local_Config_Valid (HC.Cfg.Local))
-					                and then
+					                  (if S.State = Wait_Client_Hello
+				                     and then HC.Reasm_Need > 0
+				                   then HC.Reasm_Len < HC.Reasm_Need)
+				                and then
+					                  (if S.State = Wait_Client_Hello_Retry
+				                   then Server_Reasm_Shape (HC))
+				                and then
+					                  (if S.State in Wait_Client_Certificate
+					                               | Wait_Client_Cert_Verify
+					                   then HC.Reasm_Len <= HC.Reasm_Need)
+				                and then
 					                  (if HC.Version = TLS_1_2
-					                   and then S.State in Wait_Client_Cert_Verify
+					                   and then S.State in Wait_Client_Certificate
+					                                       | Wait_Client_Cert_Verify
 					                                       | Wait_Client_Finished
-						                   then SPARKTLS.Handshake.TLS12
+						                   then SPARKTLS.Handshake.Server_Msgs
+						                          .Local_Config_Valid (HC.Cfg.Local))
+						                and then
+							                  (if HC.Version = TLS_1_2
+							                   and then S.State in Wait_Client_Cert_Verify
+							                                       | Wait_Client_Finished
+							                   then Reasm_Buffer_Shaped (HC))
+							                and then
+							                  (if HC.Version = TLS_1_2
+							                   and then S.State in Wait_Client_Cert_Verify
+							                                       | Wait_Client_Finished
+							                   then
+							                     (if HC.Reasm_Need = 0
+							                      then HC.Reasm_Buf = null))
+							                and then
+							                  (if HC.Version = TLS_1_2
+							                   and then S.State in Wait_Client_Cert_Verify
+							                                       | Wait_Client_Finished
+								                   then SPARKTLS.Handshake.TLS12
 						                          .Valid_ECDHE_Group
 						                             (HC.Selected_Group))
 						                and then
@@ -363,10 +393,11 @@ is
 	   with Pre  => Server_Active (S)
 	                and then S.State = Wait_Client_Hello_Retry
 	                and then S.Role = Role_Server
-	                and then Server_Configured (HC)
-	                and then Reasm_Building (HC)
-	                and then HC.Legacy_Session_ID_Len in 0 .. 32
-	                and then Server_State_Keys_Ready (S, HC),
+		                and then Server_Configured (HC)
+		                and then Reasm_Building (HC)
+		                and then Server_Reasm_Shape (HC)
+		                and then HC.Legacy_Session_ID_Len in 0 .. 32
+		                and then Server_State_Keys_Ready (S, HC),
 			        Post => (S.State = Wait_Client_Hello_Retry
 			                 or else Valid_Transition
 			                   (Wait_Client_Hello_Retry, S.State))
@@ -375,9 +406,10 @@ is
 			                               | Server_Hello_Sent
 		                               | Wait_Client_Finished
 		                   then Server_Configured (HC))
-			                and then
-			                  (if S.State not in Error_State | Closed
-			                   then Reasm_Building (HC));
+				                and then
+				                  (if S.State not in Error_State | Closed
+				                   then Reasm_Building (HC)
+				                        and then Server_Reasm_Shape (HC));
 
    procedure Build_Server_Flight
      (S      : in out Session;
