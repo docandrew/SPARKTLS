@@ -68,17 +68,78 @@ is
       Dealloc (Buf);
    end RFLX_Free;
 
+   subtype P384_Public_Key_Seq is Byte_Seq (0 .. 96);
+
+   procedure Compute_P384_Shared_Secret
+     (Secret  :    out Bytes_48;
+      OK      :    out Boolean;
+      SK      : in     Bytes_48;
+      Peer_PK : in     P384_Public_Key_Seq)
+   with Pre => SPARKTLSCrypto.P384.Field.Initialized;
+
+   procedure Compute_P384_Shared_Secret
+     (Secret  :    out Bytes_48;
+      OK      :    out Boolean;
+      SK      : in     Bytes_48;
+      Peer_PK : in     P384_Public_Key_Seq)
+   is
+   begin
+      SPARKTLSCrypto.P384.Point.P384_ECDHE
+        (Secret  => Secret,
+         OK      => OK,
+         SK      => SK,
+         Peer_PK => Peer_PK);
+   end Compute_P384_Shared_Secret;
+
    function Effective_ALPN_Count (Cfg : Config) return Natural is
      (if Cfg.ALPN_Count > 0 then Cfg.ALPN_Count
       elsif Cfg.ALPN.Len > 0 then 1
       else 0);
+
+   function ALPN_List_Prefix_Len
+     (Cfg   : Config;
+      Count : Natural) return N32
+   with Pre  => Count <= Max_Config_ALPN_Protocols,
+        Post => ALPN_List_Prefix_Len'Result >= 2 + N32 (Count)
+                and then ALPN_List_Prefix_Len'Result <=
+                  2 + N32 (Count * (Max_Hostname_Len + 1));
+
+   function ALPN_List_Prefix_Len
+     (Cfg   : Config;
+      Count : Natural) return N32
+   is
+      Total : N32 := 2;
+      I     : Natural := 1;
+   begin
+      while I <= Count loop
+         pragma Loop_Invariant (I in 1 .. Count + 1);
+         pragma Loop_Invariant (Total >= 2 + N32 (I - 1));
+         pragma Loop_Invariant
+           (Total <= 2 + N32 ((I - 1) * (Max_Hostname_Len + 1)));
+         pragma Loop_Variant (Increases => I);
+         pragma Assert (I in ALPN_Index);
+         Total := Total + 1 + N32 (Cfg.ALPN_List (ALPN_Index (I)).Len);
+         I := I + 1;
+      end loop;
+      pragma Assert (I = Count + 1);
+      pragma Assert (Total <= 2 + N32 (Count * (Max_Hostname_Len + 1)));
+      return Total;
+   end ALPN_List_Prefix_Len;
 
    function Effective_ALPN_Data_Len (Cfg : Config) return N32
    with Post => Effective_ALPN_Data_Len'Result <= 2 + N32
                  (Max_Config_ALPN_Protocols * (Max_Hostname_Len + 1))
                  and then
                    (if Effective_ALPN_Count (Cfg) > 0
-                    then Effective_ALPN_Data_Len'Result >= 3);
+                    then Effective_ALPN_Data_Len'Result >= 3)
+                 and then
+                   (if Cfg.ALPN_Count > 0
+                    then Effective_ALPN_Data_Len'Result =
+                      ALPN_List_Prefix_Len (Cfg, Cfg.ALPN_Count))
+                 and then
+                   (if Cfg.ALPN_Count = 0 and then Cfg.ALPN.Len > 0
+                    then Effective_ALPN_Data_Len'Result =
+                      3 + N32 (Cfg.ALPN.Len));
 
    function Effective_ALPN_Data_Len (Cfg : Config) return N32 is
       Count : constant Natural := Effective_ALPN_Count (Cfg);
@@ -88,24 +149,65 @@ is
          return 0;
       end if;
 
-      Total := 2;
       if Cfg.ALPN_Count > 0 then
-         Total := Total + N32 (Cfg.ALPN_Count);
-         for I in ALPN_Index loop
-            exit when I > Cfg.ALPN_Count;
-            pragma Loop_Invariant
-              (Total >= 2 + N32 (Cfg.ALPN_Count));
-            pragma Loop_Invariant
-              (Total <= 2 + N32 (Cfg.ALPN_Count)
-                 + N32 ((I - 1) * Max_Hostname_Len));
-            Total := Total + N32 (Cfg.ALPN_List (I).Len);
-         end loop;
+         Total := ALPN_List_Prefix_Len (Cfg, Cfg.ALPN_Count);
       else
-         Total := Total + 1 + N32 (Cfg.ALPN.Len);
+         Total := 3 + N32 (Cfg.ALPN.Len);
       end if;
       pragma Assert (Total >= 3);
       return Total;
    end Effective_ALPN_Data_Len;
+
+   procedure Build_ALPN_Extension_Data
+     (Cfg    : in     Config;
+      Result : in out Byte_Seq)
+   with Pre => Result'First = 0
+               and then Effective_ALPN_Count (Cfg) > 0
+               and then Result'Last = Effective_ALPN_Data_Len (Cfg) - 1;
+
+   procedure Build_ALPN_Extension_Data
+     (Cfg    : in     Config;
+      Result : in out Byte_Seq)
+   is
+      P        : N32 := 2;
+      List_Len : constant N32 := N32 (Result'Length) - 2;
+   begin
+      Result (0) := Byte (List_Len / 256);
+      Result (1) := Byte (List_Len mod 256);
+
+      if Cfg.ALPN_Count > 0 then
+         for J in ALPN_Index loop
+            exit when J > Cfg.ALPN_Count;
+            pragma Loop_Invariant (P >= 2);
+            pragma Loop_Invariant (P <= Result'Last + 1);
+            declare
+               Proto_Len : constant Natural := Cfg.ALPN_List (J).Len;
+            begin
+               if P > Result'Last
+                 or else N32 (Proto_Len) > Result'Last - P
+               then
+                  return;
+               end if;
+               Result (P) := Byte (Proto_Len);
+               for I in 1 .. Proto_Len loop
+                  pragma Assert (P + N32 (I) <= Result'Last);
+                  Result (P + N32 (I)) :=
+                    Byte (Character'Pos (Cfg.ALPN_List (J).Data (I)));
+               end loop;
+               P := P + 1 + N32 (Proto_Len);
+            end;
+         end loop;
+      else
+         pragma Assert (P <= Result'Last);
+         pragma Assert (P + N32 (Cfg.ALPN.Len) <= Result'Last);
+         Result (P) := Byte (Cfg.ALPN.Len);
+         for I in 1 .. Cfg.ALPN.Len loop
+            pragma Assert (P + N32 (I) <= Result'Last);
+            Result (P + N32 (I)) :=
+              Byte (Character'Pos (Cfg.ALPN.Data (I)));
+         end loop;
+      end if;
+   end Build_ALPN_Extension_Data;
 
    function Effective_Sig_Algo_Count (Cfg : Config) return Natural is
      (if Cfg.Verify_Sig_Algo_Count > 0 then Cfg.Verify_Sig_Algo_Count
@@ -140,6 +242,10 @@ is
                   Suites_Ctx.Buffer_Last'Old
                 and then Suites_Ctx.First = Suites_Ctx.First'Old
                 and then Suites_Ctx.Last = Suites_Ctx.Last'Old
+                and then RFLX.TLS_Handshake.Cipher_Suites_TLS
+                  .Available_Space (Suites_Ctx)
+                    = RFLX.TLS_Handshake.Cipher_Suites_TLS
+                        .Available_Space (Suites_Ctx)'Old - 16
                 and then RFLX.TLS_Handshake.Cipher_Suites_TLS
                   .Available_Space (Suites_Ctx)
                     >= Required_After;
@@ -254,11 +360,12 @@ is
 			                and then HC.Transcript_Len = HC.Transcript_Len'Old
 			                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-			                and then Reasm_Coherent (HC)
-			                and then HC.Reasm_Len = HC.Reasm_Len'Old
-			                and then HC.Reasm_Need = HC.Reasm_Need'Old
-			                and then HC.Reasm_Hdr_Pending =
-			                  HC.Reasm_Hdr_Pending'Old;
+				                and then Reasm_Coherent (HC)
+				                and then HC.Reasm_Len = HC.Reasm_Len'Old
+				                and then HC.Reasm_Need = HC.Reasm_Need'Old
+				                and then HC.Reasm_Hdr_Pending =
+				                  HC.Reasm_Hdr_Pending'Old
+				                and then Len <= N32 (Result'Length);
 
    procedure Append_PSK_Extension
      (S         : in     Session;
@@ -646,18 +753,11 @@ is
          else 0);
       TLS12_Ticket_Ext_Len : constant N32 :=
         (if Offer_TLS12_Ticket then 4 + TLS12_Ticket_Data_Len else 0);
-      --  TLS 1.2 EMS support is parsed/validated, but the client-side
-      --  EMS Finished path is not yet interoperable with OpenSSL/BoringSSL.
-      --  Do not advertise EMS until that path is fixed.
-      Offer_EMS : constant Boolean := False;
-      EMS_Ext_Len : constant N32 := (if Offer_EMS then 4 else 0);
-
       --  Each extension: tag(2) + data_length(2) + data
       Ext_Total : constant N32 :=
          (4 + SNI_Data_Len) + (4 + SG_Data_Len) + (4 + SA_Data_Len) +
          (4 + KS_Data_Len) + (4 + PSK_Data_Len) + (4 + SV_Data_Len) +
          (4 + EPF_Data_Len) +
-         EMS_Ext_Len +
          ALPN_Ext_Len +
          Cookie_Ext_Len +
          TLS12_Ticket_Ext_Len;
@@ -845,14 +945,20 @@ is
 
 	      --  Build extensions sequence
 	      declare
-	         Exts_Ctx : RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
-	      begin
-	         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
+		         Exts_Ctx : RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
+            Remaining_Ext_Bits : RBT.Bit_Length :=
+              RBT.Bit_Length (8) * RBT.Bit_Length (Ext_Total_All)
+              with Ghost;
+		      begin
+		         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
+            pragma Assert
+              (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                 (Exts_Ctx) = Remaining_Ext_Bits);
 
-	         --  Extension 1: server_name (0x0000)
-	         declare
-	            SNI_Raw : Byte_Seq (0 .. SNI_Data_Len - 1) := (others => 0);
-	         begin
+		         --  Extension 1: server_name (0x0000)
+		         declare
+		            SNI_Raw : Byte_Seq (0 .. SNI_Data_Len - 1) := (others => 0);
+		         begin
             --  SNI list: list_len(2) + type(1) + name_len(2) + name
             SNI_Raw (0) := Byte ((Host_Len + 3) / 256);
             SNI_Raw (1) := Byte ((Host_Len + 3) mod 256);
@@ -863,11 +969,22 @@ is
                SNI_Raw (4 + N32 (I)) :=
                   Byte (Character'Pos (HC.Cfg.Server_Name.Data (I)));
             end loop;
-	            Append_CH_Extension
-	              (Exts_Ctx,
-	               RFLX.Tls_Extensiontype_Values.Server_Name,
-	               SNI_Raw);
-	         end;
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) >=
+                  RBT.Bit_Length (8) *
+                    (RBT.Bit_Length (4) + RBT.Bit_Length (SNI_Raw'Length)));
+		            Append_CH_Extension
+		              (Exts_Ctx,
+		               RFLX.Tls_Extensiontype_Values.Server_Name,
+		               SNI_Raw);
+               Remaining_Ext_Bits := Remaining_Ext_Bits -
+                 RBT.Bit_Length (8) *
+                   (RBT.Bit_Length (4) + RBT.Bit_Length (SNI_Raw'Length));
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) = Remaining_Ext_Bits);
+		         end;
 
          --  Extension 2: supported_groups (0x000A)
          declare
@@ -886,11 +1003,22 @@ is
                SG_Raw (6) := 16#00#;
                SG_Raw (7) := 16#18#;  --  secp384r1
             end if;
-	            Append_CH_Extension
-	              (Exts_Ctx,
-	               RFLX.Tls_Extensiontype_Values.Supported_Groups,
-	               SG_Raw);
-	         end;
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) >=
+                  RBT.Bit_Length (8) *
+                    (RBT.Bit_Length (4) + RBT.Bit_Length (SG_Raw'Length)));
+		            Append_CH_Extension
+		              (Exts_Ctx,
+		               RFLX.Tls_Extensiontype_Values.Supported_Groups,
+		               SG_Raw);
+               Remaining_Ext_Bits := Remaining_Ext_Bits -
+                 RBT.Bit_Length (8) *
+                   (RBT.Bit_Length (4) + RBT.Bit_Length (SG_Raw'Length));
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) = Remaining_Ext_Bits);
+		         end;
 
          --  Extension 3: signature_algorithms (0x000D)
          declare
@@ -918,11 +1046,22 @@ is
                   16#08#, 16#06#,          --  rsa_pss_rsae_sha512
                   16#08#, 16#07#);         --  ed25519
             end if;
-	            Append_CH_Extension
-	              (Exts_Ctx,
-	               RFLX.Tls_Extensiontype_Values.Signature_Algorithms,
-	               SA_Raw);
-	         end;
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) >=
+                  RBT.Bit_Length (8) *
+                    (RBT.Bit_Length (4) + RBT.Bit_Length (SA_Raw'Length)));
+		            Append_CH_Extension
+		              (Exts_Ctx,
+		               RFLX.Tls_Extensiontype_Values.Signature_Algorithms,
+		               SA_Raw);
+               Remaining_Ext_Bits := Remaining_Ext_Bits -
+                 RBT.Bit_Length (8) *
+                   (RBT.Bit_Length (4) + RBT.Bit_Length (SA_Raw'Length));
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) = Remaining_Ext_Bits);
+		         end;
 
          --  Extension 4: key_share (0x0033).
          --  CH1 / retry-no-group-change: three KeyShareEntry (X25519
@@ -974,11 +1113,22 @@ is
                   KS_Raw (6 .. 102) := P384_PK_Enc;
                end if;
             end if;
-	            Append_CH_Extension
-	              (Exts_Ctx,
-	               RFLX.Tls_Extensiontype_Values.Key_Share,
-	               KS_Raw);
-	         end;
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) >=
+                  RBT.Bit_Length (8) *
+                    (RBT.Bit_Length (4) + RBT.Bit_Length (KS_Raw'Length)));
+		            Append_CH_Extension
+		              (Exts_Ctx,
+		               RFLX.Tls_Extensiontype_Values.Key_Share,
+		               KS_Raw);
+               Remaining_Ext_Bits := Remaining_Ext_Bits -
+                 RBT.Bit_Length (8) *
+                   (RBT.Bit_Length (4) + RBT.Bit_Length (KS_Raw'Length));
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) = Remaining_Ext_Bits);
+		         end;
 
          --  Extension 4.5 (retry only): cookie (0x002C) — echo back
          --  the cookie the server sent in HRR. RFC 8446 §4.2.2.
@@ -992,23 +1142,47 @@ is
                for I in 0 .. Cookie_Bytes_Len - 1 loop
                   Cookie_Raw (2 + I) := HC.HRR_Cookie (I);
                end loop;
-	               Append_CH_Extension
-	                 (Exts_Ctx,
-	                  RFLX.Tls_Extensiontype_Values.Cookie,
-	                  Cookie_Raw);
-	            end;
-	         end if;
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                       (Exts_Ctx) >=
+                     RBT.Bit_Length (8) *
+                       (RBT.Bit_Length (4) +
+                        RBT.Bit_Length (Cookie_Raw'Length)));
+		               Append_CH_Extension
+		                 (Exts_Ctx,
+		                  RFLX.Tls_Extensiontype_Values.Cookie,
+		                  Cookie_Raw);
+                  Remaining_Ext_Bits := Remaining_Ext_Bits -
+                    RBT.Bit_Length (8) *
+                      (RBT.Bit_Length (4) +
+                       RBT.Bit_Length (Cookie_Raw'Length));
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                       (Exts_Ctx) = Remaining_Ext_Bits);
+		            end;
+		         end if;
 
          --  Extension 5: psk_key_exchange_modes (0x002D)
          declare
             PSK_Raw : constant Byte_Seq (0 .. PSK_Data_Len - 1) :=
                (16#01#, 16#01#);  --  list_len=1, psk_dhe_ke
          begin
-	            Append_CH_Extension
-	              (Exts_Ctx,
-	               RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes,
-	               PSK_Raw);
-	         end;
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) >=
+                  RBT.Bit_Length (8) *
+                    (RBT.Bit_Length (4) + RBT.Bit_Length (PSK_Raw'Length)));
+		            Append_CH_Extension
+		              (Exts_Ctx,
+		               RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes,
+		               PSK_Raw);
+               Remaining_Ext_Bits := Remaining_Ext_Bits -
+                 RBT.Bit_Length (8) *
+                   (RBT.Bit_Length (4) + RBT.Bit_Length (PSK_Raw'Length));
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) = Remaining_Ext_Bits);
+		         end;
 
          --  Extension 6: supported_versions (0x002B).
          declare
@@ -1025,110 +1199,115 @@ is
                      Byte_Seq'(16#02#,
                                16#03#, 16#03#));
          begin
-	            Append_CH_Extension
-	              (Exts_Ctx,
-	               RFLX.Tls_Extensiontype_Values.Supported_Versions,
-	               SV_Raw);
-	         end;
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) >=
+                  RBT.Bit_Length (8) *
+                    (RBT.Bit_Length (4) + RBT.Bit_Length (SV_Raw'Length)));
+		            Append_CH_Extension
+		              (Exts_Ctx,
+		               RFLX.Tls_Extensiontype_Values.Supported_Versions,
+		               SV_Raw);
+               Remaining_Ext_Bits := Remaining_Ext_Bits -
+                 RBT.Bit_Length (8) *
+                   (RBT.Bit_Length (4) + RBT.Bit_Length (SV_Raw'Length));
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) = Remaining_Ext_Bits);
+		         end;
 
          --  Extension 7: ec_point_formats (0x000B) — RFC 8422 §5.1.2.
          declare
             EPF_Raw : constant Byte_Seq (0 .. EPF_Data_Len - 1) :=
                (16#01#, 16#00#);
          begin
-	            Append_CH_Extension
-	              (Exts_Ctx,
-	               RFLX.Tls_Extensiontype_Values.Ec_Point_Formats,
-	               EPF_Raw);
-	         end;
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) >=
+                  RBT.Bit_Length (8) *
+                    (RBT.Bit_Length (4) + RBT.Bit_Length (EPF_Raw'Length)));
+		            Append_CH_Extension
+		              (Exts_Ctx,
+		               RFLX.Tls_Extensiontype_Values.Ec_Point_Formats,
+		               EPF_Raw);
+               Remaining_Ext_Bits := Remaining_Ext_Bits -
+                 RBT.Bit_Length (8) *
+                   (RBT.Bit_Length (4) + RBT.Bit_Length (EPF_Raw'Length));
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) = Remaining_Ext_Bits);
+		         end;
 
-         --  Extension 8: extended_master_secret (0x0017), empty body.
-         if Offer_EMS then
-            declare
-               Empty : constant Byte_Seq (1 .. 0) := (others => 0);
-            begin
-	               Append_CH_Extension
-	                 (Exts_Ctx,
-	                  RFLX.Tls_Extensiontype_Values.Extended_Master_Secret,
-	                  Empty);
-	            end;
-	         end if;
-
-         --  Extension 9: ALPN (0x0010) — if configured
-         if ALPN_Count > 0 then
-            declare
-               ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
-                             := (others => 0);
-               P : N32 := 2;
-               List_Len : constant N32 := ALPN_Data_Len - 2;
-            begin
-               ALPN_Raw (0) := Byte (List_Len / 256);
-               ALPN_Raw (1) := Byte (List_Len mod 256);
-	               if HC.Cfg.ALPN_Count > 0 then
-	                  for J in ALPN_Index loop
-	                     exit when J > HC.Cfg.ALPN_Count;
-	                     pragma Loop_Invariant (P >= 2);
-	                     pragma Loop_Invariant (P <= ALPN_Data_Len - 1);
-	                     pragma Loop_Invariant (P in ALPN_Raw'Range);
-	                     declare
-	                        Proto_Len : constant Natural :=
-	                           HC.Cfg.ALPN_List (J).Len;
-	                     begin
-	                        pragma Assert (Proto_Len <= Max_Hostname_Len);
-	                        pragma Assert (P <= ALPN_Raw'Last);
-	                        pragma Assert
-	                          (P + N32 (Proto_Len) <= ALPN_Raw'Last);
-	                        ALPN_Raw (P) := Byte (Proto_Len);
-	                        for I in 1 .. Proto_Len loop
-	                           pragma Assert
-	                             (P + N32 (I) <= ALPN_Raw'Last);
-                           ALPN_Raw (P + N32 (I)) :=
-                              Byte
-                                (Character'Pos
-                                   (HC.Cfg.ALPN_List (J).Data (I)));
-                        end loop;
-                        P := P + 1 + N32 (Proto_Len);
-	                     end;
-	                  end loop;
-	               else
-	                  pragma Assert (P <= ALPN_Raw'Last);
-	                  pragma Assert
-	                    (P + N32 (HC.Cfg.ALPN.Len) <= ALPN_Raw'Last);
-	                  ALPN_Raw (P) := Byte (HC.Cfg.ALPN.Len);
-	                  for I in 1 .. HC.Cfg.ALPN.Len loop
-                     pragma Assert (P + N32 (I) <= ALPN_Raw'Last);
-                     ALPN_Raw (P + N32 (I)) :=
-                        Byte (Character'Pos (HC.Cfg.ALPN.Data (I)));
-                  end loop;
-               end if;
-	               Append_CH_Extension
-	                 (Exts_Ctx,
-	                  RFLX.Tls_Extensiontype_Values
-	                    .Application_Layer_Protocol_Negotiation,
-	                  ALPN_Raw);
-	            end;
-	         end if;
+	         --  Extension 9: ALPN (0x0010) — if configured
+	         if ALPN_Count > 0 then
+	            declare
+	               ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
+	                             := (others => 0);
+	            begin
+	               Build_ALPN_Extension_Data (HC.Cfg, ALPN_Raw);
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                       (Exts_Ctx) >=
+                     RBT.Bit_Length (8) *
+                       (RBT.Bit_Length (4) +
+                        RBT.Bit_Length (ALPN_Raw'Length)));
+			               Append_CH_Extension
+			                 (Exts_Ctx,
+			                  RFLX.Tls_Extensiontype_Values
+		                    .Application_Layer_Protocol_Negotiation,
+		                  ALPN_Raw);
+                  Remaining_Ext_Bits := Remaining_Ext_Bits -
+                    RBT.Bit_Length (8) *
+                      (RBT.Bit_Length (4) +
+                       RBT.Bit_Length (ALPN_Raw'Length));
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                       (Exts_Ctx) = Remaining_Ext_Bits);
+		            end;
+		         end if;
 
          --  Extension 9b (conditional): RFC 5077 session_ticket (0x0023).
          --  Empty data on initial CH; resume ticket bytes when resuming.
          if Offer_TLS12_Ticket then
             if TLS12_Ticket_Data_Len > 0 then
-	               Append_CH_Extension
-	                 (Exts_Ctx,
-	                  RFLX.Tls_Extensiontype_Values.Session_Ticket,
-	                  HC.Cfg.TLS12_Resume_Ticket.Ticket
-	                    (0 .. TLS12_Ticket_Data_Len - 1));
-	            else
-               --  Empty body: Append_CH_Extension's Data is zero-len.
-               declare
-                  Empty : constant Byte_Seq (1 .. 0) := (others => 0);
-               begin
-	                  Append_CH_Extension
-	                    (Exts_Ctx,
-	                     RFLX.Tls_Extensiontype_Values.Session_Ticket,
-	                     Empty);
-	               end;
-	            end if;
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                       (Exts_Ctx) >=
+                     RBT.Bit_Length (8) *
+                       (RBT.Bit_Length (4) +
+                        RBT.Bit_Length (TLS12_Ticket_Data_Len)));
+		               Append_CH_Extension
+		                 (Exts_Ctx,
+		                  RFLX.Tls_Extensiontype_Values.Session_Ticket,
+		                  HC.Cfg.TLS12_Resume_Ticket.Ticket
+		                    (0 .. TLS12_Ticket_Data_Len - 1));
+                  Remaining_Ext_Bits := Remaining_Ext_Bits -
+                    RBT.Bit_Length (8) *
+                      (RBT.Bit_Length (4) +
+                       RBT.Bit_Length (TLS12_Ticket_Data_Len));
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                       (Exts_Ctx) = Remaining_Ext_Bits);
+		            else
+	               --  Empty body: Append_CH_Extension's Data is zero-len.
+	               declare
+	                  Empty : constant Byte_Seq (1 .. 0) := (others => 0);
+	               begin
+                     pragma Assert
+                       (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                          (Exts_Ctx) >=
+                        RBT.Bit_Length (8) * RBT.Bit_Length (4));
+		                  Append_CH_Extension
+		                    (Exts_Ctx,
+		                     RFLX.Tls_Extensiontype_Values.Session_Ticket,
+		                     Empty);
+                     Remaining_Ext_Bits := Remaining_Ext_Bits -
+                       RBT.Bit_Length (8) * RBT.Bit_Length (4);
+                     pragma Assert
+                       (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                          (Exts_Ctx) = Remaining_Ext_Bits);
+		               end;
+		            end if;
             HC.TLS12_Sent_Ticket_Ext := True;
          end if;
 
@@ -1138,12 +1317,23 @@ is
                Pad_Raw : constant Byte_Seq (0 .. Pad_Data_Len - 1) :=
                  (others => 0);
             begin
-	               Append_CH_Extension
-	                 (Exts_Ctx,
-	                  RFLX.Tls_Extensiontype_Values.Padding,
-	                  Pad_Raw);
-	            end;
-	         end if;
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                       (Exts_Ctx) >=
+                     RBT.Bit_Length (8) *
+                       (RBT.Bit_Length (4) + RBT.Bit_Length (Pad_Raw'Length)));
+		               Append_CH_Extension
+		                 (Exts_Ctx,
+		                  RFLX.Tls_Extensiontype_Values.Padding,
+		                  Pad_Raw);
+                  Remaining_Ext_Bits := Remaining_Ext_Bits -
+                    RBT.Bit_Length (8) *
+                      (RBT.Bit_Length (4) + RBT.Bit_Length (Pad_Raw'Length));
+                  pragma Assert
+                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                       (Exts_Ctx) = Remaining_Ext_Bits);
+		            end;
+		         end if;
 
 	         Update_Extensions_TLS (Ctx, Exts_Ctx);
 	      end;
@@ -2431,23 +2621,13 @@ is
          declare
             Secret_384 : Bytes_48;
             P384_OK    : Boolean;
-            subtype P384_SK_Seq is Byte_Seq (0 .. 47);
-            subtype P384_PK_Seq is Byte_Seq (0 .. 96);
-            Local_SK   : constant P384_SK_Seq := HC.P384_Local_SK;
-            Peer_PK    : constant P384_PK_Seq := HC.P384_Peer_PK;
          begin
             pragma Assert (SH_Parse_Frame);
-            pragma Assert (Local_SK'First = 0);
-            pragma Assert (Local_SK'Length = 48);
-            pragma Assert (Local_SK'Last = 47);
-            pragma Assert (Peer_PK'First = 0);
-            pragma Assert (Peer_PK'Length = 97);
-            pragma Assert (Peer_PK'Last = 96);
-            SPARKTLSCrypto.P384.Point.P384_ECDHE
+            Compute_P384_Shared_Secret
               (Secret  => Secret_384,
                OK      => P384_OK,
-               SK      => Local_SK,
-               Peer_PK => Peer_PK);
+               SK      => HC.P384_Local_SK,
+               Peer_PK => HC.P384_Peer_PK);
             pragma Assert (SH_Parse_Frame);
             if not P384_OK then
                OK := False;

@@ -43,28 +43,9 @@ is
       and then HC.Cfg.Random /= null)
    with Ghost;
 
-   function Server_Active (S : Session) return Boolean is
-     (S.Role = Role_Server
-	      and then S.State not in Idle | Closing | Closed | Error_State)
-	   with Ghost;
-
-   function Wait_Client_Hello_Post
-     (S  : Session;
-      HC : Handshake_Context) return Boolean is
-     ((S.State = Wait_Client_Hello
-       or else Valid_Transition (Wait_Client_Hello, S.State))
-	      and then
-	        (if S.State in Wait_Client_Hello
-	                     | Wait_Client_Hello_Retry
-	                     | Server_Hello_Sent
-	                     | Wait_Client_Finished
-		         then Server_Configured (HC))
-		      and then
-		        (if S.State = Wait_Client_Hello
-		         then Reasm_Building (HC))
-	      and then
-	        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
-	         then HC.Reasm_Len < HC.Reasm_Need))
+	   function Server_Active (S : Session) return Boolean is
+	     (S.Role = Role_Server
+		      and then S.State not in Idle | Closing | Closed | Error_State)
 		   with Ghost;
 
    function Server_Reasm_Shape (HC : Handshake_Context) return Boolean is
@@ -81,6 +62,29 @@ is
               and then HC.Reasm_Len <= 4
               and then HC.Reasm_Buf'Length = Max_HS_Msg)))
    with Ghost;
+
+	   function Wait_Client_Hello_Post
+	     (S  : Session;
+	      HC : Handshake_Context) return Boolean is
+     ((S.State = Wait_Client_Hello
+       or else Valid_Transition (Wait_Client_Hello, S.State))
+	      and then
+	        (if S.State in Wait_Client_Hello
+	                     | Wait_Client_Hello_Retry
+	                     | Server_Hello_Sent
+	                     | Wait_Client_Finished
+		         then Server_Configured (HC))
+		      and then
+		        (if S.State = Wait_Client_Hello
+		         then Reasm_Building (HC))
+	      and then
+		        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
+		         then HC.Reasm_Len < HC.Reasm_Need
+                      and then Server_Reasm_Shape (HC))
+            and then
+              (if S.State = Wait_Client_Hello and then HC.Reasm_Need = 0
+               then HC.Reasm_Buf = null))
+		   with Ghost;
 
 	   function Handshake_Record_Fragment_Ready
 	     (Rec : Records.Parse_Result) return Boolean is
@@ -1162,9 +1166,10 @@ is
                and then S.Role = Role_Server
                and then Server_Configured (HC)
 	               and then HC.Legacy_Session_ID_Len in 0 .. 32
-	               and then HC.Transcript_Len > 0
-	               and then Reasm_Building (HC)
-	               and then SPARKTLSCrypto.P384.Field.Initialized
+		               and then HC.Transcript_Len > 0
+		               and then Reasm_Building (HC)
+		               and then Reasm_Buffer_Shaped (HC)
+		               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 					                       Post => Wait_Client_Hello_Post (S, HC);
 
@@ -1332,8 +1337,9 @@ is
 		            then
 		               Send_Alert_And_Error (S, Internal_Error, Result);
 		               return;
-		            end if;
-	            SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, HC, Result);
+	            end if;
+		            pragma Assert (Reasm_Buffer_Shaped (HC));
+		            SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, HC, Result);
             pragma Assert
               (S.State = Wait_Client_Hello
                or else Valid_Transition (Wait_Client_Hello, S.State));
@@ -2216,10 +2222,9 @@ is
 		                     --  Fresh handshake record. Check if the message
 		                     --  spans multiple records by reading the 3-byte
 		                     --  handshake length.
-                     pragma Assert (Reasm_Building (HC));
-		                     pragma Assert (HC.Reasm_Need = 0);
-		                     pragma Assert (HC.Reasm_Buf = null);
-		                     if Frag_Len < 4 then
+	                     pragma Assert (Reasm_Building (HC));
+			                     pragma Assert (HC.Reasm_Need = 0);
+			                     if Frag_Len < 4 then
 		                        --  RFC 8446 Section 5.1: handshake messages MAY
 		                        --  span records. The first fragment is shorter
 		                        --  than the 4-byte HS header itself, so start
@@ -2295,9 +2300,8 @@ is
 
 			                  end if;
 
-		                  pragma Assert (HC.Reasm_Need = 0);
-		                  pragma Assert (HC.Reasm_Buf = null);
-		                  pragma Assert (Frag_Len < Transcript_Capacity);
+			                  pragma Assert (HC.Reasm_Need = 0);
+			                  pragma Assert (Frag_Len < Transcript_Capacity);
 		                  Process_Fresh_Handshake_Record;
 		                  pragma Assert (Wait_Client_Hello_Post (S, HC));
 				               end Process_Handshake_Record;

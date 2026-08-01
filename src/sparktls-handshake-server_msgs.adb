@@ -826,13 +826,21 @@ is
 	                   and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then HC.Legacy_Session_ID_Len =
                   HC.Legacy_Session_ID_Len'Old
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
+		                and then (if HC.Cfg.Local'Old /= null
+		                          then HC.Cfg.Local /= null)
+				                and then
+				                  (if HC.Cfg.Local'Old /= null
+				                   then HC.Cfg.Local /= null)
+				                and then
+					                  (if HC.Cfg.Local'Old /= null
+				                      and then HC.Cfg.Local'Old.Has_Identity
+		                      then HC.Cfg.Local /= null
+		                           and then HC.Cfg.Local.Has_Identity)
 		                   and then
-			                  (if HC.Cfg.Local'Old /= null
-			                   then HC.Cfg.Local /= null)
-	                   and then (if HC.Cfg.Random'Old /= null
-	                             then HC.Cfg.Random /= null)
+		                     (if Local_Config_Valid (HC.Cfg.Local'Old)
+		                      then Local_Config_Valid (HC.Cfg.Local))
+		                   and then (if HC.Cfg.Random'Old /= null
+		                             then HC.Cfg.Random /= null)
 	                   and then Reasm_Building (HC);
 
       procedure Check_At (Off : N32) is
@@ -943,12 +951,20 @@ is
                   HC.Legacy_Session_ID_Len'Old
 	                and then (if HC.Cfg.Local'Old /= null
 	                          then HC.Cfg.Local /= null)
+			                and then
+		                  (if HC.Cfg.Local'Old /= null
+		                   then HC.Cfg.Local /= null)
 		                and then
-	                  (if HC.Cfg.Local'Old /= null
-	                   then HC.Cfg.Local /= null)
-	                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+			                  (if HC.Cfg.Local'Old /= null
+			                      and then HC.Cfg.Local'Old.Has_Identity
+			                   then HC.Cfg.Local /= null
+			                        and then HC.Cfg.Local.Has_Identity)
+			                and then
+			                  (if Local_Config_Valid (HC.Cfg.Local'Old)
+			                   then Local_Config_Valid (HC.Cfg.Local))
+			                and then (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
+	                and then Reasm_Building (HC);
 
    procedure Copy_ALPN_Name
      (Data : in     Byte_Seq;
@@ -969,12 +985,20 @@ is
                   HC.Legacy_Session_ID_Len'Old
 	                and then (if HC.Cfg.Local'Old /= null
 	                          then HC.Cfg.Local /= null)
+			                and then
+			                  (if HC.Cfg.Local'Old /= null
+			                   then HC.Cfg.Local /= null)
 		                and then
-		                  (if HC.Cfg.Local'Old /= null
-		                   then HC.Cfg.Local /= null)
-	                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+			                  (if HC.Cfg.Local'Old /= null
+			                      and then HC.Cfg.Local'Old.Has_Identity
+			                   then HC.Cfg.Local /= null
+			                        and then HC.Cfg.Local.Has_Identity)
+			                and then
+			                  (if Local_Config_Valid (HC.Cfg.Local'Old)
+			                   then Local_Config_Valid (HC.Cfg.Local))
+			                and then (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
+	                and then Reasm_Building (HC);
 
    procedure Copy_ALPN_Name
      (Data : in     Byte_Seq;
@@ -1029,11 +1053,19 @@ is
          pragma Loop_Invariant
            (HC.Legacy_Session_ID_Len =
             HC.Legacy_Session_ID_Len'Loop_Entry);
-         pragma Loop_Invariant
-           (if HC.Cfg.Local'Loop_Entry /= null then HC.Cfg.Local /= null);
-         pragma Loop_Invariant
-           (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
-         pragma Loop_Invariant (Reasm_Building (HC));
+	         pragma Loop_Invariant
+	           (if HC.Cfg.Local'Loop_Entry /= null then HC.Cfg.Local /= null);
+	         pragma Loop_Invariant
+	           (if HC.Cfg.Local'Loop_Entry /= null
+	               and then HC.Cfg.Local'Loop_Entry.Has_Identity
+	            then HC.Cfg.Local /= null
+	                 and then HC.Cfg.Local.Has_Identity);
+	         pragma Loop_Invariant
+	           (if Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
+	            then Local_Config_Valid (HC.Cfg.Local));
+	         pragma Loop_Invariant
+	           (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
+	         pragma Loop_Invariant (Reasm_Building (HC));
          pragma Loop_Variant (Increases => P);
          declare
             PL : constant N32 := N32 (Data (P));
@@ -1620,10 +1652,10 @@ is
             and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
 	            and then HC.Legacy_Session_ID_Len =
 	                   HC.Legacy_Session_ID_Len'Old
-	            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-	            and then
-	              (if HC.Cfg.Local'Old /= null
-	                  and then HC.Cfg.Local'Old.Has_Identity
+		            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+		            and then
+		              (if HC.Cfg.Local'Old /= null
+		                  and then HC.Cfg.Local'Old.Has_Identity
 	               then HC.Cfg.Local /= null
 	                    and then HC.Cfg.Local.Has_Identity)
 	            and then
@@ -1717,10 +1749,10 @@ is
 		            and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
 	            and then HC.Legacy_Session_ID_Len =
 	                   HC.Legacy_Session_ID_Len'Old
-	            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-	            and then
-	              (if HC.Cfg.Local'Old /= null
-	                  and then HC.Cfg.Local'Old.Has_Identity
+		            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+		            and then
+		              (if HC.Cfg.Local'Old /= null
+		                  and then HC.Cfg.Local'Old.Has_Identity
 	               then HC.Cfg.Local /= null
 	                    and then HC.Cfg.Local.Has_Identity)
 	            and then
@@ -3101,11 +3133,19 @@ is
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then HC.Legacy_Session_ID_Len =
                   HC.Legacy_Session_ID_Len'Old
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+		                and then (if HC.Cfg.Local'Old /= null
+		                          then HC.Cfg.Local /= null)
+		                and then
+		                  (if HC.Cfg.Local'Old /= null
+		                      and then HC.Cfg.Local'Old.Has_Identity
+	                   then HC.Cfg.Local /= null
+	                        and then HC.Cfg.Local.Has_Identity)
+	                and then
+	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
+	                   then Local_Config_Valid (HC.Cfg.Local))
+	                and then (if HC.Cfg.Random'Old /= null
+	                          then HC.Cfg.Random /= null)
+	                and then Reasm_Building (HC);
 
    procedure Copy_TLS12_No_Ext_Client_Random
      (Data : in     Byte_Seq;
@@ -3138,11 +3178,19 @@ is
                 and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and then HC.Legacy_Session_ID_Len = Sid_Len
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+		                and then (if HC.Cfg.Local'Old /= null
+		                          then HC.Cfg.Local /= null)
+		                and then
+		                  (if HC.Cfg.Local'Old /= null
+		                      and then HC.Cfg.Local'Old.Has_Identity
+	                   then HC.Cfg.Local /= null
+	                        and then HC.Cfg.Local.Has_Identity)
+	                and then
+	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
+	                   then Local_Config_Valid (HC.Cfg.Local))
+	                and then (if HC.Cfg.Random'Old /= null
+	                          then HC.Cfg.Random /= null)
+	                and then Reasm_Building (HC);
 
    procedure Copy_TLS12_No_Ext_Session_ID
      (Data    : in     Byte_Seq;
@@ -3189,10 +3237,10 @@ is
             and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
             and then HC.Legacy_Session_ID_Len =
                    HC.Legacy_Session_ID_Len'Old
-	            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-	            and then
-	              (if HC.Cfg.Local'Old /= null
-	                  and then HC.Cfg.Local'Old.Has_Identity
+		            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+		            and then
+		              (if HC.Cfg.Local'Old /= null
+		                  and then HC.Cfg.Local'Old.Has_Identity
 	               then HC.Cfg.Local /= null
 	                    and then HC.Cfg.Local.Has_Identity)
 	            and then
@@ -3277,17 +3325,14 @@ is
             and then HC.HRR_Sent = HC.HRR_Sent'Old
             and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
 	            and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-	            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-	            and then
-	              (if HC.Cfg.Local'Old /= null
+		            and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
+			            and then
+			              (if HC.Cfg.Local'Old /= null
 	                  and then HC.Cfg.Local'Old.Has_Identity
 	               then HC.Cfg.Local /= null
 	                    and then HC.Cfg.Local.Has_Identity)
-	            and then
-	              (if Local_Config_Valid (HC.Cfg.Local'Old)
-	               then Local_Config_Valid (HC.Cfg.Local))
-	            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-	            and then HC.Legacy_Session_ID_Len in 0 .. 32
+		            and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+		            and then HC.Legacy_Session_ID_Len in 0 .. 32
 	            and then Reasm_Building (HC)
 	            and then
 	              (if OK then HC.Version = TLS_1_2);
@@ -3298,11 +3343,11 @@ is
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
-      BS  : constant N32 := Data'First + 4;
-      P   : N32;
-      Sid_Len, Cs_Len, Cm_Len : N32;
-   begin
-      OK := False;
+	      BS  : constant N32 := Data'First + 4;
+	      P   : N32;
+	      Sid_Len, Cs_Len, Cm_Len : N32;
+	   begin
+	      OK := False;
 
       if Data'Length < 4 + 35 then
          S.Last_Error := Decode_Error;
@@ -3326,9 +3371,9 @@ is
          return;
       end if;
       pragma Assert (Data'Last >= 33);
-      pragma Assert (BS >= Data'First);
-      pragma Assert (BS <= Data'Last - 33);
-      Copy_TLS12_No_Ext_Client_Random (Data, BS, HC);
+	      pragma Assert (BS >= Data'First);
+	      pragma Assert (BS <= Data'Last - 33);
+	      Copy_TLS12_No_Ext_Client_Random (Data, BS, HC);
 
       Sid_Len := N32 (Data (BS + 34));
       if Sid_Len > 32 then
@@ -3343,10 +3388,10 @@ is
       end if;
       pragma Assert (P <= Data'Last);
       pragma Assert (P >= Data'First);
-      pragma Assert (Sid_Len <= Data'Last - P + 1);
-      pragma Assert (P + Sid_Len <= Data'Last + 1);
-      Copy_TLS12_No_Ext_Session_ID (Data, P, Sid_Len, HC);
-      P := P + Sid_Len;
+	      pragma Assert (Sid_Len <= Data'Last - P + 1);
+	      pragma Assert (P + Sid_Len <= Data'Last + 1);
+	      Copy_TLS12_No_Ext_Session_ID (Data, P, Sid_Len, HC);
+	      P := P + Sid_Len;
 
       if P > Data'Last or else Data'Last - P < 1 then
          S.Last_Error := Decode_Error;
@@ -3364,10 +3409,10 @@ is
          return;
       end if;
       pragma Assert (P <= Data'Last);
-      pragma Assert (Cs_Len <= Data'Last - P + 1);
-      pragma Assert (P + Cs_Len <= Data'Last + 1);
-      Parse_TLS12_No_Ext_Cipher_Suites (Data, P, Cs_Len, S, HC);
-      P := P + Cs_Len;
+	      pragma Assert (Cs_Len <= Data'Last - P + 1);
+	      pragma Assert (P + Cs_Len <= Data'Last + 1);
+	      Parse_TLS12_No_Ext_Cipher_Suites (Data, P, Cs_Len, S, HC);
+	      P := P + Cs_Len;
 
       if P > Data'Last then
          S.Last_Error := Decode_Error;
@@ -3385,11 +3430,11 @@ is
       end if;
 
       HC.Version := TLS_1_2;
-      HC.Has_TLS_1_3 := False;
-      HC.Saw_Supported_Versions := False;
-      HC.SV_Has_Acceptable := False;
-      HC.Client_Supports_X25519 := True;
-      OK := True;
+	      HC.Has_TLS_1_3 := False;
+	      HC.Saw_Supported_Versions := False;
+	      HC.SV_Has_Acceptable := False;
+	      HC.Client_Supports_X25519 := True;
+	      OK := True;
    end Parse_TLS12_Client_Hello_No_Extensions;
 
    procedure Parse_Client_Hello

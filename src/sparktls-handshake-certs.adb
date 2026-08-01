@@ -1125,41 +1125,46 @@ is
               and then Cert_Idx <= Max_Pool_Size
             loop
                pragma Loop_Invariant
-                 (C12_Entries.Has_Buffer (Entries_Ctx)
-                  and then C12_Entries.Valid (Entries_Ctx)
-                  and then HC.Client_HS = HC.Client_HS'Loop_Entry
-                  and then HC.Transcript_Len =
-                    HC.Transcript_Len'Loop_Entry
-                  and then HC.Hash_Len = HC.Hash_Len'Loop_Entry
-	                  and then (if HC.Cfg.Local'Loop_Entry /= null
-	                            then HC.Cfg.Local /= null)
-	                  and then
-	                    (if HC.Cfg.Local'Loop_Entry /= null
-	                        and then HC.Cfg.Local'Loop_Entry.Has_Identity
-	                     then HC.Cfg.Local /= null
-	                          and then HC.Cfg.Local.Has_Identity)
-	                  and then
-	                    (if HC.Cfg.Local'Loop_Entry /= null
-	                        and then SPARKTLS.Handshake.Server_Msgs
-	                          .Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
-	                     then HC.Cfg.Local /= null
-	                          and then SPARKTLS.Handshake.Server_Msgs
-	                            .Local_Config_Valid (HC.Cfg.Local))
-	                  and then (if HC.Cfg.Random'Loop_Entry /= null
-	                            then HC.Cfg.Random /= null)
-	                  and then Reasm_Coherent (HC)
-	                  and then Reasm_Building (HC)
-	                  and then HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
-                  and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
-                  and then HC.Reasm_Hdr_Pending =
-                    HC.Reasm_Hdr_Pending'Loop_Entry
-                  and then
-                    (if HC.Peer_Cert_Valid
-                     then HC.Peer_Cert_DER_Len
-                          in 1 .. Max_Cert_DER_Len
-                          and then X509.Spans_Valid
-                            (HC.Peer_Cert,
-                             X509.N32 (HC.Peer_Cert_DER_Len) - 1)));
+                 (C12_Entries.Has_Buffer (Entries_Ctx));
+               pragma Loop_Invariant
+                 (C12_Entries.Valid (Entries_Ctx));
+               pragma Loop_Invariant
+                 (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Hash_Len = HC.Hash_Len'Loop_Entry);
+               pragma Loop_Invariant
+                 (if HC.Cfg.Local'Loop_Entry /= null
+                  then HC.Cfg.Local /= null);
+               pragma Loop_Invariant
+                 (if HC.Cfg.Local'Loop_Entry /= null
+                     and then HC.Cfg.Local'Loop_Entry.Has_Identity
+                  then HC.Cfg.Local /= null
+                       and then HC.Cfg.Local.Has_Identity);
+               pragma Loop_Invariant
+                 (if HC.Cfg.Local'Loop_Entry /= null
+                     and then SPARKTLS.Handshake.Server_Msgs
+                       .Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
+                  then HC.Cfg.Local /= null
+                       and then SPARKTLS.Handshake.Server_Msgs
+                         .Local_Config_Valid (HC.Cfg.Local));
+               pragma Loop_Invariant
+                 (if HC.Cfg.Random'Loop_Entry /= null
+                  then HC.Cfg.Random /= null);
+	               pragma Loop_Invariant (Reasm_Coherent (HC));
+	               pragma Loop_Invariant (Reasm_Building (HC));
+	               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+	               pragma Loop_Invariant
+	                 (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+               pragma Loop_Invariant
+                 (HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Loop_Entry);
+               pragma Loop_Invariant
+                 (if HC.Peer_Cert_Valid
+                  then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                       and then X509.Spans_Valid
+                         (HC.Peer_Cert,
+                          X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                declare
                   E_Ctx : C12_Entry.Context;
                begin
@@ -1175,13 +1180,13 @@ is
                           and then C_Len <= N32 (Max_Cert_DER)
                         then
                            declare
-	                              Cert_RFLX : RBT.Bytes
-	                                (1 .. RBT.Index (C_Len));
-	                           begin
-	                              pragma Assert (Cert_RFLX'First = 1);
-	                              pragma Assert
-	                                (Cert_RFLX'Length = RBT.Length (C_Len));
-	                              C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
+                              Cert_RFLX : RBT.Bytes
+                                (1 .. RBT.Index (C_Len));
+                           begin
+                              pragma Assert (Cert_RFLX'First = 1);
+                              pragma Assert
+                                (Cert_RFLX'Length = RBT.Length (C_Len));
+                              C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
                               if Cert_Idx = 0 then
                                  Copy_Cert_To_Peer_DER
                                    (Cert_RFLX, HC, C_Len);
@@ -1227,6 +1232,17 @@ is
                      end;
                   end if;
 
+                  if C12_Entries.Has_Buffer (Entries_Ctx)
+                    or else not C12_Entries.Has_Element (Entries_Ctx)
+                    or else not C12_Entries.Valid (Entries_Ctx)
+                    or else not C12_Entry.Has_Buffer (E_Ctx)
+                  then
+                     return;
+                  end if;
+                  pragma Assert (not C12_Entries.Has_Buffer (Entries_Ctx));
+                  pragma Assert (C12_Entries.Has_Element (Entries_Ctx));
+                  pragma Assert (C12_Entries.Valid (Entries_Ctx));
+                  pragma Assert (C12_Entry.Has_Buffer (E_Ctx));
                   C12_Entries.Update (Entries_Ctx, E_Ctx);
                   if not C12_Entries.Has_Buffer (Entries_Ctx) then
                      pragma Assert
@@ -1250,6 +1266,15 @@ is
                                 X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                      return;
                   end if;
+                  pragma Assert (C12_Entries.Has_Buffer (Entries_Ctx));
+                  pragma Assert (C12_Entries.Valid (Entries_Ctx));
+                  pragma Assert
+                    (if HC.Peer_Cert_Valid
+                     then HC.Peer_Cert_DER_Len
+                          in 1 .. Max_Cert_DER_Len
+                          and then X509.Spans_Valid
+                            (HC.Peer_Cert,
+                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                end;
             end loop;
 

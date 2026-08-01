@@ -33,6 +33,8 @@ is
         Post => S.State = Error_State
                 and then Result in Has_Output | Error_Alert
                 and then S.Role = S.Role'Old
+                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+                and then S.Negotiated_Suite_12 = S.Negotiated_Suite_12'Old
                 --  RFC 8446 §6.2 / RFC 5246 §7.2.2: a fatal alert
                 --  MUST be sent to the peer before the connection
                 --  closes. We satisfy this by queueing the alert
@@ -84,13 +86,27 @@ is
       Err    : Error_Code;
       Result : out Action)
    with Pre  => S.State not in Idle | Closed | Closing | Error_State
-                and Alert_Desc (Err) /= 0
-                and Alert_Desc (Err) /= 90
-                and Records.TLS12.Nonce_Space_Available_12
+                and then Alert_Desc (Err) /= 0
+                and then Alert_Desc (Err) /= 90
+                and then HC.Cfg.Local /= null
+                and then HC.Cfg.Local.Has_Identity
+                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                      (HC.Cfg.Local)
+                and then HC.Cfg.Random /= null
+                and then Reasm_Building (HC)
+                and then Reasm_Buffer_Shaped (HC)
+                and then Records.TLS12.Nonce_Space_Available_12
                       (HC.Server_Seq_12),
         Post => S.State = Error_State
                 and S.Role = S.Role'Old
-                and S.Last_Error = Err;
+                and S.Last_Error = Err
+                and HC.Cfg.Local /= null
+                and HC.Cfg.Local.Has_Identity
+                and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                      (HC.Cfg.Local)
+                and HC.Cfg.Random /= null
+                and Reasm_Building (HC)
+                and Reasm_Buffer_Shaped (HC);
                 --  Error_Has_Alert is NOT in this Post — see
                 --  matching note on Send_Encrypted_Alert in
                 --  sparktls-server.adb. Call sites bridge to
@@ -202,6 +218,11 @@ is
                 --  Finished computation will diverge from ours and
                 --  authentic handshakes will fail. Length never shrinks.
                 and then HC.Transcript_Len >= HC.Transcript_Len'Old
+                and then
+                  (if HC.Transcript_Len'Old <= HC.Transcript'Length -
+                                                N32 (Data'Length)
+                   then HC.Transcript_Len =
+                          HC.Transcript_Len'Old + N32 (Data'Length))
    is
       Len : constant N32 := N32 (Data'Length);
    begin
@@ -215,13 +236,14 @@ is
    procedure Set_Server_Random_12
      (HC     : in out Handshake_Context;
 	      Random : in     Bytes_32)
-	   with Pre  => Reasm_Building (HC),
+	   with Pre  => Reasm_Building (HC)
+	                and then Reasm_Buffer_Shaped (HC),
 	        Post => HC.Version = HC.Version'Old
 	                and then (if HC.Cfg.Local'Old /= null
 	                          then HC.Cfg.Local /= null)
 		                and then (if HC.Cfg.Local'Old /= null
 		                              and then HC.Cfg.Local'Old.Has_Identity
-		                          then HC.Cfg.Local /= null
+	                   then HC.Cfg.Local /= null
 		                               and then HC.Cfg.Local.Has_Identity)
 		                and then
 		                  (if SPARKTLS.Handshake.Server_Msgs
@@ -230,7 +252,8 @@ is
 		                          .Local_Config_Valid (HC.Cfg.Local))
 		                and then (if HC.Cfg.Random'Old /= null
 		                          then HC.Cfg.Random /= null)
-	                and then Reasm_Building (HC);
+	                and then Reasm_Building (HC)
+	                and then Reasm_Buffer_Shaped (HC);
 
    procedure Set_Server_Random_12
      (HC     : in out Handshake_Context;
@@ -251,10 +274,11 @@ is
 	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                           (HC.Cfg.Local)
 	                and then HC.Cfg.Random /= null
-	                and then S.State = Wait_Client_Hello
-	                and then S.Role = Role_Server
-	                and then Reasm_Building (HC)
-	                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then S.State = Wait_Client_Hello
+		                and then S.Role = Role_Server
+		                and then Reasm_Building (HC)
+		                and then Reasm_Buffer_Shaped (HC)
+		                and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 	        Post => S.State in Server_Hello_Sent | Error_State
 	                and then S.Role = Role_Server
@@ -265,9 +289,10 @@ is
 				                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 				                    (HC.Cfg.Local)
 				                and then HC.Cfg.Random /= null
-				                and then
-				                  (if S.State = Server_Hello_Sent
-				                   then Reasm_Building (HC));
+					                and then
+					                  (if S.State = Server_Hello_Sent
+					                   then Reasm_Building (HC)
+					                        and then Reasm_Buffer_Shaped (HC));
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
    --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
@@ -292,10 +317,11 @@ is
 	                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
 	                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
 	                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-	                  | Suite_ECDHE_RSA_CHACHA20_SHA256
-	                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-	                and then Reasm_Building (HC)
-	                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+		                  | Suite_ECDHE_RSA_CHACHA20_SHA256
+		                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+		                and then Reasm_Building (HC)
+		                and then Reasm_Buffer_Shaped (HC)
+		                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 	                  (HC.Server_Seq_12),
 	        Post => S.State in Wait_Client_Finished | Error_State
 	                and then S.Role = Role_Server
@@ -305,8 +331,9 @@ is
 			                and then
 				                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 				                    (HC.Cfg.Local)
-				                and then HC.Cfg.Random /= null
-				                and then Reasm_Building (HC);
+					                and then HC.Cfg.Random /= null
+					                and then Reasm_Building (HC)
+					                and then Reasm_Buffer_Shaped (HC);
 
    procedure Build_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
@@ -637,6 +664,7 @@ is
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1); Hello_Len : N32;
       begin
          Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+         pragma Assert (Reasm_Buffer_Shaped (HC));
          pragma Assert (S.Role = Role_Server);
          if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
@@ -799,6 +827,7 @@ is
 		                              (HC.Cfg.Local)
 		                   and then HC.Cfg.Random /= null
 	                   and then Reasm_Building (HC)
+	                   and then Reasm_Buffer_Shaped (HC)
 	                   and then S.Negotiated_Suite in
 	                  Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -813,6 +842,7 @@ is
 		                              (HC.Cfg.Local)
 		                   and then HC.Cfg.Random /= null
 	                   and then Reasm_Building (HC)
+	                   and then Reasm_Buffer_Shaped (HC)
 	                   and then S.State = S.State'Old
                 and then S.Role = S.Role'Old
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -922,6 +952,7 @@ is
          Hello_Len : N32;
       begin
          Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+         pragma Assert (Reasm_Buffer_Shaped (HC));
          if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
          end if;
@@ -1186,10 +1217,121 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_Key_Exchange_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-   is
-      Rec : Records.Parse_Result;
-   begin
+	     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+	   is
+	      Rec : Records.Parse_Result;
+	      CKE_Transcript_Appended : Boolean := False
+	        with Ghost;
+
+	      procedure Compute_Shared_Secret_12
+	        (OK  :    out Boolean;
+	         Err :    out Error_Code)
+	      with Pre  => HC.Version = TLS_1_2
+	                   and then HC.Cfg.Local /= null
+	                   and then HC.Cfg.Local.Has_Identity
+	                   and then SPARKTLS.Handshake.Server_Msgs
+	                              .Local_Config_Valid (HC.Cfg.Local)
+	                   and then HC.Cfg.Random /= null
+	                   and then Reasm_Building (HC)
+	                   and then Reasm_Buffer_Shaped (HC)
+	                   and then Valid_ECDHE_Group (HC.Selected_Group)
+	                   and then SPARKTLSCrypto.P384.Field.Initialized,
+	           Post => HC.Version = HC.Version'Old
+	                   and then HC.Cfg.Local /= null
+	                   and then HC.Cfg.Local.Has_Identity
+	                   and then SPARKTLS.Handshake.Server_Msgs
+	                              .Local_Config_Valid (HC.Cfg.Local)
+	                   and then HC.Cfg.Random /= null
+	                   and then HC.Selected_Group = HC.Selected_Group'Old
+	                   and then Valid_ECDHE_Group (HC.Selected_Group)
+	                   and then Reasm_Building (HC)
+	                   and then Reasm_Buffer_Shaped (HC)
+	      is
+	      begin
+	         OK := False;
+	         --  RFC 5246 §7.2.2 / RFC 8446 §6.2: invalid peer share is
+	         --  illegal_parameter; an unselectable group is the generic
+	         --  handshake_failure.
+
+	         case HC.Selected_Group is
+	            when Group_X25519 =>
+	               HC.Shared_Secret (0 .. 31) :=
+	                  SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+	               --  RFC 7748 §6.1 / RFC 8422 §5.10: reject all-zeros
+	               --  shared secret (small-subgroup defence). The
+	               --  helper's Post is formally proven by SPARK.
+	               OK := Shared_Secret_Is_Acceptable_X25519
+	                       (HC.Shared_Secret (0 .. 31));
+	               if OK then
+	                  Err := No_Error;
+	               else
+	                  Err := Illegal_Parameter;
+	               end if;
+	               pragma Assert (Reasm_Building (HC));
+
+	            when Group_Secp256r1 =>
+	               declare
+	                  use SPARKTLSCrypto.P256.Point;
+	                  subtype P256_SK_Seq is Byte_Seq (0 .. 31);
+	                  subtype P256_PK_Seq is Byte_Seq (0 .. 64);
+	                  Pt       : P256_Jacobian;
+	                  V        : SPARKNaCl.U32;
+	                  Local_SK : constant P256_SK_Seq := HC.P256_Local_SK;
+	                  Peer_PK  : constant P256_PK_Seq := HC.P256_Peer_PK;
+	               begin
+	                  pragma Assert (Local_SK'First = 0);
+	                  pragma Assert (Local_SK'Length = 32);
+	                  pragma Assert (Peer_PK'First = 0);
+	                  pragma Assert (Peer_PK'Length = 65);
+	                  P256_Decode (Pt, Peer_PK, V);
+	                  if V /= 0 then
+	                     P256_Mul (Pt, Local_SK, 32);
+	                     P256_To_Affine (Pt);
+	                     declare
+	                        E : Byte_Seq (0 .. 64);
+	                     begin
+	                        P256_Encode (E, Pt);
+	                        HC.Shared_Secret := (others => 0);
+	                        HC.Shared_Secret (0 .. 31) := E (1 .. 32);
+	                     end;
+	                     OK := True;
+	                     Err := No_Error;
+	                  else
+	                     Err := Illegal_Parameter;
+	                  end if;
+	                  pragma Assert (Reasm_Building (HC));
+	               end;
+
+	            when Group_Secp384r1 =>
+	               declare
+	                  subtype P384_SK_Seq is Byte_Seq (0 .. 47);
+	                  subtype P384_PK_Seq is Byte_Seq (0 .. 96);
+	                  SS       : Bytes_48;
+	                  OK384    : Boolean;
+	                  Local_SK : constant P384_SK_Seq := HC.P384_Local_SK;
+	                  Peer_PK  : constant P384_PK_Seq := HC.P384_Peer_PK;
+	               begin
+	                  pragma Assert (Local_SK'First = 0);
+	                  pragma Assert (Local_SK'Length = 48);
+	                  pragma Assert (Peer_PK'First = 0);
+	                  pragma Assert (Peer_PK'Length = 97);
+	                  SPARKTLSCrypto.P384.Point.P384_ECDHE
+	                    (SS, OK384, Local_SK, Peer_PK);
+	                  if OK384 then
+	                     HC.Shared_Secret := SS;
+	                     OK := True;
+	                     Err := No_Error;
+	                  else
+	                     Err := Illegal_Parameter;
+	                  end if;
+	                  pragma Assert (Reasm_Building (HC));
+	               end;
+
+	            when others =>
+	               pragma Assert (False);
+	         end case;
+	      end Compute_Shared_Secret_12;
+	   begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
          pragma Assert (Reasm_Building (HC));
@@ -1383,17 +1525,19 @@ is
 	            CKE_Good :    out Boolean)
 	         with Pre => Msg'Length > 0
 	                     and then Msg'Length <= HC.Transcript'Length
-	                     and then Msg'Last < N32 (Natural'Last)
-	                     and then Reasm_Building (HC)
-	                     and then HC.Cfg.Local /= null
+		                     and then Msg'Last < N32 (Natural'Last)
+		                     and then Reasm_Building (HC)
+		                     and then Reasm_Buffer_Shaped (HC)
+		                     and then HC.Cfg.Local /= null
 	                     and then HC.Cfg.Local.Has_Identity
 	                     and then SPARKTLS.Handshake.Server_Msgs
                        .Local_Config_Valid (HC.Cfg.Local)
                      and then HC.Cfg.Random /= null
                      and then Valid_ECDHE_Group (HC.Selected_Group),
-	              Post => HC.Version = HC.Version'Old
-	                      and then Reasm_Building (HC)
-	                      and then HC.Cfg.Local /= null
+		              Post => HC.Version = HC.Version'Old
+		                      and then Reasm_Building (HC)
+		                      and then Reasm_Buffer_Shaped (HC)
+		                      and then HC.Cfg.Local /= null
 	                      and then HC.Cfg.Local.Has_Identity
 	                      and then SPARKTLS.Handshake.Server_Msgs
 	                        .Local_Config_Valid (HC.Cfg.Local)
@@ -1446,6 +1590,8 @@ is
               Post => Reasm_Building (HC)
                       and then S.State = Error_State
                       and then Result /= OK
+                      and then S.Negotiated_Suite =
+                        S.Negotiated_Suite'Old
          is
          begin
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1465,6 +1611,8 @@ is
 	              Post => Reasm_Building (HC)
 	                      and then S.State = Error_State
 	                      and then Result /= OK
+	                      and then S.Negotiated_Suite =
+	                        S.Negotiated_Suite'Old
 	         is
 	         begin
 	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1473,10 +1621,11 @@ is
 	         end Fail_Unexpected;
 
 	         procedure Finish_CKE
-	           (Msg : in Byte_Seq)
-	         with Pre  => Reasm_Building (HC)
-	                      and then Msg'Length > 0
-	                      and then Msg'Length <= HC.Transcript'Length
+		           (Msg : in Byte_Seq)
+		         with Pre  => Reasm_Building (HC)
+		                      and then Reasm_Buffer_Shaped (HC)
+		                      and then Msg'Length > 0
+		                      and then Msg'Length <= HC.Transcript'Length
 	                      and then Msg'Last < N32 (Natural'Last)
 	                      and then S.State not in
                         Idle | Closing | Closed | Error_State
@@ -1491,8 +1640,9 @@ is
                         .Local_Config_Valid (HC.Cfg.Local)
                       and then HC.Cfg.Random /= null
                       and then Valid_ECDHE_Group (HC.Selected_Group),
-	              Post => Reasm_Building (HC)
-	                      and then HC.Version = HC.Version'Old
+		              Post => Reasm_Building (HC)
+		                      and then Reasm_Buffer_Shaped (HC)
+		                      and then HC.Version = HC.Version'Old
 	                      and then HC.Cfg.Local /= null
 	                      and then HC.Cfg.Local.Has_Identity
 	                      and then SPARKTLS.Handshake.Server_Msgs
@@ -1510,35 +1660,43 @@ is
                                 HC.TLS12_EMS_Transcript_Len <=
                                   Transcript_Capacity
                          else S.State = Error_State)
-         is
-            CKE_OK : Boolean;
-	         begin
-	            Parse_Complete_CKE (Msg, CKE_OK);
-            if not CKE_OK then
-               if HC.Ext_Parse_Err /= No_Error then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, HC.Ext_Parse_Err, Result);
-                  pragma Assert (Reasm_Building (HC));
-               else
-                  Fail_Decode;
-               end if;
-               return;
-            end if;
+	         is
+	            CKE_OK : Boolean;
+	            Saved_Negotiated_Suite : constant Unsigned_16 :=
+	              S.Negotiated_Suite
+	              with Ghost;
+		         begin
+		            Parse_Complete_CKE (Msg, CKE_OK);
+	            if not CKE_OK then
+	               if HC.Ext_Parse_Err /= No_Error then
+	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+	                  Send_Alert_And_Error (S, HC.Ext_Parse_Err, Result);
+	                  pragma Assert (Reasm_Building (HC));
+	                  pragma Assert
+	                    (S.Negotiated_Suite = Saved_Negotiated_Suite);
+	               else
+	                  Fail_Decode;
+	                  pragma Assert
+	                    (S.Negotiated_Suite = Saved_Negotiated_Suite);
+	               end if;
+	               return;
+	            end if;
 
-            Append_Transcript (HC, Msg);
-            HC.TLS12_EMS_Transcript_Len := HC.Transcript_Len;
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	            Result := OK;
-	         end Finish_CKE;
+	            Append_Transcript (HC, Msg);
+	            HC.TLS12_EMS_Transcript_Len := HC.Transcript_Len;
+	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+		            Result := OK;
+	            pragma Assert
+	              (S.Negotiated_Suite = Saved_Negotiated_Suite);
+		         end Finish_CKE;
 
 	         procedure Start_CKE_Reassembly
 	           (Source         : in     Byte_Seq;
 	            New_Need       : in     N32;
 	            Buffer_Length  : in     N32;
 	            Header_Pending : in     Boolean)
-	         with Pre  => Source'Length > 0
-	                      and then Source'Length <= Natural (N32'Last)
-	                      and then Source'Last < N32'Last
+			         with Pre  => Source'Length > 0
+		                      and then Source'Last < N32'Last
 	                      and then New_Need > 0
 	                      and then New_Need <= Buffer_Length
 	                      and then Buffer_Length <= Max_HS_Msg
@@ -1569,11 +1727,22 @@ is
 	            for I in N32 range 0 .. Source_Len - 1 loop
 	               pragma Loop_Invariant (HC.Reasm_Buf /= null);
 	               pragma Loop_Invariant (HC.Reasm_Buf'First = 0);
-	               pragma Loop_Invariant
-	                 (HC.Reasm_Buf'Length = Buffer_Length);
-	               pragma Loop_Invariant (Source_Len <= New_Need);
-	               pragma Loop_Invariant (New_Need <= Buffer_Length);
-	               pragma Loop_Invariant (I <= Source_Len - 1);
+		               pragma Loop_Invariant
+		                 (HC.Reasm_Buf'Length = Buffer_Length);
+		               pragma Loop_Invariant (Buffer_Length <= Max_HS_Msg);
+		               pragma Loop_Invariant (Buffer_Length <= N32'Last);
+		               pragma Loop_Invariant (HC.Reasm_Need = New_Need);
+		               pragma Loop_Invariant
+		                 (HC.Reasm_Hdr_Pending = Header_Pending);
+		               pragma Loop_Invariant (HC.Reasm_Len = Source_Len);
+		               pragma Loop_Invariant (Source_Len <= New_Need);
+		               pragma Loop_Invariant (New_Need <= Buffer_Length);
+		               pragma Loop_Invariant
+		                 (if Header_Pending then
+		                    New_Need = 4
+		                    and then Source_Len <= 4
+		                    and then Buffer_Length = Max_HS_Msg);
+		               pragma Loop_Invariant (I <= Source_Len - 1);
 	               pragma Loop_Invariant
 	                 (Source'First + I in Source'Range);
 	               pragma Loop_Invariant (I in HC.Reasm_Buf'Range);
@@ -1683,12 +1852,14 @@ is
 	                  HC.Reasm_Need := 0;
 	                  HC.Reasm_Hdr_Pending := False;
 	                  Result := OK;
-	                  Finish_CKE (Full);
-	                  if Result /= OK then
-	                     return;
-	                  end if;
-	               end;
-	            end;
+		                  Finish_CKE (Full);
+			                  if Result /= OK then
+			                     return;
+			                  end if;
+			                  pragma Assert (HC.Transcript_Len > 0);
+			                  CKE_Transcript_Appended := True;
+			               end;
+		            end;
          elsif Frag_Len < 4 then
 	            if Frag_Len = 0 then
 	               Fail_Decode;
@@ -1745,80 +1916,28 @@ is
                  S.Input.Data (FS .. FS + Frag_Len - 1);
             begin
                Result := OK;
-               Finish_CKE (Frag);
-               if Result /= OK then
-                  return;
-               end if;
-            end;
-         end if;
+	               Finish_CKE (Frag);
+		               if Result /= OK then
+		                  return;
+		               end if;
+		               pragma Assert (HC.Transcript_Len > 0);
+		               CKE_Transcript_Appended := True;
+		            end;
+		         end if;
       end;
 
-      --  Compute ECDHE shared secret
-      pragma Assert (Reasm_Building (HC));
-      pragma Assert
-        (SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group (HC.Selected_Group));
-      declare
-         SS_OK  : Boolean    := False;
-         --  RFC 5246 §7.2.2 / RFC 8446 §6.2: invalid peer share is
-         --  illegal_parameter; an unselectable group is the generic
-         --  handshake_failure.
-         SS_Err : Error_Code := Handshake_Failure;
-      begin
-         case HC.Selected_Group is
-            when Group_X25519 =>
-               HC.Shared_Secret (0 .. 31) :=
-                  SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
-               --  RFC 7748 §6.1 / RFC 8422 §5.10: reject all-zeros
-               --  shared secret (small-subgroup defence). The
-               --  helper's Post is formally proven by SPARK.
-               SS_OK := Shared_Secret_Is_Acceptable_X25519
-                          (HC.Shared_Secret (0 .. 31));
-               pragma Assert (Reasm_Building (HC));
-               if not SS_OK then
-                  SS_Err := Illegal_Parameter;
-               end if;
-               pragma Assert (Reasm_Building (HC));
-            when Group_Secp256r1 =>
-               declare
-                  use SPARKTLSCrypto.P256.Point;
-                  Pt : P256_Jacobian; V : SPARKNaCl.U32;
-               begin
-                  P256_Decode (Pt, HC.P256_Peer_PK, V);
-                  if V /= 0 then
-                     P256_Mul (Pt, HC.P256_Local_SK, 32);
-                     P256_To_Affine (Pt);
-                     declare E : Byte_Seq (0 .. 64);
-                     begin
-                        P256_Encode (E, Pt);
-                        HC.Shared_Secret := (others => 0);
-                        HC.Shared_Secret (0 .. 31) := E (1 .. 32);
-                     end;
-                     SS_OK := True;
-                     pragma Assert (Reasm_Building (HC));
-                  else
-                     SS_Err := Illegal_Parameter;
-                  end if;
-                  pragma Assert (Reasm_Building (HC));
-               end;
-            when Group_Secp384r1 =>
-               declare SS : Bytes_48; OK384 : Boolean;
-               begin
-                  SPARKTLSCrypto.P384.Point.P384_ECDHE
-                    (SS, OK384, HC.P384_Local_SK, HC.P384_Peer_PK);
-                  if OK384 then
-                     HC.Shared_Secret := SS; SS_OK := True;
-                     pragma Assert (Reasm_Building (HC));
-                  else
-                     SS_Err := Illegal_Parameter;
-                  end if;
-                  pragma Assert (Reasm_Building (HC));
-               end;
-            when others =>
-               pragma Assert (False);
-            end case;
-            pragma Assert (Reasm_Coherent (HC));
-            pragma Assert
-              (HC.Reasm_Buf = null or else HC.Reasm_Len <= HC.Reasm_Need);
+	      --  Compute ECDHE shared secret
+	      pragma Assert (Reasm_Building (HC));
+	      pragma Assert
+	        (SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group (HC.Selected_Group));
+	      declare
+	         SS_OK  : Boolean    := False;
+	         SS_Err : Error_Code := Handshake_Failure;
+	      begin
+	         Compute_Shared_Secret_12 (SS_OK, SS_Err);
+	            pragma Assert (Reasm_Coherent (HC));
+	            pragma Assert
+	              (HC.Reasm_Buf = null or else HC.Reasm_Len <= HC.Reasm_Need);
             if not SS_OK then
                Send_Alert_And_Error (S, SS_Err, Result);
                pragma Assert (Reasm_Building (HC));
@@ -1827,15 +1946,17 @@ is
       end;
 
       pragma Assert (S.State in Wait_Client_Cert_Verify | Wait_Client_Finished);
-      pragma Assert
-        (S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
-                            | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                            | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                            | Suite_ECDHE_RSA_CHACHA20_SHA256
-                            | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
-      pragma Assert (Reasm_Building (HC));
-      Derive_Keys_12 (S, HC);
+	      pragma Assert
+	        (S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
+	                            | Suite_ECDHE_RSA_AES256_GCM_SHA384
+	                            | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+	                            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+	                            | Suite_ECDHE_RSA_CHACHA20_SHA256
+	                            | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
+		      pragma Assert (Reasm_Building (HC));
+	      pragma Assert (CKE_Transcript_Appended);
+		      pragma Assert (HC.Transcript_Len > 0);
+	      Derive_Keys_12 (S, HC);
       HC.CKE_Received_12 := True;
       Result := (if Input_Available (S) > 0 then OK else Need_Input);
       --  RFC 5246 §7.4.7: at this exit point, the single-CKE
@@ -1967,13 +2088,14 @@ is
                Chain_OK  : Boolean;
                Chain_Err : Error_Code;
             begin
-               for I in N32 range 0 .. Frag_Len - 1 loop
-                  HS_Msg (I) := Frag (Frag'First + I);
-               end loop;
+	               for I in N32 range 0 .. Frag_Len - 1 loop
+	                  HS_Msg (I) := Frag (Frag'First + I);
+	               end loop;
 
-               SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
-                 (HC     => HC,
-                  HS_Msg => HS_Msg,
+	               pragma Assert (Reasm_Buffer_Shaped (HC));
+	               SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
+	                 (HC     => HC,
+	                  HS_Msg => HS_Msg,
                   OK     => Chain_OK,
                   Err    => Chain_Err);
                pragma Assert (Reasm_Building (HC));
@@ -1985,12 +2107,13 @@ is
                   return;
                end if;
                   pragma Assert
-                    (if HC.Peer_Cert_Valid
-                     then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                          and then X509.Spans_Valid
-                            (HC.Peer_Cert,
-                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-            end;
+	                  (if HC.Peer_Cert_Valid
+	                     then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+	                          and then X509.Spans_Valid
+	                            (HC.Peer_Cert,
+	                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	                  pragma Assert (Reasm_Buffer_Shaped (HC));
+	            end;
 
             Append_Transcript (HC, Frag);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;

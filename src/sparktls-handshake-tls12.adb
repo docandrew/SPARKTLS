@@ -1426,6 +1426,7 @@ is
       end if;
 
       pragma Assert (Pos = SH_Msg_Len);
+      pragma Assert (Reasm_Buffer_Shaped (HC));
       Len := SH_Msg_Len;
    end Build_Server_Hello_12;
 

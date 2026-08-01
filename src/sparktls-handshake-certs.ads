@@ -164,11 +164,11 @@ is
       OK     :    out Boolean;
       Err    :    out Error_Code)
    with Pre => HS_Msg'First = 0
-               and then HS_Msg'Length >= 7
-               and then HS_Msg'Length <= Max_Cert_Msg
-	               and then Reasm_Building (HC),
-        Post => HC.Client_HS = HC.Client_HS'Old
-                and then HC.Transcript_Len = HC.Transcript_Len'Old
+	               and then HS_Msg'Length >= 7
+	               and then HS_Msg'Length <= Max_Cert_Msg
+	               and then Reasm_Building (HC)
+                  and then Reasm_Buffer_Shaped (HC),
+        Post => HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.Hash_Len = HC.Hash_Len'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
@@ -187,6 +187,7 @@ is
 	                          then HC.Cfg.Random /= null)
 	                and then Reasm_Coherent (HC)
                    and then Reasm_Building (HC)
+                   and then Reasm_Buffer_Shaped (HC)
 	                and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then

@@ -68,6 +68,8 @@ is
 	                              S.Input.Write_Pos'Old
 			                            and then S.Server_App.Counter =
 			                              S.Server_App.Counter'Old
+			                            and then HC.Server_HS.Counter =
+			                              HC.Server_HS.Counter'Old
 				                            and then S.Server_App.Suite =
 				                              S.Server_App.Suite'Old
 						                            and then HC.HRR_Sent = HC.HRR_Sent'Old

@@ -2372,7 +2372,8 @@ is
                   and S.Server_Seq_12 = S.Server_Seq_12'Old
                   and S.Client_Seq_12 = S.Client_Seq_12'Old
                   and S.Last_Error = S.Last_Error'Old
-                  and S.Negotiated_Suite = S.Negotiated_Suite'Old;
+                  and S.Negotiated_Suite = S.Negotiated_Suite'Old
+                  and S.Negotiated_Suite_12 = S.Negotiated_Suite_12'Old;
 
    --  Push received ciphertext bytes into the session's input buffer.
    --  RFC 8446 §5.1: the record layer accepts bytes from the transport.
