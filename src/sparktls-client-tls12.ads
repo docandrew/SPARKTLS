@@ -63,14 +63,18 @@ is
 	                    and then S.Negotiated_Suite in
 	                      Suite_ECDHE_RSA_AES128_GCM_SHA256
 	                    | Suite_ECDHE_RSA_AES256_GCM_SHA384
-	                    | Suite_ECDHE_RSA_CHACHA20_SHA256
-	                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-	                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-	                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-	                    and then SPARKTLSCrypto.P384.Field.Initialized
-	                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
-               and then
-                 (if HC.CKE_Received_12 and then not HC.CCS_Received then
+		                    | Suite_ECDHE_RSA_CHACHA20_SHA256
+		                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+		                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+		                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+		                    and then SPARKTLSCrypto.P384.Field.Initialized
+		                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+	               and then
+	                 (if HC.CKE_Received_12
+	                  then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+	                         (HC.Client_Seq_12))
+	               and then
+	                 (if HC.CKE_Received_12 and then not HC.CCS_Received then
                     HC.Cfg.Random /= null
                     and then HC.Selected_Group in
                       Group_X25519 | Group_Secp256r1 | Group_Secp384r1

@@ -124,10 +124,17 @@ is
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-				        Post => (S.State = S.State'Old
-				                 or else Valid_Transition (S.State'Old, S.State))
-				             and then S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-				                           | Connected | Closing | Error_State
+				        Post => (if S.State'Old = Wait_Client_Cert_Verify
+				                 then S.State in Wait_Client_Cert_Verify
+				                               | Wait_Client_Finished
+				                               | Closing
+				                               | Error_State)
+				             and then
+				               (if S.State'Old = Wait_Client_Finished
+				                then S.State in Wait_Client_Finished
+				                              | Connected
+				                              | Closing
+				                              | Error_State)
 	                     and then
 	                       (if S.State in Wait_Client_Cert_Verify
                                       | Wait_Client_Finished
@@ -268,13 +275,9 @@ is
                         then HC.Cfg.Local /= null
                              and then HC.Cfg.Local.Has_Identity
                              and then
-                               SPARKTLS.Handshake.Server_Msgs
-                                 .Local_Config_Valid (HC.Cfg.Local)
-                             and then HC.Cfg.Random /= null
-                             and then Reasm_Buffer_Shaped (HC)
-                             and then
-                               (if HC.Reasm_Need = 0
-                                then HC.Reasm_Buf = null));
+	                               SPARKTLS.Handshake.Server_Msgs
+	                                 .Local_Config_Valid (HC.Cfg.Local)
+	                             and then HC.Cfg.Random /= null);
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:

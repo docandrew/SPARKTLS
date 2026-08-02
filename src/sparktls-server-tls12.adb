@@ -175,12 +175,12 @@ is
 	                and then HC.Cfg.Local.Has_Identity
 	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                           (HC.Cfg.Local)
-		                   and then HC.Cfg.Random /= null
-		                   and then Reasm_Building (HC)
-		                   and then Reasm_Buffer_Shaped (HC)
-		                   and then
-		                     (if HC.Reasm_Need = 0
-		                      then HC.Reasm_Buf = null),
+				                   and then HC.Cfg.Random /= null
+				                   and then Reasm_Building (HC)
+				                   and then Reasm_Buffer_Shaped (HC)
+				                   and then
+				                     (if HC.Reasm_Need = 0
+				                      then HC.Reasm_Buf = null),
 		           Post => HC.Cfg.Local /= null
 	                   and then HC.Cfg.Local.Has_Identity
 	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
@@ -199,13 +199,13 @@ is
 	                   and then HC.Reasm_Need = HC.Reasm_Need'Old
 	                   and then HC.Reasm_Hdr_Pending =
 	                     HC.Reasm_Hdr_Pending'Old
-	                   and then
-	                     Reasm_Buffer_Shaped (HC)
-	                   and then
-	                     (if HC.Reasm_Need = 0
-	                      then HC.Reasm_Buf = null)
-	                   and then
-	                     (if HC.Peer_Cert_Valid'Old
+			                   and then
+			                     Reasm_Buffer_Shaped (HC)
+			                   and then
+			                     (if HC.Reasm_Need = 0
+			                      then HC.Reasm_Buf = null)
+			                   and then
+			                     (if HC.Peer_Cert_Valid'Old
                          and then HC.Peer_Cert_DER_Len'Old
                            in 1 .. Max_Cert_DER_Len
                          and then X509.Spans_Valid
@@ -1694,22 +1694,22 @@ is
 	                      and then HC.Cfg.Local.Has_Identity
 	                      and then SPARKTLS.Handshake.Server_Msgs
 	                        .Local_Config_Valid (HC.Cfg.Local)
-		                      and then HC.Cfg.Random /= null
-		                      and then S.Negotiated_Suite =
-		                        S.Negotiated_Suite'Old
-		                      and then HC.Selected_Group = HC.Selected_Group'Old
-		                      and then
-		                        (if HC.Reasm_Need = 0
-		                         then HC.Reasm_Buf = null)
-		                      and then
-	                        (if Result = OK
-	                         then S.State = S.State'Old
-                              and then HC.Transcript_Len > 0
-                              and then HC.Transcript_Len <= Transcript_Capacity
-                              and then
-                                HC.TLS12_EMS_Transcript_Len <=
-                                  Transcript_Capacity
-                         else S.State = Error_State)
+			                      and then HC.Cfg.Random /= null
+			                      and then S.Negotiated_Suite =
+			                        S.Negotiated_Suite'Old
+				                      and then HC.Selected_Group = HC.Selected_Group'Old
+				                      and then
+			                        (if Result = OK
+		                         then S.State = S.State'Old
+	                              and then HC.Transcript_Len > 0
+	                              and then HC.Transcript_Len <= Transcript_Capacity
+	                              and then
+	                                HC.TLS12_EMS_Transcript_Len <=
+	                                  Transcript_Capacity
+	                              and then
+	                                (if HC.Reasm_Need = 0
+	                                 then HC.Reasm_Buf = null)
+	                         else S.State = Error_State)
 	         is
 	            CKE_OK : Boolean;
 	            Saved_Negotiated_Suite : constant Unsigned_16 :=

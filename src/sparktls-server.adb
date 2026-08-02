@@ -326,12 +326,16 @@ is
 		                  (S.State = Wait_Client_Hello_Retry
 		                 or else Valid_Transition
 		                   (Wait_Client_Hello_Retry, S.State))
-	                and then
-	                  (if S.State not in Error_State | Closed
-	                   then Reasm_Building (HC))
-			                and then
-			                  (if S.State in Wait_Client_Hello_Retry
-			                               | Server_Hello_Sent
+		                and then
+		                  (if S.State not in Error_State | Closed
+		                   then Reasm_Building (HC))
+		                and then
+		                  (if S.State = Wait_Client_Hello_Retry
+		                      and then HC.Reasm_Need = 0
+		                   then HC.Reasm_Buf = null)
+				                and then
+				                  (if S.State in Wait_Client_Hello_Retry
+				                               | Server_Hello_Sent
 		                               | Wait_Client_Finished
 		                   then Server_Configured (HC))
 			                and then
@@ -433,11 +437,11 @@ is
 		                               | Wait_Client_Finished
 		                   then Server_Configured (HC))
 					                and then
-					                  (if S.State not in Error_State | Closed
-					                   then Reasm_Building (HC)
-					                        and then
-					                          (if HC.Reasm_Need = 0
-					                           then HC.Reasm_Buf = null));
+						                  (if S.State = Wait_Client_Hello_Retry
+						                   then Reasm_Building (HC)
+						                        and then
+						                          (if HC.Reasm_Need = 0
+						                           then HC.Reasm_Buf = null));
 
    procedure Build_Server_Flight
      (S      : in out Session;
@@ -2560,9 +2564,9 @@ is
 	                          (S.State = Wait_Client_Hello_Retry
 	                           or else Valid_Transition
 	                             (Wait_Client_Hello_Retry, S.State));
-	                        pragma Assert
-	                          (if S.State not in Error_State | Closed
-	                           then Reasm_Building (HC));
+		            pragma Assert
+		              (if S.State = Wait_Client_Hello_Retry
+		               then Reasm_Building (HC));
 	                        return;
                      end if;
                      pragma Assert (S.State = Wait_Client_Hello_Retry);
@@ -2634,45 +2638,60 @@ is
                   Avail  => Available (S.Input),
                   Result => Rec);
 
-	               if Rec.Overflow then
-	                  Send_Alert_And_Error (S, Record_Overflow, Result);
-		                  pragma Assert
-		                    (S.State = Wait_Client_Hello_Retry
-		                     or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
-		                  pragma Assert
-		                    (if S.State not in Error_State | Closed
-		                     then Reasm_Building (HC));
-		                  return;
-	               end if;
+		               if Rec.Overflow then
+		                  Send_Alert_And_Error (S, Record_Overflow, Result);
+			                  pragma Assert
+			                    (S.State = Wait_Client_Hello_Retry
+			                     or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
+			                  pragma Assert
+			                    (if S.State not in Error_State | Closed
+			                     then Reasm_Building (HC));
+			                  pragma Assert
+			                    (if S.State = Wait_Client_Hello_Retry
+			                        and then HC.Reasm_Need = 0
+			                     then HC.Reasm_Buf = null);
+			                  return;
+		               end if;
 
                if Rec.Bad_Version then
 	                  --  RFC 8446 §5.1: legacy_record_version must lie
 	                  --  in {3,1}..{3,4}. Out-of-band → protocol_version.
 	                  Send_Alert_And_Error (S, Protocol_Version, Result);
-		                  pragma Assert
-		                    (S.State = Wait_Client_Hello_Retry
-		                     or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
-		                  pragma Assert
-		                    (if S.State not in Error_State | Closed
-		                     then Reasm_Building (HC));
-		                  return;
-	               end if;
+			                  pragma Assert
+			                    (S.State = Wait_Client_Hello_Retry
+			                     or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
+			                  pragma Assert
+			                    (if S.State not in Error_State | Closed
+			                     then Reasm_Building (HC));
+			                  pragma Assert
+			                    (if S.State = Wait_Client_Hello_Retry
+			                        and then HC.Reasm_Need = 0
+			                     then HC.Reasm_Buf = null);
+			                  return;
+		               end if;
 
                if not Rec.OK then
                   if Rec.Record_Len > 0 then
 	                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+			                     pragma Assert
+			                       (S.State = Wait_Client_Hello_Retry
+			                        or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
+			                     pragma Assert
+			                       (if S.State not in Error_State | Closed
+			                        then Reasm_Building (HC));
+			                     pragma Assert
+			                       (if S.State = Wait_Client_Hello_Retry
+			                           and then HC.Reasm_Need = 0
+			                        then HC.Reasm_Buf = null);
+			                  else
+		                     Result := Need_Input;
+		                     pragma Assert (S.State = Wait_Client_Hello_Retry);
+		                     pragma Assert (Reasm_Building (HC));
 		                     pragma Assert
-		                       (S.State = Wait_Client_Hello_Retry
-		                        or else Valid_Transition (Wait_Client_Hello_Retry, S.State));
-		                     pragma Assert
-		                       (if S.State not in Error_State | Closed
-		                        then Reasm_Building (HC));
-		                  else
-	                     Result := Need_Input;
-	                     pragma Assert (S.State = Wait_Client_Hello_Retry);
-	                     pragma Assert (Reasm_Building (HC));
-	                  end if;
+		                       (if HC.Reasm_Need = 0
+		                        then HC.Reasm_Buf = null);
+		                  end if;
 	                  return;
                end if;
 
@@ -2695,29 +2714,37 @@ is
 	                        Send_Alert_And_Error
 	                          (S, Unexpected_Message, Result);
 	                     end if;
-		                     pragma Assert
-		                       (S.State = Wait_Client_Hello_Retry
-		                        or else Valid_Transition
-		                          (Wait_Client_Hello_Retry, S.State));
-		                     pragma Assert
-		                       (if S.State not in Error_State | Closed
-		                        then Reasm_Building (HC));
-		               end;
+			                     pragma Assert
+			                       (S.State = Wait_Client_Hello_Retry
+			                        or else Valid_Transition
+			                          (Wait_Client_Hello_Retry, S.State));
+			                     pragma Assert
+			                       (if S.State not in Error_State | Closed
+			                        then Reasm_Building (HC));
+			                     pragma Assert
+			                       (if S.State = Wait_Client_Hello_Retry
+			                           and then HC.Reasm_Need = 0
+			                        then HC.Reasm_Buf = null);
+			               end;
 	                  return;
 	               end if;
 
 	               if Rec.Content /= Records.Content_Handshake then
 		                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 		                  Send_Alert_And_Error (S, Unexpected_Message, Result);
-				                  pragma Assert
-				                    (S.State = Wait_Client_Hello_Retry
-				                     or else Valid_Transition
-				                       (Wait_Client_Hello_Retry, S.State));
-				                  pragma Assert
-				                    (if S.State not in Error_State | Closed
-				                     then Reasm_Building (HC));
-			                  return;
-	               end if;
+					                  pragma Assert
+					                    (S.State = Wait_Client_Hello_Retry
+					                     or else Valid_Transition
+					                       (Wait_Client_Hello_Retry, S.State));
+					                  pragma Assert
+					                    (if S.State not in Error_State | Closed
+					                     then Reasm_Building (HC));
+					                  pragma Assert
+					                    (if S.State = Wait_Client_Hello_Retry
+					                        and then HC.Reasm_Need = 0
+					                     then HC.Reasm_Buf = null);
+				                  return;
+		               end if;
 
                --  Parse second ClientHello. CH2 is allowed to span
                --  multiple records just like CH1, including the
@@ -2752,12 +2779,16 @@ is
 	                          or else HC.Reasm_Len >= HC.Reasm_Need
 	                     then
 	                        Consume_Record;
-	                        Send_Alert_And_Error (S, Decode_Error, Result);
-	                        pragma Assert
-	                          (if S.State not in Error_State | Closed
-	                           then Reasm_Building (HC));
-	                        return;
-	                     end if;
+		                        Send_Alert_And_Error (S, Decode_Error, Result);
+		                        pragma Assert
+		                          (if S.State not in Error_State | Closed
+		                           then Reasm_Building (HC));
+		                        pragma Assert
+		                          (if S.State = Wait_Client_Hello_Retry
+		                              and then HC.Reasm_Need = 0
+		                           then HC.Reasm_Buf = null);
+		                        return;
+		                     end if;
 
                      declare
                         Remaining : constant N32 :=
@@ -2790,13 +2821,17 @@ is
                            if HS_Total > Max_HS_Msg
                              or else HS_Total > N32 (HC.Reasm_Buf'Length)
 	                           then
-	                              Free_CH2_Reasm;
-	                              Send_Alert_And_Error (S, Decode_Error, Result);
-	                              pragma Assert
-	                                (if S.State not in Error_State | Closed
-	                                 then Reasm_Building (HC));
-	                              return;
-	                           end if;
+		                              Free_CH2_Reasm;
+		                              Send_Alert_And_Error (S, Decode_Error, Result);
+		                              pragma Assert
+		                                (if S.State not in Error_State | Closed
+		                                 then Reasm_Building (HC));
+		                              pragma Assert
+		                                (if S.State = Wait_Client_Hello_Retry
+		                                    and then HC.Reasm_Need = 0
+		                                 then HC.Reasm_Buf = null);
+		                              return;
+		                           end if;
                            HC.Reasm_Need := HS_Total;
                         end;
                      end if;
@@ -2883,11 +2918,15 @@ is
 	                              end if;
 		                           end;
 	                        end if;
-	                     end;
-		                  end if;
-		               end;
-		            end;
-			   end Handle_Client_Hello_Retry;
+		                     end;
+			                  end if;
+			               end;
+			            end;
+			            pragma Assert
+			              (if S.State = Wait_Client_Hello_Retry
+			                  and then HC.Reasm_Need = 0
+			               then HC.Reasm_Buf = null);
+				   end Handle_Client_Hello_Retry;
 
    --  Dispatch handshake states to the appropriate handler
    procedure Advance_Handshake

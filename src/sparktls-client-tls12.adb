@@ -1121,11 +1121,18 @@ is
 	                and then Frag'Last - Frag'First < Transcript_Capacity
 			                and then S.State not in Idle | Closing | Closed | Error_State
 					                and then Reasm_Coherent (HC)
-	                        and then HC.Cfg.Random /= null
-	                        and then HC.Selected_Group in
-	                          Group_X25519 | Group_Secp256r1 | Group_Secp384r1
-	                        and then Valid_ECDHE_Group (HC.Selected_Group)
-	                        and then HC.Transcript_Len > 0
+	            and then HC.Cfg.Random /= null
+	            and then HC.Selected_Group in
+	              Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+	            and then Valid_ECDHE_Group (HC.Selected_Group)
+	            and then S.Negotiated_Suite in
+	              Suite_ECDHE_RSA_AES128_GCM_SHA256
+	            | Suite_ECDHE_RSA_AES256_GCM_SHA384
+	            | Suite_ECDHE_RSA_CHACHA20_SHA256
+	            | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+	            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+	            | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+	            and then HC.Transcript_Len > 0
 	                        and then HC.Transcript_Len <= Transcript_Capacity
 	                        and then S.Negotiated_Suite in
 	                          Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -1615,6 +1622,13 @@ is
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                 and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then
@@ -1702,10 +1716,12 @@ is
                 and then Reasm_Building (HC)
                 and then Result in OK | Has_Output | Error_Alert
 	                and then
-	                  (if Result = OK then
-	                     S.State not in Idle | Closing | Closed | Error_State
-	                     and then HC.Transcript_Len > 0
-	                     and then HC.Transcript_Len <= Transcript_Capacity);
+		                  (if Result = OK then
+		                     S.State not in Idle | Closing | Closed | Error_State
+		                     and then S.Negotiated_Suite =
+		                       S.Negotiated_Suite'Old
+		                     and then HC.Transcript_Len > 0
+		                     and then HC.Transcript_Len <= Transcript_Capacity);
 
    procedure Append_TLS12_Client_Handshake_Record
      (S       : in out Session;
@@ -1714,9 +1730,11 @@ is
       Msg     : in     Byte_Seq;
       Err     : in     Error_Code;
       Result  :    out Action)
-   is
-      Rec_Out : N32;
-   begin
+	   is
+	      Rec_Out : N32;
+	      Saved_Suite : constant Unsigned_16 := S.Negotiated_Suite
+	        with Ghost;
+	   begin
       Result := OK;
       Append_Transcript_Building (HC, Msg);
       pragma Assert (Reasm_Building (HC));
@@ -1730,13 +1748,14 @@ is
          return;
       end if;
 
-      pragma Assert_And_Cut
-        (Result = OK
-         and then Reasm_Coherent (HC)
-         and then Reasm_Building (HC)
-         and then S.State not in Idle | Closing | Closed | Error_State
-         and then HC.Transcript_Len > 0
-         and then HC.Transcript_Len <= Transcript_Capacity);
+	      pragma Assert_And_Cut
+	        (Result = OK
+	         and then Reasm_Coherent (HC)
+	         and then Reasm_Building (HC)
+	         and then S.State not in Idle | Closing | Closed | Error_State
+	         and then S.Negotiated_Suite = Saved_Suite
+	         and then HC.Transcript_Len > 0
+	         and then HC.Transcript_Len <= Transcript_Capacity);
    end Append_TLS12_Client_Handshake_Record;
 
    procedure Append_Client_Certificate_12
@@ -1756,11 +1775,18 @@ is
             and then Reasm_Coherent (HC)
             and then Reasm_Building (HC)
             and then S.State not in Idle | Closing | Closed | Error_State
-            and then HC.Cfg.Random /= null
-            and then HC.Selected_Group in
-              Group_X25519 | Group_Secp256r1 | Group_Secp384r1
-            and then Valid_ECDHE_Group (HC.Selected_Group)
-            and then HC.Transcript_Len > 0
+		         and then HC.Cfg.Random /= null
+		         and then HC.Selected_Group in
+		           Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+		         and then Valid_ECDHE_Group (HC.Selected_Group)
+		         and then S.Negotiated_Suite in
+		           Suite_ECDHE_RSA_AES128_GCM_SHA256
+		         | Suite_ECDHE_RSA_AES256_GCM_SHA384
+		         | Suite_ECDHE_RSA_CHACHA20_SHA256
+		         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+		         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+		         | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+		         and then HC.Transcript_Len > 0
             and then HC.Transcript_Len <= Transcript_Capacity);
          return;
       end if;
@@ -1828,6 +1854,15 @@ is
                 and then HC.Cfg.Random /= null
                 and then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity
                 and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then HC.Selected_Group in
+                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 and then SPARKTLSCrypto.P384.Field.Initialized,
         Post => Reasm_Coherent (HC)
                 and then Reasm_Building (HC)
@@ -1986,6 +2021,13 @@ is
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                 and then Valid_ECDHE_Group (HC.Selected_Group)
+                and then S.Negotiated_Suite in
+                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                | Suite_ECDHE_RSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                 and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then SPARKTLSCrypto.P384.Field.Initialized
@@ -4542,10 +4584,10 @@ is
    --  Process_Server_CCS: receive CCS, activate server read keys
    ------------------------------------------------------------------
 
-   procedure Process_Server_CCS
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then Reasm_Coherent (HC)
+	   procedure Process_Server_CCS
+	     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+	   with Pre  => S.State not in Idle | Closing | Closed | Error_State
+	                and then Reasm_Coherent (HC)
                 and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
@@ -4556,12 +4598,14 @@ is
                 and then S.Negotiated_Suite in
                   Suite_ECDHE_RSA_AES128_GCM_SHA256
                 | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                | Suite_ECDHE_RSA_CHACHA20_SHA256
-                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+	                | Suite_ECDHE_RSA_CHACHA20_SHA256
+	                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+	                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+	                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+	                and then Records.TLS12.Nonce_Space_Available_12
+	                  (HC.Client_Seq_12)
+	                and then SPARKTLSCrypto.P384.Field.Initialized
+	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
    is
       Rec : Records.Parse_Result;
@@ -4575,10 +4619,17 @@ is
                    and then HC.Reasm_Buf /= null
                    and then HC.Reasm_Need >= 4
                    and then HC.Reasm_Need <= HC.Reasm_Len
-                   and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
-                   and then HC.Reasm_Need <= Transcript_Capacity
-                   and then Msg_Len <= HC.Reasm_Need - 4,
-           Post => Reasm_Coherent (HC);
+	                   and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+	                   and then HC.Reasm_Need <= Transcript_Capacity
+	                   and then Msg_Len <= HC.Reasm_Need - 4
+	                   and then Records.TLS12.Nonce_Space_Available_12
+	                     (HC.Client_Seq_12),
+	           Post => Reasm_Coherent (HC)
+	                   and then
+	                     (if Records.TLS12.Nonce_Space_Available_12
+	                           (HC.Client_Seq_12'Old)
+	                      then Records.TLS12.Nonce_Space_Available_12
+	                             (HC.Client_Seq_12));
 
       procedure Consume_Reassembled_NST
         (Msg_Len : in N32;
@@ -4808,9 +4859,10 @@ is
                  then Has_Output else Error_Alert);
    end Send_Encrypted_Finished_Error_12;
 
-   procedure Ensure_Finished_Reasm_Buffer_12
-     (HC : in out Handshake_Context)
-   with Pre  => Reasm_Building (HC),
+	   procedure Ensure_Finished_Reasm_Buffer_12
+	     (HC : in out Handshake_Context)
+	   with Pre  => Reasm_Building (HC)
+	                and then Finished_Reasm_Shape_12 (HC),
         Post => Reasm_Building (HC)
                 and HC.Reasm_Buf /= null
                 and Finished_Reasm_Shape_12 (HC)
@@ -5339,9 +5391,11 @@ is
       if not HC.CKE_Received_12 then
          --  Still processing server flight / sending client flight
          Process_Server_Flight (S, HC, Result);
-      elsif not HC.CCS_Received then
-         --  Waiting for server CCS
-         Process_Server_CCS (S, HC, Result);
+	      elsif not HC.CCS_Received then
+	         --  Waiting for server CCS
+	         pragma Assert
+	           (Records.TLS12.Nonce_Space_Available_12 (HC.Client_Seq_12));
+	         Process_Server_CCS (S, HC, Result);
       else
          --  Waiting for server Finished
          Process_Server_Finished (S, HC, Result);
