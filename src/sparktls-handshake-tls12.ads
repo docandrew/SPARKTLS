@@ -328,10 +328,12 @@ is
       Data : in     Byte_Seq;
       OK   :    out Boolean)
       with Pre  => Data'First = 0
-                   and Data'Last in 3 .. Max_Client_Key_Exchange - 1
-                   and Valid_ECDHE_Group (HC.Selected_Group)
-                   and Reasm_Building (HC)
-                   and Reasm_Buffer_Shaped (HC),
+                   and then Data'Last in 3 .. Max_Client_Key_Exchange - 1
+                   and then Valid_ECDHE_Group (HC.Selected_Group)
+                   and then Reasm_Building (HC)
+                   and then Reasm_Buffer_Shaped (HC)
+                   and then
+                     (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null),
            Post => HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
                    and then HC.Reasm_Need = HC.Reasm_Need'Old
@@ -339,6 +341,8 @@ is
                    and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
                    and then Reasm_Building (HC)
                    and then Reasm_Buffer_Shaped (HC)
+                   and then
+                     (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
                    and then
                      (if Valid_ECDHE_Group (HC.Selected_Group'Old)
                    then Valid_ECDHE_Group (HC.Selected_Group))

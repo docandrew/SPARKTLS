@@ -65,12 +65,14 @@ is
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
 	                and then S.Role = Role_Server
-		                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-		                           (HC.Server_Seq_12)
-		                and then Reasm_Building (HC)
-		                and then Reasm_Buffer_Shaped (HC)
-		                and then SPARKTLSCrypto.P384.Field.Initialized
-	                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+			                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+			                           (HC.Server_Seq_12)
+			                and then Reasm_Building (HC)
+			                and then Reasm_Buffer_Shaped (HC)
+			                and then
+			                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
+			                and then SPARKTLSCrypto.P384.Field.Initialized
+		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => S.State in Server_Hello_Sent | Wait_Client_Finished
                             | Error_State
                 and then
@@ -82,9 +84,9 @@ is
 	                        and then
 	                          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                            (HC.Cfg.Local)
-		                        and then HC.Cfg.Random /= null
-		                        and then Reasm_Building (HC)
-		                        and then Reasm_Buffer_Shaped (HC));
+				                        and then HC.Cfg.Random /= null
+				                        and then Reasm_Building (HC)
+				                        and then Reasm_Buffer_Shaped (HC));
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
@@ -122,16 +124,18 @@ is
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-			        Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-			                           | Connected | Closing | Error_State
-				               and then HC.Cfg.Local /= null
-			        and then HC.Cfg.Local.Has_Identity
-			        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-			                   (HC.Cfg.Local)
-					        and then HC.Cfg.Random /= null
-					        and then Reasm_Buffer_Shaped (HC)
-					        and then
-					          (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
+				        Post => (S.State = S.State'Old
+				                 or else Valid_Transition (S.State'Old, S.State))
+				             and then S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
+				                           | Connected | Closing | Error_State
+	                     and then
+	                       (if S.State in Wait_Client_Cert_Verify
+                                      | Wait_Client_Finished
+                                      | Connected
+	                        then Reasm_Buffer_Shaped (HC)
+                             and then
+                               (if HC.Reasm_Need = 0
+                                then HC.Reasm_Buf = null));
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block
@@ -148,10 +152,12 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
-	               and then S.State = Wait_Client_Certificate
-	               and then Reasm_Building (HC)
-	               and then Reasm_Buffer_Shaped (HC)
-	               and then HC.Cfg.Local /= null
+		               and then S.State = Wait_Client_Certificate
+		               and then Reasm_Building (HC)
+		               and then Reasm_Buffer_Shaped (HC)
+		               and then
+		                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
+		               and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity
                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                           (HC.Cfg.Local)
@@ -187,9 +193,17 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
-               and then S.State = Wait_Client_Cert_Verify
-               and then Reasm_Building (HC)
-               and then HC.Transcript_Len in 1 .. Transcript_Capacity
+	               and then S.State = Wait_Client_Cert_Verify
+	               and then Reasm_Building (HC)
+	               and then Reasm_Buffer_Shaped (HC)
+	               and then
+	                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
+	               and then HC.Cfg.Local /= null
+	               and then HC.Cfg.Local.Has_Identity
+	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+	                          (HC.Cfg.Local)
+	               and then HC.Cfg.Random /= null
+	               and then HC.Transcript_Len in 1 .. Transcript_Capacity
                and then HC.Peer_Cert_Valid
                and then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                and then X509.Spans_Valid
@@ -245,16 +259,22 @@ is
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                           (HC.Server_Seq_12)
                and then Free_Space (S.Output) >= 7,
-			        Post => S.State in Wait_Client_Finished | Connected | Closing
-			                           | Error_State
-			        and then HC.Cfg.Local /= null
-		        and then HC.Cfg.Local.Has_Identity
-		        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-		                   (HC.Cfg.Local)
-				        and then HC.Cfg.Random /= null
-				        and then Reasm_Buffer_Shaped (HC)
-				        and then
-				          (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
+				        Post => (S.State = S.State'Old
+				                 or else Valid_Transition (S.State'Old, S.State))
+				             and then S.State in Wait_Client_Finished | Connected | Closing
+				                           | Error_State
+	                     and then
+                       (if S.State /= Error_State
+                        then HC.Cfg.Local /= null
+                             and then HC.Cfg.Local.Has_Identity
+                             and then
+                               SPARKTLS.Handshake.Server_Msgs
+                                 .Local_Config_Valid (HC.Cfg.Local)
+                             and then HC.Cfg.Random /= null
+                             and then Reasm_Buffer_Shaped (HC)
+                             and then
+                               (if HC.Reasm_Need = 0
+                                then HC.Reasm_Buf = null));
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:
@@ -272,12 +292,15 @@ is
                    (HC.Cfg.Local)
         and then HC.Cfg.Random /= null
         and then Reasm_Building (HC)
+        and then Reasm_Buffer_Shaped (HC)
         --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
         and then HC.Transcript_Len > 0
         and then HC.Transcript_Len <= Transcript_Capacity
         and then
           (if HC.TLS12_EMS_Transcript_Len > 0
            then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
+        and then
+          (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
      --  Negotiated_Suite must be one of the six TLS 1.2 ECDHE suites
      --  we recognize, so the local mapping matches Internal_Suite_For.
      and then S.Negotiated_Suite in
@@ -298,6 +321,10 @@ is
 	                              (HC.Cfg.Local)
 		                   and then HC.Cfg.Random /= null
 		                   and then Reasm_Building (HC)
+		                   and then Reasm_Buffer_Shaped (HC)
+		                   and then
+		                     (if HC.Reasm_Need = 0
+		                      then HC.Reasm_Buf = null)
 		                   and then S.State = S.State'Old
                    and then S.Role = S.Role'Old
                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old

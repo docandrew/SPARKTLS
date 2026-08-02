@@ -1266,29 +1266,32 @@ is
 		            end;
 		         end if;
 
-         --  Extension 9b (conditional): RFC 5077 session_ticket (0x0023).
-         --  Empty data on initial CH; resume ticket bytes when resuming.
-         if Offer_TLS12_Ticket then
-            if TLS12_Ticket_Data_Len > 0 then
-                  pragma Assert
-                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
-                       (Exts_Ctx) >=
-                     RBT.Bit_Length (8) *
-                       (RBT.Bit_Length (4) +
-                        RBT.Bit_Length (TLS12_Ticket_Data_Len)));
-		               Append_CH_Extension
-		                 (Exts_Ctx,
-		                  RFLX.Tls_Extensiontype_Values.Session_Ticket,
-		                  HC.Cfg.TLS12_Resume_Ticket.Ticket
-		                    (0 .. TLS12_Ticket_Data_Len - 1));
-                  Remaining_Ext_Bits := Remaining_Ext_Bits -
-                    RBT.Bit_Length (8) *
-                      (RBT.Bit_Length (4) +
-                       RBT.Bit_Length (TLS12_Ticket_Data_Len));
-                  pragma Assert
-                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
-                       (Exts_Ctx) = Remaining_Ext_Bits);
-		            else
+	         --  Extension 9b (conditional): RFC 5077 session_ticket (0x0023).
+	         --  Empty data on initial CH; resume ticket bytes when resuming.
+	         if Offer_TLS12_Ticket then
+	            if TLS12_Ticket_Data_Len > 0 then
+	                  pragma Assert
+	                    (TLS12_Ticket_Data_Len <= Max_TLS12_Ticket_Len);
+	                  pragma Assert (TLS12_Ticket_Data_Len <= 4096);
+	                  pragma Assert
+	                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+	                       (Exts_Ctx) >=
+	                     RBT.Bit_Length (8) *
+	                       (RBT.Bit_Length (4) +
+	                        RBT.Bit_Length (TLS12_Ticket_Data_Len)));
+			               Append_CH_Extension
+			                 (Exts_Ctx,
+			                  RFLX.Tls_Extensiontype_Values.Session_Ticket,
+			                  HC.Cfg.TLS12_Resume_Ticket.Ticket
+			                    (0 .. TLS12_Ticket_Data_Len - 1));
+	                  Remaining_Ext_Bits := Remaining_Ext_Bits -
+	                    RBT.Bit_Length (8) *
+	                      (RBT.Bit_Length (4) +
+	                       RBT.Bit_Length (TLS12_Ticket_Data_Len));
+	                  pragma Assert
+	                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+	                       (Exts_Ctx) = Remaining_Ext_Bits);
+			            else
 	               --  Empty body: Append_CH_Extension's Data is zero-len.
 	               declare
 	                  Empty : constant Byte_Seq (1 .. 0) := (others => 0);

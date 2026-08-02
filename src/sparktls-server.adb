@@ -78,9 +78,8 @@ is
 		        (if S.State = Wait_Client_Hello
 		         then Reasm_Building (HC))
 	      and then
-		        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
-		         then HC.Reasm_Len < HC.Reasm_Need
-                      and then Server_Reasm_Shape (HC))
+			        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
+			         then HC.Reasm_Len < HC.Reasm_Need)
             and then
               (if S.State = Wait_Client_Hello and then HC.Reasm_Need = 0
                then HC.Reasm_Buf = null))
@@ -204,10 +203,19 @@ is
 				                and then
 					                  (if S.State = Wait_Client_Hello
 				                     and then HC.Reasm_Need > 0
-				                   then HC.Reasm_Len < HC.Reasm_Need)
+				                   then HC.Reasm_Len < HC.Reasm_Need
+					                        and then Server_Reasm_Shape (HC))
+				                and then
+					                  (if S.State = Wait_Client_Hello
+					                     and then HC.Reasm_Need = 0
+				                   then HC.Reasm_Buf = null)
 				                and then
 					                  (if S.State = Wait_Client_Hello_Retry
 				                   then Server_Reasm_Shape (HC))
+				                and then
+					                  (if S.State = Wait_Client_Hello_Retry
+					                     and then HC.Reasm_Need = 0
+				                   then HC.Reasm_Buf = null)
 				                and then
 					                  (if S.State in Wait_Client_Certificate
 					                               | Wait_Client_Cert_Verify
@@ -220,17 +228,28 @@ is
 						                   then SPARKTLS.Handshake.Server_Msgs
 						                          .Local_Config_Valid (HC.Cfg.Local))
 						                and then
-							                  (if HC.Version = TLS_1_2
-							                   and then S.State in Wait_Client_Cert_Verify
-							                                       | Wait_Client_Finished
-							                   then Reasm_Buffer_Shaped (HC))
-							                and then
-							                  (if HC.Version = TLS_1_2
-							                   and then S.State in Wait_Client_Cert_Verify
-							                                       | Wait_Client_Finished
-							                   then
-							                     (if HC.Reasm_Need = 0
+								                  (if HC.Version = TLS_1_2
+								                   and then S.State in Wait_Client_Certificate
+								                                       | Wait_Client_Cert_Verify
+								                                       | Wait_Client_Finished
+								                   then Reasm_Buffer_Shaped (HC))
+								                and then
+								                  (if HC.Version = TLS_1_2
+								                   and then S.State in Wait_Client_Certificate
+								                                       | Wait_Client_Cert_Verify
+								                                       | Wait_Client_Finished
+								                   then
+								                     (if HC.Reasm_Need = 0
 							                      then HC.Reasm_Buf = null))
+                           and then
+                             (if HC.Version = TLS_1_3
+                              and then S.State = Wait_Client_Finished
+                              then Server_Reasm_Shape (HC))
+                           and then
+                             (if HC.Version = TLS_1_3
+                              and then S.State = Wait_Client_Finished
+                              and then HC.Reasm_Need = 0
+                              then HC.Reasm_Buf = null)
 							                and then
 							                  (if HC.Version = TLS_1_2
 							                   and then S.State in Wait_Client_Cert_Verify
@@ -398,9 +417,12 @@ is
 	                and then S.State = Wait_Client_Hello_Retry
 	                and then S.Role = Role_Server
 		                and then Server_Configured (HC)
-		                and then Reasm_Building (HC)
-		                and then Server_Reasm_Shape (HC)
-		                and then HC.Legacy_Session_ID_Len in 0 .. 32
+			                and then Reasm_Building (HC)
+			                and then Server_Reasm_Shape (HC)
+			                and then
+			                  (if HC.Reasm_Need = 0
+			                   then HC.Reasm_Buf = null)
+			                and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                and then Server_State_Keys_Ready (S, HC),
 			        Post => (S.State = Wait_Client_Hello_Retry
 			                 or else Valid_Transition
@@ -410,10 +432,12 @@ is
 			                               | Server_Hello_Sent
 		                               | Wait_Client_Finished
 		                   then Server_Configured (HC))
-				                and then
-				                  (if S.State not in Error_State | Closed
-				                   then Reasm_Building (HC)
-				                        and then Server_Reasm_Shape (HC));
+					                and then
+					                  (if S.State not in Error_State | Closed
+					                   then Reasm_Building (HC)
+					                        and then
+					                          (if HC.Reasm_Need = 0
+					                           then HC.Reasm_Buf = null));
 
    procedure Build_Server_Flight
      (S      : in out Session;
@@ -596,6 +620,9 @@ is
 		               and then Nonce_Space_Available (HC.Client_HS)
 		               and then HC.Transcript_Len > 0
 		               and then Reasm_Building (HC)
+		               and then Server_Reasm_Shape (HC)
+		               and then
+		                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
 	               and then Free_Space (S.Output) >=
                           Records.Record_Header_Size + 3 + Records.Tag_Size,
 		        Post => (S.State = Wait_Client_Finished
@@ -628,11 +655,19 @@ is
                and then Rec.Record_Len >= Rec.Fragment_Pos
 	               and then Rec.Fragment_Len = Rec.Record_Len - Rec.Fragment_Pos
 		               and then Rec.Record_Len <= Available (S.Input)
-		               and then Reasm_Building (HC),
+		               and then Reasm_Building (HC)
+		               and then Server_Reasm_Shape (HC)
+		               and then
+		                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null),
 					        Post => (S.State = S.State'Old
 				                 or else Valid_Transition (S.State'Old, S.State))
 				                and then (if S.State not in Error_State | Closed
-				                          then Server_Configured (HC));
+				                          then Server_Configured (HC)
+				                               and then Reasm_Building (HC)
+				                               and then Server_Reasm_Shape (HC)
+				                               and then
+				                                 (if HC.Reasm_Need = 0
+				                                  then HC.Reasm_Buf = null));
    procedure Verify_Client_Finished
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -1412,8 +1447,14 @@ is
 	   with Pre => S.State = Wait_Client_Hello
 		               and then S.Role = Role_Server
 		               and then Server_Configured (HC)
-		               and then Reasm_Building (HC)
-		               and then HC.Legacy_Session_ID_Len in 0 .. 32
+			               and then Reasm_Building (HC)
+			               and then
+			                 (if HC.Reasm_Need > 0
+			                  then Server_Reasm_Shape (HC))
+			               and then
+			                 (if HC.Reasm_Need = 0
+			                  then HC.Reasm_Buf = null)
+			               and then HC.Legacy_Session_ID_Len in 0 .. 32
 		               and then
 		                 (if HC.Reasm_Need > 0
 		                  then HC.Reasm_Len < HC.Reasm_Need)
@@ -1540,8 +1581,14 @@ is
 	                  with Pre => S.State = Wait_Client_Hello
 	                              and then S.Role = Role_Server
 	                              and then Server_Configured (HC)
-	                              and then Reasm_Building (HC)
-	                              and then HC.Legacy_Session_ID_Len in 0 .. 32
+				                              and then Reasm_Building (HC)
+				                              and then
+				                                (if HC.Reasm_Need > 0
+				                                 then Server_Reasm_Shape (HC))
+				                              and then
+				                                (if HC.Reasm_Need = 0
+				                                 then HC.Reasm_Buf = null)
+				                              and then HC.Legacy_Session_ID_Len in 0 .. 32
 	                              and then Server_State_Keys_Ready (S, HC)
 		                              and then Handshake_Record_Fragment_Ready
 		                                (Rec)
@@ -1608,11 +1655,11 @@ is
 	                                Available (S.Input)
 	                              and then HC.Reasm_Need > 0
 	                              and then HC.Reasm_Len < HC.Reasm_Need
-	                              and then HC.Reasm_Buf /= null
-	                              and then HC.Reasm_Buf'First = 0
-	                              and then HC.Reasm_Buf'Length <= Max_HS_Msg
-	                              and then HC.Reasm_Buf'Length <= N32'Last
-	                              and then HC.Reasm_Need <=
+			                              and then HC.Reasm_Buf /= null
+			                              and then HC.Reasm_Buf'First = 0
+			                              and then HC.Reasm_Buf'Last < N32'Last
+			                              and then HC.Reasm_Buf'Length <= Max_HS_Msg
+		                              and then HC.Reasm_Need <=
 	                                N32 (HC.Reasm_Buf'Length)
 	                              and then HC.Reasm_Len <=
 	                                N32 (HC.Reasm_Buf'Length)
@@ -1653,12 +1700,11 @@ is
 							                                      HC.Legacy_Session_ID_Len
 							                                        in 0 .. 32
 				                                    and then not HC.Reasm_Hdr_Pending
-				                                    and then HC.Reasm_Buf /= null
-				                                    and then HC.Reasm_Buf'First = 0
-				                                    and then HC.Reasm_Buf'Length <=
-				                                      Max_HS_Msg
-				                                    and then HC.Reasm_Buf'Length <=
-				                                      N32'Last
+			                                 and then HC.Reasm_Buf /= null
+			                                 and then HC.Reasm_Buf'First = 0
+			                                 and then HC.Reasm_Buf'Last < N32'Last
+			                                 and then HC.Reasm_Buf'Length <=
+			                                   Max_HS_Msg
 				                                    and then HC.Reasm_Len <=
 				                                      N32 (HC.Reasm_Buf'Length));
 
@@ -1771,10 +1817,15 @@ is
 		                                 and then HC.Reasm_Len < HC.Reasm_Need
 		                                 and then HC.Reasm_Buf /= null
 		                                 and then HC.Reasm_Buf'First = 0
+		                                 and then HC.Reasm_Buf'Last < N32'Last
 		                                 and then HC.Reasm_Buf'Length <=
 		                                   Max_HS_Msg
-		                                 and then HC.Reasm_Buf'Length <=
-		                                   N32'Last
+		                                 and then
+		                                   (if HC.Reasm_Hdr_Pending
+		                                    then HC.Reasm_Need = 4
+		                                         and then HC.Reasm_Len <= 4
+		                                         and then HC.Reasm_Buf'Length =
+		                                           Max_HS_Msg)
 		                                 and then HC.Reasm_Need <=
 		                                   N32 (HC.Reasm_Buf'Length)
 		                                 and then HC.Reasm_Len <=
@@ -1801,10 +1852,10 @@ is
 			                                       else HC.Reasm_Len >= HC.Reasm_Need
 			                                            and then HC.Reasm_Buf /= null
 			                                            and then HC.Reasm_Buf'First = 0
+			                                            and then HC.Reasm_Buf'Last <
+			                                              N32'Last
 			                                            and then HC.Reasm_Buf'Length <=
 			                                              Max_HS_Msg
-			                                            and then HC.Reasm_Buf'Length <=
-			                                              N32'Last
 					                                            and then HC.Reasm_Len <=
 					                                              N32 (HC.Reasm_Buf'Length)
 					                                            and then
@@ -1925,11 +1976,11 @@ is
 				                              and then Reasm_Building (HC)
 				                              and then SPARKTLSCrypto.P384.Field.Initialized
 				                              and then SPARKTLSCrypto.P384.ECDSA.Initialized
-					                              and then HC.Reasm_Buf /= null
-		                              and then HC.Reasm_Buf'First = 0
-		                              and then HC.Reasm_Buf'Length <= Max_HS_Msg
-		                              and then HC.Reasm_Buf'Length <= N32'Last
-			                              and then HC.Reasm_Len >= HC.Reasm_Need
+						                              and then HC.Reasm_Buf /= null
+			                              and then HC.Reasm_Buf'First = 0
+			                              and then HC.Reasm_Buf'Last < N32'Last
+			                              and then HC.Reasm_Buf'Length <= Max_HS_Msg
+				                              and then HC.Reasm_Len >= HC.Reasm_Need
 			                              and then HC.Legacy_Session_ID_Len
 			                                in 0 .. 32
 			                              and then HC.Reasm_Len <=
@@ -2773,9 +2824,11 @@ is
                   elsif Frag_Len = 0 then
                      Consume_Record;
                      Send_Alert_And_Error (S, Decode_Error, Result);
-                  elsif Frag_Len < 4 then
-                     HC.Reasm_Buf := new Byte_Seq'
-                       (0 .. Max_HS_Msg - 1 => 0);
+	                  elsif Frag_Len < 4 then
+	                     pragma Assert (HC.Reasm_Need = 0);
+	                     pragma Assert (HC.Reasm_Buf = null);
+	                     HC.Reasm_Buf := new Byte_Seq'
+	                       (0 .. Max_HS_Msg - 1 => 0);
                      HC.Reasm_Need := 4;
                      HC.Reasm_Hdr_Pending := True;
                      HC.Reasm_Len := Frag_Len;
@@ -2783,9 +2836,10 @@ is
                         S.Input.Data (Frag_Start ..
                                       Frag_Start + Frag_Len - 1);
                      Consume_Record;
-                     Result := OK;
-                     pragma Assert (Reasm_Building (HC));
-                  else
+	                     Result := OK;
+	                     pragma Assert (Reasm_Building (HC));
+	                     pragma Assert (HC.Reasm_Buf /= null);
+	                  else
                      declare
                         HS_Msg_Len : constant N32 :=
                            N32 (S.Input.Data (Frag_Start + 1)) * 65536 +
@@ -2796,9 +2850,11 @@ is
                         if HS_Total > Max_HS_Msg then
                            Consume_Record;
                            Send_Alert_And_Error (S, Decode_Error, Result);
-                        elsif HS_Total > Frag_Len then
-                           HC.Reasm_Buf := new Byte_Seq'
-                             (0 .. HS_Total - 1 => 0);
+	                        elsif HS_Total > Frag_Len then
+	                           pragma Assert (HC.Reasm_Need = 0);
+	                           pragma Assert (HC.Reasm_Buf = null);
+	                           HC.Reasm_Buf := new Byte_Seq'
+	                             (0 .. HS_Total - 1 => 0);
                            HC.Reasm_Need := HS_Total;
                            HC.Reasm_Hdr_Pending := False;
                            HC.Reasm_Len := Frag_Len;
@@ -2806,8 +2862,9 @@ is
                               S.Input.Data (Frag_Start ..
                                             Frag_Start + Frag_Len - 1);
                            Consume_Record;
-                           Result := OK;
-                           pragma Assert (Reasm_Building (HC));
+	                           Result := OK;
+	                           pragma Assert (Reasm_Building (HC));
+	                           pragma Assert (HC.Reasm_Buf /= null);
 		                        else
 		                           declare
 		                              Frag : Byte_Seq (0 .. Frag_Len - 1);
@@ -5121,10 +5178,11 @@ is
          Result :    out Action)
       with Pre => S.State = Wait_Client_Finished
                   and then S.Role = Role_Server
-                  and then Nonce_Space_Available (S.Server_App)
-                  and then Server_Configured (HC)
-                  and then Reasm_Building (HC)
-                  and then Data'First = 0
+	                  and then Nonce_Space_Available (S.Server_App)
+	                  and then Server_Configured (HC)
+	                  and then Reasm_Building (HC)
+	                  and then HC.Transcript_Len > 0
+	                  and then Data'First = 0
                   and then Len > 0
                   and then Data'Last < N32'Last
                   and then Len - 1 <= Data'Last,

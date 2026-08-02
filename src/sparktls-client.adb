@@ -111,10 +111,9 @@ is
       HC     : in out Handshake_Context;
       Err    : Error_Code;
       Result :    out Action)
-   with Pre  => Nonce_Space_Available (HC.Client_HS)
-                and then S.State not in Idle | Closing | Closed | Error_State
-                and then Reasm_Coherent (HC)
-                and then Reasm_Building (HC),
+	   with Pre  => Nonce_Space_Available (HC.Client_HS)
+	                and then S.State not in Idle | Closing | Closed | Error_State
+	                and then Reasm_Coherent (HC),
         Post => S.State = Error_State
                 and then S.Last_Error = Err
 	                and then Result in Has_Output | Error_Alert
@@ -123,7 +122,9 @@ is
 	                and then HC.Reasm_Need = HC.Reasm_Need'Old
 	                and then HC.Reasm_Hdr_Pending =
 	                  HC.Reasm_Hdr_Pending'Old
-	                and then Reasm_Building (HC)
+		                and then
+		                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
+		                   then Reasm_Building (HC))
 	                --  Frame: post-handshake app key is not touched (only
                 --  the handshake-secret key is used to encrypt the
                 --  alert). Pin so callers can preserve
@@ -1391,6 +1392,7 @@ is
 	               and then HC.Transcript_Len > 0
 	               and then HC.Transcript_Len <= Transcript_Capacity
 	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+	               and then WSH_Reasm_Shape (HC)
 	               and then
 	                 (if HC.Version = TLS_1_3
 	                  then S.Negotiated_Suite in
@@ -1579,9 +1581,11 @@ is
                             N32 (HC.HRR_Cookie'Length)
                           then HC.HRR_Cookie_Len <=
                             N32 (HC.HRR_Cookie'Length))
-			                and then HC.Hash_Len = HC.Hash_Len'Old
-				                and then Reasm_Coherent (HC)
-                                and then Reasm_Building (HC)
+				                and then HC.Hash_Len = HC.Hash_Len'Old
+					                and then Reasm_Coherent (HC)
+					                and then
+					                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
+					                   then Reasm_Building (HC))
 				                and then
 				                  HC.Reasm_Len = HC.Reasm_Len'Old
 			                and then HC.Reasm_Need = HC.Reasm_Need'Old
