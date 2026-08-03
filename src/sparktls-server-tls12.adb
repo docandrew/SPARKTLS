@@ -242,8 +242,10 @@ is
    procedure Set_Server_Random_12
      (HC     : in out Handshake_Context;
 	      Random : in     Bytes_32)
-	   with Pre  => Reasm_Building (HC)
-	                and then Reasm_Buffer_Shaped (HC),
+			   with Pre  => Reasm_Building (HC)
+			                and then Reasm_Buffer_Shaped (HC)
+			                and then
+			                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null),
 	        Post => HC.Version = HC.Version'Old
 	                and then (if HC.Cfg.Local'Old /= null
 	                          then HC.Cfg.Local /= null)
@@ -256,10 +258,12 @@ is
 		                        .Local_Config_Valid (HC.Cfg.Local'Old)
 		                   then SPARKTLS.Handshake.Server_Msgs
 		                          .Local_Config_Valid (HC.Cfg.Local))
-		                and then (if HC.Cfg.Random'Old /= null
-		                          then HC.Cfg.Random /= null)
-	                and then Reasm_Building (HC)
-	                and then Reasm_Buffer_Shaped (HC);
+				                and then (if HC.Cfg.Random'Old /= null
+				                          then HC.Cfg.Random /= null)
+				                and then Reasm_Building (HC)
+				                and then Reasm_Buffer_Shaped (HC)
+				                and then
+				                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
 
    procedure Set_Server_Random_12
      (HC     : in out Handshake_Context;
@@ -284,6 +288,8 @@ is
 		                and then S.Role = Role_Server
 		                and then Reasm_Building (HC)
 		                and then Reasm_Buffer_Shaped (HC)
+		                and then
+		                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
 		                and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 	        Post => S.State in Server_Hello_Sent | Error_State
@@ -298,7 +304,10 @@ is
 					                and then
 					                  (if S.State = Server_Hello_Sent
 					                   then Reasm_Building (HC)
-					                        and then Reasm_Buffer_Shaped (HC));
+					                        and then Reasm_Buffer_Shaped (HC)
+					                        and then
+					                          (if HC.Reasm_Need = 0
+					                           then HC.Reasm_Buf = null));
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
    --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
@@ -325,9 +334,10 @@ is
 	                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
 		                  | Suite_ECDHE_RSA_CHACHA20_SHA256
 		                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-		                and then Reasm_Building (HC)
-		                and then Reasm_Buffer_Shaped (HC)
-		                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+                and then Reasm_Building (HC)
+                and then Reasm_Buffer_Shaped (HC)
+                and then HC.Reasm_Buf = null
+                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 	                  (HC.Server_Seq_12),
 	        Post => S.State in Wait_Client_Finished | Error_State
 	                and then S.Role = Role_Server
@@ -339,7 +349,10 @@ is
 				                    (HC.Cfg.Local)
 					                and then HC.Cfg.Random /= null
 					                and then Reasm_Building (HC)
-					                and then Reasm_Buffer_Shaped (HC);
+					                and then Reasm_Buffer_Shaped (HC)
+					                and then
+					                  (if HC.Reasm_Need = 0
+					                   then HC.Reasm_Buf = null);
 
    procedure Build_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
@@ -669,9 +682,11 @@ is
       declare
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1); Hello_Len : N32;
       begin
-         Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
-         pragma Assert (Reasm_Buffer_Shaped (HC));
-         pragma Assert (S.Role = Role_Server);
+		         Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+	         pragma Assert (Reasm_Buffer_Shaped (HC));
+	         pragma Assert
+	           (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
+	         pragma Assert (S.Role = Role_Server);
          if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
          end if;
@@ -834,6 +849,8 @@ is
 		                   and then HC.Cfg.Random /= null
 	                   and then Reasm_Building (HC)
 	                   and then Reasm_Buffer_Shaped (HC)
+	                   and then
+	                     (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
 	                   and then S.Negotiated_Suite in
 	                  Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -849,6 +866,8 @@ is
 		                   and then HC.Cfg.Random /= null
 	                   and then Reasm_Building (HC)
 	                   and then Reasm_Buffer_Shaped (HC)
+	                   and then
+	                     (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
 	                   and then S.State = S.State'Old
                 and then S.Role = S.Role'Old
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -957,9 +976,11 @@ is
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1);
          Hello_Len : N32;
       begin
-         Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
-         pragma Assert (Reasm_Buffer_Shaped (HC));
-         if Hello_Len = 0 then
+		         Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+	         pragma Assert (Reasm_Buffer_Shaped (HC));
+	         pragma Assert
+	           (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
+	         if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
          end if;
          Append_Transcript (HC, Hello_Buf (0 .. Hello_Len - 1));

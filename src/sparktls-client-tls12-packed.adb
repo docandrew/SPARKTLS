@@ -91,6 +91,7 @@ is
                   Msg_Type := Reasm_Buf (0);
                   Msg_Len := Next_Len;
                   Reasm_Need := Next_Total;
+                  pragma Assert (not Reasm_Hdr_Pending);
                   pragma Assert (Msg_Len <= Reasm_Need - 4);
                   pragma Assert (Reasm_Need <= Reasm_Len);
                   pragma Assert (Reasm_Len < Old_Need + Leftover);

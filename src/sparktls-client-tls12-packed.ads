@@ -40,6 +40,8 @@ is
                          and then Reasm_Buf'Length = Max_HS_Msg)
                     and then
                       (if More_Packed then
+                         not Reasm_Hdr_Pending
+                         and then
                          Reasm_Need >= 4
                          and then Reasm_Need <= Reasm_Len
                          and then Reasm_Len < Reasm_Len'Old

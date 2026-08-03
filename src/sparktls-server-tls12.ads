@@ -67,11 +67,10 @@ is
 	                and then S.Role = Role_Server
 			                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 			                           (HC.Server_Seq_12)
-			                and then Reasm_Building (HC)
-			                and then Reasm_Buffer_Shaped (HC)
-			                and then
-			                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
-			                and then SPARKTLSCrypto.P384.Field.Initialized
+                and then Reasm_Building (HC)
+                and then Reasm_Buffer_Shaped (HC)
+                and then HC.Reasm_Buf = null
+                and then SPARKTLSCrypto.P384.Field.Initialized
 		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => S.State in Server_Hello_Sent | Wait_Client_Finished
                             | Error_State
