@@ -909,12 +909,10 @@ is
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
 		   with Pre  => (if Data'First <= Data'Last then
-		                    Data'Last - Data'First < Transcript_Capacity)
-		                and then HC.Transcript_Len <= Transcript_Capacity
-		                and then
-		                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
-		                and then
-		                  (if HC.Cfg.Ticket_Store /= null
+			                    Data'Last - Data'First < Transcript_Capacity)
+			                and then HC.Transcript_Len <= Transcript_Capacity
+			                and then
+			                  (if HC.Cfg.Ticket_Store /= null
 	                   then HC.Cfg.Ticket_Store.Next
 	                        in 0 .. Max_Cached_Tickets - 1),
 	        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
@@ -966,11 +964,8 @@ is
 						                     then Server_Reasm_Shape (HC))
 						                and HC.Reasm_Len = HC.Reasm_Len'Old
 					                and HC.Reasm_Need = HC.Reasm_Need'Old
-					                and
-					                  (if HC.Reasm_Need = 0
-					                   then HC.Reasm_Buf = null)
-					                and
-				                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
+						                and
+					                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
 				                   then HC.Reasm_Len <= HC.Reasm_Need)
 				                and HC.Server_Seq_12 = HC.Server_Seq_12'Old
 				                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old

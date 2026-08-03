@@ -656,11 +656,9 @@ is
 	   with Pre  => Cert_RFLX'First = 1
 	                and then Cert_RFLX'Length = RBT.Length (C_Len)
 	                and then C_Len > 0
-	                and then C_Len <= N32 (Max_Cert_DER)
-	                and then Reasm_Building (HC)
-	                and then Reasm_Buffer_Shaped (HC)
-	                and then
-	                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null),
+		                and then C_Len <= N32 (Max_Cert_DER)
+		                and then Reasm_Building (HC)
+		                and then Reasm_Buffer_Shaped (HC),
 	        Post => HC.Client_HS = HC.Client_HS'Old
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
@@ -679,12 +677,10 @@ is
 	                          .Local_Config_Valid (HC.Cfg.Local))
 	                and then (if HC.Cfg.Random'Old /= null
 		                          then HC.Cfg.Random /= null)
-	                and then Reasm_Coherent (HC)
-	                and then Reasm_Building (HC)
-	                and then Reasm_Buffer_Shaped (HC)
-	                and then
-	                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
-                  and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then Reasm_Coherent (HC)
+		                and then Reasm_Building (HC)
+		                and then Reasm_Buffer_Shaped (HC)
+	                  and then HC.Reasm_Len = HC.Reasm_Len'Old
                   and then HC.Reasm_Need = HC.Reasm_Need'Old
                   and then HC.Reasm_Hdr_Pending =
                     HC.Reasm_Hdr_Pending'Old
@@ -704,8 +700,6 @@ is
 	         pragma Loop_Invariant (Reasm_Coherent (HC));
             pragma Loop_Invariant (Reasm_Building (HC));
             pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
-            pragma Loop_Invariant
-              (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
          pragma Loop_Invariant (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
          pragma Loop_Invariant
            (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);

@@ -198,7 +198,7 @@ is
           then 16 else 32);
       IV_Len : constant N32 :=
          (if S.Negotiated_Suite in Suite_ECDHE_RSA_CHACHA20_SHA256
-                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+				                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256
           then 12 else 4);
       CK : Byte_Seq (0 .. Key_Len - 1);
       SK : Byte_Seq (0 .. Key_Len - 1);
@@ -250,13 +250,8 @@ is
 		                        | Suite_ECDHE_RSA_AES256_GCM_SHA384
 		                        | Suite_ECDHE_RSA_CHACHA20_SHA256
 		                        | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-		                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-		                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                        and then
-                          (if HC.Cfg.Local /= null
-                               and then HC.Cfg.Local.Has_Identity
-                           then SPARKTLS.Handshake.Server_Msgs
-                                  .Local_Config_Valid (HC.Cfg.Local)),
+			                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+			                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
         Post => S.State = S.State'Old
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                 and then HC.Selected_Group = HC.Selected_Group'Old
@@ -402,11 +397,16 @@ is
 	                and then HC.Transcript_Len <= Transcript_Capacity
 		                and then S.Negotiated_Suite in
 		                  Suite_ECDHE_RSA_AES128_GCM_SHA256
-                | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                | Suite_ECDHE_RSA_CHACHA20_SHA256
-	                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-	                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-	                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+	                | Suite_ECDHE_RSA_AES256_GCM_SHA384
+		                | Suite_ECDHE_RSA_CHACHA20_SHA256
+		                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+		                | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+		                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+		                and then
+		                  (if HC.Cfg.Local /= null
+		                       and then HC.Cfg.Local.Has_Identity
+		                   then SPARKTLS.Handshake.Server_Msgs
+		                          .Local_Config_Valid (HC.Cfg.Local))
 		                and then Records.TLS12.Nonce_Space_Available_12
 		                  (HC.Client_Seq_12)
 	                and then
@@ -986,9 +986,14 @@ is
 				                         HC.Selected_Group'Old
 				                       and then S.Negotiated_Suite =
 				                         S.Negotiated_Suite'Old
-								                     and then
-								                       (if HC.Cfg.Random'Old /= null
-							                        then HC.Cfg.Random /= null));
+									                     and then
+									                       (if HC.Cfg.Random'Old /= null
+								                        then HC.Cfg.Random /= null)
+                                   and then
+                                     (if Records.TLS12.Nonce_Space_Available_12
+                                           (HC.Client_Seq_12'Old)
+                                      then Records.TLS12.Nonce_Space_Available_12
+                                           (HC.Client_Seq_12)));
 
    procedure Validate_Server_Cert_12
      (S      : in out Session;
@@ -1150,7 +1155,12 @@ is
 	                        | Suite_ECDHE_RSA_CHACHA20_SHA256
 	                        | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
 	                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-	                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+	                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                and then
+                  (if HC.Cfg.Local /= null
+                       and then HC.Cfg.Local.Has_Identity
+                   then SPARKTLS.Handshake.Server_Msgs
+                          .Local_Config_Valid (HC.Cfg.Local)),
 					        Post => Reasm_Coherent (HC)
 					                and then
 								                  (if Result = OK then
@@ -1180,7 +1190,14 @@ is
 								                        then SPARKTLS.Handshake
 								                               .Server_Msgs
 								                               .Local_Config_Valid
-								                                 (HC.Cfg.Local)));
+								                                 (HC.Cfg.Local))
+                                             and then
+                                               (if Records.TLS12
+                                                     .Nonce_Space_Available_12
+                                                       (HC.Client_Seq_12'Old)
+                                                then Records.TLS12
+                                                     .Nonce_Space_Available_12
+                                                       (HC.Client_Seq_12)));
 
    procedure Handle_CertReq_12
      (S       : in out Session;
@@ -1453,9 +1470,14 @@ is
 			                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
 			                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
 			                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-			                     and then
-			                       (if HC.Cfg.Random'Old /= null
-			                        then HC.Cfg.Random /= null));
+				                     and then
+				                       (if HC.Cfg.Random'Old /= null
+				                        then HC.Cfg.Random /= null)
+                             and then
+                               (if Records.TLS12.Nonce_Space_Available_12
+                                     (HC.Client_Seq_12'Old)
+                                then Records.TLS12.Nonce_Space_Available_12
+                                     (HC.Client_Seq_12)));
 
    procedure Handle_SKE_12
      (S       : in out Session;
@@ -1693,15 +1715,6 @@ is
 		         | Suite_ECDHE_ECDSA_CHACHA20_SHA256
 			         and then HC.Transcript_Len > 0
 			         and then HC.Transcript_Len <= Transcript_Capacity
-                     and then
-	                       (if HC.Cfg.Local'Old /= null
-	                             and then HC.Cfg.Local'Old.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local'Old)
-	                        then HC.Cfg.Local /= null
-	                             and then HC.Cfg.Local.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local))
                      and then
                        (if Records.TLS12.Nonce_Space_Available_12
                              (HC.Client_Seq_12'Old)
@@ -1979,15 +1992,6 @@ is
                      and then HC.TLS12_EMS_Transcript_Len <=
                        Transcript_Capacity
                      and then
-	                       (if HC.Cfg.Local'Old /= null
-	                             and then HC.Cfg.Local'Old.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local'Old)
-	                        then HC.Cfg.Local /= null
-	                             and then HC.Cfg.Local.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local))
-                     and then
                        (if Records.TLS12.Nonce_Space_Available_12
                              (HC.Client_Seq_12'Old)
                         then Records.TLS12.Nonce_Space_Available_12
@@ -2192,15 +2196,6 @@ is
                      and then HC.Transcript_Len > 0
                      and then HC.Transcript_Len <= Transcript_Capacity
                      and then
-	                       (if HC.Cfg.Local'Old /= null
-	                             and then HC.Cfg.Local'Old.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local'Old)
-	                        then HC.Cfg.Local /= null
-	                             and then HC.Cfg.Local.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local))
-                     and then
                        (if Records.TLS12.Nonce_Space_Available_12
                              (HC.Client_Seq_12'Old)
                         then Records.TLS12.Nonce_Space_Available_12
@@ -2335,15 +2330,6 @@ is
                      S.State not in Idle | Closing | Closed | Error_State
                      and then HC.Transcript_Len > 0
                      and then HC.Transcript_Len <= Transcript_Capacity
-                     and then
-	                       (if HC.Cfg.Local'Old /= null
-	                             and then HC.Cfg.Local'Old.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local'Old)
-	                        then HC.Cfg.Local /= null
-	                             and then HC.Cfg.Local.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local))
                      and then Records.TLS12.Nonce_Space_Available_12
                        (HC.Client_Seq_12));
 
@@ -2471,15 +2457,6 @@ is
                      S.State not in Idle | Closing | Closed | Error_State
                      and then HC.Transcript_Len > 0
                      and then HC.Transcript_Len <= Transcript_Capacity
-                     and then
-	                       (if HC.Cfg.Local'Old /= null
-	                             and then HC.Cfg.Local'Old.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local'Old)
-	                        then HC.Cfg.Local /= null
-	                             and then HC.Cfg.Local.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local))
                      and then Records.TLS12.Nonce_Space_Available_12
                        (HC.Client_Seq_12));
 
@@ -2532,17 +2509,8 @@ is
 	                     S.State not in Idle | Closing | Closed | Error_State
 	                     and then HC.Transcript_Len > 0
 		                     and then HC.Transcript_Len <= Transcript_Capacity
-                     and then
-	                       (if HC.Cfg.Local'Old /= null
-	                             and then HC.Cfg.Local'Old.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local'Old)
-	                        then HC.Cfg.Local /= null
-	                             and then HC.Cfg.Local.Has_Identity
-	                             and then SPARKTLS.Handshake.Server_Msgs
-	                               .Local_Config_Valid (HC.Cfg.Local))
-		                     and then Records.TLS12.Nonce_Space_Available_12
-		                       (HC.Client_Seq_12));
+			                     and then Records.TLS12.Nonce_Space_Available_12
+			                       (HC.Client_Seq_12));
 
    procedure Append_Client_CCS_And_Finished_12
      (S       : in out Session;
@@ -3140,18 +3108,8 @@ is
 			                     and then
 			                       (if HC.Transcript_Len'Old > 0
 			                        then HC.Transcript_Len > 0)
-	                             and then
-	                               (if HC.Cfg.Local'Old /= null
-	                                     and then HC.Cfg.Local'Old.Has_Identity
-	                                     and then SPARKTLS.Handshake.Server_Msgs
-	                                       .Local_Config_Valid
-	                                         (HC.Cfg.Local'Old)
-	                                then HC.Cfg.Local /= null
-	                                     and then HC.Cfg.Local.Has_Identity
-	                                     and then SPARKTLS.Handshake.Server_Msgs
-	                                       .Local_Config_Valid (HC.Cfg.Local))
-			                     and then
-				                       S.Negotiated_Suite in
+				                     and then
+					                       S.Negotiated_Suite in
 				                         Suite_ECDHE_RSA_AES128_GCM_SHA256
 				                       | Suite_ECDHE_RSA_AES256_GCM_SHA384
 				                       | Suite_ECDHE_RSA_CHACHA20_SHA256
@@ -3175,11 +3133,8 @@ is
       Frag     : in     Byte_Seq;
       Msg_Len  : in     N32;
      Result   :    out Action)
-   is
-      Saved_Local_Config_Valid : constant Boolean :=
-        SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
-      with Ghost;
-   begin
+	   is
+	   begin
 	      case Msg_Type is
          when 16#0B# =>
             --  Certificate (RFC 5246 §7.4.2). Parsing happens in
@@ -3293,11 +3248,7 @@ is
 	                             N32 (HC.Reasm_Buf'Length)
                            and then HC.Reasm_Len <=
                              N32 (HC.Reasm_Buf'Length))
-                      and then
-                        (if Saved_Local_Config_Valid
-                         then SPARKTLS.Handshake.Server_Msgs
-                              .Local_Config_Valid (HC.Cfg.Local))
-		              and then S.Negotiated_Suite in
+			              and then S.Negotiated_Suite in
 		                Suite_ECDHE_RSA_AES128_GCM_SHA256
 		              | Suite_ECDHE_RSA_AES256_GCM_SHA384
 		              | Suite_ECDHE_RSA_CHACHA20_SHA256
