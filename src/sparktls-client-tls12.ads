@@ -1,5 +1,6 @@
 with SPARKNaCl; use SPARKNaCl;
 with SPARKTLS.Handshake.TLS12; use SPARKTLS.Handshake.TLS12;
+with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
 
@@ -67,8 +68,13 @@ is
 		                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
 		                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
 		                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-		                    and then SPARKTLSCrypto.P384.Field.Initialized
-		                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+			                    and then SPARKTLSCrypto.P384.Field.Initialized
+			                    and then SPARKTLSCrypto.P384.ECDSA.Initialized
+			                    and then
+			                      (if HC.Cfg.Local /= null
+			                           and then HC.Cfg.Local.Has_Identity
+			                       then SPARKTLS.Handshake.Server_Msgs
+			                              .Local_Config_Valid (HC.Cfg.Local)))
 	               and then
 	                 (if HC.CKE_Received_12
 	                  then SPARKTLS.Records.TLS12.Nonce_Space_Available_12

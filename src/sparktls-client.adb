@@ -509,10 +509,11 @@ is
 		               and then Plaintext'First = 0
                and then Plain_Len >= 0
                and then Plaintext'Last < N32'Last / 2
-	               and then Plain_Len <= N32 (Plaintext'Length)
-				               and then Reasm_Coherent (HC)
-		               and then (HC.Reasm_Buf = null
-	                         or else (HC.Reasm_Buf'First = 0
+			               and then Plain_Len <= N32 (Plaintext'Length)
+			               and then Reasm_Coherent (HC)
+			               and then Reasm_Building (HC)
+				               and then (HC.Reasm_Buf = null
+			                         or else (HC.Reasm_Buf'First = 0
 	                                  and then HC.Reasm_Buf'Last in 0 .. 131071
 	                                  and then HC.Reasm_Len
 	                                     <= N32 (HC.Reasm_Buf'Length)
@@ -546,8 +547,8 @@ is
 	               and then Msg'Length >= 4
 	               and then Msg'Last < N32'Last - 4
 		               and then Msg'Last < Transcript_Capacity
-					                and then Reasm_Coherent (HC)
-					                and then HC.Reasm_Buf /= null
+						                and then Reasm_Coherent (HC)
+						                and then Reasm_Building (HC)
 				                and then HC.Transcript_Len > 0
 		               and then Nonce_Space_Available (HC.Client_HS)
 			                and then Nonce_Space_Available (S.Client_App)
@@ -1338,10 +1339,11 @@ is
    with Pre => S.State = Wait_Server_Hello
 	               and then HC.Cfg.Random /= null
 	               and then SPARKTLSCrypto.P384.Field.Initialized
-						                and then Reasm_Coherent (HC)
-						                and then Reasm_Building (HC)
-	               and then HC.Reasm_Need > 0
-	               and then HC.Reasm_Buf'First = 0
+							                and then Reasm_Coherent (HC)
+							                and then Reasm_Building (HC)
+		               and then HC.Reasm_Buf /= null
+		               and then HC.Reasm_Need > 0
+		               and then HC.Reasm_Buf'First = 0
 	               and then HC.Reasm_Need - 1 <= HC.Reasm_Buf'Last
 		               and then HC.Reasm_Need - 1 < Transcript_Capacity
 		               and then HC.Transcript_Len > 0
@@ -2071,9 +2073,10 @@ is
 	                   then HC.Hash_Len = 48
 	                   else HC.Hash_Len = 32),
 	        Post => (if S.State /= Error_State
-				                 then HC.Client_HS = HC.Client_HS'Old
-				                      and then S.Client_App = S.Client_App'Old
-				                      and then HC.Transcript_Len > 0
+					                 then Nonce_Space_Available (HC.Client_HS)
+					                      and then Nonce_Space_Available
+					                        (S.Client_App)
+					                      and then HC.Transcript_Len > 0
 		                      and then S.Negotiated_Suite
 	                         in Suite_AES_128_GCM_SHA256
 	                          | Suite_AES_256_GCM_SHA384
@@ -2286,9 +2289,9 @@ is
 	                and then Data'Length >= 4
 	                and then Data'Last < N32'Last - 4
 	                and then Data'Length <= Transcript_Capacity
-					                and then Reasm_Coherent (HC)
-					                and then HC.Reasm_Buf /= null
-				                and then HC.Transcript_Len > 0
+						                and then Reasm_Coherent (HC)
+						                and then Reasm_Building (HC)
+					                and then HC.Transcript_Len > 0
 		                and then Nonce_Space_Available (HC.Client_HS)
 		                and then Nonce_Space_Available (S.Client_App)
 		                and then SPARKTLSCrypto.P384.Field.Initialized

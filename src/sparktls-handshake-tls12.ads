@@ -460,10 +460,12 @@ is
 	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                           (HC.Cfg.Local)
                 and then HC.Cfg.Random /= null
-                and then HC.Version = TLS_1_2
-		                and then HC.Legacy_Session_ID_Len <= 32
-		                and then Reasm_Building (HC)
-		                and then Reasm_Buffer_Shaped (HC),
+	                and then HC.Version = TLS_1_2
+			                and then HC.Legacy_Session_ID_Len <= 32
+			                and then Reasm_Building (HC)
+			                and then Reasm_Buffer_Shaped (HC)
+			                and then
+			                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null),
         --  Frame postcondition: ServerHello construction does not
         --  touch S.State, the configuration pointer/identity, or the
         --  Random callback. Callers (Build_Server_Flight_12) need
@@ -480,10 +482,12 @@ is
 	                and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                      (HC.Cfg.Local)
 	                and HC.Cfg.Random /= null
-                and HC.Version = HC.Version'Old
-		                and HC.Selected_Group = HC.Selected_Group'Old
-		                and Reasm_Building (HC)
-		                and Reasm_Buffer_Shaped (HC);
+	                and HC.Version = HC.Version'Old
+			                and HC.Selected_Group = HC.Selected_Group'Old
+			                and Reasm_Building (HC)
+			                and Reasm_Buffer_Shaped (HC)
+			                and
+			                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
 
    function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean;
 

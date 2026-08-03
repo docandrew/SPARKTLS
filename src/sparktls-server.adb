@@ -422,8 +422,7 @@ is
 			                and then
 			                  (if S.State not in Error_State | Closed
 			                   then Server_Configured (HC)
-			                        and then Reasm_Building (HC)
-			                        and then Server_Reasm_Shape (HC));
+			                        and then Reasm_Building (HC));
 	   procedure Handle_Client_Hello_Retry
 	     (S      : in out Session;
 	      HC     : in out Handshake_Context;
@@ -495,8 +494,7 @@ is
 		                  else S.State in Server_Hello_Sent | Error_State)
 										                and then (if S.State not in Error_State | Closed
 										                          then Server_Configured (HC)
-										                               and then Reasm_Building (HC)
-										                               and then Server_Reasm_Shape (HC))
+										                               and then Reasm_Building (HC))
 						                and then
 					                  (if S.State = Wait_Client_Hello
 			                     and then HC.Reasm_Need > 0
@@ -692,13 +690,10 @@ is
 		                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null),
 					        Post => (S.State = S.State'Old
 				                 or else Valid_Transition (S.State'Old, S.State))
-				                and then (if S.State not in Error_State | Closed
-				                          then Server_Configured (HC)
-				                               and then Reasm_Building (HC)
-				                               and then Server_Reasm_Shape (HC)
-				                               and then
-				                                 (if HC.Reasm_Need = 0
-				                                  then HC.Reasm_Buf = null));
+					                and then (if S.State not in Error_State | Closed
+					                          then Server_Configured (HC)
+					                               and then Reasm_Building (HC)
+					                               and then Server_Reasm_Shape (HC));
    procedure Verify_Client_Finished
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -913,11 +908,13 @@ is
    procedure Append_Transcript
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
-	   with Pre  => (if Data'First <= Data'Last then
-	                    Data'Last - Data'First < Transcript_Capacity)
-	                and then HC.Transcript_Len <= Transcript_Capacity
-	                and then
-	                  (if HC.Cfg.Ticket_Store /= null
+		   with Pre  => (if Data'First <= Data'Last then
+		                    Data'Last - Data'First < Transcript_Capacity)
+		                and then HC.Transcript_Len <= Transcript_Capacity
+		                and then
+		                  (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
+		                and then
+		                  (if HC.Cfg.Ticket_Store /= null
 	                   then HC.Cfg.Ticket_Store.Next
 	                        in 0 .. Max_Cached_Tickets - 1),
 	        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
@@ -963,11 +960,16 @@ is
 			                      HC.Legacy_Session_ID_Len'Old
 					                and (if Reasm_Building (HC)'Old
 					                     then Reasm_Building (HC))
-					                and (if Reasm_Buffer_Shaped (HC)'Old
-					                     then Reasm_Buffer_Shaped (HC))
-					                and HC.Reasm_Len = HC.Reasm_Len'Old
-				                and HC.Reasm_Need = HC.Reasm_Need'Old
-				                and
+						                and (if Reasm_Buffer_Shaped (HC)'Old
+						                     then Reasm_Buffer_Shaped (HC))
+						                and (if Server_Reasm_Shape (HC)'Old
+						                     then Server_Reasm_Shape (HC))
+						                and HC.Reasm_Len = HC.Reasm_Len'Old
+					                and HC.Reasm_Need = HC.Reasm_Need'Old
+					                and
+					                  (if HC.Reasm_Need = 0
+					                   then HC.Reasm_Buf = null)
+					                and
 				                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
 				                   then HC.Reasm_Len <= HC.Reasm_Need)
 				                and HC.Server_Seq_12 = HC.Server_Seq_12'Old
@@ -1708,9 +1710,15 @@ is
 			                              and then HC.Reasm_Buf /= null
 			                              and then HC.Reasm_Buf'First = 0
 			                              and then HC.Reasm_Buf'Last < N32'Last
-			                              and then HC.Reasm_Buf'Length <= Max_HS_Msg
+			                                 and then HC.Reasm_Buf'Length <= Max_HS_Msg
+			                                 and then
+			                                   (if HC.Reasm_Hdr_Pending
+			                                    then HC.Reasm_Need = 4
+			                                         and then HC.Reasm_Len <= 4
+			                                         and then HC.Reasm_Buf'Length =
+			                                           Max_HS_Msg)
 		                              and then HC.Reasm_Need <=
-	                                N32 (HC.Reasm_Buf'Length)
+		                                N32 (HC.Reasm_Buf'Length)
 	                              and then HC.Reasm_Len <=
 	                                N32 (HC.Reasm_Buf'Length)
 	                              and then Frag_Start <=
@@ -2098,11 +2106,18 @@ is
 		                             | Suite_CHACHA20_POLY1305_SHA256);
 		                     Complete_Client_Hello (S, HC, Result);
 		                     pragma Assert (Wait_Client_Hello_Post (S, HC));
-		                  end Parse_Completed_Reassembly;
-		                  begin
-		                     Append_Reassembly_Fragment;
-		                     if S.State /= Wait_Client_Hello
-		                       or else More_Input_Needed
+			                  end Parse_Completed_Reassembly;
+			                  begin
+			                     pragma Assert
+			                       (if HC.Reasm_Hdr_Pending then
+			                          HC.Reasm_Need = 4
+			                          and then HC.Reasm_Len <= 4
+			                          and then HC.Reasm_Buf /= null
+			                          and then HC.Reasm_Buf'Length =
+			                            Max_HS_Msg);
+			                     Append_Reassembly_Fragment;
+			                     if S.State /= Wait_Client_Hello
+			                       or else More_Input_Needed
 		                     then
 		                        pragma Assert
 		                          (if S.State = Wait_Client_Hello
@@ -2221,10 +2236,14 @@ is
 		                     S.Input.Read_Pos :=
 		                        S.Input.Read_Pos + Rec.Record_Len;
 
-			                     pragma Assert (Server_Configured (HC));
-			                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-			                     pragma Assert (HC.Transcript_Len > 0);
-			                     Complete_Client_Hello (S, HC, Result);
+				                     pragma Assert (Server_Configured (HC));
+					                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+					                     pragma Assert (HC.Transcript_Len > 0);
+					                     pragma Assert (Reasm_Building (HC));
+					                     pragma Assert (HC.Reasm_Need = 0);
+					                     pragma Assert (HC.Reasm_Buf = null);
+					                     pragma Assert (Reasm_Buffer_Shaped (HC));
+					                     Complete_Client_Hello (S, HC, Result);
 				                     pragma Assert (Wait_Client_Hello_Post (S, HC));
 				                  end Parse_Single_Record_Client_Hello;
 
