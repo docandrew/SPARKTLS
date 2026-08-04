@@ -198,7 +198,7 @@ is
           then 16 else 32);
       IV_Len : constant N32 :=
          (if S.Negotiated_Suite in Suite_ECDHE_RSA_CHACHA20_SHA256
-				                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
           then 12 else 4);
       CK : Byte_Seq (0 .. Key_Len - 1);
       SK : Byte_Seq (0 .. Key_Len - 1);
