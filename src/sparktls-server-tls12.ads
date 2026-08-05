@@ -67,10 +67,9 @@ is
 	                and then S.Role = Role_Server
 			                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 			                           (HC.Server_Seq_12)
-                and then Reasm_Building (HC)
-                and then Reasm_Buffer_Shaped (HC)
-                and then HC.Reasm_Buf = null
-                and then SPARKTLSCrypto.P384.Field.Initialized
+	                and then Reasm_Building (HC)
+	                and then Reasm_Buffer_Shaped (HC)
+	                and then SPARKTLSCrypto.P384.Field.Initialized
 		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => S.State in Server_Hello_Sent | Wait_Client_Finished
                             | Error_State
@@ -291,8 +290,6 @@ is
         and then
           (if HC.TLS12_EMS_Transcript_Len > 0
            then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
-        and then
-          (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
      --  Negotiated_Suite must be one of the six TLS 1.2 ECDHE suites
      --  we recognize, so the local mapping matches Internal_Suite_For.
      and then S.Negotiated_Suite in
@@ -312,12 +309,9 @@ is
 	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                              (HC.Cfg.Local)
 		                   and then HC.Cfg.Random /= null
-		                   and then Reasm_Building (HC)
-		                   and then Reasm_Buffer_Shaped (HC)
-		                   and then
-		                     (if HC.Reasm_Need = 0
-		                      then HC.Reasm_Buf = null)
-		                   and then S.State = S.State'Old
+			                   and then Reasm_Building (HC)
+			                   and then Reasm_Buffer_Shaped (HC)
+			                   and then S.State = S.State'Old
                    and then S.Role = S.Role'Old
                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                    and then HC.Client_Seq_12 = 0

@@ -80,9 +80,6 @@ is
 	      and then
 	        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
 	         then HC.Reasm_Len < HC.Reasm_Need)
-	      and then
-	        (if S.State = Wait_Client_Hello and then HC.Reasm_Need = 0
-	         then HC.Reasm_Buf = null)
 	            )
 				   with Ghost;
 
@@ -429,10 +426,7 @@ is
 		                   then Server_Configured (HC))
 						                and then
 							                  (if S.State = Wait_Client_Hello_Retry
-							                   then Reasm_Building (HC)
-							                        and then
-							                          (if HC.Reasm_Need = 0
-							                           then HC.Reasm_Buf = null))
+							                   then Reasm_Building (HC))
 						                and then
 						                  (if S.State not in Error_State | Closed
 						                   then Reasm_Building (HC));
@@ -723,8 +717,8 @@ is
 	                                       | Suite_AES_256_GCM_SHA384
 	                                       | Suite_CHACHA20_POLY1305_SHA256
 		               and Server_Configured (HC)
-		               and Reasm_Building (HC)
-		               and Server_Reasm_Shape (HC),
+			               and Reasm_Building (HC)
+			               and Reasm_Buffer_Shaped (HC),
 		        Post => Server_Configured (HC)
 		                and HC.Transcript_Len = HC.Transcript_Len'Old
 		                and HC.Server_HS.Counter = 0
@@ -732,8 +726,8 @@ is
 		                     then HC.Hash_Len = 48
 		                     else HC.Hash_Len = 32)
 			                and Nonce_Space_Available (HC.Server_HS)
-			                and Reasm_Building (HC)
-			                and Server_Reasm_Shape (HC);
+				                and Reasm_Building (HC)
+				                and Reasm_Buffer_Shaped (HC);
 
    procedure Derive_App_Keys
      (S  : in out Session;
@@ -1217,7 +1211,6 @@ is
 				               and then Reasm_Building (HC)
 				               and then Reasm_Buffer_Shaped (HC)
 				               and then HC.Reasm_Need = 0
-				               and then HC.Reasm_Buf = null
 				               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 					                       Post => Wait_Client_Hello_Post (S, HC);
@@ -1390,8 +1383,6 @@ is
 		               return;
 		            end if;
 			            pragma Assert (Reasm_Buffer_Shaped (HC));
-			            pragma Assert
-			              (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
 			            SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, HC, Result);
             pragma Assert
               (S.State = Wait_Client_Hello
@@ -1469,9 +1460,6 @@ is
                         and then
                           (if HC.Reasm_Need > 0
                            then Server_Reasm_Shape (HC))
-                        and then
-                          (if HC.Reasm_Need = 0
-                           then HC.Reasm_Buf = null)
                         and then HC.Legacy_Session_ID_Len in 0 .. 32
 		               and then
 		                 (if HC.Reasm_Need > 0
@@ -2122,7 +2110,6 @@ is
 			                              and then S.Input.Read_Pos <=
 			                                IO_Buffer_Capacity - Rec.Record_Len
 			                              and then HC.Reasm_Need = 0
-		                              and then HC.Reasm_Buf = null
 		                              and then Frag_Start <=
 		                                S.Input.Write_Pos - 1
 		                              and then Frag_Len <=
@@ -2145,7 +2132,6 @@ is
 			                              and then S.Input.Read_Pos <=
 			                                IO_Buffer_Capacity - Rec.Record_Len
 			                              and then HC.Reasm_Need = 0
-		                              and then HC.Reasm_Buf = null
 		                              and then Frag_Len >= 4
 		                              and then Frag_Start <=
 		                                S.Input.Write_Pos - 1
@@ -2203,9 +2189,6 @@ is
 					                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
 					                     pragma Assert (HC.Transcript_Len > 0);
 					                     pragma Assert (Reasm_Building (HC));
-					                     pragma Assert (HC.Reasm_Need = 0);
-					                     pragma Assert (HC.Reasm_Buf = null);
-					                     pragma Assert (Reasm_Buffer_Shaped (HC));
 					                     Complete_Client_Hello (S, HC, Result);
 				                     pragma Assert (Wait_Client_Hello_Post (S, HC));
 				                  end Parse_Single_Record_Client_Hello;
@@ -2215,7 +2198,6 @@ is
 		                              and then Server_Configured (HC)
 		                              and then Reasm_Building (HC)
 		                              and then HC.Reasm_Need = 0
-		                              and then HC.Reasm_Buf = null
 			                              and then Frag_Len in 1 .. 3
 			                              and then Rec.Record_Len <=
 			                                Available (S.Input)
@@ -2230,6 +2212,7 @@ is
 		                  procedure Start_Header_Pending_Reassembly
 		                  is
 		                  begin
+		                     Free_Byte_Seq (HC.Reasm_Buf);
 		                     HC.Reasm_Buf := new Byte_Seq'
 		                        (0 .. Max_HS_Msg - 1 => 0);
 		                     HC.Reasm_Need := 4;
@@ -2253,7 +2236,6 @@ is
 		                              and then Server_Configured (HC)
 		                              and then Reasm_Building (HC)
 		                              and then HC.Reasm_Need = 0
-		                              and then HC.Reasm_Buf = null
 		                              and then Frag_Len >= 4
 		                              and then HS_Total in 4 .. Max_HS_Msg
 			                              and then HS_Total > Frag_Len
@@ -2271,6 +2253,7 @@ is
 		                    (HS_Total : N32)
 		                  is
 		                  begin
+			                     Free_Byte_Seq (HC.Reasm_Buf);
 			                     HC.Reasm_Buf := new Byte_Seq'
 			                        (0 .. HS_Total - 1 => 0);
 			                     HC.Reasm_Need := HS_Total;
@@ -2889,7 +2872,7 @@ is
                      Send_Alert_And_Error (S, Decode_Error, Result);
 	                  elsif Frag_Len < 4 then
 	                     pragma Assert (HC.Reasm_Need = 0);
-	                     pragma Assert (HC.Reasm_Buf = null);
+	                     Free_Byte_Seq (HC.Reasm_Buf);
 	                     HC.Reasm_Buf := new Byte_Seq'
 	                       (0 .. Max_HS_Msg - 1 => 0);
                      HC.Reasm_Need := 4;
@@ -2910,13 +2893,13 @@ is
                            N32 (S.Input.Data (Frag_Start + 3));
                         HS_Total   : constant N32 := HS_Msg_Len + 4;
                      begin
-                        if HS_Total > Max_HS_Msg then
-                           Consume_Record;
-                           Send_Alert_And_Error (S, Decode_Error, Result);
-	                        elsif HS_Total > Frag_Len then
-	                           pragma Assert (HC.Reasm_Need = 0);
-	                           pragma Assert (HC.Reasm_Buf = null);
-	                           HC.Reasm_Buf := new Byte_Seq'
+	                        if HS_Total > Max_HS_Msg then
+	                           Consume_Record;
+	                           Send_Alert_And_Error (S, Decode_Error, Result);
+		                        elsif HS_Total > Frag_Len then
+		                           pragma Assert (HC.Reasm_Need = 0);
+		                           Free_Byte_Seq (HC.Reasm_Buf);
+		                           HC.Reasm_Buf := new Byte_Seq'
 	                             (0 .. HS_Total - 1 => 0);
                            HC.Reasm_Need := HS_Total;
                            HC.Reasm_Hdr_Pending := False;

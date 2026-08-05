@@ -117,7 +117,6 @@ is
    with Pre => HS_Msg'First = 0
                and then HS_Msg'Length >= 4
 			               and then HS_Msg'Length <= Max_Cert_Msg
-			               and then Reasm_Building (HC)
 			               and then Reasm_Buffer_Shaped (HC),
 			        Post => HC.Client_HS.Counter =
 			                  HC.Client_HS.Counter'Old
@@ -139,7 +138,6 @@ is
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
 					                and then Reasm_Coherent (HC)
-	                         and then Reasm_Building (HC)
 	                         and then Reasm_Buffer_Shaped (HC)
 				                  and then HC.Reasm_Len = HC.Reasm_Len'Old
 	                  and then HC.Reasm_Need = HC.Reasm_Need'Old

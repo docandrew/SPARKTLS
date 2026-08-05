@@ -92,10 +92,14 @@ is
 		                             or else Data'First <= Data'Last
 		                          then HC.Transcript_Len > 0)
 	                and then HC.Selected_Group = HC.Selected_Group'Old
-                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
-                and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
-                and then
-                  (if Records.TLS12.Nonce_Space_Available_12
+	                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
+	                and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
+                  and then HC.Cert_Request_Received =
+                    HC.Cert_Request_Received'Old
+                  and then HC.TLS12_Client_Cert_Allowed =
+                    HC.TLS12_Client_Cert_Allowed'Old
+	                and then
+	                  (if Records.TLS12.Nonce_Space_Available_12
                         (HC.Client_Seq_12'Old)
                    then Records.TLS12.Nonce_Space_Available_12
                         (HC.Client_Seq_12))
@@ -155,11 +159,15 @@ is
                 and then (if HC.Transcript_Len'Old > 0
                              or else Data'First <= Data'Last
                           then HC.Transcript_Len > 0)
-                and then HC.Selected_Group = HC.Selected_Group'Old
-                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
-                and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
-                and then
-                  (if Records.TLS12.Nonce_Space_Available_12
+	                and then HC.Selected_Group = HC.Selected_Group'Old
+	                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
+	                and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
+                  and then HC.Cert_Request_Received =
+                    HC.Cert_Request_Received'Old
+                  and then HC.TLS12_Client_Cert_Allowed =
+                    HC.TLS12_Client_Cert_Allowed'Old
+	                and then
+	                  (if Records.TLS12.Nonce_Space_Available_12
                         (HC.Client_Seq_12'Old)
                    then Records.TLS12.Nonce_Space_Available_12
                         (HC.Client_Seq_12))
@@ -1219,9 +1227,7 @@ is
                                      and then
                                        (if HC.Transcript_Len'Old > 0
                                         then HC.Transcript_Len > 0)
-                                     and then HC.Client_Seq_12 =
-                                       HC.Client_Seq_12'Old
-								                     and then S.Negotiated_Suite in
+									                     and then S.Negotiated_Suite in
 								                       Suite_ECDHE_RSA_AES128_GCM_SHA256
 								                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
 								                     | Suite_ECDHE_RSA_CHACHA20_SHA256
@@ -1518,9 +1524,10 @@ is
                                      and then
                                        (if HC.Transcript_Len'Old > 0
                                         then HC.Transcript_Len > 0)
-                                     and then HC.Client_Seq_12 =
-                                       HC.Client_Seq_12'Old
-                                     and then S.Negotiated_Suite in
+	                                     and then Records.TLS12
+	                                       .Nonce_Space_Available_12
+	                                         (HC.Client_Seq_12)
+	                                     and then S.Negotiated_Suite in
 			                       Suite_ECDHE_RSA_AES128_GCM_SHA256
 			                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
 			                     | Suite_ECDHE_RSA_CHACHA20_SHA256
@@ -1634,11 +1641,23 @@ is
                 and then Reasm_Coherent (HC)
                 and then Reasm_Building (HC)
                 and then SPARKTLSCrypto.P384.Field.Initialized,
-	        Post => Reasm_Coherent (HC)
-	                and then Reasm_Building (HC)
-	                and then HC.Transcript_Len = HC.Transcript_Len'Old
-	                and then HC.Cfg.Random /= null
-                and then HC.Selected_Group in
+		        Post => Reasm_Coherent (HC)
+		                and then Reasm_Building (HC)
+		                and then HC.Transcript_Len = HC.Transcript_Len'Old
+		                and then HC.Cfg.Random /= null
+                    and then HC.Cert_Request_Received =
+                      HC.Cert_Request_Received'Old
+                    and then HC.TLS12_Client_Cert_Allowed =
+                      HC.TLS12_Client_Cert_Allowed'Old
+                    and then
+                      (if HC.Cfg.Local'Old /= null
+                       then HC.Cfg.Local /= null)
+                    and then
+                      (if SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                             (HC.Cfg.Local'Old)
+                       then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                              (HC.Cfg.Local))
+	                and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                 and then Valid_ECDHE_Group (HC.Selected_Group)
                 and then Err in No_Error | Illegal_Parameter
@@ -1770,13 +1789,8 @@ is
 		         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
 		         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
 		         | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-			         and then HC.Transcript_Len > 0
-			         and then HC.Transcript_Len <= Transcript_Capacity
-                     and then
-                       (if Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12'Old)
-                        then Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12)));
+				         and then HC.Transcript_Len > 0
+				         and then HC.Transcript_Len <= Transcript_Capacity);
 
    procedure Send_Cleartext_Handshake_Error_12
      (S      : in out Session;
@@ -2044,15 +2058,10 @@ is
                      and then HC.Selected_Group in
                        Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                      and then Valid_ECDHE_Group (HC.Selected_Group)
-                     and then HC.Transcript_Len > 0
-                     and then HC.Transcript_Len <= Transcript_Capacity
-                     and then HC.TLS12_EMS_Transcript_Len <=
-                       Transcript_Capacity
-                     and then
-                       (if Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12'Old)
-                        then Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12)));
+	                     and then HC.Transcript_Len > 0
+	                     and then HC.Transcript_Len <= Transcript_Capacity
+	                     and then HC.TLS12_EMS_Transcript_Len <=
+	                       Transcript_Capacity);
 
    procedure Append_Client_Key_Exchange_12
      (S       : in out Session;
@@ -2250,13 +2259,8 @@ is
                      and then HC.Selected_Group in
                        Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                      and then Valid_ECDHE_Group (HC.Selected_Group)
-                     and then HC.Transcript_Len > 0
-                     and then HC.Transcript_Len <= Transcript_Capacity
-                     and then
-                       (if Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12'Old)
-                        then Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12)));
+	                     and then HC.Transcript_Len > 0
+	                     and then HC.Transcript_Len <= Transcript_Capacity);
 
    procedure Append_Client_Certificate_Verify_12
      (S       : in out Session;

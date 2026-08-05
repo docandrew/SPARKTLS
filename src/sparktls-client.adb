@@ -1069,8 +1069,12 @@ is
 		                  else HC.Hash_Len = 32)
 		               and then SPARKTLSCrypto.P384.Field.Initialized
 			               and then SPARKTLSCrypto.P384.ECDSA.Initialized
-                                            and then Reasm_Coherent (HC)
-		               and then Plaintext'First = 0
+	                                            and then Reasm_Coherent (HC)
+                                 and then
+                                   (if HC.Reasm_Buf /= null
+                                        and then HC.Reasm_Need > 0
+                                    then Reasm_Building (HC))
+			               and then Plaintext'First = 0
 	               and then Plaintext'Last < N32'Last / 2
 	               and then Plain_Len <= N32 (Plaintext'Length)
 		               and then Pos <= Plain_Len,
@@ -1135,7 +1139,8 @@ is
 		        Post => Pos <= Plain_Len
                 and then Reasm_Coherent (HC)
                 and then
-                  (if HC.Reasm_Buf /= null
+                  (if Result = OK
+                       and then HC.Reasm_Buf /= null
                        and then HC.Reasm_Need > 0
                    then Reasm_Building (HC))
 		                and then (if Result = OK
@@ -2335,7 +2340,7 @@ is
 	                   then HC.Hash_Len = 48
 	                   else HC.Hash_Len = 32),
 	        Post => (if S.State /= Error_State
-				                 then HC.Client_HS = HC.Client_HS'Old
+				                 then Nonce_Space_Available (HC.Client_HS)
 				                      and then S.Client_App = S.Client_App'Old
 				                      and then HC.Transcript_Len > 0
 		                      and then S.Negotiated_Suite

@@ -49,12 +49,9 @@ is
       Data : in     Byte_Seq;
 	      OK   :    out Boolean)
 					      with Pre => Data'Length > 0
-					                 and then Data'Last <= N32 (Max_HS_Msg) - 1
-				                         and then Reasm_Building (HC)
-				                         and then
-				                           (if HC.Reasm_Need = 0
-				                            then HC.Reasm_Buf = null)
-				                         and then HC.Legacy_Session_ID_Len in 0 .. 32,
+						                 and then Data'Last <= N32 (Max_HS_Msg) - 1
+					                         and then Reasm_Building (HC)
+					                         and then HC.Legacy_Session_ID_Len in 0 .. 32,
                     Post => (if HC.Cfg.Local'Old /= null
                               then HC.Cfg.Local /= null
                                    and then
@@ -115,7 +112,8 @@ is
 		                                 and then HC.Cfg.Local'Old.Has_Identity
 		                             then HC.Cfg.Local /= null
 		                                  and then HC.Cfg.Local.Has_Identity)
-			                   and then Reasm_Building (HC);
+				                   and then Reasm_Building (HC)
+                           and then Reasm_Buffer_Shaped (HC);
 
    function Has_ALPN_Match (HC : Handshake_Context) return Boolean;
 
