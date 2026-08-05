@@ -1173,14 +1173,11 @@ is
                pragma Loop_Invariant
                  (if HC.Cfg.Random'Loop_Entry /= null
                   then HC.Cfg.Random /= null);
-		               pragma Loop_Invariant (Reasm_Coherent (HC));
-		               pragma Loop_Invariant (Reasm_Building (HC));
-		               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
-		               pragma Loop_Invariant
-		                 (if HC.Reasm_Need = 0
-		                  then HC.Reasm_Buf = null);
-		               pragma Loop_Invariant
-	                 (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+			               pragma Loop_Invariant (Reasm_Coherent (HC));
+			               pragma Loop_Invariant (Reasm_Building (HC));
+			               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+			               pragma Loop_Invariant
+		                 (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
                pragma Loop_Invariant
                  (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
                pragma Loop_Invariant

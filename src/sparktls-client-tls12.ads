@@ -37,9 +37,9 @@ is
    with Pre => (S.State not in Idle | Closing | Closed | Error_State)
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                and then Reasm_Coherent (HC)
-               and then
-                 (if not HC.CKE_Received_12 then
-	                    Reasm_Building (HC)
+		               and then
+		                 (if not HC.CKE_Received_12 then
+		                    Reasm_Building (HC)
 	                    and then
 	                      (if HC.Reasm_Buf /= null
 	                           and then HC.Reasm_Need > 0
@@ -68,20 +68,23 @@ is
 		                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
 		                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
 		                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-			                    and then SPARKTLSCrypto.P384.Field.Initialized
-			                    and then SPARKTLSCrypto.P384.ECDSA.Initialized
-			                    and then
-			                      (if HC.Cfg.Local /= null
-			                           and then HC.Cfg.Local.Has_Identity
-			                       then SPARKTLS.Handshake.Server_Msgs
+		                    and then SPARKTLSCrypto.P384.Field.Initialized
+		                    and then SPARKTLSCrypto.P384.ECDSA.Initialized
+		                    and then
+		                      SPARKTLS.Records.TLS12.Nonce_Space_Available_12
+		                        (HC.Client_Seq_12)
+		                    and then
+		                      (if HC.Cfg.Local /= null
+		                           and then HC.Cfg.Local.Has_Identity
+		                       then SPARKTLS.Handshake.Server_Msgs
 			                              .Local_Config_Valid (HC.Cfg.Local)))
 	               and then
 	                 (if HC.CKE_Received_12
 	                  then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 	                         (HC.Client_Seq_12))
-	               and then
-	                 (if HC.CKE_Received_12 and then not HC.CCS_Received then
-                    HC.Cfg.Random /= null
+		               and then
+		                 (if HC.CKE_Received_12 and then not HC.CCS_Received then
+	                    HC.Cfg.Random /= null
                     and then HC.Selected_Group in
                       Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                     and then Valid_ECDHE_Group (HC.Selected_Group)
@@ -93,9 +96,18 @@ is
                     | Suite_ECDHE_RSA_CHACHA20_SHA256
                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                    and then SPARKTLSCrypto.P384.Field.Initialized
-                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+	                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+	                    and then SPARKTLSCrypto.P384.Field.Initialized
+	                    and then SPARKTLSCrypto.P384.ECDSA.Initialized
+                        and then
+                          (if HC.Reasm_Buf /= null
+                               and then HC.Reasm_Need > 0
+                           then Reasm_Buffer_Shaped (HC))
+                        and then
+                          (if HC.Cfg.Local /= null
+                               and then HC.Cfg.Local.Has_Identity
+                           then SPARKTLS.Handshake.Server_Msgs
+                                  .Local_Config_Valid (HC.Cfg.Local)))
 	               and then (if HC.CKE_Received_12 and then HC.CCS_Received
 	                         then Reasm_Building (HC)
 	                              and then

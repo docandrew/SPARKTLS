@@ -169,10 +169,8 @@ is
    with Pre => HS_Msg'First = 0
 	               and then HS_Msg'Length >= 7
 	               and then HS_Msg'Length <= Max_Cert_Msg
-	               and then Reasm_Building (HC)
-	                  and then Reasm_Buffer_Shaped (HC)
-	                  and then
-	                    (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null),
+		               and then Reasm_Building (HC)
+		                  and then Reasm_Buffer_Shaped (HC),
         Post => HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.Hash_Len = HC.Hash_Len'Old
                 and then (if HC.Cfg.Local'Old /= null
@@ -190,12 +188,10 @@ is
                              .Local_Config_Valid (HC.Cfg.Local))
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
-	                and then Reasm_Coherent (HC)
-	                   and then Reasm_Building (HC)
-	                   and then Reasm_Buffer_Shaped (HC)
-	                   and then
-	                     (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
-		                and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then Reasm_Coherent (HC)
+		                   and then Reasm_Building (HC)
+		                   and then Reasm_Buffer_Shaped (HC)
+			                and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then
                   (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old

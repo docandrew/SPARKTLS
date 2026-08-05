@@ -106,11 +106,9 @@ is
                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                           (HC.Cfg.Local)
 	               and then HC.Cfg.Random /= null
-		               and then Reasm_Building (HC)
-		               and then Reasm_Buffer_Shaped (HC)
-		               and then
-		                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
-		               and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
+               and then Reasm_Building (HC)
+               and then Reasm_Buffer_Shaped (HC)
+               and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
 	                 (HC.Selected_Group)
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then SPARKTLSCrypto.P384.ECDSA.Initialized
@@ -138,10 +136,8 @@ is
 	                       (if S.State in Wait_Client_Cert_Verify
                                       | Wait_Client_Finished
                                       | Connected
-	                        then Reasm_Buffer_Shaped (HC)
-                             and then
-                               (if HC.Reasm_Need = 0
-                                then HC.Reasm_Buf = null));
+                        then Reasm_Buffer_Shaped (HC)
+                             );
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block
@@ -158,12 +154,10 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
-		               and then S.State = Wait_Client_Certificate
-		               and then Reasm_Building (HC)
-		               and then Reasm_Buffer_Shaped (HC)
-		               and then
-		                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
-		               and then HC.Cfg.Local /= null
+               and then S.State = Wait_Client_Certificate
+               and then Reasm_Building (HC)
+               and then Reasm_Buffer_Shaped (HC)
+               and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity
                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                           (HC.Cfg.Local)
@@ -199,12 +193,10 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
-	               and then S.State = Wait_Client_Cert_Verify
-	               and then Reasm_Building (HC)
-	               and then Reasm_Buffer_Shaped (HC)
-	               and then
-	                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
-	               and then HC.Cfg.Local /= null
+               and then S.State = Wait_Client_Cert_Verify
+               and then Reasm_Building (HC)
+               and then Reasm_Buffer_Shaped (HC)
+               and then HC.Cfg.Local /= null
 	               and then HC.Cfg.Local.Has_Identity
 	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                          (HC.Cfg.Local)
@@ -253,11 +245,9 @@ is
 	        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                   (HC.Cfg.Local)
 	        and then HC.Cfg.Random /= null
-		               and then Reasm_Building (HC)
-		               and then Reasm_Buffer_Shaped (HC)
-		               and then
-		                 (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null)
-		               and then CCS_Precedes_Finished_RFC_5246_7_1 (HC)
+               and then Reasm_Building (HC)
+               and then Reasm_Buffer_Shaped (HC)
+               and then CCS_Precedes_Finished_RFC_5246_7_1 (HC)
                --  Required by Send_Encrypted_Alert_12 in error paths
                --  (RFC 5246 §7.2.1 post-CCS encrypted alerts).
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
