@@ -310,11 +310,12 @@ is
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Coherent (HC)
-	                and then HC.Reasm_Need = HC.Reasm_Need'Old
-	                and then HC.Reasm_Len = HC.Reasm_Len'Old
-	                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
-	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
+		                and then HC.Reasm_Need = HC.Reasm_Need'Old
+		                and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
+		                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
+		                and then (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
 	                and then
 	                  (if OK then Valid_ECDHE_Group (HC.Selected_Group));
 

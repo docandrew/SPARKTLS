@@ -929,19 +929,74 @@ is
          Append_Cipher_Suite
            (Suites_Ctx,
             RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 16);
-         Append_Cipher_Suite
-           (Suites_Ctx,
-            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-            0);
-         Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
-      end;
+	         Append_Cipher_Suite
+	           (Suites_Ctx,
+	            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	            0);
+	         Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
+	      end;
 
-      Set_Legacy_Compression_Methods_Length (Ctx, 1);
-      Set_Legacy_Compression_Methods
-        (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
-      Set_Extensions_Length
-        (Ctx,
-         RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
+	      pragma Assert_And_Cut
+	        (RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+	         and then RFLX.TLS_Handshake.Client_Hello.Valid_Next
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello
+	              .F_Legacy_Compression_Methods_Length)
+	         and then RFLX.TLS_Handshake.Client_Hello.Available_Space
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello
+	              .F_Legacy_Compression_Methods_Length)
+	         >= RFLX.TLS_Handshake.Client_Hello.Field_Size
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello
+	              .F_Legacy_Compression_Methods_Length)
+	         and then RFLX.TLS_Handshake.Client_Hello.Field_Condition
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello
+	              .F_Legacy_Compression_Methods_Length,
+	            1));
+	      Set_Legacy_Compression_Methods_Length (Ctx, 1);
+	      pragma Assert_And_Cut
+	        (RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+	         and then RFLX.TLS_Handshake.Client_Hello.Valid_Next
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
+	         and then RFLX.TLS_Handshake.Client_Hello.Available_Space
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
+	         >= RFLX.TLS_Handshake.Client_Hello.Field_Size
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
+	         and then RFLX.TLS_Handshake.Client_Hello.Valid_Length
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods,
+	            1)
+	         and then RFLX.TLS_Handshake.Client_Hello.Available_Space
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
+	         >= RFLX.RFLX_Types.Byte'Size
+	         and then RFLX.TLS_Handshake.Client_Hello.Field_Condition
+	           (Ctx,
+	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods,
+	            0));
+	      Set_Legacy_Compression_Methods
+	        (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
+	      pragma Assert_And_Cut
+	        (RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+	         and then RFLX.TLS_Handshake.Client_Hello.Valid_Next
+	           (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
+	         and then RFLX.TLS_Handshake.Client_Hello.Available_Space
+	           (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
+	         >= RFLX.TLS_Handshake.Client_Hello.Field_Size
+	           (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
+	         and then RFLX.TLS_Handshake.Client_Hello.Field_Condition
+	           (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length,
+	            RFLX.TLS_Handshake.To_Base_Integer
+	              (RFLX.TLS_Handshake.Client_Hello_Extensions_Length
+	                 (Ext_Total_All))));
+	      Set_Extensions_Length
+	        (Ctx,
+	         RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
 
 	      --  Build extensions sequence
 	      declare
@@ -949,8 +1004,30 @@ is
             Remaining_Ext_Bits : RBT.Bit_Length :=
               RBT.Bit_Length (8) * RBT.Bit_Length (Ext_Total_All)
               with Ghost;
-		      begin
-		         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
+			      begin
+			         pragma Assert_And_Cut
+			           (RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
+			            and then RFLX.TLS_Handshake.Client_Hello.Valid_Next
+			              (Ctx,
+			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+			            and then RFLX.TLS_Handshake.Client_Hello.Field_Size
+			              (Ctx,
+			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS) > 0
+			            and then RFLX.TLS_Handshake.Client_Hello.Field_First
+			              (Ctx,
+			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+			              rem RFLX.RFLX_Types.Byte'Size = 1
+			            and then RFLX.TLS_Handshake.Client_Hello.Available_Space
+			              (Ctx,
+			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+			            >= RFLX.TLS_Handshake.Client_Hello.Field_Size
+			              (Ctx,
+			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+			            and then RFLX.TLS_Handshake.Client_Hello.Field_Condition
+			              (Ctx,
+			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS,
+			               0));
+			         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
             pragma Assert
               (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                  (Exts_Ctx) = Remaining_Ext_Bits);
@@ -1269,12 +1346,16 @@ is
 	         --  Extension 9b (conditional): RFC 5077 session_ticket (0x0023).
 	         --  Empty data on initial CH; resume ticket bytes when resuming.
 	         if Offer_TLS12_Ticket then
-	            if TLS12_Ticket_Data_Len > 0 then
-	                  pragma Assert
-	                    (TLS12_Ticket_Data_Len <= Max_TLS12_Ticket_Len);
-	                  pragma Assert (TLS12_Ticket_Data_Len <= 4096);
-	                  pragma Assert
-	                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+		            if TLS12_Ticket_Data_Len > 0 then
+		                  pragma Assert
+		                    (TLS12_Ticket_Data_Len <= Max_TLS12_Ticket_Len);
+		                  pragma Assert (TLS12_Ticket_Data_Len <= 4096);
+		                  pragma Assert
+		                    (HC.Cfg.TLS12_Resume_Ticket.Ticket
+		                       (0 .. TLS12_Ticket_Data_Len - 1)'Length
+		                     <= 4096);
+		                  pragma Assert
+		                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
 	                       (Exts_Ctx) >=
 	                     RBT.Bit_Length (8) *
 	                       (RBT.Bit_Length (4) +
