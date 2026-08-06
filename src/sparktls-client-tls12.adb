@@ -1189,9 +1189,10 @@ is
                 and then Msg_Len <= N32 (Frag'Length) - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
 	                and then Frag'Last - Frag'First < Transcript_Capacity
-			                and then S.State not in Idle | Closing | Closed | Error_State
-					                and then Reasm_Coherent (HC)
-	            and then HC.Cfg.Random /= null
+	                and then S.State not in Idle | Closing | Closed | Error_State
+	                and then Reasm_Coherent (HC)
+	                and then Reasm_Buffer_Shaped (HC)
+	                and then HC.Cfg.Random /= null
 	            and then HC.Selected_Group in
 	              Group_X25519 | Group_Secp256r1 | Group_Secp384r1
 	            and then Valid_ECDHE_Group (HC.Selected_Group)
@@ -1492,6 +1493,7 @@ is
                 and then Frag'Last - Frag'First < Transcript_Capacity
 	                and then S.State not in Idle | Closing | Closed | Error_State
 	                and then Reasm_Coherent (HC)
+	                and then Reasm_Buffer_Shaped (HC)
 	                and then HC.Cfg.Random /= null
 		                     and then S.Negotiated_Suite in
 		                       Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -3114,11 +3116,12 @@ is
                 and then Msg_Len <= N32 (Frag'Length) - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
                 and then Frag'Last - Frag'First < Transcript_Capacity
-                and then S.State not in Idle | Closing | Closed | Error_State
-                and then Reasm_Coherent (HC)
-                and then HC.Cfg.Random /= null
-	                and then
-	                  (if HC.TLS12_EMS_Transcript_Len > 0
+	                and then S.State not in Idle | Closing | Closed | Error_State
+	                and then Reasm_Coherent (HC)
+	                and then Reasm_Buffer_Shaped (HC)
+	                and then HC.Cfg.Random /= null
+		                and then
+		                  (if HC.TLS12_EMS_Transcript_Len > 0
 	                   then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
 	                and then HC.Selected_Group in
 	                  Group_X25519 | Group_Secp256r1 | Group_Secp384r1

@@ -2187,9 +2187,10 @@ is
 
 				                     pragma Assert (Server_Configured (HC));
 					                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-					                     pragma Assert (HC.Transcript_Len > 0);
-					                     pragma Assert (Reasm_Building (HC));
-					                     Complete_Client_Hello (S, HC, Result);
+						                     pragma Assert (HC.Transcript_Len > 0);
+						                     pragma Assert (Reasm_Building (HC));
+						                     pragma Assert (Reasm_Buffer_Shaped (HC));
+						                     Complete_Client_Hello (S, HC, Result);
 				                     pragma Assert (Wait_Client_Hello_Post (S, HC));
 				                  end Parse_Single_Record_Client_Hello;
 

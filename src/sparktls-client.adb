@@ -624,11 +624,12 @@ is
 		               and then SPARKTLSCrypto.P384.Field.Initialized
 		               and then SPARKTLSCrypto.P384.ECDSA.Initialized
 		               and then Plaintext'First = 0
-               and then Plaintext'Last < N32'Last / 2
-		               and then Plain_Len <= N32 (Plaintext'Length)
-		               and then Reasm_Coherent (HC)
-               and then (HC.Reasm_Buf = null
-                         or else (HC.Reasm_Buf'First = 0
+			               and then Plaintext'Last < N32'Last / 2
+				               and then Plain_Len <= N32 (Plaintext'Length)
+				               and then Reasm_Coherent (HC)
+				               and then Reasm_Buffer_Shaped (HC)
+	               and then (HC.Reasm_Buf = null
+	                         or else (HC.Reasm_Buf'First = 0
                                   and then HC.Reasm_Buf'Last in 0 .. 131071
                                   and then HC.Reasm_Len
                                      <= N32 (HC.Reasm_Buf'Length)
@@ -638,10 +639,10 @@ is
                                                HC.Reasm_Need >= 4)))
                and then
                  (if HC.Reasm_Buf /= null and then HC.Reasm_Need > 0
-                  then Reasm_Buffer_Shaped (HC)
-                       and then Reasm_Building (HC)
-                       and then
-                         (if HC.Reasm_Hdr_Pending then HC.Reasm_Len < 4))
+	                  then Reasm_Buffer_Shaped (HC)
+	                       and then Reasm_Building (HC)
+	                       and then
+	                         (if HC.Reasm_Hdr_Pending then HC.Reasm_Len <= 4))
                and then
                  (if HC.Cert_Request_Received
 	                      and then HC.Cfg.Local /= null
@@ -657,9 +658,11 @@ is
 	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
 		                       and then HC.Client_HS.Counter
 		                         <= Unsigned_64'Last - 2),
-			        Post => Pos <= Plain_Len
-			                and then (if Result = OK
-			                              and then S.State
+					        Post => Pos <= Plain_Len
+					                and then Result in OK | Has_Output | Error_Alert
+					                and then Reasm_Buffer_Shaped (HC)
+				                and then (if Result = OK
+				                              and then S.State
 			                                in Wait_Encrypted_Extensions
 			                                 | Wait_Certificate_Request
 			                                 | Wait_Certificate
@@ -711,7 +714,7 @@ is
 				                 (if HC.Reasm_Hdr_Pending
 			                  then HC.Reasm_Buf'Length = Max_HS_Msg
 			                       and then HC.Reasm_Need = 4
-			                       and then HC.Reasm_Len < 4)
+				                       and then HC.Reasm_Len <= 4)
 			               and then
 		                 (if HC.Cert_Request_Received
 	                      and then HC.Cfg.Local /= null
@@ -792,9 +795,10 @@ is
 		                               (if HC.Reasm_Hdr_Pending
 		                                then HC.Reasm_Buf'Length = Max_HS_Msg
 		                                     and then HC.Reasm_Need = 4
-		                                     and then HC.Reasm_Len < 4)
-			                             and then Reasm_Building (HC)
-			                             and then Reasm_Coherent (HC));
+			                                     and then HC.Reasm_Len <= 4)
+				                             and then Reasm_Building (HC)
+				                             and then Reasm_Buffer_Shaped (HC)
+				                             and then Reasm_Coherent (HC));
 
    procedure Copy_Decrypted_Reasm_Bytes
      (HC        : in out Handshake_Context;
@@ -1027,11 +1031,12 @@ is
 	               and then HC.Reasm_Need - 1 <= HC.Reasm_Buf'Last
 	               and then HC.Reasm_Len >= HC.Reasm_Need
 	               and then Reasm_Coherent (HC),
-			       Post => Pos <= Plain_Len
-			                and then HC.Reasm_Len = 0
-			                and then HC.Reasm_Need = 0
-                                and then Reasm_Coherent (HC)
-                                and then
+				       Post => Pos <= Plain_Len
+				                and then HC.Reasm_Len = 0
+				                and then HC.Reasm_Need = 0
+	                                and then Reasm_Coherent (HC)
+	                                and then Reasm_Buffer_Shaped (HC)
+	                                and then
                                   (if HC.Reasm_Buf /= null
                                        and then HC.Reasm_Need > 0
                                    then Reasm_Building (HC))
@@ -1084,10 +1089,12 @@ is
 	               and then Plaintext'Last < N32'Last / 2
 	               and then Plain_Len <= N32 (Plaintext'Length)
 		               and then Pos <= Plain_Len,
-					        Post => Pos <= Plain_Len
-                                            and then Reasm_Coherent (HC)
-                                            and then Reasm_Buffer_Shaped (HC)
-					                and then (if Result = OK
+						        Post => Pos <= Plain_Len
+	                                            and then Reasm_Coherent (HC)
+	                                            and then Reasm_Buffer_Shaped (HC)
+	                                            and then Result in
+	                                              OK | Has_Output | Error_Alert
+						                and then (if Result = OK
 			                              and then S.State
 			                                in Wait_Encrypted_Extensions
 			                                 | Wait_Certificate_Request
@@ -1969,8 +1976,9 @@ is
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
                 and then Data'Length <= Transcript_Capacity
-                                            and then Reasm_Coherent (HC)
-					                and then HC.Transcript_Len > 0
+	            and then Reasm_Coherent (HC)
+	            and then Reasm_Buffer_Shaped (HC)
+	            and then HC.Transcript_Len > 0
 	                and then Nonce_Space_Available (HC.Client_HS)
 		                and then Nonce_Space_Available (S.Client_App)
 		                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -4725,10 +4733,11 @@ is
 	      end;
 	      Free_Byte_Seq (HC.Reasm_Buf);
 	      HC.Reasm_Len := 0;
-	      HC.Reasm_Need := 0;
-	      HC.Reasm_Hdr_Pending := False;
+		      HC.Reasm_Need := 0;
+		      HC.Reasm_Hdr_Pending := False;
+		      pragma Assert (Reasm_Buffer_Shaped (HC));
 
-	      pragma Assert
+		      pragma Assert
 	        (if Result = OK
              and then S.State in Wait_Encrypted_Extensions
                                  | Wait_Certificate_Request
@@ -5149,9 +5158,10 @@ is
 			              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 				               then HC.Hash_Len = 48
 				               else HC.Hash_Len = 32));
-               pragma Loop_Invariant
-                 (if HC.Reasm_Buf /= null and then HC.Reasm_Need > 0
-                  then Reasm_Building (HC));
+	               pragma Loop_Invariant
+	                 (if HC.Reasm_Buf /= null and then HC.Reasm_Need > 0
+	                  then Reasm_Building (HC));
+	               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 
 		         Process_One_Decrypted_HS_Message
 	           (S, HC, Plaintext, Plain_Len, Pos, Result);
