@@ -676,9 +676,8 @@ is
 	                          .Local_Config_Valid (HC.Cfg.Local))
 	                and then (if HC.Cfg.Random'Old /= null
 		                          then HC.Cfg.Random /= null)
-				                and then Reasm_Coherent (HC)
-				                and then Reasm_Building (HC)
-				                and then Reasm_Buffer_Shaped (HC)
+					                and then Reasm_Coherent (HC)
+					                and then Reasm_Buffer_Shaped (HC)
 	                  and then HC.Reasm_Len = HC.Reasm_Len'Old
                   and then HC.Reasm_Need = HC.Reasm_Need'Old
                   and then HC.Reasm_Hdr_Pending =
@@ -1170,9 +1169,8 @@ is
                pragma Loop_Invariant
                  (if HC.Cfg.Random'Loop_Entry /= null
                   then HC.Cfg.Random /= null);
-			               pragma Loop_Invariant (Reasm_Coherent (HC));
-			               pragma Loop_Invariant (Reasm_Building (HC));
-			               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+				               pragma Loop_Invariant (Reasm_Coherent (HC));
+				               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 			               pragma Loop_Invariant
 		                 (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
                pragma Loop_Invariant

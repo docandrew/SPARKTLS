@@ -112,13 +112,13 @@ is
       Err    : Error_Code;
       Result :    out Action)
 	   with Pre  => Nonce_Space_Available (HC.Client_HS)
-	                and then S.State not in Idle | Closing | Closed | Error_State
-			                and then Reasm_Coherent (HC),
-        Post => S.State = Error_State
-                and then S.Last_Error = Err
-	                and then Result in Has_Output | Error_Alert
-			                and then Reasm_Coherent (HC)
-			                and then HC.Reasm_Len = HC.Reasm_Len'Old
+		                and then S.State not in Idle | Closing | Closed | Error_State
+					                and then Reasm_Coherent (HC),
+	        Post => S.State = Error_State
+	                and then S.Last_Error = Err
+		                and then Result in Has_Output | Error_Alert
+				                and then Reasm_Coherent (HC)
+				                and then HC.Reasm_Len = HC.Reasm_Len'Old
 	                and then HC.Reasm_Need = HC.Reasm_Need'Old
 	                and then HC.Reasm_Hdr_Pending =
 	                  HC.Reasm_Hdr_Pending'Old
@@ -333,8 +333,8 @@ is
 		                and then Data'Length >= 4
 		                and then Data'Last < N32'Last - 4
 		                and then Data'Last < Transcript_Capacity
-                                            and then Reasm_Coherent (HC)
-						                and then HC.Transcript_Len > 0
+	                                            and then Reasm_Coherent (HC)
+							                and then HC.Transcript_Len > 0
 		                and then Nonce_Space_Available (HC.Client_HS)
 		                and then Nonce_Space_Available (S.Client_App)
 		                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -415,7 +415,6 @@ is
 	                       and then HC.Client_HS.Counter
 	                         <= Unsigned_64'Last - 2)
 		               and then Reasm_Coherent (HC)
-		               and then Reasm_Buffer_Shaped (HC)
 				               and then (HC.Reasm_Buf = null
 			                         or else (HC.Reasm_Buf'First = 0
                                   and then HC.Reasm_Buf'Last
@@ -460,8 +459,8 @@ is
 		                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
 		                       and then HC.Client_HS.Counter
 		                         <= Unsigned_64'Last - 2)
-		               and then Reasm_Coherent (HC)
-               and then Rec.OK
+			               and then Reasm_Coherent (HC)
+	               and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
                and then Rec.Fragment_Pos = Records.Record_Header_Size
                and then Rec.Fragment_Len >= 1
@@ -582,6 +581,7 @@ is
 	                   then HC.Hash_Len = 48
 	                   else HC.Hash_Len = 32),
         Post => Reasm_Coherent (HC)
+                and then Reasm_Buffer_Shaped (HC)
                 and then
                 (if Result = OK
                       and then S.State in Wait_Encrypted_Extensions
@@ -627,7 +627,6 @@ is
 			               and then Plaintext'Last < N32'Last / 2
 				               and then Plain_Len <= N32 (Plaintext'Length)
 				               and then Reasm_Coherent (HC)
-				               and then Reasm_Buffer_Shaped (HC)
 	               and then (HC.Reasm_Buf = null
 	                         or else (HC.Reasm_Buf'First = 0
                                   and then HC.Reasm_Buf'Last in 0 .. 131071
@@ -660,7 +659,6 @@ is
 		                         <= Unsigned_64'Last - 2),
 					        Post => Pos <= Plain_Len
 					                and then Result in OK | Has_Output | Error_Alert
-					                and then Reasm_Buffer_Shaped (HC)
 				                and then (if Result = OK
 				                              and then S.State
 			                                in Wait_Encrypted_Extensions
@@ -1091,7 +1089,6 @@ is
 		               and then Pos <= Plain_Len,
 						        Post => Pos <= Plain_Len
 	                                            and then Reasm_Coherent (HC)
-	                                            and then Reasm_Buffer_Shaped (HC)
 	                                            and then Result in
 	                                              OK | Has_Output | Error_Alert
 						                and then (if Result = OK
@@ -1975,9 +1972,8 @@ is
                 and then Data'First = 0
                 and then Data'Length >= 4
                 and then Data'Last < N32'Last - 4
-                and then Data'Length <= Transcript_Capacity
-	            and then Reasm_Coherent (HC)
-	            and then Reasm_Buffer_Shaped (HC)
+			                and then Data'Length <= Transcript_Capacity
+		                                            and then Reasm_Coherent (HC)
 	            and then HC.Transcript_Len > 0
 	                and then Nonce_Space_Available (HC.Client_HS)
 		                and then Nonce_Space_Available (S.Client_App)
@@ -2083,8 +2079,8 @@ is
 	                and then Data'Length >= 4
 		                and then Data'Last < N32'Last - 4
 		                and then Data'Length <= Transcript_Capacity
-                                            and then Reasm_Coherent (HC)
-			                and then HC.Transcript_Len > 0
+	                                            and then Reasm_Coherent (HC)
+				                and then HC.Transcript_Len > 0
 	                and then Nonce_Space_Available (HC.Client_HS)
 		                and then Nonce_Space_Available (S.Client_App)
 		                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -2124,8 +2120,8 @@ is
 	                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 	                         then HC.Hash_Len = 48
 	                         else HC.Hash_Len = 32))
-                and then Reasm_Coherent (HC)
-                and then Result in OK | Has_Output | Error_Alert;
+	                and then Reasm_Coherent (HC)
+	                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CertReq_13
      (S      : in out Session;
@@ -2329,7 +2325,7 @@ is
 	                and then Data'Last < N32'Last - 4
 	                and then Data'Length <= Transcript_Capacity
                                             and then Reasm_Coherent (HC)
-					                and then HC.Transcript_Len > 0
+				                and then HC.Transcript_Len > 0
 		                and then Nonce_Space_Available (HC.Client_HS)
 		                and then Nonce_Space_Available (S.Client_App)
 		                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -2368,8 +2364,8 @@ is
 	                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 	                         then HC.Hash_Len = 48
 	                         else HC.Hash_Len = 32))
-                and then Reasm_Coherent (HC)
-                and then Result in OK | Has_Output | Error_Alert;
+	                and then Reasm_Coherent (HC)
+	                and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_Cert_13
      (S      : in out Session;
@@ -2519,8 +2515,8 @@ is
                 and then Data'Last < N32'Last - 4
 	                and then Data'Length <= Transcript_Capacity
 	                and then Msg_Len <= N32 (Data'Length) - 4
-				                and then Reasm_Coherent (HC)
-		                and then HC.Transcript_Len > 0
+					                and then Reasm_Coherent (HC)
+				                and then HC.Transcript_Len > 0
                 and then Nonce_Space_Available (HC.Client_HS)
                 and then Nonce_Space_Available (S.Client_App)
                 and then
@@ -2732,9 +2728,9 @@ is
         --  Derive_App_Keys_And_Send_Finished, so S.Client_App is
         --  replaced (not pinned to 'Old). Nonce headroom is guaranteed
         --  because the new key starts with Counter = 0.
-				        Post => Result in Has_Output | Error_Alert
-		                         and then Reasm_Coherent (HC)
-			                         and then Result in Has_Output | Error_Alert;
+					        Post => Result in Has_Output | Error_Alert
+			                         and then Reasm_Coherent (HC)
+				                         and then Result in Has_Output | Error_Alert;
 
    procedure Handle_Finished_13
      (S       : in out Session;

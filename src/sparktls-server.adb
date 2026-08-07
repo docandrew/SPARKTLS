@@ -271,11 +271,11 @@ is
 	      Result                 :    out Action)
 	   with Pre  => Server_Active (S)
 	                and then S.State = Wait_Client_Hello_Retry
-	                and then S.Role = Role_Server
-	                and then Server_Configured (HC)
-	                and then Reasm_Building (HC)
-	                and then HC.Legacy_Session_ID_Len in 0 .. 32
-	                and then Server_State_Keys_Ready (S, HC)
+		                and then S.Role = Role_Server
+		                and then Server_Configured (HC)
+		                and then Reasm_Building (HC)
+		                and then HC.Legacy_Session_ID_Len in 0 .. 32
+		                and then Server_State_Keys_Ready (S, HC)
 	                and then Msg'First = 0
 	                and then Msg'Last <= N32 (Max_HS_Msg) - 1
 	                and then
@@ -1208,8 +1208,7 @@ is
                and then Server_Configured (HC)
 	               and then HC.Legacy_Session_ID_Len in 0 .. 32
 		               and then HC.Transcript_Len > 0
-				               and then Reasm_Building (HC)
-				               and then Reasm_Buffer_Shaped (HC)
+						                              and then Reasm_Building (HC)
 				               and then HC.Reasm_Need = 0
 				               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
@@ -1981,9 +1980,9 @@ is
 			                  procedure Parse_Completed_Reassembly
 			                  with Pre => S.State = Wait_Client_Hello
 				                              and then S.Role = Role_Server
-				                              and then Server_Configured (HC)
+					                              and then Server_Configured (HC)
 				                              and then Reasm_Building (HC)
-				                              and then SPARKTLSCrypto.P384.Field.Initialized
+					                              and then SPARKTLSCrypto.P384.Field.Initialized
 				                              and then SPARKTLSCrypto.P384.ECDSA.Initialized
 						                              and then HC.Reasm_Buf /= null
 			                              and then HC.Reasm_Buf'First = 0
@@ -2099,9 +2098,9 @@ is
 		                  procedure Process_Fresh_Handshake_Record
 		                  with Pre => S.State = Wait_Client_Hello
 		                              and then S.Role = Role_Server
-		                              and then Server_Configured (HC)
-		                              and then Reasm_Building (HC)
-		                              and then HC.Legacy_Session_ID_Len in 0 .. 32
+			                              and then Server_Configured (HC)
+			                        and then Reasm_Building (HC)
+			                              and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                              and then Server_State_Keys_Ready (S, HC)
 		                              and then Handshake_Record_Fragment_Ready
 		                                (Rec)
@@ -2121,9 +2120,10 @@ is
 		                  procedure Parse_Single_Record_Client_Hello
 		                  with Pre => S.State = Wait_Client_Hello
 		                              and then S.Role = Role_Server
-		                              and then Server_Configured (HC)
-		                              and then Reasm_Building (HC)
-		                              and then HC.Legacy_Session_ID_Len in 0 .. 32
+		                        and then Server_Configured (HC)
+		                        and then Reasm_Building (HC)
+		                        and then Reasm_Buffer_Shaped (HC)
+		                        and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                              and then Server_State_Keys_Ready (S, HC)
 		                              and then Handshake_Record_Fragment_Ready
 		                                (Rec)

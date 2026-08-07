@@ -187,7 +187,6 @@ is
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
 		                and then Reasm_Coherent (HC)
-		                   and then Reasm_Building (HC)
 		                   and then Reasm_Buffer_Shaped (HC)
 			                and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old

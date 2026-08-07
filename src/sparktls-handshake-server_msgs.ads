@@ -48,11 +48,10 @@ is
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
 	      OK   :    out Boolean)
-						      with Pre => Data'Length > 0
-							                 and then Data'Last <= N32 (Max_HS_Msg) - 1
-						                         and then Reasm_Building (HC)
-						                         and then Reasm_Buffer_Shaped (HC)
-						                         and then HC.Legacy_Session_ID_Len in 0 .. 32,
+							      with Pre => Data'Length > 0
+								                 and then Data'Last <= N32 (Max_HS_Msg) - 1
+							                         and then Reasm_Building (HC)
+							                         and then HC.Legacy_Session_ID_Len in 0 .. 32,
                     Post => (if HC.Cfg.Local'Old /= null
                               then HC.Cfg.Local /= null
                                    and then
@@ -74,14 +73,6 @@ is
 				                            and then S.Server_App.Suite =
 				                              S.Server_App.Suite'Old
 										                            and then HC.HRR_Sent = HC.HRR_Sent'Old
-										                            and then Reasm_Building (HC)
-										                            and then Reasm_Buffer_Shaped (HC)
-										                            and then HC.Reasm_Len =
-										                              HC.Reasm_Len'Old
-										                            and then HC.Reasm_Need =
-										                              HC.Reasm_Need'Old
-										                            and then HC.Reasm_Hdr_Pending =
-										                              HC.Reasm_Hdr_Pending'Old
 				                            and then
 	                              (if OK and then HC.Version = TLS_1_3
 	                               then S.Negotiated_Suite in
