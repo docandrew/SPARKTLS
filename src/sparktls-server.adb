@@ -1208,9 +1208,10 @@ is
                and then Server_Configured (HC)
 	               and then HC.Legacy_Session_ID_Len in 0 .. 32
 		               and then HC.Transcript_Len > 0
-						                              and then Reasm_Building (HC)
-				               and then HC.Reasm_Need = 0
-				               and then SPARKTLSCrypto.P384.Field.Initialized
+							                              and then Reasm_Building (HC)
+					               and then HC.Reasm_Need = 0
+					               and then HC.Reasm_Buf = null
+					               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
 					                       Post => Wait_Client_Hello_Post (S, HC);
 
@@ -2122,7 +2123,6 @@ is
 		                              and then S.Role = Role_Server
 		                        and then Server_Configured (HC)
 		                        and then Reasm_Building (HC)
-		                        and then Reasm_Buffer_Shaped (HC)
 		                        and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                              and then Server_State_Keys_Ready (S, HC)
 		                              and then Handshake_Record_Fragment_Ready
@@ -2179,15 +2179,19 @@ is
 				                          (Frag_Len < Transcript_Capacity);
 			                        pragma Assert
 			                          (Frag'Last - Frag'First = Frag_Len - 1);
-			                        Append_Transcript (HC, Frag);
-			                        pragma Assert (HC.Transcript_Len > 0);
-		                     end;
-		                     S.Input.Read_Pos :=
-		                        S.Input.Read_Pos + Rec.Record_Len;
+				                        Append_Transcript (HC, Frag);
+				                        pragma Assert (HC.Transcript_Len > 0);
+			                     end;
+			                     S.Input.Read_Pos :=
+			                        S.Input.Read_Pos + Rec.Record_Len;
+			                     Free_Byte_Seq (HC.Reasm_Buf);
+			                     HC.Reasm_Len := 0;
+			                     HC.Reasm_Need := 0;
+			                     HC.Reasm_Hdr_Pending := False;
 
-				                     pragma Assert (Server_Configured (HC));
-					                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-						                     pragma Assert (HC.Transcript_Len > 0);
+					                     pragma Assert (Server_Configured (HC));
+						                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+							                     pragma Assert (HC.Transcript_Len > 0);
 						                     pragma Assert (Reasm_Building (HC));
 						                     pragma Assert (Reasm_Buffer_Shaped (HC));
 						                     Complete_Client_Hello (S, HC, Result);

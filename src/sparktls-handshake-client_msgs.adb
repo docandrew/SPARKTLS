@@ -1039,13 +1039,20 @@ is
             --  SNI list: list_len(2) + type(1) + name_len(2) + name
             SNI_Raw (0) := Byte ((Host_Len + 3) / 256);
             SNI_Raw (1) := Byte ((Host_Len + 3) mod 256);
-            SNI_Raw (2) := 16#00#;  --  host_name type
-            SNI_Raw (3) := Byte (Host_Len / 256);
-            SNI_Raw (4) := Byte (Host_Len mod 256);
-            for I in 1 .. HC.Cfg.Server_Name.Len loop
-               SNI_Raw (4 + N32 (I)) :=
-                  Byte (Character'Pos (HC.Cfg.Server_Name.Data (I)));
-            end loop;
+	            SNI_Raw (2) := 16#00#;  --  host_name type
+	            SNI_Raw (3) := Byte (Host_Len / 256);
+	            SNI_Raw (4) := Byte (Host_Len mod 256);
+               pragma Assert (SNI_Raw'First = 0);
+               pragma Assert (SNI_Raw'Last = 4 + Host_Len);
+	            for I in 1 .. HC.Cfg.Server_Name.Len loop
+                  pragma Loop_Invariant (I in 1 .. HC.Cfg.Server_Name.Len);
+                  pragma Loop_Invariant (SNI_Raw'First = 0);
+                  pragma Loop_Invariant (SNI_Raw'Last = 4 + Host_Len);
+                  pragma Assert (N32 (I) <= Host_Len);
+                  pragma Assert (4 + N32 (I) <= SNI_Raw'Last);
+	               SNI_Raw (4 + N32 (I)) :=
+	                  Byte (Character'Pos (HC.Cfg.Server_Name.Data (I)));
+	            end loop;
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) >=

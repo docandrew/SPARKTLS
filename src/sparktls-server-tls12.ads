@@ -153,18 +153,17 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
-               and then S.State = Wait_Client_Certificate
-               and then Reasm_Building (HC)
-               and then Reasm_Buffer_Shaped (HC)
+	               and then S.State = Wait_Client_Certificate
+	               and then Reasm_Building (HC)
+	               and then HC.Reasm_Len <= HC.Reasm_Need
+	               and then Reasm_Buffer_Shaped (HC)
                and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity
                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                           (HC.Cfg.Local)
                and then HC.Cfg.Random /= null,
-	        Post => (S.State = S.State'Old
-                    or else Valid_Transition (S.State'Old, S.State))
-                  and then S.State in Wait_Client_Certificate
-	                          | Wait_Client_Cert_Verify
+		        Post => S.State in Wait_Client_Certificate
+		                          | Wait_Client_Cert_Verify
                           | Wait_Client_Finished
                           | Error_State
                 and then
