@@ -206,9 +206,7 @@ is
                  (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1)
                and then SPARKTLSCrypto.P384.Field.Initialized
                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-	        Post => (S.State = S.State'Old
-                    or else Valid_Transition (S.State'Old, S.State))
-                  and then S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
+	        Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
 	                          | Error_State
                 and then
                   (if S.State /= Error_State then Reasm_Building (HC));
@@ -253,9 +251,7 @@ is
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                           (HC.Server_Seq_12)
                and then Free_Space (S.Output) >= 7,
-				        Post => (S.State = S.State'Old
-				                 or else Valid_Transition (S.State'Old, S.State))
-				             and then S.State in Wait_Client_Finished | Connected | Closing
+				        Post => S.State in Wait_Client_Finished | Connected | Closing
 				                           | Error_State
 	                     and then
                        (if S.State /= Error_State

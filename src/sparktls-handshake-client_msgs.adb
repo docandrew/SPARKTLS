@@ -1425,15 +1425,21 @@ is
 	      OK         :    out Boolean)
 		   with Pre => Data'Length in 39 .. Max_HS_Msg
 			               and then Data'Last < N32 (Natural'Last)
-	                  and then HC.HRR_Cookie_Len <=
-	                    N32 (HC.HRR_Cookie'Length)
-	                  and then Reasm_Coherent (HC),
+		                  and then HC.HRR_Cookie_Len <=
+		                    N32 (HC.HRR_Cookie'Length)
+		                  and then Reasm_Coherent (HC)
+		                  and then Reasm_Buffer_Shaped (HC),
 	        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
 	          and then HC.Transcript_Len = HC.Transcript_Len'Old
 	          and then (if HC.Got_HRR'Old then HC.Got_HRR)
-	                  and then HC.HRR_Cookie_Len <=
-                    N32 (HC.HRR_Cookie'Length)
-                  and then Reasm_Coherent (HC);
+		                  and then HC.HRR_Cookie_Len <=
+	                    N32 (HC.HRR_Cookie'Length)
+	                  and then Reasm_Coherent (HC)
+	                  and then HC.Reasm_Len = HC.Reasm_Len'Old
+	                  and then HC.Reasm_Need = HC.Reasm_Need'Old
+	                  and then HC.Reasm_Hdr_Pending =
+	                    HC.Reasm_Hdr_Pending'Old
+	                  and then Reasm_Buffer_Shaped (HC);
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
@@ -2103,10 +2109,19 @@ is
 	      Random_Was_Set : constant Boolean :=
 	        HC.Cfg.Random /= null with Ghost;
 	      Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
+	      Reasm_Len_At_Entry : constant N32 := HC.Reasm_Len with Ghost;
+	      Reasm_Need_At_Entry : constant N32 := HC.Reasm_Need with Ghost;
+	      Reasm_Hdr_Pending_At_Entry : constant Boolean :=
+	        HC.Reasm_Hdr_Pending with Ghost;
 	      function SH_Parse_Frame return Boolean is
 	        (HC.Transcript_Len = Transcript_Len_At_Entry
 	         and then (if Random_Was_Set then HC.Cfg.Random /= null)
 	         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+	         and then HC.Reasm_Len = Reasm_Len_At_Entry
+	         and then HC.Reasm_Need = Reasm_Need_At_Entry
+	         and then HC.Reasm_Hdr_Pending =
+	           Reasm_Hdr_Pending_At_Entry
+	         and then Reasm_Buffer_Shaped (HC)
 	         and then Reasm_Coherent (HC))
 	      with Ghost;
 	   begin

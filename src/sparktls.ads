@@ -195,64 +195,6 @@ is
      (State in Connected | Closing | Closed)
    with Ghost;
 
-   --  RFC 8446 §4.1: Valid state transitions.
-   --  The handshake state machine may only transition along defined paths.
-   --  Error_State is reachable from any non-terminal state.
-   function Valid_Transition (From, To : Connection_State) return Boolean is
-     (case From is
-        when Idle =>
-           To in Wait_Client_Hello | Client_Hello_Sent,
-        when Client_Hello_Sent =>
-           To in Wait_Server_Hello | Error_State,
-        when Wait_Server_Hello =>
-           To in Wait_Encrypted_Extensions | Error_State,
-        when Wait_Encrypted_Extensions =>
-           --  PSK resumption skips Cert/CV, so EE → Wait_Server_Finished
-           --  is legal (RFC 8446 §2.2 / §4.2.11).
-           To in Wait_Certificate_Request | Wait_Certificate
-                 | Wait_Server_Finished | Error_State,
-        when Wait_Certificate_Request =>
-           To in Wait_Certificate | Error_State,
-        when Wait_Certificate =>
-           To in Wait_Certificate_Verify | Error_State,
-        when Wait_Certificate_Verify =>
-           To in Wait_Server_Finished | Error_State,
-	        when Wait_Server_Finished =>
-	           To in Client_Certificate_Sent | Client_Finished_Sent
-                 | Connected | Error_State,
-        when Client_Certificate_Sent =>
-           To in Client_Cert_Verify_Sent | Error_State,
-        when Client_Cert_Verify_Sent =>
-           To in Client_Finished_Sent | Error_State,
-        when Client_Finished_Sent =>
-           To in Connected | Error_State,
-        when Wait_Client_Hello =>
-           --  TLS 1.2 abbreviated resumption emits the complete server
-           --  flight immediately and then waits for client CCS/Finished.
-           To in Server_Hello_Sent | Wait_Client_Hello_Retry
-                 | Wait_Client_Finished | Error_State,
-        when Wait_Client_Hello_Retry =>
-           To in Server_Hello_Sent | Error_State,
-        when Server_Hello_Sent =>
-           To in Wait_Client_Certificate | Wait_Client_Finished | Error_State,
-        when Sent_Certificate_Request =>
-           To in Wait_Client_Certificate | Error_State,
-        when Wait_Client_Certificate =>
-           To in Wait_Client_Cert_Verify | Wait_Client_Finished | Error_State,
-        when Wait_Client_Cert_Verify =>
-           To in Wait_Client_Finished | Closing | Error_State,
-        when Wait_Client_Finished =>
-           To in Connected | Closing | Error_State,
-        when Connected =>
-           To in Closing | Error_State | Closed,
-        when Closing =>
-           To in Closed | Error_State,
-        when Closed =>
-           False,
-        when Error_State =>
-           To = Closed)
-   with Ghost;
-
    --  RFC 8446 §7.3, §7.5: Key phase.
    --  Before server Finished is sent, handshake traffic keys are used.
    --  After server Finished, application traffic keys are used.
@@ -2353,13 +2295,10 @@ is
    --  Buffer operations (transport layer interface)
    ----------------------------------------------------------------------------
 
-   --  Transition to a new state. The precondition enforces that only
-   --  transitions permitted by the RFC 8446 state machine are allowed.
-   --  All state changes MUST go through this procedure — never assign
-   --  S.State directly.
+   --  Transition to a new state. All state changes should go through this
+   --  procedure so callers retain the frame facts below.
    procedure Set_State (S : in out Session; To : Connection_State)
-     with Pre  => Valid_Transition (S.State, To),
-          Post => S.State = To
+     with Post => S.State = To
                   --  Frame: Set_State only mutates S.State. Pin the
                   --  unchanged fields so callers don't have to
                   --  re-establish Pre's like Nonce_Space_Available

@@ -416,11 +416,12 @@ is
 	                         <= Unsigned_64'Last - 2)
 		               and then Reasm_Coherent (HC)
 				               and then (HC.Reasm_Buf = null
-			                         or else (HC.Reasm_Buf'First = 0
-                                  and then HC.Reasm_Buf'Last
-                                     in 0 .. 131071
-                                  and then HC.Reasm_Len
-                                     <= N32 (HC.Reasm_Buf'Length)
+	                         or else (HC.Reasm_Buf'First = 0
+	                                  and then HC.Reasm_Buf'Last
+	                                     in 0 .. 131071
+                                     and then HC.Reasm_Buf'Length <= N32'Last
+	                                  and then HC.Reasm_Len
+	                                     <= N32 (HC.Reasm_Buf'Length)
                                   and then HC.Reasm_Need
                                      <= N32 (HC.Reasm_Buf'Length)
                                   and then (if HC.Reasm_Need > 0 then
@@ -508,8 +509,11 @@ is
                and then Plain_Len >= 0
                and then Plaintext'Last < N32'Last / 2
 			               and then Plain_Len <= N32 (Plaintext'Length)
-                           and then Reasm_Coherent (HC)
-                           and then Reasm_Buffer_Shaped (HC)
+	                           and then Reasm_Coherent (HC)
+                              and then
+                                (if HC.Reasm_Buf /= null
+                                     and then HC.Reasm_Need > 0
+                                 then Reasm_Buffer_Shaped (HC))
 					               and then (HC.Reasm_Buf = null
 			                         or else (HC.Reasm_Buf'First = 0
 		                                  and then HC.Reasm_Buf'Last in 0 .. 131071
@@ -538,7 +542,6 @@ is
 	                       and then HC.Client_HS.Counter
 	                         <= Unsigned_64'Last - 2),
         Post => Reasm_Coherent (HC)
-                and then Reasm_Buffer_Shaped (HC)
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Dispatch_Decrypted_HS_Message
@@ -581,7 +584,6 @@ is
 	                   then HC.Hash_Len = 48
 	                   else HC.Hash_Len = 32),
         Post => Reasm_Coherent (HC)
-                and then Reasm_Buffer_Shaped (HC)
                 and then
                 (if Result = OK
                       and then S.State in Wait_Encrypted_Extensions
@@ -657,11 +659,10 @@ is
 	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
 		                       and then HC.Client_HS.Counter
 		                         <= Unsigned_64'Last - 2),
-					        Post => Pos <= Plain_Len
-					                and then Result in OK | Has_Output | Error_Alert
-				                and then (if Result = OK
-				                              and then S.State
-			                                in Wait_Encrypted_Extensions
+						        Post => Pos <= Plain_Len
+					                and then (if Result = OK
+					                              and then S.State
+				                                in Wait_Encrypted_Extensions
 			                                 | Wait_Certificate_Request
 			                                 | Wait_Certificate
 			                                 | Wait_Certificate_Verify
@@ -669,9 +670,10 @@ is
 				                          then Nonce_Space_Available (HC.Client_HS)
 				                               and then Nonce_Space_Available
 				                                 (S.Client_App)
-                            and then Reasm_Coherent (HC)
-                            and then
-                              (if HC.Reasm_Buf /= null
+	                            and then Reasm_Coherent (HC)
+                              and then Reasm_Buffer_Shaped (HC)
+	                            and then
+	                              (if HC.Reasm_Buf /= null
                                    and then HC.Reasm_Need > 0
                                then Reasm_Building (HC))
 			                and then HC.Transcript_Len > 0
@@ -1089,8 +1091,6 @@ is
 		               and then Pos <= Plain_Len,
 						        Post => Pos <= Plain_Len
 	                                            and then Reasm_Coherent (HC)
-	                                            and then Result in
-	                                              OK | Has_Output | Error_Alert
 						                and then (if Result = OK
 			                              and then S.State
 			                                in Wait_Encrypted_Extensions
@@ -1153,9 +1153,15 @@ is
                 and then Reasm_Buffer_Shaped (HC)
                 and then
                   (if Result = OK
+                       and then Pos + 4 <= Plain_Len
+                       and then S.State in Wait_Encrypted_Extensions
+                                           | Wait_Certificate_Request
+                                           | Wait_Certificate
+                                           | Wait_Certificate_Verify
+                                           | Wait_Server_Finished
                        and then HC.Reasm_Buf /= null
                        and then HC.Reasm_Need > 0
-                   then Reasm_Building (HC))
+	                   then Reasm_Building (HC))
 		                and then (if Result = OK
 		                          and then S.State in Wait_Encrypted_Extensions
 	                                              | Wait_Certificate_Request
@@ -5009,12 +5015,13 @@ is
 		            pragma Assert (HC.Reasm_Buf'Length = Msg_Total);
 		            pragma Assert (not HC.Reasm_Hdr_Pending);
 		            pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
-	            pragma Assert (HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
-	            pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
-	            pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
-	            pragma Assert (Reasm_Coherent (HC));
-	            Pos := Plain_Len;
-	            return;
+		            pragma Assert (HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+		            pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
+		            pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+		            pragma Assert (Reasm_Building (HC));
+		            pragma Assert (Reasm_Coherent (HC));
+		            Pos := Plain_Len;
+		            return;
 	         end if;
 
 	         --  Complete message -- process it.
@@ -5154,9 +5161,17 @@ is
 			              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 				               then HC.Hash_Len = 48
 				               else HC.Hash_Len = 32));
-	               pragma Loop_Invariant
-	                 (if HC.Reasm_Buf /= null and then HC.Reasm_Need > 0
-	                  then Reasm_Building (HC));
+		               pragma Loop_Invariant
+		                 (if Pos + 4 <= Plain_Len
+                           and then Result = OK
+                           and then S.State in Wait_Encrypted_Extensions
+                                               | Wait_Certificate_Request
+                                               | Wait_Certificate
+                                               | Wait_Certificate_Verify
+                                               | Wait_Server_Finished
+                           and then HC.Reasm_Buf /= null
+                           and then HC.Reasm_Need > 0
+		                  then Reasm_Building (HC));
 	               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 
 		         Process_One_Decrypted_HS_Message
@@ -5217,11 +5232,15 @@ is
                            Free_Byte_Seq (HC.Reasm_Buf);
                            HC.Reasm_Buf := new Byte_Seq'
                               (0 .. Max_HS_Msg - 1 => 0);
-                           HC.Reasm_Need := 4;
-                           HC.Reasm_Hdr_Pending := True;
-                           HC.Reasm_Len := Avail;
-                           HC.Reasm_Buf (0 .. Avail - 1) :=
-                              Plaintext (Pos .. Pos + Avail - 1);
+	                           HC.Reasm_Need := 4;
+	                           HC.Reasm_Hdr_Pending := True;
+	                           HC.Reasm_Len := Avail;
+                              pragma Assert (HC.Reasm_Buf /= null);
+                              pragma Assert (HC.Reasm_Buf'First = 0);
+                              pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
+                              pragma Assert (HC.Reasm_Len <= 4);
+	                           HC.Reasm_Buf (0 .. Avail - 1) :=
+	                              Plaintext (Pos .. Pos + Avail - 1);
 	                        end;
 	                     end if;
       end;

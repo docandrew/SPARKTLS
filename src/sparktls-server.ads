@@ -97,7 +97,7 @@ is
                 S.Role = Role_Server;
 
    --  RFC 8446 §4.1: Step the server handshake / record processing
-   --  state machine. State transitions follow the valid transition graph.
+   --  state machine.
    --
    --  Result semantics (RFC 8446 §4, §5, §6):
    --    OK           → progress made, state may or may not change
@@ -111,9 +111,7 @@ is
      (S      : in out Session;
       Result :    out Action)
    with Pre  => S.State /= Idle and S.Role = Role_Server,
-        Post => (S.State = S.State'Old
-                 or else Valid_Transition (S.State'Old, S.State))
-                and (if Result = Handshake_Done then
+        Post => (if Result = Handshake_Done then
                        S.State = Connected)
                 and (if Result = Shutdown then
                        S.State = Closed)

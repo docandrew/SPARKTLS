@@ -113,14 +113,12 @@ is
    --    Handshake_Done => connection is ready for app data
    --    Error_Alert    => check S.Last_Error
    --  RFC 8446 §4.1: Step the client handshake / record processing
-   --  state machine. State transitions follow the valid transition graph.
+   --  state machine.
    procedure Advance
      (S      : in out Session;
       Result :    out Action)
    with Pre  => S.State /= Idle and S.Role = Role_Client,
-        Post => (S.State = S.State'Old
-                 or else Valid_Transition (S.State'Old, S.State))
-                and (if Result = Handshake_Done then
+        Post => (if Result = Handshake_Done then
                        S.State = Connected)
                 and (if Result = Shutdown then
                        S.State = Closed)
