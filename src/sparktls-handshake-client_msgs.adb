@@ -936,64 +936,9 @@ is
 	         Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
 	      end;
 
-	      pragma Assert_And_Cut
-	        (RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-	         and then RFLX.TLS_Handshake.Client_Hello.Valid_Next
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello
-	              .F_Legacy_Compression_Methods_Length)
-	         and then RFLX.TLS_Handshake.Client_Hello.Available_Space
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello
-	              .F_Legacy_Compression_Methods_Length)
-	         >= RFLX.TLS_Handshake.Client_Hello.Field_Size
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello
-	              .F_Legacy_Compression_Methods_Length)
-	         and then RFLX.TLS_Handshake.Client_Hello.Field_Condition
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello
-	              .F_Legacy_Compression_Methods_Length,
-	            1));
 	      Set_Legacy_Compression_Methods_Length (Ctx, 1);
-	      pragma Assert_And_Cut
-	        (RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-	         and then RFLX.TLS_Handshake.Client_Hello.Valid_Next
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
-	         and then RFLX.TLS_Handshake.Client_Hello.Available_Space
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
-	         >= RFLX.TLS_Handshake.Client_Hello.Field_Size
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
-	         and then RFLX.TLS_Handshake.Client_Hello.Valid_Length
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods,
-	            1)
-	         and then RFLX.TLS_Handshake.Client_Hello.Available_Space
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
-	         >= RFLX.RFLX_Types.Byte'Size
-	         and then RFLX.TLS_Handshake.Client_Hello.Field_Condition
-	           (Ctx,
-	            RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods,
-	            0));
 	      Set_Legacy_Compression_Methods
 	        (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
-	      pragma Assert_And_Cut
-	        (RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-	         and then RFLX.TLS_Handshake.Client_Hello.Valid_Next
-	           (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
-	         and then RFLX.TLS_Handshake.Client_Hello.Available_Space
-	           (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
-	         >= RFLX.TLS_Handshake.Client_Hello.Field_Size
-	           (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
-	         and then RFLX.TLS_Handshake.Client_Hello.Field_Condition
-	           (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length,
-	            RFLX.TLS_Handshake.To_Base_Integer
-	              (RFLX.TLS_Handshake.Client_Hello_Extensions_Length
-	                 (Ext_Total_All))));
 	      Set_Extensions_Length
 	        (Ctx,
 	         RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
@@ -1005,28 +950,6 @@ is
               RBT.Bit_Length (8) * RBT.Bit_Length (Ext_Total_All)
               with Ghost;
 			      begin
-			         pragma Assert_And_Cut
-			           (RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
-			            and then RFLX.TLS_Handshake.Client_Hello.Valid_Next
-			              (Ctx,
-			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-			            and then RFLX.TLS_Handshake.Client_Hello.Field_Size
-			              (Ctx,
-			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS) > 0
-			            and then RFLX.TLS_Handshake.Client_Hello.Field_First
-			              (Ctx,
-			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-			              rem RFLX.RFLX_Types.Byte'Size = 1
-			            and then RFLX.TLS_Handshake.Client_Hello.Available_Space
-			              (Ctx,
-			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-			            >= RFLX.TLS_Handshake.Client_Hello.Field_Size
-			              (Ctx,
-			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-			            and then RFLX.TLS_Handshake.Client_Hello.Field_Condition
-			              (Ctx,
-			               RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS,
-			               0));
 			         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
             pragma Assert
               (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
