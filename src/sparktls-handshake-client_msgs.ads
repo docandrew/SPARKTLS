@@ -62,12 +62,11 @@ is
 	      HC   : in out Handshake_Context;
 	      Data : in     Byte_Seq;
 	      OK   :    out Boolean)
-			   with Pre => Data'Length > 0
-			               and then SPARKTLSCrypto.P384.Field.Initialized
-				               and then HC.HRR_Cookie_Len <=
-				                 N32 (HC.HRR_Cookie'Length)
-				               and then Reasm_Coherent (HC)
-				               and then Reasm_Buffer_Shaped (HC),
+				   with Pre => Data'Length > 0
+				               and then SPARKTLSCrypto.P384.Field.Initialized
+					               and then HC.HRR_Cookie_Len <=
+					                 N32 (HC.HRR_Cookie'Length)
+					               and then Reasm_Coherent (HC),
 										        Post =>
 											                  (if OK
 											                   or else S.Last_Error = No_Error
@@ -76,16 +75,9 @@ is
 											                      then HC.Cfg.Random /= null)
 										                     and then HC.Transcript_Len =
 										                       HC.Transcript_Len'Old
-										                     and then HC.HRR_Cookie_Len <=
-										                       N32 (HC.HRR_Cookie'Length)
-										                     and then Reasm_Coherent (HC)
-										                     and then HC.Reasm_Len =
-										                       HC.Reasm_Len'Old
-										                     and then HC.Reasm_Need =
-										                       HC.Reasm_Need'Old
-										                     and then HC.Reasm_Hdr_Pending =
-										                       HC.Reasm_Hdr_Pending'Old
-										                     and then Reasm_Buffer_Shaped (HC))
+											                     and then HC.HRR_Cookie_Len <=
+											                       N32 (HC.HRR_Cookie'Length)
+											                     and then Reasm_Coherent (HC))
 											                and then
 											                  (if OK
 											                   and then HC.Version = TLS_1_3
