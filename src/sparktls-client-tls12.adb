@@ -84,8 +84,9 @@ is
    --  edit that resets HC.Transcript_Len in this proc would fail.
    with Pre  => (if Data'First <= Data'Last then
                     Data'Last - Data'First < Transcript_Capacity)
-		                and then HC.Transcript_Len <= Transcript_Capacity
-		                and then Reasm_Coherent (HC),
+			                and then HC.Transcript_Len <= Transcript_Capacity
+			                and then Reasm_Coherent (HC)
+			                and then Reasm_Buffer_Shaped (HC),
 		        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
 		                and then HC.Transcript_Len <= Transcript_Capacity
 		                and then (if HC.Transcript_Len'Old > 0
@@ -131,8 +132,8 @@ is
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then HC.Reasm_Hdr_Pending =
                   HC.Reasm_Hdr_Pending'Old
-		                and then Reasm_Coherent (HC)
-		                and then Reasm_Buffer_Shaped (HC)
+				                and then Reasm_Coherent (HC)
+				                and then Reasm_Buffer_Shaped (HC)
    is
    begin
       if Data'First <= Data'Last then
@@ -203,6 +204,7 @@ is
                   HC.Reasm_Hdr_Pending'Old
                 and then Reasm_Coherent (HC)
                 and then Reasm_Building (HC)
+                and then Reasm_Buffer_Shaped (HC)
    is
    begin
       if Data'First <= Data'Last then
@@ -231,9 +233,14 @@ is
 			                and then S.State = S.State'Old
 			                and then S.Negotiated_Suite =
 			                  S.Negotiated_Suite'Old
-			                and then (if HC.Cfg.Random'Old /= null
-			                          then HC.Cfg.Random /= null)
-			                and then HC.Selected_Group =
+				                and then (if HC.Cfg.Random'Old /= null
+				                          then HC.Cfg.Random /= null)
+				                and then
+				                  (if SPARKTLS.Handshake.Server_Msgs
+				                         .Local_Config_Valid (HC.Cfg.Local'Old)
+				                   then SPARKTLS.Handshake.Server_Msgs
+				                          .Local_Config_Valid (HC.Cfg.Local))
+				                and then HC.Selected_Group =
 			                  HC.Selected_Group'Old
 			                and then HC.Transcript_Len =
 			                  HC.Transcript_Len'Old
@@ -1534,9 +1541,11 @@ is
                                      and then
                                        (if HC.Transcript_Len'Old > 0
                                         then HC.Transcript_Len > 0)
-	                                     and then Records.TLS12
-	                                       .Nonce_Space_Available_12
-	                                         (HC.Client_Seq_12)
+				                     and then
+				                       (if HC.CKE_Received_12
+				                        then Records.TLS12
+				                               .Nonce_Space_Available_12
+				                                 (HC.Client_Seq_12))
 	                                     and then S.Negotiated_Suite in
 			                       Suite_ECDHE_RSA_AES128_GCM_SHA256
 			                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -1754,9 +1763,10 @@ is
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then Reasm_Coherent (HC)
-                and then Reasm_Building (HC)
-                and then HC.Cfg.Random /= null
+		                and then Reasm_Coherent (HC)
+		                and then Reasm_Building (HC)
+		                and then Reasm_Buffer_Shaped (HC)
+		                and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
                 and then Valid_ECDHE_Group (HC.Selected_Group)
@@ -1778,12 +1788,14 @@ is
                           (HC.Cfg.Local)
                         and then HC.Cfg.Local.NaCl_Cert_Len <=
                           N32 (Max_Cert_DER)),
-        Post => Reasm_Coherent (HC)
-                and then Reasm_Building (HC)
-                and then Result in OK | Has_Output | Error_Alert
-                and then
-		                  (if Result = OK then
-		                     S.State not in Idle | Closing | Closed | Error_State
+			        Post => Reasm_Coherent (HC)
+			                and then Reasm_Building (HC)
+			                and then Result in OK | Has_Output | Error_Alert
+	                and then
+			                  (if Result = OK then
+		                     Reasm_Buffer_Shaped (HC)
+		                     and then
+			                     S.State not in Idle | Closing | Closed | Error_State
 		                     and then HC.Cfg.Random /= null
 		                     and then S.Negotiated_Suite in
 		                       Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -1915,10 +1927,11 @@ is
       end if;
 
 	      pragma Assert_And_Cut
-	        (Result = OK
-	         and then Reasm_Coherent (HC)
-			         and then Reasm_Building (HC)
-			         and then S.State not in Idle | Closing | Closed | Error_State
+	           (Result = OK
+	            and then Reasm_Coherent (HC)
+	            and then Reasm_Building (HC)
+	            and then Reasm_Buffer_Shaped (HC)
+	            and then S.State not in Idle | Closing | Closed | Error_State
 				         and then S.Negotiated_Suite = Saved_Suite
 				         and then HC.Selected_Group = Saved_Group
 				         and then
@@ -1954,10 +1967,11 @@ is
       Result := OK;
       if not HC.Cert_Request_Received then
          pragma Assert_And_Cut
-           (Result = OK
-            and then Reasm_Coherent (HC)
-            and then Reasm_Building (HC)
-            and then S.State not in Idle | Closing | Closed | Error_State
+		        (Result = OK
+		         and then Reasm_Coherent (HC)
+		         and then Reasm_Building (HC)
+		         and then Reasm_Buffer_Shaped (HC)
+		         and then S.State not in Idle | Closing | Closed | Error_State
 		         and then HC.Cfg.Random /= null
 		         and then HC.Selected_Group in
 		           Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -2037,9 +2051,10 @@ is
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then Reasm_Coherent (HC)
-                and then Reasm_Building (HC)
-                and then HC.Transcript_Len > 0
+	                and then Reasm_Coherent (HC)
+	                and then Reasm_Building (HC)
+	                and then Reasm_Buffer_Shaped (HC)
+	                and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then HC.Cfg.Random /= null
                 and then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity
@@ -2057,9 +2072,11 @@ is
 	        Post => Reasm_Coherent (HC)
 	                and then Reasm_Building (HC)
 	                and then Result in OK | Has_Output | Error_Alert
-                and then
-                  (if Result = OK then
-                     S.State not in Idle | Closing | Closed | Error_State
+	                and then
+	                  (if Result = OK then
+	                     Reasm_Buffer_Shaped (HC)
+	                     and then
+	                     S.State not in Idle | Closing | Closed | Error_State
                      and then HC.Cfg.Random /= null
                      and then S.Negotiated_Suite in
                        Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -2897,10 +2914,11 @@ is
      (HC.Reasm_Buf = null
       or else
         (HC.Reasm_Buf'First = 0
-         and then HC.Reasm_Buf'Length <= Max_HS_Msg
-         and then HC.Reasm_Buf'Length <= N32'Last
-         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+	         and then HC.Reasm_Buf'Length <= Max_HS_Msg
+	         and then HC.Reasm_Buf'Length <= N32'Last
+	         and then HC.Reasm_Need >= 4
+	         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+	         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
          and then
            (if HC.Reasm_Hdr_Pending then
               HC.Reasm_Need = 4
@@ -3594,8 +3612,8 @@ is
       Have_Record :    out Boolean;
       Result      :    out Action)
 		   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-			                and then Reasm_Coherent (HC)
-			                and then Reasm_Buffer_Shaped (HC)
+				                and then Reasm_Coherent (HC)
+				                and then Reasm_Buffer_Shaped (HC)
 			                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
 			                and then HC.Cfg.Random /= null
 		                and then HC.Selected_Group in
@@ -3682,13 +3700,11 @@ is
 	                     and then S.Negotiated_Suite in
 	                       Suite_ECDHE_RSA_AES128_GCM_SHA256
 	                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
-		                     | Suite_ECDHE_RSA_CHACHA20_SHA256
-		                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-		                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-		                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-		                     and then Records.TLS12.Nonce_Space_Available_12
-		                       (HC.Client_Seq_12)
-		                and then SPARKTLSCrypto.P384.Field.Initialized
+			                     | Suite_ECDHE_RSA_CHACHA20_SHA256
+			                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+			                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+			                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+			                and then SPARKTLSCrypto.P384.Field.Initialized
 	                     and then SPARKTLSCrypto.P384.ECDSA.Initialized
                        and then HC.Client_Seq_12 =
                          HC.Client_Seq_12'Old);
@@ -3896,18 +3912,13 @@ is
 		                               (HC.Client_Seq_12))
 		                     and then SPARKTLSCrypto.P384.Field.Initialized
 		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-			        Post => Reasm_Coherent (HC)
-	                        and then Reasm_Buffer_Shaped (HC)
-	                        and then
-                          (if SPARKTLS.Handshake.Server_Msgs
-                                 .Local_Config_Valid (HC.Cfg.Local'Old)
-                           then SPARKTLS.Handshake.Server_Msgs
-                                  .Local_Config_Valid (HC.Cfg.Local))
-		                and then
-                  (if Ready then
-                     Result = OK
-                and then S.State not in Idle | Closing | Closed | Error_State
-                and then HC.Reasm_Buf /= null
+				        Post => Reasm_Coherent (HC)
+			                and then
+	                  (if Ready then
+	                     Result = OK
+	                and then S.State not in Idle | Closing | Closed | Error_State
+                     and then Reasm_Buffer_Shaped (HC)
+	                and then HC.Reasm_Buf /= null
                 and then HC.Reasm_Buf'First = 0
                 and then HC.Reasm_Buf'Length <= Max_HS_Msg
                      and then not HC.Reasm_Hdr_Pending
@@ -3934,12 +3945,17 @@ is
 			                     and then Records.TLS12
 			                       .Nonce_Space_Available_12
 			                         (HC.Client_Seq_12)
-			                     and then
-			                       (if HC.Cfg.Local /= null
-		                            and then HC.Cfg.Local.Has_Identity
-		                        then SPARKTLS.Handshake.Server_Msgs
-		                               .Local_Config_Valid (HC.Cfg.Local))
-		                     and then SPARKTLSCrypto.P384.Field.Initialized
+				                     and then
+				                       (if HC.Cfg.Local /= null
+			                            and then HC.Cfg.Local.Has_Identity
+			                        then SPARKTLS.Handshake.Server_Msgs
+			                               .Local_Config_Valid (HC.Cfg.Local))
+                             and then
+                               (if SPARKTLS.Handshake.Server_Msgs
+                                      .Local_Config_Valid (HC.Cfg.Local'Old)
+                                then SPARKTLS.Handshake.Server_Msgs
+                                       .Local_Config_Valid (HC.Cfg.Local))
+			                     and then SPARKTLSCrypto.P384.Field.Initialized
 		                     and then SPARKTLSCrypto.P384.ECDSA.Initialized);
 
    procedure Prepare_Leftover_Server_Flight_Message

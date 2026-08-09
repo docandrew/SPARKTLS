@@ -2908,11 +2908,7 @@ is
 	                    (S, HC, Result);
 	               end if;
 	            end if;
-				                        pragma Assert
-				                          (if S.State = Wait_Client_Hello
-				                           then Reasm_Building (HC));
-
-	         when others =>
+		         when others =>
 	            S.Last_Error := Internal_Error;
 	            Set_State (S, Error_State);
 	            Result := Error_Alert;

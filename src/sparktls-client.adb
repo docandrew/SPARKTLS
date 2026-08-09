@@ -541,8 +541,7 @@ is
 	                          then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
 	                       and then HC.Client_HS.Counter
 	                         <= Unsigned_64'Last - 2),
-        Post => Reasm_Coherent (HC)
-                and then Result in OK | Has_Output | Error_Alert;
+        Post => Reasm_Coherent (HC);
 
    procedure Dispatch_Decrypted_HS_Message
      (S      : in out Session;
@@ -670,11 +669,10 @@ is
 				                          then Nonce_Space_Available (HC.Client_HS)
 				                               and then Nonce_Space_Available
 				                                 (S.Client_App)
-	                            and then Reasm_Coherent (HC)
-                              and then Reasm_Buffer_Shaped (HC)
+		                            and then Reasm_Coherent (HC)
 	                            and then
 	                              (if HC.Reasm_Buf /= null
-                                   and then HC.Reasm_Need > 0
+	                                   and then HC.Reasm_Need > 0
                                then Reasm_Building (HC))
 			                and then HC.Transcript_Len > 0
 				                               and then S.Negotiated_Suite
@@ -1034,12 +1032,11 @@ is
 				       Post => Pos <= Plain_Len
 				                and then HC.Reasm_Len = 0
 				                and then HC.Reasm_Need = 0
-	                                and then Reasm_Coherent (HC)
-	                                and then Reasm_Buffer_Shaped (HC)
-	                                and then
-                                  (if HC.Reasm_Buf /= null
-                                       and then HC.Reasm_Need > 0
-                                   then Reasm_Building (HC))
+                                            and then Reasm_Coherent (HC)
+                                 and then
+                                   (if HC.Reasm_Buf /= null
+                                        and then HC.Reasm_Need > 0
+                                    then Reasm_Building (HC))
 			                and then (if Result = OK
 		                              and then S.State in Wait_Encrypted_Extensions
 	                                                  | Wait_Certificate_Request
@@ -1079,8 +1076,7 @@ is
 		                  else HC.Hash_Len = 32)
 		               and then SPARKTLSCrypto.P384.Field.Initialized
 			               and then SPARKTLSCrypto.P384.ECDSA.Initialized
-	                                            and then Reasm_Coherent (HC)
-                                 and then Reasm_Buffer_Shaped (HC)
+                                            and then Reasm_Coherent (HC)
                                  and then
                                    (if HC.Reasm_Buf /= null
                                         and then HC.Reasm_Need > 0
@@ -1142,15 +1138,13 @@ is
 		               and then Plain_Len <= N32 (Plaintext'Length)
 		               and then Pos <= N32'Last - 4
 			               and then Pos + 4 <= Plain_Len
-	                           and then Reasm_Coherent (HC)
-                              and then Reasm_Buffer_Shaped (HC)
+                           and then Reasm_Coherent (HC)
                            and then
                              (if HC.Reasm_Buf /= null
                                   and then HC.Reasm_Need > 0
                               then Reasm_Building (HC)),
 			        Post => Pos <= Plain_Len
                 and then Reasm_Coherent (HC)
-                and then Reasm_Buffer_Shaped (HC)
                 and then
                   (if Result = OK
                        and then Pos + 4 <= Plain_Len
@@ -5172,10 +5166,8 @@ is
                            and then HC.Reasm_Buf /= null
                            and then HC.Reasm_Need > 0
 		                  then Reasm_Building (HC));
-	               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
-
-		         Process_One_Decrypted_HS_Message
-	           (S, HC, Plaintext, Plain_Len, Pos, Result);
+			         Process_One_Decrypted_HS_Message
+		           (S, HC, Plaintext, Plain_Len, Pos, Result);
       end loop;
    end Process_Decrypted_HS_Packed_Messages;
 

@@ -45,11 +45,12 @@ is
 		                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
 		                        <= Max_TLS12_Ticket_Len)
 		                and then Reasm_Coherent (HC),
-	        Post => (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
-						                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-		                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-		                and then Reasm_Coherent (HC)
+		        Post => (if HC.Cfg.Random'Old /= null
+		                          then HC.Cfg.Random /= null)
+                        and then Len <= N32 (Result'Length)
+							                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
+			                and then Reasm_Coherent (HC)
 		                and then HC.Reasm_Len = HC.Reasm_Len'Old
 		                and then HC.Reasm_Need = HC.Reasm_Need'Old
 		                and then HC.Reasm_Hdr_Pending =

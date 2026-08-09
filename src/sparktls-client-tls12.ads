@@ -116,12 +116,13 @@ is
 	                                   (HC.Reasm_Buf'First = 0
 	                                    and then HC.Reasm_Buf'Length <=
 	                                      Max_HS_Msg
-	                                    and then HC.Reasm_Len <=
-	                                      N32 (HC.Reasm_Buf'Length)
-	                                    and then HC.Reasm_Need <=
-	                                      N32 (HC.Reasm_Buf'Length)
-	                                    and then
-	                                      (if HC.Reasm_Hdr_Pending
+		                                    and then HC.Reasm_Len <=
+		                                      N32 (HC.Reasm_Buf'Length)
+		                                    and then HC.Reasm_Need <=
+		                                      N32 (HC.Reasm_Buf'Length)
+		                                    and then HC.Reasm_Need >= 4
+		                                    and then
+		                                      (if HC.Reasm_Hdr_Pending
 	                                       then HC.Reasm_Need = 4
 	                                            and then HC.Reasm_Len <= 4
 	                                            and then HC.Reasm_Buf'Length =
