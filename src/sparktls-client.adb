@@ -422,10 +422,16 @@ is
                                      and then HC.Reasm_Buf'Length <= N32'Last
 	                                  and then HC.Reasm_Len
 	                                     <= N32 (HC.Reasm_Buf'Length)
-                                  and then HC.Reasm_Need
-                                     <= N32 (HC.Reasm_Buf'Length)
-                                  and then (if HC.Reasm_Need > 0 then
-                                               HC.Reasm_Need >= 4)));
+	                                  and then HC.Reasm_Need
+	                                     <= N32 (HC.Reasm_Buf'Length)
+	                                  and then (if HC.Reasm_Need > 0 then
+	                                               HC.Reasm_Need >= 4)))
+	               and then
+		                 (if HC.Reasm_Buf /= null
+		                      and then HC.Reasm_Need > 0
+		                  then Reasm_Buffer_Shaped (HC)
+		                       and then Reasm_Building (HC)
+		                  else True);
    procedure Handle_Encrypted_App_Data
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -480,10 +486,16 @@ is
                                      in 0 .. 131071
                                   and then HC.Reasm_Len
                                      <= N32 (HC.Reasm_Buf'Length)
-                                  and then HC.Reasm_Need
-                                     <= N32 (HC.Reasm_Buf'Length)
-                                  and then (if HC.Reasm_Need > 0 then
-                                               HC.Reasm_Need >= 4)));
+	                                  and then HC.Reasm_Need
+	                                     <= N32 (HC.Reasm_Buf'Length)
+	                                  and then (if HC.Reasm_Need > 0 then
+	                                               HC.Reasm_Need >= 4)))
+	               and then
+		                 (if HC.Reasm_Buf /= null
+		                      and then HC.Reasm_Need > 0
+		                  then Reasm_Buffer_Shaped (HC)
+		                       and then Reasm_Building (HC)
+		                  else True);
    procedure Process_Decrypted_Handshake_Bytes
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -553,8 +565,7 @@ is
 	               and then Msg'Length >= 4
 	               and then Msg'Last < N32'Last - 4
 		               and then Msg'Last < Transcript_Capacity
-		                                            and then Reasm_Coherent (HC)
-                                 and then Reasm_Buffer_Shaped (HC)
+			                                            and then Reasm_Coherent (HC)
 				                and then HC.Transcript_Len > 0
 		               and then Nonce_Space_Available (HC.Client_HS)
 			                and then Nonce_Space_Available (S.Client_App)
@@ -1145,22 +1156,11 @@ is
                               then Reasm_Building (HC)),
 			        Post => Pos <= Plain_Len
                 and then Reasm_Coherent (HC)
-                and then
-                  (if Result = OK
-                       and then Pos + 4 <= Plain_Len
-                       and then S.State in Wait_Encrypted_Extensions
-                                           | Wait_Certificate_Request
-                                           | Wait_Certificate
-                                           | Wait_Certificate_Verify
-                                           | Wait_Server_Finished
-                       and then HC.Reasm_Buf /= null
-                       and then HC.Reasm_Need > 0
-	                   then Reasm_Building (HC))
-		                and then (if Result = OK
-		                          and then S.State in Wait_Encrypted_Extensions
-	                                              | Wait_Certificate_Request
-	                                              | Wait_Certificate
-	                                              | Wait_Certificate_Verify
+	                and then (if Result = OK
+			                          and then S.State in Wait_Encrypted_Extensions
+		                                              | Wait_Certificate_Request
+		                                              | Wait_Certificate
+		                                              | Wait_Certificate_Verify
 	                                              | Wait_Server_Finished then
 		                             Pos > Pos'Old
 		                             and then Nonce_Space_Available (HC.Client_HS)
@@ -1301,9 +1301,13 @@ is
 		                                     in 64 .. 512)
 			                             and then HC.Client_HS.Counter
 			                               <= Unsigned_64'Last - 2)
-			                     and then Reasm_Coherent (HC)
-		                     and then Reasm_Buffer_Shaped (HC)
-		                     and then (HC.Reasm_Buf = null
+				                     and then Reasm_Coherent (HC)
+			                     and then Reasm_Buffer_Shaped (HC)
+			                     and then
+			                       (if HC.Reasm_Buf /= null
+			                            and then HC.Reasm_Need > 0
+			                        then Reasm_Building (HC))
+			                     and then (HC.Reasm_Buf = null
 	                               or else (HC.Reasm_Buf'First = 0
                                         and then HC.Reasm_Buf'Last
                                            in 0 .. 131071
@@ -1391,11 +1395,10 @@ is
 						                    and then HC.Cfg.Random /= null
 							                    and then HC.Transcript_Len > 0
 							                    and then HC.Transcript_Len <= Transcript_Capacity
-								                    and then
-								                      (if S.State = Wait_Server_Hello
-								                       then HC.HRR_Cookie_Len <=
-								                         N32 (HC.HRR_Cookie'Length)
-								                         and then WSH_Reasm_Shape (HC))
+									                    and then
+									                      (if S.State = Wait_Server_Hello
+									                       then HC.HRR_Cookie_Len <=
+									                         N32 (HC.HRR_Cookie'Length))
 						                    and then
 						                      (if S.State = Wait_Server_Hello
 					                           and then HC.Version = TLS_1_3
@@ -1426,13 +1429,12 @@ is
 		   with Pre => S.State = Wait_Server_Hello
 		               and then Reasm_Coherent (HC)
 	               and then HC.Cfg.Random /= null
-	               and then SPARKTLSCrypto.P384.Field.Initialized
-	               and then HC.Transcript_Len > 0
-	               and then HC.Transcript_Len <= Transcript_Capacity
-	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-	               and then WSH_Reasm_Shape (HC)
-	               and then
-	                 (if HC.Version = TLS_1_3
+		               and then SPARKTLSCrypto.P384.Field.Initialized
+		               and then HC.Transcript_Len > 0
+		               and then HC.Transcript_Len <= Transcript_Capacity
+		               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+		               and then
+		                 (if HC.Version = TLS_1_3
 	                  then S.Negotiated_Suite in
 	                    Suite_AES_128_GCM_SHA256
 	                  | Suite_AES_256_GCM_SHA384
@@ -1620,10 +1622,10 @@ is
                           then HC.HRR_Cookie_Len <=
                             N32 (HC.HRR_Cookie'Length))
 					                and then HC.Hash_Len = HC.Hash_Len'Old
-									                and then Reasm_Coherent (HC)
-									                and then
-									                  (if HC.Reasm_Len'Old <=
-									                        HC.Reasm_Need'Old
+										                and then Reasm_Coherent (HC)
+										                and then
+										                  (if HC.Reasm_Len'Old <=
+										                        HC.Reasm_Need'Old
 									                   then Reasm_Building (HC))
 					                and then
 				                  HC.Reasm_Len = HC.Reasm_Len'Old
@@ -4735,7 +4737,8 @@ is
 
 		      pragma Assert
 	        (if Result = OK
-             and then S.State in Wait_Encrypted_Extensions
+	                           and then Pos < Plain_Len
+	                           and then S.State in Wait_Encrypted_Extensions
                                  | Wait_Certificate_Request
                                  | Wait_Certificate
                                  | Wait_Certificate_Verify
@@ -5055,10 +5058,10 @@ is
 
 	         declare
 	            Msg_Copy : Byte_Seq (0 .. Msg_Total - 1);
-         begin
-            Msg_Copy := Plaintext (Pos .. Msg_End - 1);
-            Dispatch_Decrypted_HS_Message (S, HC, Msg_Copy, Result);
-         end;
+	         begin
+	            Msg_Copy := Plaintext (Pos .. Msg_End - 1);
+	            Dispatch_Decrypted_HS_Message (S, HC, Msg_Copy, Result);
+	         end;
 
          Pos := Msg_End;
 
@@ -5314,11 +5317,15 @@ is
                --  handshake messages, or a single message may span
                --  multiple records. Use Reasm_Buf for cross-record
 	               --  reassembly.
-	               if Inner_Type = 16#16# then
-	                  HC.Transcript_Len := Saved_Transcript_Len;
-	                  pragma Assert (HC.Transcript_Len > 0);
-	                  Process_Decrypted_Handshake_Bytes
-	                    (S, HC, Plaintext, Plain_Len, Result);
+		               if Inner_Type = 16#16# then
+		                  HC.Transcript_Len := Saved_Transcript_Len;
+		                  pragma Assert (HC.Transcript_Len > 0);
+		                  pragma Assert
+		                    (if HC.Reasm_Buf /= null
+		                         and then HC.Reasm_Need > 0
+		                     then Reasm_Buffer_Shaped (HC));
+		                  Process_Decrypted_Handshake_Bytes
+		                    (S, HC, Plaintext, Plain_Len, Result);
                elsif Inner_Type = 16#15# then
                   --  Alert
                   S.Last_Error := Unexpected_Message;

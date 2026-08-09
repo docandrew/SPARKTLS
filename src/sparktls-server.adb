@@ -4217,7 +4217,7 @@ is
       HC     : in out Handshake_Context;
       Data   : in     Byte_Seq;
       Result :    out Action)
-   with Pre  => Data'First = 0
+	   with Pre  => Data'First = 0
                 and then Data'Last >= 3
                 and then Data'Last < N32'Last - 4
                 and then Data'Last < Transcript_Capacity
@@ -4228,10 +4228,9 @@ is
 		                  and then Reasm_Building (HC)
 		                  and then Reasm_Buffer_Shaped (HC)
 				                and then HC.Reasm_Len <= HC.Reasm_Need,
-		        Post => (if S.State not in Error_State | Closed
-			                          then Server_Configured (HC)
-		                               and then Reasm_Building (HC)
-		                               and then Reasm_Buffer_Shaped (HC));
+			        Post => (if S.State not in Error_State | Closed
+				                          then Server_Configured (HC)
+			                               and then Reasm_Building (HC));
 
    procedure Handle_Client_Cert_13
      (S      : in out Session;
@@ -5339,14 +5338,16 @@ is
                               HC.Reasm_Len := 0;
                               HC.Reasm_Need := 0;
                               Send_Encrypted_Alert (S, Decode_Error, Result);
-                              return;
-                           end if;
-                           HC.Reasm_Need := HS_Total;
-                        end;
-                     end if;
+	                              return;
+	                           end if;
+	                           HC.Reasm_Need := HS_Total;
+	                           pragma Assert (HC.Reasm_Need > 0);
+	                        end;
+	                     end if;
+	                     pragma Assert (HC.Reasm_Need > 0);
 
-                     if HC.Reasm_Len < HC.Reasm_Need and then Pos < Plain_Len
-                     then
+	                     if HC.Reasm_Len < HC.Reasm_Need and then Pos < Plain_Len
+	                     then
                         declare
                            Need : constant N32 :=
                              HC.Reasm_Need - HC.Reasm_Len;
