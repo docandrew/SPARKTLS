@@ -52,6 +52,20 @@ is
    Max_HS_Msg : constant := 131072;
    subtype HS_Msg_Len is N32 range 0 .. Max_HS_Msg;
 
+   --  Reassembly buffer pointer. The two facts every indexing site needs
+   --  from the buffer itself -- zero-based, and short enough that
+   --  N32 (Buf'Length) cannot overflow -- are carried here rather than
+   --  threaded through contracts. Max_HS_Msg (131072) is well under
+   --  N32'Last, so the N32 conversions are discharged by the subtype.
+   --  The obligation lands only where the pointer is assigned; every
+   --  allocation site is 0 .. X - 1 with X bounded by Max_HS_Msg or
+   --  IO_Buffer_Capacity (33280).
+   subtype Reasm_Buf_Access is Byte_Seq_Access
+     with Dynamic_Predicate =>
+       Reasm_Buf_Access = null
+       or else (Reasm_Buf_Access'First = 0
+                and then Reasm_Buf_Access'Length <= Max_HS_Msg);
+
    --  Handshake message type code (1 byte on wire).
    --  RFC 8446 Section 4 defines the valid values.
    subtype HS_Msg_Type is Byte;
@@ -70,6 +84,7 @@ is
    IO_Buffer_Capacity : constant N32 := 2 * Max_Record_Size;
 
    Transcript_Capacity  : constant N32 := 32768;  --  32 KB
+
    --  Sufficient for all real-world handshakes. Typical transcript is
    --  ~2 KB. Pathological inputs (32K sig_algs) require reassembly
    --  but the transcript only includes the final parsed result.
@@ -1630,9 +1645,9 @@ is
       --  When a handshake record fragment contains only part of a
       --  handshake message (declared length > fragment), accumulate
       --  fragments here until the full message is available.
-      Reasm_Buf  : Byte_Seq_Access := null;
-      Reasm_Len  : N32 := 0;   --  bytes accumulated so far
-      Reasm_Need : N32 := 0;   --  total bytes needed (type+length+body)
+      Reasm_Buf  : Reasm_Buf_Access := null;
+      Reasm_Len  : HS_Msg_Len := 0;   --  bytes accumulated so far
+      Reasm_Need : HS_Msg_Len := 0;   --  total bytes needed (type+len+body)
       --  When fragmentation splits the 4-byte handshake header itself
       --  (BoGo MaxHandshakeRecordLength=1), Reasm_Need is initialized
       --  to 4 with this flag set; the reassembly path decodes the
@@ -1667,33 +1682,42 @@ is
    is (Size <= Max_Handshake_Heap
        and then HC.Heap_Used <= Max_Handshake_Heap - Size);
 
-   --  Reassembly predicates are deliberately narrow. Earlier versions tried
-   --  to encode every valid reassembly shape in one global predicate; that
-   --  created proof obligations in callers that did not need those facts.
-   --  Keep concrete buffer bounds local to the code that indexes the buffer.
-   function Reasm_Coherent (Ignored_HC : Handshake_Context) return Boolean is
-     (True)
-     with Ghost;
-
-   --  Build mode excludes temporary packed-flight dispatch, where Reasm_Len
-   --  may exceed Reasm_Need while leftover bytes are shifted down.
-   function Reasm_Building (HC : Handshake_Context) return Boolean is
-     (HC.Reasm_Buf = null or else HC.Reasm_Len <= HC.Reasm_Need)
-     with Ghost;
-
+   --  Reassembly predicates.
+   --
+   --  Reasm_Buffer_Shaped pins the concrete buffer bounds that every site
+   --  indexing Reasm_Buf depends on, including Reasm_Buf'Length <= N32'Last,
+   --  which the N32 (HC.Reasm_Buf'Length) conversions need.
+   --
+   --  Reasm_Coherent is the name actually threaded through the handshake
+   --  contracts (~155 Pre/Post across 84 subprograms). It carries the shape
+   --  across calls: a callee that does not touch Reasm_* gets it for free,
+   --  and a caller regains it on return. It was briefly reduced to True,
+   --  which silently dropped the buffer bounds from every one of those
+   --  contracts and broke the callers that index the buffer.
+   --  Only the buffer-RELATIVE facts live here. Reasm_Buf'First = 0,
+   --  'Length <= Max_HS_Msg and 'Length <= N32'Last now come from the
+   --  Reasm_Buf_Access subtype, so they cost nothing to carry.
    function Reasm_Buffer_Shaped (HC : Handshake_Context) return Boolean is
      (HC.Reasm_Buf = null
       or else
-        (HC.Reasm_Buf'First = 0
-         and then HC.Reasm_Buf'Length <= Max_HS_Msg
-         and then HC.Reasm_Buf'Length <= N32'Last
-         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
+        (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
          and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
          and then
            (if HC.Reasm_Hdr_Pending then
               HC.Reasm_Need = 4
               and then HC.Reasm_Len <= 4
               and then HC.Reasm_Buf'Length = Max_HS_Msg)))
+     with Ghost;
+
+   function Reasm_Coherent (HC : Handshake_Context) return Boolean is
+     (Reasm_Buffer_Shaped (HC))
+     with Ghost;
+
+   --  Build mode excludes temporary packed-flight dispatch, where Reasm_Len
+   --  may exceed Reasm_Need while leftover bytes are shifted down. This is
+   --  deliberately independent of the buffer shape above.
+   function Reasm_Building (HC : Handshake_Context) return Boolean is
+     (HC.Reasm_Buf = null or else HC.Reasm_Len <= HC.Reasm_Need)
      with Ghost;
 
    --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------

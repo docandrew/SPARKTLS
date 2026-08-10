@@ -746,7 +746,15 @@ is
       --  previously-issued ticket bytes go in the data field.
       Offer_TLS12_Ticket : constant Boolean :=
         HC.Cfg.Versions in TLS_1_2_Only | Allow_Both;
-      TLS12_Ticket_Data_Len : constant N32 :=
+      --  The bound comes from Build_Client_Hello's Pre (see the spec:
+      --  "if TLS12_Resume_Ticket.Valid then Ticket_Len <=
+      --  Max_TLS12_Ticket_Len"). Carrying it in the type keeps it available
+      --  at every later use without re-deriving it through ~530 lines of
+      --  RFLX calls.
+      subtype TLS12_Ticket_Data_Len_Range is
+        N32 range 0 .. Max_TLS12_Ticket_Len;
+
+      TLS12_Ticket_Data_Len : constant TLS12_Ticket_Data_Len_Range :=
         (if Offer_TLS12_Ticket
            and then HC.Cfg.TLS12_Resume_Ticket.Valid
          then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
@@ -1280,6 +1288,14 @@ is
 		                  pragma Assert
 		                    (TLS12_Ticket_Data_Len <= Max_TLS12_Ticket_Len);
 		                  pragma Assert (TLS12_Ticket_Data_Len <= 4096);
+		                  --  Link the slice length back to the bounded
+		                  --  constant; without it the Available_Space fact
+		                  --  below cannot reach Data'Length in
+		                  --  Append_CH_Extension's precondition.
+		                  pragma Assert
+		                    (HC.Cfg.TLS12_Resume_Ticket.Ticket
+		                       (0 .. TLS12_Ticket_Data_Len - 1)'Length
+		                     = TLS12_Ticket_Data_Len);
 		                  pragma Assert
 		                    (HC.Cfg.TLS12_Resume_Ticket.Ticket
 		                       (0 .. TLS12_Ticket_Data_Len - 1)'Length
@@ -2525,6 +2541,7 @@ is
 	                       Suite_AES_128_GCM_SHA256
 	                     | Suite_AES_256_GCM_SHA384
 	                     | Suite_CHACHA20_POLY1305_SHA256);
+	                  pragma Loop_Invariant (Reasm_Coherent (HC));
 	                  if Data (SH_SID_Off + I)
                        /= HC.Legacy_Session_ID (I)
                   then
@@ -2600,6 +2617,7 @@ is
                  Suite_AES_128_GCM_SHA256
                | Suite_AES_256_GCM_SHA384
                | Suite_CHACHA20_POLY1305_SHA256);
+            pragma Loop_Invariant (Reasm_Coherent (HC));
             if R (24 + I) /= S13 (I)   then M13 := False; end if;
             if R (24 + I) /= S12 (I)   then M12 := False; end if;
             if R (24 + I) /= S_JDK (I) then MJ  := False; end if;

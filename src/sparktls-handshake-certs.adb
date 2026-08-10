@@ -656,7 +656,8 @@ is
 	   with Pre  => Cert_RFLX'First = 1
 			                and then Cert_RFLX'Length = RBT.Length (C_Len)
 			                and then C_Len > 0
-				                and then C_Len <= N32 (Max_Cert_DER),
+				                and then C_Len <= N32 (Max_Cert_DER)
+				                and then Reasm_Coherent (HC),
 	        Post => HC.Client_HS = HC.Client_HS'Old
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old

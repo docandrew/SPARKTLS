@@ -90,11 +90,16 @@ is
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
+   --  The body is SPARK_Mode => Off, so this postcondition is ASSUMED by
+   --  GNATprove rather than checked. It must therefore state only what is
+   --  true on every path: both failure paths leave S.State = Error_State.
+   --  Role is set in the initial aggregate and never changed (Set_State
+   --  frames it).
    with Pre  => Cfg.Random /= null
                 and then Cfg.Local /= null
                 and then Cfg.Local.Has_Identity,
-        Post => S.State = Wait_Client_Hello and
-                S.Role = Role_Server;
+        Post => S.Role = Role_Server and
+                S.State in Wait_Client_Hello | Error_State;
 
    --  RFC 8446 §4.1: Step the server handshake / record processing
    --  state machine.

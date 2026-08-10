@@ -1983,12 +1983,11 @@ is
          pragma Assert (Single_CKE_RFC_5246_7_4_7 (HC));
          pragma Assert (Reasm_Building (HC));
          pragma Assert (Reasm_Buffer_Shaped (HC));
-      end Process_Client_Key_Exchange_12;
+	      end Process_Client_Key_Exchange_12;
 
-   ------------------------------------------------------------------
-   procedure Process_Client_Certificate_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-   is
+	   procedure Process_Client_Certificate_12
+	     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+	   is
       Rec : Records.Parse_Result;
    begin
       if Input_Available (S) = 0 then
@@ -2110,13 +2109,13 @@ is
 	                  HS_Msg (I) := Frag (Frag'First + I);
 	               end loop;
 
-	               pragma Assert (Reasm_Buffer_Shaped (HC));
+			               pragma Assert (Reasm_Buffer_Shaped (HC));
 	               SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
-	                 (HC     => HC,
-	                  HS_Msg => HS_Msg,
-                  OK     => Chain_OK,
-                  Err    => Chain_Err);
-               pragma Assert (Reasm_Building (HC));
+		                 (HC     => HC,
+			                  HS_Msg => HS_Msg,
+		                  OK     => Chain_OK,
+		                  Err    => Chain_Err);
+	               pragma Assert (Reasm_Building (HC));
 
                if not Chain_OK then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2128,10 +2127,9 @@ is
 	                  (if HC.Peer_Cert_Valid
 	                     then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
 	                          and then X509.Spans_Valid
-	                            (HC.Peer_Cert,
-	                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-	                  pragma Assert (Reasm_Buffer_Shaped (HC));
-	            end;
+		                            (HC.Peer_Cert,
+		                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+		            end;
 
             Append_Transcript (HC, Frag);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;

@@ -116,7 +116,8 @@ is
       Err                    :    out Error_Code)
    with Pre => HS_Msg'First = 0
 	               and then HS_Msg'Length >= 4
-				               and then HS_Msg'Length <= Max_Cert_Msg,
+				               and then HS_Msg'Length <= Max_Cert_Msg
+				               and then Reasm_Coherent (HC),
 			        Post => HC.Client_HS.Counter =
 			                  HC.Client_HS.Counter'Old
 			                and then HC.Transcript_Len = HC.Transcript_Len'Old
@@ -164,7 +165,8 @@ is
       Err    :    out Error_Code)
    with Pre => HS_Msg'First = 0
 		               and then HS_Msg'Length >= 7
-		               and then HS_Msg'Length <= Max_Cert_Msg,
+		               and then HS_Msg'Length <= Max_Cert_Msg
+		               and then Reasm_Coherent (HC),
         Post => HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.Hash_Len = HC.Hash_Len'Old
                 and then (if HC.Cfg.Local'Old /= null

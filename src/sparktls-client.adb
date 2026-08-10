@@ -670,6 +670,7 @@ is
 		                       and then HC.Client_HS.Counter
 		                         <= Unsigned_64'Last - 2),
 						        Post => Pos <= Plain_Len
+					                and then Reasm_Coherent (HC)
 					                and then (if Result = OK
 					                              and then S.State
 				                                in Wait_Encrypted_Extensions
@@ -3918,8 +3919,46 @@ is
                                        N32 (HC.Reasm_Buf (1)) * 65536
                                        + N32 (HC.Reasm_Buf (2)) * 256
                                        + N32 (HC.Reasm_Buf (3));
+                                    Next_Total : constant N32 :=
+                                       Next_Len + 4;
                                  begin
-                                    HC.Reasm_Need := Next_Len + 4;
+                                    --  The declared length is three raw
+                                    --  wire bytes (up to 2**24 - 1). Reject
+                                    --  anything the reassembly buffer or the
+                                    --  transcript could never hold, matching
+                                    --  the header-pending path above and
+                                    --  Packed.Shift_To_Next_Packed_Message.
+                                    --  Without this Reasm_Need can exceed
+                                    --  Reasm_Buf'Length, reassembly can never
+                                    --  complete, and the caller re-enters
+                                    --  consuming records without progress.
+                                    if Next_Total > Max_HS_Msg
+                                      or else Next_Total > Transcript_Capacity
+                                    then
+                                       Free_Byte_Seq (HC.Reasm_Buf);
+                                       HC.Reasm_Len := 0;
+                                       HC.Reasm_Need := 0;
+                                       HC.Reasm_Hdr_Pending := False;
+                                       S.Last_Error := Decode_Error;
+                                       Set_State (S, Error_State);
+                                       Result := Error_Alert;
+                                       return;
+                                    end if;
+                                    if Next_Total >
+                                         N32 (HC.Reasm_Buf'Length)
+                                    then
+                                       declare
+                                          New_Buf : Byte_Seq_Access :=
+                                             new Byte_Seq'
+                                               (0 .. Next_Total - 1 => 0);
+                                       begin
+                                          New_Buf (0 .. Leftover - 1) :=
+                                             HC.Reasm_Buf (0 .. Leftover - 1);
+                                          Free_Byte_Seq (HC.Reasm_Buf);
+                                          HC.Reasm_Buf := New_Buf;
+                                       end;
+                                    end if;
+                                    HC.Reasm_Need := Next_Total;
                                     HC.Reasm_Hdr_Pending := False;
                                  end;
                               end if;

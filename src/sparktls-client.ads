@@ -70,10 +70,13 @@ is
       Resume               : Session_Ticket := (others => <>);
       Skip_Verify          : Boolean := False;
       Skip_Hostname_Verify : Boolean := False)
+   --  Mirrors Init's postcondition: Configure is a thin wrapper that
+   --  builds a Config and calls Init, so it can promise no more than Init
+   --  does. Init fails closed to Error_State.
    with Pre  => Random /= null and Clock /= null,
-        Post => S.State = Client_Hello_Sent and
-                S.Role = Role_Client and
-                Output_Pending (S) > 0;
+        Post => S.Role = Role_Client and
+                S.State in Client_Hello_Sent | Error_State and
+                (if S.State = Client_Hello_Sent then Output_Pending (S) > 0);
    --  Skip_Verify: skip full X.509 chain validation against Trust
    --  (development / self-signed certs). Without Skip_Verify, a trust
    --  store and clock must be configured before the handshake can
@@ -97,10 +100,16 @@ is
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
+   --  The body is SPARK_Mode => Off, so this postcondition is ASSUMED by
+   --  GNATprove rather than checked. It must therefore state only what is
+   --  true on every path. Init fails closed: Client_Config_Can_Start
+   --  rejection, HC allocation failure, and Initialize_Client_Handshake
+   --  failure all leave S.State = Error_State with nothing queued. Role is
+   --  set in the initial aggregate and never changed (Set_State frames it).
    with Pre  => Cfg.Random /= null,
-        Post => S.State = Client_Hello_Sent and
-                S.Role = Role_Client and
-                Output_Pending (S) > 0;
+        Post => S.Role = Role_Client and
+                S.State in Client_Hello_Sent | Error_State and
+                (if S.State = Client_Hello_Sent then Output_Pending (S) > 0);
 
    --  Step the client handshake / record processing state machine.
    --
