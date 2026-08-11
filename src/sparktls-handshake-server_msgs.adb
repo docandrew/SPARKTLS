@@ -3448,7 +3448,7 @@ is
       Buf          : RBT.Bytes_Ptr;
       Ctx          : Context;
       Raw_Legacy_Version : N32 := 0;
-		      Saved_Local  : constant Identity_Access := HC.Cfg.Local;
+		      Saved_Local  : constant Valid_Identity_Access := HC.Cfg.Local;
 			      Saved_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
 	      Saved_HRR    : constant Boolean := HC.HRR_Sent;
 	      Saved_Server_HS_Counter : constant Unsigned_64 :=

@@ -42,7 +42,7 @@ is
    --  Optionally provide a Trust store and Request_Client_Cert for mTLS.
    procedure Configure
      (S                     : out Session;
-      Local                 : Identity_Access;
+      Local                 : Valid_Identity_Access;
       Random                : Random_Bytes_Fn;
       Trust                 : Trust_Store_Access := null;
       Request_Client_Cert   : Boolean := False;

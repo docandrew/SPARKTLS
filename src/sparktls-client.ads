@@ -63,7 +63,7 @@ is
       Trust                : Trust_Store_Access;
       Random               : Random_Bytes_Fn;
       Clock                : Get_Time_Fn;
-      Local                : Identity_Access := null;
+      Local                : Valid_Identity_Access := null;
       Mode                 : Validation_Mode := Mode_WebPKI;
       ALPN                 : String := "";
       Versions             : Version_Policy := Allow_Both;

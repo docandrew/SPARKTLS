@@ -14,17 +14,14 @@ is
    --  Maximum ServerHello size
    Max_Server_Hello : constant := 256;
 
+   --  Defined as membership in the predicated subtype rather than by
+   --  restating its conjuncts. Config.Local now has subtype
+   --  Valid_Identity_Access, so Local_Config_Valid (HC.Cfg.Local) unfolds to
+   --  a membership test that holds by construction. Written as a second
+   --  literal conjunction it did not: the prover had to match two
+   --  independent copies of the same predicate and could not.
    function Local_Config_Valid (Local : Identity_Access) return Boolean is
-     (Local = null
-      or else
-        (Local.NaCl_Cert_Len <= N32 (Max_Cert_DER)
-         and then Local.Int_Count <= Max_Pool_Size
-         and then
-           (for all I in 0 .. Max_Pool_Size - 1 =>
-              Local.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
-         and then
-           (if Local.Sign_Algo = Sign_RSA_PSS
-            then Local.RSA_Mod_Len in 64 .. 512)))
+     (Local in Valid_Identity_Access)
    with Ghost;
 
    function Local_Config_Frame

@@ -2805,7 +2805,7 @@ is
 	      Msg_Len : in     N32;
 	      Result  :    out Action)
 	   is
-	      Saved_Local : constant Identity_Access := HC.Cfg.Local;
+	      Saved_Local : constant Valid_Identity_Access := HC.Cfg.Local;
 	      Saved_Local_Config_Valid : constant Boolean :=
 	        Saved_Local /= null
 	        and then Saved_Local.Has_Identity

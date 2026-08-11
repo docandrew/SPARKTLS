@@ -111,9 +111,6 @@ is
    --  Uses a rolling polynomial hash (fingerprint * 31 xor code).
    --  Reordering extensions changes the hash. No array needed.
 
-   --  RFLX scratch buffer sizes (stack-allocated, no heap)
-   RFLX_Main_Size : constant := 17000;  --  Holds largest message (incoming record)
-
    ----------------------------------------------------------------------------
    --  Cipher suite
    ----------------------------------------------------------------------------
@@ -877,6 +874,36 @@ is
 
    type Identity_Access is access constant Identity;
 
+   --  Length bounds every Identity must satisfy for the certificate and
+   --  signature paths to index it safely. Identical in content to
+   --  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid, restated here
+   --  because that child package is not visible from this spec.
+   --
+   --  Carried in the subtype rather than threaded through contracts: SPARK
+   --  cannot frame an access-typed record component by equality (there is no
+   --  legal `HC.Cfg.Local = HC.Cfg.Local'Old`), so every `HC : in out` call
+   --  otherwise loses the fact unless the callee restates it -- which is why
+   --  Local_Config_Valid appears in ~170 contracts. As a subtype predicate it
+   --  holds by construction and the threading becomes unnecessary.
+   --
+   --  Deliberately weaker than Selected_Identity_Access below, which also
+   --  demands Has_Identity: a non-null Identity without Has_Identity is a
+   --  legal state (the `Local /= null and then Local.Has_Identity` guard
+   --  appears throughout the codebase).
+   subtype Valid_Identity_Access is Identity_Access
+     with Dynamic_Predicate =>
+       Valid_Identity_Access = null
+       or else
+         (Valid_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+          and then Valid_Identity_Access.Int_Count <= Max_Pool_Size
+          and then
+            (for all I in 0 .. Max_Pool_Size - 1 =>
+               Valid_Identity_Access.Ints (I).DER_Len
+                 <= X509.N32 (Max_Cert_DER))
+          and then
+            (if Valid_Identity_Access.Sign_Algo = Sign_RSA_PSS
+             then Valid_Identity_Access.RSA_Mod_Len in 64 .. 512));
+
    subtype Selected_Identity_Access is Identity_Access
      with Dynamic_Predicate =>
        Selected_Identity_Access = null
@@ -1160,7 +1187,7 @@ is
       --  On the server side, this is the default identity used when
       --  Select_Identity is null OR when Select_Identity returns null
       --  for the client's SNI hostname.
-      Local : Identity_Access := null;
+      Local : Valid_Identity_Access := null;
 
       --  Server-side SNI acknowledgement. When True, the server emits
       --  the empty server_name extension if the client sent SNI. Set
@@ -1658,10 +1685,13 @@ is
       --  Prevents DoS via large extensions in ClientHello/ServerHello.
       Heap_Used : N32 := 0;
 
-      --  RFLX scratch buffer
-      RFLX_Main : aliased RFLX.RFLX_Builtin_Types.Bytes
-                    (1 .. RFLX.RFLX_Builtin_Types.Index (RFLX_Main_Size))
-                    := (others => 0);
+      --  NOTE: a 17 KB scratch buffer field and its size constant used to
+      --  live here, declared for a stack-allocation design that was never
+      --  implemented -- every RFLX buffer is heap-allocated via `new`. Both
+      --  were removed. If the no-`new` work is picked up (pointing
+      --  RecordFlux's Initialize/Take_Buffer at non-heap storage), note that
+      --  server_msgs.adb holds a message buffer and an extension buffer live
+      --  simultaneously, so a single shared block is not sufficient.
    end record
      with Predicate =>
        --  RFC 5246 §7.4.9 transcript bound: every Append_Transcript

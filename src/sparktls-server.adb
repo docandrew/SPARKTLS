@@ -48,21 +48,6 @@ is
 		      and then S.State not in Idle | Closing | Closed | Error_State)
 		   with Ghost;
 
-   function Server_Reasm_Shape (HC : Handshake_Context) return Boolean is
-     (HC.Reasm_Buf = null
-      or else
-        (HC.Reasm_Buf'First = 0
-         and then HC.Reasm_Buf'Length <= Max_HS_Msg
-         and then HC.Reasm_Buf'Length <= N32'Last
-         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
-         and then
-           (if HC.Reasm_Hdr_Pending then
-              HC.Reasm_Need = 4
-              and then HC.Reasm_Len <= 4
-              and then HC.Reasm_Buf'Length = Max_HS_Msg)))
-   with Ghost;
-
    function Wait_Client_Hello_Post
      (S  : Session;
       HC : Handshake_Context) return Boolean is
@@ -201,14 +186,14 @@ is
 						                  (if S.State = Wait_Client_Hello
 					                     and then HC.Reasm_Need > 0
 					                   then HC.Reasm_Len < HC.Reasm_Need
-						                        and then Server_Reasm_Shape (HC))
+						                        and then Reasm_Buffer_Shaped (HC))
 						                and then
 							                  (if S.State = Wait_Client_Hello
 							                     and then HC.Reasm_Need = 0
 						                   then HC.Reasm_Buf = null)
 					                and then
 						                  (if S.State = Wait_Client_Hello_Retry
-					                   then Server_Reasm_Shape (HC))
+					                   then Reasm_Buffer_Shaped (HC))
 					                and then
 						                  (if S.State in Wait_Client_Certificate
 						                               | Wait_Client_Cert_Verify
@@ -233,7 +218,7 @@ is
 	                           and then
 	                             (if HC.Version = TLS_1_3
 	                              and then S.State = Wait_Client_Finished
-	                              then Server_Reasm_Shape (HC))
+	                              then Reasm_Buffer_Shaped (HC))
 								                and then
 							                  (if HC.Version = TLS_1_2
 							                   and then S.State in Wait_Client_Cert_Verify
@@ -296,7 +281,7 @@ is
 		                   and then HC.Legacy_Session_ID_Len in 0 .. 32
 					                and then HC.Transcript_Len > 0
 					                and then Reasm_Building (HC)
-					                and then Server_Reasm_Shape (HC)
+					                and then Reasm_Buffer_Shaped (HC)
 					                and then S.Negotiated_Suite in
 		                     Suite_AES_128_GCM_SHA256
 		                   | Suite_AES_256_GCM_SHA384
@@ -381,7 +366,7 @@ is
 	                and then HC.Legacy_Session_ID_Len in 0 .. 32
                 and then HC.Transcript_Len > 0
                 and then Reasm_Building (HC)
-                and then Server_Reasm_Shape (HC)
+                and then Reasm_Buffer_Shaped (HC)
                 and then S.Negotiated_Suite in
                   Suite_AES_128_GCM_SHA256
 	                | Suite_AES_256_GCM_SHA384
@@ -404,7 +389,7 @@ is
 	                and then S.Role = Role_Server
 		                and then Server_Configured (HC)
                         and then Reasm_Building (HC)
-                        and then Server_Reasm_Shape (HC)
+                        and then Reasm_Buffer_Shaped (HC)
                         and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                and then Server_State_Keys_Ready (S, HC),
 				        Post =>
@@ -441,7 +426,7 @@ is
 			                and then HC.Legacy_Session_ID_Len in 0 .. 32
 					                and then HC.Transcript_Len > 0
 					                and then Reasm_Building (HC)
-					                and then Server_Reasm_Shape (HC)
+					                and then Reasm_Buffer_Shaped (HC)
 					                and then S.Negotiated_Suite in
 				                  Suite_AES_128_GCM_SHA256
 			                  | Suite_AES_256_GCM_SHA384
@@ -473,7 +458,7 @@ is
 	   with Pre  => Server_Active (S)
 		                and then Server_Configured (HC)
 		                and then Reasm_Building (HC)
-		                and then Server_Reasm_Shape (HC),
+		                and then Reasm_Buffer_Shaped (HC),
 		        Post => (if HRR_Len > 0
 		                 then HRR_Buf'First = 0
 		                   and then HRR_Len - 1 <= HRR_Buf'Last)
@@ -483,7 +468,7 @@ is
 		                and then (if HRR_Len > 0
 			                          then HC.Transcript_Len > 0)
 		                and then Reasm_Building (HC)
-		                and then Server_Reasm_Shape (HC);
+		                and then Reasm_Buffer_Shaped (HC);
 
    procedure Append_And_Encrypt_Server_HS
      (S         : in out Session;
@@ -497,7 +482,7 @@ is
 	                and then Server_Configured (HC)
 	                and then HC.Transcript_Len > 0
 	                and then Reasm_Building (HC)
-	                and then Server_Reasm_Shape (HC)
+	                and then Reasm_Buffer_Shaped (HC)
 	                and then Plaintext'Length > 0
                 and then Plaintext'Length <= Max_Fragment
                 and then Plaintext'Length < Transcript_Capacity
@@ -506,7 +491,7 @@ is
 		                 then Server_Active (S)
 		                  and then Server_Configured (HC)
 		                  and then Reasm_Building (HC)
-		                  and then Server_Reasm_Shape (HC)
+		                  and then Reasm_Buffer_Shaped (HC)
 		                  and then HC.Transcript_Len > 0
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
@@ -532,7 +517,7 @@ is
                 and then Server_Configured (HC)
                 and then HC.Transcript_Len > 0
                 and then Reasm_Building (HC)
-                and then Server_Reasm_Shape (HC)
+                and then Reasm_Buffer_Shaped (HC)
                 and then Plaintext'First = 0
                 and then Plaintext'Last in 0 .. N32 (Transcript_Capacity) - 2
                 and then HC.Server_HS.Counter <= Unsigned_64'Last - 2,
@@ -540,7 +525,7 @@ is
 		                 then Server_Active (S)
 			                      and then Server_Configured (HC)
 			                      and then Reasm_Building (HC)
-			                      and then Server_Reasm_Shape (HC)
+			                      and then Reasm_Buffer_Shaped (HC)
 			                      and then HC.Transcript_Len > 0
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
@@ -553,7 +538,7 @@ is
 			                          then S.State = Error_State
 				                               and then Result = Error_Alert
 				                               and then Reasm_Building (HC)
-				                               and then Server_Reasm_Shape (HC)
+				                               and then Reasm_Buffer_Shaped (HC)
 				                               and then HC.Server_HS.Counter = Saved_Ctr);
 
    procedure Process_Client_Auth
@@ -607,7 +592,7 @@ is
 		               and then Nonce_Space_Available (HC.Client_HS)
 			               and then HC.Transcript_Len > 0
 			               and then Reasm_Building (HC)
-			               and then Server_Reasm_Shape (HC)
+			               and then Reasm_Buffer_Shaped (HC)
 		               and then Free_Space (S.Output) >=
                           Records.Record_Header_Size + 3 + Records.Tag_Size,
 			        Post => (if S.State not in Error_State | Closed
@@ -639,12 +624,12 @@ is
 	               and then Rec.Fragment_Len = Rec.Record_Len - Rec.Fragment_Pos
 		               and then Rec.Record_Len <= Available (S.Input)
 			               and then Reasm_Building (HC)
-			               and then Server_Reasm_Shape (HC)
+			               and then Reasm_Buffer_Shaped (HC)
 	               ,
 							        Post => (if S.State not in Error_State | Closed
 						                          then Server_Configured (HC)
 					                               and then Reasm_Building (HC)
-					                               and then Server_Reasm_Shape (HC));
+					                               and then Reasm_Buffer_Shaped (HC));
    procedure Verify_Client_Finished
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -662,7 +647,7 @@ is
 		               and then Plain_Len - 1 <= Plaintext'Last
 					               and then HC.Transcript_Len > 0
 					               and then Reasm_Building (HC)
-					               and then Server_Reasm_Shape (HC)
+					               and then Reasm_Buffer_Shaped (HC)
 					               and then
 				                 (if HC.Cfg.Ticket_Store /= null
 			                  then HC.Cfg.Ticket_Store.Next
@@ -670,7 +655,7 @@ is
 			        Post => (if S.State not in Error_State | Closed
 						                          then Server_Configured (HC)
 					                               and then Reasm_Building (HC)
-					                               and then Server_Reasm_Shape (HC));
+					                               and then Reasm_Buffer_Shaped (HC));
 
 
 
@@ -902,8 +887,8 @@ is
 					                     then Reasm_Building (HC))
 						                and (if Reasm_Buffer_Shaped (HC)'Old
 						                     then Reasm_Buffer_Shaped (HC))
-						                and (if Server_Reasm_Shape (HC)'Old
-						                     then Server_Reasm_Shape (HC))
+						                and (if Reasm_Buffer_Shaped (HC)'Old
+						                     then Reasm_Buffer_Shaped (HC))
 						                and HC.Reasm_Len = HC.Reasm_Len'Old
 					                and HC.Reasm_Need = HC.Reasm_Need'Old
 						                and
@@ -953,7 +938,7 @@ is
 
    procedure Configure
      (S                     : out Session;
-      Local                 : Identity_Access;
+      Local                 : Valid_Identity_Access;
       Random                : Random_Bytes_Fn;
       Trust                 : Trust_Store_Access := null;
       Request_Client_Cert   : Boolean := False;
@@ -1413,7 +1398,7 @@ is
 				               and then Reasm_Building (HC)
                         and then
                           (if HC.Reasm_Need > 0
-                           then Server_Reasm_Shape (HC))
+                           then Reasm_Buffer_Shaped (HC))
                         and then HC.Legacy_Session_ID_Len in 0 .. 32
 		               and then
 		                 (if HC.Reasm_Need > 0
@@ -1520,7 +1505,7 @@ is
 				                              and then Reasm_Building (HC)
 					                              and then
 					                                (if HC.Reasm_Need > 0
-					                                 then Server_Reasm_Shape (HC))
+					                                 then Reasm_Buffer_Shaped (HC))
 					                              and then HC.Legacy_Session_ID_Len in 0 .. 32
 	                              and then Server_State_Keys_Ready (S, HC)
 		                              and then Handshake_Record_Fragment_Ready
@@ -3147,13 +3132,13 @@ is
 		                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
 		                and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                and then Reasm_Building (HC)
-		                and then Server_Reasm_Shape (HC),
+		                and then Reasm_Buffer_Shaped (HC),
 		        Post => (if not Rejected
 		                 then S.State = S.State'Old
 		                      and S.Role = S.Role'Old
 			                      and Server_Configured (HC)
 			                      and Reasm_Building (HC)
-			                      and Server_Reasm_Shape (HC)
+			                      and Reasm_Buffer_Shaped (HC)
 			                      and HC.Transcript_Len = HC.Transcript_Len'Old
 		                      and HC.HRR_Sent = HC.HRR_Sent'Old
 	                      and HC.Legacy_Session_ID_Len in 0 .. 32
@@ -3168,7 +3153,7 @@ is
 	                      and S.Negotiated_Suite = S.Negotiated_Suite'Old)
 			                 and then (if Rejected then S.State = Error_State)
 			                 and then Reasm_Building (HC)
-			                 and then Server_Reasm_Shape (HC);
+			                 and then Reasm_Buffer_Shaped (HC);
 
    procedure Verify_PSK_Binder
      (S        : in out Session;
@@ -3308,14 +3293,14 @@ is
 		                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
 		                and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                and then Reasm_Building (HC)
-		                and then Server_Reasm_Shape (HC),
+		                and then Reasm_Buffer_Shaped (HC),
 	        Post => (if Algo_OK
 		                 then S.State = S.State'Old
 		                      and S.Role = S.Role'Old
 			                      and S.Negotiated_Suite = S.Negotiated_Suite'Old
 			                      and Server_Configured (HC)
 			                      and Reasm_Building (HC)
-			                      and Server_Reasm_Shape (HC)
+			                      and Reasm_Buffer_Shaped (HC)
 			                      and HC.Transcript_Len = HC.Transcript_Len'Old
 	                      and HC.HRR_Sent = HC.HRR_Sent'Old
 	                      and HC.Legacy_Session_ID_Len in 0 .. 32
@@ -3333,7 +3318,7 @@ is
 	                         HC.Cfg.Local.Sign_Algo))
 			                 and then (if not Algo_OK then S.State = Error_State)
 			                 and then Reasm_Building (HC)
-			                 and then Server_Reasm_Shape (HC);
+			                 and then Reasm_Buffer_Shaped (HC);
 
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
@@ -5092,7 +5077,7 @@ is
 	                  and then Nonce_Space_Available (S.Server_App)
 		                  and then Server_Configured (HC)
 		                  and then Reasm_Building (HC)
-			                  and then Server_Reasm_Shape (HC)
+			                  and then Reasm_Buffer_Shaped (HC)
 			                  and then HC.Transcript_Len > 0
 	                  and then Data'First = 0
                   and then Len > 0
@@ -5101,7 +5086,7 @@ is
            Post => (if S.State not in Error_State | Closed
 			                             then Server_Configured (HC)
 			                                  and then Reasm_Building (HC)
-			                                  and then Server_Reasm_Shape (HC))
+			                                  and then Reasm_Buffer_Shaped (HC))
       is
          Msg_Type : Byte;
          Msg_Len  : N32;
@@ -5370,7 +5355,7 @@ is
 	                     if HC.Reasm_Len < HC.Reasm_Need then
 	                        Result := OK;
 	                        pragma Assert (Reasm_Building (HC));
-	                        pragma Assert (Server_Reasm_Shape (HC));
+	                        pragma Assert (Reasm_Buffer_Shaped (HC));
 	                        return;
 	                     end if;
 
@@ -5406,7 +5391,7 @@ is
 	                    Plaintext (0 .. Plain_Len - 1);
 	                  Result := OK;
 	                  pragma Assert (Reasm_Building (HC));
-	                  pragma Assert (Server_Reasm_Shape (HC));
+	                  pragma Assert (Reasm_Buffer_Shaped (HC));
 	                  return;
 	               end if;
 
@@ -5429,7 +5414,7 @@ is
 	                       Plaintext (0 .. Plain_Len - 1);
 	                     Result := OK;
 	                     pragma Assert (Reasm_Building (HC));
-	                     pragma Assert (Server_Reasm_Shape (HC));
+	                     pragma Assert (Reasm_Buffer_Shaped (HC));
 	                     return;
 	                  end if;
                end;
@@ -5444,7 +5429,7 @@ is
 	                  then Reasm_Building (HC));
 		               pragma Assert
 		                 (if S.State not in Error_State | Closed
-		                  then Server_Reasm_Shape (HC));
+		                  then Reasm_Buffer_Shaped (HC));
 		            end;
    end Handle_PCF_App_Data;
 

@@ -889,8 +889,27 @@ is
 
       --  PK_Bytes already set by X25519.Scalar_Mult above
 
-      --  Allocate buffer for ClientHello body
-      Buf := new RBT.Bytes'(1 .. RBT.Index (RFLX_Main_Size) => 0);
+      --  Bound the message BEFORE writing any of it. The equivalent check
+      --  used to run only after Take_Buffer, which meant nothing told the
+      --  prover the accumulated extensions fit the scratch buffer -- the
+      --  Available_Space preconditions on the Set_* calls below were
+      --  therefore unprovable. Ext_Total_All is config-driven (SNI, ALPN,
+      --  HRR cookie up to 1024, TLS 1.2 ticket up to 2048, PSK), so this is
+      --  a genuine input-dependent bound, not a check that can never fire.
+      --  Failing here is identical in effect to failing at the old site:
+      --  Len stays 0 and the caller sees no ClientHello.
+      if CH_Msg_Len > N32 (Result'Length) then
+         pragma Assert (HC.Cfg.Random /= null);
+         return;
+      end if;
+
+      --  Allocate exactly the body size, matching every other RFLX buffer
+      --  in this codebase (Data_Len / Body_Len / DLen / Ext_Len ...). This
+      --  site used to allocate a fixed 17000 bytes -- a receive-path bound,
+      --  roughly 4x more than an outgoing ClientHello can ever need. The
+      --  check above bounds CH_Body_Len by Result'Length, so the allocation
+      --  is bounded too.
+      Buf := new RBT.Bytes'(1 .. RBT.Index (CH_Body_Len) => 0);
       Initialize (Ctx, Buf);
 
       --  Set ClientHello fields via RFLX

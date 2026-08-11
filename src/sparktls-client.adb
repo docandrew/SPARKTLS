@@ -791,24 +791,17 @@ is
 	                             HC.Reasm_Buf = null
 	                             and then HC.Reasm_Len = 0
                              and then HC.Reasm_Need = 0)
+	                --  'First = 0 and 'Length <= Max_HS_Msg come from the
+	                --  Reasm_Buf_Access subtype; the Len/Need bounds and the
+	                --  Hdr_Pending triple are Reasm_Buffer_Shaped. Reasm_Coherent
+	                --  is defined as Reasm_Buffer_Shaped, so stating both is
+	                --  redundant.
 	                and then (if not Decode_Failed then
 	                             HC.Reasm_Buf /= null
-	                             and then HC.Reasm_Buf'First = 0
-	                             and then HC.Reasm_Buf'Last in 0 .. 131071
-	                             and then HC.Reasm_Len
-	                                <= N32 (HC.Reasm_Buf'Length)
-	                             and then HC.Reasm_Need
-	                                <= N32 (HC.Reasm_Buf'Length)
-		                             and then (if HC.Reasm_Need > 0 then
-		                                          HC.Reasm_Need >= 4)
-		                             and then
-		                               (if HC.Reasm_Hdr_Pending
-		                                then HC.Reasm_Buf'Length = Max_HS_Msg
-		                                     and then HC.Reasm_Need = 4
-			                                     and then HC.Reasm_Len <= 4)
-				                             and then Reasm_Building (HC)
-				                             and then Reasm_Buffer_Shaped (HC)
-				                             and then Reasm_Coherent (HC));
+	                             and then (if HC.Reasm_Need > 0 then
+	                                          HC.Reasm_Need >= 4)
+	                             and then Reasm_Building (HC)
+	                             and then Reasm_Buffer_Shaped (HC));
 
    procedure Copy_Decrypted_Reasm_Bytes
      (HC        : in out Handshake_Context;
@@ -1407,20 +1400,16 @@ is
 				                         Suite_AES_128_GCM_SHA256
 			                       | Suite_AES_256_GCM_SHA384
 			                       | Suite_CHACHA20_POLY1305_SHA256));
+   --  Wait_Server_Hello reassembly shape: the shared buffer shape plus the
+   --  one extra fact this state needs (the message must fit the transcript).
+   --  Defined in terms of Reasm_Buffer_Shaped rather than restating its
+   --  conjuncts, so the prover sees the implication directly instead of
+   --  having to match two literal conjunctions. 'First = 0 and
+   --  'Length <= Max_HS_Msg come from the Reasm_Buf_Access subtype.
    function WSH_Reasm_Shape (HC : Handshake_Context) return Boolean is
-     (HC.Reasm_Buf = null
-      or else
-        (HC.Reasm_Buf'First = 0
-         and then HC.Reasm_Buf'Length <= Max_HS_Msg
-         and then HC.Reasm_Buf'Length <= N32'Last
-         and then HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
-         and then HC.Reasm_Need - 1 < Transcript_Capacity
-         and then
-           (if HC.Reasm_Hdr_Pending then
-              HC.Reasm_Buf'Length = Max_HS_Msg
-              and then HC.Reasm_Need = 4
-              and then HC.Reasm_Len <= 4)))
+     (Reasm_Buffer_Shaped (HC)
+      and then (HC.Reasm_Buf = null
+                or else HC.Reasm_Need - 1 < Transcript_Capacity))
    with Ghost;
 
    procedure Finalize_SH_Processing
@@ -1835,7 +1824,7 @@ is
       Trust                : Trust_Store_Access;
       Random               : Random_Bytes_Fn;
       Clock                : Get_Time_Fn;
-      Local                : Identity_Access := null;
+      Local                : Valid_Identity_Access := null;
       Mode                 : Validation_Mode := Mode_WebPKI;
       ALPN                 : String := "";
       Versions             : Version_Policy := Allow_Both;
