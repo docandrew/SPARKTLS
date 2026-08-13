@@ -1143,11 +1143,7 @@ is
 		               and then Plain_Len <= N32 (Plaintext'Length)
 		               and then Pos <= N32'Last - 4
 			               and then Pos + 4 <= Plain_Len
-                           and then Reasm_Coherent (HC)
-                           and then
-                             (if HC.Reasm_Buf /= null
-                                  and then HC.Reasm_Need > 0
-                              then Reasm_Building (HC)),
+                           and then Reasm_Coherent (HC),
 			        Post => Pos <= Plain_Len
                 and then Reasm_Coherent (HC)
 	                and then (if Result = OK
@@ -5186,17 +5182,6 @@ is
 			              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
 				               then HC.Hash_Len = 48
 				               else HC.Hash_Len = 32));
-		               pragma Loop_Invariant
-		                 (if Pos + 4 <= Plain_Len
-                           and then Result = OK
-                           and then S.State in Wait_Encrypted_Extensions
-                                               | Wait_Certificate_Request
-                                               | Wait_Certificate
-                                               | Wait_Certificate_Verify
-                                               | Wait_Server_Finished
-                           and then HC.Reasm_Buf /= null
-                           and then HC.Reasm_Need > 0
-		                  then Reasm_Building (HC));
 			         Process_One_Decrypted_HS_Message
 		           (S, HC, Plaintext, Plain_Len, Pos, Result);
       end loop;

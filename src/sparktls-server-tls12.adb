@@ -1712,7 +1712,11 @@ is
 	            Header_Pending : in     Boolean)
 			         with Pre  => Source'Length > 0
 		                      and then Source'Last < N32'Last
-	                      and then New_Need > 0
+	                      --  >= 4, not > 0: an active reassembly always
+	                      --  includes the 4-byte handshake header, per
+	                      --  Reasm_Buffer_Shaped. Both callers pass 4 or
+	                      --  HS_Msg_Len + 4.
+	                      and then New_Need >= 4
 	                      and then New_Need <= Buffer_Length
 	                      and then Buffer_Length <= Max_HS_Msg
                               and then

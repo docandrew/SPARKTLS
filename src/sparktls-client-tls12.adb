@@ -564,7 +564,12 @@ is
 				                and then Reasm_Coherent (HC)
                         and then (if HC.Cfg.Random'Old /= null
                                   then HC.Cfg.Random /= null)
-	                and then HC.Peer_Cert_DER_Len = C_Len;
+	                and then HC.Peer_Cert_DER_Len = C_Len
+	                --  Frame the TLS 1.2 send counter: this helper never
+	                --  touches it, and Parse_Cert_Chain_12's Post must
+	                --  carry it out to keep Nonce_Space_Available_12 alive
+	                --  across the Certificate branch of the dispatcher.
+	                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
@@ -654,7 +659,12 @@ is
 	                and then (if HC.Peer_Cert_Valid then
                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                     and then X509.Spans_Valid
-                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1))
+	                --  Frame the TLS 1.2 send counter: this helper never
+	                --  touches it, and Parse_Cert_Chain_12's Post must
+	                --  carry it out to keep Nonce_Space_Available_12 alive
+	                --  across the Certificate branch of the dispatcher.
+	                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
 
    procedure Append_Intermediate_12
      (HC  : in out Handshake_Context;
@@ -679,7 +689,12 @@ is
 	                            and then (if HC.Cfg.Random'Old /= null
 	                                      then HC.Cfg.Random /= null)
 			                and then not HC.Peer_Cert_Valid
-			                and then HC.Peer_Int_Count = 0;
+			                and then HC.Peer_Int_Count = 0
+	                --  Frame the TLS 1.2 send counter: this helper never
+	                --  touches it, and Parse_Cert_Chain_12's Post must
+	                --  carry it out to keep Nonce_Space_Available_12 alive
+	                --  across the Certificate branch of the dispatcher.
+	                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
 
 	   procedure Reset_Peer_Cert_Chain_12
 	     (HC : in out Handshake_Context)
@@ -715,7 +730,12 @@ is
 	                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
 	                     and then X509.Spans_Valid
 	                       (HC.Peer_Cert,
-	                        X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+	                        X509.N32 (HC.Peer_Cert_DER_Len) - 1))
+	                --  Frame the TLS 1.2 send counter: this helper never
+	                --  touches it, and Parse_Cert_Chain_12's Post must
+	                --  carry it out to keep Nonce_Space_Available_12 alive
+	                --  across the Certificate branch of the dispatcher.
+	                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
 
 	   procedure Set_Peer_Cert_12
 	     (HC    : in out Handshake_Context;
@@ -769,6 +789,15 @@ is
 				                  HC.Reasm_Hdr_Pending'Old
 				                and then HC.Selected_Group =
 				                  HC.Selected_Group'Old
+				                --  Frame the TLS 1.2 send counter. The body never
+				                --  touches it, but without saying so the caller
+				                --  loses Nonce_Space_Available_12 at this call --
+				                --  and this is the FIRST call in the Certificate
+				                --  branch of Dispatch_Server_Flight_Message, so the
+				                --  monotonicity conjuncts on Validate_Server_Cert_12
+				                --  and Append_Transcript that follow are left with
+				                --  no antecedent and become vacuous.
+				                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
 	                            and then
 	                              (if HC.Cfg.Random'Old /= null
                                then HC.Cfg.Random /= null)
@@ -804,6 +833,8 @@ is
 	           HC.Selected_Group with Ghost;
 	         Random_Was_Set : constant Boolean :=
 	           HC.Cfg.Random /= null with Ghost;
+	         Saved_Client_Seq : constant Unsigned_64 :=
+	           HC.Client_Seq_12 with Ghost;
 	   begin
 		      Reset_Peer_Cert_Chain_12 (HC);
       OK := False;
@@ -899,6 +930,8 @@ is
 	                                   Saved_Reasm_Hdr_Pending
 	                                 and then HC.Selected_Group =
 	                                   Saved_Selected_Group
+	                                 and then HC.Client_Seq_12 =
+	                                   Saved_Client_Seq
 	                                 and then
 	                                   (if Random_Was_Set
 	                                    then HC.Cfg.Random /= null));
@@ -2775,6 +2808,13 @@ is
 				                     Records.TLS12.Nonce_Space_Available_12
 				                       (HC.Client_Seq_12)),
 				        Post => Reasm_Coherent (HC)
+			                --  ServerHelloDone never yields OK: the body ends with
+			                --  Result := (if Output_Pending > 0 then Has_Output
+			                --  else Need_Input) and asserts Result /= OK three
+			                --  times. Stating it lets the caller discharge the
+			                --  HT_Server_Hello_Done arm of the dispatch cut
+			                --  instead of re-deriving it.
+			                and then Result /= OK
 			                and then
 			                  (if Result = OK then
 								                     S.State not in Idle | Closing

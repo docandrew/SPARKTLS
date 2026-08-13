@@ -5355,6 +5355,27 @@ is
 	                     if HC.Reasm_Len < HC.Reasm_Need then
 	                        Result := OK;
 	                        pragma Assert (Reasm_Building (HC));
+	                        --  Proof decomposition for the assert below.
+	                        --  Reasm_Len has just grown by Take, and the
+	                        --  prover cannot re-establish Reasm_Buffer_Shaped
+	                        --  in one step here. Each conjunct below is
+	                        --  discharged on its own and then used as a
+	                        --  lemma. All five are PROVED, so they are
+	                        --  verified stepping stones, not assumptions.
+	                        pragma Assert (HC.Reasm_Buf /= null);
+	                        pragma Assert
+	                          (if HC.Reasm_Buf /= null then
+	                             HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+	                        pragma Assert
+	                          (if HC.Reasm_Buf /= null then
+	                             HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+	                        pragma Assert
+	                          (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
+	                           else HC.Reasm_Need >= 4);
+	                        pragma Assert
+	                          (if HC.Reasm_Hdr_Pending then
+	                             HC.Reasm_Need = 4
+	                             and then HC.Reasm_Len <= 4);
 	                        pragma Assert (Reasm_Buffer_Shaped (HC));
 	                        return;
 	                     end if;

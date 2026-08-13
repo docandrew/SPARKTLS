@@ -1732,6 +1732,19 @@ is
       or else
         (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
          and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+         --  Reassembly state machine: Need = 0 means idle, which means
+         --  no buffered bytes; otherwise the target total always
+         --  includes the 4-byte handshake header. All 83 Reasm_Need
+         --  assignment sites are 0, 4, or a header-inclusive total, and
+         --  every ":= 0" site zeroes Reasm_Len alongside.
+         --  Deliberately stated INSIDE the buffer-exists branch: hoisting
+         --  it above costs every Reasm_Buf = null path (which previously
+         --  discharged this predicate for free) a new obligation to frame
+         --  Reasm_Len/Reasm_Need, which regresses flights that never
+         --  reassemble at all (e.g. Build_Abbreviated_Server_Flight_12).
+         and then (if HC.Reasm_Need = 0
+                   then HC.Reasm_Len = 0
+                   else HC.Reasm_Need >= 4)
          and then
            (if HC.Reasm_Hdr_Pending then
               HC.Reasm_Need = 4

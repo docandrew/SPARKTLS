@@ -2560,7 +2560,6 @@ is
 	                       Suite_AES_128_GCM_SHA256
 	                     | Suite_AES_256_GCM_SHA384
 	                     | Suite_CHACHA20_POLY1305_SHA256);
-	                  pragma Loop_Invariant (Reasm_Coherent (HC));
 	                  if Data (SH_SID_Off + I)
                        /= HC.Legacy_Session_ID (I)
                   then
@@ -2636,7 +2635,6 @@ is
                  Suite_AES_128_GCM_SHA256
                | Suite_AES_256_GCM_SHA384
                | Suite_CHACHA20_POLY1305_SHA256);
-            pragma Loop_Invariant (Reasm_Coherent (HC));
             if R (24 + I) /= S13 (I)   then M13 := False; end if;
             if R (24 + I) /= S12 (I)   then M12 := False; end if;
             if R (24 + I) /= S_JDK (I) then MJ  := False; end if;
