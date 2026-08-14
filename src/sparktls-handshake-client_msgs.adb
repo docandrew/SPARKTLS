@@ -912,9 +912,26 @@ is
       Buf := new RBT.Bytes'(1 .. RBT.Index (CH_Body_Len) => 0);
       Initialize (Ctx, Buf);
 
+      --  Size-accounting chain, anchored at Initialize. Each step states
+      --  the space remaining before the next field is written, so the
+      --  whole CH_Body_Len = 59 + Session_ID_Len + Ext_Total_All formula
+      --  is machine-checked against what the writes actually consume.
+      --  A future edit that breaks a term fails here instead of emitting
+      --  a malformed ClientHello (production builds use -gnatp, so this
+      --  proof is the only backstop).
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Version)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - 0));
+
       --  Set ClientHello fields via RFLX
       Set_Legacy_Version (Ctx, TLS_1_2);  --  0x0303 per RFC 8446
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Random)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - 2));
       Set_Random (Ctx, To_RFLX (HC.Client_Random));
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Session_ID_Length)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - 34));
       if HC.Cfg.Versions = TLS_1_2_Only then
          Set_Legacy_Session_ID_Length (Ctx, 0);
          Set_Legacy_Session_ID_Empty (Ctx);
@@ -922,11 +939,17 @@ is
          Set_Legacy_Session_ID_Length (Ctx, 32);
          Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       end if;
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_Length)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (35 + Session_ID_Len)));
       --  TLS version routes past cookie fields to cipher_suites_length
       --  9 suites: 3 TLS 1.3 + 3 TLS 1.2 ECDHE-RSA + 3 TLS 1.2
       --  ECDHE-ECDSA = 18 bytes
       Set_Cipher_Suites_Length
         (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (18));
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_TLS)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (37 + Session_ID_Len)));
 
       --  Build cipher suite sequence
       declare
@@ -963,12 +986,30 @@ is
 	         Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
 	      end;
 
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods_Length)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (55 + Session_ID_Len)));
+
 	      Set_Legacy_Compression_Methods_Length (Ctx, 1);
+      --  Field_Size of the compression-methods field is data-dependent:
+      --  it follows from the length field just written (1 byte = 8 bits).
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
+                     = RBT.Bit_Length (8));
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (56 + Session_ID_Len)));
 	      Set_Legacy_Compression_Methods
 	        (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (57 + Session_ID_Len)));
 	      Set_Extensions_Length
 	        (Ctx,
 	         RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
+      --  Likewise: the extensions field size follows from the length
+      --  field just written.
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+                     = RBT.Bit_Length (8) * RBT.Bit_Length (Ext_Total_All));
 
 	      --  Build extensions sequence
 	      declare
@@ -1419,6 +1460,22 @@ is
       --  Binder hash matches the ticket's hash: PSK_Len=32 → SHA-256;
       --  PSK_Len=48 → SHA-384. Both paths share the same wire
       --  layout (only the binder VALUE size differs).
+      --  Proof decomposition: the prover cannot re-establish the whole
+      --  predicate in one step after the HC component writes above.
+      --  Each conjunct is discharged separately, then used as a lemma.
+      pragma Assert (HC.Reasm_Buf = null
+                     or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+      pragma Assert (HC.Reasm_Buf = null
+                     or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+      pragma Assert (HC.Reasm_Buf = null
+                     or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
+                              else HC.Reasm_Need >= 4));
+      pragma Assert (HC.Reasm_Buf = null
+                     or else (if HC.Reasm_Hdr_Pending then
+                                HC.Reasm_Need = 4
+                                and then HC.Reasm_Len <= 4
+                                and then HC.Reasm_Buf'Length = Max_HS_Msg));
+      pragma Assert (Reasm_Coherent (HC));
       if Len > 0 then
          Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
       end if;
@@ -2516,6 +2573,21 @@ is
       else
          HC.Version := TLS_1_2;
       end if;
+      --  Correctly guarded decomposition: every conjunct is inside the
+      --  "Reasm_Buf = null or else" disjunction, as the predicate has it.
+      pragma Assert (HC.Reasm_Buf = null
+                     or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));  --  D1 heap
+      pragma Assert (HC.Reasm_Buf = null
+                     or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));  --  D2 heap
+      pragma Assert (HC.Reasm_Buf = null
+                     or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
+                              else HC.Reasm_Need >= 4));  --  D3 scalar
+      pragma Assert (HC.Reasm_Buf = null
+                     or else (if HC.Reasm_Hdr_Pending then
+                                HC.Reasm_Need = 4
+                                and then HC.Reasm_Len <= 4
+                                and then HC.Reasm_Buf'Length = Max_HS_Msg));  --  D4 mixed
+      pragma Assert (Reasm_Buffer_Shaped (HC));  --  D5 whole
       if HC.Version = TLS_1_3
         and then S.Negotiated_Suite not in
           Suite_AES_128_GCM_SHA256
@@ -2684,6 +2756,21 @@ is
                goto Cleanup;
             end if;
             HC.Shared_Secret := Secret_384;
+            --  Proof decomposition: the prover cannot re-establish the whole
+            --  predicate in one step after an unrelated HC component write.
+            --  Each conjunct is discharged separately, then used as a lemma.
+            pragma Assert (HC.Reasm_Buf = null
+                           or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+            pragma Assert (HC.Reasm_Buf = null
+                           or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+            pragma Assert (HC.Reasm_Buf = null
+                           or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
+                                    else HC.Reasm_Need >= 4));
+            pragma Assert (HC.Reasm_Buf = null
+                           or else (if HC.Reasm_Hdr_Pending then
+                                      HC.Reasm_Need = 4
+                                      and then HC.Reasm_Len <= 4
+                                      and then HC.Reasm_Buf'Length = Max_HS_Msg));
             pragma Assert (Reasm_Coherent (HC));
          end;
       elsif HC.Use_P256_KE then
@@ -2713,6 +2800,21 @@ is
             end;
             HC.Shared_Secret := (others => 0);
             HC.Shared_Secret (0 .. 31) := X_Bytes;
+            --  Proof decomposition: the prover cannot re-establish the whole
+            --  predicate in one step after an unrelated HC component write.
+            --  Each conjunct is discharged separately, then used as a lemma.
+            pragma Assert (HC.Reasm_Buf = null
+                           or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+            pragma Assert (HC.Reasm_Buf = null
+                           or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+            pragma Assert (HC.Reasm_Buf = null
+                           or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
+                                    else HC.Reasm_Need >= 4));
+            pragma Assert (HC.Reasm_Buf = null
+                           or else (if HC.Reasm_Hdr_Pending then
+                                      HC.Reasm_Need = 4
+                                      and then HC.Reasm_Len <= 4
+                                      and then HC.Reasm_Buf'Length = Max_HS_Msg));
             pragma Assert (Reasm_Coherent (HC));
          end;
       else
@@ -2732,6 +2834,21 @@ is
             OK := False;
             goto Cleanup;
          end if;
+         --  Proof decomposition: the prover cannot re-establish the whole
+         --  predicate in one step after an unrelated HC component write.
+         --  Each conjunct is discharged separately, then used as a lemma.
+         pragma Assert (HC.Reasm_Buf = null
+                        or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+         pragma Assert (HC.Reasm_Buf = null
+                        or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+         pragma Assert (HC.Reasm_Buf = null
+                        or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
+                                 else HC.Reasm_Need >= 4));
+         pragma Assert (HC.Reasm_Buf = null
+                        or else (if HC.Reasm_Hdr_Pending then
+                                   HC.Reasm_Need = 4
+                                   and then HC.Reasm_Len <= 4
+                                   and then HC.Reasm_Buf'Length = Max_HS_Msg));
          pragma Assert (Reasm_Coherent (HC));
       end if;
 
