@@ -57,6 +57,17 @@
             buildInputs = with pkgs; [ valgrind ];
 
             shellHook = ''
+              #  tests/ctgrind/ctgrind_helpers.c does #include <valgrind/memcheck.h>,
+              #  but gprbuild compiles it with ALIRE's toolchain gcc
+              #  (~/.local/share/alire/toolchains/gnat_native_*/bin/gcc), not the
+              #  nix-wrapped one. That plain gcc ignores NIX_CFLAGS_COMPILE, so
+              #  buildInputs above is not sufficient on its own. C_INCLUDE_PATH is
+              #  honoured by any gcc, wrapped or not.
+              #
+              #  This is invisible on a dev box that has system valgrind headers
+              #  in /usr/include -- the build silently uses those instead.
+              export C_INCLUDE_PATH="${pkgs.valgrind.dev}/include''${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
+
               echo "SPARKTLS dev shell: use ci/check.sh for the reproducible CI lane."
             '';
           };
