@@ -1,7 +1,9 @@
 # SparkTLS
 
-SparkTLS is a pure SPARK/Ada TLS 1.3 implementation — no C code, no heap allocation,
-designed for formal verification.
+SparkTLS is a TLS 1.3 and TLS 1.2 implementation in SPARK/Ada, designed for
+formal verification. The library contains no C code; the accelerated crypto
+paths in SPARKTLSCrypto use x86 inline assembly, gated by runtime CPUID
+dispatch.
 
 **Note: This project is still in development and is not suitable for production use.**
 
@@ -16,7 +18,10 @@ designed for formal verification.
 - TLS 1.3 PSK session resumption (psk_dhe_ke mode, forward-secret)
 - TLS 1.2 client + server session ticket resumption (RFC 5077 tickets)
 - ALPN with strict echo-check (RFC 7301 §3.1/§3.2)
-- Zero heap allocation — all buffers are stack or session-owned
+- Heap allocation is bounded and validated: wire-declared lengths are
+  converted to constrained subtypes before any allocation, so "validate
+  before allocate" is enforced at the type level. Reassembly and RecordFlux
+  buffers are heap-allocated and released explicitly
 - RecordFlux-generated message serialization/parsing with SPARK contracts
 - Crypto provided by SPARKNaCl + SPARKTLSCrypto (formally verified, AES-NI / VAES / VPCLMULQDQ / AVX-512 ChaCha20 fast paths)
 
@@ -110,26 +115,51 @@ a production-facing release.
 
 | Dependency | Source | Notes |
 |------------|--------|-------|
-| [SPARKNaCl](https://github.com/rod-chapman/SPARKNaCl) | Alire crate | Crypto library (SPARK proven) |
-| [SPARKx509](https://github.com/docandrew/sparkx509) | Alire crate | X.509 certificate parser |
+| [SPARKNaCl](https://github.com/rod-chapman/SPARKNaCl) | git | Crypto library (SPARK proven) |
+| [SPARKTLSCrypto](https://github.com/docandrew/sparktlscrypto) | git | AES-GCM, ChaCha20-Poly1305, P-256/P-384, RSA, SHA-2, HKDF |
+| [SPARKx509](https://github.com/docandrew/sparkx509) | git | X.509 certificate parser |
+| [sparkentropy](https://github.com/docandrew/sparkentropy) | git | Needed by `examples/` only |
 | [RecordFlux](https://github.com/AdaCore/RecordFlux) | pip / GitHub | Only needed to regenerate `generated/` |
 
-SPARKNaCl and SPARKx509 are pulled automatically by `alr build`. RecordFlux is only
-needed if you modify the `.rflx` specs in `specs/`.
+**These are not pulled automatically.** `SPARKTLSCrypto` and `SPARKx509` are not
+published to the Alire community index, and `alire.toml` pins all of them by
+relative path (`../sparkx509`, `../sparktlscrypto`, `../sparknacl`) so they can
+be developed side by side. A checkout of `sparktls` on its own will fail to
+resolve. RecordFlux is only needed if you modify the `.rflx` specs in `specs/`.
 
 ## Building
+
+The sibling crates must sit alongside `sparktls`:
+
+```
+<parent>/
+  sparktls/          <- this repo
+  sparknacl/
+  sparkx509/
+  sparktlscrypto/
+  sparkentropy/      <- only needed to build examples/
+```
+
+`ci/fetch-deps.sh` clones them at known-good commits, and is safe to re-run —
+existing checkouts are left untouched:
 
 ```sh
 git clone https://github.com/docandrew/sparktls.git
 cd sparktls
+ci/fetch-deps.sh
 alr build
 ```
 
-Build the example TLS client:
+Note that committed `sparknacl` requires `gnatprove ^14.1.1` while everything
+here requires `^15.1.0`; those ranges are disjoint and `alr` will refuse to
+resolve. `ci/fetch-deps.sh` patches it after cloning — see the comment in that
+script for why this is a stopgap.
+
+Build the example programs (`tls_fetch`, `tls_blocking_server`, and others):
 
 ```sh
-alr exec -- gprbuild -P examples/tls_example.gpr tls_fetch.adb
-obj/examples/tls_fetch https://example.com/
+cd examples && alr build      # binaries land in bin/examples/
+bin/examples/tls_fetch https://example.com/
 ```
 
 ## Regenerating RecordFlux Code
@@ -165,6 +195,27 @@ To check for drift: regenerate into a scratch directory and diff, ignoring the
 
 ## Testing
 
+The full suite — build, unit, integration, protocol (tlsfuzzer), x509-limbo and
+BoGo:
+
+```sh
+tests/run_all.sh                  # release build, all suites
+tests/run_all.sh unit             # one suite: unit | integration | protocol | x509 | bogo
+tests/run_all.sh --checked        # debug build, runtime checks + contracts ON
+```
+
+`--checked` compiles with `-gnata` so preconditions, postconditions, predicates
+and `pragma Assert` are evaluated at runtime — it catches violations that proof
+did not. Integration tests are excluded from that lane; see the note in
+`tests/run_all.sh` about an RFLX 0.26.0 predicate that dereferences a null
+buffer after `Take_Buffer`.
+
+CI lanes and proof runs are in `ci/` — see `ci/README.md`. Proof should be run
+through `ci/prove.sh`, which contains gnatprove in a memory cgroup so a runaway
+solver cannot take the machine down.
+
+Ad-hoc checks:
+
 ```sh
 # ECDSA P-384 signature verification (NIST CAVP vectors from SigVer.rsp)
 cd /tmp && unzip /path/to/186-4ecdsatestvectors.zip
@@ -184,22 +235,25 @@ bin/examples/tls_fetch https://127.0.0.1:8443/ -k
 ## Architecture
 
 ```
-sparktls.ads/.adb              -- Session record, I/O buffers, config
-sparktls-client.ads/.adb       -- Client handshake state machine
-sparktls-server.ads/.adb       -- Server handshake (basic)
-sparktls-records.ads/.adb      -- TLS record layer (build/parse/encrypt/decrypt)
-sparktls-handshake.ads/.adb    -- Handshake message build/parse (via RecordFlux)
-sparktls-key_schedule.ads/.adb -- TLS 1.3 HKDF key derivation
-sparktls-rflx_bridge.ads/.adb  -- SPARKNaCl <-> RecordFlux type conversion
-sparktls-p384-field.ads/.adb   -- P-384 field arithmetic (Montgomery)
-sparktls-p384-point.ads/.adb   -- P-384 ECDHE key exchange
-sparktls-p384-ecdsa.ads/.adb   -- P-384 ECDSA signature verification
-sparktls-p256-*.ads/.adb       -- P-256 ECDHE and ECDSA
-sparktls-rsa.ads/.adb          -- RSA-PSS signature verification
-sparktls-aes_gcm.ads/.adb      -- AES-GCM AEAD
-generated/                     -- RecordFlux-generated SPARK (158 files)
-specs/                         -- RecordFlux .rflx TLS 1.3 message specs
+src/
+  sparktls.ads/.adb              -- Session record, I/O buffers, config
+  sparktls-client*.ads/.adb      -- Client handshake state machine (1.3 and 1.2)
+  sparktls-server*.ads/.adb      -- Server handshake state machine (1.3 and 1.2)
+  sparktls-records*.ads/.adb     -- TLS record layer (build/parse/encrypt/decrypt)
+  sparktls-handshake*.ads/.adb   -- Handshake message build/parse (via RecordFlux)
+  sparktls-key_schedule*.ads/.adb -- HKDF key derivation (1.3 and 1.2)
+  sparktls-rflx_bridge.ads/.adb  -- SPARKNaCl <-> RecordFlux type conversion
+  sparktls-tickets*.ads/.adb     -- Session ticket handling
+generated/                       -- RecordFlux-generated SPARK (169 files)
+specs/                           -- RecordFlux .rflx message specs (TLS 1.3 + 1.2)
+cli/                             -- sparktls_cli (devcert generation, etc.)
+examples/                        -- tls_fetch, tls_blocking_server, and others
 ```
+
+Crypto primitives live in the SPARKTLSCrypto and SPARKNaCl crates, not here —
+P-256/P-384 field, point and ECDSA operations, RSA, AES-GCM,
+ChaCha20-Poly1305, SHA-2 and HKDF. X.509 parsing and chain validation live in
+SPARKx509.
 
 ## Disclaimer
 

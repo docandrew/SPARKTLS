@@ -49,12 +49,10 @@ clone_at() {
     git -C "$PARENT/$dir" checkout --quiet "$ref"
 }
 
-# Directory names must match the paths in alire.toml exactly, including case:
-#   sparkx509 = { path='../sparkx509' }
-#   sparknacl = { path='../sparknacl' }
-#   sparktlscrypto = { path='../SPARKTLSCrypto' }
+# Directory names must match the paths in alire.toml. All lowercase, which
+# is also what `git clone` produces from the repo names -- no override needed.
 clone_at "$SPARKX509_URL"      "$SPARKX509_REF"      "sparkx509"
-clone_at "$SPARKTLSCRYPTO_URL" "$SPARKTLSCRYPTO_REF" "SPARKTLSCrypto"
+clone_at "$SPARKTLSCRYPTO_URL" "$SPARKTLSCRYPTO_REF" "sparktlscrypto"
 clone_at "$SPARKNACL_URL"      "$SPARKNACL_REF"      "sparknacl"
 clone_at "$SPARKENTROPY_URL"   "$SPARKENTROPY_REF"   "sparkentropy"
 
@@ -76,4 +74,4 @@ if [[ -f "$NACL_TOML" ]] && grep -q '\^14\.1\.1' "$NACL_TOML"; then
 fi
 
 echo "== sibling crates ready under $PARENT"
-ls -d "$PARENT"/sparkx509 "$PARENT"/SPARKTLSCrypto "$PARENT"/sparknacl "$PARENT"/sparkentropy 2>/dev/null
+ls -d "$PARENT"/sparkx509 "$PARENT"/sparktlscrypto "$PARENT"/sparknacl "$PARENT"/sparkentropy 2>/dev/null
