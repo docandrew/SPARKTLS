@@ -30,12 +30,19 @@ fi
 #  a clean separation between the ctgrind binaries and the bench /
 #  unit-test binaries (which need the optimize build).
 echo "Rebuilding library + harnesses in ctgrind mode..."
-( cd "$DIR" && SPARKTLSCRYPTO_BUILD_MODE=ctgrind alr -n --no-tty build >/dev/null 2>&1 )
+#  Capture rather than discard: a silent "Rebuild failed" is
+#  undiagnosable in CI, where the tree differs from a dev box.
+build_log="$(mktemp)"
+( cd "$DIR" && SPARKTLSCRYPTO_BUILD_MODE=ctgrind alr -n --no-tty build ) >"$build_log" 2>&1
 build_status=$?
 if [ "$build_status" -ne 0 ]; then
-  echo "Rebuild failed; aborting"
+  echo "Rebuild failed; aborting. Build output:"
+  sed "s/^/    /" "$build_log"
+  rm -f "$build_log"
   exit 2
 fi
+
+rm -f "$build_log"
 
 run_one() {
   local name="$1" expect_errs="$2"

@@ -14,15 +14,22 @@ export ALR_NON_INTERACTIVE=1
 export NO_COLOR=1
 
 echo "Rebuilding library + harnesses in optimize mode..."
-( cd "$DIR" && SPARKTLSCRYPTO_BUILD_MODE=optimize alr -n --no-tty build >/dev/null 2>&1 )
+#  Capture rather than discard: a silent "Rebuild failed" is
+#  undiagnosable in CI, where the tree differs from a dev box.
+build_log="$(mktemp)"
+( cd "$DIR" && SPARKTLSCRYPTO_BUILD_MODE=optimize alr -n --no-tty build ) >"$build_log" 2>&1
 build_status=$?
 if [ "$build_status" -ne 0 ]; then
-  echo "Rebuild failed; aborting"
+  echo "Rebuild failed; aborting. Build output:"
+  sed "s/^/    /" "$build_log"
+  rm -f "$build_log"
   exit 2
 fi
 
 echo "=== dudect statistical timing analysis ==="
 echo ""
+
+rm -f "$build_log"
 
 run_one() {
   local name="$1"

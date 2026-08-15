@@ -32,6 +32,12 @@ SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-2cbba6a6bb064d4a9f63cd9efbf029a7092b4a
 SPARKNACL_URL="https://github.com/rod-chapman/sparknacl.git"
 SPARKNACL_REF="${SPARKNACL_REF:-49e3bddf092561ce2b74c134a35acff91a2da9a4}"
 
+# Needed by examples/ (pinned ../../sparkentropy). Without it the examples
+# build fails and tls_fetch / tls_blocking_server never exist -- which the
+# integration, protocol (tlsfuzzer), realworld and benchmark suites all need.
+SPARKENTROPY_URL="https://github.com/docandrew/sparkentropy.git"
+SPARKENTROPY_REF="${SPARKENTROPY_REF:-e07febf337f81c4c78a7fd6efe56f30dec8e4608}"
+
 clone_at() {
     local url="$1" ref="$2" dir="$3"
     if [[ -d "$PARENT/$dir" ]]; then
@@ -50,6 +56,7 @@ clone_at() {
 clone_at "$SPARKX509_URL"      "$SPARKX509_REF"      "sparkx509"
 clone_at "$SPARKTLSCRYPTO_URL" "$SPARKTLSCRYPTO_REF" "SPARKTLSCrypto"
 clone_at "$SPARKNACL_URL"      "$SPARKNACL_REF"      "sparknacl"
+clone_at "$SPARKENTROPY_URL"   "$SPARKENTROPY_REF"   "sparkentropy"
 
 # --- sparknacl toolchain constraint -------------------------------------
 # Committed sparknacl HEAD declares gnatprove = "^14.1.1" and gnat >= 14.2.1.
@@ -69,4 +76,4 @@ if [[ -f "$NACL_TOML" ]] && grep -q '\^14\.1\.1' "$NACL_TOML"; then
 fi
 
 echo "== sibling crates ready under $PARENT"
-ls -d "$PARENT"/sparkx509 "$PARENT"/SPARKTLSCrypto "$PARENT"/sparknacl 2>/dev/null
+ls -d "$PARENT"/sparkx509 "$PARENT"/SPARKTLSCrypto "$PARENT"/sparknacl "$PARENT"/sparkentropy 2>/dev/null

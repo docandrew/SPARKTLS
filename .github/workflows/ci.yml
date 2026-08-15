@@ -22,8 +22,16 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-latest
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
+          # aarch64 is disabled until SPARKTLSCrypto builds without x86 asm.
+          # Its accelerated units (AES-NI, GHASH-NI, four AVX-512 modules --
+          # 12 files) call System.Machine_Code.Asm with x86 instructions and
+          # live in the unconditional "src" directory, so they cannot compile
+          # on aarch64. The CPUID dispatch is a RUNTIME gate for selecting an
+          # implementation on x86; it does not make the sources portable.
+          # Re-enable once a software-only build exists -- see
+          # PRODUCTION_READINESS.md, "P1: CI And Reproducibility".
+          # - arch: aarch64
+          #   runner: ubuntu-24.04-arm
     name: build-test (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     steps:

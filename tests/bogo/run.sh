@@ -37,6 +37,12 @@ PIPE_ARG=(-pipe)
 GO_VER="1.23.4"
 GO_URL="https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz"
 BORING_URL="https://boringssl.googlesource.com/boringssl"
+#  Pinned. BoGo is an upstream test suite that gains new cases over
+#  time; an unpinned clone means CI fails the day BoringSSL adds a
+#  test for something we do not implement (this happened with the
+#  PostQuantumEnabledByDefault* cases). Bump deliberately, then
+#  triage any new failures into the skip lists below.
+BORING_REV="${BORING_REV:-0b2b80bdb886ea106021512a16b66cfddafa8302}"
 export ALR_NON_INTERACTIVE=1
 export NO_COLOR=1
 
@@ -96,10 +102,23 @@ if [ ! -d "$BORING_DIR" ]; then
         echo "  SKIP: git not available"
         exit 0
     fi
-    if ! git clone --depth 1 -q "$BORING_URL" "$BORING_DIR" 2>&1; then
+    if ! git clone -q "$BORING_URL" "$BORING_DIR" 2>&1; then
         echo "  SKIP: BoringSSL clone failed (network?)"
         exit 0
     fi
+    if ! git -C "$BORING_DIR" checkout -q "$BORING_REV" 2>&1; then
+        echo "  SKIP: BoringSSL revision $BORING_REV not found"
+        exit 0
+    fi
+fi
+#  A cache from before the pin was introduced may sit at a different
+#  revision; realign it so local and CI runs agree.
+if [ -d "$BORING_DIR/.git" ] &&
+   [ "$(git -C "$BORING_DIR" rev-parse HEAD 2>/dev/null)" != "$BORING_REV" ]; then
+    echo "  Cached BoringSSL is at a different revision; checking out $BORING_REV"
+    git -C "$BORING_DIR" fetch -q origin "$BORING_REV" 2>/dev/null || true
+    git -C "$BORING_DIR" checkout -q "$BORING_REV" 2>/dev/null || \
+        echo "  WARNING: could not realign; results may differ from CI"
 fi
 
 # --- 4. Build the runner if not cached -------------------------------
@@ -177,6 +196,10 @@ UNSUPPORTED_SKIPS=(
   '*TicketCallback*' 'Server-DDoS-*' '*Fail*Callback*'
   '*EarlyCallback*' '*SRTP*' '*TLSUnique*' 'TLS-HintMismatch-*'
   'Peek-*' 'ShimSendAlert-*'
+  # Post-quantum key exchange (X25519MLKEM768 etc.) is not implemented.
+  # These assert PQ is on by default, which is a policy decision we have
+  # not taken; they are not conformance failures.
+  'PostQuantum*' '*MLKEM*' '*Kyber*'
   # BoringSSL compliance profiles exercise policy knobs we do not expose.
   'Compliance-*'
   # Active GREASE emission is intentionally out of scope. SPARKTLS keeps
