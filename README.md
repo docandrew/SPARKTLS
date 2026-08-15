@@ -80,7 +80,29 @@ a production-facing release.
 ## Not Yet Supported
 
 - TLS 1.2 session-ID resumption
-- Post-quantum key exchange (ML-KEM hybrid) — see `mlkem_roadmap`
+- Post-quantum key exchange (ML-KEM hybrid). SPARKTLS currently *tolerates*
+  PQ peers without negotiating with them: `Wire_Key_Share_Len` is sized at
+  16 KB so real ClientHellos carrying `X25519MLKEM768` (1220 bytes per entry)
+  parse rather than being dropped, but only X25519 / secp256r1 / secp384r1 are
+  offered or selected. Browser defaults have already moved to
+  `X25519MLKEM768`, so peers currently fall back to classical groups.
+
+  A plausible starting point is AWS Labs'
+  [LibFormalPQC](https://github.com/awslabs/LibFormalPQC), which
+  has an ML-KEM implementation in the SPARK Ada subset (`MLKEM/spark_ada`;
+  there is also an `HQC/spark_ada`). It comes from the same author as
+  SPARKNaCl, which this project already depends on. Note its own warning that
+  it is "absolutely NOT intended for production" — constant-time properties
+  are not formally verified at the generated-code level, intermediate values
+  are not sanitized as FIPS 203 requires, and performance is not competitive
+  with optimized implementations. Those caveats are worth reading in full
+  before adopting it; several of them apply to this project too.
+
+  Wycheproof ML-KEM known-answer vectors are already vendored under
+  `tests/wycheproof/` (`mlkem_512/768/1024_*_test.json`), and tlsfuzzer has
+  `test-tls13-mlkem.py`, so validation material is in place ahead of any
+  implementation. BoGo's `PostQuantum*` / `*MLKEM*` / `*Kyber*` cases are
+  skipped as out of scope until then — see `tests/bogo/CLASSIFICATION.md`.
 - AES-CCM cipher suites (gating item for a FIPS-conformant profile)
 - TLS 1.3 server-side 0-RTT (see "Not Supported" above — by design)
 
