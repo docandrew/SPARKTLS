@@ -7,7 +7,7 @@ Output of `rflx generate -d generated/ specs/*.rflx` against AdaCore's
 Generated with **RecordFlux 0.26.0**. Keep this directory in sync with
 `../specs/` — see "Checking for drift" below.
 
-After regeneration, re-apply this patch:
+After regeneration, re-apply these patches:
 
 1. **`rflx-rflx_generic_types.ads`**: delete the `with
    Ada.Unchecked_Deallocation;` line and the `Free` instantiation. We
@@ -27,6 +27,55 @@ After regeneration, re-apply this patch:
    `SPARK_Mode => Off` `RFLX_Free` wrappers, which are real gaps in the
    verification story. Not yet tested for *proof* impact (only
    legality/flow), so it stays applied until someone measures it.
+
+2. **`rflx-tls_handshake-server_hello.ads`**: add a `Buffer /= null and then`
+   guard before each of the 8 `Buffer.all (RFLX_Types.To_Index ...)` slices in
+   the context `Dynamic_Predicate` (around lines 1720, 1729, 1738, 1747, 1829,
+   1836, 1843, 1850 — the HelloRetryRequest sentinel comparisons).
+
+   Apply with:
+
+   ```sh
+   python3 - <<'EOF'
+   import re
+   p = 'generated/rflx-tls_handshake-server_hello.ads'
+   s = open(p, encoding='utf8').read()
+   # NB: exclude "Ctx.Buffer.all" (~line 2195) — that is a Bytes-valued
+   # expression in a function body, not a boolean conjunct; guarding it is a
+   # type error and will not compile.
+   pat = re.compile(r'(?<!Ctx\.)\bBuffer\.all \(RFLX_Types\.To_Index')
+   assert len(pat.findall(s)) == 8
+   open(p, 'w', encoding='utf8').write(
+       pat.sub('Buffer /= null and then Buffer.all (RFLX_Types.To_Index', s))
+   EOF
+   ```
+
+   **Why.** RecordFlux 0.26.0 emits those dereferences with no null guard.
+   After `Take_Buffer` — a legitimate, intended use — `Buffer` is null and the
+   predicate is not merely false but *unevaluable*. Consequences:
+
+   * Any build with assertions on (`-gnata`, i.e. `tests/run_all.sh --checked`)
+     dies with `access check failed` at `server_hello.ads:1729` on the first
+     real ServerHello. Reproduce with `bin/examples/tls_fetch https://github.com/`
+     built `--checked`. Release builds are unaffected: predicates are not
+     evaluated.
+   * GNATprove cannot discharge the 8 pointer-dereference checks, and the
+     failure cascades into the predicate checks at every use of the type.
+
+   **Measured effect** (chungus, level 1, same tree before and after):
+   `server_hello` went from **74 unproved to 28**. All 8 pointer-dereference
+   checks were eliminated; predicate checks fell 26 -> 15 and preconditions
+   27 -> 4. Reproduced qualitatively on the primary box (the exact counts
+   there were taken under contention and are not citable).
+
+   **Not fixed by this patch:** 8 `range check might fail` remain on the same
+   slices. Those need the buffer-bounds invariant relating
+   `Cursors (F_Random).First/.Last` to `Buffer.all'Range`, which non-nullness
+   alone does not give. Level 3 does not help (74 -> 70 unguarded).
+
+   This is a workaround for an upstream defect. Report it to AdaCore and drop
+   the patch once fixed; `rflx generate` will silently discard it otherwise,
+   and the proofs will regress with no obvious cause.
 
 ### Formerly patch 1 — `Bytes_Ptr` — NO LONGER NEEDED
 

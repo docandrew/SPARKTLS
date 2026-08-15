@@ -31,6 +31,13 @@ jobs:
         with:
           submodules: false
 
+      # alire.toml pins sparkx509 / sparknacl / sparktlscrypto by relative
+      # path so local development can edit them side by side. CI checks out
+      # only sparktls, so clone the siblings into the parent directory --
+      # actions/checkout cannot place a repo outside $GITHUB_WORKSPACE.
+      - name: Fetch sibling crates
+        run: bash ci/fetch-deps.sh
+
       - uses: DeterminateSystems/nix-installer-action@e50d5f73bfe71c2dd0aa4218de8f4afa59f8f81d # v16
 
       - uses: alire-project/setup-alire@8398015c233537c928d12293d46c0dcecb54434c # v5
@@ -65,6 +72,13 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: false
+
+      # alire.toml pins sparkx509 / sparknacl / sparktlscrypto by relative
+      # path so local development can edit them side by side. CI checks out
+      # only sparktls, so clone the siblings into the parent directory --
+      # actions/checkout cannot place a repo outside $GITHUB_WORKSPACE.
+      - name: Fetch sibling crates
+        run: bash ci/fetch-deps.sh
 
       - uses: DeterminateSystems/nix-installer-action@e50d5f73bfe71c2dd0aa4218de8f4afa59f8f81d # v16
 
