@@ -45,10 +45,23 @@ After regeneration, re-apply these patches:
    # type error and will not compile.
    pat = re.compile(r'(?<!Ctx\.)\bBuffer\.all \(RFLX_Types\.To_Index')
    assert len(pat.findall(s)) == 8
-   open(p, 'w', encoding='utf8').write(
-       pat.sub('Buffer /= null and then Buffer.all (RFLX_Types.To_Index', s))
+   open(p, 'w', encoding='utf8').write(pat.sub(
+       "Buffer /= null "
+       "and then RFLX_Types.To_Index (Cursors (F_Random).First) >= Buffer'First "
+       "and then RFLX_Types.To_Index (Cursors (F_Random).Last) <= Buffer'Last "
+       "and then Buffer.all (RFLX_Types.To_Index", s))
    EOF
    ```
+
+   The guard covers BOTH problems on those slices. Non-nullness alone fixes the
+   8 pointer-dereference checks; the two bounds conjuncts fix the 8 range
+   checks ("slice bounds must fit in the underlying array"). `Valid_Context`
+   already gives `Buffer'First = Buffer_First` / `Buffer'Last = Buffer_Last`
+   under `Buffer /= null`, but relating the *cursor* positions to those bounds
+   would mean chaining through `Cursors_Invariant`, which the prover does not
+   do. Stating them in the guard discharges them directly. It is a weakening
+   in the safe direction: out-of-range makes the conjunct vacuously true
+   rather than erroneous.
 
    **Why.** RecordFlux 0.26.0 emits those dereferences with no null guard.
    After `Take_Buffer` — a legitimate, intended use — `Buffer` is null and the
@@ -62,16 +75,20 @@ After regeneration, re-apply these patches:
    * GNATprove cannot discharge the 8 pointer-dereference checks, and the
      failure cascades into the predicate checks at every use of the type.
 
-   **Measured effect** (chungus, level 1, same tree before and after):
-   `server_hello` went from **74 unproved to 28**. All 8 pointer-dereference
+   **Measured effect** (level 1, same tree before and after):
+   `server_hello` went **80 -> 34** with the null guard alone, then **34 -> 26**
+   once the bounds conjuncts were added; 1262 checks proved. Crucially the
+   composition changed: 8 pointer-dereference and 8 range checks -> **zero
+   native runtime checks remain in this unit**. Everything left (18 predicate,
+   4 precondition, 4 postcondition) is a contract obligation, not AoRTE.
+   Earlier measurement on chungus with the null guard alone: 74 -> 28. All 8 pointer-dereference
    checks were eliminated; predicate checks fell 26 -> 15 and preconditions
    27 -> 4. Reproduced qualitatively on the primary box (the exact counts
    there were taken under contention and are not citable).
 
-   **Not fixed by this patch:** 8 `range check might fail` remain on the same
-   slices. Those need the buffer-bounds invariant relating
-   `Cursors (F_Random).First/.Last` to `Buffer.all'Range`, which non-nullness
-   alone does not give. Level 3 does not help (74 -> 70 unguarded).
+   **Still open in this unit:** 18 predicate checks, 4 preconditions,
+   4 postconditions — all contract obligations. Level 3 does not help
+   (74 -> 70 unguarded).
 
    This is a workaround for an upstream defect. Report it to AdaCore and drop
    the patch once fixed; `rflx generate` will silently discard it otherwise,
