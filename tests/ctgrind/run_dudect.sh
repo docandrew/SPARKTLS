@@ -31,6 +31,27 @@ echo ""
 
 rm -f "$build_log"
 
+#  Alire's toolchain gcc links against the system dynamic loader
+#  (/lib64/ld-linux-x86-64.so.2), which does not exist under nix on a hosted
+#  runner. The binaries then fail to launch, and a canary that never runs
+#  reports zero memcheck errors -- surfacing as "control should have leaked
+#  but didn't" rather than as an execution failure. Repoint the interpreter
+#  at nix's loader when running inside a nix shell.
+#  Ported from SPARKTLSCrypto tests/timing/run_ctgrind.sh (commit 8b5486d,
+#  "GH Runner valgrind patch"); this copy of the harness never received it.
+if [ -n "${NIX_CC:-}" ] && [ -f "$NIX_CC/nix-support/dynamic-linker" ]; then
+  nix_ld="$(cat "$NIX_CC/nix-support/dynamic-linker")"
+  if ! command -v patchelf >/dev/null 2>&1; then
+    echo "patchelf not installed; aborting"
+    exit 2
+  fi
+  for exe in "$BIN"/*; do
+    if [ -x "$exe" ] && [ -f "$exe" ]; then
+      patchelf --set-interpreter "$nix_ld" "$exe"
+    fi
+  done
+fi
+
 run_one() {
   local name="$1"
   local exe="$BIN/$name"

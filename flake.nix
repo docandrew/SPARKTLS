@@ -40,6 +40,7 @@
               gnumake
               iproute2
               openssl
+              patchelf
               procps
               python3
               tcpdump
