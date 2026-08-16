@@ -211,7 +211,7 @@ is
 
    function Effective_Sig_Algo_Count (Cfg : Config) return Natural is
      (if Cfg.Verify_Sig_Algo_Count > 0 then Cfg.Verify_Sig_Algo_Count
-      else 6);
+      else 9);
 
    ----------------------------------------------------------------------------
    --  Build procedures (keep manual serialization for simple output)
@@ -1188,14 +1188,37 @@ is
                   P := P + 2;
                end loop;
             else
+               --  Preference order: the server picks the first entry it
+               --  can satisfy, so PSS/ECDSA/Ed25519 come before PKCS#1.
+               --
+               --  rsa_pkcs1_* are listed LAST but must be listed. TLS 1.2
+               --  (RFC 5246 7.4.1.4.1) allows them for ServerKeyExchange
+               --  and most RSA deployments still use them; omitting them
+               --  made every such server unreachable -- the server signs
+               --  with rsa_pkcs1 regardless and a conforming client then
+               --  rejects a signature type it never offered (observed
+               --  against badssl.com, 2026-08-16: OpenSSL fails the same
+               --  way when restricted to our old list). We can already
+               --  verify all three: see Cert_Verify.Verify_Signature,
+               --  covered by the Wycheproof rsa_pkcs1_sha256/384/512
+               --  vectors.
+               --
+               --  Listing them here is RFC 8446 4.2.3 conformant: in TLS
+               --  1.3 rsa_pkcs1_* apply to signatures in CERTIFICATES and
+               --  must not be accepted for CertificateVerify. That
+               --  restriction belongs to the TLS 1.3 CV path, not to what
+               --  we advertise.
                SA_Raw :=
-                 (16#00#, 16#0C#,          --  list_len=12 (6 algorithms)
+                 (16#00#, 16#12#,          --  list_len=18 (9 algorithms)
                   16#04#, 16#03#,          --  ecdsa_secp256r1_sha256
                   16#05#, 16#03#,          --  ecdsa_secp384r1_sha384
                   16#08#, 16#04#,          --  rsa_pss_rsae_sha256
                   16#08#, 16#05#,          --  rsa_pss_rsae_sha384
                   16#08#, 16#06#,          --  rsa_pss_rsae_sha512
-                  16#08#, 16#07#);         --  ed25519
+                  16#08#, 16#07#,          --  ed25519
+                  16#04#, 16#01#,          --  rsa_pkcs1_sha256  (TLS 1.2)
+                  16#05#, 16#01#,          --  rsa_pkcs1_sha384  (TLS 1.2)
+                  16#06#, 16#01#);         --  rsa_pkcs1_sha512  (TLS 1.2)
             end if;
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space

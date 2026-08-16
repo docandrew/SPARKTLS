@@ -801,4 +801,33 @@ is
       end case;
    end Describe;
 
+   ----------------------
+   -- Error_From_Alert --
+   ----------------------
+
+   function Error_From_Alert (Description : Byte) return Error_Code is
+   begin
+      case Description is
+         when 40  => return Handshake_Failure;          --  handshake_failure
+         when 42 | 43 => return Bad_Certificate;        --  bad/unsupported cert
+         when 44 => return Certificate_Verify_Failed;   --  certificate_revoked
+         when 45 => return Certificate_Expired;         --  certificate_expired
+         when 46 => return Bad_Certificate;             --  certificate_unknown
+         when 47 => return Illegal_Parameter;           --  illegal_parameter
+         when 48 => return Certificate_Verify_Failed;   --  unknown_ca
+         when 49 => return Certificate_Verify_Failed;   --  access_denied
+         when 50 => return Decode_Error;                --  decode_error
+         when 51 => return Certificate_Verify_Failed;   --  decrypt_error
+         when 70 => return Protocol_Version;            --  protocol_version
+         when 71 => return Handshake_Failure;           --  insufficient_security
+         when 80 => return Internal_Error;              --  internal_error
+         when 109 => return Missing_Extension;          --  missing_extension
+         when 110 => return Unsupported_Extension;      --  unsupported_extension
+         when 112 => return Illegal_Parameter;          --  unrecognized_name
+         when 116 => return Certificate_Required;       --  certificate_required
+         when 120 => return No_Application_Protocol;    --  no_application_protocol
+         when others => return Handshake_Failure;
+      end case;
+   end Error_From_Alert;
+
 end SPARKTLS;

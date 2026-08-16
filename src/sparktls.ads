@@ -2283,6 +2283,17 @@ is
    --  the RFC clause. Total: every Error_Code value has a description, so
    --  there is no fallback case to go stale when the type grows.
    function Describe (E : Error_Code) return String;
+
+   --  Map a received TLS alert description (RFC 8446 s6.2 / RFC 5246 s7.2)
+   --  onto our Error_Code.
+   --
+   --  When a peer rejects us it says why, in the alert's description byte.
+   --  Discarding that and reporting a generic failure throws away the only
+   --  diagnostic the peer gave us -- "server sent handshake_failure" is
+   --  actionable, "unexpected message" is not. Unrecognised descriptions map
+   --  to Handshake_Failure rather than Internal_Error: an unknown alert from
+   --  the peer is a negotiation outcome, not a fault on our side.
+   function Error_From_Alert (Description : Byte) return Error_Code;
    function Role (S : Session) return TLS_Role;
    function Last_Error (S : Session) return Error_Code;
    function Negotiated_Suite (S : Session) return Unsigned_16;

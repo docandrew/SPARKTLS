@@ -4340,8 +4340,23 @@ is
 	                                 S.Warning_Alerts_Recvd + 1;
 	                              Result := OK;
 	                           end if;
-	                        else
+	                        elsif S.Input.Data (Alert_Pos + 1) = 0 then
+	                           --  close_notify before ServerHello: the peer
+	                           --  hung up mid-handshake. Unchanged behaviour.
 	                           S.Last_Error := Unexpected_Message;
+	                           Set_State (S, Error_State);
+	                           Result := Error_Alert;
+	                        else
+	                           --  Fatal alert. Reflect the peer's description
+	                           --  instead of discarding it: the server has
+	                           --  just told us why it rejected the handshake
+	                           --  (e.g. handshake_failure when no signature
+	                           --  algorithm is shared), and reporting
+	                           --  "unexpected message" hides that. No alert
+	                           --  is queued in reply -- we are reacting to
+	                           --  the peer's alert, not raising our own.
+	                           S.Last_Error :=
+	                              Error_From_Alert (S.Input.Data (Alert_Pos + 1));
 	                           Set_State (S, Error_State);
 	                           Result := Error_Alert;
 	                        end if;
