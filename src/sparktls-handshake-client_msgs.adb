@@ -1010,6 +1010,19 @@ is
       --  field just written.
       pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
                      = RBT.Bit_Length (8) * RBT.Bit_Length (Ext_Total_All));
+      --  One more link in the accounting chain, which previously stopped at
+      --  F_Extensions_Length. That write consumes 2 bytes (57 -> 59), so the
+      --  space remaining for the extensions field itself is
+      --  CH_Body_Len - (59 + Session_ID_Len). Since
+      --  CH_Body_Len = 59 + Session_ID_Len + Ext_Total_All, that is exactly
+      --  8 * Ext_Total_All -- i.e. Field_Size of the field, which is the
+      --  Sufficient_Space conjunct Switch_To_Extensions_TLS requires.
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (59 + Session_ID_Len)));
+      pragma Assert
+        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+         >= RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS));
 
 	      --  Build extensions sequence
 	      declare
@@ -1018,7 +1031,70 @@ is
               RBT.Bit_Length (8) * RBT.Bit_Length (Ext_Total_All)
               with Ghost;
 			      begin
+            --  Byte-alignment of the extensions field start, which
+            --  Switch_To_Extensions_TLS demands as a precondition.
+            --
+            --  RFLX generates "Post => True" for Field_First (and silences
+            --  the resulting warning), so the start position carries no
+            --  published contract. It does publish "rem Byte'Size = 0" for
+            --  both Field_Size and Field_Last on this field. Since
+            --  Last = First + Size - 1, that pins First: with Last and Size
+            --  both byte-aligned, First rem 8 = 1 -- bit indices are
+            --  1-based, so an aligned start is 1 where an aligned end is 0.
+            --
+            --  Derived here rather than by patching the generated contract:
+            --  giving Field_First an explicit postcondition replaces the
+            --  expression-function definition GNATprove already uses, which
+            --  loses the field's *value* and costs more proofs than it buys
+            --  (measured; see generated/README.md "REJECTED").
+            pragma Assert
+              (RFLX.TLS_Handshake.Client_Hello.Field_Size
+                 (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+               rem RBT.Byte'Size = 0);
+            pragma Assert
+              (RFLX.TLS_Handshake.Client_Hello.Field_Last
+                 (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+               rem RBT.Byte'Size = 0);
+            pragma Assert
+              (RFLX.TLS_Handshake.Client_Hello.Field_Last
+                 (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+               = RFLX.TLS_Handshake.Client_Hello.Field_First
+                   (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+                 + RFLX.TLS_Handshake.Client_Hello.Field_Size
+                     (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+                 - 1);
+            pragma Assert
+              (RFLX.TLS_Handshake.Client_Hello.Field_First
+                 (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+               rem RBT.Byte'Size = 1);
+
 			         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
+            --  Walk the sequence context's free space back to the field
+            --  size we already pinned above. Switch_To_Extensions_TLS
+            --  publishes all three links: the sequence spans exactly the
+            --  extensions field, and starts empty.
+            pragma Assert
+              (Exts_Ctx.First
+               = RFLX.TLS_Handshake.Client_Hello.Field_First
+                   (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS));
+            pragma Assert
+              (Exts_Ctx.Last
+               = RFLX.TLS_Handshake.Client_Hello.Field_Last
+                   (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS));
+            pragma Assert
+              (RFLX.TLS_Handshake.CH_Extensions_TLS.Sequence_Last (Exts_Ctx)
+               = Exts_Ctx.First - 1);
+            --  Last - First + 1 = Field_Size, and Available_Space is
+            --  Last - Sequence_Last, so the two coincide when the sequence
+            --  is empty -- which the Switch postcondition guarantees.
+            pragma Assert
+              (RFLX.TLS_Handshake.Client_Hello.Field_Last
+                 (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+               = RFLX.TLS_Handshake.Client_Hello.Field_First
+                   (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+                 + RFLX.TLS_Handshake.Client_Hello.Field_Size
+                     (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+                 - 1);
             pragma Assert
               (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                  (Exts_Ctx) = Remaining_Ext_Bits);
