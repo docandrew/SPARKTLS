@@ -10,6 +10,7 @@ with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Handshake.Server_Msgs;
 with Det_Random_Lib;
+with SPARKTLS.Test_Support;
 
 procedure Test_Parse_Client_Hello is
 
@@ -217,7 +218,7 @@ procedure Test_Parse_Client_Hello is
 
    procedure Init_Context (S : out Session; HC : out Handshake_Context) is
    begin
-      S  := (others => <>);
+      SPARKTLS.Test_Support.Reset (S);
       HC := (others => <>);
       HC.Cfg.Random := Det_Random_Lib.Det_Random'Access;
    end Init_Context;
@@ -260,7 +261,7 @@ procedure Test_Parse_Client_Hello is
       SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
       Check ("Minimal well-formed CH parses (OK = True)", OK);
       Check ("Minimal CH selects TLS_AES_128_GCM_SHA256",
-             S.Negotiated_Suite = Suite_AES_128_GCM_SHA256);
+             Negotiated_Suite (S) = Suite_AES_128_GCM_SHA256);
    end Test_Wellformed_Min;
 
    procedure Test_Random_Extracted is
@@ -322,7 +323,7 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("TLS_AES_256_GCM_SHA384 selected",
              OK and then
-             S.Negotiated_Suite = Suite_AES_256_GCM_SHA384);
+             Negotiated_Suite (S) = Suite_AES_256_GCM_SHA384);
    end Test_Suite_TLS13_AES256;
 
    procedure Test_Suite_Prefers_ChaCha is
@@ -343,7 +344,7 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("ChaCha20 preferred over AES-128",
              OK and then
-             S.Negotiated_Suite = Suite_CHACHA20_POLY1305_SHA256);
+             Negotiated_Suite (S) = Suite_CHACHA20_POLY1305_SHA256);
    end Test_Suite_Prefers_ChaCha;
 
    procedure Test_Suite_TLS12 is
@@ -362,8 +363,8 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("TLS 1.2 ECDHE-RSA-AES128 selected",
              OK and then
-             (S.Negotiated_Suite = 0
-              and then S.Negotiated_Suite_12 =
+             (Negotiated_Suite (S) = 0
+              and then Negotiated_Suite_12 (S) =
                        Suite_ECDHE_RSA_AES128_GCM_SHA256));
    end Test_Suite_TLS12;
 
@@ -386,7 +387,7 @@ procedure Test_Parse_Client_Hello is
          SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
       end;
       Check ("TLS 1.2 compression list containing null is accepted",
-             OK and then S.Negotiated_Suite_12 =
+             OK and then Negotiated_Suite_12 (S) =
                Suite_ECDHE_RSA_AES128_GCM_SHA256);
    end Test_TLS12_Compression_List_With_Null;
 
@@ -408,7 +409,7 @@ procedure Test_Parse_Client_Hello is
          SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
       end;
       Check ("TLS 1.3 compression list with extra method is rejected",
-             not OK and then S.Last_Error = Illegal_Parameter);
+             not OK and then Last_Error (S) = Illegal_Parameter);
    end Test_TLS13_Compression_List_With_Extra_Rejected;
 
    procedure Test_KS_X25519 is
@@ -675,7 +676,7 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("Idempotent: both succeed", OK1 and OK2);
       Check ("Idempotent: same negotiated suite",
-             S1.Negotiated_Suite = S2.Negotiated_Suite);
+             Negotiated_Suite (S1) = Negotiated_Suite (S2));
       Check ("Idempotent: same Client_Has_X25519",
              HC1.Client_Has_X25519 = HC2.Client_Has_X25519);
       Check ("Idempotent: same Peer_PK",

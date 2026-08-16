@@ -92,14 +92,14 @@ is
       Cfg : in     Config)
    --  The body is SPARK_Mode => Off, so this postcondition is ASSUMED by
    --  GNATprove rather than checked. It must therefore state only what is
-   --  true on every path: both failure paths leave S.State = Error_State.
+   --  true on every path: both failure paths leave State (S) = Error_State.
    --  Role is set in the initial aggregate and never changed (Set_State
    --  frames it).
    with Pre  => Cfg.Random /= null
                 and then Cfg.Local /= null
                 and then Cfg.Local.Has_Identity,
-        Post => S.Role = Role_Server and
-                S.State in Wait_Client_Hello | Error_State;
+        Post => Role (S) = Role_Server and
+                State (S) in Wait_Client_Hello | Error_State;
 
    --  RFC 8446 §4.1: Step the server handshake / record processing
    --  state machine.
@@ -115,27 +115,32 @@ is
    procedure Advance
      (S      : in out Session;
       Result :    out Action)
-   with Pre  => S.State /= Idle and S.Role = Role_Server,
+   with Pre  => State (S) /= Idle and Role (S) = Role_Server,
         Post => (if Result = Handshake_Done then
-                       S.State = Connected)
+                       State (S) = Connected)
                 and (if Result = Shutdown then
-                       S.State = Closed)
+                       State (S) = Closed)
                 and (if Result = Error_Alert then
-                       S.State = Closed);
+                       State (S) = Closed);
 
    --  RFC 8446 §6.1: Send a close_notify alert.
    --  Transitions to Closing state.
    procedure Close_Notify (S : in out Session)
-   with Pre  => (S.State = Connected or S.State = Closing)
-                and S.Role = Role_Server
-                and Nonce_Space_Available (S.Server_App)
+   with Pre  => (State (S) = Connected or State (S) = Closing)
+                and Role (S) = Role_Server
+                and Nonce_Space_Available (Server_App (S))
                 and SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                      (S.Server_Seq_12),
-        Post => S.State = Closing;                 --  RFC 8446 §6.1
+                      (Server_Seq_12 (S)),
+        Post => State (S) = Closing;                 --  RFC 8446 §6.1
 
    --  True if a client certificate was received (mutual TLS).
-   function Has_Peer_Certificate (S : Session) return Boolean is
-      (S.Peer_Cert_Valid);
+   --
+   --  Declared here, completed in the private part below: once Session is a
+   --  private type, an expression function in a public child's VISIBLE part
+   --  may not name Session components. The private part of a public child
+   --  does have that visibility, and GNATprove still reads the completion,
+   --  so this is a relocation with no change in meaning for the prover.
+   function Has_Peer_Certificate (S : Session) return Boolean;
 
    ----------------------------------------------------------------------------
    --  RFC 5077 TLS 1.2 ticket encryption key (TEK) rotation
@@ -208,5 +213,14 @@ is
    --      transit process memory briefly during ticket encryption —
    --      a pure-HSM operation would require AES-GCM offload to the
    --      HSM, which is not supported today.)
+
+private
+
+   --  Completions of the query functions declared above. A public child's
+   --  private part may name the parent's private components, so these keep
+   --  their original bodies verbatim once Session becomes a private type.
+
+   function Has_Peer_Certificate (S : Session) return Boolean is
+      (S.Peer_Cert_Valid);
 
 end SPARKTLS.Server;

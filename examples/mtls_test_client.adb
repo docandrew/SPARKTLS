@@ -405,8 +405,8 @@ begin
             end;
          when Error_Alert =>
             Send_Pending;
-            Err ("handshake error: state=" & S.State'Image
-                 & " err=" & S.Last_Error'Image);
+            Err ("handshake error: state=" & State (S)'Image
+                 & " err=" & Last_Error (S)'Image);
             Run_Failed := True;
             exit Loop1;
          when Shutdown =>

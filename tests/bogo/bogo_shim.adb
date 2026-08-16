@@ -31,6 +31,7 @@ with Entropy_Random;
 with X509;
 
 with GNAT.Sockets;               use GNAT.Sockets;
+with SPARKTLS.Test_Support;
 
 procedure Bogo_Shim is
 
@@ -263,8 +264,8 @@ procedure Bogo_Shim is
    procedure Err_State (Prefix : String; S : SPARKTLS.Session) is
    begin
       Err (Prefix
-           & " state=" & State_Name (S.State)
-           & " last_error=" & Error_Name (S.Last_Error));
+           & " state=" & State_Name (State (S))
+           & " last_error=" & Error_Name (Last_Error (S)));
    end Err_State;
 
    procedure Trace_Step (Prefix : String; S : SPARKTLS.Session;
@@ -272,15 +273,15 @@ procedure Bogo_Shim is
    begin
       Trace (Prefix
              & " action=" & Action_Name (Res)
-             & " state=" & State_Name (S.State)
-             & " last_error=" & Error_Name (S.Last_Error)
+             & " state=" & State_Name (State (S))
+             & " last_error=" & Error_Name (Last_Error (S))
              & " in=" & N32'Image (SPARKTLS.Input_Available (S))
              & " out=" & N32'Image (SPARKTLS.Output_Pending (S))
-             & " version=" & TLS_Version'Image (S.Negotiated_Version)
-             & " suite13=" & Unsigned_16'Image (S.Negotiated_Suite)
-             & " suite12=" & Unsigned_16'Image (S.Negotiated_Suite_12)
-             & " cseq12=" & Unsigned_64'Image (S.Client_Seq_12)
-             & " sseq12=" & Unsigned_64'Image (S.Server_Seq_12));
+             & " version=" & TLS_Version'Image (SPARKTLS.Get_Version (S))
+             & " suite13=" & Unsigned_16'Image (Negotiated_Suite (S))
+             & " suite12=" & Unsigned_16'Image (Negotiated_Suite_12 (S))
+             & " cseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Client_Seq_12 (S))
+             & " sseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Server_Seq_12 (S)));
    end Trace_Step;
 
    --  ------------------------------------------------------------------
@@ -1235,7 +1236,7 @@ procedure Bogo_Shim is
          case Res is
             when Has_Output =>
                Send_Pending;
-               if S.State = Error_State then
+               if State (S) = Error_State then
                   delay 0.05;
                   Ada.Command_Line.Set_Exit_Status
                     (Ada.Command_Line.Exit_Status

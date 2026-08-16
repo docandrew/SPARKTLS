@@ -493,7 +493,7 @@ procedure TLS_Web_Epoll is
 
             when SPARKTLS.Error_Alert =>
                Put_Line ("  TLS error: " &
-                  Conn.S.Last_Error'Image);
+                  SPARKTLS.Last_Error (Conn.S)'Image);
                Conn.State := Closed;
                exit;
 

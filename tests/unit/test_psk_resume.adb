@@ -2,7 +2,7 @@
 --
 --  Verifies that:
 --    1. A Session_Ticket placed in Cfg.Resume_Ticket flows through
---       Init into S.Ticket.
+--       Init into the session ticket (see Client.Get_Session_Ticket).
 --    2. The resulting ClientHello contains the pre_shared_key
 --       extension (tag 0x0029) and a psk_key_exchange_modes
 --       extension (tag 0x002D).
@@ -23,6 +23,7 @@ with SPARKTLS.Client;
 with SPARKTLS.Tickets_12;
 with Det_Random_Lib;
 with X509;
+with SPARKTLS.Test_Support;
 
 procedure Test_PSK_Resume is
 
@@ -148,11 +149,12 @@ begin
    SPARKTLS.Client.Init (S, Cfg);
 
    Check ("Init sets Client_Hello_Sent state",
-          S.State = Client_Hello_Sent);
+          State (S) = Client_Hello_Sent);
    Check ("Output_Pending > 0 after Init",
           Output_Pending (S) > 0);
-   Check ("Cfg.Resume_Ticket flows into S.Ticket",
-          S.Ticket.Valid and then S.Ticket.PSK_Len = 32);
+   Check ("Cfg.Resume_Ticket flows into the session ticket",
+          SPARKTLS.Client.Get_Session_Ticket (S).Valid
+          and then SPARKTLS.Client.Get_Session_Ticket (S).PSK_Len = 32);
 
    --  Drain the CH and inspect.
    declare
@@ -212,7 +214,7 @@ begin
    --  Verify HC.PSK_Offered flag is set (so the matrix lets server
    --  echo pre_shared_key).
    Check ("HC.PSK_Offered = True after Init with valid ticket",
-          S.HC_Ptr /= null and then S.HC_Ptr.PSK_Offered);
+          SPARKTLS.Test_Support.PSK_Offered (S));
 
    declare
       S_Mismatch   : Session;
@@ -234,9 +236,9 @@ begin
          Has_PSK := Find_Ext (Net (5 .. Drained - 1), 16#0029#) /= Not_Found;
       end if;
       Check ("mismatched ticket hostname is not offered",
-             not S_Mismatch.Ticket.Valid
-             and then S_Mismatch.HC_Ptr /= null
-             and then not S_Mismatch.HC_Ptr.PSK_Offered
+             not SPARKTLS.Client.Get_Session_Ticket (S_Mismatch).Valid
+             and then SPARKTLS.Test_Support.Has_Handshake_Context (S_Mismatch)
+             and then not SPARKTLS.Test_Support.PSK_Offered (S_Mismatch)
              and then not Has_PSK);
    end;
 

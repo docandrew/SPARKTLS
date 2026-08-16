@@ -31,7 +31,7 @@ is
    --             SPARKTLS.Read_Plaintext (S, Buf, N);
    --             -- process Buf (0 .. N - 1)
    --          when Error_Alert =>
-   --             -- handle S.Last_Error
+   --             -- handle Last_Error (S)
    --             exit;
    --          when others =>
    --             null;
@@ -74,9 +74,9 @@ is
    --  builds a Config and calls Init, so it can promise no more than Init
    --  does. Init fails closed to Error_State.
    with Pre  => Random /= null and Clock /= null,
-        Post => S.Role = Role_Client and
-                S.State in Client_Hello_Sent | Error_State and
-                (if S.State = Client_Hello_Sent then Output_Pending (S) > 0);
+        Post => Role (S) = Role_Client and
+                State (S) in Client_Hello_Sent | Error_State and
+                (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
    --  Skip_Verify: skip full X.509 chain validation against Trust
    --  (development / self-signed certs). Without Skip_Verify, a trust
    --  store and clock must be configured before the handshake can
@@ -104,12 +104,12 @@ is
    --  GNATprove rather than checked. It must therefore state only what is
    --  true on every path. Init fails closed: Client_Config_Can_Start
    --  rejection, HC allocation failure, and Initialize_Client_Handshake
-   --  failure all leave S.State = Error_State with nothing queued. Role is
+   --  failure all leave State (S) = Error_State with nothing queued. Role is
    --  set in the initial aggregate and never changed (Set_State frames it).
    with Pre  => Cfg.Random /= null,
-        Post => S.Role = Role_Client and
-                S.State in Client_Hello_Sent | Error_State and
-                (if S.State = Client_Hello_Sent then Output_Pending (S) > 0);
+        Post => Role (S) = Role_Client and
+                State (S) in Client_Hello_Sent | Error_State and
+                (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
 
    --  Step the client handshake / record processing state machine.
    --
@@ -120,32 +120,31 @@ is
    --    Has_Output     => Drain_Ciphertext, send, Advance
    --    Plaintext_Ready => call Read_Plaintext
    --    Handshake_Done => connection is ready for app data
-   --    Error_Alert    => check S.Last_Error
+   --    Error_Alert    => check Last_Error (S)
    --  RFC 8446 §4.1: Step the client handshake / record processing
    --  state machine.
    procedure Advance
      (S      : in out Session;
       Result :    out Action)
-   with Pre  => S.State /= Idle and S.Role = Role_Client,
+   with Pre  => State (S) /= Idle and Role (S) = Role_Client,
         Post => (if Result = Handshake_Done then
-                       S.State = Connected)
+                       State (S) = Connected)
                 and (if Result = Shutdown then
-                       S.State = Closed)
+                       State (S) = Closed)
                 and (if Result = Error_Alert then
-                       S.State = Closed);
+                       State (S) = Closed);
 
    --  RFC 8446 §6.1: Send a close_notify alert.
    procedure Close_Notify (S : in out Session)
-   with Pre  => (S.State = Connected or S.State = Closing)
-                and S.Role = Role_Client
-                and Nonce_Space_Available (S.Client_App)
+   with Pre  => (State (S) = Connected or State (S) = Closing)
+                and Role (S) = Role_Client
+                and Nonce_Space_Available (Client_App (S))
                 and SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                      (S.Client_Seq_12),
-        Post => S.State = Closing;
+                      (Client_Seq_12 (S)),
+        Post => State (S) = Closing;
 
    --  True if a peer certificate has been received and parsed.
-   function Has_Peer_Certificate (S : Session) return Boolean is
-      (S.Peer_Cert_Valid);
+   function Has_Peer_Certificate (S : Session) return Boolean;
 
    ----------------------------------------------------------------------------
    --  Session resumption (RFC 8446 §4.6.1 / §2.2)
@@ -168,16 +167,14 @@ is
    --  NewSessionTicket. Servers may send NSTs at any point after
    --  Handshake_Done; callers should re-check (and resnapshot)
    --  whenever they return to their event loop.
-   function Has_Session_Ticket (S : Session) return Boolean is
-      (S.Ticket.Valid);
+   function Has_Session_Ticket (S : Session) return Boolean;
 
    --  True iff the current connection's handshake completed
    --  using the PSK supplied via Cfg.Resume_Ticket (server
    --  accepted resumption). Cleared on every Init/Configure.
    --  Stable across the freeing of the handshake context — the
    --  flag is mirrored from HC into S at handshake completion.
-   function Was_Resumed (S : Session) return Boolean is
-      (S.Resumed_From_PSK);
+   function Was_Resumed (S : Session) return Boolean;
 
    --  Note: 0-RTT (RFC 8446 §2.3 / §4.2.10) is intentionally
    --  not exposed. There is no Write_Early_Data / Was_0RTT_Accepted
@@ -193,14 +190,37 @@ is
    --
    --  RFC 8446 §4.6.1: tickets MUST NOT be reused; the caller is
    --  responsible for using each persisted ticket at most once.
-   function Get_Session_Ticket (S : Session) return Session_Ticket is
-      (S.Ticket);
+   function Get_Session_Ticket (S : Session) return Session_Ticket;
 
    --  RFC 5077 §3.3 TLS 1.2 session ticket extraction. Mirror of the
    --  TLS 1.3 PSK pair above. The TLS 1.2 server populates this
    --  field via NewSessionTicket; callers persist it across
    --  connections and inject into the next Config.TLS12_Resume_Ticket
    --  to attempt abbreviated resumption.
+   function Has_TLS12_Ticket (S : Session) return Boolean;
+
+   function Get_TLS12_Ticket (S : Session) return Session_Ticket_12;
+
+private
+
+   --  Completions of the query functions declared above. A public child's
+   --  private part may name the parent's private components, so these keep
+   --  their original bodies verbatim once Session becomes a private type.
+   --  GNATprove reads expression-function completions here, so the prover
+   --  sees exactly what it saw before this relocation.
+
+   function Has_Peer_Certificate (S : Session) return Boolean is
+      (S.Peer_Cert_Valid);
+
+   function Has_Session_Ticket (S : Session) return Boolean is
+      (S.Ticket.Valid);
+
+   function Was_Resumed (S : Session) return Boolean is
+      (S.Resumed_From_PSK);
+
+   function Get_Session_Ticket (S : Session) return Session_Ticket is
+      (S.Ticket);
+
    function Has_TLS12_Ticket (S : Session) return Boolean is
       (S.TLS12_New_Ticket.Valid);
 

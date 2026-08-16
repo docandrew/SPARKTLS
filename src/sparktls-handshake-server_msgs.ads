@@ -11,6 +11,14 @@ with X509;
 package SPARKTLS.Handshake.Server_Msgs with
    SPARK_Mode => On
 is
+   --  Needed because Session is now a private type: contracts that used to
+   --  say S.State'Old now say State (S)'Old, and Ada only permits 'Old on a
+   --  function call in a potentially-unevaluated context (inside an "if" in
+   --  a postcondition) when this pragma is present. The accessors are
+   --  precondition-free expression functions over one component each, so
+   --  evaluating them unconditionally is harmless. Same pragma RecordFlux
+   --  emits in its own generated specs.
+   pragma Unevaluated_Use_Of_Old (Allow);
    --  Maximum ServerHello size
    Max_Server_Hello : constant := 256;
 
@@ -57,23 +65,23 @@ is
                             and then
                               (if HC.Cfg.Random'Old /= null
                                then HC.Cfg.Random /= null)
-	                            and then S.State = S.State'Old
-	                            and then S.Role = S.Role'Old
-	                            and then S.Input.Read_Pos =
-	                              S.Input.Read_Pos'Old
-	                            and then S.Input.Write_Pos =
-	                              S.Input.Write_Pos'Old
-			                            and then S.Server_App.Counter =
-			                              S.Server_App.Counter'Old
+	                            and then State (S) = State (S)'Old
+	                            and then Role (S) = Role (S)'Old
+	                            and then Input (S).Read_Pos =
+	                              Input (S).Read_Pos'Old
+	                            and then Input (S).Write_Pos =
+	                              Input (S).Write_Pos'Old
+			                            and then Server_App (S).Counter =
+			                              Server_App (S).Counter'Old
 			                            and then HC.Server_HS.Counter =
 			                              HC.Server_HS.Counter'Old
-				                            and then S.Server_App.Suite =
-				                              S.Server_App.Suite'Old
+				                            and then Server_App (S).Suite =
+				                              Server_App (S).Suite'Old
 											                            and then HC.HRR_Sent = HC.HRR_Sent'Old
 				                            and then Reasm_Building (HC)
 				                            and then
 	                              (if OK and then HC.Version = TLS_1_3
-	                               then S.Negotiated_Suite in
+	                               then Negotiated_Suite (S) in
 	                                 Suite_AES_128_GCM_SHA256
 	                               | Suite_AES_256_GCM_SHA384
 	                               | Suite_CHACHA20_POLY1305_SHA256)
@@ -93,7 +101,7 @@ is
 		                and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                and then Reasm_Building (HC)
 		                and then Reasm_Buffer_Shaped (HC)
-		                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+		                and then Negotiated_Suite (S) in Suite_AES_128_GCM_SHA256
 	                                               | Suite_AES_256_GCM_SHA384
 	                                               | Suite_CHACHA20_POLY1305_SHA256
                 and then SPARKTLSCrypto.P384.Field.Initialized,
@@ -119,8 +127,8 @@ is
    --  May include ALPN extension if client offered and server matches.
    --
    --  Body writes S.Negotiated_ALPN on a successful match but never
-   --  touches S.State; the frame post lets callers preserve their
-   --  S.State knowledge through the call so the surrounding flight
+   --  touches State (S); the frame post lets callers preserve their
+   --  State (S) knowledge through the call so the surrounding flight
    --  builder can keep proving its Set_State / Send_Alert_And_Error
    --  preconditions.
    procedure Build_Encrypted_Extensions
@@ -132,14 +140,14 @@ is
                 and then Result'Last in 271 .. N32'Last - 1,
    --  Header(4) + ext_list_len(2) + SNI ack(4)
    --  + ALPN ext(7 + Max_Hostname_Len=255) = 272
-        Post => S.State = S.State'Old
-                and then S.Role = S.Role'Old
-                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                and then (if S.Role'Old = Role_Server
-                          and then S.State'Old not in
+        Post => State (S) = State (S)'Old
+                and then Role (S) = Role (S)'Old
+                and then Negotiated_Suite (S) = Negotiated_Suite (S)'Old
+                and then (if Role (S)'Old = Role_Server
+                          and then State (S)'Old not in
                             Idle | Closing | Closed | Error_State
-                          then S.Role = Role_Server
-                               and then S.State not in
+                          then Role (S) = Role_Server
+                               and then State (S) not in
                                  Idle | Closing | Closed | Error_State)
                 and then Len in 6 .. N32 (Result'Length);
 

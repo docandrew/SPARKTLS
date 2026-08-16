@@ -6,6 +6,14 @@ with X509;
 package SPARKTLS with
    SPARK_Mode => On
 is
+   --  Needed because Session is now a private type: contracts that used to
+   --  say S.State'Old now say State (S)'Old, and Ada only permits 'Old on a
+   --  function call in a potentially-unevaluated context (inside an "if" in
+   --  a postcondition) when this pragma is present. The accessors are
+   --  precondition-free expression functions over one component each, so
+   --  evaluating them unconditionally is harmless. Same pragma RecordFlux
+   --  emits in its own generated specs.
+   pragma Unevaluated_Use_Of_Old (Allow);
    ----------------------------------------------------------------------------
    --  Constants
    ----------------------------------------------------------------------------
@@ -1608,7 +1616,7 @@ is
       --  has access to HC, not S — so when an extension's contents
       --  violate its RFC (e.g. RFC 7301 §3.1 empty ALPN protocol_name),
       --  the parser stores the alert code here and the caller of
-      --  Parse_Client_Hello propagates it to S.Last_Error.
+      --  Parse_Client_Hello propagates it to Last_Error (S).
       Ext_Parse_Err : Error_Code := No_Error;
 
       --  Client's offered ALPN protocol (parsed from ClientHello)
@@ -2024,7 +2032,7 @@ is
    --  alert, the receiver MUST send its own close_notify in reply
    --  before closing the write side. After the reply is queued the
    --  connection enters the Closing state. This predicate captures
-   --  the post-receipt invariant: S.State = Closing AND the output
+   --  the post-receipt invariant: State (S) = Closing AND the output
    --  buffer holds the queued close_notify (or the reply attempt
    --  filled the buffer beyond capacity, in which case the caller
    --  drains then retries — Output_Pending > 0 still holds).
@@ -2222,6 +2230,250 @@ is
    --  embed a Resume_Ticket.
    ----------------------------------------------------------------------------
 
+   --  Opaque session state. The full definition is in the private part
+   --  below: consumers must go through the query functions rather than
+   --  reading or assigning components directly, so the state machine
+   --  cannot be corrupted from outside the library.
+   type Session is private;
+
+   ---------------------------------------------------------------------------
+   --  Session query functions.
+   --
+   --  Session is a private type, so contracts and callers reach its state
+   --  through these rather than by naming components. Each is an expression
+   --  function returning exactly one field (completions in the private part),
+   --  so every contract that used to say S.X and now says X (S) has the same
+   --  logical content -- the prover unfolds the definition either way.
+   --
+   --  The Ghost ones exist only so contracts can keep their original form.
+   --  They are usable in Pre/Post but NOT callable from ordinary code, so
+   --  internals like Traffic_Keys and the TLS 1.2 sequence counters are not
+   --  committed to the public API.
+   ---------------------------------------------------------------------------
+
+   function State (S : Session) return Connection_State;
+   function Role (S : Session) return TLS_Role;
+   function Last_Error (S : Session) return Error_Code;
+   function Negotiated_Suite (S : Session) return Unsigned_16;
+   function Negotiated_Suite_12 (S : Session) return Unsigned_16;
+
+   function Client_App (S : Session) return Traffic_Keys with Ghost;
+   function Server_App (S : Session) return Traffic_Keys with Ghost;
+   function Input (S : Session) return IO_Buffer with Ghost;
+   function Output (S : Session) return IO_Buffer with Ghost;
+   function Client_Seq_12 (S : Session) return Unsigned_64 with Ghost;
+   function Server_Seq_12 (S : Session) return Unsigned_64 with Ghost;
+   function Res_Master (S : Session) return Bytes_48 with Ghost;
+   function Exporter_Secret (S : Session) return Bytes_48 with Ghost;
+   function App_Data_Len (S : Session) return N32 with Ghost;
+
+
+   --  RFC 7301 §3.1/§3.2: validate the server's ALPN-echo body in a
+   --  SH or EE extension and (on success) copy the chosen protocol
+   --  name into S.Negotiated_ALPN. Body shape:
+   --     list_len(2) + proto_len(1) + proto_name(proto_len)
+   --
+   --  Body_Start is the index of the list_len byte in Data; E_Len is
+   --  the declared extension body length. Caller must guarantee
+   --  Body_Start + E_Len <= Data'Last + 1.
+   --
+   --  On failure:
+   --    Decode_Error      — body too short, empty proto, list/body
+   --                        length mismatch
+   --    Illegal_Parameter — chosen proto doesn't match the one we
+   --                        offered in CH (RFC 7301 §3.2)
+   procedure Validate_ALPN_Echo_Body
+     (Data       : in     Byte_Seq;
+      Body_Start : in     N32;
+      E_Len      : in     N32;
+      HC         : in     Handshake_Context;
+      S          : in out Session;
+      OK         :    out Boolean;
+      Err        :    out Error_Code)
+   with Pre  => Data'Length > 0
+                and then Data'Last < N32'Last
+                and then Body_Start >= Data'First
+                and then Body_Start <= Data'Last + 1
+                and then E_Len >= 0
+                and then E_Len <= Data'Last + 1 - Body_Start,
+        Post => State (S) = State (S)'Old
+                and then Client_App (S) = Client_App (S)'Old
+                and then Negotiated_Suite (S) = Negotiated_Suite (S)'Old;
+
+   ----------------------------------------------------------------------------
+   --  Buffer operations (transport layer interface)
+   ----------------------------------------------------------------------------
+
+   --  Transition to a new state. All state changes should go through this
+   --  procedure so callers retain the frame facts below.
+   procedure Set_State (S : in out Session; To : Connection_State)
+     with Post => State (S) = To
+                  --  Frame: Set_State only mutates State (S). Pin the
+                  --  unchanged fields so callers don't have to
+                  --  re-establish Pre's like Nonce_Space_Available
+                  --  (Server_App (S)) across the call.
+                  and Role (S) = Role (S)'Old
+                  and Server_App (S) = Server_App (S)'Old
+                  and Client_App (S) = Client_App (S)'Old
+                  and Input (S) = Input (S)'Old
+                  and Output (S) = Output (S)'Old
+                  and Server_Seq_12 (S) = Server_Seq_12 (S)'Old
+                  and Client_Seq_12 (S) = Client_Seq_12 (S)'Old
+                  and Last_Error (S) = Last_Error (S)'Old
+                  and Negotiated_Suite (S) = Negotiated_Suite (S)'Old
+                  and Negotiated_Suite_12 (S) = Negotiated_Suite_12 (S)'Old;
+
+   --  Push received ciphertext bytes into the session's input buffer.
+   --  RFC 8446 §5.1: the record layer accepts bytes from the transport.
+   --  State is not modified by feeding data.
+   procedure Feed_Ciphertext
+     (S         : in out Session;
+      Data      : in     Byte_Seq;
+      Bytes_Fed :    out N32)
+   with Pre  => Data'First = 0
+                and Data'Last < N32'Last,
+        Post => Bytes_Fed <= N32 (Data'Length)
+                and State (S) = State (S)'Old;         --  feeding doesn't change state
+
+   --  Pull ciphertext bytes from the session's output buffer to send.
+   --  State is not modified by draining data.
+   procedure Drain_Ciphertext
+     (S              : in out Session;
+      Dest           :    out Byte_Seq;
+      Bytes_Drained  :    out N32)
+   with Pre  => Dest'First = 0
+                and Dest'Last < N32'Last,
+        Relaxed_Initialization => Dest,
+        Post => Bytes_Drained <= N32 (Dest'Length)
+                and State (S) = State (S)'Old         --  draining doesn't change state
+                and (for all I in 0 .. Bytes_Drained - 1 =>
+                       Dest (I)'Initialized);
+
+   --  How many bytes are waiting to be sent?
+   function Output_Pending (S : Session) return N32;
+
+   ----------------------------------------------------------------------------
+   --  Session-scoped ghost predicates (added 2026-05-09 alongside
+   --  the alert-handling / DoS-bound fixes). Each pins an RFC
+   --  clause so a regression that re-introduces the unbounded
+   --  behavior is caught at proof time.
+   ----------------------------------------------------------------------------
+
+   --  RFC 8446 §6.1 / §6: warning-alert flood cap. Holds whenever
+   --  the receiver is still in a non-error state — once we exceed
+   --  Max_Warning_Alerts (4) we MUST transition to Error_State.
+   function Warning_Alerts_Bounded_RFC_8446_6_1
+     (S : Session) return Boolean
+     with Ghost;
+
+   --  RFC 8446 §5.2 / RFC 5246 §6.2.1: empty-record flood cap.
+   --  Same shape: ≤ 32 in the live state, > 32 only if we've
+   --  already transitioned to Error_State with the alert queued.
+   function Empty_Records_Bounded_RFC_8446_5_2
+     (S : Session) return Boolean
+     with Ghost;
+
+   --  RFC 8446 §5.2 / RFC 5246 §7.2: AEAD verification failure
+   --  MUST queue a fatal bad_record_mac alert and enter Error_State.
+   --  The previous behaviour returned Error_Alert without queuing,
+   --  so peers saw TCP RST and couldn't tell what went wrong.
+   function AEAD_Failure_Alert_Queued_RFC_8446_5_2
+     (S : Session) return Boolean
+     with Ghost;
+
+   --  How many input bytes are buffered?
+   function Input_Available (S : Session) return N32;
+
+   --  Is decrypted application data waiting to be read?
+   function Has_Plaintext (S : Session) return Boolean;
+
+   --  Which TLS version was negotiated?
+   --  Only meaningful after Handshake_Done.
+   function Get_Version (S : Session) return TLS_Version;
+
+   --  Which cipher suite was negotiated? (wire value)
+   --  Only meaningful after Handshake_Done.
+   function Get_Cipher_Suite (S : Session) return Unsigned_16;
+
+   --  Which ALPN protocol was negotiated?
+   --  Empty string if no ALPN or not yet negotiated.
+   function Get_ALPN (S : Session) return String;
+
+   --  Zero all key material in a Session.
+   --  Call after Close_Notify or on error to prevent key leakage.
+   --  Uses volatile writes to prevent compiler from optimizing
+   --  the zeroing away.
+   procedure Sanitize_Keys (S : in out Session)
+   with Post => Client_App (S).Key = Bytes_32'(others => 0)
+                and Server_App (S).Key = Bytes_32'(others => 0)
+                and Client_App (S).IV = Bytes_12'(others => 0)
+                and Server_App (S).IV = Bytes_12'(others => 0)
+                and Res_Master (S) = Bytes_48'(others => 0)
+                and Exporter_Secret (S) = Bytes_48'(others => 0);
+
+   --  RFC 5705 / RFC 8446 §7.5: derive application-specific exporter
+   --  bytes from a completed TLS session. Label is an ASCII exporter label.
+   --  TLS 1.2 permits an empty label; TLS 1.3 requires a non-empty label
+   --  because it is embedded in an HKDF label. For TLS 1.2,
+   --  Use_Context controls whether the RFC
+   --  5705 context length prefix is included. For TLS 1.3 the context is
+   --  always hashed as part of RFC 8446 exporter derivation.
+   procedure Export_Keying_Material
+     (S           : in     Session;
+      Label       : in     String;
+      Context     : in     Byte_Seq;
+      Use_Context : in     Boolean;
+      Output      :    out Byte_Seq;
+      OK          :    out Boolean)
+   with Pre => Output'First = 0
+               and Output'Length > 0
+               and Output'Length <= 1024
+               and Label'Length <= 64
+               and Context'Length <= 62
+               and (if Context'Length > 0 then Context'First = 0),
+        Relaxed_Initialization => Output,
+        Post => (for all I in Output'Range => Output (I)'Initialized);
+
+   --  Read decrypted application data.
+   procedure Read_Plaintext
+     (S          : in out Session;
+      Dest       :    out Byte_Seq;
+      Bytes_Read :    out N32)
+   with Pre  => Dest'First = 0
+                and Dest'Last < N32'Last
+                and App_Data_Len (S) <= Max_Record_Plaintext,
+        Relaxed_Initialization => Dest,
+        Post => Bytes_Read <= N32 (Dest'Length)
+                and (for all I in 0 .. Bytes_Read - 1 =>
+                       Dest (I)'Initialized);
+
+   --  RFC 8446 §7.5: Encrypt and queue application data.
+   procedure Write_Plaintext
+     (S              : in out Session;
+      Plaintext      : in     Byte_Seq;
+      Bytes_Written  :    out N32)
+   with Pre  => State (S) = Connected and
+                In_App_Key_Phase (State (S)) and
+                Plaintext'First = 0 and
+                Plaintext'Length > 0 and
+                Plaintext'Last < N32'Last and
+                (if Role (S) = Role_Client then
+                   Nonce_Space_Available (Client_App (S)) and
+                   Client_Seq_12 (S) < Unsigned_64'Last
+                 else
+                   Nonce_Space_Available (Server_App (S)) and
+                   Server_Seq_12 (S) < Unsigned_64'Last),
+        Post => Bytes_Written <= N32 (Plaintext'Length) and
+                State (S) = Connected;
+
+private
+
+   --  Completions of the query functions and ghost predicates declared
+   --  above. Bodies are verbatim -- this is a relocation, not a rewrite.
+   --  The visible part of a package cannot name its own private
+   --  components, but the private part can, and GNATprove reads
+   --  expression-function completions here exactly as it did before.
+
    type Session is record
       --  State
       State        : Connection_State := Idle;
@@ -2326,215 +2578,55 @@ is
       HC_Ptr : Handshake_Context_Access := null;
    end record;
 
-   --  RFC 7301 §3.1/§3.2: validate the server's ALPN-echo body in a
-   --  SH or EE extension and (on success) copy the chosen protocol
-   --  name into S.Negotiated_ALPN. Body shape:
-   --     list_len(2) + proto_len(1) + proto_name(proto_len)
-   --
-   --  Body_Start is the index of the list_len byte in Data; E_Len is
-   --  the declared extension body length. Caller must guarantee
-   --  Body_Start + E_Len <= Data'Last + 1.
-   --
-   --  On failure:
-   --    Decode_Error      — body too short, empty proto, list/body
-   --                        length mismatch
-   --    Illegal_Parameter — chosen proto doesn't match the one we
-   --                        offered in CH (RFC 7301 §3.2)
-   procedure Validate_ALPN_Echo_Body
-     (Data       : in     Byte_Seq;
-      Body_Start : in     N32;
-      E_Len      : in     N32;
-      HC         : in     Handshake_Context;
-      S          : in out Session;
-      OK         :    out Boolean;
-      Err        :    out Error_Code)
-   with Pre  => Data'Length > 0
-                and then Data'Last < N32'Last
-                and then Body_Start >= Data'First
-                and then Body_Start <= Data'Last + 1
-                and then E_Len >= 0
-                and then E_Len <= Data'Last + 1 - Body_Start,
-        Post => S.State = S.State'Old
-                and then S.Client_App = S.Client_App'Old
-                and then S.Negotiated_Suite = S.Negotiated_Suite'Old;
+   --  Query function completions: one field each, verbatim.
 
-   ----------------------------------------------------------------------------
-   --  Buffer operations (transport layer interface)
-   ----------------------------------------------------------------------------
+   function State (S : Session) return Connection_State is (S.State);
+   function Role (S : Session) return TLS_Role is (S.Role);
+   function Last_Error (S : Session) return Error_Code is (S.Last_Error);
+   function Negotiated_Suite (S : Session) return Unsigned_16 is (S.Negotiated_Suite);
+   function Negotiated_Suite_12 (S : Session) return Unsigned_16 is (S.Negotiated_Suite_12);
+   function Client_App (S : Session) return Traffic_Keys is (S.Client_App);
+   function Server_App (S : Session) return Traffic_Keys is (S.Server_App);
+   function Input (S : Session) return IO_Buffer is (S.Input);
+   function Output (S : Session) return IO_Buffer is (S.Output);
+   function Client_Seq_12 (S : Session) return Unsigned_64 is (S.Client_Seq_12);
+   function Server_Seq_12 (S : Session) return Unsigned_64 is (S.Server_Seq_12);
+   function Res_Master (S : Session) return Bytes_48 is (S.Res_Master);
+   function Exporter_Secret (S : Session) return Bytes_48 is (S.Exporter_Secret);
+   function App_Data_Len (S : Session) return N32 is (S.App_Data_Len);
 
-   --  Transition to a new state. All state changes should go through this
-   --  procedure so callers retain the frame facts below.
-   procedure Set_State (S : in out Session; To : Connection_State)
-     with Post => S.State = To
-                  --  Frame: Set_State only mutates S.State. Pin the
-                  --  unchanged fields so callers don't have to
-                  --  re-establish Pre's like Nonce_Space_Available
-                  --  (S.Server_App) across the call.
-                  and S.Role = S.Role'Old
-                  and S.Server_App = S.Server_App'Old
-                  and S.Client_App = S.Client_App'Old
-                  and S.Input = S.Input'Old
-                  and S.Output = S.Output'Old
-                  and S.Server_Seq_12 = S.Server_Seq_12'Old
-                  and S.Client_Seq_12 = S.Client_Seq_12'Old
-                  and S.Last_Error = S.Last_Error'Old
-                  and S.Negotiated_Suite = S.Negotiated_Suite'Old
-                  and S.Negotiated_Suite_12 = S.Negotiated_Suite_12'Old;
-
-   --  Push received ciphertext bytes into the session's input buffer.
-   --  RFC 8446 §5.1: the record layer accepts bytes from the transport.
-   --  State is not modified by feeding data.
-   procedure Feed_Ciphertext
-     (S         : in out Session;
-      Data      : in     Byte_Seq;
-      Bytes_Fed :    out N32)
-   with Pre  => Data'First = 0
-                and Data'Last < N32'Last,
-        Post => Bytes_Fed <= N32 (Data'Length)
-                and S.State = S.State'Old;         --  feeding doesn't change state
-
-   --  Pull ciphertext bytes from the session's output buffer to send.
-   --  State is not modified by draining data.
-   procedure Drain_Ciphertext
-     (S              : in out Session;
-      Dest           :    out Byte_Seq;
-      Bytes_Drained  :    out N32)
-   with Pre  => Dest'First = 0
-                and Dest'Last < N32'Last,
-        Relaxed_Initialization => Dest,
-        Post => Bytes_Drained <= N32 (Dest'Length)
-                and S.State = S.State'Old         --  draining doesn't change state
-                and (for all I in 0 .. Bytes_Drained - 1 =>
-                       Dest (I)'Initialized);
-
-   --  How many bytes are waiting to be sent?
    function Output_Pending (S : Session) return N32 is
       (Available (S.Output));
 
-   ----------------------------------------------------------------------------
-   --  Session-scoped ghost predicates (added 2026-05-09 alongside
-   --  the alert-handling / DoS-bound fixes). Each pins an RFC
-   --  clause so a regression that re-introduces the unbounded
-   --  behavior is caught at proof time.
-   ----------------------------------------------------------------------------
-
-   --  RFC 8446 §6.1 / §6: warning-alert flood cap. Holds whenever
-   --  the receiver is still in a non-error state — once we exceed
-   --  Max_Warning_Alerts (4) we MUST transition to Error_State.
    function Warning_Alerts_Bounded_RFC_8446_6_1
      (S : Session) return Boolean is
      (S.Warning_Alerts_Recvd <= Max_Warning_Alerts
-      or else S.State = Error_State)
-     with Ghost;
+      or else S.State = Error_State);
 
-   --  RFC 8446 §5.2 / RFC 5246 §6.2.1: empty-record flood cap.
-   --  Same shape: ≤ 32 in the live state, > 32 only if we've
-   --  already transitioned to Error_State with the alert queued.
    function Empty_Records_Bounded_RFC_8446_5_2
      (S : Session) return Boolean is
      (S.Empty_Records_Recvd <= Max_Empty_Records
-      or else S.State = Error_State)
-     with Ghost;
+      or else S.State = Error_State);
 
-   --  RFC 8446 §5.2 / RFC 5246 §7.2: AEAD verification failure
-   --  MUST queue a fatal bad_record_mac alert and enter Error_State.
-   --  The previous behaviour returned Error_Alert without queuing,
-   --  so peers saw TCP RST and couldn't tell what went wrong.
    function AEAD_Failure_Alert_Queued_RFC_8446_5_2
      (S : Session) return Boolean is
      (S.State = Error_State
       and then S.Last_Error = Bad_Record_MAC
-      and then Output_Pending (S) > 0)
-     with Ghost;
+      and then Output_Pending (S) > 0);
 
-   --  How many input bytes are buffered?
    function Input_Available (S : Session) return N32 is
       (Available (S.Input));
 
-   --  Is decrypted application data waiting to be read?
    function Has_Plaintext (S : Session) return Boolean is
       (S.App_Data_Len > 0);
 
-   --  Which TLS version was negotiated?
-   --  Only meaningful after Handshake_Done.
    function Get_Version (S : Session) return TLS_Version is
       (S.Negotiated_Version);
 
-   --  Which cipher suite was negotiated? (wire value)
-   --  Only meaningful after Handshake_Done.
    function Get_Cipher_Suite (S : Session) return Unsigned_16 is
       (S.Negotiated_Suite);
 
-   --  Which ALPN protocol was negotiated?
-   --  Empty string if no ALPN or not yet negotiated.
    function Get_ALPN (S : Session) return String is
       (S.Negotiated_ALPN.Data (1 .. S.Negotiated_ALPN.Len));
-
-   --  Zero all key material in a Session.
-   --  Call after Close_Notify or on error to prevent key leakage.
-   --  Uses volatile writes to prevent compiler from optimizing
-   --  the zeroing away.
-   procedure Sanitize_Keys (S : in out Session)
-   with Post => S.Client_App.Key = Bytes_32'(others => 0)
-                and S.Server_App.Key = Bytes_32'(others => 0)
-                and S.Client_App.IV = Bytes_12'(others => 0)
-                and S.Server_App.IV = Bytes_12'(others => 0)
-                and S.Res_Master = Bytes_48'(others => 0)
-                and S.Exporter_Secret = Bytes_48'(others => 0);
-
-   --  RFC 5705 / RFC 8446 §7.5: derive application-specific exporter
-   --  bytes from a completed TLS session. Label is an ASCII exporter label.
-   --  TLS 1.2 permits an empty label; TLS 1.3 requires a non-empty label
-   --  because it is embedded in an HKDF label. For TLS 1.2,
-   --  Use_Context controls whether the RFC
-   --  5705 context length prefix is included. For TLS 1.3 the context is
-   --  always hashed as part of RFC 8446 exporter derivation.
-   procedure Export_Keying_Material
-     (S           : in     Session;
-      Label       : in     String;
-      Context     : in     Byte_Seq;
-      Use_Context : in     Boolean;
-      Output      :    out Byte_Seq;
-      OK          :    out Boolean)
-   with Pre => Output'First = 0
-               and Output'Length > 0
-               and Output'Length <= 1024
-               and Label'Length <= 64
-               and Context'Length <= 62
-               and (if Context'Length > 0 then Context'First = 0),
-        Relaxed_Initialization => Output,
-        Post => (for all I in Output'Range => Output (I)'Initialized);
-
-   --  Read decrypted application data.
-   procedure Read_Plaintext
-     (S          : in out Session;
-      Dest       :    out Byte_Seq;
-      Bytes_Read :    out N32)
-   with Pre  => Dest'First = 0
-                and Dest'Last < N32'Last
-                and S.App_Data_Len <= Max_Record_Plaintext,
-        Relaxed_Initialization => Dest,
-        Post => Bytes_Read <= N32 (Dest'Length)
-                and (for all I in 0 .. Bytes_Read - 1 =>
-                       Dest (I)'Initialized);
-
-   --  RFC 8446 §7.5: Encrypt and queue application data.
-   procedure Write_Plaintext
-     (S              : in out Session;
-      Plaintext      : in     Byte_Seq;
-      Bytes_Written  :    out N32)
-   with Pre  => S.State = Connected and
-                In_App_Key_Phase (S.State) and
-                Plaintext'First = 0 and
-                Plaintext'Length > 0 and
-                Plaintext'Last < N32'Last and
-                (if S.Role = Role_Client then
-                   Nonce_Space_Available (S.Client_App) and
-                   S.Client_Seq_12 < Unsigned_64'Last
-                 else
-                   Nonce_Space_Available (S.Server_App) and
-                   S.Server_Seq_12 < Unsigned_64'Last),
-        Post => Bytes_Written <= N32 (Plaintext'Length) and
-                S.State = Connected;
 
 end SPARKTLS;

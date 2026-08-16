@@ -12,6 +12,7 @@ with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
 with Det_Random_Lib;
+with SPARKTLS.Test_Support;
 
 procedure Test_Build_Server_Hello is
 
@@ -44,7 +45,7 @@ procedure Test_Build_Server_Hello is
    is
       pragma Unreferenced (Suite);
    begin
-      S          := (others => <>);
+      SPARKTLS.Test_Support.Reset (S);
       HC         := (others => <>);
       HC.Version := TLS_1_3;
       HC.Cfg.Random       := Det_Random_Lib.Det_Random'Access;

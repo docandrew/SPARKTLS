@@ -99,7 +99,7 @@ begin
    --  Main handshake + data loop
    Handshake_Loop : loop
       SPARKTLS.Client.Advance (S, Res);
-      Put_Line ("  Advance: state=" & S.State'Image &
+      Put_Line ("  Advance: state=" & State (S)'Image &
          " res=" & SPARKTLS.Action'Image (Res) &
          " ver=" & SPARKTLS.TLS_Version'Image (SPARKTLS.Get_Version (S)));
 
@@ -145,9 +145,9 @@ begin
          when SPARKTLS.Handshake_Done =>
             Put_Line ("");
             Put_Line ("=== HANDSHAKE COMPLETE ===");
-            Put_Line ("State: " & S.State'Image);
+            Put_Line ("State: " & State (S)'Image);
 
-            case S.Negotiated_Suite is
+            case Negotiated_Suite (S) is
                when SPARKTLS.Suite_AES_128_GCM_SHA256 =>
                   Put_Line ("Cipher: TLS_AES_128_GCM_SHA256");
                when SPARKTLS.Suite_CHACHA20_POLY1305_SHA256 =>
@@ -155,7 +155,7 @@ begin
                when SPARKTLS.Suite_AES_256_GCM_SHA384 =>
                   Put_Line ("Cipher: TLS_AES_256_GCM_SHA384");
                when others =>
-                  Put_Line ("Cipher: 0x" & S.Negotiated_Suite'Image);
+                  Put_Line ("Cipher: 0x" & Negotiated_Suite (S)'Image);
             end case;
 
             if SPARKTLS.Client.Has_Peer_Certificate (S) then
@@ -169,7 +169,7 @@ begin
             Put_Line ("App data (" & N'Image & " bytes)");
 
          when SPARKTLS.Error_Alert =>
-            Put_Line ("ERROR: " & S.Last_Error'Image);
+            Put_Line ("ERROR: " & Last_Error (S)'Image);
             exit Handshake_Loop;
 
          when SPARKTLS.Shutdown =>
@@ -182,7 +182,7 @@ begin
    end loop Handshake_Loop;
 
    --  If connected, do application data exchange
-   if S.State = SPARKTLS.Connected then
+   if State (S) = SPARKTLS.Connected then
       --  Drain any post-handshake messages (NewSessionTicket etc.)
       Post_HS : loop
          begin
@@ -288,7 +288,7 @@ begin
    end if;
 
    Put_Line ("");
-   Put_Line ("Final state: " & S.State'Image);
+   Put_Line ("Final state: " & State (S)'Image);
    Put_Line ("Done.");
 
    GNAT.Sockets.Close_Socket (Sock);

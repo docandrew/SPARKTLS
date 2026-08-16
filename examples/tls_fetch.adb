@@ -366,7 +366,7 @@ begin
             when SPARKTLS.Handshake_Done =>
                if Verbose then
                   Put ("* TLS 1.3 handshake complete (");
-                  case S.Negotiated_Suite is
+                  case Negotiated_Suite (S) is
                      when SPARKTLS.Suite_AES_128_GCM_SHA256 =>
                         Put ("TLS_AES_128_GCM_SHA256");
                      when SPARKTLS.Suite_CHACHA20_POLY1305_SHA256 =>
@@ -374,7 +374,7 @@ begin
                      when SPARKTLS.Suite_AES_256_GCM_SHA384 =>
                         Put ("TLS_AES_256_GCM_SHA384");
                      when others =>
-                        Put ("0x" & S.Negotiated_Suite'Image);
+                        Put ("0x" & Negotiated_Suite (S)'Image);
                   end case;
                   Put_Line (")");
                end if;
@@ -385,7 +385,7 @@ begin
                SPARKTLS.Read_Plaintext (S, Net_Buf, N);
 
             when SPARKTLS.Error_Alert =>
-               Put_Line ("TLS error: " & S.Last_Error'Image);
+               Put_Line ("TLS error: " & Last_Error (S)'Image);
                GNAT.Sockets.Close_Socket (Sock);
                return;
 
@@ -401,7 +401,7 @@ begin
 
       --  Drain any post-handshake messages (NewSessionTicket etc.)
       --  Use a short timeout so we don't block forever
-      if S.State = SPARKTLS.Connected then
+      if State (S) = SPARKTLS.Connected then
          GNAT.Sockets.Set_Socket_Option
            (Socket => Sock,
             Level  => GNAT.Sockets.Socket_Level,
@@ -430,7 +430,7 @@ begin
       end if;
 
       --  Build and send HTTP/1.1 GET request
-      if S.State = SPARKTLS.Connected then
+      if State (S) = SPARKTLS.Connected then
          declare
             Request : constant String :=
                "GET " & Pathstr & " HTTP/1.1" & ASCII.CR & ASCII.LF &
@@ -536,9 +536,9 @@ begin
                         exit Process_Loop;
 
                      when SPARKTLS.Error_Alert =>
-                        if S.Last_Error /= SPARKTLS.No_Error then
+                        if Last_Error (S) /= SPARKTLS.No_Error then
                            Put_Line (Standard_Error,
-                              "TLS error: " & S.Last_Error'Image);
+                              "TLS error: " & Last_Error (S)'Image);
                         end if;
                         Done := True;
                         exit Process_Loop;
@@ -554,7 +554,7 @@ begin
          end;
 
          --  Clean shutdown
-         if S.State = SPARKTLS.Connected then
+         if State (S) = SPARKTLS.Connected then
             SPARKTLS.Client.Close_Notify (S);
             SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
             if N > 0 then

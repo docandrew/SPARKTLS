@@ -30,6 +30,14 @@ with X509;
 package SPARKTLS.Handshake.TLS12 with
    SPARK_Mode => On
 is
+   --  Needed because Session is now a private type: contracts that used to
+   --  say S.State'Old now say State (S)'Old, and Ada only permits 'Old on a
+   --  function call in a potentially-unevaluated context (inside an "if" in
+   --  a postcondition) when this pragma is present. The accessors are
+   --  precondition-free expression functions over one component each, so
+   --  evaluating them unconditionally is harmless. Same pragma RecordFlux
+   --  emits in its own generated specs.
+   pragma Unevaluated_Use_Of_Old (Allow);
    use type X509.Algorithm_ID;
 
    ----------------------------------------------------------------------------
@@ -462,16 +470,16 @@ is
 				                and then Reasm_Building (HC)
 				                and then Reasm_Buffer_Shaped (HC),
         --  Frame postcondition: ServerHello construction does not
-        --  touch S.State, the configuration pointer/identity, or the
+        --  touch State (S), the configuration pointer/identity, or the
         --  Random callback. Callers (Build_Server_Flight_12) need
         --  these to keep proving subsequent Set_State preconditions
         --  and HC.Cfg.Local.* dereferences. SPARK forbids equality on
         --  access types, so we restate the specific facts as Post
         --  rather than HC.Cfg = HC.Cfg'Old.
         Post => Len <= Max_Server_Hello_12
-                and S.State = S.State'Old
-                and S.Role = S.Role'Old
-                and S.Negotiated_Suite = S.Negotiated_Suite'Old
+                and State (S) = State (S)'Old
+                and Role (S) = Role (S)'Old
+                and Negotiated_Suite (S) = Negotiated_Suite (S)'Old
 	                and HC.Cfg.Local /= null
 	                and HC.Cfg.Local.Has_Identity
 	                and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
@@ -508,7 +516,7 @@ is
 	                and then SPARKTLSCrypto.P384.Field.Initialized
 	                and then Reasm_Coherent (HC),
 		        Post => (if OK then
-		                   Valid_TLS12_Suite (S.Negotiated_Suite)
+		                   Valid_TLS12_Suite (Negotiated_Suite (S))
 		                   and HC.Version = TLS_1_2)
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
@@ -525,7 +533,7 @@ is
 		                   then HC.HRR_Cookie_Len <=
 		                        N32 (HC.HRR_Cookie'Length))
 		                and then SPARKTLSCrypto.P384.Field.Initialized
-		                and then S.State = S.State'Old;
+		                and then State (S) = State (S)'Old;
 
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket builder.
    --

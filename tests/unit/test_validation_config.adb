@@ -44,7 +44,7 @@ procedure Test_Validation_Config is
          Clock    => Fixed_Now'Unrestricted_Access);
 
       Check ("client Configure: null Trust fails closed",
-             S.State = Error_State);
+             State (S) = Error_State);
    end Test_Client_Quick_Null_Trust_Fails_Closed;
 
    procedure Test_Client_Init_Null_Time_Fails_Closed is
@@ -59,7 +59,7 @@ procedure Test_Validation_Config is
       SPARKTLS.Client.Init (S, Cfg);
 
       Check ("client Init: null Get_Time with verification fails closed",
-             S.State = Error_State);
+             State (S) = Error_State);
    end Test_Client_Init_Null_Time_Fails_Closed;
 
    procedure Test_Client_Explicit_Skip_Verify_Allowed is
@@ -74,7 +74,7 @@ procedure Test_Validation_Config is
       SPARKTLS.Client.Init (S, Cfg);
 
       Check ("client Init: explicit Skip_Verify allows no Trust/Get_Time",
-             S.State = Client_Hello_Sent);
+             State (S) = Client_Hello_Sent);
    end Test_Client_Explicit_Skip_Verify_Allowed;
 
    procedure Test_Server_MTLS_Null_Trust_Fails_Closed is
@@ -90,7 +90,7 @@ procedure Test_Validation_Config is
          Get_Time            => Fixed_Now'Unrestricted_Access);
 
       Check ("server Configure: mTLS with null Trust fails closed",
-             S.State = Error_State);
+             State (S) = Error_State);
    end Test_Server_MTLS_Null_Trust_Fails_Closed;
 
    procedure Test_Server_MTLS_Null_Time_Fails_Closed is
@@ -106,7 +106,7 @@ procedure Test_Validation_Config is
          Get_Time            => null);
 
       Check ("server Configure: mTLS with null Get_Time fails closed",
-             S.State = Error_State);
+             State (S) = Error_State);
    end Test_Server_MTLS_Null_Time_Fails_Closed;
 
    procedure Test_Server_No_MTLS_Allows_Null_Trust_Time is
@@ -122,7 +122,7 @@ procedure Test_Validation_Config is
          Get_Time            => null);
 
       Check ("server Configure: no mTLS allows null Trust/Get_Time",
-             S.State = Wait_Client_Hello);
+             State (S) = Wait_Client_Hello);
    end Test_Server_No_MTLS_Allows_Null_Trust_Time;
 
 begin

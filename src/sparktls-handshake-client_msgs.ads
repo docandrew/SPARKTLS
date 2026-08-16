@@ -70,7 +70,7 @@ is
 					               and then Reasm_Coherent (HC),
 										        Post =>
 											                  (if OK
-											                   or else S.Last_Error = No_Error
+											                   or else Last_Error (S) = No_Error
 											                   then
 											                     (if HC.Cfg.Random'Old /= null
 											                      then HC.Cfg.Random /= null)
@@ -82,7 +82,7 @@ is
 											                and then
 											                  (if OK
 											                   and then HC.Version = TLS_1_3
-										                   then S.Negotiated_Suite in
+										                   then Negotiated_Suite (S) in
 										                     Suite_AES_128_GCM_SHA256
 									                   | Suite_AES_256_GCM_SHA384
 									                   | Suite_CHACHA20_POLY1305_SHA256)

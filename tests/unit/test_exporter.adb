@@ -6,6 +6,7 @@ with SPARKTLS; use SPARKTLS;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLSCrypto.HKDF;
+with SPARKTLS.Test_Support;
 
 procedure Test_Exporter is
    use type SPARKNaCl.Byte_Seq;
@@ -65,19 +66,17 @@ procedure Test_Exporter is
       Ctx : constant SPARKNaCl.Byte_Seq (0 .. 2) := (16#A0#, 16#A1#, 16#A2#);
       OK : Boolean;
    begin
-      S.State := Connected;
-      S.Negotiated_Version := TLS_1_2;
-      S.Negotiated_Suite_12 := Suite_ECDHE_RSA_AES128_GCM_SHA256;
-      S.Exporter_Secret := Seq (16#10#);
-      S.Exporter_Secret_Len := 48;
-      S.Exporter_Client_Random := Seq32 (16#40#);
-      S.Exporter_Server_Random := Seq32 (16#80#);
+      SPARKTLS.Test_Support.Set_State (S, Connected);
+      SPARKTLS.Test_Support.Set_Negotiated_Version (S, TLS_1_2);
+      SPARKTLS.Test_Support.Set_Negotiated_Suite_12 (S, Suite_ECDHE_RSA_AES128_GCM_SHA256);
+      SPARKTLS.Test_Support.Set_Exporter_State
+        (S, Seq (16#10#), 48, Seq32 (16#40#), Seq32 (16#80#));
 
       Export_Keying_Material
         (S, "EXPORTER-test", Ctx, True, Outp, OK);
       SPARKTLS.Key_Schedule_12.Export_Keying_Material_12
-        (Expected, S.Exporter_Secret, S.Exporter_Client_Random,
-         S.Exporter_Server_Random, "EXPORTER-test", Ctx, True, False);
+        (Expected, SPARKTLS.Test_Support.Exporter_Secret (S), SPARKTLS.Test_Support.Exporter_Client_Random (S),
+         SPARKTLS.Test_Support.Exporter_Server_Random (S), "EXPORTER-test", Ctx, True, False);
 
       Check ("TLS 1.2 exporter succeeds", OK);
       Check ("TLS 1.2 exporter matches RFC5705 helper", Outp = Expected);
@@ -100,8 +99,8 @@ procedure Test_Exporter is
          Export_Keying_Material
            (S, "EXPORTER-test", Ctx, True, Wide, OK);
          SPARKTLS.Key_Schedule_12.Export_Keying_Material_12
-           (Expected_Wide, S.Exporter_Secret, S.Exporter_Client_Random,
-            S.Exporter_Server_Random, "EXPORTER-test", Ctx, True, False);
+           (Expected_Wide, SPARKTLS.Test_Support.Exporter_Secret (S), SPARKTLS.Test_Support.Exporter_Client_Random (S),
+            SPARKTLS.Test_Support.Exporter_Server_Random (S), "EXPORTER-test", Ctx, True, False);
          Check ("TLS 1.2 1024-byte exporter succeeds", OK);
          Check ("TLS 1.2 1024-byte exporter matches RFC5705 helper",
                 Wide = Expected_Wide);
@@ -109,8 +108,8 @@ procedure Test_Exporter is
          Export_Keying_Material
            (S, "", Ctx, False, Empty_Label, OK);
          SPARKTLS.Key_Schedule_12.Export_Keying_Material_12
-           (Expected_Empty, S.Exporter_Secret, S.Exporter_Client_Random,
-            S.Exporter_Server_Random, "", Ctx, False, False);
+           (Expected_Empty, SPARKTLS.Test_Support.Exporter_Secret (S), SPARKTLS.Test_Support.Exporter_Client_Random (S),
+            SPARKTLS.Test_Support.Exporter_Server_Random (S), "", Ctx, False, False);
          Check ("TLS 1.2 empty-label exporter succeeds", OK);
          Check ("TLS 1.2 empty-label exporter matches RFC5705 helper",
                 Empty_Label = Expected_Empty);
@@ -124,17 +123,21 @@ procedure Test_Exporter is
       Ctx : constant SPARKNaCl.Byte_Seq (0 .. 3) := (1, 2, 3, 4);
       OK : Boolean;
    begin
-      S.State := Connected;
-      S.Negotiated_Version := TLS_1_3;
-      S.Negotiated_Suite := Suite_AES_128_GCM_SHA256;
-      S.Exporter_Secret := (others => 0);
-      S.Exporter_Secret (0 .. 31) := Seq32 (16#22#);
-      S.Exporter_Secret_Len := 32;
+      SPARKTLS.Test_Support.Set_State (S, Connected);
+      SPARKTLS.Test_Support.Set_Negotiated_Version (S, TLS_1_3);
+      SPARKTLS.Test_Support.Set_Negotiated_Suite (S, Suite_AES_128_GCM_SHA256);
+      declare
+         Sec : Bytes_48 := (others => 0);
+      begin
+         Sec (0 .. 31) := Seq32 (16#22#);
+         SPARKTLS.Test_Support.Set_Exporter_State
+           (S, Sec, 32, (others => 0), (others => 0));
+      end;
 
       Export_Keying_Material
         (S, "EXPORTER-test", Ctx, True, Outp, OK);
       SPARKTLS.Key_Schedule.Export_Keying_Material
-        (Expected, S.Exporter_Secret (0 .. 31), "EXPORTER-test", Ctx);
+        (Expected, SPARKTLS.Test_Support.Exporter_Secret (S) (0 .. 31), "EXPORTER-test", Ctx);
 
       Check ("TLS 1.3 exporter succeeds", OK);
       Check ("TLS 1.3 exporter matches RFC8446 helper",
@@ -144,17 +147,15 @@ procedure Test_Exporter is
    procedure Test_Sanitize is
       S : Session;
    begin
-      S.Exporter_Secret := Seq (16#33#);
-      S.Exporter_Secret_Len := 48;
-      S.Exporter_Client_Random := Seq32 (16#44#);
-      S.Exporter_Server_Random := Seq32 (16#55#);
+      SPARKTLS.Test_Support.Set_Exporter_State
+        (S, Seq (16#33#), 48, Seq32 (16#44#), Seq32 (16#55#));
       Sanitize_Keys (S);
       Check ("Sanitize zeros exporter secret",
-             S.Exporter_Secret = (0 .. 47 => 0));
-      Check ("Sanitize clears exporter length", S.Exporter_Secret_Len = 0);
+             SPARKTLS.Test_Support.Exporter_Secret (S) = (0 .. 47 => 0));
+      Check ("Sanitize clears exporter length", SPARKTLS.Test_Support.Exporter_Secret_Len (S) = 0);
       Check ("Sanitize zeros exporter randoms",
-             S.Exporter_Client_Random = (0 .. 31 => 0)
-             and then S.Exporter_Server_Random = (0 .. 31 => 0));
+             SPARKTLS.Test_Support.Exporter_Client_Random (S) = (0 .. 31 => 0)
+             and then SPARKTLS.Test_Support.Exporter_Server_Random (S) = (0 .. 31 => 0));
    end Test_Sanitize;
 
 begin

@@ -146,11 +146,11 @@ begin
 
          when Handshake_Done =>
             Put_Line ("Handshake complete");
-            Put_Line ("  Cipher: 0x" & S.Negotiated_Suite'Image);
+            Put_Line ("  Cipher: 0x" & Negotiated_Suite (S)'Image);
             exit Handshake_Loop;
 
          when Error_Alert =>
-            Put_Line ("Handshake error: " & S.Last_Error'Image);
+            Put_Line ("Handshake error: " & Last_Error (S)'Image);
             return;
 
          when Shutdown =>
@@ -226,7 +226,7 @@ begin
             exit Echo_Loop;
 
          when Error_Alert =>
-            Put_Line ("Error: " & S.Last_Error'Image);
+            Put_Line ("Error: " & Last_Error (S)'Image);
             exit Echo_Loop;
 
          when others =>

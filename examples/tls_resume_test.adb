@@ -172,7 +172,7 @@ procedure TLS_Resume_Test is
                SPARKTLS.Read_Plaintext (S, Net_Buf, N);
 
             when Error_Alert =>
-               Put_Line ("  handshake error: " & S.Last_Error'Image);
+               Put_Line ("  handshake error: " & Last_Error (S)'Image);
                --  Drain any pending alert before closing.
                SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
                if N > 0 then
