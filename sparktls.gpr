@@ -90,20 +90,56 @@ project Sparktls is
       for Switches ("Ada") use ("-Es"); --  Symbolic traceback
    end Binder;
 
-   --  RecordFlux-generated code is excluded from gnatprove for now
-   --  (TODO: drive these to 0 — proof status of generated code is a
-   --  shared responsibility between us and the RFLX schemas + the
-   --  RecordFlux code generator). Currently 9 unproved checks remain
-   --  in rflx-rflx_arithmetic and rflx-tls_handshake-finished; see
-   --  src/proof-status.md for the inventory. Functional correctness
-   --  of the generated code is currently covered by the integration
-   --  test suite (TLS interop with OpenSSL).
-   --  Regenerate the list with: ls generated/ > excluded_from_proof.list
+   --  RecordFlux-generated code IS analysed by gnatprove, along with
+   --  everything in src/. It is not excluded and should not be.
+   --
+   --  This package used to carry
+   --     for Excluded_Source_List_File use "excluded_from_proof.list";
+   --  together with a comment saying generated code was excluded and
+   --  suggesting "ls generated/ > excluded_from_proof.list" to rebuild the
+   --  list. That file never existed and was never committed, so the
+   --  directive did nothing -- generated units were being proved the whole
+   --  time, and the comment described the opposite of the actual behaviour.
+   --  Removed rather than repaired: materialising the list would silence
+   --  every generated-unit finding in one command and make a "fully proven"
+   --  claim that proves strictly less.
+   --
+   --  Findings as of the 2026-08-16 full-project run (level 2, see
+   --  findings_Aug_16.txt), 145 total:
+   --     137  generated (rflx-*)  -- server_hello 27, tls_record 9,
+   --                                 client_hello 6, and a long tail
+   --       7  sparknacl (dependency, not ours)
+   --       1  owned -- sparktls-handshake-tls12.ads:517 Reasm_Coherent,
+   --          which is MARGINAL rather than unprovable: identical runs on an
+   --          idle box gave proved/failed/proved/failed/proved/proved/proved.
+   --          See the --steps note below.
+   --
+   --  The generated count came down from 186 via the Buffer.all guards in
+   --  generated/rflx-tls_handshake-server_hello.ads; see generated/README.md.
+   --  Functional correctness of generated code is covered by the integration
+   --  suite (TLS interop with OpenSSL) and BoGo.
    package Prove is
-      for Excluded_Source_List_File use "excluded_from_proof.list";
       --  Per RFLX docs § "First steps": throw multiple provers, no
       --  step limit, generous per-VC timeout, suppress counterexamples
       --  for speed. RFLX-generated specs need this profile.
+      --
+      --  KNOWN ISSUE -- "--steps=0" makes findings non-reproducible.
+      --  With no step limit the only bound is wall-clock "--timeout=180",
+      --  so a VC that needs a large fraction of that budget can land either
+      --  way depending on machine load, prover scheduling, and solver
+      --  heuristics. Measured 2026-08-16: sparktls-handshake-tls12.ads:517
+      --  gave proved/failed/proved/failed/proved/proved/proved across
+      --  identical invocations on an idle box. A findings count produced
+      --  this way describes one run, not the code.
+      --
+      --  Steps are deterministic prover work units, so bounding by
+      --  "--steps=N" (keeping a timeout as a backstop) makes the same tree
+      --  yield the same verdict on any machine under any load -- a marginal
+      --  VC then fails consistently and can be fixed, instead of flapping.
+      --  Not changed yet: picking N wants a calibration run, since too low
+      --  a value turns currently-proved checks into findings.
+      --  NOTE: --timeout here overrides whatever --level implies, so
+      --  "--level=2" and "--level=1" resolve to the same configuration.
       for Proof_Switches ("Ada") use
         ("-j0",
          "--prover=z3,cvc5,altergo",

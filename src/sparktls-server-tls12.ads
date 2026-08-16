@@ -40,7 +40,12 @@ with X509;
 --    - Finished is 12 bytes (not 32/48)
 --    - No EncryptedExtensions message
 --    - No CertificateVerify from server for ECDHE (signature is in SKE)
-package SPARKTLS.Server.TLS12 with
+--  Private child: this unit is internal to SPARKTLS and is deliberately
+--  not part of the public API. Being a private child also lets its
+--  contracts name Session components directly (a private child's visible
+--  part sees the parent's private part), which a public child's visible
+--  part may not do once Session becomes a private type.
+private package SPARKTLS.Server.TLS12 with
    SPARK_Mode => On
 is
    --  Build the TLS 1.2 server flight:

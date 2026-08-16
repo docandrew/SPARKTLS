@@ -20,7 +20,12 @@ with SPARKTLSCrypto.P384.ECDSA;
 --    4. Receive server CCS
 --    5. Decrypt + verify server Finished
 --    6. Transition to Connected
-package SPARKTLS.Client.TLS12 with
+--  Private child: this unit is internal to SPARKTLS and is deliberately
+--  not part of the public API. Being a private child also lets its
+--  contracts name Session components directly (a private child's visible
+--  part sees the parent's private part), which a public child's visible
+--  part may not do once Session becomes a private type.
+private package SPARKTLS.Client.TLS12 with
    SPARK_Mode => On
 is
    --  Step the TLS 1.2 handshake state machine.

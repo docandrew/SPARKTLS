@@ -94,6 +94,53 @@ After regeneration, re-apply these patches:
    the patch once fixed; `rflx generate` will silently discard it otherwise,
    and the proofs will regress with no obvious cause.
 
+### REJECTED — adding postconditions to expression functions (2026-08-16)
+
+**Do not do this. It was measured and it makes proofs strictly worse.**
+
+The idea was to "republish" facts that looked hidden, by giving RecordFlux's
+query functions explicit postconditions:
+
+* `Field_First` in `rflx-tls_handshake-client_hello.ads`, whose generated
+  contract is literally `Post => True` (with a `pragma Warnings (Off,
+  "postcondition does not mention function result")` around it), while the
+  adjacent `Field_Size` and `Field_Last` both publish `rem Byte'Size = 0`.
+  Patch added the missing symmetric case, `Field_First'Result rem
+  RFLX_Types.Byte'Size = 1` (1 not 0: bit indices are 1-based, so a
+  byte-aligned *start* is `rem 8 = 1`).
+* `Available_Space` in the same file, and `Available_Space` / `Size` in both
+  `rflx-rflx_message_sequence.ads` and `rflx-rflx_scalar_sequence.ads`,
+  restating their private-part definitions.
+
+**The premise was wrong.** These functions are declared in the public part and
+*completed as expression functions in the private part*. It is true that Ada
+visibility hides the completion from clients — but GNATprove does not work at
+that level. It already uses the expression function's definition when proving
+client code, so callers effectively had the exact value all along.
+
+Adding an explicit `Post` therefore does not add information. It **replaces**
+the strongest available contract with whatever you wrote. Writing an
+alignment-only postcondition on `Field_First` bought `rem 8 = 1` and destroyed
+knowledge of the *value* — which is worth far more, because `Available_Space`,
+`Field_Last` and the whole size-accounting chain unfold through it.
+
+**Measured on `SPARKTLS.Handshake.Client_Msgs` (level 1, `-u`, same tree):**
+
+| tree | findings |
+|---|---|
+| pristine `generated/` | **2** — 1021 (alignment conjunct), 1023 |
+| + `Field_First` and `Available_Space` posts | 3 — 1004 (new), 1021 (space conjunct), 1023 |
+| + `Field_First` post only | 3 — same |
+
+1021 never closed; it *moved* to the `Available_Space >= Field_Size` conjunct,
+which had been proving fine, and 1004 broke outright. Reverted in full;
+`generated/` is pristine except this file.
+
+If the byte-alignment of `Field_First` is needed at a call site, derive it
+there from the postconditions RecordFlux *does* emit (`Field_Size` and
+`Field_Last` are both `rem 8 = 0`) rather than overriding a generated
+contract.
+
 ### Formerly patch 1 — `Bytes_Ptr` — NO LONGER NEEDED
 
 This directory used to document changing `type Bytes_Ptr is access all
@@ -144,5 +191,16 @@ use) `Buffer` is null, so the predicate is not evaluable. Consequences:
   fail` VCs, so proofs over these contexts rest on an assumption that
   cannot be established.
 
-Not yet reported upstream. A local null guard would fix both but means
-patching 8 sites in generated code — decide deliberately.
+**This is now fixed locally by patch 2 above** — the 8 sites carry a
+`Buffer /= null` guard plus slice bounds, which closed all 16 native
+runtime checks in the unit and unblocked the `--checked` build. The
+description above is retained because it documents the upstream defect
+itself, which is still **not reported to AdaCore**. Report it and drop
+patch 2 once fixed.
+
+A second, much weaker candidate defect: `Field_First` is generated with
+`Post => True` while the adjacent `Field_Size` and `Field_Last` publish
+`rem Byte'Size = 0`. That asymmetry looks like an omission and may be
+worth mentioning upstream — but note that attempting to fix it locally
+made proofs *worse*, for the reasons in "REJECTED — adding
+postconditions to expression functions" above. Do not patch it here.
