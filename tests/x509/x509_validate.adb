@@ -5,6 +5,7 @@
 with Ada.Calendar;
 with Ada.Calendar.Formatting;
 with Ada.Command_Line;
+with Ada.Real_Time;
 with Ada.Exceptions;
 with Ada.Text_IO;
 with SPARKNaCl;     use SPARKNaCl;
@@ -242,6 +243,13 @@ procedure X509_Validate is
    Val_Time  : X509.Date_Time;
    Now_Cal   : constant Ada.Calendar.Time := Ada.Calendar.Clock;
    Val_Mode  : Validation_Mode := Mode_WebPKI;
+
+   --  --repeat N runs the validation N times inside this one process and
+   --  reports the rate. Without it, a shell loop measures fork/exec of this
+   --  binary (~16 ms) rather than chain validation (microseconds), which
+   --  made SPARKTLS and OpenSSL look identical in the benchmark regardless
+   --  of how either performed.
+   Repeat    : Positive := 1;
 begin
    --  Initialize validation time from system clock
    declare
@@ -294,7 +302,19 @@ begin
          declare
             Arg : constant String := Ada.Command_Line.Argument (I);
          begin
-            if Arg = "--hostname"
+            if Arg = "--repeat"
+               and I < Ada.Command_Line.Argument_Count
+            then
+               I := I + 1;
+               declare
+                  N : constant Natural :=
+                    Natural (Parse_Nat (Ada.Command_Line.Argument (I)));
+               begin
+                  if N >= 1 then
+                     Repeat := N;
+                  end if;
+               end;
+            elsif Arg = "--hostname"
                and I < Ada.Command_Line.Argument_Count
             then
                I := I + 1;
@@ -331,17 +351,48 @@ begin
    declare
       use Cert_Verify;
       Result : Validation_Result;
+      use type Ada.Real_Time.Time;
+      T0 : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
    begin
-      Result := Validate_Chain
-        (Leaf_DER   => Peer_DER (0 .. Peer_Len - 1),
-         Leaf       => Peer_Cert,
-         Ints       => Ints,
-         Int_Count  => Int_Count,
-         Roots      => Roots.Roots,
-         Root_Count => Roots.Root_Count,
-         Now        => Val_Time,
-         Hostname   => Hostname (1 .. Host_Len),
-         Mode       => Val_Mode);
+      for Iter in 1 .. Repeat loop
+         --  Re-parse the leaf on every iteration.
+         --
+         --  The comparison in tests/benchmark.sh is against
+         --  "openssl verify -CAfile ca leaf leaf leaf ...", which re-reads
+         --  and re-decodes the PEM file for each cert argument. Timing only
+         --  Validate_Chain here would measure parse-once-validate-many
+         --  against parse-and-validate-each, inflating our rate. Keep the
+         --  load inside the loop so both sides do the same work.
+         Load_Peer (Ada.Command_Line.Argument (1),
+                    Peer_Cert, Peer_DER, Peer_Len, Peer_OK, Peer_Big);
+         exit when not Peer_OK;
+
+         Result := Validate_Chain
+           (Leaf_DER   => Peer_DER (0 .. Peer_Len - 1),
+            Leaf       => Peer_Cert,
+            Ints       => Ints,
+            Int_Count  => Int_Count,
+            Roots      => Roots.Roots,
+            Root_Count => Roots.Root_Count,
+            Now        => Val_Time,
+            Hostname   => Hostname (1 .. Host_Len),
+            Mode       => Val_Mode);
+      end loop;
+
+      if Repeat > 1 then
+         declare
+            Ms : constant Integer :=
+              Integer (Ada.Real_Time.To_Duration
+                         (Ada.Real_Time.Clock - T0) * 1000.0);
+            Per_Sec : constant Integer :=
+              (if Ms > 0 then Repeat * 1000 / Ms else 0);
+         begin
+            Ada.Text_IO.Put_Line
+              (Integer'Image (Repeat) & " validations in"
+               & Integer'Image (Ms) & " ms ("
+               & Integer'Image (Per_Sec) & "/sec)");
+         end;
+      end if;
 
       if Result = Valid then
          Ada.Command_Line.Set_Exit_Status (0);

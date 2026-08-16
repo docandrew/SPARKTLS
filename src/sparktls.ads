@@ -2234,6 +2234,28 @@ is
    --  below: consumers must go through the query functions rather than
    --  reading or assigning components directly, so the state machine
    --  cannot be corrupted from outside the library.
+   --
+   --  SIZE: a Session is large -- roughly 100 KB (103,240 bytes measured on
+   --  x86-64, 2026-08-16). It embeds its own I/O buffers and a
+   --  Max_Record_Plaintext (16 KB) application-data staging area rather than
+   --  allocating them, which is what lets the record path run without
+   --  per-record heap traffic.
+   --
+   --  Practical consequences:
+   --
+   --    * Declaring one as an ordinary local variable puts ~100 KB on the
+   --      stack. Fine on a default main-task stack; NOT fine inside an Ada
+   --      task with a small stack, or on an embedded target. Prefer a
+   --      library-level object, or allocate it.
+   --    * A server holding N concurrent connections needs ~100 KB * N of
+   --      session state alone. At 1000 connections that is ~100 MB. Size
+   --      your connection pool accordingly -- see examples/tls_web_epoll.adb,
+   --      which keeps its Connection array at library level (BSS) for
+   --      exactly this reason.
+   --    * Passing a Session by value copies all of it. The API takes
+   --      "in out Session" throughout; do not introduce copies.
+   --
+   --  Config is ~5.9 KB and Session_Ticket ~600 bytes, for comparison.
    type Session is private;
 
    ---------------------------------------------------------------------------
@@ -2252,6 +2274,15 @@ is
    ---------------------------------------------------------------------------
 
    function State (S : Session) return Connection_State;
+
+   --  Human-readable description of an error code.
+   --
+   --  Error_Code'Image yields the enumeration identifier ("BAD_RECORD_MAC"),
+   --  which is fine for logs and poor in anything a user reads. This returns
+   --  a short sentence and, where the code corresponds to a TLS alert, cites
+   --  the RFC clause. Total: every Error_Code value has a description, so
+   --  there is no fallback case to go stale when the type grows.
+   function Describe (E : Error_Code) return String;
    function Role (S : Session) return TLS_Role;
    function Last_Error (S : Session) return Error_Code;
    function Negotiated_Suite (S : Session) return Unsigned_16;

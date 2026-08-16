@@ -150,7 +150,7 @@ begin
             exit Handshake_Loop;
 
          when Error_Alert =>
-            Put_Line ("Handshake error: " & Last_Error (S)'Image);
+            Put_Line ("Handshake error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
             return;
 
          when Shutdown =>
@@ -226,7 +226,7 @@ begin
             exit Echo_Loop;
 
          when Error_Alert =>
-            Put_Line ("Error: " & Last_Error (S)'Image);
+            Put_Line ("Error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
             exit Echo_Loop;
 
          when others =>

@@ -169,7 +169,7 @@ begin
             Put_Line ("App data (" & N'Image & " bytes)");
 
          when SPARKTLS.Error_Alert =>
-            Put_Line ("ERROR: " & Last_Error (S)'Image);
+            Put_Line ("ERROR: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
             exit Handshake_Loop;
 
          when SPARKTLS.Shutdown =>

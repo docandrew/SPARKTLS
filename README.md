@@ -22,6 +22,15 @@ dispatch.
   converted to constrained subtypes before any allocation, so "validate
   before allocate" is enforced at the type level. Reassembly and RecordFlux
   buffers are heap-allocated and released explicitly
+- `Session` is a private type and is **large — about 100 KB** (103,240 bytes
+  on x86-64). It embeds its I/O buffers and a 16 KB application-data staging
+  area instead of allocating them, which keeps the record path free of
+  per-record heap traffic. Two consequences worth planning for: declaring one
+  as an ordinary local puts ~100 KB on the stack (prefer library-level or
+  heap allocation, especially inside tasks), and a server needs ~100 KB per
+  concurrent connection — roughly 100 MB at 1000 connections. See
+  `examples/tls_web_epoll.adb`, which holds its connection array at library
+  level for this reason.
 - RecordFlux-generated message serialization/parsing with SPARK contracts
 - Crypto provided by SPARKNaCl + SPARKTLSCrypto (formally verified, AES-NI / VAES / VPCLMULQDQ / AVX-512 ChaCha20 fast paths)
 

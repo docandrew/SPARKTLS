@@ -406,7 +406,7 @@ begin
          when Error_Alert =>
             Send_Pending;
             Err ("handshake error: state=" & State (S)'Image
-                 & " err=" & Last_Error (S)'Image);
+                 & " err=" & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
             Run_Failed := True;
             exit Loop1;
          when Shutdown =>

@@ -385,7 +385,7 @@ begin
                SPARKTLS.Read_Plaintext (S, Net_Buf, N);
 
             when SPARKTLS.Error_Alert =>
-               Put_Line ("TLS error: " & Last_Error (S)'Image);
+               Put_Line ("TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
                GNAT.Sockets.Close_Socket (Sock);
                return;
 
@@ -538,7 +538,7 @@ begin
                      when SPARKTLS.Error_Alert =>
                         if Last_Error (S) /= SPARKTLS.No_Error then
                            Put_Line (Standard_Error,
-                              "TLS error: " & Last_Error (S)'Image);
+                              "TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
                         end if;
                         Done := True;
                         exit Process_Loop;

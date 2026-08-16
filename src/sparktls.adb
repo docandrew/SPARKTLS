@@ -740,4 +740,65 @@ is
       end if;
    end Export_Keying_Material;
 
+   --------------
+   -- Describe --
+   --------------
+
+   function Describe (E : Error_Code) return String is
+   begin
+      --  A complete case expression: adding an Error_Code value without a
+      --  description here is a compile error, not a silently wrong string.
+      case E is
+         when No_Error =>
+            return "no error";
+         when Unexpected_Message =>
+            return "unexpected handshake message for the current state " &
+                   "(RFC 8446 6.2, alert 10)";
+         when Bad_Record_MAC =>
+            return "record failed AEAD authentication (RFC 8446 5.2, " &
+                   "alert 20)";
+         when Record_Overflow =>
+            return "record exceeded the maximum permitted length " &
+                   "(RFC 8446 5.1, alert 22)";
+         when Handshake_Failure =>
+            return "could not negotiate an acceptable set of security " &
+                   "parameters (RFC 8446 6.2, alert 40)";
+         when Bad_Certificate =>
+            return "peer certificate was malformed or could not be parsed " &
+                   "(alert 42)";
+         when Certificate_Expired =>
+            return "peer certificate is expired or not yet valid (alert 45)";
+         when Certificate_Verify_Failed =>
+            return "peer certificate chain did not validate against the " &
+                   "trust store, or the hostname did not match (alert 51)";
+         when Certificate_Required =>
+            return "a client certificate was required but none was sent " &
+                   "(RFC 8446 6, alert 116)";
+         when Decode_Error =>
+            return "a message could not be decoded: a length or field was " &
+                   "inconsistent with the wire format (alert 50)";
+         when Illegal_Parameter =>
+            return "a field was syntactically correct but not permitted " &
+                   "here (alert 47)";
+         when Protocol_Version =>
+            return "peer offered no protocol version this configuration " &
+                   "accepts (alert 70)";
+         when Unsupported_Extension =>
+            return "peer sent an extension not offered in ClientHello " &
+                   "(RFC 8446 6, alert 110)";
+         when Missing_Extension =>
+            return "a required extension was absent (RFC 8446 6, alert 109)";
+         when No_Application_Protocol =>
+            return "no mutually supported ALPN protocol " &
+                   "(RFC 7301 3.2, alert 120)";
+         when Internal_Error =>
+            return "internal error: an invariant was violated (alert 80)";
+         when Insufficient_Buffer =>
+            return "the caller-supplied buffer was too small for the data";
+         when Unsupported_Cipher_Suite =>
+            return "peer selected a cipher suite this build does not " &
+                   "implement";
+      end case;
+   end Describe;
+
 end SPARKTLS;
