@@ -67,4 +67,19 @@ is
    function Client_Seq_12 (S : Session) return Unsigned_64;
    function Server_Seq_12 (S : Session) return Unsigned_64;
 
+   --  TLS 1.3 application traffic counters. A KeyUpdate resets the
+   --  rotated direction to zero, so these make rekeying observable from
+   --  a test without exposing key material.
+   function Client_App_Counter (S : Session) return Unsigned_64;
+   function Server_App_Counter (S : Session) return Unsigned_64;
+   function Key_Update_Pending (S : Session) return Boolean;
+   function Key_Updates_Recvd (S : Session) return Natural;
+
+   --  Test-only: force a traffic counter. The RFC 8446 §5.5 rekey
+   --  threshold is ~8.4 million records, so the proactive-rotation path is
+   --  otherwise unreachable in a test. Setting the counter directly lets a
+   --  test park it just below the threshold and observe the rotation.
+   procedure Set_Client_App_Counter (S : in out Session; V : Unsigned_64);
+   procedure Set_Server_App_Counter (S : in out Session; V : Unsigned_64);
+
 end SPARKTLS.Test_Support;

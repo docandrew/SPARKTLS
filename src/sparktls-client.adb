@@ -4616,6 +4616,24 @@ is
                Result := Shutdown;
             end if;
 
+         when Closed =>
+            --  The connection is finished. A peer may still have records
+            --  in flight -- BoGo's Shutdown-Shim-* tests drain after
+            --  close_notify with -check-close-notify, and a real
+            --  application may call Advance again for the same reason.
+            --  Report Shutdown idempotently and discard anything that
+            --  arrives: the traffic keys have already been zeroed, so
+            --  there is nothing left to decrypt with, and nothing useful
+            --  a late record could tell us.
+            --
+            --  Before 2026-08-17 this fell through to "others", which set
+            --  Handled := False and let Advance reach its "HC_Ptr = null"
+            --  branch -- reporting Internal_Error for the entirely normal
+            --  act of calling Advance on a closed session.
+            S.Input.Read_Pos  := 0;
+            S.Input.Write_Pos := 0;
+            Result := Shutdown;
+
          when others =>
             Handled := False;
             Result := Need_Input;
@@ -5893,10 +5911,19 @@ is
          return;
       end if;
 
-      --  Each KeyUpdate costs a KDF plus key re-derivation, and the RFC
-      --  places no bound on how often a peer may send them. Cap it so the
-      --  peer cannot use rekeying as a cheap asymmetric DoS (BoGo
-      --  TooManyKeyUpdates).
+      --  Leaky bucket, drained by work actually done under the previous
+      --  key. S.Server_App.Counter is our READ counter: it counts records
+      --  read since the last rotation, so a peer that rekeyed after real
+      --  traffic refunds a token here and can rekey indefinitely, while a
+      --  peer spamming KeyUpdates back-to-back (counter ~0) refunds
+      --  nothing and drains the bucket. See Max_Key_Updates in sparktls.ads
+      --  for why a lifetime cap would be an interop bug.
+      if S.Server_App.Counter >= Rekey_Refill_Records
+        and then S.Key_Updates_Recvd > 0
+      then
+         S.Key_Updates_Recvd := S.Key_Updates_Recvd - 1;
+      end if;
+
       if S.Key_Updates_Recvd >= Max_Key_Updates then
          Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
          return;
@@ -6143,10 +6170,10 @@ is
                end if;
 
 	            when 16#16# =>
-	               --  Post-handshake handshake-record: today only NST is
-	               --  expected here (KeyUpdate not yet implemented). The
-	               --  handshake message itself may be split across multiple
-	               --  encrypted records.
+	               --  Post-handshake handshake-record: NewSessionTicket
+	               --  or KeyUpdate (RFC 8446 4.6). The handshake message
+	               --  itself may be split across multiple encrypted
+	               --  records, so it is reassembled before dispatch.
 	               --  Must also run while Closing: the peer rotates its
 	               --  write key when it sends a KeyUpdate, so skipping it
 	               --  during shutdown leaves us unable to decrypt the

@@ -285,6 +285,16 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # KeyUpdate leaky-bucket rate limiting + nonce-space backstop
+    if [ -f bin/tests/test_key_update_ratelimit ]; then
+        output=$(bin/tests/test_key_update_ratelimit 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_key_update_ratelimit: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # Validation configuration fail-closed checks
     if [ -f bin/tests/test_validation_config ]; then
         output=$(bin/tests/test_validation_config 2>&1 || true)

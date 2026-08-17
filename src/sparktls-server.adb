@@ -1117,7 +1117,27 @@ is
                Result := Error_Alert;
             end if;
 
-         when Closed | Idle =>
+         when Closed =>
+            --  Terminal, and reaching it again is normal: a peer may still
+            --  have records in flight after our close_notify (BoGo's
+            --  Shutdown-Shim-* tests drain with -check-close-notify), and
+            --  applications legitimately call Advance again to confirm the
+            --  connection is finished.
+            --
+            --  Report Shutdown idempotently and discard late input. The
+            --  traffic keys were zeroed on the way here, so there is
+            --  nothing to decrypt with and nothing a late record could
+            --  usefully tell us.
+            --
+            --  Before 2026-08-17 this shared Idle's branch and reported
+            --  Internal_Error, turning an ordinary post-close poll into a
+            --  spurious failure.
+            S.Input.Read_Pos  := 0;
+            S.Input.Write_Pos := 0;
+            Result := Shutdown;
+
+         when Idle =>
+            --  Genuinely a caller error: Advance before Init/Configure.
             S.Last_Error := Internal_Error;
             S.State := Error_State;
             Result := Error_Alert;
@@ -5624,8 +5644,19 @@ is
          return;
       end if;
 
-      --  Cap the rate: each rekey costs a KDF and the RFC sets no bound
-      --  (BoGo TooManyKeyUpdates).
+      --  Leaky bucket, drained by work actually done under the previous
+      --  key. S.Client_App.Counter is our READ counter: it counts records
+      --  read since the last rotation, so a peer that rekeyed after real
+      --  traffic refunds a token here and can rekey indefinitely, while a
+      --  peer spamming KeyUpdates back-to-back (counter ~0) refunds
+      --  nothing and drains the bucket. See Max_Key_Updates in sparktls.ads
+      --  for why a lifetime cap would be an interop bug.
+      if S.Client_App.Counter >= Rekey_Refill_Records
+        and then S.Key_Updates_Recvd > 0
+      then
+         S.Key_Updates_Recvd := S.Key_Updates_Recvd - 1;
+      end if;
+
       if S.Key_Updates_Recvd >= Max_Key_Updates then
          Send_Encrypted_Alert (S, Unexpected_Message, Result);
          return;

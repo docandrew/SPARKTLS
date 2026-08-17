@@ -215,6 +215,13 @@ is
    --
    --  Never sets request_update -- replying with a request would be an
    --  unbounded ping-pong (RFC 8446 §4.6.3).
+   --  True when our own write direction is approaching the RFC 8446 §5.5
+   --  AEAD usage limit and should be rotated before sending more.
+   function Write_Key_Exhausted (S : Session) return Boolean is
+     (if S.Role = Role_Client
+      then S.Client_App.Counter >= Rekey_After_Records
+      else S.Server_App.Counter >= Rekey_After_Records);
+
    procedure Flush_Pending_Key_Update (S : in out Session)
    with Pre => S.App_Secret_Len in 32 | 48
                and then S.Negotiated_Version /= TLS_1_2;
@@ -264,6 +271,24 @@ is
       S.Key_Update_Pending := False;
    end Flush_Pending_Key_Update;
 
+   procedure Request_Key_Update (S : in out Session) is
+   begin
+      --  TLS 1.2 has no rekey mechanism, and without retained traffic
+      --  secrets there is nothing to ratchet from.
+      if S.Negotiated_Version = TLS_1_2
+        or else S.App_Secret_Len not in 32 | 48
+      then
+         return;
+      end if;
+
+      --  Flush immediately rather than deferring to the next write. The
+      --  deferred path exists to collapse a BURST of peer requests into one
+      --  reply; an explicit application request should take effect when it
+      --  is made, so the caller can drain and know it is done.
+      S.Key_Update_Pending := True;
+      Flush_Pending_Key_Update (S);
+   end Request_Key_Update;
+
    procedure Write_Plaintext
      (S              : in out Session;
       Plaintext      : in     Byte_Seq;
@@ -292,9 +317,20 @@ is
       --  what makes the reply correct when it is discovered mid-write.
       --
       --  TLS 1.3 only: TLS 1.2 has no rekey mechanism.
-      if S.Key_Update_Pending
-        and then S.Negotiated_Version /= TLS_1_2
+      --  Two reasons to rotate our write key before sending, both
+      --  discharged by the same mechanism:
+      --
+      --   1. The peer asked (RFC 8446 §4.6.3 request_update). We owe them a
+      --      KeyUpdate before the next Application Data record.
+      --   2. We are approaching the RFC 8446 §5.5 AEAD usage limit on our
+      --      OWN write direction. Nobody will ask us to do this -- a
+      --      KeyUpdate rotates only the sender's key, so protecting our
+      --      write direction is ours alone to do. Without it a long-lived
+      --      high-volume connection runs past the AEAD security margin and,
+      --      eventually, toward the modular wrap that would reuse nonces.
+      if S.Negotiated_Version /= TLS_1_2
         and then S.App_Secret_Len in 32 | 48
+        and then (S.Key_Update_Pending or else Write_Key_Exhausted (S))
       then
          Flush_Pending_Key_Update (S);
       end if;

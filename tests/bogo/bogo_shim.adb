@@ -58,6 +58,7 @@ procedure Bogo_Shim is
       Max_Version          : Unsigned_16 := 16#0304#;  --  TLS 1.3
       Shim_Writes_First    : Boolean := False;
       Shim_Shuts_Down      : Boolean := False;
+      Key_Update           : Boolean := False;
       Check_Close_Notify   : Boolean := False;
       Request_Client_Cert  : Boolean := False;
       Require_Client_Cert  : Boolean := False;
@@ -274,6 +275,14 @@ procedure Bogo_Shim is
              & " version=" & TLS_Version'Image (SPARKTLS.Get_Version (S))
              & " suite13=" & Unsigned_16'Image (Negotiated_Suite (S))
              & " suite12=" & Unsigned_16'Image (Negotiated_Suite_12 (S))
+             & " cApp=" & Unsigned_64'Image
+                 (SPARKTLS.Test_Support.Client_App_Counter (S))
+             & " sApp=" & Unsigned_64'Image
+                 (SPARKTLS.Test_Support.Server_App_Counter (S))
+             & " kuPend=" & Boolean'Image
+                 (SPARKTLS.Test_Support.Key_Update_Pending (S))
+             & " kuRecv=" & Natural'Image
+                 (SPARKTLS.Test_Support.Key_Updates_Recvd (S))
              & " cseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Client_Seq_12 (S))
              & " sseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Server_Seq_12 (S)));
    end Trace_Step;
@@ -506,6 +515,13 @@ procedure Bogo_Shim is
                Cfg.Shim_Writes_First := True;
             elsif A = "-shim-shuts-down" then
                Cfg.Shim_Shuts_Down := True;
+            elsif A = "-key-update" then
+               --  BoGo asks the shim to initiate an UNSOLICITED KeyUpdate
+               --  after each write (bssl_shim.cc:1254 calls
+               --  SSL_key_update(SSL_KEY_UPDATE_NOT_REQUESTED)). This is
+               --  what exercises our proactive rotation path, which is
+               --  otherwise only reachable after ~8.4M records.
+               Cfg.Key_Update := True;
             elsif A = "-check-close-notify" then
                --  BoGo's runner side checks for our close_notify. The
                --  shim must continue reading after sending close_notify
@@ -1452,6 +1468,16 @@ procedure Bogo_Shim is
                      for I in N32 range 0 .. App_N - 1 loop
                         App (I) := App (I) xor 16#FF#;
                      end loop;
+                     --  Rekey BEFORE the reply. BoGo stops reading once
+                     --  it has the message it expects, so a KeyUpdate
+                     --  queued after the echo can be missed entirely
+                     --  (keyUpdateSeen=false). Rotating first is also the
+                     --  natural order: the reply then travels under the
+                     --  new key, which is what a rekey is for.
+                     if Cfg.Key_Update then
+                        SPARKTLS.Request_Key_Update (S);
+                        Send_Pending;
+                     end if;
                      SPARKTLS.Write_Plaintext
                        (S, App (0 .. App_N - 1), Written);
                      Send_Pending;

@@ -69,4 +69,26 @@ is
    function Server_Seq_12 (S : Session) return Unsigned_64 is
      (S.Server_Seq_12);
 
+   function Client_App_Counter (S : Session) return Unsigned_64 is
+     (S.Client_App.Counter);
+
+   function Server_App_Counter (S : Session) return Unsigned_64 is
+     (S.Server_App.Counter);
+
+   function Key_Update_Pending (S : Session) return Boolean is
+     (S.Key_Update_Pending);
+
+   function Key_Updates_Recvd (S : Session) return Natural is
+     (S.Key_Updates_Recvd);
+
+   procedure Set_Client_App_Counter (S : in out Session; V : Unsigned_64) is
+   begin
+      S.Client_App.Counter := V;
+   end Set_Client_App_Counter;
+
+   procedure Set_Server_App_Counter (S : in out Session; V : Unsigned_64) is
+   begin
+      S.Server_App.Counter := V;
+   end Set_Server_App_Counter;
+
 end SPARKTLS.Test_Support;

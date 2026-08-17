@@ -763,10 +763,29 @@ is
    ----------------------------------------------------------------------------
 
    --  RFC 8446 §7.3: Traffic keys with suite constraint.
+   --  RFC 8446 §5.3: the per-record nonce is the static write IV XORed
+   --  with this sequence number, so the nonce is DERIVED, not chosen.
+   --
+   --  Unsigned_64 is a MODULAR type: Counter + 1 at 'Last wraps silently to
+   --  0 with no overflow check, because wrapping is what modular arithmetic
+   --  is defined to do. That would restart the nonce sequence under an
+   --  unchanged key -- nonce reuse, which is catastrophic for AEAD, and
+   --  entirely silent in a release build where preconditions are not
+   --  evaluated.
+   --
+   --  Excluding 'Last from the subtype turns that silent wrap into a range
+   --  check the prover must discharge, which forces the increment sites to
+   --  refuse rather than wrap. The bound is arithmetic, not cryptographic:
+   --  RFC 8446 §5.5's AEAD limit (see Rekey_After_Records) is reached
+   --  ~2**40 times sooner, and KeyUpdate rotation is what keeps a healthy
+   --  connection far away from here. This is the backstop for when it does
+   --  not happen.
+   subtype Record_Counter is Unsigned_64 range 0 .. Unsigned_64'Last - 1;
+
    type Traffic_Keys is record
       Key     : Bytes_32          := (others => 0);
       IV      : Bytes_12          := (others => 0);
-      Counter : Unsigned_64       := 0;
+      Counter : Record_Counter    := 0;
       Suite   : Unsigned_16       := Suite_CHACHA20_POLY1305_SHA256;
    end record
      with Predicate =>
@@ -2243,7 +2262,53 @@ is
    --  count so rekeying cannot be used as a cheap asymmetric DoS. The
    --  legitimate need is one rotation per AEAD usage limit (RFC 8446 5.5),
    --  so a healthy peer sends single digits over a connection's life.
+   --  Leaky bucket for inbound KeyUpdate (RFC 8446 §4.6.3 sets no bound on
+   --  how often a peer may rekey, and each one costs a KDF).
+   --
+   --  Max_Key_Updates is the BUCKET DEPTH, not a lifetime cap. An absolute
+   --  cap is wrong here: a well-behaved peer rotating at its own §5.5 AEAD
+   --  limit would exhaust a lifetime cap on a long-lived connection and we
+   --  would drop it with unexpected_message -- a self-inflicted interop
+   --  bug. The bucket must therefore drain.
+   --
+   --  The leak is driven by RECORDS READ rather than a clock, which the
+   --  core deliberately does not have (Get_Time is an optional callback).
+   --  Records read is also the better signal: it distinguishes the two
+   --  cases directly.
+   --
+   --    * legitimate peer -- rotates after millions of records, so the read
+   --      counter is large at each KeyUpdate; it refunds a token and never
+   --      drains the bucket;
+   --    * abusive peer -- sends KeyUpdates back-to-back with no data, so
+   --      the read counter is ~0 each time; no refund, bucket empties, and
+   --      the connection is dropped.
    Max_Key_Updates : constant := 32;
+
+   --  Records that must have been read under the previous key for an
+   --  inbound KeyUpdate to be considered legitimate work rather than
+   --  flooding. Far below our own rotation threshold so a peer rekeying on
+   --  any sane schedule always refunds.
+   Rekey_Refill_Records : constant := 2 ** 16;
+
+   --  RFC 8446 §5.5 "Limits on Key Usage". For AES-GCM the guidance is at
+   --  most 2**24.5 (~23.7 million) full-size records under one key, to keep
+   --  the AEAD security margin at roughly 2**-57. ChaCha20-Poly1305 has no
+   --  comparable confidentiality limit, so this conservative bound is
+   --  applied uniformly rather than per-suite.
+   --
+   --  We rotate well below the limit -- 2**23 records -- so the rekey
+   --  happens with margin rather than at the cliff edge. That matters
+   --  because rotation needs output-buffer space: if the buffer is full we
+   --  retry on the next write, and the margin is what makes those retries
+   --  harmless.
+   --
+   --  NOTE the two bounds are different things and both are needed:
+   --    * this one is the CRYPTOGRAPHIC limit, and rotating keeps the
+   --      connection alive and within the AEAD margin;
+   --    * Unsigned_64'Last is the ARITHMETIC limit, ~584,000 years away,
+   --      and reaching it must fail closed rather than wrap (a modular
+   --      wrap would reuse nonces). See #46.
+   Rekey_After_Records : constant := 2 ** 23;
 
    --  RFC 8446 §5.2 / RFC 5246 §6.2.1: zero-length-plaintext
    --  records waste decrypt CPU without delivering progress.
@@ -2616,6 +2681,30 @@ is
                        Dest (I)'Initialized);
 
    --  RFC 8446 §7.5: Encrypt and queue application data.
+   --  RFC 8446 §4.6.3: rotate our own write key now.
+   --
+   --  Queues a KeyUpdate (request_update = update_not_requested -- we are
+   --  not asking the peer to rotate, only telling them we have), then
+   --  advances our write traffic secret and resets the write sequence to
+   --  zero. Drain the output afterwards as usual.
+   --
+   --  The library already rotates automatically as it approaches the RFC
+   --  8446 §5.5 AEAD usage limit (see Rekey_After_Records), so calling this
+   --  is never required for safety. It exists because an application may
+   --  have its own policy -- rekey hourly, or per N bytes, or on a
+   --  privilege change -- and because rekeying more often narrows the
+   --  window a compromised key exposes.
+   --
+   --  Note this rotates OUR write direction only; a KeyUpdate never
+   --  rotates the peer's. There is deliberately no way to demand that the
+   --  peer rotate: request_update exists in the protocol but invites a
+   --  ping-pong, and a peer under our control can be asked out of band.
+   --
+   --  TLS 1.3 only. A TLS 1.2 session has no rekey mechanism and this is a
+   --  no-op there.
+   procedure Request_Key_Update (S : in out Session)
+   with Pre => State (S) = Connected;
+
    procedure Write_Plaintext
      (S              : in out Session;
       Plaintext      : in     Byte_Seq;

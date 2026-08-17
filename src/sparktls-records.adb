@@ -266,8 +266,22 @@ is
       pragma Assert (Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
       Hdr (3 .. 4) := TS16 (Unsigned_16 (Enc_Len));
 
-      --  Compute the per-record nonce. Counter advances unconditionally
-      --  here, matching the original Build_Encrypted_Record semantics.
+      --  RFC 8446 §5.3: nonce = IV xor sequence number. Fail closed at the
+      --  end of the sequence space rather than wrap. Unsigned_64 is
+      --  modular, so without this the increment below would silently reach
+      --  zero and restart the nonce sequence under an unchanged key --
+      --  nonce reuse, catastrophic for AEAD and invisible in a release
+      --  build. Record_Counter excludes 'Last so this branch is what makes
+      --  the increment provable.
+      --
+      --  Unreachable on any healthy connection: KeyUpdate rotates at the
+      --  RFC 8446 §5.5 AEAD limit, roughly 2**40 times sooner. Bytes_Out
+      --  stays 0, which callers already treat as "nothing queued".
+      if Keys.Counter >= Record_Counter'Last then
+         Bytes_Out := 0;
+         return;
+      end if;
+
       Nonce := Make_Nonce (Keys.IV, Keys.Counter);
       Keys.Counter := Keys.Counter + 1;
 
@@ -391,6 +405,15 @@ is
 
       --  Extract tag (last 16 bytes)
       Tag := Bytes_16 (Encrypted (Cipher_Len .. Cipher_Len + 15));
+
+      --  Same fail-closed bound on the receive side. A peer that never
+      --  rekeys cannot walk us off the end of the sequence space; Valid
+      --  stays False and the caller raises bad_record_mac, which is the
+      --  correct outcome -- we genuinely cannot authenticate anything more
+      --  under this key.
+      if Keys.Counter >= Record_Counter'Last then
+         return;
+      end if;
 
       --  Compute nonce
       Nonce := Make_Nonce (Keys.IV, Keys.Counter);
