@@ -120,10 +120,6 @@ is
 	         then Nonce_Space_Available (HC.Client_HS)
 	              and then Nonce_Space_Available (S.Server_App)
 	              and then HC.Transcript_Len > 0
-	              and then
-	                (if HC.Cfg.Ticket_Store /= null
-	                 then HC.Cfg.Ticket_Store.Next
-                      in 0 .. Max_Cached_Tickets - 1)
               and then Free_Space (S.Output) >=
                 Records.Record_Header_Size + 3 + Records.Tag_Size)
       and then
@@ -610,10 +606,6 @@ is
 	               and then HC.Transcript_Len > 0
 	               and then Nonce_Space_Available (HC.Client_HS)
 	               and then Nonce_Space_Available (S.Server_App)
-	               and then
-	                 (if HC.Cfg.Ticket_Store /= null
-	                  then HC.Cfg.Ticket_Store.Next
-	                       in 0 .. Max_Cached_Tickets - 1)
 	               and then Free_Space (S.Output) >=
 	                          Records.Record_Header_Size + 3 + Records.Tag_Size
                and then Rec.Fragment_Len >= 1
@@ -648,10 +640,7 @@ is
 					               and then HC.Transcript_Len > 0
 					               and then Reasm_Building (HC)
 					               and then Reasm_Buffer_Shaped (HC)
-					               and then
-				                 (if HC.Cfg.Ticket_Store /= null
-			                  then HC.Cfg.Ticket_Store.Next
-			                       in 0 .. Max_Cached_Tickets - 1),
+,
 			        Post => (if S.State not in Error_State | Closed
 						                          then Server_Configured (HC)
 					                               and then Reasm_Building (HC)
@@ -838,10 +827,7 @@ is
 		   with Pre  => (if Data'First <= Data'Last then
 			                    Data'Last - Data'First < Transcript_Capacity)
 			                and then HC.Transcript_Len <= Transcript_Capacity
-			                and then
-			                  (if HC.Cfg.Ticket_Store /= null
-	                   then HC.Cfg.Ticket_Store.Next
-	                        in 0 .. Max_Cached_Tickets - 1),
+,
 	        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
 	                and HC.Transcript_Len <= Transcript_Capacity
                 and (if HC.Transcript_Len'Old > 0
@@ -859,10 +845,7 @@ is
 				                       Handshake.Server_Msgs.Local_Config_Valid
 				                         (HC.Cfg.Local))
 			                and HC.Hash_Len = HC.Hash_Len'Old
-		                and
-		                  (if HC.Cfg.Ticket_Store /= null
-		                   then HC.Cfg.Ticket_Store.Next
-		                        in 0 .. Max_Cached_Tickets - 1)
+
 			                and HC.Version = HC.Version'Old
 		                and HC.Peer_Cert = HC.Peer_Cert'Old
 		                and HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
@@ -943,16 +926,15 @@ is
       Trust                 : Trust_Store_Access := null;
       Request_Client_Cert   : Boolean := False;
       Require_Client_Cert   : Boolean := False;
-      Tickets               : Ticket_Store_Access := null;
+      Store_Session         : Store_Session_Fn := null;
+      Lookup_Session        : Lookup_Session_Fn := null;
       ALPN                  : String := "";
       Versions              : Version_Policy := Allow_Both;
-      TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
+      Get_Active_TEK        : Get_Active_TEK_Fn := null;
+      Get_TEK_By_Id         : Get_TEK_By_Id_Fn := null;
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
       Get_Time              : Get_Time_Fn := null;
-      Select_Identity       : SNI_Cert_Selector := null;
-      Auto_Rotate_TEK            : Boolean := True;
-      TEK_Rotation_Interval_Secs : Unsigned_32 := 24 * 3600)
-   with SPARK_Mode => Off
+      Select_Identity       : SNI_Cert_Selector := null)
    is
       Cfg : Config;
    begin
@@ -961,14 +943,14 @@ is
       Cfg.Trust               := Trust;
       Cfg.Request_Client_Cert := Request_Client_Cert;
       Cfg.Require_Client_Cert := Require_Client_Cert;
-      Cfg.Ticket_Store        := Tickets;
+      Cfg.Store_Session       := Store_Session;
+      Cfg.Lookup_Session      := Lookup_Session;
       Cfg.Versions            := Versions;
-      Cfg.TLS12_Ticket_Keys   := TLS12_Ticket_Keys;
+      Cfg.Get_Active_TEK      := Get_Active_TEK;
+      Cfg.Get_TEK_By_Id       := Get_TEK_By_Id;
       Cfg.TLS12_Ticket_Lifetime := TLS12_Ticket_Lifetime;
       Cfg.Get_Time            := Get_Time;
       Cfg.Select_Identity     := Select_Identity;
-      Cfg.Auto_Rotate_TEK            := Auto_Rotate_TEK;
-      Cfg.TEK_Rotation_Interval_Secs := TEK_Rotation_Interval_Secs;
       if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
          Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
          Cfg.ALPN.Len := ALPN'Length;
@@ -979,7 +961,6 @@ is
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
-   with SPARK_Mode => Off
    is
    begin
       S := (State  => Wait_Client_Hello,
@@ -3129,7 +3110,8 @@ is
       Rejected :    out Boolean;
       Result   :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then HC.Cfg.Ticket_Store /= null
+                and then HC.Cfg.Store_Session /= null
+                    and then HC.Cfg.Lookup_Session /= null
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then HC.PSK_Binder_Len <= Max_HS_Msg
                 and then Server_Configured (HC)
@@ -3180,8 +3162,8 @@ is
    begin
       Rejected := False;
       Result := OK;
-      Ticket_Cache.Lookup
-        (Cache      => HC.Cfg.Ticket_Store.all,
+      HC.Cfg.Lookup_Session
+        (
          ID         => HC.PSK_Ticket_ID,
          Want_Suite => S.Negotiated_Suite,
          PSK        => PSK,
@@ -3547,7 +3529,8 @@ is
    begin
       --  PSK resumption: verify binder, install if valid, fatal-alert
       --  on mismatch. Sets HC.Using_PSK on success.
-      if HC.PSK_Offered and then HC.Cfg.Ticket_Store /= null then
+      if HC.PSK_Offered and then HC.Cfg.Store_Session /= null
+                    and then HC.Cfg.Lookup_Session /= null then
          declare
             Rejected : Boolean;
          begin
@@ -4914,12 +4897,12 @@ is
                                  Key_Schedule.Derive_PSK_384
                                    (PSK_Out, Byte_Seq (Res_Master), Nonce);
                                  --  Store in cache
-                                 if HC.Cfg.Ticket_Store /= null then
+                                 if HC.Cfg.Store_Session /= null
+                    and then HC.Cfg.Lookup_Session /= null then
                                     pragma Warnings
                                       (Off, "value conversion implemented by copy");
-                                    Ticket_Cache.Store
-                                      (HC.Cfg.Ticket_Store.all,
-                                       Bytes_48 (PSK_Out), 48,
+                                    HC.Cfg.Store_Session
+                                      (                                       Bytes_48 (PSK_Out), 48,
                                        S.Negotiated_Suite, Age_Add, TID);
                                     pragma Warnings
                                       (On, "value conversion implemented by copy");
@@ -4944,16 +4927,16 @@ is
                                     Full_Hash);
                                  Key_Schedule.Derive_PSK
                                    (PSK_Out, Byte_Seq (Res_Master), Nonce);
-                                 if HC.Cfg.Ticket_Store /= null then
+                                 if HC.Cfg.Store_Session /= null
+                    and then HC.Cfg.Lookup_Session /= null then
                                     declare
                                        PSK_48 : Bytes_48 := (others => 0);
                                     begin
                                        for I in N32 range 0 .. 31 loop
                                           PSK_48 (I) := PSK_Out (I);
                                        end loop;
-                                       Ticket_Cache.Store
-                                         (HC.Cfg.Ticket_Store.all,
-                                          PSK_48, 32,
+                                       HC.Cfg.Store_Session
+                                         (                                          PSK_48, 32,
                                           S.Negotiated_Suite, Age_Add, TID);
                                     end;
                                  end if;
@@ -4971,7 +4954,8 @@ is
                         --  BoGo TLS13-ExpectNoSessionTicketOnBadKE
                         --  Mode-Server checks that we DON'T issue NST
                         --  when the client only offered psk_ke.
-                        if HC.Cfg.Ticket_Store /= null
+                        if HC.Cfg.Store_Session /= null
+                    and then HC.Cfg.Lookup_Session /= null
                           and then HC.Has_PSK_DHE_KE
                         then
                            declare

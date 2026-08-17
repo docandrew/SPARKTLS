@@ -78,16 +78,14 @@ begin
       P_In, P_Out : T.Ticket_Plain;
       Ticket : Byte_Seq (0 .. 255) := (others => 0);
       Len : N32;
-      Keys : TLS12_Ticket_Key_Array;
       OK : Boolean;
    begin
       P_In := Make_Plain;
-      Keys := Make_Keys;
       T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
       Check ("Encrypt: Len > 0", Len > 0);
       Check ("Encrypt: Len = 32 + 59 + 16",
              Len = 32 + 59 + 16);
-      T.Decrypt_Ticket (Ticket (0 .. Len - 1), Keys,
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
                         1_700_000_100, 3600, P_Out, OK);
       Check ("Decrypt: succeeded", OK);
       Check ("Round-trip: Master_Secret matches",
@@ -106,14 +104,12 @@ begin
       P_In, P_Out : T.Ticket_Plain;
       Ticket : Byte_Seq (0 .. 255) := (others => 0);
       Len : N32;
-      Keys : TLS12_Ticket_Key_Array;
       OK : Boolean;
    begin
       P_In := Make_Plain;
-      Keys := Make_Keys;
       T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
       Ticket (Len - 1) := Ticket (Len - 1) xor 16#01#;
-      T.Decrypt_Ticket (Ticket (0 .. Len - 1), Keys,
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
                         1_700_000_100, 3600, P_Out, OK);
       Check ("Tampered tag → Decrypt fails", not OK);
    end;
@@ -122,30 +118,29 @@ begin
       P_In, P_Out : T.Ticket_Plain;
       Ticket : Byte_Seq (0 .. 255) := (others => 0);
       Len : N32;
-      Keys : TLS12_Ticket_Key_Array;
       OK : Boolean;
       Wrong_ID : constant T.Bytes_4 :=
         (16#DE#, 16#AD#, 16#BE#, 16#EF#);
    begin
       P_In := Make_Plain;
-      Keys := Make_Keys;
+      --  Key selection moved out of Decrypt_Ticket (the caller looks the
+      --  key up via Config.Get_TEK_By_Id, keyed on Ticket_Key_ID). What
+      --  remains testable here is that the wrong key does not open it.
       T.Encrypt_Ticket (P_In, Wrong_ID, TEK_A, Nonce, Ticket, Len);
-      T.Decrypt_Ticket (Ticket (0 .. Len - 1), Keys,
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_B,
                         1_700_000_100, 3600, P_Out, OK);
-      Check ("Unknown Key_ID → Decrypt fails", not OK);
+      Check ("Wrong TEK → Decrypt fails", not OK);
    end;
 
    declare
       P_In, P_Out : T.Ticket_Plain;
       Ticket : Byte_Seq (0 .. 255) := (others => 0);
       Len : N32;
-      Keys : TLS12_Ticket_Key_Array;
       OK : Boolean;
    begin
       P_In := Make_Plain;
-      Keys := Make_Keys;
       T.Encrypt_Ticket (P_In, Key_ID_B, TEK_B, Nonce, Ticket, Len);
-      T.Decrypt_Ticket (Ticket (0 .. Len - 1), Keys,
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_B,
                         1_700_000_100, 3600, P_Out, OK);
       Check ("Rotation: ticket under Key_B decrypts", OK);
       Check ("Rotation: round-trip Master_Secret",
@@ -156,13 +151,11 @@ begin
       P_In, P_Out : T.Ticket_Plain;
       Ticket : Byte_Seq (0 .. 255) := (others => 0);
       Len : N32;
-      Keys : TLS12_Ticket_Key_Array;
       OK : Boolean;
    begin
       P_In := Make_Plain;
-      Keys := Make_Keys;
       T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
-      T.Decrypt_Ticket (Ticket (0 .. Len - 1), Keys,
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
                         1_700_000_000 + 7200, 3600, P_Out, OK);
       Check ("Expired ticket (>Max_Age) → Decrypt fails", not OK);
    end;
@@ -171,13 +164,11 @@ begin
       P_In, P_Out : T.Ticket_Plain;
       Ticket : Byte_Seq (0 .. 255) := (others => 0);
       Len : N32;
-      Keys : TLS12_Ticket_Key_Array;
       OK : Boolean;
    begin
       P_In := Make_Plain;
-      Keys := Make_Keys;
       T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
-      T.Decrypt_Ticket (Ticket (0 .. Len - 1), Keys,
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
                         1_600_000_000, 86400, P_Out, OK);
       Check ("Future-dated ticket → Decrypt fails", not OK);
    end;

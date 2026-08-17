@@ -308,8 +308,8 @@ is
 	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                           (HC.Cfg.Local)
 	                and then HC.Cfg.Random /= null
-                and then HC.Cfg.TLS12_Ticket_Keys /= null
-	                and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+                and then HC.Cfg.Get_Active_TEK /= null
+	                and then HC.Cfg.Get_TEK_By_Id /= null
 	                and then S.State = Wait_Client_Hello
 	                and then S.Role = Role_Server
 		                and then S.Negotiated_Suite in
@@ -339,48 +339,11 @@ is
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    is
    begin
-      --  RFC 5077 §5.6 TEK auto-rotation. Cheap check (one
-      --  Get_Time call + one comparison) at the start of every
-      --  TLS 1.2 server handshake. Required preconditions: keys
-      --  exist, auto-rotate is on, Get_Time + Random are wired.
-      --  Without Get_Time we can't tell if the interval elapsed;
-      --  without Random we can't generate the new key.
-      if HC.Cfg.Auto_Rotate_TEK
-        and then HC.Cfg.TLS12_Ticket_Keys /= null
-        and then HC.Cfg.Get_Time /= null
-        and then HC.Cfg.Random /= null
-        and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
-      then
-         declare
-            Now       : constant Unsigned_64 :=
-              SPARKTLS.Tickets_12.To_Unix_Seconds
-                (HC.Cfg.Get_Time.all);
-            Active    : constant Natural :=
-              HC.Cfg.TLS12_Active_TEK_Idx;
-            Last      : constant Unsigned_64 :=
-              HC.Cfg.TLS12_Ticket_Keys.all (Active).Created_At;
-            Interval  : constant Unsigned_64 :=
-              Unsigned_64 (HC.Cfg.TEK_Rotation_Interval_Secs);
-         begin
-            if Now >= Last + Interval then
-               declare
-                  New_Key_ID : Byte_Seq (0 .. 3);
-                  New_TEK    : Byte_Seq (0 .. 31);
-                  New_Active : Natural := Active;
-               begin
-                  HC.Cfg.Random.all (New_Key_ID);
-                  HC.Cfg.Random.all (New_TEK);
-                  SPARKTLS.Server.Rotate_TLS12_Ticket_Key
-                    (Keys       => HC.Cfg.TLS12_Ticket_Keys.all,
-                     Active_Idx => New_Active,
-                     New_Key_ID => New_Key_ID,
-                     New_TEK    => New_TEK,
-                     Now_Secs   => Now);
-                  HC.Cfg.TLS12_Active_TEK_Idx := New_Active;
-               end;
-            end if;
-         end;
-      end if;
+      --  TEK rotation is NOT performed here. The library no longer holds
+      --  ticket-encryption keys -- Config.Get_Active_TEK / Get_TEK_By_Id
+      --  fetch them -- so key lifetime and rotation policy belong to the
+      --  callback implementation, which is also the only party that knows
+      --  whether keys are shared across threads, processes or nodes.
 
       --  RFC 5077 §3.4: if the client offered a non-empty session_ticket
       --  extension AND we have configured ticket-encryption keys, try
@@ -392,8 +355,8 @@ is
       if HC.TLS12_Ticket_Offered
         and then HC.TLS12_Peer_Ticket_Len > 0
         and then HC.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len
-        and then HC.Cfg.TLS12_Ticket_Keys /= null
-        and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
+        and then HC.Cfg.Get_Active_TEK /= null
+        and then HC.Cfg.Get_TEK_By_Id /= null
       then
          declare
             Plain : SPARKTLS.Tickets_12.Ticket_Plain;
@@ -412,15 +375,28 @@ is
               (if HC.Cfg.Get_Time /= null
                then HC.Cfg.TLS12_Ticket_Lifetime
                else 0);
+            --  Fetch exactly the key the ticket names (O(1)), rather than
+            --  trying every configured key in turn. A miss is not an error:
+            --  RFC 5077 3.4 says fall through to a full handshake.
+            Wanted_ID : constant Byte_Seq :=
+              SPARKTLS.Tickets_12.Ticket_Key_ID
+                (HC.TLS12_Peer_Ticket (0 .. HC.TLS12_Peer_Ticket_Len - 1));
+            TEK       : Byte_Seq (0 .. 31) := (others => 0);
+            TEK_Found : Boolean := False;
          begin
-            SPARKTLS.Tickets_12.Decrypt_Ticket
-              (Ticket  => HC.TLS12_Peer_Ticket
-                            (0 .. HC.TLS12_Peer_Ticket_Len - 1),
-               Keys    => HC.Cfg.TLS12_Ticket_Keys.all,
-               Now     => Now,
-               Max_Age => Max_Age,
-               Plain   => Plain,
-               Status  => OK);
+            HC.Cfg.Get_TEK_By_Id.all (Wanted_ID, TEK, TEK_Found);
+            if not TEK_Found then
+               OK := False;
+            else
+               SPARKTLS.Tickets_12.Decrypt_Ticket
+                 (Ticket  => HC.TLS12_Peer_Ticket
+                               (0 .. HC.TLS12_Peer_Ticket_Len - 1),
+                  TEK     => TEK,
+                  Now     => Now,
+                  Max_Age => Max_Age,
+                  Plain   => Plain,
+                  Status  => OK);
+            end if;
             if OK
               and then S.Negotiated_Suite_12 /= 0
               and then S.Negotiated_Suite_12 in
@@ -915,13 +891,16 @@ is
          Use_384    : constant Boolean :=
             S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
                                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
-         Active_TEK_Idx : constant Natural :=
-            HC.Cfg.TLS12_Active_TEK_Idx;
-         Active_Key_ID : constant Byte_Seq :=
-            HC.Cfg.TLS12_Ticket_Keys (Active_TEK_Idx).Key_ID;
-         Active_TEK : constant Byte_Seq :=
-            HC.Cfg.TLS12_Ticket_Keys (Active_TEK_Idx).TEK;
+         --  Sealing key comes from the caller's store, not from Config.
+         --  Filled by Get_Active_TEK below; if the callback reports no key
+         --  we simply do not issue a ticket.
+         Active_Key_ID : Byte_Seq (0 .. 3)  := (others => 0);
+         Active_TEK    : Byte_Seq (0 .. 31) := (others => 0);
+         Have_TEK      : Boolean := False;
       begin
+         if HC.Cfg.Get_Active_TEK /= null then
+            HC.Cfg.Get_Active_TEK.all (Active_Key_ID, Active_TEK, Have_TEK);
+         end if;
       --  Mirror the full-flight setup that Build_Server_Flight_12_Full
       --  did before we diverted. We don't pick a group (no ECDHE), we
       --  don't pick a signature scheme (no SKE), but we DO need the
@@ -2762,22 +2741,15 @@ is
          --  configured ticket-encryption keys. Resumed-flight NSTs (the
          --  abbreviated case) are emitted from a different code path.
          if HC.TLS12_Ticket_Offered
-           and then HC.Cfg.TLS12_Ticket_Keys /= null
+           and then HC.Cfg.Get_Active_TEK /= null
            and then HC.Cfg.Random /= null
-           and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
-           and then HC.Cfg.TLS12_Ticket_Keys
-                      (HC.Cfg.TLS12_Active_TEK_Idx).Valid
          then
             declare
                use type SPARKTLS.Tickets_12.Bytes_4;
-               --  Renaming a deref-and-index of HC.Cfg.* trips SPARK
-               --  E0007; copy fields into local constants instead.
-               Active_Key_ID : constant SPARKTLS.Tickets_12.Bytes_4 :=
-                  HC.Cfg.TLS12_Ticket_Keys
-                    (HC.Cfg.TLS12_Active_TEK_Idx).Key_ID;
-               Active_TEK    : constant SPARKTLS.Tickets_12.Bytes_32 :=
-                  HC.Cfg.TLS12_Ticket_Keys
-                    (HC.Cfg.TLS12_Active_TEK_Idx).TEK;
+               --  Sealing key supplied by the caller's store.
+               Key_ID_Buf : Byte_Seq (0 .. 3)  := (others => 0);
+               TEK_Buf    : Byte_Seq (0 .. 31) := (others => 0);
+               Have_TEK   : Boolean := False;
                Nonce_Buf  : Byte_Seq (0 .. 11);
                Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
                Ticket_Buf : Byte_Seq (0 .. 255);
@@ -2786,6 +2758,7 @@ is
                NST_Total  : N32;
                NST_Rec_Out : N32;
             begin
+               HC.Cfg.Get_Active_TEK.all (Key_ID_Buf, TEK_Buf, Have_TEK);
                HC.Cfg.Random.all (Nonce_Buf);
 
                --  Ticket plaintext = master_secret + suite + creation
@@ -2807,8 +2780,8 @@ is
 
                SPARKTLS.Tickets_12.Encrypt_Ticket
                  (Plain      => Plain,
-                  Key_ID     => Active_Key_ID,
-                  TEK        => Active_TEK,
+                  Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Key_ID_Buf),
+                  TEK        => SPARKTLS.Tickets_12.Bytes_32 (TEK_Buf),
                   Nonce      =>
                     SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
                   Ticket     => Ticket_Buf,

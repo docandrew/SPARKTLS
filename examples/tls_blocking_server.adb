@@ -22,19 +22,18 @@ with SPARKTLS.Tickets_12;
 with Entropy_Random;
 
 with GNAT.Sockets;               use GNAT.Sockets;
+with SPARKTLS.Session_Cache;
 
 procedure TLS_Blocking_Server is
 
    Id      : aliased SPARKTLS.Identity;
    Id_OK   : Boolean;
-   Tickets : aliased SPARKTLS.Ticket_Store;
    Roots   : aliased SPARKTLS.Trust_Store;
    MTLS    : Boolean := False;
    MTLS_Require : Boolean := False;
 
    --  TLS 1.2 ticket encryption keys (RFC 5077). One TEK generated
    --  at startup with a fixed Key_ID; rotates only on restart.
-   TLS12_Keys : aliased SPARKTLS.TLS12_Ticket_Key_Array;
 
    --  UTC wall-clock callback used by ticket expiry + cert validation.
    --  Production code would centralise this (e.g. monotonic + UTC
@@ -149,10 +148,15 @@ procedure TLS_Blocking_Server is
                                  else null),
          Request_Client_Cert => MTLS,
          Require_Client_Cert => MTLS_Require,
-         Tickets             => Tickets'Unchecked_Access,
-         TLS12_Ticket_Keys   => TLS12_Keys'Unchecked_Access,
-         Get_Time            => Now_UTC'Unrestricted_Access,
-         TEK_Rotation_Interval_Secs => TEK_Rotate_Secs);
+         Store_Session       =>
+           SPARKTLS.Session_Cache.Store_Session'Access,
+         Lookup_Session      =>
+           SPARKTLS.Session_Cache.Lookup_Session'Access,
+         Get_Active_TEK      =>
+           SPARKTLS.Session_Cache.Get_Active_TEK'Access,
+         Get_TEK_By_Id       =>
+           SPARKTLS.Session_Cache.Get_TEK_By_Id'Access,
+         Get_Time            => Now_UTC'Unrestricted_Access);
 
       --  Handshake + data loop
       loop
@@ -240,28 +244,14 @@ procedure TLS_Blocking_Server is
 begin
    Entropy_Random.Init;
 
-   --  Generate a single TLS 1.2 ticket-encryption key at startup.
-   --  With Server.Configure's Auto_Rotate_TEK = True (default), the
-   --  library auto-rotates this key every 24h. The Created_At field
-   --  records the wall-clock time so the first rotation fires 24h
-   --  after startup, not immediately on the first handshake.
-   declare
-      Key_ID  : Byte_Seq (0 .. 3) := (others => 0);
-      TEK_Buf : Byte_Seq (0 .. 31) := (others => 0);
-      Now_S   : constant Unsigned_64 :=
-         SPARKTLS.Tickets_12.To_Unix_Seconds (Now_UTC);
-   begin
-      Entropy_Random.Random (Key_ID);
-      Entropy_Random.Random (TEK_Buf);
-      TLS12_Keys (0) := (Key_ID => Key_ID, TEK => TEK_Buf,
-                         Valid => True, Created_At => Now_S);
-      TLS12_Keys (1) := (Key_ID => (others => 0), TEK => (others => 0),
-                         Valid => False, Created_At => 0);
-      TLS12_Keys (2) := (Key_ID => (others => 0), TEK => (others => 0),
-                         Valid => False, Created_At => 0);
-      TLS12_Keys (3) := (Key_ID => (others => 0), TEK => (others => 0),
-                         Valid => False, Created_At => 0);
-   end;
+   --  Ticket storage lives in the application, not in SPARKTLS. One call
+   --  seeds the first TLS 1.2 ticket key and turns on rotation (24h by
+   --  default); rotation is lazy, checked on the ticket path, so there is
+   --  no timer task to manage.
+   SPARKTLS.Session_Cache.Initialize
+     (Random            => Entropy_Random.Random'Access,
+      Clock             => Now_UTC'Unrestricted_Access,
+      Rotation_Interval => Get_TEK_Rotate_Secs);
 
    if Ada.Command_Line.Argument_Count < 2 then
       Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>" &

@@ -1255,12 +1255,13 @@ is
       --  iff (a) client offered the extension and (b) we have ticket-
       --  encryption keys configured. The actual NST message is built
       --  by Process_Client_Finished_12 in the full-handshake path.
+      --  "We can issue tickets" is now simply "the caller wired up a key
+      --  source". Whether a usable key actually exists is the callback's
+      --  answer at issue time (Found => False just means no ticket), so we
+      --  no longer inspect key slots here.
       Emit_ST_Ext : constant Boolean :=
          HC.TLS12_Ticket_Offered
-         and then HC.Cfg.TLS12_Ticket_Keys /= null
-         and then HC.Cfg.TLS12_Active_TEK_Idx < TLS12_Max_Keys
-         and then HC.Cfg.TLS12_Ticket_Keys
-                    (HC.Cfg.TLS12_Active_TEK_Idx).Valid;
+         and then HC.Cfg.Get_Active_TEK /= null;
       ST_Ext_Len : constant N32 := (if Emit_ST_Ext then 4 else 0);
 
       --  Extensions total

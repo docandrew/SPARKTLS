@@ -1901,7 +1901,6 @@ is
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
-   with SPARK_Mode => Off
    is
       OK : Boolean;
       Resume_Usable : Boolean := False;
@@ -1940,7 +1939,15 @@ is
          S.Ticket := Cfg.Resume_Ticket;
       end if;
 
-      Initialize_Client_Handshake (S, S.HC_Ptr.all, OK);
+      --  BORROW: S and S.HC_Ptr.all would alias (SPARK RM 6.4.2). Move the
+      --  context out for the duration of the call, then hand it back.
+      declare
+         HC : Handshake_Context_Access := S.HC_Ptr;
+      begin
+         S.HC_Ptr := null;
+         Initialize_Client_Handshake (S, HC.all, OK);
+         S.HC_Ptr := HC;
+      end;
       if not OK then
          HC_Alloc.Free (S.HC_Ptr);
       end if;

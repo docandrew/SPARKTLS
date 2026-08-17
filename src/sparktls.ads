@@ -778,6 +778,7 @@ is
    type Get_Time_Fn is access
       function return X509.Date_Time;
 
+
    ----------------------------------------------------------------------------
    --  Certificate pool types
    --
@@ -988,7 +989,6 @@ is
       Next    : Natural range 0 .. Max_Cached_Tickets - 1 := 0;
    end record;
 
-   type Ticket_Store_Access is access all Ticket_Store;
 
    ----------------------------------------------------------------------------
    --  Session Ticket (RFC 8446 §4.6.1)
@@ -1042,7 +1042,6 @@ is
    type TLS12_Ticket_Key_Array is array (Natural range 0 .. TLS12_Max_Keys - 1)
       of TLS12_Ticket_Key;
 
-   type TLS12_Ticket_Keys_Access is access all TLS12_Ticket_Key_Array;
 
    ----------------------------------------------------------------------------
    --  TLS 1.2 cached session ticket (client side, RFC 5077 §3.4)
@@ -1142,6 +1141,62 @@ is
    ----------------------------------------------------------------------------
    --  Configuration (set once before Init)
    ----------------------------------------------------------------------------
+
+   ----------------------------------------------------------------------------
+   --  Server ticket storage callbacks
+   --
+   --  Session resumption needs storage that outlives a single connection,
+   --  and whose concurrency and durability properties only the application
+   --  knows. Rather than hold a pointer to a shared mutable store, the
+   --  library calls out. This keeps SPARKTLS free of global state and free
+   --  of owning pointers -- access-to-subprogram carries no ownership, so
+   --  Config stays a copyable value type and Init/Configure stay in SPARK.
+   --
+   --  Leave them null to disable resumption entirely; an embedded caller
+   --  then pays nothing for it.
+   --
+   --  THREAD SAFETY is the implementation's responsibility. SPARKTLS holds
+   --  no shared state of its own, so sessions are independent; anything
+   --  these callbacks touch is shared by the application's choice. See
+   --  SPARKTLS.Ticket_Store.Protected_Impl for a ready-made thread-safe one.
+   --
+   --  DO NOT BLOCK. These run inside handshake processing. A cache miss is
+   --  always safe -- it falls back to a full handshake -- so a distributed
+   --  implementation should time out and report Found => False rather than
+   --  stall the state machine.
+   ----------------------------------------------------------------------------
+
+   --  Persist a resumption PSK; return the identity to put on the wire.
+   type Store_Session_Fn is access
+      procedure (PSK     : Bytes_48;
+                 PSK_Len : N32;
+                 Suite   : Unsigned_16;
+                 Age_Add : Unsigned_32;
+                 ID_Out  : out Ticket_ID);
+
+   --  Retrieve a PSK by identity. Found => False on miss, wrong suite,
+   --  expiry, or any error: all mean "do a full handshake".
+   type Lookup_Session_Fn is access
+      procedure (ID         : Byte_Seq;
+                 Want_Suite : Unsigned_16;
+                 PSK        : out Bytes_48;
+                 PSK_Len    : out N32;
+                 Suite      : out Unsigned_16;
+                 Found      : out Boolean);
+
+   --  TLS 1.2 stateless tickets (RFC 5077): the key that seals outgoing
+   --  tickets, and lookup by the Key_ID carried in an inbound ticket.
+   --  Replaces the old shared key array, and lets an HSM-backed
+   --  deployment supply keys without the library holding them.
+   type Get_Active_TEK_Fn is access
+      procedure (Key_ID : out Byte_Seq;
+                 TEK    : out Byte_Seq;
+                 Found  : out Boolean);
+
+   type Get_TEK_By_Id_Fn is access
+      procedure (Key_ID : Byte_Seq;
+                 TEK    : out Byte_Seq;
+                 Found  : out Boolean);
 
    type Config is record
       Suite        : Cipher_Suite    := TLS_CHACHA20_POLY1305_SHA256;
@@ -1273,9 +1328,11 @@ is
       --  SSL_VERIFY_FAIL_IF_NO_PEER_CERT distinction.
       Require_Client_Cert : Boolean := False;
 
-      --  Server: ticket cache for session resumption.
-      --  If non-null, server sends NewSessionTicket after handshake.
-      Ticket_Store : Ticket_Store_Access := null;
+      --  Server: resumption storage callbacks. When both are non-null the
+      --  server sends NewSessionTicket after the handshake and accepts
+      --  PSK identities on resumption. Null disables resumption.
+      Store_Session  : Store_Session_Fn  := null;
+      Lookup_Session : Lookup_Session_Fn := null;
 
       --  Server: mark TLS 1.3 NewSessionTicket values as usable across
       --  hostnames via the ticket_flags resumption_across_names bit.
@@ -1293,8 +1350,8 @@ is
       --  key index is the one used for outgoing tickets; all valid
       --  keys are tried in turn for inbound ticket decryption (via the
       --  embedded Key_ID).
-      TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
-      TLS12_Active_TEK_Idx  : Natural := 0;
+      Get_Active_TEK : Get_Active_TEK_Fn := null;
+      Get_TEK_By_Id  : Get_TEK_By_Id_Fn  := null;
 
       --  Server: lifetime hint (seconds) sent in NewSessionTicket.
       --  The server itself also enforces this as a hard expiry on
@@ -1329,7 +1386,6 @@ is
       --  Requires Cfg.Get_Time AND Cfg.Random to be non-null. If
       --  either is null, auto-rotation silently does nothing
       --  regardless of this flag.
-      Auto_Rotate_TEK : Boolean := True;
 
       --  Interval (seconds) between automatic TEK rotations. Default
       --  24 hours, matching Go crypto/tls and CABF guidance ("regular
@@ -1339,7 +1395,6 @@ is
       --  more clients hitting "old ticket, full handshake" right
       --  after a rotation. The grace window is fixed at
       --  TLS12_Max_Keys * Interval (default 4 days at 24h interval).
-      TEK_Rotation_Interval_Secs : Unsigned_32 := 24 * 3600;
 
       --  Client: previously-cached TLS 1.2 session ticket. When
       --  Valid, sent in the session_ticket extension on CH; on

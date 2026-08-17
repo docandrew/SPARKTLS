@@ -47,16 +47,22 @@ is
       Trust                 : Trust_Store_Access := null;
       Request_Client_Cert   : Boolean := False;
       Require_Client_Cert   : Boolean := False;
-      Tickets               : Ticket_Store_Access := null;
+      Store_Session         : Store_Session_Fn := null;
+      Lookup_Session        : Lookup_Session_Fn := null;
       ALPN                  : String := "";
       Versions              : Version_Policy := Allow_Both;
-      TLS12_Ticket_Keys     : TLS12_Ticket_Keys_Access := null;
+      Get_Active_TEK        : Get_Active_TEK_Fn := null;
+      Get_TEK_By_Id         : Get_TEK_By_Id_Fn := null;
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
       Get_Time              : Get_Time_Fn := null;
-      Select_Identity       : SNI_Cert_Selector := null;
-      Auto_Rotate_TEK            : Boolean := True;
-      TEK_Rotation_Interval_Secs : Unsigned_32 := 24 * 3600)
-   with SPARK_Mode => Off;
+      Select_Identity       : SNI_Cert_Selector := null)
+   --  Mirrors Server.Init's requirements, which Configure must satisfy on
+   --  the caller's behalf. Client.Configure has always carried the equivalent
+   --  check; the server's absence of one was invisible while this body was
+   --  SPARK_Mode => Off, and let a null Random reach Init.
+   with Pre => Random /= null
+               and then Local /= null
+               and then Local.Has_Identity;
    --  Select_Identity: optional SNI-based identity selector
    --  (RFC 6066 §3 / RFC 8446 §4.4.2.4). When non-null and the client
    --  sent a non-empty server_name extension, the callback receives
@@ -90,9 +96,11 @@ is
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
-   --  The body is SPARK_Mode => Off, so this postcondition is ASSUMED by
-   --  GNATprove rather than checked. It must therefore state only what is
-   --  true on every path: both failure paths leave State (S) = Error_State.
+   --  This postcondition is CHECKED by GNATprove: the body is in SPARK
+   --  since the ticket-storage callbacks replaced Config's owning pointers
+   --  (an owning pointer could not be copied out of an "in" parameter, which
+   --  is what forced SPARK_Mode => Off here before). Both failure paths
+   --  leave State (S) = Error_State.
    --  Role is set in the initial aggregate and never changed (Set_State
    --  frames it).
    with Pre  => Cfg.Random /= null
@@ -171,48 +179,6 @@ is
    --  Created_At for the new key; the next rotation timer compares
    --  against this. Typically the caller hands in
    --  Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all).
-   procedure Rotate_TLS12_Ticket_Key
-     (Keys       : in out TLS12_Ticket_Key_Array;
-      Active_Idx : in out Natural;
-      New_Key_ID : in     Byte_Seq;
-      New_TEK    : in     Byte_Seq;
-      Now_Secs   : in     Interfaces.Unsigned_64)
-   with Pre  => New_Key_ID'Length = 4
-                and then New_TEK'Length = 32
-                and then Active_Idx in Keys'Range,
-        Post => Active_Idx in Keys'Range
-                and then Keys (Active_Idx).Valid
-                and then Keys (Active_Idx).Created_At = Now_Secs;
-   --  Multi-process deployment patterns (when Cfg.Auto_Rotate_TEK =
-   --  False; the library does not generate keys, only handles them):
-   --
-   --   1. FORK-INHERIT + WORKER RECYCLING (simplest, most common):
-   --      Parent generates a fresh TEK before fork(); workers
-   --      inherit the shared array via COW. Rotation happens by
-   --      recycling workers (e.g., after N connections or T
-   --      seconds). Tickets issued by workers spawned before a
-   --      recycle don't decrypt in workers spawned after — clients
-   --      re-handshake. Acceptable for most deployments.
-   --
-   --   2. SHARED FILE + SIGHUP (nginx model):
-   --      External orchestrator (cron, k8s sidecar) writes a fresh
-   --      key file every Interval and signals all workers. Each
-   --      worker's signal handler reads the file and calls
-   --      Rotate_TLS12_Ticket_Key. All workers stay in sync.
-   --
-   --   3. KV STORE (Cloudflare model):
-   --      A central control plane writes the active TEK to Redis /
-   --      etcd / consul on a schedule. Each worker polls (5-minute
-   --      timer is typical) and calls Rotate_TLS12_Ticket_Key on
-   --      key change.
-   --
-   --   4. HSM-BACKED KEYS:
-   --      Keys live in an HSM; the library must not generate fresh
-   --      ones in process memory. Caller pulls the key from the HSM
-   --      and calls Rotate_TLS12_Ticket_Key. (TEK bytes still
-   --      transit process memory briefly during ticket encryption —
-   --      a pure-HSM operation would require AES-GCM offload to the
-   --      HSM, which is not supported today.)
 
 private
 

@@ -100,9 +100,10 @@ is
    procedure Init
      (S   :    out Session;
       Cfg : in     Config)
-   --  The body is SPARK_Mode => Off, so this postcondition is ASSUMED by
-   --  GNATprove rather than checked. It must therefore state only what is
-   --  true on every path. Init fails closed: Client_Config_Can_Start
+   --  This postcondition is CHECKED by GNATprove: the body is in SPARK
+   --  since the ticket-storage callbacks replaced Config's owning pointers
+   --  (an owning pointer could not be copied out of an "in" parameter, which
+   --  is what forced SPARK_Mode => Off here before). Init fails closed: Client_Config_Can_Start
    --  rejection, HC allocation failure, and Initialize_Client_Handshake
    --  failure all leave State (S) = Error_State with nothing queued. Role is
    --  set in the initial aggregate and never changed (Set_State frames it).

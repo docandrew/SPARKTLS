@@ -74,14 +74,29 @@ is
    --    * Plaintext shape invalid
    --    * Created_At + Max_Age < Now (expired)
    --    * Created_At > Now (clock skew / forged future)
+   --  Read the Key_ID a ticket names, so the caller can fetch exactly the
+   --  key that sealed it. Wire layout is Key_ID (4) | Nonce (12) | Ct | Tag.
+   --  This is what makes decryption the O(1) lookup the RFC 5077 notes
+   --  describe, rather than trying every key in turn.
+   function Ticket_Key_ID (Ticket : Byte_Seq) return Byte_Seq
+   with Pre  => Ticket'First = 0 and then Ticket'Length >= 4,
+        Post => Ticket_Key_ID'Result'First = 0
+                and then Ticket_Key_ID'Result'Length = 4;
+
+   --  Decrypt with a single caller-supplied key -- the one named by
+   --  Ticket_Key_ID. Takes raw key bytes rather than a key record so it
+   --  is independent of how the caller stores keys (Config.Get_TEK_By_Id,
+   --  an HSM, a file, whatever).
    procedure Decrypt_Ticket
      (Ticket  : in     Byte_Seq;
-      Keys    : in     TLS12_Ticket_Key_Array;
+      TEK     : in     Byte_Seq;
       Now     : in     Unsigned_64;
       Max_Age : in     Unsigned_32;
       Plain   :    out Ticket_Plain;
       Status  :    out Boolean)
    with Pre => Ticket'First = 0
-               and then Ticket'Last < N32'Last;
+               and then Ticket'Last < N32'Last
+               and then TEK'First = 0
+               and then TEK'Length = 32;
 
 end SPARKTLS.Tickets_12;

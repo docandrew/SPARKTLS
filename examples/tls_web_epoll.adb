@@ -36,6 +36,7 @@ with SPARKTLS.Credentials;
 with Entropy_Random;
 with POSIX_Thin;            use POSIX_Thin;
 with TLS_Echo_Pool;         use TLS_Echo_Pool;
+with SPARKTLS.Session_Cache;
 
 procedure TLS_Web_Epoll is
 
@@ -167,7 +168,6 @@ procedure TLS_Web_Epoll is
    end Get_Cached;
 
    --  Session ticket cache (shared across connections)
-   Tickets : aliased SPARKTLS.Ticket_Store;
 
    --  Per-connection state, Conns array, etc. live at library level
    --  in TLS_Echo_Pool (BSS, not main stack).
@@ -612,7 +612,10 @@ begin
                           (S       => Conns (Conn_Index (Slot)).S,
                            Local   => Id'Unchecked_Access,
                            Random  => Entropy_Random.Random'Access,
-                           Tickets => Tickets'Unchecked_Access);
+                           Store_Session  =>
+                             SPARKTLS.Session_Cache.Store_Session'Access,
+                           Lookup_Session =>
+                             SPARKTLS.Session_Cache.Lookup_Session'Access);
 
                         Ev.Events := unsigned (EPOLLIN);
                         Ev.Data.FD := Client_FD;

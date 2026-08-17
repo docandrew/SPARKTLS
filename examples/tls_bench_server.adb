@@ -18,6 +18,7 @@ with SPARKTLS.Credentials;
 with Entropy_Random;
 with POSIX_Thin;            use POSIX_Thin;
 with TLS_Echo_Pool;         use TLS_Echo_Pool;
+with SPARKTLS.Session_Cache;
 
 procedure TLS_Bench_Server is
 
@@ -45,7 +46,6 @@ procedure TLS_Bench_Server is
    Id      : aliased SPARKTLS.Identity;
    Id_OK   : Boolean;
    Port    : Interfaces.C.unsigned_short := 8443;
-   Tickets : aliased SPARKTLS.Ticket_Store;
 
    Raw_Buf : aliased Byte_Seq (0 .. 16383) := (others => 0);
    Snd_Buf : Byte_Seq (0 .. 16383);
@@ -169,7 +169,12 @@ begin
       return;
    end if;
 
-   Tickets := (others => <>);
+   --  Seed ticket storage. No clock is wired here, so rotation stays off --
+   --  fine for a short-lived benchmark process; a long-running server should
+   --  pass Clock so keys rotate.
+   SPARKTLS.Session_Cache.Initialize
+     (Random => Entropy_Random.Random'Access,
+      Clock  => null);
 
    Put_Line ("=== SPARKTLS Bench Server ===");
    Put_Line ("Listening on 0.0.0.0:" & Port'Image);
@@ -232,7 +237,10 @@ begin
                           (S       => Conns (Conn_Index (Slot)).S,
                            Local   => Id'Unchecked_Access,
                            Random  => Entropy_Random.Random'Access,
-                           Tickets => Tickets'Unchecked_Access);
+                           Store_Session  =>
+                             SPARKTLS.Session_Cache.Store_Session'Access,
+                           Lookup_Session =>
+                             SPARKTLS.Session_Cache.Lookup_Session'Access);
                         Ev.Events := unsigned (EPOLLIN);
                         Ev.Data.FD := Client_FD;
                         Dummy := Epoll_Ctl (Epfd, EPOLL_CTL_ADD,

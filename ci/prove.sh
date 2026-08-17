@@ -47,12 +47,31 @@ PROVE_LEVEL_ARGS=()
 high_num="${PROVE_MEM%G}"
 PROVE_HIGH="$(( high_num * 85 / 100 ))G"
 
+# Proof-only configuration pragmas. SPARK refuses to analyse a protected
+# object without a concurrency profile (SPARK RM 9(2)), and SPARKTLS.
+# Session_Cache is exactly that. The pragmas live here rather than in
+# sparktls.gpr because pragma Profile is partition-wide: in the project file
+# it would impose Ravenscar/Jorvik on every consumer of the library. Passed
+# via -cargs, it reaches gnatprove and never `alr build`. See ci/proof.adc.
+#
+# -cargs consumes everything after it, so this must come last -- which also
+# means a caller supplying its own -cargs would be overridden. Detect that
+# and let the caller win, since it is doing something deliberate.
+PROVE_CARGS=(-cargs "-gnatec=${ROOT}/ci/proof.adc")
+if [[ "$*" == *"-cargs"* ]]; then
+    echo "== NOTE: caller passed -cargs; ci/proof.adc NOT applied."
+    echo "   Session_Cache will fail SPARK legality (needs pragma Profile)."
+    echo "   Add -gnatec=${ROOT}/ci/proof.adc to your own -cargs group."
+    PROVE_CARGS=()
+fi
+
 GNATPROVE_ARGS=(
     -j"${PROVE_JOBS}"
     "${PROVE_LEVEL_ARGS[@]}"
     --counterexamples=off
     --output=oneline
     "$@"
+    "${PROVE_CARGS[@]}"
 )
 
 # --- containment ----------------------------------------------------------

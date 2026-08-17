@@ -166,26 +166,17 @@ is
       Ticket_Len := 32 + Plain_Len;
    end Encrypt_Ticket;
 
-   ----------------------------------------------------------------
-   --  Helper: find key with matching Key_ID. Returns -1 on miss.
-   function Find_Key_Index
-     (Keys : TLS12_Ticket_Key_Array;
-      ID   : Byte_Seq) return Integer
-   with Post => Find_Key_Index'Result = -1
-                or else Find_Key_Index'Result in Keys'Range
-   is
+
+   function Ticket_Key_ID (Ticket : Byte_Seq) return Byte_Seq is
+      Result : Byte_Seq (0 .. 3);
    begin
-      for I in Keys'Range loop
-         if Keys (I).Valid and then Keys (I).Key_ID = ID then
-            return I;
-         end if;
-      end loop;
-      return -1;
-   end Find_Key_Index;
+      Result := Ticket (0 .. 3);
+      return Result;
+   end Ticket_Key_ID;
 
    procedure Decrypt_Ticket
      (Ticket  : in     Byte_Seq;
-      Keys    : in     TLS12_Ticket_Key_Array;
+      TEK     : in     Byte_Seq;
       Now     : in     Unsigned_64;
       Max_Age : in     Unsigned_32;
       Plain   :    out Ticket_Plain;
@@ -193,7 +184,6 @@ is
    is
       use SPARKNaCl.AES;
       T_Len : constant N32 := N32 (Ticket'Length);
-      Idx   : Integer;
       Tag   : SPARKNaCl.Bytes_16;
       Ct_Len : N32;
       Plain_Buf : Byte_Seq (0 .. 90) := (others => 0);
@@ -210,11 +200,6 @@ is
       end if;
       Ct_Len := T_Len - 32;  --  ciphertext length
       if Ct_Len > 91 then
-         return;
-      end if;
-
-      Idx := Find_Key_Index (Keys, Ticket (0 .. 3));
-      if Idx < 0 then
          return;
       end if;
 
@@ -239,7 +224,7 @@ is
          for I in SPARKNaCl.Index_12 loop
             Nonce_B (I) := Ticket (4 + N32 (I));
          end loop;
-         Construct (Key, SPARKNaCl.Bytes_32 (Keys (Idx).TEK));
+         Construct (Key, SPARKNaCl.Bytes_32 (TEK));
          SPARKTLSCrypto.AES_GCM.Decrypt_256
            (M      => Pt_Slice,
             Status => AES_OK,

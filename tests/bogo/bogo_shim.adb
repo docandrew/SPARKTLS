@@ -32,6 +32,7 @@ with X509;
 
 with GNAT.Sockets;               use GNAT.Sockets;
 with SPARKTLS.Test_Support;
+with SPARKTLS.Session_Cache;
 
 procedure Bogo_Shim is
 
@@ -118,20 +119,13 @@ procedure Bogo_Shim is
    --  declared inside Run_Handshake (re-zeroed each iteration),
    --  which silently broke server-mode resumption (Cache lookup
    --  on iteration 2 found nothing → didResume=False).
-   Shared_Tickets : aliased SPARKTLS.Ticket_Store;
 
-   --  TLS 1.2 RFC 5077 ticket encryption keys. BoGo's Basic-Server
-   --  TLS 1.2 cases require tickets, not session IDs. This test-only
-   --  key stays stable across the shim's resume loop.
-   TLS12_Keys : aliased SPARKTLS.TLS12_Ticket_Key_Array :=
-     (0 => (Key_ID     => (16#42#, 16#4F#, 16#47#, 16#4F#),
-            TEK        => (others => 16#A5#),
-            Valid      => True,
-            Created_At => 0),
-      others => (Key_ID     => (others => 0),
-                 TEK        => (others => 0),
-                 Valid      => False,
-                 Created_At => 0));
+   --  TLS 1.2 RFC 5077 ticket key. BoGo's Basic-Server TLS 1.2 cases
+   --  require tickets; this fixed test key is installed into the shared
+   --  Session_Cache at startup and stays stable across the resume loop.
+   BoGo_Key_ID : constant SPARKNaCl.Byte_Seq (0 .. 3) :=
+     (16#42#, 16#4F#, 16#47#, 16#4F#);
+   BoGo_TEK    : constant SPARKNaCl.Byte_Seq (0 .. 31) := (others => 16#A5#);
 
    --  Set by Run_Handshake on any failure-exit path so the resume
    --  loop can bail and let the test framework see a single
@@ -894,11 +888,6 @@ procedure Bogo_Shim is
       Id_OK   : Boolean;
       Roots   : aliased SPARKTLS.Trust_Store;
       Roots_OK : Boolean;
-      --  Server-side ticket cache: alias the outer Shared_Tickets
-      --  so resume connections see tickets stored on previous
-      --  iterations.
-      Tickets : SPARKTLS.Ticket_Store_Access :=
-                  Shared_Tickets'Unchecked_Access;
 
       procedure Send_Pending is
          N    : N32;
@@ -1119,12 +1108,20 @@ procedure Bogo_Shim is
                Server_Cfg.Request_Client_Cert := Cfg.Request_Client_Cert;
                Server_Cfg.Require_Client_Cert := Cfg.Require_Client_Cert;
                Server_Cfg.Skip_Verify := Cfg.Request_Client_Cert;
-               Server_Cfg.Ticket_Store :=
-                 (if Cfg.No_Ticket then null else Tickets);
+               --  Resumption storage is the shared Session_Cache; null
+               --  callbacks disable it for -no-ticket cases.
+               Server_Cfg.Store_Session :=
+                 (if Cfg.No_Ticket then null
+                  else SPARKTLS.Session_Cache.Store_Session'Access);
+               Server_Cfg.Lookup_Session :=
+                 (if Cfg.No_Ticket then null
+                  else SPARKTLS.Session_Cache.Lookup_Session'Access);
                Server_Cfg.TLS13_Resumption_Across_Names :=
                  Cfg.Resumption_Across_Names;
-               Server_Cfg.TLS12_Ticket_Keys := TLS12_Keys'Unchecked_Access;
-               Server_Cfg.Auto_Rotate_TEK := False;
+               Server_Cfg.Get_Active_TEK :=
+                 SPARKTLS.Session_Cache.Get_Active_TEK'Access;
+               Server_Cfg.Get_TEK_By_Id :=
+                 SPARKTLS.Session_Cache.Get_TEK_By_Id'Access;
                Server_Cfg.Versions := Policy;
                Server_Cfg.TLS12_Cipher_List := Cfg.TLS12_Cipher_List;
                Server_Cfg.TLS12_Cipher_Groups := Cfg.TLS12_Cipher_Groups;
@@ -1506,6 +1503,9 @@ procedure Bogo_Shim is
 
 begin
    Entropy_Random.Init;
+   --  Install the fixed TLS 1.2 ticket key into the shared cache. The
+   --  library no longer holds ticket keys, so the shim owns this now.
+   SPARKTLS.Session_Cache.Rotate_TEK (BoGo_Key_ID, BoGo_TEK, 0);
    Parse_Args;
    if Cfg.Port = 0 then
       Err ("bogo_shim: -port required");
