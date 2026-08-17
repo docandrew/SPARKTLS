@@ -2618,7 +2618,21 @@ private
 
       --  Handshake context (heap-allocated, freed after handshake)
       HC_Ptr : Handshake_Context_Access := null;
-   end record;
+   end record
+   with Dynamic_Predicate =>
+     --  The four AEAD sequence counters are monotonic and the library is
+     --  their only writer, so "has not reached 2**64" is a property of a
+     --  Session at every observable point rather than something a caller
+     --  should have to establish. Stating it here means the increments
+     --  prove non-overflowing without Nonce_Space_Available appearing as a
+     --  precondition on the public API. At 1e6 records/sec, reaching the
+     --  bound would take roughly 584,000 years; the guard exists for
+     --  overflow proof, not as a cryptographic record limit (RFC 8446 5.5
+     --  key-update limits are a separate, much smaller concern).
+     Session.Client_App.Counter < Unsigned_64'Last
+     and then Session.Server_App.Counter < Unsigned_64'Last
+     and then Session.Client_Seq_12 < Unsigned_64'Last
+     and then Session.Server_Seq_12 < Unsigned_64'Last;
 
    --  Query function completions: one field each, verbatim.
 

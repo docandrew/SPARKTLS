@@ -57,6 +57,39 @@ dispatch.
   suites, groups, signature schemes, versions, or extensions to exercise peer
   tolerance. This is a deliberate product choice, not a missing MVP feature.
 
+- **Certificate revocation checking (CRL / OCSP).** Neither is performed.
+  A certificate that has been revoked but is otherwise well-formed, in-date
+  and chains to a trusted root **will be accepted** (verifiable against
+  `revoked.badssl.com`, which is in the `tests/realworld` matrix as a known
+  failure). We also do not send `status_request`, so no stapled OCSP
+  response is requested or received.
+
+  The reasoning is the same one that led rustls and others to the same
+  default: *online* revocation checking does not deliver what people assume
+  it does. OCSP soft-fails in practice — an attacker positioned to
+  intercept the connection can equally drop the OCSP request, so a client
+  that proceeds on failure gains nothing, while one that hard-fails breaks
+  whenever a responder is down. It also discloses browsing activity to the
+  CA and costs a round trip. CRLs are bulky and stale. Browsers largely
+  moved to out-of-band pushed sets (CRLSets, CRLite) for these reasons.
+
+  **However, be clear about the gap here:** unlike rustls — which exposes
+  the peer certificate chain, supports CRLs for client-certificate
+  verification, and can hand a stapled OCSP response to the application —
+  SPARKTLS currently provides **no mechanism for a caller to implement
+  revocation themselves**. `Has_Peer_Certificate` returns only a Boolean;
+  there is no accessor for the peer chain or its DER. If revocation matters
+  in your threat model, today the practical mitigations are short-lived
+  certificates or an out-of-band check performed before the connection is
+  trusted for anything sensitive. Exposing the peer chain so callers can
+  make their own policy decisions is tracked as planned work.
+
+- **RSA-4096 server certificates (known issue, not by design).**
+  RSA-2048 leaf certificates work; RSA-4096 currently fails the handshake
+  (`rsa4096.badssl.com` in the realworld matrix). `Max_RSA_Key_Bytes` is
+  512 bytes, so 4096-bit keys are nominally within range and this is
+  believed to be a bug rather than a deliberate limit. Being tracked.
+
 ## Session Ticket Policy
 
 TLS 1.3 session tickets are hostname-scoped by default. Servers only mark

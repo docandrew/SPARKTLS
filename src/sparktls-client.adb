@@ -4546,7 +4546,6 @@ is
    procedure Advance
      (S      : in out Session;
       Result :    out Action)
-   with SPARK_Mode => Off
    is
       Handled : Boolean;
    begin
@@ -4563,15 +4562,31 @@ is
          --  HC.Version is set after Parse_Server_Hello.
          --  Before ServerHello, Version defaults to TLS_1_3
          --  (ClientHello is version-agnostic).
-         if S.HC_Ptr.Version = TLS_1_2
-            and S.State /= Client_Hello_Sent
-            and S.State /= Wait_Server_Hello
-         then
-            SPARKTLS.Client.TLS12.Advance_Handshake_12
-              (S, S.HC_Ptr.all, Result);
-         else
-            Advance_Handshake (S, S.HC_Ptr.all, Result);
-         end if;
+         --
+         --  BORROW: the handshake handlers take both S and the context.
+         --  Passing S and S.HC_Ptr.all together is aliasing (SPARK RM
+         --  6.4.2, reported as "high" by flow analysis -- note that
+         --  --mode=check_all does NOT catch this, since aliasing is a flow
+         --  check rather than a legality one). Move the pointer out of S
+         --  for the duration of the call so S no longer reaches the
+         --  context, then hand ownership back.
+         declare
+            HC : Handshake_Context_Access := S.HC_Ptr;
+         begin
+            S.HC_Ptr := null;
+
+            if HC.Version = TLS_1_2
+               and S.State /= Client_Hello_Sent
+               and S.State /= Wait_Server_Hello
+            then
+               SPARKTLS.Client.TLS12.Advance_Handshake_12
+                 (S, HC.all, Result);
+            else
+               Advance_Handshake (S, HC.all, Result);
+            end if;
+
+            S.HC_Ptr := HC;
+         end;
 
          if S.State = Connected or S.State = Error_State then
             S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;

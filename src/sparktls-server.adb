@@ -1135,7 +1135,6 @@ is
    procedure Advance
      (S      : in out Session;
       Result :    out Action)
-   with SPARK_Mode => Off
    is
       Handled : Boolean;
    begin
@@ -1148,7 +1147,20 @@ is
             return;
          end if;
 
-         Advance_Handshake (S, S.HC_Ptr.all, Result);
+         --  BORROW: Advance_Handshake takes both S and the context.
+         --  Passing S and S.HC_Ptr.all together is aliasing (SPARK RM
+         --  6.4.2) -- flow analysis reports it as "high", and note that
+         --  --mode=check_all does NOT catch it, since aliasing is a flow
+         --  check rather than a legality one. Move the pointer out of S
+         --  for the duration of the call so S no longer reaches the
+         --  context, then hand ownership back. Mirrors Client.Advance.
+         declare
+            HC : Handshake_Context_Access := S.HC_Ptr;
+         begin
+            S.HC_Ptr := null;
+            Advance_Handshake (S, HC.all, Result);
+            S.HC_Ptr := HC;
+         end;
 
          if S.State in Connected | Error_State | Closed then
             S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
