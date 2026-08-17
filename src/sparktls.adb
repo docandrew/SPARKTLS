@@ -6,6 +6,8 @@ with SPARKTLS.Key_Schedule_12;
 with SPARKTLSCrypto.HKDF;
 with SPARKTLSCrypto.HKDF384;
 
+with SPARKTLS.Key_Update;
+
 package body SPARKTLS with
    SPARK_Mode => On
 is
@@ -202,6 +204,66 @@ is
    ----------------------------------------------------------------------------
    --  Write_Plaintext
    ----------------------------------------------------------------------------
+   --  RFC 8446 §4.6.3: emit the deferred KeyUpdate reply and rotate our
+   --  write key. Direction depends on role -- a client writes under
+   --  Client_App, a server under Server_App.
+   --
+   --  Ordering matters: the message is sealed under the CURRENT write key
+   --  and only then is the key rotated. Rotating first would encrypt the
+   --  notification under a key the peer has not adopted yet, and it would
+   --  never be readable.
+   --
+   --  Never sets request_update -- replying with a request would be an
+   --  unbounded ping-pong (RFC 8446 §4.6.3).
+   procedure Flush_Pending_Key_Update (S : in out Session)
+   with Pre => S.App_Secret_Len in 32 | 48
+               and then S.Negotiated_Version /= TLS_1_2;
+
+   procedure Flush_Pending_Key_Update (S : in out Session) is
+      KU_Buf : Byte_Seq (0 .. Key_Update.Key_Update_Msg_Len - 1);
+      KU_Len : N32;
+      Sent   : N32;
+   begin
+      if S.Negotiated_Suite not in Suite_AES_128_GCM_SHA256
+                                 | Suite_AES_256_GCM_SHA384
+                                 | Suite_CHACHA20_POLY1305_SHA256
+      then
+         return;
+      end if;
+
+      Key_Update.Build_Key_Update (KU_Buf, KU_Len, Request => False);
+
+      if S.Role = Role_Client then
+         Records.Build_Encrypted_Record
+           (Plaintext  => KU_Buf (0 .. KU_Len - 1),
+            Inner_Type => 16#16#,
+            Keys       => S.Client_App,
+            Output     => S.Output,
+            Bytes_Out  => Sent);
+         if Sent = 0 then
+            return;   --  no room; retry on the next write
+         end if;
+         Key_Update.Update_Secret
+           (S.Client_App_Secret, S.App_Secret_Len,
+            S.Client_App, S.Negotiated_Suite);
+      else
+         Records.Build_Encrypted_Record
+           (Plaintext  => KU_Buf (0 .. KU_Len - 1),
+            Inner_Type => 16#16#,
+            Keys       => S.Server_App,
+            Output     => S.Output,
+            Bytes_Out  => Sent);
+         if Sent = 0 then
+            return;
+         end if;
+         Key_Update.Update_Secret
+           (S.Server_App_Secret, S.App_Secret_Len,
+            S.Server_App, S.Negotiated_Suite);
+      end if;
+
+      S.Key_Update_Pending := False;
+   end Flush_Pending_Key_Update;
+
    procedure Write_Plaintext
      (S              : in out Session;
       Plaintext      : in     Byte_Seq;
@@ -223,6 +285,20 @@ is
          (if S.Negotiated_Version = TLS_1_2
           then TLS12_Overhead else TLS13_Overhead);
    begin
+      --  RFC 8446 §4.6.3: if the peer asked us to rekey, we MUST send our
+      --  KeyUpdate before the next Application Data record. Flushing it
+      --  here -- rather than inline when the request arrived -- is what
+      --  collapses a burst of requests into a single reply, and is also
+      --  what makes the reply correct when it is discovered mid-write.
+      --
+      --  TLS 1.3 only: TLS 1.2 has no rekey mechanism.
+      if S.Key_Update_Pending
+        and then S.Negotiated_Version /= TLS_1_2
+        and then S.App_Secret_Len in 32 | 48
+      then
+         Flush_Pending_Key_Update (S);
+      end if;
+
       while Pos < Total loop
          pragma Loop_Invariant
            (Pos in 0 .. Total

@@ -2238,6 +2238,13 @@ is
    --  the 5th triggers fatal too_many_warning_alerts.
    Max_Warning_Alerts : constant := 4;
 
+   --  RFC 8446 4.6.3 places no bound on how often a peer may send
+   --  KeyUpdate, and each one costs a KDF plus key re-derivation. Cap the
+   --  count so rekeying cannot be used as a cheap asymmetric DoS. The
+   --  legitimate need is one rotation per AEAD usage limit (RFC 8446 5.5),
+   --  so a healthy peer sends single digits over a connection's life.
+   Max_Key_Updates : constant := 32;
+
    --  RFC 8446 §5.2 / RFC 5246 §6.2.1: zero-length-plaintext
    --  records waste decrypt CPU without delivering progress.
    --  BoringSSL caps consecutive empty records at 32; the 33rd
@@ -2700,6 +2707,40 @@ private
       Exporter_Secret_Len    : N32 := 0;  --  32 or 48; 0 means unavailable
       Exporter_Client_Random : Bytes_32 := (others => 0);
       Exporter_Server_Random : Bytes_32 := (others => 0);
+
+      --  RFC 8446 §4.6.3 KeyUpdate: the application traffic SECRETS are
+      --  retained, not just the derived key/IV, because the next generation
+      --  is derived from the current secret:
+      --
+      --    application_traffic_secret_N+1 =
+      --      HKDF-Expand-Label (secret_N, "traffic upd", "", Hash.length)
+      --
+      --  The key and IV alone are a dead end -- they are outputs of the
+      --  secret, and the KDF is one-way. These survive the handshake
+      --  context being freed, which is why they live on Session rather
+      --  than Handshake_Context.
+      --
+      --  TLS 1.3 only. TLS 1.2 has no rekey mechanism; a TLS 1.2 connection
+      --  that exhausts its sequence space must be closed.
+      Client_App_Secret : Bytes_48 := (others => 0);
+      Server_App_Secret : Bytes_48 := (others => 0);
+      App_Secret_Len    : N32 := 0;  --  0 = none, else 32 (SHA-256)/48 (384)
+
+      --  RFC 8446 §4.6.3 does not bound how often a peer may request a
+      --  rekey, and each one costs a KDF plus key re-derivation. Counted
+      --  so a peer cannot use KeyUpdate as a cheap asymmetric DoS, in the
+      --  same shape as the warning-alert and empty-record flood caps.
+      Key_Updates_Recvd : Natural := 0;
+
+      --  RFC 8446 §4.6.3: a peer's request_update obliges us to send a
+      --  KeyUpdate "prior to sending its next Application Data record" --
+      --  the obligation is tied to the next application WRITE, not to each
+      --  message received. Five requests arriving back-to-back therefore
+      --  warrant ONE response, not five. Responding immediately per
+      --  message makes every reply after the first look unsolicited to the
+      --  peer (BoGo KeyUpdate-Requested, with RejectUnsolicitedKeyUpdate).
+      --  So the reply is deferred: set here, flushed by Write_Plaintext.
+      Key_Update_Pending : Boolean := False;
 
       --  True on first Advance in Connected state (to deliver Handshake_Done)
       Handshake_Just_Done : Boolean := False;

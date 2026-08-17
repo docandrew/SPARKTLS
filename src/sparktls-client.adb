@@ -11,6 +11,7 @@ with SPARKTLS.Handshake.Client_Msgs;
 with SPARKTLS.Handshake.Certs;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule;
+with SPARKTLS.Key_Update;
 with SPARKTLS.Tickets_12;
 with SPARKTLSCrypto.HMAC384;
 with SPARKTLSCrypto.HKDF384;
@@ -3242,6 +3243,12 @@ is
       Set_Traffic_Keys
         (S.Server_App, Bytes_48 (Byte_Seq (Server_App_Sec)),
          S.Negotiated_Suite);
+
+      --  RFC 8446 §4.6.3: retain the secrets themselves, not just the
+      --  derived key/IV, so KeyUpdate can ratchet to the next generation.
+      S.Client_App_Secret := Bytes_48 (Byte_Seq (Client_App_Sec));
+      S.Server_App_Secret := Bytes_48 (Byte_Seq (Server_App_Sec));
+      S.App_Secret_Len    := 48;
    end Build_Client_Finished_384;
 
    procedure Build_Client_Finished_256
@@ -3337,6 +3344,11 @@ is
          SS48 (0 .. 31) := Bytes_32 (Byte_Seq (Server_App_Sec));
          Set_Traffic_Keys (S.Client_App, CS48, S.Negotiated_Suite);
          Set_Traffic_Keys (S.Server_App, SS48, S.Negotiated_Suite);
+
+         --  RFC 8446 §4.6.3: retain the secrets for the KeyUpdate ratchet.
+         S.Client_App_Secret := CS48;
+         S.Server_App_Secret := SS48;
+         S.App_Secret_Len    := 32;
       end;
    end Build_Client_Finished_256;
 
@@ -5671,7 +5683,7 @@ is
       Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Result    :    out Action)
-   with Pre => S.State = Connected
+   with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Client_App)
                and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
@@ -5833,7 +5845,7 @@ is
    procedure Dispatch_Post_HS_Message
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State = Connected
+   with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Client_App)
                and then S.Post_HS_Need in 4 .. Max_Record_Plaintext
                and then S.Post_HS_Len = S.Post_HS_Need,
@@ -5843,6 +5855,75 @@ is
                   (if Result = OK
                    then S.State = S.State'Old
                      and then Nonce_Space_Available (S.Client_App));
+
+   --  RFC 8446 §4.6.3. A KeyUpdate from the peer rotates the peer's WRITE
+   --  key, which is our READ key -- for a client that is S.Server_App. If
+   --  the peer set request_update we must rotate our own write key
+   --  (S.Client_App) and tell them, before our next Application Data
+   --  record.
+   procedure Process_Key_Update_Message
+     (S      : in out Session;
+      Msg    : in     Byte_Seq;
+      Result :    out Action)
+   with Pre  => S.State in Connected | Closing
+                and then Msg'First = 0
+                and then Nonce_Space_Available (S.Client_App)
+                and then S.App_Secret_Len in 32 | 48
+                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                            | Suite_AES_256_GCM_SHA384
+                                            | Suite_CHACHA20_POLY1305_SHA256,
+        Post => (if Result = OK
+                 then S.State in Connected | Closing
+                   and then Nonce_Space_Available (S.Client_App));
+
+   procedure Process_Key_Update_Message
+     (S      : in out Session;
+      Msg    : in     Byte_Seq;
+      Result :    out Action)
+   is
+      Request : Boolean;
+      Valid   : Boolean;
+   begin
+      Key_Update.Parse_Key_Update (Msg, Request, Valid);
+
+      if not Valid then
+         --  RFC 8446 §4.6.3: a malformed body or a request_update outside
+         --  {0,1} MUST terminate the connection with illegal_parameter.
+         Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
+         return;
+      end if;
+
+      --  Each KeyUpdate costs a KDF plus key re-derivation, and the RFC
+      --  places no bound on how often a peer may send them. Cap it so the
+      --  peer cannot use rekeying as a cheap asymmetric DoS (BoGo
+      --  TooManyKeyUpdates).
+      if S.Key_Updates_Recvd >= Max_Key_Updates then
+         Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+         return;
+      end if;
+      S.Key_Updates_Recvd := S.Key_Updates_Recvd + 1;
+
+      --  Rotate the READ direction. The peer has already switched, so every
+      --  record after this one arrives under the new key.
+      Key_Update.Update_Secret
+        (Secret => S.Server_App_Secret,
+         Len    => S.App_Secret_Len,
+         TK     => S.Server_App,
+         Suite  => S.Negotiated_Suite);
+
+      if not Request then
+         Result := OK;
+         return;
+      end if;
+
+      --  RFC 8446 §4.6.3 requires a reply "prior to sending its next
+      --  Application Data record" -- the obligation is per-write, not
+      --  per-message. Defer it: a burst of requests collapses to a single
+      --  KeyUpdate, which is what the peer expects. Replying inline would
+      --  make every reply after the first look unsolicited.
+      S.Key_Update_Pending := True;
+      Result := OK;
+   end Process_Key_Update_Message;
 
    procedure Dispatch_Post_HS_Message
      (S      : in out Session;
@@ -5854,6 +5935,18 @@ is
    begin
       if Msg (0) = 16#04# then
          Process_NST_Message (S, Msg, Msg_Len, Result);
+      elsif Msg (0) = Key_Update.HS_Key_Update then
+         if S.App_Secret_Len in 32 | 48
+           and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                       | Suite_AES_256_GCM_SHA384
+                                       | Suite_CHACHA20_POLY1305_SHA256
+         then
+            Process_Key_Update_Message (S, Msg, Result);
+         else
+            --  KeyUpdate is TLS 1.3 only; there is no retained secret to
+            --  ratchet in a TLS 1.2 session.
+            Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+         end if;
       else
          Result := OK;
       end if;
@@ -5865,7 +5958,7 @@ is
       Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Result    :    out Action)
-   with Pre => S.State = Connected
+   with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Client_App)
                and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
@@ -5893,7 +5986,7 @@ is
       while Pos < Plain_Len loop
          pragma Loop_Invariant (Pos <= Plain_Len);
          pragma Loop_Invariant (Plain_Len <= Max_Record_Plaintext);
-         pragma Loop_Invariant (S.State = Connected);
+         pragma Loop_Invariant (S.State in Connected | Closing);
          pragma Loop_Invariant (Nonce_Space_Available (S.Client_App));
          pragma Loop_Invariant (S.Post_HS_Len <= Max_Record_Plaintext);
          pragma Loop_Invariant (S.Post_HS_Need <= Max_Record_Plaintext);
@@ -6054,7 +6147,12 @@ is
 	               --  expected here (KeyUpdate not yet implemented). The
 	               --  handshake message itself may be split across multiple
 	               --  encrypted records.
-	               if S.State = Connected then
+	               --  Must also run while Closing: the peer rotates its
+	               --  write key when it sends a KeyUpdate, so skipping it
+	               --  during shutdown leaves us unable to decrypt the
+	               --  close_notify we are waiting for (BoGo
+	               --  Shutdown-Shim-KeyUpdate).
+	               if S.State in Connected | Closing then
 	                  Process_Post_HS_Handshake_Bytes
 	                    (S, Plaintext, Plain_Len, Result);
 	               else

@@ -11,6 +11,7 @@ with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Handshake.Certs;
 with SPARKTLS.Key_Schedule;
+with SPARKTLS.Key_Update;
 with SPARKTLS.HC_Alloc;
 with X509;
 use type X509.Algorithm_ID;
@@ -4118,6 +4119,14 @@ is
                Set_Traffic_Keys (S.Server_App,
                                  Bytes_48 (Byte_Seq (Server_App_Sec)),
                                  S.Negotiated_Suite);
+
+               --  RFC 8446 4.6.3: retain the secrets themselves, not just
+               --  the derived key/IV, so KeyUpdate can ratchet forward.
+               S.Client_App_Secret :=
+                  Bytes_48 (Byte_Seq (Client_App_Sec));
+               S.Server_App_Secret :=
+                  Bytes_48 (Byte_Seq (Server_App_Sec));
+               S.App_Secret_Len := 48;
             end;
 
          when others =>
@@ -4151,6 +4160,12 @@ is
                SS48 (0 .. 31) := Bytes_32 (Byte_Seq (Server_App_Sec));
                Set_Traffic_Keys (S.Client_App, CS48, S.Negotiated_Suite);
                Set_Traffic_Keys (S.Server_App, SS48, S.Negotiated_Suite);
+
+               --  RFC 8446 4.6.3: retain the secrets for the KeyUpdate
+               --  ratchet.
+               S.Client_App_Secret := CS48;
+               S.Server_App_Secret := SS48;
+               S.App_Secret_Len    := 32;
             end;
       end case;
    end Derive_App_Keys;
@@ -5549,6 +5564,225 @@ is
 	   end Process_Client_Finished;
 
    --  Process records in Connected state
+   ----------------------------------------------------------------------
+   --  Post-handshake handshake messages (RFC 8446 §4.6)
+   --
+   --  Until 2026-08-17 the server silently dropped every post-handshake
+   --  handshake record ("when 16#16# => Result := OK;"). That was not
+   --  merely a missing feature: a peer sending KeyUpdate would rotate its
+   --  write key, the server would never rotate its matching read key, and
+   --  every subsequent record failed to decrypt -- surfacing as an opaque
+   --  bad_record_mac rather than anything diagnosable.
+   --
+   --  Messages may be fragmented across records (a hostile peer will split
+   --  a 5-byte KeyUpdate deliberately), so this reassembles header-then-body
+   --  exactly as the client side does.
+   ----------------------------------------------------------------------
+
+   procedure Reset_Post_HS_Reasm (S : in out Session)
+   with Post => S.Post_HS_Len = 0 and then S.Post_HS_Need = 0;
+
+   procedure Reset_Post_HS_Reasm (S : in out Session) is
+   begin
+      S.Post_HS_Len  := 0;
+      S.Post_HS_Need := 0;
+   end Reset_Post_HS_Reasm;
+
+   --  RFC 8446 §4.6.3. The peer's KeyUpdate rotates its WRITE key, which
+   --  for a server is S.Client_App (our read direction). A request_update
+   --  obliges us to rotate S.Server_App and say so before our next
+   --  Application Data record.
+   procedure Process_Key_Update_Message
+     (S      : in out Session;
+      Msg    : in     Byte_Seq;
+      Result :    out Action)
+   with Pre  => S.State in Connected | Closing
+                and then Msg'First = 0
+                and then Nonce_Space_Available (S.Server_App)
+                and then S.App_Secret_Len in 32 | 48
+                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                            | Suite_AES_256_GCM_SHA384
+                                            | Suite_CHACHA20_POLY1305_SHA256,
+        Post => (if Result = OK
+                 then S.State in Connected | Closing
+                   and then Nonce_Space_Available (S.Server_App));
+
+   procedure Process_Key_Update_Message
+     (S      : in out Session;
+      Msg    : in     Byte_Seq;
+      Result :    out Action)
+   is
+      Request : Boolean;
+      Valid   : Boolean;
+   begin
+      Key_Update.Parse_Key_Update (Msg, Request, Valid);
+
+      if not Valid then
+         --  RFC 8446 §4.6.3: malformed body, or request_update outside
+         --  {0,1}, MUST be illegal_parameter.
+         Send_Encrypted_Alert (S, Illegal_Parameter, Result);
+         return;
+      end if;
+
+      --  Cap the rate: each rekey costs a KDF and the RFC sets no bound
+      --  (BoGo TooManyKeyUpdates).
+      if S.Key_Updates_Recvd >= Max_Key_Updates then
+         Send_Encrypted_Alert (S, Unexpected_Message, Result);
+         return;
+      end if;
+      S.Key_Updates_Recvd := S.Key_Updates_Recvd + 1;
+
+      --  Rotate the read direction; the peer has already switched.
+      Key_Update.Update_Secret
+        (Secret => S.Client_App_Secret,
+         Len    => S.App_Secret_Len,
+         TK     => S.Client_App,
+         Suite  => S.Negotiated_Suite);
+
+      if not Request then
+         Result := OK;
+         return;
+      end if;
+
+      --  RFC 8446 §4.6.3 requires a reply "prior to sending its next
+      --  Application Data record" -- the obligation is per-write, not
+      --  per-message. Defer it: a burst of requests collapses to a single
+      --  KeyUpdate, which is what the peer expects. Replying inline would
+      --  make every reply after the first look unsolicited.
+      S.Key_Update_Pending := True;
+      Result := OK;
+   end Process_Key_Update_Message;
+
+   procedure Dispatch_Post_HS_Message
+     (S      : in out Session;
+      Result :    out Action)
+   with Pre  => S.State in Connected | Closing
+                and then Nonce_Space_Available (S.Server_App)
+                and then S.Post_HS_Need in 4 .. Max_Record_Plaintext
+                and then S.Post_HS_Len = S.Post_HS_Need,
+        Post => S.Post_HS_Len = 0 and then S.Post_HS_Need = 0;
+
+   procedure Dispatch_Post_HS_Message
+     (S      : in out Session;
+      Result :    out Action)
+   is
+      Msg_Len : constant N32 := S.Post_HS_Need;
+      Msg     : constant Byte_Seq (0 .. Msg_Len - 1) :=
+        S.Post_HS_Buf (0 .. Msg_Len - 1);
+   begin
+      if Msg (0) = Key_Update.HS_Key_Update then
+         if S.App_Secret_Len in 32 | 48
+           and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+                                       | Suite_AES_256_GCM_SHA384
+                                       | Suite_CHACHA20_POLY1305_SHA256
+         then
+            Process_Key_Update_Message (S, Msg, Result);
+         else
+            --  TLS 1.3 only; a TLS 1.2 session has no retained secret.
+            Send_Encrypted_Alert (S, Unexpected_Message, Result);
+         end if;
+      else
+         --  RFC 8446 §4.6: a server legitimately receives few
+         --  post-handshake messages. NewSessionTicket is server-to-client,
+         --  and post-handshake client auth is not supported here, so
+         --  anything else is unexpected rather than ignorable.
+         Send_Encrypted_Alert (S, Unexpected_Message, Result);
+      end if;
+      Reset_Post_HS_Reasm (S);
+   end Dispatch_Post_HS_Message;
+
+   procedure Process_Post_HS_Handshake_Bytes
+     (S         : in out Session;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Result    :    out Action)
+   with Pre => S.State in Connected | Closing
+               and then Nonce_Space_Available (S.Server_App)
+               and then Plaintext'First = 0
+               and then Plain_Len >= 0
+               and then Plain_Len <= Max_Record_Plaintext
+               and then Plain_Len <= N32 (Plaintext'Length)
+               and then S.Post_HS_Len <= Max_Record_Plaintext
+               and then S.Post_HS_Need <= Max_Record_Plaintext
+               and then
+                 (if S.Post_HS_Need = 0
+                  then S.Post_HS_Len = 0
+                  else S.Post_HS_Need >= 4
+                    and then S.Post_HS_Len <= S.Post_HS_Need);
+
+   procedure Process_Post_HS_Handshake_Bytes
+     (S         : in out Session;
+      Plaintext : in     Byte_Seq;
+      Plain_Len : in     N32;
+      Result    :    out Action)
+   is
+      Pos : N32 := 0;
+   begin
+      Result := OK;
+
+      while Pos < Plain_Len loop
+         pragma Loop_Invariant (Pos <= Plain_Len);
+         pragma Loop_Invariant (Plain_Len <= Max_Record_Plaintext);
+         pragma Loop_Invariant (S.State in Connected | Closing);
+         pragma Loop_Invariant (Nonce_Space_Available (S.Server_App));
+         pragma Loop_Invariant (S.Post_HS_Len <= Max_Record_Plaintext);
+         pragma Loop_Invariant (S.Post_HS_Need <= Max_Record_Plaintext);
+         pragma Loop_Invariant
+           (if S.Post_HS_Need = 0
+            then S.Post_HS_Len = 0
+            else S.Post_HS_Need >= 4
+              and then S.Post_HS_Len <= S.Post_HS_Need);
+
+         --  Start of a new message: take the 4-byte header first.
+         if S.Post_HS_Need = 0 then
+            S.Post_HS_Len  := 0;
+            S.Post_HS_Need := 4;
+         end if;
+
+         declare
+            Need : constant N32 := S.Post_HS_Need - S.Post_HS_Len;
+            Take : constant N32 := N32'Min (Need, Plain_Len - Pos);
+         begin
+            if Take > 0 then
+               pragma Assert (Pos + Take <= Plain_Len);
+               pragma Assert (S.Post_HS_Len + Take <= S.Post_HS_Need);
+               S.Post_HS_Buf (S.Post_HS_Len .. S.Post_HS_Len + Take - 1) :=
+                 Plaintext (Pos .. Pos + Take - 1);
+               S.Post_HS_Len := S.Post_HS_Len + Take;
+               Pos := Pos + Take;
+            end if;
+         end;
+
+         if S.Post_HS_Len = S.Post_HS_Need then
+            if S.Post_HS_Need = 4 then
+               --  Header complete: read the 24-bit body length.
+               declare
+                  Msg_Total : constant N32 :=
+                    N32 (S.Post_HS_Buf (1)) * 65536
+                    + N32 (S.Post_HS_Buf (2)) * 256
+                    + N32 (S.Post_HS_Buf (3)) + 4;
+               begin
+                  if Msg_Total < 4
+                    or else Msg_Total > Max_Record_Plaintext
+                  then
+                     Reset_Post_HS_Reasm (S);
+                     Send_Encrypted_Alert (S, Decode_Error, Result);
+                     return;
+                  end if;
+                  S.Post_HS_Need := Msg_Total;
+               end;
+            end if;
+
+            if S.Post_HS_Len = S.Post_HS_Need then
+               Dispatch_Post_HS_Message (S, Result);
+               if Result /= OK then
+                  return;
+               end if;
+            end if;
+         end if;
+      end loop;
+   end Process_Post_HS_Handshake_Bytes;
+
    procedure Process_Connected
      (S      : in out Session;
       Result :    out Action)
@@ -5753,8 +5987,23 @@ is
                end if;
 
             when 16#16# =>
-               --  Post-handshake message (NewSessionTicket, etc.)
-               Result := OK;
+               --  RFC 8446 §4.6 post-handshake handshake message. Until
+               --  2026-08-17 this was "Result := OK" -- silently dropped,
+               --  which broke any peer that sent KeyUpdate: it rotated its
+               --  write key, we never rotated the matching read key, and
+               --  every later record failed to decrypt as bad_record_mac.
+               --  MUST also run while Closing. BoGo's
+               --  Shutdown-Shim-KeyUpdate is explicit about this ("test
+               --  that SSL_shutdown still processes KeyUpdate"): the peer
+               --  rotates its write key when it sends the KeyUpdate, so a
+               --  shim that skips it can no longer decrypt anything that
+               --  follows -- including the close_notify it is waiting for.
+               if S.State in Connected | Closing then
+                  Process_Post_HS_Handshake_Bytes
+                    (S, Plaintext, Plain_Len, Result);
+               else
+                  Result := OK;
+               end if;
 
             when 16#15# =>
                --  Alert. RFC 8446 §6 / RFC 5246 §7.2: 2-byte payload

@@ -240,8 +240,11 @@ UNSUPPORTED_SKIPS=(
   'SendV2ClientHello-*'
   # Renegotiation (TLS 1.2 reneg intentionally rejected)
   'Renegotiat*' 'Shutdown-Shim-HelloRequest-*' 'SendHalfHelloRequest-*'
-  # KeyUpdate (post-handshake rekey not implemented)
-  'KeyUpdate*' '*KeyUpdate*'
+  # KeyUpdate: TLS 1.3 post-handshake rekey IS implemented (RFC 8446 4.6.3).
+  # Only the DTLS variants remain out of scope, because DTLS itself is not
+  # implemented -- these are excluded for that reason, not because rekeying
+  # is unsupported.
+  '*KeyUpdate*DTLS*' 'KeyUpdate-*-DTLS'
   # PQ signatures (ML-DSA not in scope)
   '*ML-DSA*'
   # SHA-1 / legacy RSA-PKCS1 / MD5-SHA1 sig schemes (deprecated).
