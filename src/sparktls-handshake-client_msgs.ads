@@ -44,13 +44,13 @@ is
 		                  (if HC.Cfg.TLS12_Resume_Ticket.Valid
 		                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
 		                        <= Max_TLS12_Ticket_Len)
-		                and then Reasm_Coherent (HC),
+		                and then Reasm_Buffer_Shaped (HC),
 		        Post => (if HC.Cfg.Random'Old /= null
 		                          then HC.Cfg.Random /= null)
                         and then Len <= N32 (Result'Length)
 							                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-			                and then Reasm_Coherent (HC)
+			                and then Reasm_Buffer_Shaped (HC)
 		                and then HC.Reasm_Len = HC.Reasm_Len'Old
 		                and then HC.Reasm_Need = HC.Reasm_Need'Old
 		                and then HC.Reasm_Hdr_Pending =
@@ -67,7 +67,7 @@ is
 				               and then SPARKTLSCrypto.P384.Field.Initialized
 					               and then HC.HRR_Cookie_Len <=
 					                 N32 (HC.HRR_Cookie'Length)
-					               and then Reasm_Coherent (HC),
+					               and then Reasm_Buffer_Shaped (HC),
 										        Post =>
 											                  (if OK
 											                   or else Last_Error (S) = No_Error
@@ -78,7 +78,7 @@ is
 										                       HC.Transcript_Len'Old
 											                     and then HC.HRR_Cookie_Len <=
 											                       N32 (HC.HRR_Cookie'Length)
-											                     and then Reasm_Coherent (HC))
+											                     and then Reasm_Buffer_Shaped (HC))
 											                and then
 											                  (if OK
 											                   and then HC.Version = TLS_1_3

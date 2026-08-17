@@ -721,7 +721,22 @@ is
       Read_Pos   : Buffer_Size := 0;  --  next byte to consume
       Write_Pos  : Buffer_Size := 0;  --  next byte to write
    end record
-     with Predicate => IO_Buffer.Write_Pos >= IO_Buffer.Read_Pos;
+     with Predicate =>
+       IO_Buffer.Write_Pos >= IO_Buffer.Read_Pos
+       --  A drained buffer is always compacted back to the start:
+       --  Drain_Ciphertext and Compact both reset the pair once Available
+       --  reaches 0. So "nothing pending" implies the whole capacity is
+       --  free, which is what lets the state machine know it can always
+       --  stage an alert record when it has no queued output.
+       --
+       --  This belongs on IO_Buffer rather than on Session. Stated on
+       --  Session it was unprovable at every call that passes S.Output as
+       --  an "in out" component -- roughly 27 sites -- because the callee
+       --  says nothing about Write_Pos/Read_Pos and the caller must then
+       --  re-establish the whole Session predicate on return. Here each
+       --  buffer operation discharges it once, locally.
+       and then (if IO_Buffer.Write_Pos = IO_Buffer.Read_Pos
+                 then IO_Buffer.Write_Pos = 0);
 
    function Available (Buf : IO_Buffer) return N32 is
       (Buf.Write_Pos - Buf.Read_Pos);
@@ -1766,7 +1781,35 @@ is
        and Handshake_Context.Peer_Int_Count <= Max_Pool_Size
        and Handshake_Context.PSK_Binder_Len <= 64
        and Handshake_Context.PSK_Value_Len <= 48
-       and Handshake_Context.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len;
+       and Handshake_Context.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len
+       --  Reassembly buffer shape -- the same conditions the Ghost function
+       --  Reasm_Buffer_Shaped states, inlined here because that function is
+       --  declared after this record and a predicate cannot call it.
+       --
+       --  Stated as an invariant so the ~430 Pre/Post mentions that
+       --  currently thread it by hand become redundant. Unlike the Session
+       --  output-compaction rule (tried and moved to IO_Buffer on
+       --  2026-08-17), this one sits at the SAME level as the parameter:
+       --  HC is passed whole as "in out Handshake_Context", so each callee
+       --  discharges it once rather than every caller re-establishing it.
+       --  The 68 sites that pass HC.Reasm_Buf as a component to
+       --  Free_Byte_Seq are safe because that procedure carries
+       --  Post => Ptr = null, which satisfies the null disjunct directly.
+       and (Handshake_Context.Reasm_Buf = null
+            or else
+              (Handshake_Context.Reasm_Len <=
+                 N32 (Handshake_Context.Reasm_Buf'Length)
+               and then Handshake_Context.Reasm_Need <=
+                 N32 (Handshake_Context.Reasm_Buf'Length)
+               and then (if Handshake_Context.Reasm_Need = 0
+                         then Handshake_Context.Reasm_Len = 0
+                         else Handshake_Context.Reasm_Need >= 4)
+               and then
+                 (if Handshake_Context.Reasm_Hdr_Pending
+                  then Handshake_Context.Reasm_Need = 4
+                       and then Handshake_Context.Reasm_Len <= 4
+                       and then Handshake_Context.Reasm_Buf'Length =
+                         Max_HS_Msg)));
 
    Max_Handshake_Heap : constant := 262_144;  --  256 KB per handshake
 
@@ -1781,12 +1824,18 @@ is
    --  indexing Reasm_Buf depends on, including Reasm_Buf'Length <= N32'Last,
    --  which the N32 (HC.Reasm_Buf'Length) conversions need.
    --
-   --  Reasm_Coherent is the name actually threaded through the handshake
-   --  contracts (~155 Pre/Post across 84 subprograms). It carries the shape
-   --  across calls: a callee that does not touch Reasm_* gets it for free,
-   --  and a caller regains it on return. It was briefly reduced to True,
-   --  which silently dropped the buffer bounds from every one of those
-   --  contracts and broke the callers that index the buffer.
+   --  It is threaded through the handshake contracts (~430 Pre/Post
+   --  mentions): a callee that does not touch Reasm_* gets it for free, and
+   --  a caller regains it on return. It was briefly reduced to True, which
+   --  silently dropped the buffer bounds from every one of those contracts
+   --  and broke the callers that index the buffer -- so it is load-bearing,
+   --  unlike Reasm_Building, which was correctly deleted outright.
+   --
+   --  Until 2026-08-17 a second name, Reasm_Coherent, existed as a pure
+   --  alias -- "function Reasm_Coherent (HC) is (Reasm_Buffer_Shaped (HC))".
+   --  It carried no information, and it meant failure messages named the
+   --  wrapper instead of the predicate that actually failed. Collapsed into
+   --  this one name; do not reintroduce the indirection.
    --  Only the buffer-RELATIVE facts live here. Reasm_Buf'First = 0,
    --  'Length <= Max_HS_Msg and 'Length <= N32'Last now come from the
    --  Reasm_Buf_Access subtype, so they cost nothing to carry.
@@ -1815,9 +1864,6 @@ is
               and then HC.Reasm_Buf'Length = Max_HS_Msg)))
      with Ghost;
 
-   function Reasm_Coherent (HC : Handshake_Context) return Boolean is
-     (Reasm_Buffer_Shaped (HC))
-     with Ghost;
 
    --  Build mode excludes temporary packed-flight dispatch, where Reasm_Len
    --  may exceed Reasm_Need while leftover bytes are shifted down. This is
@@ -2364,6 +2410,18 @@ is
    function Exporter_Secret (S : Session) return Bytes_48 with Ghost;
    function App_Data_Len (S : Session) return N32 with Ghost;
 
+   --  Ghost: True when the session currently owns a handshake context.
+   --
+   --  Exists so Set_State can frame the handshake-context pointer. Two
+   --  constraints force this shape. The visible part cannot name S.HC_Ptr,
+   --  since Session is private; and "S.HC_Ptr = S.HC_Ptr'Old" would be
+   --  illegal anyway, because 'Old on an owning access type is a move.
+   --  Reducing the pointer to its null-ness sidesteps both: the prefix of
+   --  'Old becomes a Boolean, and null-ness is exactly what SPARK's
+   --  memory-leak check consumes when deciding whether an assignment
+   --  overwrites a live pointer.
+   function Has_Context (S : Session) return Boolean with Ghost;
+
 
    --  RFC 7301 §3.1/§3.2: validate the server's ALPN-echo body in a
    --  SH or EE extension and (on success) copy the chosen protocol
@@ -2410,6 +2468,12 @@ is
                   --  re-establish Pre's like Nonce_Space_Available
                   --  (Server_App (S)) across the call.
                   and Role (S) = Role (S)'Old
+                  --  Frames the handshake-context pointer too, so a borrow
+                  --  (pointer moved out, field nulled, restored after the
+                  --  call) survives an intervening Set_State. Without this
+                  --  the restore reads as overwriting a live pointer and
+                  --  SPARK reports a memory leak.
+                  and Has_Context (S) = Has_Context (S)'Old
                   and Server_App (S) = Server_App (S)'Old
                   and Client_App (S) = Client_App (S)'Old
                   and Input (S) = Input (S)'Old
@@ -2687,7 +2751,42 @@ private
      Session.Client_App.Counter < Unsigned_64'Last
      and then Session.Server_App.Counter < Unsigned_64'Last
      and then Session.Client_Seq_12 < Unsigned_64'Last
-     and then Session.Server_Seq_12 < Unsigned_64'Last;
+     and then Session.Server_Seq_12 < Unsigned_64'Last
+     --  App_Data_Len counts the valid bytes staged in App_Data, which is
+     --  exactly Max_Record_Plaintext long, so the bound is a property of a
+     --  well-formed Session rather than a caller obligation. Stating it
+     --  here is what lets Advance call its helpers without carrying
+     --  App_Data_Len <= Max_Record_Plaintext through the public API --
+     --  the same reasoning as the counters above.
+     and then Session.App_Data_Len <= Max_Record_Plaintext
+     --  NOT stated here: the RFC 8446 6.1 / 5.2 flood caps. Tried on
+     --  2026-08-17 and reverted -- they are NOT invariants of Session.
+     --  The receive paths increment the counter and only then test and
+     --  transition:
+     --      S.Warning_Alerts_Recvd := S.Warning_Alerts_Recvd + 1;
+     --      if S.Warning_Alerts_Recvd >= 5 then ... Error_State ...
+     --  so the counter transiently holds Max + 1 before the transition,
+     --  and assigning to a component of a predicated object checks the
+     --  predicate at exactly that point. The code shape is correct;
+     --  the invariant was simply false. These stay as the Ghost
+     --  functions Warning_Alerts_Bounded_RFC_8446_6_1 /
+     --  Empty_Records_Bounded_RFC_8446_5_2, used as preconditions where
+     --  they are actually needed.
+     --  Post-handshake reassembly coherence (TLS 1.3 NewSessionTicket may
+     --  arrive fragmented across records). Post_HS_Buf is exactly
+     --  Max_Record_Plaintext long, and the Need/Len relationship is the
+     --  same shape as Reasm_Buffer_Shaped on Handshake_Context: nothing pending
+     --  means nothing buffered, and a pending message is at least a 4-byte
+     --  header with no more buffered than needed.
+     and then Session.Post_HS_Len <= Max_Record_Plaintext
+     and then Session.Post_HS_Need <= Max_Record_Plaintext
+     and then (if Session.Post_HS_Need = 0
+               then Session.Post_HS_Len = 0
+               else Session.Post_HS_Need >= 4
+                    and then Session.Post_HS_Len <= Session.Post_HS_Need)
+     --  NOTE: the output-buffer compaction invariant deliberately lives on
+     --  IO_Buffer's own predicate, not here -- see the comment there.
+     ;
 
    --  Query function completions: one field each, verbatim.
 
@@ -2705,6 +2804,7 @@ private
    function Res_Master (S : Session) return Bytes_48 is (S.Res_Master);
    function Exporter_Secret (S : Session) return Bytes_48 is (S.Exporter_Secret);
    function App_Data_Len (S : Session) return N32 is (S.App_Data_Len);
+   function Has_Context (S : Session) return Boolean is (S.HC_Ptr /= null);
 
    function Output_Pending (S : Session) return N32 is
       (Available (S.Output));

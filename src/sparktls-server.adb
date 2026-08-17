@@ -963,13 +963,23 @@ is
       Cfg : in     Config)
    is
    begin
+      --  The postcondition is a two-conjunct goal (Role and State). Left
+      --  whole, the prover discharges one conjunct or the other depending
+      --  on how its budget falls, and reports whichever it dropped -- the
+      --  same one-at-a-time behaviour seen on VCs 1021/1023. Asserting both
+      --  conjuncts at each exit decomposes the goal in place, so each is
+      --  established from local facts instead of re-derived at the end.
       S := (State  => Wait_Client_Hello,
             Role   => Role_Server,
             others => <>);
+      pragma Assert (Role (S) = Role_Server);
+      pragma Assert (State (S) = Wait_Client_Hello);
 
       if not Server_Config_Can_Start (Cfg) then
          Set_State (S, Error_State);
          S.Last_Error := Internal_Error;
+         pragma Assert (Role (S) = Role_Server);
+         pragma Assert (State (S) = Error_State);
          return;
       end if;
 
@@ -977,9 +987,13 @@ is
       if S.HC_Ptr = null then
          Set_State (S, Error_State);
          S.Last_Error := Internal_Error;
+         pragma Assert (Role (S) = Role_Server);
+         pragma Assert (State (S) = Error_State);
          return;
       end if;
       S.HC_Ptr.Cfg := Cfg;
+      pragma Assert (Role (S) = Role_Server);
+      pragma Assert (State (S) = Wait_Client_Hello);
    end Init;
 
    procedure Rotate_TLS12_Ticket_Key

@@ -314,10 +314,10 @@ is
       OK   :    out Boolean)
    with Pre  => Data'First = 0
                 and then Data'Last in 9 .. Max_Server_Key_Exchange - 1
-                and then Reasm_Coherent (HC)
+                and then Reasm_Buffer_Shaped (HC)
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => Reasm_Coherent (HC)
+        Post => Reasm_Buffer_Shaped (HC)
 		                and then HC.Reasm_Need = HC.Reasm_Need'Old
 		                and then HC.Reasm_Len = HC.Reasm_Len'Old
 		                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
@@ -514,7 +514,7 @@ is
 	                and then Data'Last < N32'Last
 	                and then HC.Version = TLS_1_2
 	                and then SPARKTLSCrypto.P384.Field.Initialized
-	                and then Reasm_Coherent (HC),
+	                and then Reasm_Buffer_Shaped (HC),
 		        Post => (if OK then
 		                   Valid_TLS12_Suite (Negotiated_Suite (S))
 		                   and HC.Version = TLS_1_2)
@@ -522,7 +522,7 @@ is
 	                          then HC.Cfg.Random /= null)
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-	                and then Reasm_Coherent (HC)
+	                and then Reasm_Buffer_Shaped (HC)
 	                and then HC.Reasm_Len = HC.Reasm_Len'Old
 	                and then HC.Reasm_Need = HC.Reasm_Need'Old
 	                and then HC.Reasm_Hdr_Pending =

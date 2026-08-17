@@ -355,12 +355,12 @@ is
 		                and then Result'Length >= 600
 		                and then Len > 0
 		                and then Len <= N32 (Result'Length)
-		                and then Reasm_Coherent (HC),
+		                and then Reasm_Buffer_Shaped (HC),
 		        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
 			                and then HC.Transcript_Len = HC.Transcript_Len'Old
 			                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-				                and then Reasm_Coherent (HC)
+				                and then Reasm_Buffer_Shaped (HC)
 				                and then HC.Reasm_Len = HC.Reasm_Len'Old
 				                and then HC.Reasm_Need = HC.Reasm_Need'Old
 				                and then HC.Reasm_Hdr_Pending =
@@ -1574,7 +1574,7 @@ is
                                 HC.Reasm_Need = 4
                                 and then HC.Reasm_Len <= 4
                                 and then HC.Reasm_Buf'Length = Max_HS_Msg));
-      pragma Assert (Reasm_Coherent (HC));
+      pragma Assert (Reasm_Buffer_Shaped (HC));
       if Len > 0 then
          Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
       end if;
@@ -1618,13 +1618,13 @@ is
 				               and then Data'Last < N32 (Natural'Last)
 			                  and then HC.HRR_Cookie_Len <=
 			                    N32 (HC.HRR_Cookie'Length)
-			                  and then Reasm_Coherent (HC),
+			                  and then Reasm_Buffer_Shaped (HC),
 	        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
 	          and then HC.Transcript_Len = HC.Transcript_Len'Old
 	          and then (if HC.Got_HRR'Old then HC.Got_HRR)
 			                  and then HC.HRR_Cookie_Len <=
 		                    N32 (HC.HRR_Cookie'Length)
-		                  and then Reasm_Coherent (HC);
+		                  and then Reasm_Buffer_Shaped (HC);
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
@@ -1656,7 +1656,7 @@ is
       --  minimum is version(2)+random(32)+sid_len(1) = 35 bytes
 	      --  past the 4-byte handshake header.
 	      if N32 (Data'Length) - 4 < 35 then
-		                        pragma Assert_And_Cut (Reasm_Coherent (HC)
+		                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
 	                              and then (if Random_Was_Set
 	                                        then HC.Cfg.Random /= null)
 		                              and then HC.Transcript_Len =
@@ -1672,7 +1672,7 @@ is
 	      if Sid_Len > 32 then
 		         S.Last_Error := Decode_Error;
 		         OK := False;
-		         pragma Assert_And_Cut (Reasm_Coherent (HC)
+		         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1685,7 +1685,7 @@ is
 	      if B > N32'Last - 38
 	        or else Sid_Len > N32'Last - B - 38
 		      then
-		         pragma Assert_And_Cut (Reasm_Coherent (HC)
+		         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1696,7 +1696,7 @@ is
 		      end if;
 	      P := B + 38 + Sid_Len;  --  past sid + cipher + comp
 		      if P > Data'Last - 2 then
-		         pragma Assert_And_Cut (Reasm_Coherent (HC)
+		         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1719,7 +1719,7 @@ is
       then
 	         S.Last_Error := Decode_Error;
 	         OK := False;
-	         pragma Assert_And_Cut (Reasm_Coherent (HC)
+	         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1734,7 +1734,7 @@ is
       if Ext_Total > Data'Last - P + 1 then
 	         S.Last_Error := Decode_Error;
 	         OK := False;
-	         pragma Assert_And_Cut (Reasm_Coherent (HC)
+	         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1752,7 +1752,7 @@ is
          if Ext_End /= Data'Last + 1 then
 	            S.Last_Error := Decode_Error;
 	            OK := False;
-	            pragma Assert_And_Cut (Reasm_Coherent (HC)
+	            pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1767,7 +1767,7 @@ is
 	         pragma Assert (N_Ext <= Exts'Last);
 	         while P <= Ext_End - 4 loop
 	            pragma Loop_Invariant (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant (Reasm_Coherent (HC));
+	            pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 	            pragma Loop_Invariant
 	              (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
 	            pragma Loop_Invariant
@@ -1801,7 +1801,7 @@ is
                if E_Len > Ext_End - P - 4 then
 	                  S.Last_Error := Decode_Error;
 	                  OK := False;
-	                  pragma Assert_And_Cut (Reasm_Coherent (HC)
+	                  pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1814,7 +1814,7 @@ is
 	                  pragma Loop_Invariant
 	                    (if HC.Cfg.Random'Loop_Entry /= null
 	                     then HC.Cfg.Random /= null);
-	                  pragma Loop_Invariant (Reasm_Coherent (HC));
+	                  pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 	                  pragma Loop_Invariant
 	                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
 	                  pragma Loop_Invariant
@@ -1838,7 +1838,7 @@ is
 	                        (if Is_HRR_Msg then Illegal_Parameter
 	                         else Decode_Error);
 	                     OK := False;
-	                     pragma Assert_And_Cut (Reasm_Coherent (HC)
+	                     pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1886,7 +1886,7 @@ is
 	         for I in 1 .. N_Ext loop
 	            pragma Loop_Invariant
 	              (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant (Reasm_Coherent (HC));
+	            pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 	            pragma Loop_Invariant
 	              (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
 	            pragma Loop_Invariant
@@ -1923,7 +1923,7 @@ is
                if not V_OK then
 	                  S.Last_Error := V_Err;
 	                  OK := False;
-	                  pragma Assert_And_Cut (Reasm_Coherent (HC)
+	                  pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1950,7 +1950,7 @@ is
                   if not V_OK then
 	                     S.Last_Error := V_Err;
 	                     OK := False;
-	                     pragma Assert_And_Cut (Reasm_Coherent (HC)
+	                     pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -1973,7 +1973,7 @@ is
                   if Exts (I).E_Len = 0 then
                      S.Last_Error := Decode_Error;
                      OK := False;
-                     pragma Assert_And_Cut (Reasm_Coherent (HC)
+                     pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
                               and then HC.Transcript_Len =
@@ -1992,7 +1992,7 @@ is
                      then
                         S.Last_Error := Decode_Error;
                         OK := False;
-                        pragma Assert_And_Cut (Reasm_Coherent (HC)
+                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
                               and then HC.Transcript_Len =
@@ -2013,7 +2013,7 @@ is
                      then
                         S.Last_Error := Decode_Error;
                         OK := False;
-                        pragma Assert_And_Cut (Reasm_Coherent (HC)
+                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
                               and then HC.Transcript_Len =
@@ -2059,7 +2059,7 @@ is
                      if Sel /= 0 then
 	                        S.Last_Error := Illegal_Parameter;
 	                        OK := False;
-	                        pragma Assert_And_Cut (Reasm_Coherent (HC)
+	                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -2091,7 +2091,7 @@ is
                      then
 	                        S.Last_Error := Illegal_Parameter;
 	                        OK := False;
-	                        pragma Assert_And_Cut (Reasm_Coherent (HC)
+	                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
                               and then (if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
@@ -2103,7 +2103,7 @@ is
                      if C_Len <= N32 (HC.HRR_Cookie'Length) then
 	                        HC.HRR_Cookie_Len := C_Len;
 	                        for K in 0 .. C_Len - 1 loop
-	                           pragma Loop_Invariant (Reasm_Coherent (HC));
+	                           pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 	                           pragma Loop_Invariant
 	                             (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
 	                           pragma Loop_Invariant
@@ -2128,7 +2128,7 @@ is
             end;
 	         end loop;
 	      end;
-	      pragma Assert_And_Cut (Reasm_Coherent (HC)
+	      pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
 	                              and then (if Random_Was_Set
 	                                        then HC.Cfg.Random /= null)
 		                              and then HC.Transcript_Len =
@@ -2159,11 +2159,11 @@ is
                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid_Next
                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
-               and then Reasm_Coherent (HC),
+               and then Reasm_Buffer_Shaped (HC),
         Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
                 and then HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-                and then Reasm_Coherent (HC)
+                and then Reasm_Buffer_Shaped (HC)
                 and then HC.Reasm_Len = HC.Reasm_Len'Old
                 and then HC.Reasm_Need = HC.Reasm_Need'Old
                 and then HC.Reasm_Hdr_Pending =
@@ -2298,7 +2298,7 @@ is
 	        (HC.Transcript_Len = Transcript_Len_At_Entry
 	         and then (if Random_Was_Set then HC.Cfg.Random /= null)
 	         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-	         and then Reasm_Coherent (HC))
+	         and then Reasm_Buffer_Shaped (HC))
 	      with Ghost;
 	   begin
 	      OK := False;
@@ -2482,7 +2482,7 @@ is
 		            and then HC.Transcript_Len = Transcript_Len_At_Entry
 		            and then (if Random_Was_Set then HC.Cfg.Random /= null)
 		            and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-		            and then Reasm_Coherent (HC));
+		            and then Reasm_Buffer_Shaped (HC));
 		         return;
       end if;
 
@@ -2615,7 +2615,7 @@ is
                     (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
                   pragma Loop_Invariant
                     (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
-                  pragma Loop_Invariant (Reasm_Coherent (HC));
+                  pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
                   pragma Loop_Invariant
                     (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
                   pragma Loop_Invariant
@@ -2830,7 +2830,7 @@ is
                  Suite_AES_128_GCM_SHA256
 	               | Suite_AES_256_GCM_SHA384
 	               | Suite_CHACHA20_POLY1305_SHA256)
-            and then Reasm_Coherent (HC));
+            and then Reasm_Buffer_Shaped (HC));
          OK := True;
          goto Cleanup;
       end if;
@@ -2870,7 +2870,7 @@ is
                                       HC.Reasm_Need = 4
                                       and then HC.Reasm_Len <= 4
                                       and then HC.Reasm_Buf'Length = Max_HS_Msg));
-            pragma Assert (Reasm_Coherent (HC));
+            pragma Assert (Reasm_Buffer_Shaped (HC));
          end;
       elsif HC.Use_P256_KE then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
@@ -2914,7 +2914,7 @@ is
                                       HC.Reasm_Need = 4
                                       and then HC.Reasm_Len <= 4
                                       and then HC.Reasm_Buf'Length = Max_HS_Msg));
-            pragma Assert (Reasm_Coherent (HC));
+            pragma Assert (Reasm_Buffer_Shaped (HC));
          end;
       else
          --  X25519 ECDHE
@@ -2948,7 +2948,7 @@ is
                                    HC.Reasm_Need = 4
                                    and then HC.Reasm_Len <= 4
                                    and then HC.Reasm_Buf'Length = Max_HS_Msg));
-         pragma Assert (Reasm_Coherent (HC));
+         pragma Assert (Reasm_Buffer_Shaped (HC));
       end if;
 
       --  Bubble up extension-specific protocol errors (e.g. RFC 7301
@@ -2961,7 +2961,7 @@ is
       end if;
 
       pragma Assert_And_Cut
-        (Reasm_Coherent (HC)
+        (Reasm_Buffer_Shaped (HC)
          and then HC.Transcript_Len = Transcript_Len_At_Entry
          and then (if Random_Was_Set then HC.Cfg.Random /= null)
          and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)

@@ -41,7 +41,7 @@ is
       Result :    out Action)
    with Pre => (S.State not in Idle | Closing | Closed | Error_State)
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
-               and then Reasm_Coherent (HC)
+               and then Reasm_Buffer_Shaped (HC)
 		               and then
 		                 (if not HC.CKE_Received_12 then
 		                    Reasm_Building (HC)

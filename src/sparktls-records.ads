@@ -91,9 +91,15 @@ is
      (Fragment   : in     Byte_Seq;
       Output     : in out IO_Buffer;
       Bytes_Out  :    out N32)
-   with Pre => Fragment'First = 0
-               and Fragment'Length > 0
-               and Fragment'Length <= Max_Fragment;
+   with Pre  => Fragment'First = 0
+                and Fragment'Length > 0
+                and Fragment'Length <= Max_Fragment,
+        --  A non-zero Bytes_Out means both the 5-byte header and the
+        --  fragment were written, so the buffer necessarily holds data.
+        --  Callers need this to conclude a ClientHello is actually queued;
+        --  without it Bytes_Out and Output are unrelated to the prover,
+        --  which is what blocked Client.Init's Output_Pending postcondition.
+        Post => (if Bytes_Out > 0 then Available (Output) > 0);
 
    --  RFC 8446 §5.2: Build an encrypted TLS record.
    --  Inner_Type: 0x15 (alert), 0x16 (handshake), 0x17 (application_data).

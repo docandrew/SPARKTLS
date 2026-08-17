@@ -1935,7 +1935,7 @@ is
 	         SS_Err : Error_Code := Handshake_Failure;
 	      begin
 	         Compute_Shared_Secret_12 (SS_OK, SS_Err);
-	            pragma Assert (Reasm_Coherent (HC));
+	            pragma Assert (Reasm_Buffer_Shaped (HC));
 	            pragma Assert
 	              (HC.Reasm_Buf = null or else HC.Reasm_Len <= HC.Reasm_Need);
             if not SS_OK then

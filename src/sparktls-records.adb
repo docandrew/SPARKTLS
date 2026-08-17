@@ -47,7 +47,21 @@ is
      (Output : in out IO_Buffer;
       Data   : in     Byte_Seq;
       OK     :    out Boolean)
-   with Pre => Data'First = 0 and Data'Last < N32'Last
+   with Pre  => Data'First = 0 and Data'Last < N32'Last,
+        --  Relates success to the buffer. Without this nothing downstream
+        --  can conclude that a successful write left anything pending, so
+        --  callers cannot prove Available (Output) > 0 after writing.
+        --  Holds on all three paths: empty Data (no change, Length = 0),
+        --  successful append (Write_Pos advances by Len, Read_Pos fixed),
+        --  and refusal for want of space (no change).
+        --  Written as one equation rather than "if OK then ..." so the
+        --  'Old is evaluated unconditionally -- a potentially unevaluated
+        --  'Old would need its prefix to statically name an entity, which
+        --  a function call does not, and would otherwise force either
+        --  Unevaluated_Use_Of_Old or an 'Old copy of the whole buffer.
+        Post => Available (Output) =
+                  Available (Output)'Old
+                  + (if OK then N32 (Data'Length) else 0)
    is
    begin
       if Data'Length = 0 then
