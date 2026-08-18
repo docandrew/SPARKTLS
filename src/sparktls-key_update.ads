@@ -82,10 +82,28 @@ is
    --  Valid is False for a malformed length or a request_update value
    --  outside {0, 1} -- RFC 8446 §4.6.3 requires those to be treated as
    --  illegal_parameter rather than ignored.
+   --  Outcome of parsing a post-handshake KeyUpdate.
+   --
+   --  The two failure modes carry DIFFERENT alerts and must not be
+   --  conflated:
+   --    Malformed  -> decode_error.       RFC 8446 6.2 defines
+   --                  decode_error as "the length of the message was
+   --                  incorrect", which is exactly a KeyUpdate whose
+   --                  body is absent or the wrong size.
+   --    Bad_Value  -> illegal_parameter.  RFC 8446 4.6.3: a structurally
+   --                  valid KeyUpdate whose request_update is outside
+   --                  {0,1} MUST be illegal_parameter.
+   --
+   --  Reporting a single Boolean forced both onto illegal_parameter,
+   --  which tlsfuzzer's test-tls13-keyupdate.py "empty KeyUpdate
+   --  message" case correctly rejects: it truncates the body and
+   --  expects decode_error.
+   type Parse_Status is (Parse_OK, Parse_Malformed, Parse_Bad_Value);
+
    procedure Parse_Key_Update
      (Msg     : in  Byte_Seq;
       Request : out Boolean;
-      Valid   : out Boolean)
+      Status  : out Parse_Status)
    with Pre => Msg'First = 0;
 
 end SPARKTLS.Key_Update;

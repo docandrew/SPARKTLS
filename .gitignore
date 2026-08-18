@@ -4,3 +4,9 @@ bin/
 alire/
 config/
 *.txt
+
+# Generated on demand by tests/Makefile for manual openssl s_server
+# sessions. Not used by any automated suite -- those use tests/certs/.
+tests/tlscipher.lan.crt
+tests/tlscipher.lan.csr
+tests/tlscipher.lan.key

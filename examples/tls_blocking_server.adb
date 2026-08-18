@@ -133,9 +133,24 @@ procedure TLS_Blocking_Server is
       end Read_Input;
 
    begin
+      --  Receive timeout. 30 s suits an interactive example, but it is
+      --  far too long for a conformance harness: this server handles one
+      --  connection at a time, and tlsfuzzer deliberately stalls or
+      --  abandons connections. A stalled peer therefore blocks the accept
+      --  loop for the full timeout and takes the NEXT several tests down
+      --  with it, which showed up as run-to-run flakiness (keyupdate
+      --  scoring 58-61/62 across identical runs with different failures
+      --  each time). SPARKTLS_RECV_TIMEOUT lets the harness ask for a
+      --  short timeout without changing the example's default behaviour.
       Set_Socket_Option
         (Client_Sock, Socket_Level,
-         (Name => Receive_Timeout, Timeout => 30.0));
+         (Name    => Receive_Timeout,
+          Timeout =>
+            (if Ada.Environment_Variables.Exists ("SPARKTLS_RECV_TIMEOUT")
+             then Duration'Value
+                    (Ada.Environment_Variables.Value
+                       ("SPARKTLS_RECV_TIMEOUT"))
+             else 30.0)));
       Set_Socket_Option
         (Client_Sock, IP_Protocol_For_TCP_Level,
          (Name => No_Delay, Enabled => True));

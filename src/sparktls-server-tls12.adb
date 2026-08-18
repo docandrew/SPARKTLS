@@ -2476,10 +2476,10 @@ is
 	                  end if;
 
                   Free_Byte_Seq (HC.Reasm_Buf);
-                  HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
                   HC.Reasm_Need := 4;
                   HC.Reasm_Hdr_Pending := True;
                   HC.Reasm_Len := PL;
+                  HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
                   HC.Reasm_Buf (0 .. PL - 1) := Plaintext (0 .. PL - 1);
                else
 	                  if HC.Reasm_Buf = null
@@ -3131,7 +3131,13 @@ is
                   end if;
 
                when others =>
-                  Result := OK;
+                  --  RFC 5246 s6 / RFC 8446 s5.1: an unrecognised record
+                  --  content type is unexpected_message, not something to
+                  --  skip. Silently returning OK let a peer feed us
+                  --  records we neither processed nor rejected.
+                  S.Last_Error := Unexpected_Message;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
             end case;
          end;
       end;

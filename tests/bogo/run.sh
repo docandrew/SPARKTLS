@@ -269,30 +269,28 @@ UNSUPPORTED_SKIPS=(
   # Disables every protocol version, including the TLS versions we support.
   'DisableEverything'
 
-  # TLS 1.3 post-handshake KeyUpdate is already skipped above. These
-  # are related post-handshake / ticket-resumption probes for behaviors
-  # SPARKTLS intentionally does not expose through the BoGo shim today.
-  'Resume-*' 'TLS13-TestBadTicketAge-Client'
-  'TLS13-Client-*TicketFlags*' 'TLS13-Client-EmptyTicketFlags'
-  'TLS13-Client-NonminimalTicketFlags'
-  'TLS13-SendBadKEModeSessionTicket-Server'
-  'CertificateInResumption-TLS13' 'CertificateRequestInResumption-TLS13'
-  'CurveID-Resume-Client-TLS13' 'ResumeTLS12SessionID-TLS13'
-  'SupportTicketsWithSessionID' 'TicketSessionIDLength-*'
-  'TLS12-NoTicket-NoMint' 'TLS12-NoTicket-NoAccept'
-  'TLS12-NoTicket-NoOffer' 'TLS13-NoTicket-NoAccept'
-  'SendEmptySessionTicket-*' 'CustomTicketExtension-TLS13'
-  'ExtraPSKIdentity-TLS13'
-  'TLS13-TicketAgeSkew-*-60-*'
-  'TLS13-TicketAgeSkew-Backward-61-Reject'
-  'TLS13-TicketAgeSkew-Forward-61-Reject'
-  'SessionTicketsDisabled-*'
-  'TLS12NoSessionID-TLS13' 'TLS12SessionID-TLS13'
-  'TLS13SessionID-TLS13' 'EchoTLS13CompatibilitySessionID'
-  'TLS13-Client-NoResumptionAcrossNames'
-  'TLS13-Client-ResumptionAcrossNames'
-  'EmptySessionID' 'Client-ShortSessionID' 'Client-TooLongSessionID'
-  'Basic-Client-NoTicket-*' 'Basic-Server-NoTickets-*'
+  # UNSKIPPED 2026-08-18 (task #54): the resumption / session-ticket
+  # family, ~30 globs. Skipped as behaviours "SPARKTLS intentionally does
+  # not expose THROUGH THE BOGO SHIM today" -- again a harness limitation
+  # rather than a protocol decision. Resumption is core TLS 1.3 and we
+  # implement it (tickets and session IDs), so this is likely the largest
+  # block of hidden PASSING tests. Measure, then re-skip individually.
+  #   was: 'Resume-*' 'TLS13-TestBadTicketAge-Client'
+  #        'TLS13-Client-*TicketFlags*' 'TLS13-Client-EmptyTicketFlags'
+  #        'TLS13-Client-NonminimalTicketFlags'
+  #        'TLS13-SendBadKEModeSessionTicket-Server'
+  #        'CertificateInResumption-TLS13' 'CertificateRequestInResumption-TLS13'
+  #        'CurveID-Resume-Client-TLS13' 'ResumeTLS12SessionID-TLS13'
+  #        'SupportTicketsWithSessionID' 'TicketSessionIDLength-*'
+  #        'TLS12-NoTicket-*' 'TLS13-NoTicket-NoAccept'
+  #        'SendEmptySessionTicket-*' 'CustomTicketExtension-TLS13'
+  #        'ExtraPSKIdentity-TLS13' 'TLS13-TicketAgeSkew-*'
+  #        'SessionTicketsDisabled-*' 'TLS12NoSessionID-TLS13'
+  #        'TLS12SessionID-TLS13' 'TLS13SessionID-TLS13'
+  #        'EchoTLS13CompatibilitySessionID'
+  #        'TLS13-Client-*ResumptionAcrossNames'
+  #        'EmptySessionID' 'Client-ShortSessionID' 'Client-TooLongSessionID'
+  #        'Basic-Client-NoTicket-*' 'Basic-Server-NoTickets-*'
   # Despite the ALPN prefix, this TLS 1.2 case disables tickets and expects
   # session-ID resumption through BoringSSL's async session callback.
   'ALPNServer-Async-TLS-TLS12'
@@ -307,10 +305,18 @@ UNSUPPORTED_SKIPS=(
   # BoringSSL client-auth matrix exercises shim behaviors and
   # per-iteration assertions we do not currently model. SPARKTLS mTLS
   # coverage lives in tests/integration/run.sh.
-  'ClientAuth-*' 'TLS12-Client-ClientAuth-*' 'TLS13-Client-ClientAuth-*'
-  'NoClientCertificate-*' 'RejectEmptyCertificateAuthorities-*'
-  'CertificateSelection-*' 'ClientCertificateType*'
-  'CertificateVerification*' '*VerifyDefault*'
+  # UNSKIPPED 2026-08-18 (task #54): the certificate-validation and
+  # client-auth family. These were skipped as "shim behaviours we do not
+  # currently model", which is a HARNESS justification, not a protocol
+  # decision -- and it was hiding our coverage of certificate PATH
+  # VALIDATION, which is the most security-critical thing this library
+  # does. Precedent: 45 of 49 "temporary triage" globs turned out to be
+  # stale, hiding ~290 passing tests. Measure, then re-skip only what is
+  # genuinely a shim gap, individually and with a reason.
+  #   was: 'ClientAuth-*' 'TLS12-Client-ClientAuth-*' 'TLS13-Client-ClientAuth-*'
+  #        'NoClientCertificate-*' 'RejectEmptyCertificateAuthorities-*'
+  #        'CertificateSelection-*' 'ClientCertificateType*'
+  #        'CertificateVerification*' '*VerifyDefault*'
 
   # BoringSSL compatibility edge cases for features/policies that are
   # intentionally not supported right now.
@@ -323,12 +329,12 @@ UNSUPPORTED_SKIPS=(
   # Oversized certificate-chain stress profile. SPARKTLS intentionally
   # bounds reassembled handshake messages and retained intermediates.
   'LargeMessage*'
-  # Client-side EMS advertisement is disabled until the TLS 1.2 EMS
-  # Finished path is interoperable. BoGo's TLS 1.3 forbidden-EMS probe
-  # only triggers when the client offered EMS, so classify it with the
-  # EMS feature matrix for now.
-  'NoExtendedMasterSecret-*' 'ExtendedMasterSecret-*'
-  'EMS-Forbidden-TLS13'
+  # EMS (RFC 7627) skips REMOVED 2026-08-18 -- see task #63. EMS is being
+  # completed rather than deferred: it is the triple-handshake mitigation
+  # and a prerequisite for any future renegotiation support. These tests
+  # are expected to fail until the TLS 1.2 EMS Finished path lands; they
+  # are unskipped deliberately so the gap is visible and measurable
+  # instead of hidden behind a glob.
   'Ed25519DefaultDisable-*'
   'PostQuantumNotEnabledByDefaultInClients'
   'SendClientVersion-RSA' 'SkipChangeCipherSpec-*'

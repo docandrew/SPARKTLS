@@ -2168,11 +2168,11 @@ is
 		                  is
 		                  begin
 		                     Free_Byte_Seq (HC.Reasm_Buf);
-		                     HC.Reasm_Buf := new Byte_Seq'
-		                        (0 .. Max_HS_Msg - 1 => 0);
 		                     HC.Reasm_Need := 4;
 		                     HC.Reasm_Hdr_Pending := True;
 		                     HC.Reasm_Len := Frag_Len;
+		                     HC.Reasm_Buf := new Byte_Seq'
+		                        (0 .. Max_HS_Msg - 1 => 0);
 		                     HC.Reasm_Buf (0 .. Frag_Len - 1) :=
 		                        S.Input.Data (Frag_Start ..
 		                                      Frag_Start + Frag_Len - 1);
@@ -2209,11 +2209,11 @@ is
 		                  is
 		                  begin
 			                     Free_Byte_Seq (HC.Reasm_Buf);
-			                     HC.Reasm_Buf := new Byte_Seq'
-			                        (0 .. HS_Total - 1 => 0);
 			                     HC.Reasm_Need := HS_Total;
 			                     HC.Reasm_Len := Frag_Len;
 		                        HC.Reasm_Hdr_Pending := False;
+			                     HC.Reasm_Buf := new Byte_Seq'
+			                        (0 .. HS_Total - 1 => 0);
 			                     HC.Reasm_Buf (0 .. Frag_Len - 1) :=
 		                        S.Input.Data (Frag_Start ..
 		                                      Frag_Start + Frag_Len - 1);
@@ -2792,11 +2792,11 @@ is
 	                  elsif Frag_Len < 4 then
 	                     pragma Assert (HC.Reasm_Need = 0);
 	                     Free_Byte_Seq (HC.Reasm_Buf);
-	                     HC.Reasm_Buf := new Byte_Seq'
-	                       (0 .. Max_HS_Msg - 1 => 0);
                      HC.Reasm_Need := 4;
                      HC.Reasm_Hdr_Pending := True;
                      HC.Reasm_Len := Frag_Len;
+	                     HC.Reasm_Buf := new Byte_Seq'
+	                       (0 .. Max_HS_Msg - 1 => 0);
                      HC.Reasm_Buf (0 .. Frag_Len - 1) :=
                         S.Input.Data (Frag_Start ..
                                       Frag_Start + Frag_Len - 1);
@@ -2818,11 +2818,11 @@ is
 		                        elsif HS_Total > Frag_Len then
 		                           pragma Assert (HC.Reasm_Need = 0);
 		                           Free_Byte_Seq (HC.Reasm_Buf);
-		                           HC.Reasm_Buf := new Byte_Seq'
-	                             (0 .. HS_Total - 1 => 0);
                            HC.Reasm_Need := HS_Total;
                            HC.Reasm_Hdr_Pending := False;
                            HC.Reasm_Len := Frag_Len;
+		                           HC.Reasm_Buf := new Byte_Seq'
+	                             (0 .. HS_Total - 1 => 0);
                            HC.Reasm_Buf (0 .. Frag_Len - 1) :=
                               S.Input.Data (Frag_Start ..
                                             Frag_Start + Frag_Len - 1);
@@ -5475,10 +5475,10 @@ is
 
                if Plain_Len < 4 then
                   Free_Byte_Seq (HC.Reasm_Buf);
-                  HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
                   HC.Reasm_Need := 4;
                   HC.Reasm_Hdr_Pending := True;
                   HC.Reasm_Len := Plain_Len;
+                  HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
 	                  HC.Reasm_Buf (0 .. Plain_Len - 1) :=
 	                    Plaintext (0 .. Plain_Len - 1);
 	                  Result := OK;
@@ -5498,10 +5498,10 @@ is
                      return;
                   elsif HS_Total > Plain_Len then
                      Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
                      HC.Reasm_Need := HS_Total;
                      HC.Reasm_Hdr_Pending := False;
                      HC.Reasm_Len := Plain_Len;
+                     HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
 	                     HC.Reasm_Buf (0 .. Plain_Len - 1) :=
 	                       Plaintext (0 .. Plain_Len - 1);
 	                     Result := OK;
@@ -5658,17 +5658,30 @@ is
       Msg    : in     Byte_Seq;
       Result :    out Action)
    is
-      Request : Boolean;
-      Valid   : Boolean;
+      Request   : Boolean;
+      KU_Status : Key_Update.Parse_Status;
    begin
-      Key_Update.Parse_Key_Update (Msg, Request, Valid);
+      Key_Update.Parse_Key_Update (Msg, Request, KU_Status);
 
-      if not Valid then
-         --  RFC 8446 §4.6.3: malformed body, or request_update outside
-         --  {0,1}, MUST be illegal_parameter.
-         Send_Encrypted_Alert (S, Illegal_Parameter, Result);
-         return;
-      end if;
+      --  Two distinct failures carry two distinct alerts. Exhaustive
+      --  case, no `others`: adding a Parse_Status literal must not be
+      --  silently absorbed here.
+      case KU_Status is
+         when Key_Update.Parse_OK =>
+            null;
+
+         when Key_Update.Parse_Malformed =>
+            --  RFC 8446 6.2: decode_error is "the length of the message
+            --  was incorrect" -- a truncated or absent request_update.
+            Send_Encrypted_Alert (S, Decode_Error, Result);
+            return;
+
+         when Key_Update.Parse_Bad_Value =>
+            --  RFC 8446 4.6.3: a well-formed KeyUpdate whose
+            --  request_update is outside {0,1} MUST be illegal_parameter.
+            Send_Encrypted_Alert (S, Illegal_Parameter, Result);
+            return;
+      end case;
 
       --  Leaky bucket, drained by work actually done under the previous
       --  key. S.Client_App.Counter is our READ counter: it counts records
@@ -6011,7 +6024,15 @@ is
          case Inner_Type is
             when 16#17# =>
                --  Application data
-               if S.State = Closing and then Plain_Len > 0 then
+               if S.Post_HS_Need > 0 then
+                  --  RFC 8446 5.1: "Handshake messages MUST NOT be
+                  --  interleaved with other record types." A
+                  --  post-handshake handshake message is mid-reassembly
+                  --  (Post_HS_Need > 0), so an application_data record
+                  --  arriving now splits it. Reject rather than buffer
+                  --  the data and resume reassembly afterwards.
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+               elsif S.State = Closing and then Plain_Len > 0 then
                   Send_Encrypted_Alert (S, Unexpected_Message, Result);
                elsif Plain_Len > 0 and then
                   S.App_Data_Len + Plain_Len <= S.App_Data'Length

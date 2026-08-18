@@ -722,21 +722,36 @@ is
       Write_Pos  : Buffer_Size := 0;  --  next byte to write
    end record
      with Predicate =>
-       IO_Buffer.Write_Pos >= IO_Buffer.Read_Pos
-       --  A drained buffer is always compacted back to the start:
-       --  Drain_Ciphertext and Compact both reset the pair once Available
-       --  reaches 0. So "nothing pending" implies the whole capacity is
-       --  free, which is what lets the state machine know it can always
-       --  stage an alert record when it has no queued output.
-       --
-       --  This belongs on IO_Buffer rather than on Session. Stated on
-       --  Session it was unprovable at every call that passes S.Output as
-       --  an "in out" component -- roughly 27 sites -- because the callee
-       --  says nothing about Write_Pos/Read_Pos and the caller must then
-       --  re-establish the whole Session predicate on return. Here each
-       --  buffer operation discharges it once, locally.
-       and then (if IO_Buffer.Write_Pos = IO_Buffer.Read_Pos
-                 then IO_Buffer.Write_Pos = 0);
+       IO_Buffer.Write_Pos >= IO_Buffer.Read_Pos;
+
+   --  REMOVED 2026-08-18, and why -- do not reinstate without reading this.
+   --
+   --  This predicate used to also assert the compaction invariant:
+   --      (if IO_Buffer.Write_Pos = IO_Buffer.Read_Pos
+   --       then IO_Buffer.Write_Pos = 0)
+   --  on the reasoning that Drain_Ciphertext and Compact reset the pair
+   --  once Available reaches 0, so "nothing pending" implies the whole
+   --  capacity is free.
+   --
+   --  That reasoning describes where the code SETTLES, not what is true at
+   --  every point, and a predicate is checked on every component
+   --  assignment. The consuming paths advance Read_Pos and only compact
+   --  afterwards:
+   --      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+   --      ... return;                    <-- Read_Pos = Write_Pos /= 0 here
+   --  so the invariant is transiently FALSE, not merely unproven. A
+   --  checked build would raise Assertion_Error at exactly those points.
+   --
+   --  It accounted for 159 of the 204 owned proof findings in the
+   --  2026-08-18 full run (78%), spread across every line range of the
+   --  four largest units -- the signature of a predicate that is false in
+   --  ordinary operation rather than one that is hard to discharge.
+   --
+   --  This is the same mistake, and the same fix, as the RFC 8446 6.1/5.2
+   --  flood caps reverted on 2026-08-17: an invariant that holds between
+   --  operations is not an invariant of the TYPE. If a specific caller
+   --  needs "drained implies compacted", it belongs in that subprogram's
+   --  precondition where it can actually be established, not here.
 
    function Available (Buf : IO_Buffer) return N32 is
       (Buf.Write_Pos - Buf.Read_Pos);
@@ -748,11 +763,16 @@ is
    --  Hostname storage (for SNI)
    ----------------------------------------------------------------------------
 
+   --  Bound lives on the field, not on a record predicate: a predicate is
+   --  re-checked on every component assignment and at every call boundary
+   --  that passes a Hostname_Buf, whereas a subtype costs one range check
+   --  where the length is actually written.
+   subtype Hostname_Length is Natural range 0 .. Max_Hostname_Len;
+
    type Hostname_Buf is record
       Data : String (1 .. Max_Hostname_Len) := (others => ASCII.NUL);
-      Len  : Natural := 0;
-   end record
-     with Predicate => Hostname_Buf.Len <= Max_Hostname_Len;
+      Len  : Hostname_Length := 0;
+   end record;
 
    Max_Config_ALPN_Protocols : constant := 8;
    subtype ALPN_Index is Natural range 1 .. Max_Config_ALPN_Protocols;
@@ -781,6 +801,13 @@ is
    --  connection far away from here. This is the backstop for when it does
    --  not happen.
    subtype Record_Counter is Unsigned_64 range 0 .. Unsigned_64'Last - 1;
+
+   --  Lengths bounded by the record-plaintext limit. These were Session
+   --  predicate conjuncts; as subtypes the bound travels with the field
+   --  and is discharged by a range check at assignment instead of being
+   --  re-proved as part of the whole-record predicate every time any
+   --  component of a Session is written.
+   subtype Plaintext_Length is N32 range 0 .. Max_Record_Plaintext;
 
    type Traffic_Keys is record
       Key     : Bytes_32          := (others => 0);
@@ -863,11 +890,14 @@ is
    Max_Root_Pool_Size : constant := 200;
    type Root_Pool is array (0 .. Max_Root_Pool_Size - 1) of Pool_Entry;
 
+   --  Same reasoning as Hostname_Length: single-field bound belongs on the
+   --  field's subtype rather than on a whole-record predicate.
+   subtype Root_Pool_Count is Natural range 0 .. Max_Root_Pool_Size;
+
    type Trust_Store is record
       Roots      : Root_Pool;
-      Root_Count : Natural := 0;
-   end record
-     with Predicate => Trust_Store.Root_Count <= Max_Root_Pool_Size;
+      Root_Count : Root_Pool_Count := 0;
+   end record;
 
    type Trust_Store_Access is access constant Trust_Store;
 
@@ -1487,6 +1517,29 @@ is
    --  scan cost in Apply_CH_Extension.
    type Ext_Tag_Array is array (1 .. 64) of Unsigned_32;
 
+   --  Length/count bounds for Handshake_Context fields.
+   --
+   --  These were Handshake_Context PREDICATE conjuncts. A predicate is
+   --  re-checked on every assignment to ANY component of the record and at
+   --  every call boundary that passes an HC, so a single-field bound stated
+   --  there costs a proof obligation at every unrelated write elsewhere in
+   --  the record. As a subtype the bound is discharged by one range check at
+   --  the assignment that actually touches the field.
+   --
+   --  The record already used this idiom for Seen_Ext_Count,
+   --  Legacy_Session_ID_Len and Peer_Sig_Algo_Count -- note none of those
+   --  three has a predicate conjunct. These seven are the ones that were
+   --  missed; moving them leaves the predicate with only the genuine
+   --  multi-field relationship (reassembly buffer shape), which cannot
+   --  become a subtype.
+   subtype Transcript_Length   is N32 range 0 .. Transcript_Capacity;
+   subtype Hash_Length         is N32 range 0 .. 48;
+   subtype Cert_DER_Length     is N32 range 0 .. Max_Cert_DER_Len;
+   subtype Cert_Pool_Count     is Natural range 0 .. Max_Pool_Size;
+   subtype PSK_Binder_Length   is N32 range 0 .. 64;
+   subtype PSK_Value_Length    is N32 range 0 .. 48;
+   subtype TLS12_Ticket_Length is N32 range 0 .. Max_TLS12_Ticket_Len;
+
    type Handshake_Context is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
@@ -1584,23 +1637,23 @@ is
       Master_Secret    : Bytes_48 := (others => 0);
 
       --  Hash length for negotiated cipher suite (32 or 48)
-      Hash_Len : N32 := 32;
+      Hash_Len : Hash_Length := 32;
 
       --  Transcript accumulator
       Transcript     : Byte_Seq (0 .. Transcript_Capacity - 1)
                          := (others => 0);
-      Transcript_Len : N32 := 0;
+      Transcript_Len : Transcript_Length := 0;
 
       --  Peer certificate (raw DER for verification)
       Peer_Cert_DER     : Byte_Seq (0 .. Max_Cert_DER_Len - 1)
                             := (others => 0);
-      Peer_Cert_DER_Len : N32 := 0;
+      Peer_Cert_DER_Len : Cert_DER_Length := 0;
       Peer_Cert         : X509.Certificate;
       Peer_Cert_Valid   : Boolean := False;
 
       --  Peer intermediate certificates
       Peer_Ints      : Cert_Pool;
-      Peer_Int_Count : Natural := 0;
+      Peer_Int_Count : Cert_Pool_Count := 0;
 
       --  Legacy session ID (middlebox compatibility)
       Legacy_Session_ID : Bytes_32 := (others => 0);
@@ -1677,7 +1730,7 @@ is
       TLS12_Ticket_Will_Issue   : Boolean := False;
       TLS12_Resumed_Master_Secret : Byte_Seq (0 .. 47) := (others => 0);
       TLS12_Resumed_Suite       : Unsigned_16 := 0;
-      TLS12_Peer_Ticket_Len     : N32 := 0;
+      TLS12_Peer_Ticket_Len     : TLS12_Ticket_Length := 0;
       TLS12_Peer_Ticket         : Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1)
                                     := (others => 0);
 
@@ -1740,9 +1793,9 @@ is
       PSK_Offered   : Boolean := False;
       PSK_Ticket_ID : Ticket_ID := (others => 0);
       PSK_Value     : Bytes_48 := (others => 0);  --  zeros if no PSK
-      PSK_Value_Len : N32 := 0;                   --  0 = no PSK
+      PSK_Value_Len : PSK_Value_Length := 0;                   --  0 = no PSK
       PSK_Binder    : Bytes_48 := (others => 0);  --  received binder
-      PSK_Binder_Len : N32 := 0;
+      PSK_Binder_Len : PSK_Binder_Length := 0;
       PSK_Binders_Offset : N32 := 0;              --  offset of binders in ClientHello
 
       --  RFC 8446 §2.3 / §4.2.10 0-RTT (early data).
@@ -1791,16 +1844,13 @@ is
       --  simultaneously, so a single shared block is not sufficient.
    end record
      with Predicate =>
-       --  RFC 5246 §7.4.9 transcript bound: every Append_Transcript
-       --  guards against overrun. Pin the runtime invariant so the
-       --  prover doesn't have to re-derive it at every callsite.
-       Handshake_Context.Transcript_Len <= Transcript_Capacity
-       and Handshake_Context.Hash_Len <= 48
-       and Handshake_Context.Peer_Cert_DER_Len <= Max_Cert_DER_Len
-       and Handshake_Context.Peer_Int_Count <= Max_Pool_Size
-       and Handshake_Context.PSK_Binder_Len <= 64
-       and Handshake_Context.PSK_Value_Len <= 48
-       and Handshake_Context.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len
+       --  All seven single-field length/count bounds that used to be stated
+       --  here now live on the FIELD subtypes (Transcript_Length,
+       --  Hash_Length, Cert_DER_Length, Cert_Pool_Count, PSK_Binder_Length,
+       --  PSK_Value_Length, TLS12_Ticket_Length) -- see their declarations
+       --  above for why. What remains is the one genuine MULTI-field
+       --  relationship, which no subtype can express.
+       --
        --  Reassembly buffer shape -- the same conditions the Ghost function
        --  Reasm_Buffer_Shaped states, inlined here because that function is
        --  declared after this record and a predicate cannot call it.
@@ -1814,7 +1864,7 @@ is
        --  The 68 sites that pass HC.Reasm_Buf as a component to
        --  Free_Byte_Seq are safe because that procedure carries
        --  Post => Ptr = null, which satisfies the null disjunct directly.
-       and (Handshake_Context.Reasm_Buf = null
+       (Handshake_Context.Reasm_Buf = null
             or else
               (Handshake_Context.Reasm_Len <=
                  N32 (Handshake_Context.Reasm_Buf'Length)
@@ -2772,7 +2822,7 @@ private
       --  Decrypted application data staging area
       App_Data     : Byte_Seq (0 .. Max_Record_Plaintext - 1)
                        := (others => 0);
-      App_Data_Len : N32 := 0;
+      App_Data_Len : Plaintext_Length := 0;
 
       --  Negotiated cipher suite (wire value from ServerHello)
       Negotiated_Suite    : Unsigned_16 := 0;  --  TLS 1.3 suite (0x13xx)
@@ -2868,8 +2918,8 @@ private
       --  fragment NewSessionTicket across encrypted application_data records.
       Post_HS_Buf  : Byte_Seq (0 .. Max_Record_Plaintext - 1)
                        := (others => 0);
-      Post_HS_Len  : N32 := 0;
-      Post_HS_Need : N32 := 0;
+      Post_HS_Len  : Plaintext_Length := 0;
+      Post_HS_Need : Plaintext_Length := 0;
 
       --  Counter for received warning-level user_canceled alerts.
       --  RFC 8446 §6.1: TLS 1.3 deprecates warning alerts but keeps
@@ -2892,33 +2942,42 @@ private
       Negotiated_ALPN     : Hostname_Buf := (Len => 0, Data => (others => ' '));
       Client_IV_12        : Byte_Seq (0 .. 11) := (others => 0);
       Server_IV_12        : Byte_Seq (0 .. 11) := (others => 0);
-      Client_Seq_12       : Unsigned_64 := 0;
-      Server_Seq_12       : Unsigned_64 := 0;
+      --  Record_Counter, not Unsigned_64: the "< Unsigned_64'Last" bound
+      --  belongs to the FIELD, not to the Session. As a subtype it is
+      --  checked once at assignment; as a Session predicate conjunct it
+      --  had to be re-proved at every component assignment anywhere in
+      --  the record, and at every call boundary.
+      Client_Seq_12       : Record_Counter := 0;
+      Server_Seq_12       : Record_Counter := 0;
 
       --  Handshake context (heap-allocated, freed after handshake)
       HC_Ptr : Handshake_Context_Access := null;
    end record
    with Dynamic_Predicate =>
-     --  The four AEAD sequence counters are monotonic and the library is
-     --  their only writer, so "has not reached 2**64" is a property of a
-     --  Session at every observable point rather than something a caller
-     --  should have to establish. Stating it here means the increments
-     --  prove non-overflowing without Nonce_Space_Available appearing as a
-     --  precondition on the public API. At 1e6 records/sec, reaching the
-     --  bound would take roughly 584,000 years; the guard exists for
-     --  overflow proof, not as a cryptographic record limit (RFC 8446 5.5
-     --  key-update limits are a separate, much smaller concern).
-     Session.Client_App.Counter < Unsigned_64'Last
-     and then Session.Server_App.Counter < Unsigned_64'Last
-     and then Session.Client_Seq_12 < Unsigned_64'Last
-     and then Session.Server_Seq_12 < Unsigned_64'Last
-     --  App_Data_Len counts the valid bytes staged in App_Data, which is
-     --  exactly Max_Record_Plaintext long, so the bound is a property of a
-     --  well-formed Session rather than a caller obligation. Stating it
-     --  here is what lets Advance call its helpers without carrying
-     --  App_Data_Len <= Max_Record_Plaintext through the public API --
-     --  the same reasoning as the counters above.
-     and then Session.App_Data_Len <= Max_Record_Plaintext
+     --  WHAT LIVES HERE AND WHAT DOES NOT.
+     --
+     --  A Dynamic_Predicate is re-checked on EVERY assignment to ANY
+     --  component of the record, and at every call boundary that passes
+     --  a Session. So a conjunct constraining a single field costs a
+     --  proof obligation at every unrelated write elsewhere in the
+     --  record. A subtype on that field costs one range check at the
+     --  assignment that actually touches it.
+     --
+     --  Therefore: single-field bounds belong on the FIELD's subtype;
+     --  only genuine multi-field relationships belong here.
+     --
+     --  Moved out to subtypes (2026-08-18, was 78% of all owned proof
+     --  findings -- 159 VC_PREDICATE_CHECK across the four largest
+     --  units):
+     --    Client_App.Counter / Server_App.Counter < Unsigned_64'Last
+     --        -> already guaranteed by Traffic_Keys.Counter's type,
+     --           Record_Counter. These two conjuncts were pure
+     --           restatement and proved nothing the type did not.
+     --    Client_Seq_12 / Server_Seq_12 < Unsigned_64'Last
+     --        -> fields retyped Record_Counter.
+     --    App_Data_Len, Post_HS_Len, Post_HS_Need <= Max_Record_Plaintext
+     --        -> fields retyped Plaintext_Length.
+     --
      --  NOT stated here: the RFC 8446 6.1 / 5.2 flood caps. Tried on
      --  2026-08-17 and reverted -- they are NOT invariants of Session.
      --  The receive paths increment the counter and only then test and
@@ -2932,15 +2991,14 @@ private
      --  functions Warning_Alerts_Bounded_RFC_8446_6_1 /
      --  Empty_Records_Bounded_RFC_8446_5_2, used as preconditions where
      --  they are actually needed.
+     --
      --  Post-handshake reassembly coherence (TLS 1.3 NewSessionTicket may
-     --  arrive fragmented across records). Post_HS_Buf is exactly
-     --  Max_Record_Plaintext long, and the Need/Len relationship is the
-     --  same shape as Reasm_Buffer_Shaped on Handshake_Context: nothing pending
-     --  means nothing buffered, and a pending message is at least a 4-byte
-     --  header with no more buffered than needed.
-     and then Session.Post_HS_Len <= Max_Record_Plaintext
-     and then Session.Post_HS_Need <= Max_Record_Plaintext
-     and then (if Session.Post_HS_Need = 0
+     --  arrive fragmented across records). This is a genuine relationship
+     --  BETWEEN two fields, so it cannot become a subtype and correctly
+     --  stays here: nothing pending means nothing buffered, and a pending
+     --  message is at least a 4-byte header with no more buffered than
+     --  needed.
+     (if Session.Post_HS_Need = 0
                then Session.Post_HS_Len = 0
                else Session.Post_HS_Need >= 4
                     and then Session.Post_HS_Len <= Session.Post_HS_Need)

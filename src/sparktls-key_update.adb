@@ -158,11 +158,11 @@ is
    procedure Parse_Key_Update
      (Msg     : in  Byte_Seq;
       Request : out Boolean;
-      Valid   : out Boolean)
+      Status  : out Parse_Status)
    is
    begin
       Request := False;
-      Valid   := False;
+      Status  := Parse_Malformed;
 
       --  Must be exactly type + 3-byte length + 1-byte body, and the
       --  declared length must be 1. RFC 8446 §4.6.3 gives the body a fixed
@@ -186,12 +186,14 @@ is
       case Msg (4) is
          when Update_Not_Requested =>
             Request := False;
-            Valid   := True;
+            Status  := Parse_OK;
          when Update_Requested =>
             Request := True;
-            Valid   := True;
+            Status  := Parse_OK;
          when others =>
-            Valid := False;
+            --  Structurally fine, value out of range: illegal_parameter,
+            --  NOT decode_error.
+            Status := Parse_Bad_Value;
       end case;
    end Parse_Key_Update;
 

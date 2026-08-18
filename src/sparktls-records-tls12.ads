@@ -66,6 +66,15 @@ is
    --  "Sequence numbers do not wrap"
    --  "The first record transmitted under a particular connection
    --   state MUST use sequence number 0"
+   --  NOTE (2026-08-18): retyping Seq to Record_Counter here was TRIED and
+   --  REVERTED. It looks tidier -- the bound travels with the value -- but
+   --  the TLS 1.2 sequence counters are also held as plain Unsigned_64 in
+   --  Handshake_Context, so every call site passing one of those into an
+   --  `in out Record_Counter` acquired a range check in BOTH directions.
+   --  Measured on sparktls-client-tls12: 10 findings -> 38 (4 range checks
+   --  -> 31). Retyping one end of a chain and not the other costs more
+   --  than it saves; either retype the whole chain (Handshake_Context
+   --  fields included) or leave it alone.
    function Nonce_Space_Available_12 (Seq : Unsigned_64) return Boolean is
      (Seq < Unsigned_64'Last)
    with Ghost;

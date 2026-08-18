@@ -761,6 +761,20 @@ is
          else 0);
       TLS12_Ticket_Ext_Len : constant N32 :=
         (if Offer_TLS12_Ticket then 4 + TLS12_Ticket_Data_Len else 0);
+
+      --  extended_master_secret (0x0017, RFC 7627). Empty body, so the
+      --  whole extension is tag(2) + length(2) = 4 bytes.
+      --
+      --  Offered only when TLS 1.2 is actually on the table. EMS is a
+      --  TLS 1.2 mechanism: 1.3 always binds the key schedule to the
+      --  transcript, so the extension is meaningless there and a 1.3
+      --  server must not echo it (BoGo EMS-Forbidden-TLS13 checks that we
+      --  reject an echo when 1.3 was negotiated). Sending it from a
+      --  1.3-only client would be pure noise.
+      Offer_EMS : constant Boolean :=
+        HC.Cfg.Versions /= TLS_1_3_Only;
+      EMS_Ext_Len : constant N32 := (if Offer_EMS then 4 else 0);
+
       --  Each extension: tag(2) + data_length(2) + data
       Ext_Total : constant N32 :=
          (4 + SNI_Data_Len) + (4 + SG_Data_Len) + (4 + SA_Data_Len) +
@@ -768,7 +782,8 @@ is
          (4 + EPF_Data_Len) +
          ALPN_Ext_Len +
          Cookie_Ext_Len +
-         TLS12_Ticket_Ext_Len;
+         TLS12_Ticket_Ext_Len +
+         EMS_Ext_Len;
 
       --  ClientHello body: version(2) + random(32) + sid_len(1) +
       --  sid(0 | 32) + suites_len(2) + suites(18) + comp_len(1) +
@@ -1498,6 +1513,42 @@ is
 		               end;
 		            end if;
             HC.TLS12_Sent_Ticket_Ext := True;
+         end if;
+
+         --  extended_master_secret (RFC 7627, tag 0x0017). Empty body.
+         --
+         --  RFC 7627 §5.1: the client offers it; a 1.2 server that also
+         --  supports it echoes the extension, and BOTH sides then derive
+         --  master_secret = PRF(pms, "extended master secret",
+         --  session_hash) instead of using the two randoms as the seed.
+         --  Our derivation for both roles is already implemented and
+         --  gated on HC.Use_EMS (client: sparktls-client-tls12.adb ~356,
+         --  server: sparktls-server-tls12.adb ~1100); until now nothing
+         --  ever set that flag on the client, because the offer was
+         --  never sent -- so the server had nothing to echo.
+         --
+         --  Not offered by a 1.3-only client (see Offer_EMS): TLS 1.3
+         --  binds its key schedule to the transcript unconditionally, so
+         --  the extension is meaningless there and a 1.3 server must not
+         --  echo it.
+         if Offer_EMS then
+            declare
+               Empty : constant Byte_Seq (1 .. 0) := (others => 0);
+            begin
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) >=
+                  RBT.Bit_Length (8) * RBT.Bit_Length (4));
+               Append_CH_Extension
+                 (Exts_Ctx,
+                  RFLX.Tls_Extensiontype_Values.Extended_Master_Secret,
+                  Empty);
+               Remaining_Ext_Bits := Remaining_Ext_Bits -
+                 RBT.Bit_Length (8) * RBT.Bit_Length (4);
+               pragma Assert
+                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                    (Exts_Ctx) = Remaining_Ext_Bits);
+            end;
          end if;
 
          --  Extension 9 (conditional): padding (RFC 7685, tag 0x0015).

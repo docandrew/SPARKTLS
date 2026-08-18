@@ -56,6 +56,54 @@ ALL_TESTS=(
     session-resumption serverhello-random multiple-ccs-messages
     ecdhe-curves signature-algorithms lengths shuffled-extentions
     symetric-ciphers psk_dhe_ke non-support finished-plaintext
+    #  ---------------- TLS 1.2 CORPUS (added 2026-08-18) ----------------
+    #  These resolve via the unprefixed fallback above. They were never
+    #  runnable before: run.sh only ever built "test-tls13-<name>.py",
+    #  which was correct while the project was TLS 1.3 only and silently
+    #  became a coverage hole the moment TLS 1.2 shipped. 111 of
+    #  tlsfuzzer's 171 scripts were unreachable BY NAME as a result.
+    #
+    #  Selected for what we actually implement: TLS 1.2 with ECDHE
+    #  (X25519 / P-256 / P-384) and AEAD only (AES-GCM, ChaCha20-Poly1305).
+    #  Deliberately NOT listed: CBC/Lucky13, RSA key exchange/Bleichenbacher,
+    #  3DES/RC4/export, SSLv2/v3, DHE/FFDHE, heartbeat, encrypt-then-mac and
+    #  the renegotiation family -- all features we do not support, so they
+    #  would only generate noise to re-classify. Add them if that changes.
+
+    #  Core protocol + record layer
+    conversation ccs lengths extensions empty-extensions
+    version-numbers invalid-version downgrade-protection
+    record-layer-fragmentation invalid-content-type zero-length-data
+    serverhello-random invalid-session-id
+    invalid-client-hello invalid-client-hello-w-record-overflow
+    invalid-cipher-suites invalid-compression-methods
+    large-hello large-number-of-extensions client-hello-max-size
+
+    #  Robustness / adversarial -- should hold regardless of feature set
+    message-duplication message-skipping
+    truncating-of-client-hello truncating-of-finished
+    fuzzed-ciphertext fuzzed-finished fuzzed-plaintext
+    ssl-death-alert early-application-data connection-abort
+
+    #  AEAD + key exchange we implement
+    aes-gcm-nonces chacha20 x25519 ecdhe-padded-shared-secret
+
+    #  Signatures / certificates
+    sig-algs signature-algorithms certificate-request certificate-verify
+    ecdsa-in-certificate-verify eddsa-in-certificate-verify
+    rsa-pss-sigs-on-certificate-verify
+
+    #  Extensions + resumption
+    alpn-negotiation invalid-server-name-extension
+    sessionID-resumption session-ticket-resumption
+    resumption-with-wrong-ciphers
+
+    #  KNOWN GAPS -- expected to fail, listed so they stay measurable:
+    #    record-size-limit  RFC 8449 is parsed but not honoured (see #54)
+    #    extended-master-*  RFC 7627 Finished path incomplete (see #63)
+    record-size-limit
+    extended-master-secret-extension
+    extended-master-secret-extension-with-client-cert
 )
 
 # Use command-line args or all tests
@@ -185,7 +233,16 @@ classify_failure() {
 }
 
 for test in "${TESTS[@]}"; do
+    #  Resolve the script name. Historically this only ever built
+    #  "test-tls13-<name>.py", which made every NON-TLS-1.3 script in
+    #  tlsfuzzer unreachable BY NAME -- 111 of the 171 shipped scripts,
+    #  including the whole TLS 1.2 and generic-attack corpus, despite us
+    #  shipping TLS 1.2. Fall back to the unprefixed "test-<name>.py" so
+    #  1.2-era tests (extended-master-secret, etc.) can be listed too.
     script="$TLSFUZZER_DIR/scripts/test-tls13-${test}.py"
+    if [ ! -f "$script" ]; then
+        script="$TLSFUZZER_DIR/scripts/test-${test}.py"
+    fi
     if [ ! -f "$script" ]; then
         RESULTS="$RESULTS$test: SKIP (script not found)\n"
         TOTAL_SKIP=$((TOTAL_SKIP + 1))

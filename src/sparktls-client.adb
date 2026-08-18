@@ -3568,10 +3568,10 @@ is
    is
    begin
       Free_Byte_Seq (HC.Reasm_Buf);
-      HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
       HC.Reasm_Need := 4;
       HC.Reasm_Hdr_Pending := True;
       HC.Reasm_Len := Frag_Len;
+      HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
 	      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
 			      Copy_Input_Fragment
 			        (S, HC, Frag_Start, Frag_Len, Max_HS_Msg);
@@ -3637,10 +3637,10 @@ is
    is
    begin
       Free_Byte_Seq (HC.Reasm_Buf);
-      HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
       HC.Reasm_Need := HS_Total;
       HC.Reasm_Hdr_Pending := False;
       HC.Reasm_Len := Frag_Len;
+      HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
 	      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
 			      Copy_Input_Fragment
 			        (S, HC, Frag_Start, Frag_Len, HS_Total);
@@ -3696,10 +3696,10 @@ is
    is
    begin
       Free_Byte_Seq (HC.Reasm_Buf);
-      HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
       HC.Reasm_Need := HS_Total;
       HC.Reasm_Hdr_Pending := False;
 	      HC.Reasm_Len := Frag_Len;
+      HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
 		      pragma Assert (Frag_Len - 1 <= HC.Reasm_Buf'Last);
 			      Copy_Input_Fragment
 			        (S, HC, Frag_Start, Frag_Len, Frag_Len);
@@ -5166,9 +5166,9 @@ is
 	         if Msg_End > Plain_Len then
 	            --  Message spans into next record.
 		            Free_Byte_Seq (HC.Reasm_Buf);
-		            HC.Reasm_Buf := new Byte_Seq'(0 .. Msg_Total - 1 => 0);
 		            HC.Reasm_Need := Msg_Total;
 		            HC.Reasm_Hdr_Pending := False;
+		            HC.Reasm_Buf := new Byte_Seq'(0 .. Msg_Total - 1 => 0);
 		            pragma Assert (HC.Reasm_Buf /= null);
 		            pragma Assert (HC.Reasm_Buf'First = 0);
 		            pragma Assert (HC.Reasm_Buf'Length = Msg_Total);
@@ -5391,11 +5391,11 @@ is
                            --  Reasm_Buf as potentially non-null even
                            --  when the if-condition implies otherwise.
                            Free_Byte_Seq (HC.Reasm_Buf);
-                           HC.Reasm_Buf := new Byte_Seq'
-                              (0 .. Max_HS_Msg - 1 => 0);
 	                           HC.Reasm_Need := 4;
 	                           HC.Reasm_Hdr_Pending := True;
 	                           HC.Reasm_Len := Avail;
+                           HC.Reasm_Buf := new Byte_Seq'
+                              (0 .. Max_HS_Msg - 1 => 0);
                               pragma Assert (HC.Reasm_Buf /= null);
                               pragma Assert (HC.Reasm_Buf'First = 0);
                               pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
@@ -5498,7 +5498,18 @@ is
                   Set_State (S, Error_State);
                   Result := Error_Alert;
 	               else
-		                  Result := OK;
+                  --  RFC 8446 5.2: if the decrypted inner content type
+                  --  is not one we expect here, the receiver MUST
+                  --  terminate with unexpected_message. In particular a
+                  --  0x17 (application_data) inner type mid-handshake is
+                  --  not "nothing to do" -- 0-RTT is not supported, so
+                  --  there is no legitimate way to reach this.
+                  --
+                  --  This used to be `Result := OK`, which let a peer
+                  --  feed us records we neither processed nor rejected.
+                  S.Last_Error := Unexpected_Message;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
 		               end if;
 		               HC.Server_HS.Counter := Server_HS_Copy.Counter;
 		            end;
@@ -5925,17 +5936,30 @@ is
       Msg    : in     Byte_Seq;
       Result :    out Action)
    is
-      Request : Boolean;
-      Valid   : Boolean;
+      Request   : Boolean;
+      KU_Status : Key_Update.Parse_Status;
    begin
-      Key_Update.Parse_Key_Update (Msg, Request, Valid);
+      Key_Update.Parse_Key_Update (Msg, Request, KU_Status);
 
-      if not Valid then
-         --  RFC 8446 §4.6.3: a malformed body or a request_update outside
-         --  {0,1} MUST terminate the connection with illegal_parameter.
-         Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
-         return;
-      end if;
+      --  Two distinct failures carry two distinct alerts. Exhaustive
+      --  case, no `others`: adding a Parse_Status literal must not be
+      --  silently absorbed here.
+      case KU_Status is
+         when Key_Update.Parse_OK =>
+            null;
+
+         when Key_Update.Parse_Malformed =>
+            --  RFC 8446 6.2: decode_error is "the length of the message
+            --  was incorrect" -- a truncated or absent request_update.
+            Send_App_Encrypted_Alert (S, Decode_Error, Result);
+            return;
+
+         when Key_Update.Parse_Bad_Value =>
+            --  RFC 8446 4.6.3: a well-formed KeyUpdate whose
+            --  request_update is outside {0,1} MUST be illegal_parameter.
+            Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
+            return;
+      end case;
 
       --  Leaky bucket, drained by work actually done under the previous
       --  key. S.Server_App.Counter is our READ counter: it counts records
@@ -6001,7 +6025,22 @@ is
             Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
          end if;
       else
-         Result := OK;
+         --  RFC 8446 4.6: the only post-handshake messages a client may
+         --  receive are NewSessionTicket (4) and KeyUpdate (24), both
+         --  handled above.
+         --
+         --  CertificateRequest (13) is the notable case: we never send
+         --  the post_handshake_auth extension, and 4.6.2 says a client
+         --  that receives CertificateRequest without having sent it
+         --  MUST reply with unexpected_message. Everything else --
+         --  Certificate, CertificateVerify, Finished, a second
+         --  ClientHello -- is equally out of place here.
+         --
+         --  This used to be `Result := OK`, silently swallowing every
+         --  unhandled type. The server side of this same dispatcher was
+         --  corrected on 2026-08-17; the client was missed because the
+         --  failing test at the time only exercised the server.
+         Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
       end if;
       Reset_Post_HS_Reasm (S);
    end Dispatch_Post_HS_Message;
@@ -6166,7 +6205,20 @@ is
          case Inner_Type is
             when 16#17# =>
                --  Application data
-               if S.State = Closing and then Plain_Len > 0 then
+               if S.Post_HS_Need > 0 then
+                  --  RFC 8446 5.1: "Handshake messages MUST NOT be
+                  --  interleaved with other record types." A
+                  --  post-handshake handshake message is mid-reassembly
+                  --  (Post_HS_Need > 0), so an application_data record
+                  --  arriving now splits it. Reject rather than buffer
+                  --  the data and resume reassembly afterwards.
+                  --
+                  --  Caught by tlsfuzzer test-tls13-keyupdate.py cases
+                  --  "1/4 fragmented keyupdate msg, appdata between" and
+                  --  "3/2 fragmented keyupdate msg, appdata between",
+                  --  which we had never run.
+                  Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+               elsif S.State = Closing and then Plain_Len > 0 then
                   Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
                elsif Plain_Len > 0 and then
                   S.App_Data_Len + Plain_Len <= S.App_Data'Length

@@ -4444,10 +4444,10 @@ is
       Result   :    out Action)
    is
    begin
-      HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
       HC.Reasm_Need := 4;
       HC.Reasm_Hdr_Pending := True;
       HC.Reasm_Len := Frag_Len;
+      HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
       for I in N32 range 0 .. Frag_Len - 1 loop
          pragma Loop_Invariant (I <= Frag_Len - 1);
          pragma Loop_Invariant (HC.Reasm_Buf /= null);
@@ -4539,10 +4539,10 @@ is
    is
       Total : constant N32 := Msg_Len + 4;
    begin
-      HC.Reasm_Buf := new Byte_Seq'(0 .. Total - 1 => 0);
       HC.Reasm_Need := Total;
       HC.Reasm_Len := Frag_Len;
       HC.Reasm_Hdr_Pending := False;
+      HC.Reasm_Buf := new Byte_Seq'(0 .. Total - 1 => 0);
       for I in N32 range 0 .. Frag_Len - 1 loop
          pragma Loop_Invariant (I <= Frag_Len - 1);
          pragma Loop_Invariant (HC.Reasm_Buf /= null);
@@ -4637,10 +4637,10 @@ is
       Result   :    out Action)
    is
    begin
-      HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
       HC.Reasm_Need := Msg_Len + 4;
       HC.Reasm_Len := Frag_Len;
       HC.Reasm_Hdr_Pending := False;
+      HC.Reasm_Buf := new Byte_Seq'(0 .. Frag_Len - 1 => 0);
       for I in N32 range 0 .. Frag_Len - 1 loop
          pragma Loop_Invariant (I <= Frag_Len - 1);
          pragma Loop_Invariant (HC.Reasm_Buf /= null);
@@ -5315,12 +5315,12 @@ is
    is
    begin
       if HC.Reasm_Buf = null then
-         HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
-         pragma Assert (HC.Reasm_Buf'First = 0);
-         pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
          HC.Reasm_Need := 4;
          HC.Reasm_Hdr_Pending := True;
          HC.Reasm_Len := 0;
+         HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
+         pragma Assert (HC.Reasm_Buf'First = 0);
+         pragma Assert (HC.Reasm_Buf'Length = Max_HS_Msg);
       end if;
    end Ensure_Finished_Reasm_Buffer_12;
 
@@ -6049,7 +6049,13 @@ is
                      Result := Shutdown;
                   end if;
                when others =>
-                  Result := OK;
+                  --  RFC 5246 s6 / RFC 8446 s5.1: an unrecognised record
+                  --  content type is unexpected_message, not something to
+                  --  skip. Silently returning OK let a peer feed us
+                  --  records we neither processed nor rejected.
+                  S.Last_Error := Unexpected_Message;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
             end case;
          end;
       end;
