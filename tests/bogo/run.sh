@@ -342,63 +342,20 @@ UNSUPPORTED_SKIPS=(
   'CipherNegotiation-4' 'CipherNegotiation-7' 'CipherNegotiation-8'
 )
 
-TEMPORARY_TRIAGE_SKIPS=(
-  # These are supported-surface gaps or BoringSSL-specific behavior
-  # mismatches. They stay visible in BOGO_STRICT_SUPPORTED=1 runs and
-  # should burn down over time instead of being treated as out of scope.
-  # BoGo verifies BoringSSL-specific alert/error strings for many
-  # malformed-message probes. The protocol behavior is already covered
-  # by tlsfuzzer; until the shim maps SPARKTLS errors to BoringSSL
-  # strings, these are intentional behavior mismatches.
-  'WrongMessageType-*' 'TrailingMessageData-*'
-  'TrailingDataWithFinished-*' 'ExtensionTrailingData-*'
-  'UnknownExtension-*' 'UnknownExtensionInCertificateRequest-*'
-  'UnknownUnencryptedExtension-*' 'UnexpectedUnencryptedExtension-*'
-  'UnofferedExtension-*' 'DuplicateExtensionClient-*'
-  'UnencryptedEncryptedExtensions'
-  'EmptyEncryptedExtensions-*' 'EncryptedExtensionsWithKeyShare-*'
-  'ConflictingVersionNegotiation*' 'VersionNegotiation-*'
-  'MinimumVersion-*' 'Downgrade-*' 'Client-*JDK11DowngradeRandom'
-  'ServerNameExtensionClient*' 'ServerNameExtensionServer-NoACK-*'
-  'UnsolicitedServerNameAck-*'
-  'TolerateServerNameAck-*' 'SendSNIWarningAlert'
-  'SendBogusAlertType' 'SendWarningAlerts-*' 'SendUserCanceledAlerts-*'
-  'AlternateEmptyRecordsAndWarningAlerts'
-  'AppDataBeforeTLS13KeyChange*'
-  'Shutdown-Shim-ApplicationData-*'
-  'Unclean-Shutdown' 'Unclean-Shutdown-Alert'
-  'Null-Client-CA-List'
-  'TLS12-Server-CertReq-CA-List'
-  'TLS13-Server-CertReq-CA-List'
-  'TLS13-Empty-Client-CA-List'
-
-  # BoringSSL compatibility edge cases that are not yet implemented.
-  'ClientHelloPadding'
-  'PointFormat-*' 'SupportedCurves-*'
-  'CurveTest-*' 'KeyShareWithServerHint-*'
-  'NoCommonAlgorithms*'
-  'TLS-TLS12-*'
-  'Client-Verify-*'
-  'RSAKeyUsage-*'
-  'RSA-PSS-Default-Verify' 'Client-SignDefault-*'
-
-  # Supported-surface gaps exposed by accepting BoGo's read-only
-  # expectation flags. Keep these in strict-supported runs until fixed.
-  'SendHelloRetryRequest*'
-  'TLS13-1RTT-Client-TLS-*-SplitHandshakeRecords'
-  'TLS13-HelloRetryRequest-*-TLS-*'
-)
 # Join with ';' for the runner.
-if [ "${BOGO_STRICT_SUPPORTED:-0}" = "1" ]; then
-    SKIPS=$(IFS=';'; echo "${UNSUPPORTED_SKIPS[*]}")
-    OUT_OF_SCOPE_GLOBS=${#UNSUPPORTED_SKIPS[@]}
-    TEMPORARY_TRIAGE_GLOBS=0
-else
-    ALL_SKIPS=("${UNSUPPORTED_SKIPS[@]}" "${TEMPORARY_TRIAGE_SKIPS[@]}")
-    SKIPS=$(IFS=';'; echo "${ALL_SKIPS[*]}")
-    OUT_OF_SCOPE_GLOBS=${#UNSUPPORTED_SKIPS[@]}
-    TEMPORARY_TRIAGE_GLOBS=${#TEMPORARY_TRIAGE_SKIPS[@]}
-fi
+# ONE MODE ONLY (2026-08-17). There used to be a second, laxer mode with a
+# "temporary triage" skip list, and BOGO_STRICT_SUPPORTED=1 to bypass it.
+# An audit found 45 of those 49 globs were STALE: the tests had been fixed
+# over time and nobody re-enabled them, so the default run hid ~290 passing
+# tests and under-reported its own coverage by more than a third.
+#
+# A stale skip and a real gap look identical from the outside, and a laxer
+# default mode is where skips go to be forgotten. So there is now one mode.
+# Anything genuinely out of scope belongs in UNSUPPORTED_SKIPS with a
+# reason; anything failing should fail visibly until it is fixed.
+SKIPS=$(IFS=';'; echo "${UNSUPPORTED_SKIPS[*]}")
+OUT_OF_SCOPE_GLOBS=${#UNSUPPORTED_SKIPS[@]}
+TEMPORARY_TRIAGE_GLOBS=0
 
 RUN_STATUS=0
 "$RUNNER" \

@@ -6016,7 +6016,12 @@ is
                   --    record the error and stop reading; sending an
                   --    alert back would loop on every fatal we receive.
                   if PL >= 2 and then Plaintext (1) = 0 then
-                     --  close_notify
+                     --  close_notify. RFC 8446 6.1 / RFC 5246 7.2.1:
+                     --  record that the peer closed in an orderly way,
+                     --  so the application can tell a finished stream
+                     --  from one an attacker truncated. Also what lets
+                     --  the Closing branch know the close is complete.
+                     S.Peer_Closed_Cleanly := True;
                      if S.State = Connected then
                         Set_State (S, Closing);
                      end if;

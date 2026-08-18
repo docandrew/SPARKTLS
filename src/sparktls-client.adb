@@ -4606,13 +4606,39 @@ is
                else
                   Process_Connected (S, Result);
                end if;
-            else
-               --  Zero traffic keys before closing
+            elsif S.Peer_Closed_Cleanly then
+               --  Both directions are closed: our close_notify is sent
+               --  and the peer's has arrived. THIS -- not our own send
+               --  buffer draining -- is what completes a TLS close.
+               --  Zero the traffic keys here, where the connection is
+               --  genuinely finished.
                S.Server_App.Key := (others => 0);
                S.Server_App.IV := (others => 0);
                S.Client_App.Key := (others => 0);
                S.Client_App.IV := (others => 0);
                Set_State (S, Closed);
+               Result := Shutdown;
+            else
+               --  Half-duplex close in progress (RFC 8446 6.1). We have
+               --  closed our WRITE direction; the peer has not closed
+               --  theirs, so the READ direction is still open and this
+               --  connection is NOT finished. Stay in Closing.
+               --
+               --  Critically, keep the read key: it is what authenticates
+               --  a late close_notify. Zeroing it here -- which is what
+               --  this branch used to do -- destroyed the only means of
+               --  telling an orderly close from a truncation attack, and
+               --  left Peer_Closed_Cleanly permanently False.
+               --
+               --  Report Shutdown, not Need_Input: an application that
+               --  stops here behaves exactly as it always has and can
+               --  never hang waiting for a close_notify that an attacker
+               --  simply will not send. One that keeps reading until the
+               --  transport ends reaches Closed via the peer's
+               --  close_notify, and can then distinguish the two cases.
+               --
+               --  This mirrors OpenSSL's SSL_shutdown returning 0 (sent,
+               --  not yet received) versus 1 (both).
                Result := Shutdown;
             end if;
 
@@ -6203,6 +6229,12 @@ is
                   Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
                elsif Plaintext (1) = 0 then
                   --  close_notify (warning, desc=0). Reply in kind.
+                  --
+                  --  RFC 8446 §6.1: record that the peer closed in an
+                  --  orderly way. Without this the application cannot
+                  --  distinguish a finished stream from one an attacker
+                  --  truncated by cutting the transport.
+                  S.Peer_Closed_Cleanly := True;
                   declare
                      A : N32;
                   begin

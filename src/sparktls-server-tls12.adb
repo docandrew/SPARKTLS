@@ -3093,6 +3093,11 @@ is
 
                when Records.Content_Alert =>
                   if PL >= 2 and then Plaintext (1) = 0 then
+                     --  RFC 8446 6.1: record the orderly close, so the
+                     --  application can distinguish a finished stream
+                     --  from a truncated one, and so the Closing branch
+                     --  knows both directions are shut.
+                     S.Peer_Closed_Cleanly := True;
                      --  close_notify received — RFC 5246 §7.2.1 (and
                      --  RFC 8446 §6.1) require a close_notify reply at
                      --  warning level (1) before tearing the

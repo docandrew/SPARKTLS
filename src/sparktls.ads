@@ -2469,6 +2469,30 @@ is
    function Error_From_Alert (Description : Byte) return Error_Code;
    function Role (S : Session) return TLS_Role;
    function Last_Error (S : Session) return Error_Code;
+
+   --  RFC 8446 §6.1: True only if the peer sent close_notify.
+   --
+   --  Check this when YOUR transport reports EOF. The library performs no
+   --  I/O, so it cannot see the connection close; you can, and only the
+   --  two facts together mean anything:
+   --
+   --      transport closed  AND NOT Peer_Closed_Cleanly (S)
+   --          =>  the byte stream may have been TRUNCATED
+   --
+   --  close_notify exists precisely so that truncation is detectable. An
+   --  attacker able to close the TCP connection can otherwise cut the
+   --  plaintext at a point of their choosing, and the receiver cannot tell
+   --  that from the peer having finished. Do not treat received data as
+   --  complete unless this is True.
+   --
+   --  Most applications running HTTP over TLS are already protected by
+   --  Content-Length or chunked framing, which catches truncation a layer
+   --  up. Raw TLS streams without their own length framing are the case
+   --  that needs this.
+   --
+   --  This is a QUERY, not a command -- contrast Client.Close_Notify /
+   --  Server.Close_Notify, which SEND our own close_notify.
+   function Peer_Closed_Cleanly (S : Session) return Boolean;
    function Negotiated_Suite (S : Session) return Unsigned_16;
    function Negotiated_Suite_12 (S : Session) return Unsigned_16;
 
@@ -2831,6 +2855,12 @@ private
       --  So the reply is deferred: set here, flushed by Write_Plaintext.
       Key_Update_Pending : Boolean := False;
 
+      --  RFC 8446 §6.1: set when the peer's close_notify has been
+      --  received. Exposed via Peer_Closed_Cleanly so an application can
+      --  tell an orderly close from a truncated stream -- see there for
+      --  why that distinction is a security property.
+      Peer_Closed_Cleanly : Boolean := False;
+
       --  True on first Advance in Connected state (to deliver Handshake_Done)
       Handshake_Just_Done : Boolean := False;
 
@@ -2923,6 +2953,8 @@ private
    function State (S : Session) return Connection_State is (S.State);
    function Role (S : Session) return TLS_Role is (S.Role);
    function Last_Error (S : Session) return Error_Code is (S.Last_Error);
+   function Peer_Closed_Cleanly (S : Session) return Boolean is
+     (S.Peer_Closed_Cleanly);
    function Negotiated_Suite (S : Session) return Unsigned_16 is (S.Negotiated_Suite);
    function Negotiated_Suite_12 (S : Session) return Unsigned_16 is (S.Negotiated_Suite_12);
    function Client_App (S : Session) return Traffic_Keys is (S.Client_App);

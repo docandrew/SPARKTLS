@@ -57,6 +57,7 @@ procedure Bogo_Shim is
       Min_Version          : Unsigned_16 := 16#0303#;  --  TLS 1.2
       Max_Version          : Unsigned_16 := 16#0304#;  --  TLS 1.3
       Shim_Writes_First    : Boolean := False;
+      Unfinished_Write     : Boolean := False;
       Shim_Shuts_Down      : Boolean := False;
       Key_Update           : Boolean := False;
       Check_Close_Notify   : Boolean := False;
@@ -283,6 +284,8 @@ procedure Bogo_Shim is
                  (SPARKTLS.Test_Support.Key_Update_Pending (S))
              & " kuRecv=" & Natural'Image
                  (SPARKTLS.Test_Support.Key_Updates_Recvd (S))
+             & " clean=" & Boolean'Image
+                 (SPARKTLS.Peer_Closed_Cleanly (S))
              & " cseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Client_Seq_12 (S))
              & " sseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Server_Seq_12 (S)));
    end Trace_Step;
@@ -513,6 +516,14 @@ procedure Bogo_Shim is
                null;
             elsif A = "-shim-writes-first" then
                Cfg.Shim_Writes_First := True;
+            elsif A = "-read-with-unfinished-write" then
+               --  Like -shim-writes-first, but the write must still be
+               --  UNFINISHED while we read (runner.go:1134). We buffer
+               --  "hello" into the session and deliberately read before
+               --  draining it, so the peer's KeyUpdates are processed
+               --  with our own write still outstanding.
+               Cfg.Shim_Writes_First := True;
+               Cfg.Unfinished_Write  := True;
             elsif A = "-shim-shuts-down" then
                Cfg.Shim_Shuts_Down := True;
             elsif A = "-key-update" then
@@ -900,6 +911,30 @@ procedure Bogo_Shim is
       Net_In  : Byte_Seq (0 .. 16383);
       Net_Out : Byte_Seq (0 .. 16383);
 
+      --  Bytes received but not yet accepted by the session.
+      --  Feed_Ciphertext is contractually allowed to take FEWER bytes
+      --  than offered (Bytes_Fed <= Data'Length) when the session input
+      --  buffer is full. Dropping the remainder -- which this shim did
+      --  until 2026-08-17 -- loses records, and whether it happens at
+      --  all depends on how much data a TCP read returns versus how much
+      --  buffer space is free. That is a timing-dependent data loss, and
+      --  a real application must carry the remainder forward instead.
+      Pending     : Byte_Seq (0 .. 16383);
+      Pending_Len : N32 := 0;
+
+      --  Feed granularity, from BOGO_FEED_CHUNK. 0 means "whatever
+      --  arrived". Setting it to 1 feeds the session a single byte at a
+      --  time, which turns the entire BoGo corpus into a test that the
+      --  library's behaviour does not depend on how the byte stream is
+      --  chunked across feed calls -- a property BoGo's own
+      --  SplitHandshakeRecords cannot check, because that varies RECORD
+      --  splitting, not FEED splitting.
+      Feed_Chunk : constant N32 :=
+        (if Ada.Environment_Variables.Value ("BOGO_FEED_CHUNK", "0") = "0"
+         then 0
+         else N32'Value
+                (Ada.Environment_Variables.Value ("BOGO_FEED_CHUNK", "0")));
+
       Id      : aliased SPARKTLS.Identity;
       Id_OK   : Boolean;
       Roots   : aliased SPARKTLS.Trust_Store;
@@ -956,6 +991,49 @@ procedure Bogo_Shim is
 
       First_Server_Bytes_Seen : Boolean := False;
 
+      --  Feed the backlog to the session, honouring the fact that
+      --  Feed_Ciphertext may accept only part of what it is offered.
+      procedure Drain_Pending is
+         Buf  : Byte_Seq (0 .. 16383);
+         Fed  : N32;
+         Take : N32;
+         Off  : N32 := 0;
+      begin
+         while Off < Pending_Len loop
+            Take := Pending_Len - Off;
+            if Feed_Chunk > 0 and then Feed_Chunk < Take then
+               Take := Feed_Chunk;
+            end if;
+            for K in 0 .. Take - 1 loop
+               Buf (K) := Pending (Off + K);
+            end loop;
+            --  Slice must start at 0 to satisfy Feed_Ciphertext's Pre.
+            Feed_Ciphertext (S, Buf (0 .. Take - 1), Fed);
+            exit when Fed = 0;      --  session full; keep the rest
+            Off := Off + Fed;
+         end loop;
+
+         if Off > 0 then
+            for K in 0 .. Pending_Len - Off - 1 loop
+               Pending (K) := Pending (Off + K);
+            end loop;
+            Pending_Len := Pending_Len - Off;
+         end if;
+      end Drain_Pending;
+
+      --  Append newly received bytes to the backlog, preserving stream
+      --  order, then feed as much as the session will take.
+      procedure Push_Bytes (Data : in Byte_Seq) is
+      begin
+         for K in 0 .. N32 (Data'Length) - 1 loop
+            if Pending_Len <= Pending'Last then
+               Pending (Pending_Len) := Data (Data'First + K);
+               Pending_Len := Pending_Len + 1;
+            end if;
+         end loop;
+         Drain_Pending;
+      end Push_Bytes;
+
       procedure Recv_Once (Done : out Boolean) is
          SE   : Stream_Element_Array (1 .. 16384);
          Last : Stream_Element_Offset;
@@ -963,6 +1041,16 @@ procedure Bogo_Shim is
          Hex  : constant String := "0123456789abcdef";
       begin
          Done := False;
+
+         --  Never block on the socket while bytes the session has not
+         --  accepted are still in hand.
+         if Pending_Len > 0 then
+            Drain_Pending;
+            if Pending_Len > 0 then
+               return;   --  caller must Advance to make room
+            end if;
+         end if;
+
          GNAT.Sockets.Receive_Socket (Sock, SE, Last);
          if Last < SE'First then
             Done := True;
@@ -1041,7 +1129,7 @@ procedure Bogo_Shim is
                   end;
                end if;
             end if;
-            Feed_Ciphertext (S, Net_In (0 .. Avail - 1), Fed);
+            Push_Bytes (Net_In (0 .. Avail - 1));
          end;
       end Recv_Once;
 
@@ -1366,6 +1454,20 @@ procedure Bogo_Shim is
             Written : N32;
          begin
             SPARKTLS.Write_Plaintext (S, Hello, Written);
+            if Cfg.Unfinished_Write then
+               --  Read with the write still pending. RFC 8446 4.6.3
+               --  ties the KeyUpdate reply to the NEXT Application Data
+               --  record, so the five update_requested KeyUpdates the
+               --  runner sends here must collapse into exactly ONE
+               --  reply, emitted ahead of this buffered "hello".
+               --  RejectUnsolicitedKeyUpdate makes the runner fail if
+               --  we send more than one.
+               declare
+                  Ignored_Done : Boolean;
+               begin
+                  Recv_Once (Ignored_Done);
+               end;
+            end if;
             Send_Pending;
          end;
       end if;
@@ -1489,7 +1591,20 @@ procedure Bogo_Shim is
                null;  --  shouldn't recur after first time
             when Shutdown =>
                Send_Pending;
-               if Cfg.Check_Close_Notify and then Close_Drain_Reads < 4 then
+               --  Drain until the peer's close_notify actually arrives
+               --  or the transport ends -- NOT for a fixed number of
+               --  reads. A fixed budget is a race: the KeyUpdate
+               --  variants put a KeyUpdate exchange and session tickets
+               --  in flight ahead of the close_notify, which exhausted a
+               --  4-read budget and made the test fail only when it ran
+               --  fast enough (it passed with tracing enabled, which
+               --  slowed it down). The cap remains solely so a peer that
+               --  never closes cannot hang the shim.
+               if Cfg.Check_Close_Notify
+                 and then not SPARKTLS.Peer_Closed_Cleanly (S)
+                 and then SPARKTLS.Input_Available (S) = 0
+                 and then Close_Drain_Reads < 4096
+               then
                   declare
                      Done : Boolean;
                   begin
@@ -1509,6 +1624,51 @@ procedure Bogo_Shim is
                return;
          end case;
       end loop Echo_Loop;
+
+      --  RFC 8446 6.1 truncation check. The peer's close_notify may
+      --  still be in flight when the echo loop ends, so drain once more
+      --  before judging -- the session now stays in Closing (read side
+      --  open, read key retained) until it arrives, so a late one is
+      --  still decrypted and still counts.
+      if Cfg.Check_Close_Notify then
+         --  One Advance consumes ONE record, and a peer that closed
+         --  the transport can leave several buffered at once (tickets,
+         --  a KeyUpdate, then close_notify -- the SplitHandshakeRecords
+         --  variants make this routine). Draining once looked correct
+         --  only because tracing slowed the run enough to change how
+         --  records batched into TCP reads.
+         Final_Drain :
+         for I in 1 .. 64 loop
+            exit Final_Drain when SPARKTLS.Peer_Closed_Cleanly (S);
+            exit Final_Drain when SPARKTLS.Input_Available (S) = 0;
+            declare
+               Final_Res : SPARKTLS.Action;
+            begin
+               if Cfg.Is_Server then
+                  SPARKTLS.Server.Advance (S, Final_Res);
+               else
+                  SPARKTLS.Client.Advance (S, Final_Res);
+               end if;
+               Trace_Step ("final-drain", S, Final_Res);
+            end;
+         end loop Final_Drain;
+
+         if not SPARKTLS.Peer_Closed_Cleanly (S) then
+            Err ("shim-diag"
+                 & " state=" & SPARKTLS.State (S)'Image
+                 & " in=" & N32'Image (SPARKTLS.Input_Available (S))
+                 & " out=" & N32'Image (SPARKTLS.Output_Pending (S))
+                 & " drains=" & Natural'Image (Close_Drain_Reads)
+                 & " kuRecv="
+                 & Natural'Image
+                     (SPARKTLS.Test_Support.Key_Updates_Recvd (S)));
+            Err ("Unexpected SSL_shutdown result: -1 != 1");
+            Ada.Command_Line.Set_Exit_Status
+              (Ada.Command_Line.Exit_Status (Exit_Failure));
+            Run_Failed := True;
+            return;
+         end if;
+      end if;
 
       --  Capture any session ticket the server issued, so the
       --  next iteration of the resume loop can resume from it.
