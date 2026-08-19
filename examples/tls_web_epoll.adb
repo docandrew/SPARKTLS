@@ -24,6 +24,7 @@ with Ada.Streams;           use Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Unchecked_Deallocation;
 with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Interfaces;            use Interfaces;
 with Interfaces.C;          use Interfaces.C;
 with System;
@@ -46,13 +47,20 @@ procedure TLS_Web_Epoll is
       Y   : Year_Number;
       Mo  : Month_Number;
       D   : Day_Number;
-      Secs : Day_Duration;
+      Hr  : Ada.Calendar.Formatting.Hour_Number;
+      Mn  : Ada.Calendar.Formatting.Minute_Number;
+      Sc  : Ada.Calendar.Formatting.Second_Number;
+      SS  : Ada.Calendar.Formatting.Second_Duration;
    begin
-      Split (Now, Y, Mo, D, Secs);
+      --  Ada.Calendar.Split works in package Calendar's implementation-
+      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
+      --  UTC, so a local split shifts every validity comparison by the
+      --  host's UTC offset. Formatting.Split with Time_Zone => 0 is the
+      --  UTC one.
+      Ada.Calendar.Formatting.Split
+        (Now, Y, Mo, D, Hr, Mn, Sc, SS, Time_Zone => 0);
       return (Year   => Y, Month => Mo, Day => D,
-              Hour   => Natural (Secs) / 3600,
-              Minute => (Natural (Secs) mod 3600) / 60,
-              Second => Natural (Secs) mod 60);
+              Hour   => Hr, Minute => Mn, Second => Sc);
    end Current_Time;
 
    --  To_C_Buf / From_C_Buf removed 2026-04-30. SPARKNaCl.Byte is just

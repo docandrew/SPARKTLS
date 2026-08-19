@@ -5,6 +5,7 @@
 --  Usage: tls_blocking_server <cert.pem> <key.pem>
 
 with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Ada.Command_Line;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
@@ -45,15 +46,24 @@ procedure TLS_Blocking_Server is
       Y  : Year_Number;
       M  : Month_Number;
       D  : Day_Number;
-      S  : Day_Duration;
+      Hr : Ada.Calendar.Formatting.Hour_Number;
+      Mn : Ada.Calendar.Formatting.Minute_Number;
+      Sc : Ada.Calendar.Formatting.Second_Number;
+      SS : Ada.Calendar.Formatting.Second_Duration;
    begin
-      Split (T, Y, M, D, S);
+      --  Ada.Calendar.Split works in package Calendar's implementation-
+      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
+      --  UTC, so a local split shifts every validity comparison by the
+      --  host's UTC offset -- which is why this is NOT plain Split
+      --  despite the name. Formatting.Split with Time_Zone => 0 is UTC.
+      Ada.Calendar.Formatting.Split
+        (T, Y, M, D, Hr, Mn, Sc, SS, Time_Zone => 0);
       return (Year   => Y,
               Month  => M,
               Day    => D,
-              Hour   => Natural (S) / 3600,
-              Minute => (Natural (S) mod 3600) / 60,
-              Second => Natural (S) mod 60);
+              Hour   => Hr,
+              Minute => Mn,
+              Second => Sc);
    end Now_UTC;
 
    Server_Sock : Socket_Type;

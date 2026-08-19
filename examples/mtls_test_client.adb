@@ -28,6 +28,7 @@ with Ada.Exceptions;
 with Ada.Streams;                use Ada.Streams;
 with Ada.Text_IO;                use Ada.Text_IO;
 with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Interfaces;                 use Interfaces;
 
 with SPARKNaCl;                  use SPARKNaCl;
@@ -181,13 +182,20 @@ procedure MTLS_Test_Client is
       Y   : Year_Number;
       Mo  : Month_Number;
       D   : Day_Number;
-      S   : Day_Duration;
+      Hr  : Ada.Calendar.Formatting.Hour_Number;
+      Mn  : Ada.Calendar.Formatting.Minute_Number;
+      Sc  : Ada.Calendar.Formatting.Second_Number;
+      SS  : Ada.Calendar.Formatting.Second_Duration;
    begin
-      Split (Now, Y, Mo, D, S);
+      --  Ada.Calendar.Split works in package Calendar's implementation-
+      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
+      --  UTC, so a local split shifts every validity comparison by the
+      --  host's UTC offset. Formatting.Split with Time_Zone => 0 is the
+      --  UTC one.
+      Ada.Calendar.Formatting.Split
+        (Now, Y, Mo, D, Hr, Mn, Sc, SS, Time_Zone => 0);
       return (Year   => Y, Month => Mo, Day => D,
-              Hour   => Natural (S) / 3600,
-              Minute => (Natural (S) mod 3600) / 60,
-              Second => Natural (S) mod 60);
+              Hour   => Hr, Minute => Mn, Second => Sc);
    end Current_Time;
 
    S       : SPARKTLS.Session;

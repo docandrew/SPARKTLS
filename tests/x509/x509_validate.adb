@@ -257,15 +257,23 @@ begin
       Y  : Year_Number;
       Mo : Month_Number;
       D  : Day_Number;
-      S  : Day_Duration;
+      Hr : Ada.Calendar.Formatting.Hour_Number;
+      Mn : Ada.Calendar.Formatting.Minute_Number;
+      Sc : Ada.Calendar.Formatting.Second_Number;
+      SS : Ada.Calendar.Formatting.Second_Duration;
    begin
-      Split (Now_Cal, Y, Mo, D, S);
+      --  Ada.Calendar.Split works in package Calendar's implementation-
+      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
+      --  UTC, so a local split shifts every validity comparison by the
+      --  host's UTC offset. Formatting.Split with Time_Zone => 0 is UTC.
+      Ada.Calendar.Formatting.Split
+        (Now_Cal, Y, Mo, D, Hr, Mn, Sc, SS, Time_Zone => 0);
       Val_Time := (Year   => Natural (Y),
                    Month  => Natural (Mo),
                    Day    => Natural (D),
-                   Hour   => Natural (S) / 3600,
-                   Minute => (Natural (S) mod 3600) / 60,
-                   Second => Natural (S) mod 60);
+                   Hour   => Natural (Hr),
+                   Minute => Natural (Mn),
+                   Second => Natural (Sc));
    end;
 
    if Ada.Command_Line.Argument_Count < 2 then

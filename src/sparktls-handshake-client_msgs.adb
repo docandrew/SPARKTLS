@@ -1102,6 +1102,11 @@ is
       --  CH_Body_Len = 59 + Session_ID_Len + Ext_Total_All, that is exactly
       --  8 * Ext_Total_All -- i.e. Field_Size of the field, which is the
       --  Sufficient_Space conjunct Switch_To_Extensions_TLS requires.
+      --  Rung: CH_Body_Len is DEFINED as 59 + Session_ID_Len + Ext_Total_All,
+      --  so this subtraction is definitional. Stated separately so the
+      --  prover discharges the arithmetic on its own instead of doing it
+      --  inside the Available_Space goal below, which timed out.
+      pragma Assert (CH_Body_Len - (59 + Session_ID_Len) = Ext_Total_All);
       pragma Assert
         (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
          = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (59 + Session_ID_Len)));
@@ -3060,19 +3065,29 @@ is
          end if;
          --  Proof decomposition: the prover cannot re-establish the whole
          --  predicate in one step after an unrelated HC component write.
-         --  Each conjunct is discharged separately, then used as a lemma.
-         pragma Assert (HC.Reasm_Buf = null
-                        or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
-         pragma Assert (HC.Reasm_Buf = null
-                        or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
-         pragma Assert (HC.Reasm_Buf = null
-                        or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
-                                 else HC.Reasm_Need >= 4));
-         pragma Assert (HC.Reasm_Buf = null
-                        or else (if HC.Reasm_Hdr_Pending then
-                                   HC.Reasm_Need = 4
-                                   and then HC.Reasm_Len <= 4
-                                   and then HC.Reasm_Buf'Length = Max_HS_Msg));
+         --
+         --  The case split on Reasm_Buf = null is made EXPLICIT in the
+         --  control flow rather than left inside four separate
+         --  "Buf = null or else <conjunct>" lemmas. Reasm_Buffer_Shaped is
+         --  "Buf = null or else (A and B and C and D)"; deriving that from
+         --  four independent disjunctions requires the solver to split on
+         --  Buf = null and recombine, which it failed to find inside a VC
+         --  this large (it timed out at level 1 on chungus, 2026-08-19).
+         --  Inside the branch below Buf /= null is a hypothesis, so each
+         --  conjunct is proved bare, and the fold is then either the first
+         --  disjunct or all four -- no search required. Giving the prover
+         --  the split beats giving it more time.
+         if HC.Reasm_Buf /= null then
+            pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+            pragma Assert (HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+            pragma Assert (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
+                           else HC.Reasm_Need >= 4);
+            pragma Assert (if HC.Reasm_Hdr_Pending then
+                             HC.Reasm_Need = 4
+                             and then HC.Reasm_Len <= 4
+                             and then HC.Reasm_Buf'Length = Max_HS_Msg);
+            null;
+         end if;
          pragma Assert (Reasm_Buffer_Shaped (HC));
       end if;
 

@@ -1,6 +1,7 @@
 with "../sparktls.gpr";
 
 project ECDHE_P384_Test is
+
    for Source_Dirs use (".");
    for Object_Dir use ".";
    for Create_Missing_Dirs use "True";
@@ -8,6 +9,6 @@ project ECDHE_P384_Test is
 
    package Compiler is
       for Default_Switches ("Ada") use
-        ("-g", "-gnatQ", "-gnatw.X");
+        ("-gnat2022", "-g", "-gnatQ", "-gnatw.X");
    end Compiler;
 end ECDHE_P384_Test;

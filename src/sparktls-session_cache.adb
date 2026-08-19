@@ -24,6 +24,14 @@ is
    --  never invalidates tickets already in flight.
    type Key_Ring is array (0 .. TLS12_Max_Keys - 1) of TLS12_Ticket_Key;
 
+   --  Index of the active slot. Declared as the ring's own index subtype
+   --  rather than Natural: with Natural, every "Keys (Active)" carried an
+   --  unprovable index check, because nothing in the type said Active is
+   --  in range. Constraining the type makes an out-of-range Active
+   --  UNREPRESENTABLE instead of merely guarded -- the assignments that
+   --  set it (Rotate, Clear) are then checked at their source.
+   subtype Key_Index is Natural range 0 .. TLS12_Max_Keys - 1;
+
    --  Rotation settings. Held outside the protected object on purpose: the
    --  CSPRNG is a user callback and must never be invoked while holding the
    --  lock (a potentially blocking operation would stall every other task).
@@ -38,7 +46,10 @@ is
          PSK_Len : N32;
          Suite   : Unsigned_16;
          Age_Add : Unsigned_32;
-         ID_Out  : out Ticket_ID);
+         ID_Out  : out Ticket_ID)
+      --  Ticket_Cache.Store requires a valid PSK length; a protected op
+      --  cannot inherit that, so restate it here.
+      with Pre => PSK_Len in 32 | 48;
 
       procedure Lookup
         (ID         : Byte_Seq;
@@ -46,17 +57,26 @@ is
          PSK        : out Bytes_48;
          PSK_Len    : out N32;
          Suite      : out Unsigned_16;
-         Found      : out Boolean);
+         Found      : out Boolean)
+      with Pre  => ID'First = 0 and then ID'Length = Ticket_ID_Len,
+           Post => (if Found then Suite = Want_Suite
+                                 and then PSK_Len in 32 | 48);
 
       procedure Active_Key
         (Key_ID : out Byte_Seq;
          TEK    : out Byte_Seq;
-         Found  : out Boolean);
+         Found  : out Boolean)
+      --  The ring stores fixed-width key material; the caller must supply
+      --  buffers of exactly that width or the copies below are unprovable.
+      with Pre => Key_ID'Length = 4 and then TEK'Length = 32;
 
       procedure Key_By_Id
         (Key_ID : Byte_Seq;
          TEK    : out Byte_Seq;
-         Found  : out Boolean);
+         Found  : out Boolean)
+      --  Key_ID'Length is checked inline (a wrong-sized id is a miss, not
+      --  an error); TEK is a destination and must be the right width.
+      with Pre => TEK'Length = 32;
 
       procedure Rotate
         (New_Key_ID : Byte_Seq;
@@ -73,7 +93,7 @@ is
                                          TEK        => (others => 0),
                                          Valid      => False,
                                          Created_At => 0));
-      Active   : Natural  := 0;
+      Active   : Key_Index := 0;
       Have_Key : Boolean  := False;
    end Cache;
 

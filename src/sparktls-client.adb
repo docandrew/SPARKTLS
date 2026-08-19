@@ -98,11 +98,29 @@ is
       end;
    end Check_Resume_Ticket_Usable;
 
+   --  First conjunct: certificate checking ON (not Skip_Verify) requires
+   --  a CLOCK, with no exception for resumption.
+   --
+   --  Resumption used to excuse it, via the "or else Resume_Usable" arm
+   --  below. That was wrong, because the PEER decides whether resumption
+   --  happens: a server -- or an attacker in the path -- can decline the
+   --  ticket and force a full handshake, and chain validation then needs
+   --  a clock to check notBefore/notAfter. Without one the runtime guards
+   --  fail closed (Bad_Certificate), so this was never a validation
+   --  bypass, but it let an application build a config that only works
+   --  while an attacker permits it. Reject at Init, where the operator
+   --  sees it at startup rather than on the first declined ticket.
+   --
+   --  A missing TRUST STORE is deliberately NOT fatal here: a client that
+   --  only ever resumes legitimately has no roots, and the second
+   --  conjunct still lets it start. If such a client is forced into a
+   --  full handshake it fails closed at the same runtime guard.
    function Client_Config_Can_Start
      (Cfg : Config;
       Resume_Usable : Boolean) return Boolean
    is
      (Cfg.Random /= null
+      and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
       and then
         (Cfg.Skip_Verify
          or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
@@ -222,8 +240,7 @@ is
       Err  :    out Error_Code)
 	   with Pre  => Data'Length >= 4
 	                and Data'Last < N32'Last
-	                and Data'Last <= N32'Last - 16#1_0004#
-	                and Data'First >= 0,
+	                and Data'Last <= N32'Last - 16#1_0004#,
 						        Post => S.State = S.State'Old
 						                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
 		                                and then
@@ -530,7 +547,6 @@ is
 		               and then SPARKTLSCrypto.P384.Field.Initialized
 		               and then SPARKTLSCrypto.P384.ECDSA.Initialized
 		               and then Plaintext'First = 0
-               and then Plain_Len >= 0
                and then Plaintext'Last < N32'Last / 2
 			               and then Plain_Len <= N32 (Plaintext'Length)
 	                           and then Reasm_Buffer_Shaped (HC)
@@ -3098,13 +3114,20 @@ is
       HC              : in out Handshake_Context;
       Scratch         : in out IO_Buffer;
       App_TS_Hash_384 : in     Key_Schedule.Digest_384;
-      Saved_Ctr       : in     Unsigned_64;
+      Saved_Ctr       : in     Record_Counter;
       Result          :    out Action)
    with Pre => S.State not in Idle | Closing | Closed | Error_State
                and then Nonce_Space_Available (HC.Client_HS)
                and then HC.Transcript_Len > 0
                and then Reasm_Buffer_Shaped (HC)
                and then S.Negotiated_Suite = Suite_AES_256_GCM_SHA384,
+               --  Saved_Ctr is the caller's snapshot of
+               --  HC.Client_HS.Counter, restored on the failure path.
+               --  Counter is a Record_Counter (0 .. Unsigned_64'Last - 1,
+               --  sparktls.ads:803), so restoring an unbounded Unsigned_64
+               --  is a narrowing with no bound. gnatprove named this
+               --  precondition; the same clause on the two server-side
+               --  variants closed all four of their Saved_Ctr findings.
 	        Post => (if Result = OK then
 	                    Nonce_Space_Available (S.Client_App))
 	                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -3117,7 +3140,7 @@ is
       HC              : in out Handshake_Context;
       Scratch         : in out IO_Buffer;
       App_TS_Hash_384 : in     Key_Schedule.Digest_384;
-      Saved_Ctr       : in     Unsigned_64;
+      Saved_Ctr       : in     Record_Counter;
       Result          :    out Action)
    is
       use HKDF384;
@@ -3202,7 +3225,7 @@ is
       HC              : in out Handshake_Context;
       Scratch         : in out IO_Buffer;
       App_TS_Hash_256 : in     Digest;
-      Saved_Ctr       : in     Unsigned_64;
+      Saved_Ctr       : in     Record_Counter;
       Result          :    out Action)
    with Pre => S.State not in Idle | Closing | Closed | Error_State
                and then Nonce_Space_Available (HC.Client_HS)
@@ -3210,6 +3233,13 @@ is
                and then Reasm_Buffer_Shaped (HC)
                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                            | Suite_CHACHA20_POLY1305_SHA256,
+               --  Saved_Ctr is the caller's snapshot of
+               --  HC.Client_HS.Counter, restored on the failure path.
+               --  Counter is a Record_Counter (0 .. Unsigned_64'Last - 1,
+               --  sparktls.ads:803), so restoring an unbounded Unsigned_64
+               --  is a narrowing with no bound. gnatprove named this
+               --  precondition; the same clause on the two server-side
+               --  variants closed all four of their Saved_Ctr findings.
 	        Post => (if Result = OK then
 	                    Nonce_Space_Available (S.Client_App))
 	                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -3222,7 +3252,7 @@ is
       HC              : in out Handshake_Context;
       Scratch         : in out IO_Buffer;
       App_TS_Hash_256 : in     Digest;
-      Saved_Ctr       : in     Unsigned_64;
+      Saved_Ctr       : in     Record_Counter;
       Result          :    out Action)
    is
       Finished_Buf       : Byte_Seq (0 .. 35);
@@ -3314,7 +3344,7 @@ is
       --  advances HC.Client_HS.Counter; we save it and restore on any
       --  failure to keep AEAD nonces in sync with what the peer saw.
       Scratch   : IO_Buffer;
-      Saved_Ctr : constant Unsigned_64 := HC.Client_HS.Counter;
+      Saved_Ctr : constant Record_Counter := HC.Client_HS.Counter;
       --  RFC 8446 §7.1: client_application_traffic_secret_0 uses
       --  the transcript hash through SERVER's Finished — NOT
       --  including any subsequent client Cert/CV. Snapshot the
@@ -5572,7 +5602,6 @@ is
       Status    :    out NST_Status)
    with Pre => Plaintext'First = 0
                and Plaintext'Last < N32'Last / 2
-               and Plain_Len >= 0
                and Plain_Len <= Max_Record_Plaintext
                and (if Plain_Len > 0 then Plain_Len - 1 <= Plaintext'Last)
                and Start_Off >= 0
@@ -5694,7 +5723,6 @@ is
                and then Nonce_Space_Available (S.Client_App)
                and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
-               and then Plain_Len >= 0
                and then Plain_Len <= Max_Record_Plaintext
                and then Plain_Len <= N32 (Plaintext'Length),
         Post => (if Result = OK
@@ -6006,7 +6034,6 @@ is
                and then Nonce_Space_Available (S.Client_App)
                and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
-               and then Plain_Len >= 0
                and then Plain_Len <= Max_Record_Plaintext
                and then Plain_Len <= N32 (Plaintext'Length)
                and then S.Post_HS_Len <= Max_Record_Plaintext

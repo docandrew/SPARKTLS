@@ -234,8 +234,24 @@ is
 						                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
 						                    | Suite_ECDHE_RSA_CHACHA20_SHA256
 						                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256)
-					                and then Server_State_Keys_Ready (S, HC),
-		        Post => S.State in Connection_State;
+					                and then Server_State_Keys_Ready (S, HC);
+	   --  NO POSTCONDITION HERE, DELIBERATELY. It used to carry
+	   --  "Post => S.State in Connection_State", a TAUTOLOGY (S.State IS a
+	   --  Connection_State) that looked like a contract and told callers
+	   --  nothing -- which is how Advance's own
+	   --  "Result = Handshake_Done => State (S) = Connected" stayed
+	   --  unprovable without anyone noticing.
+	   --
+	   --  Replacing it with the TRUE implication was tried 2026-08-20 and
+	   --  REVERTED: the fact holds (the only Handshake_Done exit reachable
+	   --  from here is in Verify_Client_Finished, immediately after
+	   --  Set_State (S, Connected)), but the prover cannot discharge it --
+	   --  the VC carries ~1550 SMT assertions because Session reaches
+	   --  Handshake_Context, which inlines X509.Certificate and an 8-entry
+	   --  Cert_Pool. It cost 2 extra findings and closed none. Adding
+	   --  "Result /= Handshake_Done" to the four callees did not help
+	   --  either. Do not re-add a postcondition here until the VC context
+	   --  problem is addressed -- see #65.
 
 
 	   procedure Complete_Client_Hello_Retry
@@ -472,7 +488,7 @@ is
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
-      Saved_Ctr : in     Unsigned_64;
+      Saved_Ctr : in     Record_Counter;
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
@@ -484,6 +500,14 @@ is
                 and then Plaintext'Length <= Max_Fragment
                 and then Plaintext'Length < Transcript_Capacity
                 and then Nonce_Space_Available (HC.Server_HS),
+                --  Saved_Ctr is the caller's snapshot of
+                --  HC.Server_HS.Counter, restored on the failure path.
+                --  Counter is a Record_Counter (0 .. Unsigned_64'Last - 1,
+                --  sparktls.ads:803) so restoring an unbounded Unsigned_64
+                --  is a narrowing with no bound to work from. gnatprove
+                --  suggested exactly this precondition; adding it closed
+                --  all four Saved_Ctr findings (server.adb 26 -> 22 at
+                --  level 1) with no body change and no new findings.
 	        Post => (if Emitted
 		                 then Server_Active (S)
 		                  and then Server_Configured (HC)
@@ -507,7 +531,7 @@ is
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
-      Saved_Ctr : in     Unsigned_64;
+      Saved_Ctr : in     Record_Counter;
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
@@ -518,6 +542,7 @@ is
                 and then Plaintext'First = 0
                 and then Plaintext'Last in 0 .. N32 (Transcript_Capacity) - 2
                 and then HC.Server_HS.Counter <= Unsigned_64'Last - 2,
+                --  Same narrowing as the non-fragmented variant above.
 	        Post => (if Emitted
 		                 then Server_Active (S)
 			                      and then Server_Configured (HC)
@@ -996,35 +1021,6 @@ is
       pragma Assert (Role (S) = Role_Server);
       pragma Assert (State (S) = Wait_Client_Hello);
    end Init;
-
-   procedure Rotate_TLS12_Ticket_Key
-     (Keys       : in out TLS12_Ticket_Key_Array;
-      Active_Idx : in out Natural;
-      New_Key_ID : in     Byte_Seq;
-      New_TEK    : in     Byte_Seq;
-      Now_Secs   : in     Interfaces.Unsigned_64)
-   is
-      New_Idx : constant Natural :=
-         (Active_Idx + 1) mod TLS12_Max_Keys;
-   begin
-      --  Slot layout after rotation:
-      --    Active_Idx   = previously-active key (kept Valid for
-      --                   incoming-ticket decrypt during grace).
-      --    New_Idx      = newly-installed active key.
-      --    Other slots  = whatever they were (Valid or not).
-      --
-      --  The oldest key in the rotation is whichever slot New_Idx
-      --  was previously pointing at — it gets overwritten here. Its
-      --  decrypt grace ended at this moment; tickets issued under
-      --  it will no longer resume. After TLS12_Max_Keys rotations
-      --  the original key is fully purged.
-      Keys (New_Idx) :=
-        (Key_ID     => New_Key_ID,
-         TEK        => New_TEK,
-         Valid      => True,
-         Created_At => Now_Secs);
-      Active_Idx := New_Idx;
-   end Rotate_TLS12_Ticket_Key;
 
    procedure Scrub_Handshake_Context (HC : in out Handshake_Context)
    is
@@ -1646,8 +1642,7 @@ is
 	                                S.Input.Write_Pos - 1
 		                              and then Frag_Len <=
 		                                S.Input.Write_Pos - Frag_Start,
-			                       Post => Result in Action
-			                               and then Wait_Client_Hello_Post (S, HC);
+			                       Post => Wait_Client_Hello_Post (S, HC);
 
 		                  procedure Continue_Reassembly
 		                  is
@@ -2073,8 +2068,7 @@ is
 		                              and then Frag_Len <=
 		                                S.Input.Write_Pos - Frag_Start
 		                              and then Frag_Len < Transcript_Capacity,
-		                       Post => Result in Action
-		                               and then Wait_Client_Hello_Post (S, HC);
+		                       Post => Wait_Client_Hello_Post (S, HC);
 
 		                  procedure Parse_Single_Record_Client_Hello
 		                  with Pre => S.State = Wait_Client_Hello
@@ -2324,7 +2318,6 @@ is
 			                  Process_Handshake_Record;
 				            end;
 				            end;
-			            pragma Assert (Result in Action);
 			            pragma Assert
 			              (if S.State in Wait_Client_Hello
 			                         | Wait_Client_Hello_Retry
@@ -3232,7 +3225,33 @@ is
          PSK_Len    => PSK_Len,
          Suite      => Suite,
          Found      => Found);
+
+      --  DEFENCE AGAINST THE CALLBACK, not merely a proof aid.
+      --
+      --  Lookup_Session is supplied by the application and its access type
+      --  cannot carry a postcondition (that is an Ada 2022 feature; this
+      --  project builds as Ada 2012), so NOTHING constrains what an
+      --  implementation returns. This used to be a bare
+      --      pragma Assert (if Found then Suite = S.Negotiated_Suite);
+      --  which is checked only in assertion-enabled builds -- in a release
+      --  build a buggy or hostile cache returning Found with a mismatched
+      --  suite, or a PSK length other than 32/48, would flow straight into
+      --  binder verification and key derivation.
+      --
+      --  Treat any such answer as a cache miss. RFC 8446 4.2.11 lets us
+      --  decline any offered identity, and RFC 5077 3.4 says fall through
+      --  to a full handshake -- so downgrading to "not found" is both
+      --  safe and spec-legal. It also makes PSK_Len in 32 | 48 available
+      --  for the HC.PSK_Value_Len assignment below
+      --  (PSK_Value_Length is N32 range 0 .. 48).
+      if Found
+        and then (Suite /= S.Negotiated_Suite
+                  or else PSK_Len not in 32 | 48)
+      then
+         Found := False;
+      end if;
       pragma Assert (if Found then Suite = S.Negotiated_Suite);
+      pragma Assert (if Found then PSK_Len in 32 | 48);
       if not Found or HC.PSK_Binder_Len = 0 then
          return;
       end if;
@@ -3469,7 +3488,7 @@ is
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
-      Saved_Ctr : in     Unsigned_64;
+      Saved_Ctr : in     Record_Counter;
       Result    :    out Action;
       Emitted   :    out Boolean)
    is
@@ -3500,7 +3519,7 @@ is
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
-      Saved_Ctr : in     Unsigned_64;
+      Saved_Ctr : in     Record_Counter;
       Result    :    out Action;
       Emitted   :    out Boolean)
    is
@@ -3582,7 +3601,7 @@ is
       --  the counter so the next record's AEAD nonce stays in sync with
       --  what the peer actually sees.
       Scratch    : IO_Buffer;
-      Saved_Ctr  : Unsigned_64;
+      Saved_Ctr  : Record_Counter;
       Flight_Suite    : constant Unsigned_16 := S.Negotiated_Suite;
       Flight_Hash_Len : N32 := 32;
       --  Track whether we've started writing encrypted records (so we
@@ -5770,7 +5789,6 @@ is
    with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Server_App)
                and then Plaintext'First = 0
-               and then Plain_Len >= 0
                and then Plain_Len <= Max_Record_Plaintext
                and then Plain_Len <= N32 (Plaintext'Length)
                and then S.Post_HS_Len <= Max_Record_Plaintext

@@ -1,4 +1,5 @@
 with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
 with SPARKNaCl.Hashing.SHA256;
@@ -38,17 +39,24 @@ package body Cert_Builder is
    --  Get current time as X509.Date_Time
    function Now return X509.Date_Time is
       use Ada.Calendar;
-      T : constant Time := Clock;
-      Y : Year_Number;
-      M : Month_Number;
-      D : Day_Number;
-      S : Day_Duration;
+      Now : constant Time := Clock;
+      Y   : Year_Number;
+      M  : Month_Number;
+      D   : Day_Number;
+      Hr  : Ada.Calendar.Formatting.Hour_Number;
+      Mn  : Ada.Calendar.Formatting.Minute_Number;
+      Sc  : Ada.Calendar.Formatting.Second_Number;
+      SS  : Ada.Calendar.Formatting.Second_Duration;
    begin
-      Split (T, Y, M, D, S);
+      --  Ada.Calendar.Split works in package Calendar's implementation-
+      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
+      --  UTC, so a local split shifts every validity comparison by the
+      --  host's UTC offset. Formatting.Split with Time_Zone => 0 is the
+      --  UTC one.
+      Ada.Calendar.Formatting.Split
+        (Now, Y, M, D, Hr, Mn, Sc, SS, Time_Zone => 0);
       return (Year   => Y, Month => M, Day => D,
-              Hour   => Natural (S) / 3600,
-              Minute => (Natural (S) mod 3600) / 60,
-              Second => Natural (S) mod 60);
+              Hour   => Hr, Minute => Mn, Second => Sc);
    end Now;
 
    --  Add days to a Date_Time (simplified, month-aware)

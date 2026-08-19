@@ -94,18 +94,28 @@ else
     section "Building SPARKTLS"
 fi
 
-if ! alr -n --no-tty build 2>&1 | tail -3; then
-    echo "FATAL: Library build failed"
-    exit 1
-fi
+#  NOTE: "cmd | tail -3" reports TAIL's status, not cmd's, and this script
+#  deliberately runs without "set -e". Both FATAL checks below were therefore
+#  UNREACHABLE -- a failed build scrolled past and the suite carried on against
+#  whatever binaries happened to be in bin/. That is how the 2026-08-19 run
+#  scored the protocol suite against an 08-18 tls_blocking_server. Capture the
+#  status explicitly instead of relying on the pipeline.
+build_or_die() {   #  $1 = human-readable stage name
+    local out rc
+    out=$(alr -n --no-tty build 2>&1); rc=$?
+    printf '%s\n' "$out" | tail -3
+    if [ $rc -ne 0 ]; then
+        echo "FATAL: $1 build failed (exit $rc)"
+        exit 1
+    fi
+}
+
+build_or_die "Library" 
 cd examples
 if [ "$CHECKED_BUILD" = "1" ]; then
     rm -rf obj/* 2>/dev/null
 fi
-if ! alr -n --no-tty build 2>&1 | tail -3; then
-    echo "FATAL: Examples build failed"
-    exit 1
-fi
+build_or_die "Examples"
 cd "$REPO_ROOT"
 
 # Build x509 validator if .gpr exists

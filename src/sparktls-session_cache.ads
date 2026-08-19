@@ -124,7 +124,8 @@ is
       PSK_Len : N32;
       Suite   : Unsigned_16;
       Age_Add : Unsigned_32;
-      ID_Out  : out Ticket_ID);
+      ID_Out  : out Ticket_ID)
+   with Pre => PSK_Len in 32 | 48;
 
    --  Retrieve a PSK by identity. Found => False for a miss, a cipher-suite
    --  mismatch, or anything else -- all mean "do a full handshake".
@@ -134,21 +135,26 @@ is
       PSK        : out Bytes_48;
       PSK_Len    : out N32;
       Suite      : out Unsigned_16;
-      Found      : out Boolean);
+      Found      : out Boolean)
+   with Pre  => ID'First = 0 and then ID'Length = Ticket_ID_Len,
+        Post => (if Found then Suite = Want_Suite
+                             and then PSK_Len in 32 | 48);
 
    --  The key that seals new TLS 1.2 tickets. Found => False before any
    --  Rotate_TEK call, which simply means no ticket is issued.
    procedure Get_Active_TEK
      (Key_ID : out Byte_Seq;
       TEK    : out Byte_Seq;
-      Found  : out Boolean);
+      Found  : out Boolean)
+   with Pre => Key_ID'Length = 4 and then TEK'Length = 32;
 
    --  The key a presented ticket names. Older keys stay usable until they
    --  age out of the ring, so tickets issued before a rotation still resume.
    procedure Get_TEK_By_Id
      (Key_ID : Byte_Seq;
       TEK    : out Byte_Seq;
-      Found  : out Boolean);
+      Found  : out Boolean)
+   with Pre => TEK'Length = 32;
 
    ----------------------------------------------------------------------
    --  Key management — the application's job now, on its own schedule.

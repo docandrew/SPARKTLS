@@ -776,7 +776,6 @@ is
       OK      :    out Boolean)
 		         with Pre  => Reasm_Buffer_Shaped (HC)
                          and then Msg_Len in 3 .. Max_HS_Msg - 4
-                         and then Frag'First >= 0
                          and then Frag'Last < N32'Last - 4
                          and then Frag'First <= N32'Last - 4
                          and then Msg_Len <= N32'Last - Frag'First - 4
@@ -1221,9 +1220,7 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   with Pre  => Msg_Len >= 0
-                and then Msg_Len <= Max_HS_Msg - 4
-                and then Frag'First >= 0
+   with Pre  => Msg_Len <= Max_HS_Msg - 4
                 and then Frag'First <= Frag'Last
                 and then Frag'Last < N32'Last - 4
                 and then Frag'First <= N32'Last - 4
@@ -1524,9 +1521,7 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   with Pre  => Msg_Len >= 0
-                and then Msg_Len <= Max_HS_Msg - 4
-                and then Frag'First >= 0
+   with Pre  => Msg_Len <= Max_HS_Msg - 4
                 and then Frag'First <= Frag'Last
                 and then Frag'Last < N32'Last - 4
                 and then Frag'First <= N32'Last - 4
@@ -2424,7 +2419,7 @@ is
       Scratch : in out IO_Buffer;
       FB      : in     Byte_Seq;
       FL      : in     N32;
-      Saved_Seq : out Unsigned_64;
+      Saved_Seq : out Record_Counter;
       Result  :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and then Reasm_Buffer_Shaped (HC)
@@ -2454,7 +2449,7 @@ is
       Scratch : in out IO_Buffer;
       FB      : in     Byte_Seq;
       FL      : in     N32;
-      Saved_Seq : out Unsigned_64;
+      Saved_Seq : out Record_Counter;
       Result  :    out Action)
    is
       use Records.TLS12;
@@ -2492,7 +2487,7 @@ is
      (S         : in out Session;
       HC        : in out Handshake_Context;
       Scratch   : in     IO_Buffer;
-      Saved_Seq : in     Unsigned_64;
+      Saved_Seq : in     Record_Counter;
       Result    :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and then Reasm_Buffer_Shaped (HC)
@@ -2513,7 +2508,7 @@ is
      (S         : in out Session;
       HC        : in out Handshake_Context;
       Scratch   : in     IO_Buffer;
-      Saved_Seq : in     Unsigned_64;
+      Saved_Seq : in     Record_Counter;
       Result    :    out Action)
    is
       Entry_Client_Seq : constant Unsigned_64 := HC.Client_Seq_12
@@ -2583,7 +2578,7 @@ is
       FL      : in     N32;
       Result  :    out Action)
    is
-      Saved_Seq : Unsigned_64;
+      Saved_Seq : Record_Counter;
    begin
       Encrypt_Client_Finished_Record_12
         (S, HC, Scratch, FB, FL, Saved_Seq, Result);
@@ -2770,9 +2765,7 @@ is
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
-   with Pre  => Msg_Len >= 0
-                and then Msg_Len <= Max_HS_Msg - 4
-                and then Frag'First >= 0
+   with Pre  => Msg_Len <= Max_HS_Msg - 4
                 and then Frag'Last < N32'Last - 4
                 and then Frag'First <= N32'Last - 4
                 and then Msg_Len <= N32'Last - Frag'First - 4
@@ -3044,6 +3037,10 @@ is
       S.TLS12_New_Ticket.Master_Secret := HC.Master_Secret_12;
       S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
       S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
+      --  RFC 7627 s5.3: record whether THIS session negotiated EMS so a
+      --  later resumption using this ticket can be checked against it.
+      S.TLS12_New_Ticket.EMS :=
+        (if HC.Use_EMS then EMS_Negotiated else EMS_Absent);
       S.TLS12_New_Ticket.Valid := True;
    end Cache_New_Session_Ticket_12;
 
@@ -3054,7 +3051,6 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Msg_Len in 6 .. Max_HS_Msg - 4
-                and then Frag'First >= 0
                 and then Frag'First <= Frag'Last
                 and then Frag'Last < N32'Last - 4
                 and then Frag'First <= N32'Last - 4
@@ -3161,7 +3157,6 @@ is
       Msg_Len  : in     N32;
       Result   :    out Action)
    with Pre  => Msg_Len <= Max_HS_Msg - 4
-                and then Frag'First >= 0
                 and then Frag'First <= Frag'Last
                 and then Frag'Last < N32'Last - 4
                 and then Frag'First <= N32'Last - 4
@@ -3829,6 +3824,20 @@ is
                return;
             end if;
          end;
+         --  RFC 7627 s5.3: the resumed session's EMS state MUST match the
+         --  original session's. Resuming a session that did NOT negotiate
+         --  EMS as one that does (or the reverse) is precisely the
+         --  triple-handshake attack path EMS exists to close, so a
+         --  mismatch is a fatal handshake_failure -- NOT a silent
+         --  fall-back to a full handshake.
+         --  BoGo ExtendedMasterSecret-{NoToYes,YesToNo}-Client.
+         if HC.Cfg.TLS12_Resume_Ticket.EMS /=
+              (if HC.Use_EMS then EMS_Negotiated else EMS_Absent)
+         then
+            Send_Alert_And_Error (S, Handshake_Failure, Result);
+            pragma Assert (Reasm_Buffer_Shaped (HC));
+            return;
+         end if;
          HC.TLS12_Resuming := True;
          HC.Master_Secret_12 :=
             HC.Cfg.TLS12_Resume_Ticket.Master_Secret;
@@ -5102,6 +5111,10 @@ is
             S.TLS12_New_Ticket.Master_Secret := HC.Master_Secret_12;
             S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
             S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
+            --  RFC 7627 s5.3: record whether THIS session negotiated EMS so a
+            --  later resumption using this ticket can be checked against it.
+            S.TLS12_New_Ticket.EMS :=
+              (if HC.Use_EMS then EMS_Negotiated else EMS_Absent);
             S.TLS12_New_Ticket.Valid := True;
 
             declare
@@ -5276,7 +5289,7 @@ is
 	      Err       : in     Error_Code;
 	      Result    :    out Action)
 	   is
-	      Saved_Seq : constant Unsigned_64 := HC.Client_Seq_12;
+	      Saved_Seq : constant Record_Counter := HC.Client_Seq_12;
       Dummy     : N32;
    begin
       Records.TLS12.Build_Alert_Record_12
@@ -5560,7 +5573,7 @@ is
       TH         : Digest;
       TH4        : SPARKNaCl.Hashing.SHA384.Digest;
       EO         : N32;
-      Saved_Seq  : Unsigned_64;
+      Saved_Seq  : Record_Counter;
    begin
       Result := OK;
       Records.Build_CCS_Record (Scratch, CCS_Out);

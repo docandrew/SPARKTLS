@@ -56,7 +56,7 @@ is
    --  IV (RFC 7905); AES-GCM uses only the first 4 bytes (the salt).
    function Valid_GCM_Nonce
      (Implicit_IV : Byte_Seq;
-      Seq_Num     : Unsigned_64) return Boolean is
+      Seq_Num     : Record_Counter) return Boolean is
      (Implicit_IV'Length = Implicit_IV_Len
       and Seq_Num < Unsigned_64'Last)  --  nonce space not exhausted
    with Ghost;
@@ -107,7 +107,7 @@ is
       Content_Type : in     Byte;
       Keys         : in     Traffic_Keys;
       Implicit_IV  : in     Byte_Seq;
-      Seq_Num      : in out Unsigned_64;
+      Seq_Num      : in out Record_Counter;
       Output       : in out IO_Buffer;
       Bytes_Out    :    out N32)
    with Pre  => Plaintext'First = 0
@@ -145,7 +145,7 @@ is
       Record_Hdr  : in     Byte_Seq;
       Keys        : in     Traffic_Keys;
       Implicit_IV : in     Byte_Seq;
-      Seq_Num     : in out Unsigned_64;
+      Seq_Num     : in out Record_Counter;
       Plaintext   :    out Byte_Seq;
       Plain_Len   :    out N32;
       Valid       :    out Boolean)
@@ -175,7 +175,7 @@ is
       Desc        : in     Byte;
       Keys        : in     Traffic_Keys;
       Implicit_IV : in     Byte_Seq;
-      Seq_Num     : in out Unsigned_64;
+      Seq_Num     : in out Record_Counter;
       Output      : in out IO_Buffer;
       Bytes_Out   :    out N32)
    with Pre  => Level in 1 .. 2

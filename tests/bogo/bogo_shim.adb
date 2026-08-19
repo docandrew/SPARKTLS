@@ -15,6 +15,7 @@
 
 with Ada.Command_Line;
 with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Streams;                use Ada.Streams;
@@ -182,13 +183,20 @@ procedure Bogo_Shim is
       Y   : Year_Number;
       Mo  : Month_Number;
       D   : Day_Number;
-      S   : Day_Duration;
+      Hr  : Ada.Calendar.Formatting.Hour_Number;
+      Mn  : Ada.Calendar.Formatting.Minute_Number;
+      Sc  : Ada.Calendar.Formatting.Second_Number;
+      SS  : Ada.Calendar.Formatting.Second_Duration;
    begin
-      Split (Now, Y, Mo, D, S);
+      --  Ada.Calendar.Split works in package Calendar's implementation-
+      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
+      --  UTC, so a local split shifts every validity comparison by the
+      --  host's UTC offset. Formatting.Split with Time_Zone => 0 is the
+      --  UTC one.
+      Ada.Calendar.Formatting.Split
+        (Now, Y, Mo, D, Hr, Mn, Sc, SS, Time_Zone => 0);
       return (Year   => Y, Month => Mo, Day => D,
-              Hour   => Natural (S) / 3600,
-              Minute => (Natural (S) mod 3600) / 60,
-              Second => Natural (S) mod 60);
+              Hour   => Hr, Minute => Mn, Second => Sc);
    end Current_Time;
 
    function State_Name (State : SPARKTLS.Connection_State) return String is
@@ -1241,10 +1249,19 @@ procedure Bogo_Shim is
                Server_Cfg.Verify_Sig_Algo_Count := Cfg.Verify_Sig_Count;
                Server_Cfg.Sign_Sig_Algos := Cfg.Sign_Sig_Algos;
                Server_Cfg.Sign_Sig_Algo_Count := Cfg.Sign_Sig_Count;
-               Server_Cfg.Get_Time :=
-                 (if Cfg.Request_Client_Cert
-                  then Current_Time'Unrestricted_Access
-                  else null);
+               --  ALWAYS give the server a clock. It used to be wired only
+               --  when the test requested a client certificate (the only
+               --  path that then needed it, for notBefore/notAfter). Since
+               --  2026-08-19 the library also fails closed on a missing
+               --  clock in the ticket path -- no clock means no
+               --  NewSessionTicket is issued and inbound tickets are
+               --  refused, because a ticket whose age cannot be checked
+               --  never expires. With Get_Time null the shim therefore
+               --  stopped issuing tickets and BoGo reported
+               --  Unexpected_Message across Basic-Server (8 -> 40 failures)
+               --  and CipherNegotiation. A conformance harness has a clock;
+               --  withholding it was never deliberate.
+               Server_Cfg.Get_Time := Current_Time'Unrestricted_Access;
 
                if Server_ALPN'Length > 0 then
                   Server_Cfg.ALPN.Data (1 .. Server_ALPN'Length) :=

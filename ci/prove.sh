@@ -40,6 +40,15 @@ if [[ -z "${PROVE_MEM:-}" ]]; then
 fi
 PROVE_SWAP="${PROVE_SWAP:-16G}"
 PROVE_JOBS="${PROVE_JOBS:-0}"        # 0 = all cores
+
+# Counterexamples: OFF by default because generating them is expensive and
+# yields NOTHING for a check that timed out -- a timeout has no model to
+# report. Turn it on ONLY when triaging a finding that fails WITHOUT the
+# "[provers reached time and memory limit]" tag: that means the prover
+# DECIDED rather than gave up, so the check may be genuinely false and a
+# counterexample will show you the inputs.
+#   PROVE_CEX=on ci/prove.sh -u sparktls-server.adb
+PROVE_CEX="${PROVE_CEX:-off}"
 PROVE_LEVEL_ARGS=()
 [[ "$*" == *"--level"* ]] || PROVE_LEVEL_ARGS=(--level=1)
 
@@ -68,7 +77,7 @@ fi
 GNATPROVE_ARGS=(
     -j"${PROVE_JOBS}"
     "${PROVE_LEVEL_ARGS[@]}"
-    --counterexamples=off
+    --counterexamples="$PROVE_CEX"
     --output=oneline
     "$@"
     "${PROVE_CARGS[@]}"

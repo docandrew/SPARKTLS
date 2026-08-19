@@ -8,6 +8,6 @@ project Wycheproof_Runner is
    for Main use ("wycheproof_runner.adb");
 
    package Compiler is
-      for Default_Switches ("Ada") use ("-O2", "-gnatp");
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatp");
    end Compiler;
 end Wycheproof_Runner;

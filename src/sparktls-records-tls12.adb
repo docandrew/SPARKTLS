@@ -70,7 +70,7 @@ is
    --  nonce = implicit_IV[4] || seq_num[8]
    function Make_Nonce_12
      (Implicit_IV : Byte_Seq;
-      Seq_Num     : Unsigned_64) return Bytes_12
+      Seq_Num     : Record_Counter) return Bytes_12
    is
       Nonce : Bytes_12 := (others => 0);
    begin
@@ -94,7 +94,7 @@ is
    --    implicit IV. No on-wire `explicit_nonce` field.
    function Make_Nonce_ChaCha20
      (Implicit_IV : Byte_Seq;
-      Seq_Num     : Unsigned_64) return Bytes_12
+      Seq_Num     : Record_Counter) return Bytes_12
    is
       Nonce : Bytes_12 := (others => 0);
    begin
@@ -114,7 +114,7 @@ is
    --  additional_data = seq_num[8] || type[1] || version[2] || length[2]
    --  where length = PLAINTEXT length (not ciphertext)
    function Build_AAD
-     (Seq_Num       : Unsigned_64;
+     (Seq_Num       : Record_Counter;
       Content_Type  : Byte;
       Plaintext_Len : N32) return Byte_Seq
    with Pre  => Plaintext_Len <= Max_Record_Plaintext,
@@ -196,7 +196,7 @@ is
       Content_Type : in     Byte;
       Keys         : in     Traffic_Keys;
       Implicit_IV  : in     Byte_Seq;
-      Seq_Num      : in out Unsigned_64;
+      Seq_Num      : in out Record_Counter;
       Output       : in out IO_Buffer;
       Bytes_Out    :    out N32)
    is
@@ -326,7 +326,7 @@ is
       Record_Hdr  : in     Byte_Seq;
       Keys        : in     Traffic_Keys;
       Implicit_IV : in     Byte_Seq;
-      Seq_Num     : in out Unsigned_64;
+      Seq_Num     : in out Record_Counter;
       Plaintext   :    out Byte_Seq;
       Plain_Len   :    out N32;
       Valid       :    out Boolean)
@@ -516,7 +516,7 @@ is
       Desc        : in     Byte;
       Keys        : in     Traffic_Keys;
       Implicit_IV : in     Byte_Seq;
-      Seq_Num     : in out Unsigned_64;
+      Seq_Num     : in out Record_Counter;
       Output      : in out IO_Buffer;
       Bytes_Out   :    out N32)
    is

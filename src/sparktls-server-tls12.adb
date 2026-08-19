@@ -357,6 +357,10 @@ is
         and then HC.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len
         and then HC.Cfg.Get_Active_TEK /= null
         and then HC.Cfg.Get_TEK_By_Id /= null
+        --  No clock => we cannot enforce the RFC 5077 5.6 age window, so
+        --  we refuse to resume rather than honour a ticket of unknown
+        --  age. Falls through to a full handshake, which 3.4 permits.
+        and then HC.Cfg.Get_Time /= null
       then
          declare
             Plain : SPARKTLS.Tickets_12.Ticket_Plain;
@@ -887,7 +891,7 @@ is
       Gen_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
       Rec_Out    : N32;
       Scratch    : IO_Buffer;
-         Saved_Seq  : Unsigned_64;
+         Saved_Seq  : Record_Counter;
          Use_384    : constant Boolean :=
             S.Negotiated_Suite in Suite_ECDHE_RSA_AES256_GCM_SHA384
                                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
@@ -898,7 +902,12 @@ is
          Active_TEK    : Byte_Seq (0 .. 31) := (others => 0);
          Have_TEK      : Boolean := False;
       begin
-         if HC.Cfg.Get_Active_TEK /= null then
+         --  Get_Time /= null for the same reason as the full flight: an
+         --  unexpirable ticket is worse than no ticket. Have_TEK stays
+         --  False, which the NST path already reads as "issue nothing".
+         if HC.Cfg.Get_Active_TEK /= null
+           and then HC.Cfg.Get_Time /= null
+         then
             HC.Cfg.Get_Active_TEK.all (Active_Key_ID, Active_TEK, Have_TEK);
          end if;
       --  Mirror the full-flight setup that Build_Server_Flight_12_Full
@@ -2732,7 +2741,7 @@ is
          Scratch       : IO_Buffer;
          CCS_Out       : N32;
          EO            : N32;
-         Saved_Seq     : constant Unsigned_64 := HC.Server_Seq_12;
+         Saved_Seq     : constant Record_Counter := HC.Server_Seq_12;
          FB : Byte_Seq (0 .. Finished_12_Total_Len - 1); FL : N32;
          TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
       begin
@@ -2743,6 +2752,10 @@ is
          if HC.TLS12_Ticket_Offered
            and then HC.Cfg.Get_Active_TEK /= null
            and then HC.Cfg.Random /= null
+           --  Fail closed without a clock: Created_At would be 0 and the
+           --  decrypt-side age check would pass forever, so the ticket
+           --  would never expire. Issue none instead.
+           and then HC.Cfg.Get_Time /= null
          then
             declare
                use type SPARKTLS.Tickets_12.Bytes_4;

@@ -1,4 +1,5 @@
 with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Ada.Streams;         use Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Text_IO;         use Ada.Text_IO;
@@ -334,20 +335,19 @@ package body CLI_Util is
       Y      : Year_Number;
       Mo     : Month_Number;
       D      : Day_Number;
-      Secs   : Day_Duration;
-      S_Int  : Natural;
-      Hr     : Natural;
-      Mn     : Natural;
-      Sc     : Natural;
+      Hr     : Ada.Calendar.Formatting.Hour_Number;
+      Mn     : Ada.Calendar.Formatting.Minute_Number;
+      Sc     : Ada.Calendar.Formatting.Second_Number;
+      SS     : Ada.Calendar.Formatting.Second_Duration;
    begin
-      Split (T, Y, Mo, D, Secs);
-      S_Int := Natural (Secs);
-      if S_Int >= 86400 then
-         S_Int := 86399;
-      end if;
-      Hr := S_Int / 3600;
-      Mn := (S_Int mod 3600) / 60;
-      Sc := S_Int mod 60;
+      --  Ada.Calendar.Split works in package Calendar's implementation-
+      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
+      --  UTC, so a local split shifts every validity comparison by the
+      --  host's UTC offset. Formatting.Split with Time_Zone => 0 is the
+      --  UTC one, and it yields Hour/Minute/Second already in range --
+      --  which retires the leap-second clamp this used to need.
+      Ada.Calendar.Formatting.Split
+        (T, Y, Mo, D, Hr, Mn, Sc, SS, Time_Zone => 0);
       return (Year   => Y,
               Month  => Mo,
               Day    => D,

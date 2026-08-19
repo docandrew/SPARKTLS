@@ -24,12 +24,13 @@ project Unit_Tests is
                  "test_psk_resume.adb",
                  "test_key_update_ratelimit.adb",
                  "test_tickets_12.adb",
+                 "test_clock.adb",
                  "test_tek_rotation.adb",
                  "test_validation_config.adb",
                  "test_tls12_ecdsa.adb",
                  "test_exporter.adb");
 
    package Compiler is
-      for Default_Switches ("Ada") use ("-O2", "-gnatn", "-gnatp");
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatn", "-gnatp");
    end Compiler;
 end Unit_Tests;

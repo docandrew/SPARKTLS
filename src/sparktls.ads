@@ -1121,6 +1121,20 @@ is
    --  state + GCM tag); BoringSSL ~256 bytes. 2048 covers all
    --  observed implementations with margin.
 
+   --  RFC 7627 §5.3: whether the session a ticket represents negotiated
+   --  Extended Master Secret. Persisted with the ticket so a resumption
+   --  attempt can be compared against the ORIGINAL session's state --
+   --  §5.3 requires aborting when a non-EMS session is resumed as EMS or
+   --  vice versa, and that comparison is the triple-handshake defence
+   --  itself. Distinct from HC.MS_Derivation, which records which PRF
+   --  path ran within a single handshake (RFC 7627 §4).
+   --
+   --  A two-value enum rather than a Boolean so the wire/stored states
+   --  are named at the point of use and a future third state (e.g.
+   --  "unknown, ticket predates this field") is a compile error to
+   --  ignore rather than a silently-false Boolean.
+   type EMS_Status is (EMS_Absent, EMS_Negotiated);
+
    type Session_Ticket_12 is record
       Ticket        : Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1)
                          := (others => 0);
@@ -1129,6 +1143,8 @@ is
       Suite         : Unsigned_16 := 0;
       Lifetime_Hint : Unsigned_32 := 0;   --  seconds (from server)
       Server_Name   : Hostname_Buf := (Len => 0, Data => (others => ' '));
+      --  RFC 7627 §5.3 resumption consistency; see EMS_Status above.
+      EMS           : EMS_Status := EMS_Absent;
       Valid         : Boolean := False;
    end record;
 
@@ -1236,17 +1252,45 @@ is
                  PSK_Len : N32;
                  Suite   : Unsigned_16;
                  Age_Add : Unsigned_32;
-                 ID_Out  : out Ticket_ID);
+                 ID_Out  : out Ticket_ID)
+   with Pre => PSK_Len in 32 | 48;
 
    --  Retrieve a PSK by identity. Found => False on miss, wrong suite,
    --  expiry, or any error: all mean "do a full handshake".
+   --  Post mirrors SPARKTLS.Ticket_Cache.Lookup, which already PROVES it.
+   --  Without it here the guarantee was lost three times over -- Ticket_Cache
+   --  -> protected Cache.Lookup -> Session_Cache.Lookup_Session -> this access
+   --  type -- so the server could not discharge
+   --  "if Found then Suite = S.Negotiated_Suite" at the call site even though
+   --  the reference implementation establishes it. The contract belongs on the
+   --  access type: that is the boundary a caller can see, and it obligates
+   --  every implementation rather than one.
    type Lookup_Session_Fn is access
       procedure (ID         : Byte_Seq;
                  Want_Suite : Unsigned_16;
                  PSK        : out Bytes_48;
                  PSK_Len    : out N32;
                  Suite      : out Unsigned_16;
-                 Found      : out Boolean);
+                 Found      : out Boolean)
+   with Pre  => ID'First = 0 and then ID'Length = Ticket_ID_Len,
+        Post => (if Found then Suite = Want_Suite
+                             and then PSK_Len in 32 | 48);
+   --  Mirrors SPARKTLS.Ticket_Cache.Lookup, which already proves it.
+   --  Requires Ada 2022 (postcondition on an access-to-subprogram type);
+   --  see ada_version in alire.toml.
+   --
+   --  THIS CONTRACT DOES NOT MAKE THE RESULT TRUSTWORTHY, and the server
+   --  still re-checks it at the call site. Deleting that check because
+   --  gnatprove calls it redundant would be a mistake, for two reasons:
+   --    * SPARK obligates only implementations whose 'Access is taken in
+   --      SPARK-verified code. An application may supply this callback
+   --      from ordinary Ada -- or any language -- and is bound by nothing.
+   --    * Postconditions are checked at runtime only while assertions are
+   --      enabled. A release build checks nothing.
+   --  So for a caller, this Post is an ASSUMPTION the library cannot
+   --  enforce. The call site derives the same fact from an explicit test
+   --  instead, which is why the proof does not depend on trusting the
+   --  application. Keep both.
 
    --  TLS 1.2 stateless tickets (RFC 5077): the key that seals outgoing
    --  tickets, and lookup by the Key_ID carried in an inbound ticket.
@@ -1255,12 +1299,14 @@ is
    type Get_Active_TEK_Fn is access
       procedure (Key_ID : out Byte_Seq;
                  TEK    : out Byte_Seq;
-                 Found  : out Boolean);
+                 Found  : out Boolean)
+   with Pre => Key_ID'Length = 4 and then TEK'Length = 32;
 
    type Get_TEK_By_Id_Fn is access
       procedure (Key_ID : Byte_Seq;
                  TEK    : out Byte_Seq;
-                 Found  : out Boolean);
+                 Found  : out Boolean)
+   with Pre => TEK'Length = 32;
 
    type Config is record
       Suite        : Cipher_Suite    := TLS_CHACHA20_POLY1305_SHA256;
@@ -1424,46 +1470,31 @@ is
       --  secrecy hourly. Set 0 to disable issuing tickets entirely.
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
 
-      --  Server-side automatic TEK rotation. When True (default),
-      --  the server checks at the start of each incoming TLS 1.2
-      --  handshake whether the active key has exceeded
-      --  TEK_Rotation_Interval_Secs since its Created_At; if so,
-      --  generates a fresh Key_ID + TEK via Cfg.Random and rotates
-      --  it into the active slot via Rotate_TLS12_Ticket_Key
-      --  (oldest slot shifts out; previously-active slot keeps its
-      --  Valid=True so prior tickets still decrypt during the
-      --  grace window).
+      --  TICKET-ENCRYPTION KEY (TEK) ROTATION IS NOT CONFIGURED HERE.
+      --  There is no Auto_Rotate_TEK flag and no interval in Cfg: the
+      --  mechanism lives in SPARKTLS.Session_Cache, which is where the
+      --  key material and the CSPRNG already are.
       --
-      --  Set this to FALSE for multi-process / multi-host / HSM
-      --  deployments where the TEK is managed externally:
-      --    * Fork-inherit + worker recycling: parent generates one
-      --      TEK before fork(); workers inherit; rotation = recycle
-      --      workers. No library-level rotation needed.
-      --    * Shared file + SIGHUP: an orchestrator writes new keys
-      --      to disk; workers read on signal and call
-      --      Rotate_TLS12_Ticket_Key explicitly.
-      --    * KV store (Cloudflare model): each worker polls Redis /
-      --      etcd; on key change, calls Rotate_TLS12_Ticket_Key.
-      --    * HSM-backed: keys live in the HSM and the library must
-      --      not generate fresh ones in process memory.
+      --  Rotation is ON BY DEFAULT (24 h) once the app calls
+      --      Session_Cache.Initialize (Random, Clock, Rotation_Interval)
+      --  and is LAZY: Get_Active_TEK checks the active key's age on each
+      --  ticket issuance and rotates in place, so the check rides on real
+      --  traffic and an idle server does no work. No timer task.
       --
-      --  Requires Cfg.Get_Time AND Cfg.Random to be non-null. If
-      --  either is null, auto-rotation silently does nothing
-      --  regardless of this flag.
+      --  Rotation shifts a ring of TLS12_Max_Keys slots: the new key
+      --  becomes active, older keys stay valid for DECRYPT so tickets
+      --  issued under them still resume during the grace window, and the
+      --  oldest drops out.
+      --
+      --  Rotation_Interval => 0 disables it and hands control back to the
+      --  app via Session_Cache.Rotate_TEK -- the right choice for HSM keys
+      --  or a fleet kept in sync by an orchestrator, where independent
+      --  per-node rotation would break cross-node resume.
+      --
+      --  CAVEAT: all of the above is Session_Cache, the reference cache.
+      --  An app that supplies its OWN Store_Session/Get_Active_TEK
+      --  callbacks owns rotation entirely and gets none of this for free.
 
-      --  Interval (seconds) between automatic TEK rotations. Default
-      --  24 hours, matching Go crypto/tls and CABF guidance ("regular
-      --  schedule, such as daily"). Tighter intervals are defensible
-      --  for high-value deployments where a TEK leak's blast radius
-      --  must be smaller; the cost is more key-generation calls and
-      --  more clients hitting "old ticket, full handshake" right
-      --  after a rotation. The grace window is fixed at
-      --  TLS12_Max_Keys * Interval (default 4 days at 24h interval).
-
-      --  Client: previously-cached TLS 1.2 session ticket. When
-      --  Valid, sent in the session_ticket extension on CH; on
-      --  server-side resume, the cached Master_Secret is reused
-      --  via the abbreviated TLS 1.2 flight (RFC 5077 §3.4).
       TLS12_Resume_Ticket   : Session_Ticket_12;
 
       --  Client: previously-saved resumption ticket (RFC 8446
@@ -1788,8 +1819,17 @@ is
       --  for the larger usage and zero-padded on the AES-GCM side.
       Client_Write_IV_12 : Byte_Seq (0 .. 11) := (others => 0);
       Server_Write_IV_12 : Byte_Seq (0 .. 11) := (others => 0);
-      Client_Seq_12      : Unsigned_64 := 0;
-      Server_Seq_12      : Unsigned_64 := 0;
+      --  Record_Counter, not Unsigned_64 (#46). Session already used the
+      --  constrained subtype; Handshake_Context did not, so
+      --  Nonce_Space_Available_12 (HC.*_Seq_12) had to be PROVED at every
+      --  call site while the Session-side twin was true by construction.
+      --  With the subtype the wrap is UNREPRESENTABLE: reaching
+      --  Unsigned_64'Last is a range check at the assignment that produces
+      --  it, not a silent modular wrap that would reuse a nonce. TLS 1.2
+      --  has no KeyUpdate, so there is no rotation to fall back on -- the
+      --  type is the only thing standing between us and nonce reuse.
+      Client_Seq_12      : Record_Counter := 0;
+      Server_Seq_12      : Record_Counter := 0;
 
       --  RFC 7627 §4: tracks which PRF path produced Master_Secret_12.
       --  Use_EMS ↔ extended PRF; (not Use_EMS) ↔ legacy PRF. The
@@ -2619,7 +2659,6 @@ is
                 and then Data'Last < N32'Last
                 and then Body_Start >= Data'First
                 and then Body_Start <= Data'Last + 1
-                and then E_Len >= 0
                 and then E_Len <= Data'Last + 1 - Body_Start,
         Post => State (S) = State (S)'Old
                 and then Client_App (S) = Client_App (S)'Old

@@ -2,6 +2,7 @@ with "../sparktls.gpr";
 with "../../sparkentropy/sparkentropy.gpr";
 
 project SPARKTLS_Examples is
+
    for Source_Dirs use (".");
    for Object_Dir use "../bin/examples";
    for Create_Missing_Dirs use "True";
@@ -16,8 +17,11 @@ project SPARKTLS_Examples is
                   "test_prf12.adb");
 
    package Compiler is
+      --  -gnat2022: sparktls.ads has a postcondition on an
+      --  access-to-subprogram type, so consumers must parse it too.
       for Default_Switches ("Ada") use
-        ("-O3", "-gnatn", "-march=native", "-mtune=native",
+        ("-gnat2022",
+         "-O3", "-gnatn", "-march=native", "-mtune=native",
          "-g", "-gnatQ", "-gnatw.X");
    end Compiler;
 

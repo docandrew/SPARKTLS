@@ -2,6 +2,7 @@ with "../sparktls.gpr";
 with "../../sparkentropy/sparkentropy.gpr";
 
 project SPARKTLS_CLI is
+
    for Source_Dirs use (".");
    for Object_Dir use "../obj/cli";
    for Exec_Dir use "../bin";
@@ -10,7 +11,7 @@ project SPARKTLS_CLI is
 
    package Compiler is
       for Default_Switches ("Ada") use
-        ("-g", "-O2", "-gnatQ", "-gnatw.X");
+        ("-gnat2022", "-g", "-O2", "-gnatQ", "-gnatw.X");
    end Compiler;
 
    package Binder is

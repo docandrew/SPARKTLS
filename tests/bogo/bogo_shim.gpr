@@ -20,6 +20,6 @@ project Bogo_Shim is
    for Main use ("bogo_shim.adb");
 
    package Compiler is
-      for Default_Switches ("Ada") use ("-O2", "-gnatn", "-gnatp");
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatn", "-gnatp");
    end Compiler;
 end Bogo_Shim;

@@ -153,32 +153,37 @@ is
    ----------------------------------------------------------------------------
    --  RFC 5077 TLS 1.2 ticket encryption key (TEK) rotation
    --
-   --  Atomic primitive for rotating the active TEK. Used by:
-   --    * Server-internal auto-rotation when
-   --      Cfg.Auto_Rotate_TEK = True and the active key has aged
-   --      past Cfg.TEK_Rotation_Interval_Secs.
-   --    * Caller-driven rotation when Cfg.Auto_Rotate_TEK = False
-   --      (multi-process / shared-file / HSM-backed deployments).
+   --  ROTATION LIVES IN SPARKTLS.Session_Cache, NOT HERE. This package
+   --  once declared Rotate_TLS12_Ticket_Key; it moved during the
+   --  callback refactor and the orphaned body was deleted 2026-08-19.
+   --  Use:
+   --      Session_Cache.Rotate_TEK (New_Key_ID, New_TEK, Now_Secs)
+   --      Session_Cache.Active_Key_Age (Now_Secs)
    --
-   --  Semantics: the new key takes the active slot. The previously
-   --  active key shifts to slot Active+1 (mod TLS12_Max_Keys), and
-   --  so on, with the oldest slot dropping out. ALL slots stay
-   --  Valid=True for INCOMING ticket decryption (the grace window
-   --  ensures clients with tickets issued under prior keys still
-   --  resume) until they get overwritten by future rotations. New
-   --  tickets ENCRYPT under the new active key only.
+   --  Semantics (unchanged): the new key takes the active slot and older
+   --  keys shift down, staying valid for INCOMING ticket decryption so
+   --  clients holding tickets from prior keys still resume during the
+   --  grace window; the oldest slot drops out. New tickets ENCRYPT under
+   --  the active key only.
    --
-   --  Atomicity note: rotation writes to the shared TLS12_Ticket_Key
-   --  array. Because the array is single-threaded-accessed in our
-   --  state-machine model (caller drives Advance one handshake at a
-   --  time per Server), the write is naturally atomic with respect
-   --  to in-flight handshakes. Multi-threaded callers (multiple
-   --  Servers sharing one Cfg) MUST serialize Advance calls.
+   --  ROTATION IS AUTOMATIC BY DEFAULT, not caller-driven. Once the app
+   --  calls Session_Cache.Initialize (Random, Clock, Rotation_Interval)
+   --  the cache rotates lazily every Rotation_Interval seconds (24 h
+   --  default): Get_Active_TEK checks the active key's age on each ticket
+   --  issuance and rotates in place, generating fresh material from the
+   --  app-supplied CSPRNG. No timer task; an idle server does no work.
+   --  Rotate_TEK / Active_Key_Age are the manual escape hatch, used with
+   --  Rotation_Interval => 0 for HSM- or orchestrator-supplied keys.
    --
-   --  Now_Secs is the wall-clock time (Unix seconds) recorded as
-   --  Created_At for the new key; the next rotation timer compares
-   --  against this. Typically the caller hands in
-   --  Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all).
+   --  Atomicity: rotation writes the shared key array. In our
+   --  state-machine model the caller drives Advance one handshake at a
+   --  time per Server, so the write is naturally atomic with respect to
+   --  in-flight handshakes. Multi-threaded callers sharing one Cfg MUST
+   --  serialize Advance calls.
+   --
+   --  Now_Secs is wall-clock Unix seconds recorded as Created_At for the
+   --  new key, typically Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all).
+
 
 private
 

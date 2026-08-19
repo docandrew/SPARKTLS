@@ -124,8 +124,7 @@ is
      (Sig_Algs           : Byte_Seq;
       Cert               : Signing_Algorithm;
       Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
-   with Pre => Sig_Algs'First >= 0
-               and then Sig_Algs'Last < N32'Last,
+   with Pre => Sig_Algs'Last < N32'Last,
         Post => Sig_Algo_Compatible_With_Cert
                   (Pick_Sig_Algo'Result, Cert, Allow_PKCS1_v1_5);
 
@@ -135,8 +134,7 @@ is
       Prefs              : Sig_Algo_List;
       Count              : Natural;
       Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
-   with Pre => Sig_Algs'First >= 0
-               and then Sig_Algs'Last < N32'Last
+   with Pre => Sig_Algs'Last < N32'Last
                and then Count <= Max_Sig_Algos,
         Post => Sig_Algo_Compatible_With_Cert
                   (Pick_Sig_Algo_With_Prefs'Result,

@@ -36,15 +36,18 @@ procedure TLS_Fetch is
       Y   : Year_Number;
       Mo  : Month_Number;
       D   : Day_Number;
-      S   : Day_Duration;
-      Hr  : Natural;
-      Mn  : Natural;
-      Sc  : Natural;
+      Hr  : Ada.Calendar.Formatting.Hour_Number;
+      Mn  : Ada.Calendar.Formatting.Minute_Number;
+      Sc  : Ada.Calendar.Formatting.Second_Number;
+      SS  : Ada.Calendar.Formatting.Second_Duration;
    begin
-      Split (Now, Y, Mo, D, S);
-      Hr := Natural (S) / 3600;
-      Mn := (Natural (S) mod 3600) / 60;
-      Sc := Natural (S) mod 60;
+      --  Ada.Calendar.Split works in package Calendar's implementation-
+      --  defined (local) time zone, RM 9.6. X.509 notBefore/notAfter are
+      --  UTC, so a local split shifts every validity comparison by the
+      --  host's UTC offset. Formatting.Split with Time_Zone => 0 is the
+      --  UTC one.
+      Ada.Calendar.Formatting.Split
+        (Now, Y, Mo, D, Hr, Mn, Sc, SS, Time_Zone => 0);
       return (Year   => Y,
               Month  => Mo,
               Day    => D,

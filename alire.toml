@@ -20,3 +20,9 @@ sparktlscrypto = "~0.0.1"
 sparkx509 = { path='../sparkx509' }
 sparknacl = { path='../sparknacl' }
 sparktlscrypto = { path='../sparktlscrypto' }
+
+[build-switches]
+#  Ada 2022 is required for postconditions on access-to-subprogram types
+#  (see Lookup_Session_Fn in sparktls.ads). Set here rather than in
+#  config/sparktls_config.gpr, which Alire regenerates.
+"*".ada_version = "Ada2022"
