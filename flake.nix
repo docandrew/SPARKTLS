@@ -38,6 +38,13 @@
               gnugrep
               gnused
               gnumake
+              #  BoGo's runner is Go. Without it here, tests/bogo/run.sh
+              #  curls its own Go tarball from go.dev at run time (~75 MB)
+              #  -- so the toolchain becomes whatever upstream serves that
+              #  day, and the suite silently skips entirely if the network
+              #  is unavailable. Pinning it through nixpkgs is the whole
+              #  point of this shell.
+              go
               iproute2
               openssl
               patchelf

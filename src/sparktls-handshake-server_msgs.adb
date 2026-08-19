@@ -295,153 +295,72 @@ is
                 and then Reasm_Building (HC);
 
    procedure Copy_X25519_KS
-     (Data : in     Byte_Seq;
-      Pos  : in     N32;
-      HC   : in out Handshake_Context)
+     (Data    : in     Byte_Seq;
+      Pos     : in     N32;
+      Peer_PK :    out Bytes_32;
+      Present :    out Boolean)
    with Pre => Data'First = 0
                and then Pos <= N32'Last - 35
-               and then Pos + 35 <= Data'Last
-               and then Reasm_Building (HC),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-	                and then HC.Legacy_Session_ID_Len =
-	                  HC.Legacy_Session_ID_Len'Old
-	                and then (if HC.Cfg.Local'Old /= null
-	                          then HC.Cfg.Local /= null)
-                and then
-                  (if HC.Cfg.Local'Old /= null
-                     and then Local_Config_Valid (HC.Cfg.Local'Old)
-                   then Local_Config_Valid (HC.Cfg.Local))
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+               and then Pos + 35 <= Data'Last,
+        Post => Present;
 
    procedure Copy_X25519_KS
-     (Data : in     Byte_Seq;
-      Pos  : in     N32;
-      HC   : in out Handshake_Context)
+     (Data    : in     Byte_Seq;
+      Pos     : in     N32;
+      Peer_PK :    out Bytes_32;
+      Present :    out Boolean)
    is
    begin
       for I in N32 range 0 .. 31 loop
-         pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Legacy_Session_ID_Len =
-	            HC.Legacy_Session_ID_Len'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Server_HS.Counter =
-	            HC.Server_HS.Counter'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Server_HS.Suite = HC.Server_HS.Suite'Loop_Entry);
-	         pragma Loop_Invariant
-	           (if HC.Cfg.Local'Loop_Entry /= null
-	               and then Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
-	            then HC.Cfg.Local /= null
-	               and then Local_Config_Valid (HC.Cfg.Local));
-	         pragma Loop_Invariant (Reasm_Building (HC));
-         HC.Peer_PK (I) := Data (Pos + 4 + I);
+         Peer_PK (I) := Data (Pos + 4 + I);
       end loop;
-      HC.Client_Has_X25519 := True;
+      Present := True;
    end Copy_X25519_KS;
 
    procedure Copy_P256_KS
-     (Data : in     Byte_Seq;
-      Pos  : in     N32;
-      HC   : in out Handshake_Context)
+     (Data    : in     Byte_Seq;
+      Pos     : in     N32;
+      Peer_PK :    out P256_Peer_Key;
+      Present :    out Boolean)
    with Pre => Data'First = 0
                and then Pos <= N32'Last - 68
-               and then Pos + 68 <= Data'Last
-               and then Reasm_Building (HC),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then HC.Legacy_Session_ID_Len =
-                  HC.Legacy_Session_ID_Len'Old
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
-                and then
-                  (if HC.Cfg.Local'Old /= null
-                     and then Local_Config_Valid (HC.Cfg.Local'Old)
-                   then Local_Config_Valid (HC.Cfg.Local))
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+               and then Pos + 68 <= Data'Last,
+        Post => Present;
 
    procedure Copy_P256_KS
-     (Data : in     Byte_Seq;
-      Pos  : in     N32;
-      HC   : in out Handshake_Context)
+     (Data    : in     Byte_Seq;
+      Pos     : in     N32;
+      Peer_PK :    out P256_Peer_Key;
+      Present :    out Boolean)
    is
    begin
       for I in N32 range 0 .. 64 loop
-         pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Legacy_Session_ID_Len =
-	            HC.Legacy_Session_ID_Len'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Server_HS.Counter = HC.Server_HS.Counter'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Server_HS.Suite = HC.Server_HS.Suite'Loop_Entry);
-	         pragma Loop_Invariant
-	           (if Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
-	            then Local_Config_Valid (HC.Cfg.Local));
-	         pragma Loop_Invariant (Reasm_Building (HC));
-         HC.P256_Peer_PK (I) := Data (Pos + 4 + I);
+         Peer_PK (I) := Data (Pos + 4 + I);
       end loop;
-      HC.Client_Has_P256 := True;
+      Present := True;
    end Copy_P256_KS;
 
    procedure Copy_P384_KS
-     (Data : in     Byte_Seq;
-      Pos  : in     N32;
-      HC   : in out Handshake_Context)
+     (Data    : in     Byte_Seq;
+      Pos     : in     N32;
+      Peer_PK :    out P384_Peer_Key;
+      Present :    out Boolean)
    with Pre => Data'First = 0
                and then Pos <= N32'Last - 100
-               and then Pos + 100 <= Data'Last
-               and then Reasm_Building (HC),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then HC.Legacy_Session_ID_Len =
-                  HC.Legacy_Session_ID_Len'Old
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null)
-                and then
-                  (if HC.Cfg.Local'Old /= null
-                     and then Local_Config_Valid (HC.Cfg.Local'Old)
-                   then Local_Config_Valid (HC.Cfg.Local))
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+               and then Pos + 100 <= Data'Last,
+        Post => Present;
 
    procedure Copy_P384_KS
-     (Data : in     Byte_Seq;
-      Pos  : in     N32;
-      HC   : in out Handshake_Context)
+     (Data    : in     Byte_Seq;
+      Pos     : in     N32;
+      Peer_PK :    out P384_Peer_Key;
+      Present :    out Boolean)
    is
    begin
       for I in N32 range 0 .. 96 loop
-         pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Legacy_Session_ID_Len =
-	            HC.Legacy_Session_ID_Len'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Server_HS.Counter = HC.Server_HS.Counter'Loop_Entry);
-	         pragma Loop_Invariant
-	           (HC.Server_HS.Suite = HC.Server_HS.Suite'Loop_Entry);
-	         pragma Loop_Invariant
-	           (if HC.Cfg.Local'Loop_Entry /= null
-	            then HC.Cfg.Local /= null);
-	         pragma Loop_Invariant
-	           (if Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
-	            then Local_Config_Valid (HC.Cfg.Local));
-	         pragma Loop_Invariant
-	           (if HC.Cfg.Random'Loop_Entry /= null
-	            then HC.Cfg.Random /= null);
-	         pragma Loop_Invariant (Reasm_Building (HC));
-         HC.P384_Peer_PK (I) := Data (Pos + 4 + I);
+         Peer_PK (I) := Data (Pos + 4 + I);
       end loop;
-      HC.Client_Has_P384 := True;
+      Present := True;
    end Copy_P384_KS;
 
    procedure Parse_KS_Data
@@ -516,7 +435,9 @@ is
                         return;
                      end if;
                      pragma Assert (Pos + 35 <= Data'Last);
-                     Copy_X25519_KS (Data, Pos, HC);
+                     Copy_X25519_KS
+                       (Data, Pos, HC.Peer_PK,
+                        HC.Client_Has_X25519);
                      Pos := Pos + 4 + KL;
                   elsif Group = 16#0017# then
                      if HC.Client_Has_P256 then
@@ -528,7 +449,9 @@ is
                         return;
                      end if;
                      pragma Assert (Pos + 68 <= Data'Last);
-                     Copy_P256_KS (Data, Pos, HC);
+                     Copy_P256_KS
+                       (Data, Pos, HC.P256_Peer_PK,
+                        HC.Client_Has_P256);
                      Pos := Pos + 4 + KL;
                   elsif Group = 16#0018# then
                      if HC.Client_Has_P384 then
@@ -540,7 +463,9 @@ is
                         return;
                      end if;
                      pragma Assert (Pos + 100 <= Data'Last);
-                     Copy_P384_KS (Data, Pos, HC);
+                     Copy_P384_KS
+                       (Data, Pos, HC.P384_Peer_PK,
+                        HC.Client_Has_P384);
                      Pos := Pos + 4 + KL;
                   else
                      Pos := Pos + 4 + KL;
@@ -2369,61 +2294,35 @@ is
    end Parse_Certificate_Authorities_Data;
 
    procedure Store_TLS12_Ticket_Data
-     (Ext_Data : in     Byte_Seq;
-      HC       : in out Handshake_Context)
+     (Ext_Data   : in     Byte_Seq;
+      Ticket     : in out TLS12_Ticket_Buffer;
+      Ticket_Len :    out TLS12_Ticket_Length)
    with Pre => Ext_Data'First = 0
-               and then Ext_Data'Last in 0 .. Max_TLS12_Ticket_Len - 1
-               and then Reasm_Building (HC),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then HC.Legacy_Session_ID_Len =
-                  HC.Legacy_Session_ID_Len'Old
-	                and then (if HC.Cfg.Local'Old /= null
-	                          then HC.Cfg.Local /= null)
-	                and then
-	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
-	                   then Local_Config_Valid (HC.Cfg.Local))
-	                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+               and then Ext_Data'Last in 0 .. Max_TLS12_Ticket_Len - 1,
+        Post => Ticket_Len = Ext_Data'Last + 1;
 
    procedure Store_TLS12_Ticket_Data
-     (Ext_Data : in     Byte_Seq;
-      HC       : in out Handshake_Context)
+     (Ext_Data   : in     Byte_Seq;
+      Ticket     : in out TLS12_Ticket_Buffer;
+      Ticket_Len :    out TLS12_Ticket_Length)
    is
       DLen : constant N32 := Ext_Data'Last + 1;
    begin
       for I in N32 range 0 .. DLen - 1 loop
-         pragma Loop_Invariant (I < DLen);
-         HC.TLS12_Peer_Ticket (I) := Ext_Data (I);
+         Ticket (I) := Ext_Data (I);
       end loop;
-      HC.TLS12_Peer_Ticket_Len := DLen;
+      Ticket_Len := DLen;
    end Store_TLS12_Ticket_Data;
 
    procedure Parse_PSK_Key_Exchange_Modes_Data
-     (Ext_Data : in     Byte_Seq;
-      HC       : in out Handshake_Context)
+     (Ext_Data       : in     Byte_Seq;
+      Has_PSK_DHE_KE : in out Boolean)
    with Pre => Ext_Data'First = 0
-               and then Ext_Data'Last in 1 .. 131071
-               and then Reasm_Building (HC),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then HC.Legacy_Session_ID_Len =
-                  HC.Legacy_Session_ID_Len'Old
-	                and then (if HC.Cfg.Local'Old /= null
-	                          then HC.Cfg.Local /= null)
-	                and then
-	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
-	                   then Local_Config_Valid (HC.Cfg.Local))
-	                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then Reasm_Building (HC);
+               and then Ext_Data'Last in 1 .. 131071;
 
    procedure Parse_PSK_Key_Exchange_Modes_Data
-     (Ext_Data : in     Byte_Seq;
-      HC       : in out Handshake_Context)
+     (Ext_Data       : in     Byte_Seq;
+      Has_PSK_DHE_KE : in out Boolean)
    is
       DLen     : constant N32 := Ext_Data'Last + 1;
       List_Len : constant N32 := N32 (Ext_Data (0));
@@ -2435,7 +2334,7 @@ is
             pragma Loop_Invariant (I < List_Len);
             pragma Loop_Invariant (1 + I <= Ext_Data'Last);
             if N32 (Ext_Data (1 + I)) = 16#01# then
-               HC.Has_PSK_DHE_KE := True;
+               Has_PSK_DHE_KE := True;
             end if;
          end loop;
       end if;
@@ -2712,7 +2611,9 @@ is
                   RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data
                     (Ext_Ctx, ED);
                   Ext_Data := To_NaCl (ED);
-                  Store_TLS12_Ticket_Data (Ext_Data, HC);
+                  Store_TLS12_Ticket_Data
+                    (Ext_Data, HC.TLS12_Peer_Ticket,
+                     HC.TLS12_Peer_Ticket_Len);
                end;
             end if;
 
@@ -2730,7 +2631,8 @@ is
                   RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data
                     (Ext_Ctx, ED);
                   Ext_Data := To_NaCl (ED);
-                  Parse_PSK_Key_Exchange_Modes_Data (Ext_Data, HC);
+                  Parse_PSK_Key_Exchange_Modes_Data
+                    (Ext_Data, HC.Has_PSK_DHE_KE);
                end;
             end if;
 
@@ -3119,46 +3021,23 @@ is
    end Parse_CH_Cipher_Suites;
 
    procedure Copy_TLS12_No_Ext_Client_Random
-     (Data : in     Byte_Seq;
-      BS   : in     N32;
-      HC   : in out Handshake_Context)
+     (Data          : in     Byte_Seq;
+      BS            : in     N32;
+      Client_Random :    out Bytes_32)
    with Pre => Data'Length > 0
                and then Data'Last <= N32 (Max_HS_Msg) - 1
                and then Data'Last >= 33
                and then BS >= Data'First
-               and then BS <= Data'Last - 33
-               and then Reasm_Building (HC),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then HC.Legacy_Session_ID_Len =
-                  HC.Legacy_Session_ID_Len'Old
-		                and then (if HC.Cfg.Local'Old /= null
-		                          then HC.Cfg.Local /= null)
-		                and then
-		                  (if HC.Cfg.Local'Old /= null
-		                      and then HC.Cfg.Local'Old.Has_Identity
-	                   then HC.Cfg.Local /= null
-	                        and then HC.Cfg.Local.Has_Identity)
-	                and then
-	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
-	                   then Local_Config_Valid (HC.Cfg.Local))
-	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
-	                and then Reasm_Building (HC);
+               and then BS <= Data'Last - 33;
 
    procedure Copy_TLS12_No_Ext_Client_Random
-     (Data : in     Byte_Seq;
-      BS   : in     N32;
-      HC   : in out Handshake_Context)
+     (Data          : in     Byte_Seq;
+      BS            : in     N32;
+      Client_Random :    out Bytes_32)
    is
    begin
       for I in N32 range 0 .. 31 loop
-         pragma Loop_Invariant (I <= 31);
-         pragma Loop_Invariant (BS >= Data'First);
-         pragma Loop_Invariant (BS <= Data'Last - 33);
-         pragma Loop_Invariant (BS + 2 + I <= Data'Last);
-         HC.Client_Random (I) := Data (BS + 2 + I);
+         Client_Random (I) := Data (BS + 2 + I);
       end loop;
    end Copy_TLS12_No_Ext_Client_Random;
 
@@ -3166,47 +3045,32 @@ is
      (Data    : in     Byte_Seq;
       P       : in     N32;
       Sid_Len : in     N32;
-      HC      : in out Handshake_Context)
+      Sid     :    out Bytes_32;
+      Sid_Out : in out Session_ID_Length)
    with Pre => Data'Length > 0
                and then Data'Last <= N32 (Max_HS_Msg) - 1
                and then Sid_Len <= 32
                and then P >= Data'First
                and then P <= Data'Last
-               and then Sid_Len <= Data'Last - P + 1
-               and then Reasm_Building (HC),
-        Post => HC.HRR_Sent = HC.HRR_Sent'Old
-                and then HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and then HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and then HC.Legacy_Session_ID_Len = Sid_Len
-		                and then (if HC.Cfg.Local'Old /= null
-		                          then HC.Cfg.Local /= null)
-		                and then
-		                  (if HC.Cfg.Local'Old /= null
-		                      and then HC.Cfg.Local'Old.Has_Identity
-	                   then HC.Cfg.Local /= null
-	                        and then HC.Cfg.Local.Has_Identity)
-	                and then
-	                  (if Local_Config_Valid (HC.Cfg.Local'Old)
-	                   then Local_Config_Valid (HC.Cfg.Local))
-	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
-	                and then Reasm_Building (HC);
+               and then Sid_Len <= Data'Last - P + 1,
+        Post => Sid_Out = Sid_Len;
 
    procedure Copy_TLS12_No_Ext_Session_ID
      (Data    : in     Byte_Seq;
       P       : in     N32;
       Sid_Len : in     N32;
-      HC      : in out Handshake_Context)
+      Sid     :    out Bytes_32;
+      Sid_Out : in out Session_ID_Length)
    is
    begin
-      HC.Legacy_Session_ID := (others => 0);
-      HC.Legacy_Session_ID_Len := Sid_Len;
+      Sid := (others => 0);
+      Sid_Out := Sid_Len;
       if Sid_Len > 0 then
          for I in N32 range 0 .. Sid_Len - 1 loop
             pragma Loop_Invariant (I < Sid_Len);
             pragma Loop_Invariant (P >= Data'First);
             pragma Loop_Invariant (P + I <= Data'Last);
-            HC.Legacy_Session_ID (I) := Data (P + I);
+            Sid (I) := Data (P + I);
          end loop;
       end if;
    end Copy_TLS12_No_Ext_Session_ID;
@@ -3373,7 +3237,7 @@ is
       pragma Assert (Data'Last >= 33);
 	      pragma Assert (BS >= Data'First);
 	      pragma Assert (BS <= Data'Last - 33);
-	      Copy_TLS12_No_Ext_Client_Random (Data, BS, HC);
+	      Copy_TLS12_No_Ext_Client_Random (Data, BS, HC.Client_Random);
 
       Sid_Len := N32 (Data (BS + 34));
       if Sid_Len > 32 then
@@ -3390,7 +3254,9 @@ is
       pragma Assert (P >= Data'First);
 	      pragma Assert (Sid_Len <= Data'Last - P + 1);
 	      pragma Assert (P + Sid_Len <= Data'Last + 1);
-	      Copy_TLS12_No_Ext_Session_ID (Data, P, Sid_Len, HC);
+	      Copy_TLS12_No_Ext_Session_ID
+	        (Data, P, Sid_Len, HC.Legacy_Session_ID,
+	         HC.Legacy_Session_ID_Len);
 	      P := P + Sid_Len;
 
       if P > Data'Last or else Data'Last - P < 1 then

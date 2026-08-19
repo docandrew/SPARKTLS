@@ -1206,6 +1206,7 @@ is
 
          if S.State in Connected | Error_State | Closed then
             S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+            S.Use_EMS := S.HC_Ptr.Use_EMS;
             --  Zero ALL key material before freeing HC.
             Scrub_Handshake_Context (S.HC_Ptr.all);
             HC_Alloc.Free (S.HC_Ptr);

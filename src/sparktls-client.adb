@@ -1578,68 +1578,6 @@ is
    --  RFC 5246 §7.4.9 / RFC 8446 §4.4.1: the transcript drives
    --  Finished verify_data, so it is append-only — losing bytes
    --  desyncs from the peer.
-   procedure Append_Transcript
-     (HC   : in out Handshake_Context;
-      Data : in     Byte_Seq)
-	   with Pre  => (if Data'First <= Data'Last then
-						                    Data'Last - Data'First < Transcript_Capacity)
-						                and then HC.Transcript_Len <= Transcript_Capacity
-						                and then Reasm_Buffer_Shaped (HC),
-        Post => HC.Transcript_Len >= HC.Transcript_Len'Old
-                and then HC.Transcript_Len <= Transcript_Capacity
-                and then
-                  (if HC.Transcript_Len'Old > 0
-                     or else Data'First <= Data'Last
-                   then HC.Transcript_Len > 0)
-                and then HC.Client_HS = HC.Client_HS'Old
-                and then (if HC.Cfg.Local'Old /= null
-                          then HC.Cfg.Local /= null
-                            and then HC.Cfg.Local.Has_Identity =
-                              HC.Cfg.Local'Old.Has_Identity
-                            and then HC.Cfg.Local.Sign_Algo =
-                              HC.Cfg.Local'Old.Sign_Algo
-                            and then HC.Cfg.Local.RSA_Mod_Len =
-                              HC.Cfg.Local'Old.RSA_Mod_Len
-                            and then HC.Cfg.Local.NaCl_Cert_Len =
-                              HC.Cfg.Local'Old.NaCl_Cert_Len)
-                and then (if HC.Cfg.Local /= null
-                          then HC.Cfg.Local'Old /= null
-                            and then
-                              (if HC.Cfg.Local.Has_Identity
-                               then HC.Cfg.Local'Old.Has_Identity))
-                and then (if HC.Cfg.Random'Old /= null
-                          then HC.Cfg.Random /= null)
-                and then HC.Cert_Request_Received =
-                  HC.Cert_Request_Received'Old
-	                and then HC.Negotiated_Sig_Algo =
-	                  HC.Negotiated_Sig_Algo'Old
-	                and then HC.Version = HC.Version'Old
-	                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-                and then (if HC.HRR_Cookie_Len'Old <=
-                            N32 (HC.HRR_Cookie'Length)
-                          then HC.HRR_Cookie_Len <=
-                            N32 (HC.HRR_Cookie'Length))
-					                and then HC.Hash_Len = HC.Hash_Len'Old
-										                and then Reasm_Buffer_Shaped (HC)
-										                and then
-										                  (if HC.Reasm_Len'Old <=
-										                        HC.Reasm_Need'Old
-									                   then Reasm_Building (HC))
-					                and then
-				                  HC.Reasm_Len = HC.Reasm_Len'Old
-			                and then HC.Reasm_Need = HC.Reasm_Need'Old
-			                and then HC.Reasm_Hdr_Pending =
-			                  HC.Reasm_Hdr_Pending'Old
-			                and then
-			                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
-			                   then HC.Reasm_Len <= HC.Reasm_Need)
-		   is
-   begin
-      Append_Transcript_Bytes
-        (Transcript     => HC.Transcript,
-         Transcript_Len => HC.Transcript_Len,
-         Data           => Data);
-   end Append_Transcript;
 
    function Transcript_Hash_256 (HC : Handshake_Context) return Digest
    with Pre => HC.Transcript_Len > 0
@@ -1910,7 +1848,8 @@ is
          return;
       end if;
 
-      Append_Transcript (HC, CH_Buf (0 .. CH_Len - 1));
+      Append_Transcript_Bytes
+        (HC.Transcript, HC.Transcript_Len, CH_Buf (0 .. CH_Len - 1));
 
       --  RFC 8446 §5.1: initial ClientHello uses record version 0x0301
       --  (TLS 1.0) for middlebox compatibility, even though the actual
@@ -2080,7 +2019,7 @@ is
             return;
          end if;
 	      end;
-	      Append_Transcript (HC, Data);
+	      Append_Transcript_Bytes (HC.Transcript, HC.Transcript_Len, Data);
 
 	      declare
          ALPN_OK  : Boolean;
@@ -2198,7 +2137,7 @@ is
             end if;
          end;
 	      end if;
-	      Append_Transcript (HC, Data);
+	      Append_Transcript_Bytes (HC.Transcript, HC.Transcript_Len, Data);
 	      pragma Assert (Reasm_Buffer_Shaped (HC));
       HC.Cert_Request_Received := True;
       declare
@@ -2438,7 +2377,7 @@ is
             end if;
          end;
       end if;
-      Append_Transcript (HC, Data);
+      Append_Transcript_Bytes (HC.Transcript, HC.Transcript_Len, Data);
 
       declare
          Parse_OK  : Boolean;
@@ -2617,7 +2556,7 @@ is
                end;
          end case;
 
-         Append_Transcript (HC, Data);
+         Append_Transcript_Bytes (HC.Transcript, HC.Transcript_Len, Data);
 
          if not HC.Peer_Cert_Valid then
             Send_HS_Encrypted_Alert (S, HC, Decode_Error, Result);
@@ -2799,7 +2738,8 @@ is
                   Fin_Key  : OKM384_Seq (0 .. 47);
                   Expected : Bytes_48;
                begin
-                  Append_Transcript (HC, Data);
+                  Append_Transcript_Bytes
+                    (HC.Transcript, HC.Transcript_Len, Data);
                   Key_Schedule.Derive_Finished_Key_384
                     (Fin_Key, HC.Server_HS_Secret);
                   HMAC384.HMAC_SHA_384
@@ -2822,7 +2762,8 @@ is
                   Fin_Key  : OKM_Seq (0 .. 31);
                   Expected : Digest;
                begin
-                  Append_Transcript (HC, Data);
+                  Append_Transcript_Bytes
+                    (HC.Transcript, HC.Transcript_Len, Data);
                   Key_Schedule.Derive_Finished_Key
                     (Fin_Key, HC.Server_HS_Secret (0 .. 31));
                   HMAC_SHA_256
@@ -3017,7 +2958,8 @@ is
             Empty_Cert (6) := 0;
             Empty_Cert (7) := 0;
 
-            Append_Transcript (HC, Empty_Cert);
+            Append_Transcript_Bytes
+              (HC.Transcript, HC.Transcript_Len, Empty_Cert);
             Records.Build_Encrypted_Record
               (Plaintext  => Empty_Cert,
                Inner_Type => 16#16#,
@@ -3071,7 +3013,8 @@ is
          pragma Assert (Cert_Len < Transcript_Capacity);
          pragma Assert (Cert_Len <= Max_Fragment);
          if Cert_Len > 0 then
-            Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
+            Append_Transcript_Bytes
+              (HC.Transcript, HC.Transcript_Len, Cert_Buf (0 .. Cert_Len - 1));
             Records.Build_Encrypted_Record
               (Plaintext  => Cert_Buf (0 .. Cert_Len - 1),
                Inner_Type => 16#16#,
@@ -3128,7 +3071,9 @@ is
                pragma Assert (Reasm_Buffer_Shaped (HC));
 
                if CV_Len > 0 then
-                  Append_Transcript (HC, CV_Buf (0 .. CV_Len - 1));
+                  Append_Transcript_Bytes
+                    (HC.Transcript, HC.Transcript_Len,
+                     CV_Buf (0 .. CV_Len - 1));
                   Records.Build_Encrypted_Record
                     (Plaintext  => CV_Buf (0 .. CV_Len - 1),
                      Inner_Type => 16#16#,
@@ -3205,7 +3150,8 @@ is
          Big_Finished (3) := 16#30#;
          Big_Finished (4 .. 51) := Verify_48;
 
-         Append_Transcript (HC, Big_Finished);
+         Append_Transcript_Bytes
+           (HC.Transcript, HC.Transcript_Len, Big_Finished);
 
          Records.Build_Encrypted_Record
            (Plaintext  => Big_Finished,
@@ -3303,7 +3249,9 @@ is
       Handshake.Build_Finished
         (Client_Verify, Finished_Buf, Finished_Len);
 
-      Append_Transcript (HC, Finished_Buf (0 .. Finished_Len - 1));
+      Append_Transcript_Bytes
+        (HC.Transcript, HC.Transcript_Len,
+         Finished_Buf (0 .. Finished_Len - 1));
 
       Records.Build_Encrypted_Record
         (Plaintext  => Finished_Buf (0 .. Finished_Len - 1),
@@ -4158,7 +4106,8 @@ is
                                  end loop;
                                  HC.Transcript_Len := 36;
 	                              end;
-		                              Append_Transcript (HC, Frag);
+		                              Append_Transcript_Bytes
+		                                (HC.Transcript, HC.Transcript_Len, Frag);
 			                              if HC.Cfg.Random = null
 			                                or else HC.HRR_Cookie_Len >
 			                                  N32 (HC.HRR_Cookie'Length)
@@ -4205,8 +4154,9 @@ is
                                     HC.Reasm_Hdr_Pending := False;
                                     return;
                                  end if;
-	                                 Append_Transcript
-	                                   (HC, CH2_Buf (0 .. CH2_Len - 1));
+	                                 Append_Transcript_Bytes
+	                                   (HC.Transcript, HC.Transcript_Len,
+	                                    CH2_Buf (0 .. CH2_Len - 1));
 	                                 pragma Assert (HC.Transcript_Len > 0);
 	                                 --  RFC 8446 §D.4 middlebox-compat:
                                  --  emit dummy CCS between HRR and
@@ -4241,7 +4191,8 @@ is
 		                              return;
 		                           end if;
 
-				                           Append_Transcript (HC, Frag);
+				                           Append_Transcript_Bytes
+				                             (HC.Transcript, HC.Transcript_Len, Frag);
 				                           pragma Assert (HC.Transcript_Len > 0);
 		                           pragma Assert
 		                             (if HC.Version = TLS_1_3
@@ -4713,6 +4664,7 @@ is
 
          if S.State = Connected or S.State = Error_State then
             S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+            S.Use_EMS := S.HC_Ptr.Use_EMS;
             --  Persist resumption flags out of HC before free.
             S.Resumed_From_PSK := S.HC_Ptr.Using_PSK;
             --  Zero traffic keys on error (Connected path keeps them)

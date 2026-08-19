@@ -640,6 +640,76 @@ is
       end;
    end Append_PSK_Extension;
 
+   --  Extension payload builders.
+   --
+   --  Each constructs one extension's opaque payload and nothing else: no
+   --  Session, no Handshake_Context, no RFLX context, no ghost state. They
+   --  therefore carry no frame conditions at all. The bounds facts that had
+   --  to be restated inline as loop invariants (SNI_Raw'First = 0,
+   --  SNI_Raw'Last = 4 + Host_Len) are trivial here because the function
+   --  owns the array, so they collapse to a Post the caller can use.
+   --
+   --  The emission quadruple stays at the call site: it updates the Ghost
+   --  Remaining_Ext_Bits, and a ghost entity cannot be passed to a
+   --  non-ghost subprogram.
+
+   --  RFC 6066 §3: list_len(2) + type(1) + name_len(2) + name.
+   --  Name.Len may be 0: the caller emits server_name unconditionally,
+   --  so this must handle the no-SNI case. (That the extension is sent at
+   --  all with an empty host_name is questionable under RFC 6066 §3, but
+   --  it is the caller's existing behaviour and not changed here.)
+   function Build_SNI_Raw (Name : Hostname_Buf) return Byte_Seq
+   with Post => Build_SNI_Raw'Result'First = 0
+                and then Build_SNI_Raw'Result'Last = 4 + N32 (Name.Len);
+
+   function Build_SNI_Raw (Name : Hostname_Buf) return Byte_Seq is
+      Host_Len : constant N32 := N32 (Name.Len);
+      R : Byte_Seq (0 .. 4 + Host_Len) := (others => 0);
+   begin
+      R (0) := Byte ((Host_Len + 3) / 256);
+      R (1) := Byte ((Host_Len + 3) mod 256);
+      R (2) := 16#00#;  --  host_name type
+      R (3) := Byte (Host_Len / 256);
+      R (4) := Byte (Host_Len mod 256);
+      for I in 1 .. Name.Len loop
+         pragma Loop_Invariant (I in 1 .. Name.Len);
+         R (4 + N32 (I)) := Byte (Character'Pos (Name.Data (I)));
+      end loop;
+      return R;
+   end Build_SNI_Raw;
+
+   --  RFC 8422 §5.1.1 supported_groups. Either the single group the server
+   --  selected in an HRR, or the full offered set.
+   function Build_SG_Raw
+     (Restrict : Boolean;
+      Group    : Unsigned_16) return Byte_Seq
+   with Post => Build_SG_Raw'Result'First = 0
+                and then Build_SG_Raw'Result'Last =
+                  (if Restrict then 3 else 7);
+
+   function Build_SG_Raw
+     (Restrict : Boolean;
+      Group    : Unsigned_16) return Byte_Seq
+   is
+      Count : constant N32 := (if Restrict then 1 else 3);
+      R : Byte_Seq (0 .. 1 + 2 * Count) := (others => 0);
+   begin
+      R (0) := Byte ((2 * Count) / 256);
+      R (1) := Byte ((2 * Count) mod 256);
+      if Restrict then
+         R (2) := Byte (Group / 256);
+         R (3) := Byte (Group mod 256);
+      else
+         R (2) := 16#00#;
+         R (3) := 16#1D#;  --  X25519
+         R (4) := 16#00#;
+         R (5) := 16#17#;  --  secp256r1
+         R (6) := 16#00#;
+         R (7) := 16#18#;  --  secp384r1
+      end if;
+      return R;
+   end Build_SG_Raw;
+
    procedure Build_Client_Hello
      (S          : in     Session;
       HC         : in out Handshake_Context;
@@ -1116,25 +1186,9 @@ is
 
 		         --  Extension 1: server_name (0x0000)
 		         declare
-		            SNI_Raw : Byte_Seq (0 .. SNI_Data_Len - 1) := (others => 0);
+              SNI_Raw : constant Byte_Seq :=
+                Build_SNI_Raw (HC.Cfg.Server_Name);
 		         begin
-            --  SNI list: list_len(2) + type(1) + name_len(2) + name
-            SNI_Raw (0) := Byte ((Host_Len + 3) / 256);
-            SNI_Raw (1) := Byte ((Host_Len + 3) mod 256);
-	            SNI_Raw (2) := 16#00#;  --  host_name type
-	            SNI_Raw (3) := Byte (Host_Len / 256);
-	            SNI_Raw (4) := Byte (Host_Len mod 256);
-               pragma Assert (SNI_Raw'First = 0);
-               pragma Assert (SNI_Raw'Last = 4 + Host_Len);
-	            for I in 1 .. HC.Cfg.Server_Name.Len loop
-                  pragma Loop_Invariant (I in 1 .. HC.Cfg.Server_Name.Len);
-                  pragma Loop_Invariant (SNI_Raw'First = 0);
-                  pragma Loop_Invariant (SNI_Raw'Last = 4 + Host_Len);
-                  pragma Assert (N32 (I) <= Host_Len);
-                  pragma Assert (4 + N32 (I) <= SNI_Raw'Last);
-	               SNI_Raw (4 + N32 (I)) :=
-	                  Byte (Character'Pos (HC.Cfg.Server_Name.Data (I)));
-	            end loop;
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) >=
@@ -1154,21 +1208,9 @@ is
 
          --  Extension 2: supported_groups (0x000A)
          declare
-            SG_Raw : Byte_Seq (0 .. SG_Data_Len - 1) := (others => 0);
+            SG_Raw : constant Byte_Seq :=
+              Build_SG_Raw (Restrict_Groups, Initial_Key_Share_Group);
          begin
-            SG_Raw (0) := Byte ((2 * SG_Group_Count) / 256);
-            SG_Raw (1) := Byte ((2 * SG_Group_Count) mod 256);
-            if Restrict_Groups then
-               SG_Raw (2) := Byte (Initial_Key_Share_Group / 256);
-               SG_Raw (3) := Byte (Initial_Key_Share_Group mod 256);
-            else
-               SG_Raw (2) := 16#00#;
-               SG_Raw (3) := 16#1D#;  --  X25519
-               SG_Raw (4) := 16#00#;
-               SG_Raw (5) := 16#17#;  --  secp256r1
-               SG_Raw (6) := 16#00#;
-               SG_Raw (7) := 16#18#;  --  secp384r1
-            end if;
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) >=
@@ -2179,6 +2221,38 @@ is
             end;
 	         end loop;
 	      end;
+
+
+
+      --  RFC 7627 s5.1: record the server's extended_master_secret echo.
+      --  BOTH this and the Tag_Is_Offered arm for 16#0017# (sparktls.ads)
+      --  are required, and neither alone is enough:
+      --    * without the Tag_Is_Offered arm, Requires_Offer rejects the
+      --      server's legitimate echo with unsupported_extension and the
+      --      handshake dies before this flag matters;
+      --    * without this scan, the handshake completes but HC.Use_EMS
+      --      stays False, so the client derives with the legacy label
+      --      while the server used "extended master secret", and Finished
+      --      verification fails.
+      --  Handshake.TLS12.Parse_Server_Hello_12 also sets Use_EMS, but it
+      --  runs only as a fallback when this parser fails
+      --  (sparktls-client.adb ~4015), so it cannot be relied on.
+      --  Verified by BoGo ExtendedMasterSecret-TLS12-Client: reverting
+      --  either change alone puts that test back in the failing set.
+      for I in 1 .. N_Ext loop
+         pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+         pragma Loop_Invariant
+           (HC.Transcript_Len = Saved_Transcript_Len);
+         pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
+         pragma Loop_Invariant
+           (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
+         pragma Loop_Invariant
+           (if Random_Was_Set then HC.Cfg.Random /= null);
+         if Exts (I).Tag = 16#0017# then
+            HC.Use_EMS := True;
+         end if;
+      end loop;
+
 	      pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
 	                              and then (if Random_Was_Set
 	                                        then HC.Cfg.Random /= null)

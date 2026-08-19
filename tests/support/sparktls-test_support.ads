@@ -82,4 +82,25 @@ is
    procedure Set_Client_App_Counter (S : in out Session; V : Unsigned_64);
    procedure Set_Server_App_Counter (S : in out Session; V : Unsigned_64);
 
+   --  RFC 7627: did this TLS 1.2 session negotiate Extended Master
+   --  Secret? Session mirrors HC.Use_EMS before the handshake context is
+   --  freed, so this stays readable post-handshake.
+   --
+   --  Exposed here rather than in SPARKTLS because consumers have no need
+   --  for it: BoGo's -expect-extended-master-secret asks the shim to
+   --  confirm the library's own view agrees with what went on the wire.
+   --  Correctness of the derivation is already established by the
+   --  handshake completing at all -- a mismatched PRF label would produce
+   --  a different master_secret and fail Finished verification.
+   --
+   --  Reports TRUE for any TLS 1.3 session. TLS 1.3 has no EMS
+   --  extension, but its key schedule binds the full handshake
+   --  transcript, so the property EMS exists to provide holds
+   --  inherently. BoringSSL reports the same via
+   --  SSL_get_extms_support, and ems_tests.go passes
+   --  -expect-extended-master-secret on EVERY TLS 1.3 case, including
+   --  the NoExtendedMasterSecret- ones ("In TLS 1.3, the extension is
+   --  irrelevant and always reports as enabled").
+   function Extended_Master_Secret_Used (S : Session) return Boolean;
+
 end SPARKTLS.Test_Support;

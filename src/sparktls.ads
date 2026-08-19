@@ -1540,6 +1540,20 @@ is
    subtype PSK_Value_Length    is N32 range 0 .. 48;
    subtype TLS12_Ticket_Length is N32 range 0 .. Max_TLS12_Ticket_Len;
 
+   --  Uncompressed EC point buffers for the peer's key_share (RFC 8446
+   --  §4.2.8.2): 0x04 || X || Y, so 65 bytes for P-256 and 97 for P-384.
+   --  Named so Copy_P256_KS / Copy_P384_KS can take the buffer alone as an
+   --  out parameter instead of the whole Handshake_Context -- a parameter
+   --  cannot carry an inline constraint, and sharing one subtype between
+   --  field and parameter keeps the call boundary conversion-free.
+   subtype P256_Peer_Key is Byte_Seq (0 .. 64);
+   subtype P384_Peer_Key is Byte_Seq (0 .. 96);
+
+   --  Named so the TLS 1.2 session-ID and ticket helpers can take just the
+   --  buffer they fill instead of the whole Handshake_Context.
+   subtype Session_ID_Length   is N32 range 0 .. 32;
+   subtype TLS12_Ticket_Buffer is Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1);
+
    type Handshake_Context is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
@@ -1564,12 +1578,12 @@ is
 
       --  P-256 ECDHE key exchange state
       P256_Local_SK : Bytes_32 := (others => 0);
-      P256_Peer_PK  : Byte_Seq (0 .. 64) := (others => 0);
+      P256_Peer_PK  : P256_Peer_Key := (others => 0);
       Use_P256_KE   : Boolean := False;
 
       --  P-384 ECDHE key exchange state
       P384_Local_SK : Bytes_48 := (others => 0);
-      P384_Peer_PK  : Byte_Seq (0 .. 96) := (others => 0);
+      P384_Peer_PK  : P384_Peer_Key := (others => 0);
       Use_P384_KE   : Boolean := False;
 
       --  Server-side: which groups did the client offer in key_share?
@@ -1661,7 +1675,7 @@ is
       --  legacy_session_id (whatever its length, 0..32). We store
       --  both the bytes and the length so we can echo accurately
       --  rather than always padding to 32.
-      Legacy_Session_ID_Len : N32 range 0 .. 32 := 0;
+      Legacy_Session_ID_Len : Session_ID_Length := 0;
 
       --  Signature algorithm negotiation
       Peer_Sig_Algos      : Sig_Algo_List := (others => 0);
@@ -1731,8 +1745,7 @@ is
       TLS12_Resumed_Master_Secret : Byte_Seq (0 .. 47) := (others => 0);
       TLS12_Resumed_Suite       : Unsigned_16 := 0;
       TLS12_Peer_Ticket_Len     : TLS12_Ticket_Length := 0;
-      TLS12_Peer_Ticket         : Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1)
-                                    := (others => 0);
+      TLS12_Peer_Ticket         : TLS12_Ticket_Buffer := (others => 0);
 
       --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
       Use_EMS : Boolean := False;
@@ -2426,7 +2439,18 @@ is
       or else (Tag = 16#0010# and then HC.Cfg.ALPN.Len > 0)
       or else (Tag = 16#0023# and then HC.TLS12_Sent_Ticket_Ext)
       or else (Tag = 16#0029# and then HC.PSK_Offered)
-      or else (Tag = 16#002A# and then HC.Early_Data_Offered));
+      or else (Tag = 16#002A# and then HC.Early_Data_Offered)
+      --  RFC 7627 EMS is a CONDITIONAL offering: the CH builder emits it
+      --  iff Cfg.Versions /= TLS_1_3_Only (see Offer_EMS in
+      --  Handshake.Client_Msgs.Build_Client_Hello), so Always_In_CH is
+      --  False on its policy row and Tag_Is_Offered_Static cannot answer
+      --  for it. Without this arm the server's legitimate EMS echo failed
+      --  the Requires_Offer check and the client replied
+      --  unsupported_extension -- BoGo ExtendedMasterSecret-TLS12-Client.
+      --  The condition MUST track Offer_EMS exactly; if one changes so
+      --  must the other.
+      or else (Tag = 16#0017#
+               and then HC.Cfg.Versions /= TLS_1_3_Only));
 
    --  RFC 8446 §4.2 single-call validator for any server-generated
    --  extension. Returns OK = True on success; otherwise sets
@@ -2830,6 +2854,14 @@ private
 
       --  Peer certificate valid (copied from HC before free)
       Peer_Cert_Valid : Boolean := False;
+
+      --  RFC 7627 Extended Master Secret negotiated for this TLS 1.2
+      --  session (copied from HC before free, same as Peer_Cert_Valid).
+      --  Always False for TLS 1.3, which binds the transcript inherently
+      --  and has no EMS extension. Mirrored purely so the negotiated
+      --  outcome outlives the handshake context; read via
+      --  SPARKTLS.Test_Support, not by consumers.
+      Use_EMS : Boolean := False;
 
       --  Resumption: cached session ticket (client side, TLS 1.3 PSK)
       Ticket : Session_Ticket;

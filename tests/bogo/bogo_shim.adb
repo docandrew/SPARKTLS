@@ -83,6 +83,7 @@ procedure Bogo_Shim is
       Sign_Sig_Count       : Natural range 0 .. Max_Sig_Algos := 0;
       Expect_ALPN          : Unbounded_Text := (others => Character'Val (0));
       Expect_ALPN_Len      : Natural := 0;
+      Expect_EMS           : Boolean := False;
       Decline_ALPN         : Boolean := False;
       Reject_ALPN          : Boolean := False;
       Export_Len           : Natural range 0 .. 1024 := 0;
@@ -559,6 +560,10 @@ procedure Bogo_Shim is
                null;
             elsif A = "-expect-handshake-fails" then
                Cfg.Expect_Hs_Fails := True;
+            elsif A = "-expect-extended-master-secret" then
+               --  RFC 7627. ems_tests.go passes this on the
+               --  ExtendedMasterSecret-TLS12-{Server,Client} tests.
+               Cfg.Expect_EMS := True;
             elsif A = "-require-any-client-certificate" then
                Cfg.Request_Client_Cert := True;
                Cfg.Require_Client_Cert := True;
@@ -1417,6 +1422,22 @@ procedure Bogo_Shim is
       if Cfg.Expect_Hs_Fails then
          --  Got here = handshake succeeded but test expected failure.
          Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (Exit_Failure));
+         Run_Failed := True;
+         return;
+      end if;
+
+      --  -expect-extended-master-secret: the session must have
+      --  negotiated RFC 7627 EMS. Note the handshake completing at all
+      --  is already strong evidence the derivation is right -- a
+      --  mismatched PRF label yields a different master_secret and
+      --  fails Finished verification against the peer. This check
+      --  additionally confirms our own bookkeeping agrees with the wire.
+      if Cfg.Expect_EMS
+        and then not SPARKTLS.Test_Support.Extended_Master_Secret_Used (S)
+      then
+         Err ("expect-extended-master-secret: EMS was not negotiated");
+         Ada.Command_Line.Set_Exit_Status
+           (Ada.Command_Line.Exit_Status (Exit_Failure));
          Run_Failed := True;
          return;
       end if;

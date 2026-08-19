@@ -91,4 +91,13 @@ is
       S.Server_App.Counter := V;
    end Set_Server_App_Counter;
 
+   function Extended_Master_Secret_Used (S : Session) return Boolean is
+   begin
+      --  TLS 1.3 binds the transcript inherently -- see the spec note.
+      if S.Negotiated_Version = TLS_1_3 then
+         return True;
+      end if;
+      return S.Use_EMS;
+   end Extended_Master_Secret_Used;
+
 end SPARKTLS.Test_Support;
