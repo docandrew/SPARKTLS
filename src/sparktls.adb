@@ -1,4 +1,3 @@
-with Ada.Unchecked_Deallocation;
 with SPARKTLS.Records;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Key_Schedule;
@@ -11,13 +10,6 @@ with SPARKTLS.Key_Update;
 package body SPARKTLS with
    SPARK_Mode => On
 is
-   procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access) is
-      procedure Dealloc is new Ada.Unchecked_Deallocation
-        (Object => Reasm_Buffer, Name => Byte_Seq_Access);
-   begin
-      Dealloc (Ptr);
-   end Free_Byte_Seq;
-
    --  RFC 7748 §6.1 / RFC 8422 §5.10: see the contract in the spec.
    --  The body accumulates a byte-wise OR; the loop invariant ties
    --  the accumulator to the existence of a non-zero byte seen so

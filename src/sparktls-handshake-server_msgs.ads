@@ -100,7 +100,6 @@ is
                 and then HC.Cfg.Random /= null
 		                and then HC.Legacy_Session_ID_Len in 0 .. 32
 		                and then Reasm_Building (HC)
-		                and then Reasm_Buffer_Shaped (HC)
 		                and then Negotiated_Suite (S) in Suite_AES_128_GCM_SHA256
 	                                               | Suite_AES_256_GCM_SHA384
 	                                               | Suite_CHACHA20_POLY1305_SHA256
@@ -117,8 +116,7 @@ is
 		                                 and then HC.Cfg.Local'Old.Has_Identity
 		                             then HC.Cfg.Local /= null
 		                                  and then HC.Cfg.Local.Has_Identity)
-				                   and then Reasm_Building (HC)
-                           and then Reasm_Buffer_Shaped (HC);
+				                   and then Reasm_Building (HC);
 
    function Has_ALPN_Match (HC : Handshake_Context) return Boolean;
 

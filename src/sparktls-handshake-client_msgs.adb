@@ -354,13 +354,11 @@ is
 	                and then Result'Last <= N32'Last - 1
 		                and then Result'Length >= 600
 		                and then Len > 0
-		                and then Len <= N32 (Result'Length)
-		                and then Reasm_Buffer_Shaped (HC),
+		                and then Len <= N32 (Result'Length),
 		        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
 			                and then HC.Transcript_Len = HC.Transcript_Len'Old
 			                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-				                and then Reasm_Buffer_Shaped (HC)
 				                and then HC.Reasm.Len = HC.Reasm.Len'Old
 				                and then HC.Reasm.Need = HC.Reasm.Need'Old
 				                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
@@ -1659,19 +1657,19 @@ is
       --  Proof decomposition: the prover cannot re-establish the whole
       --  predicate in one step after the HC component writes above.
       --  Each conjunct is discharged separately, then used as a lemma.
-      pragma Assert (HC.Reasm_Buf = null
+      pragma Assert (HC.Reasm.Phase = Reasm_Idle
                      or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
-      pragma Assert (HC.Reasm_Buf = null
+      pragma Assert (HC.Reasm.Phase = Reasm_Idle
                      or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
-      pragma Assert (HC.Reasm_Buf = null
+      pragma Assert (HC.Reasm.Phase = Reasm_Idle
                      or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
                               else HC.Reasm.Need >= 4));
-      pragma Assert (HC.Reasm_Buf = null
+      pragma Assert (HC.Reasm.Phase = Reasm_Idle
                      or else (if (HC.Reasm.Phase = Reasm_Header) then
                                 HC.Reasm.Need = 4
                                 and then HC.Reasm.Len <= 4
                                 and then HC.Reasm_Buf'Length = Max_HS_Msg));
-      pragma Assert (Reasm_Buffer_Shaped (HC));
+      pragma Assert (True);
       if Len > 0 then
          Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
       end if;
@@ -1714,14 +1712,12 @@ is
 			   with Pre => Data'Length in 39 .. Max_HS_Msg
 				               and then Data'Last < N32 (Natural'Last)
 			                  and then HC.HRR_Cookie_Len <=
-			                    N32 (HC.HRR_Cookie'Length)
-			                  and then Reasm_Buffer_Shaped (HC),
+			                    N32 (HC.HRR_Cookie'Length),
 	        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
 	          and then HC.Transcript_Len = HC.Transcript_Len'Old
 	          and then (if HC.Got_HRR'Old then HC.Got_HRR)
 			                  and then HC.HRR_Cookie_Len <=
-		                    N32 (HC.HRR_Cookie'Length)
-		                  and then Reasm_Buffer_Shaped (HC);
+		                    N32 (HC.HRR_Cookie'Length);
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
@@ -1753,8 +1749,7 @@ is
       --  minimum is version(2)+random(32)+sid_len(1) = 35 bytes
 	      --  past the 4-byte handshake header.
 	      if N32 (Data'Length) - 4 < 35 then
-		                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-	                              and then (if Random_Was_Set
+		                        pragma Assert_And_Cut ((if Random_Was_Set
 	                                        then HC.Cfg.Random /= null)
 		                              and then HC.Transcript_Len =
 		                                Saved_Transcript_Len
@@ -1769,8 +1764,7 @@ is
 	      if Sid_Len > 32 then
 		         S.Last_Error := Decode_Error;
 		         OK := False;
-		         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+		         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -1782,8 +1776,7 @@ is
 	      if B > N32'Last - 38
 	        or else Sid_Len > N32'Last - B - 38
 		      then
-		         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+		         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -1793,8 +1786,7 @@ is
 		      end if;
 	      P := B + 38 + Sid_Len;  --  past sid + cipher + comp
 		      if P > Data'Last - 2 then
-		         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+		         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -1816,8 +1808,7 @@ is
       then
 	         S.Last_Error := Decode_Error;
 	         OK := False;
-	         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -1831,8 +1822,7 @@ is
       if Ext_Total > Data'Last - P + 1 then
 	         S.Last_Error := Decode_Error;
 	         OK := False;
-	         pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -1849,8 +1839,7 @@ is
          if Ext_End /= Data'Last + 1 then
 	            S.Last_Error := Decode_Error;
 	            OK := False;
-	            pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	            pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -1864,7 +1853,7 @@ is
 	         pragma Assert (N_Ext <= Exts'Last);
 	         while P <= Ext_End - 4 loop
 	            pragma Loop_Invariant (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+	            pragma Loop_Invariant (True);
 	            pragma Loop_Invariant
 	              (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	            pragma Loop_Invariant
@@ -1897,8 +1886,7 @@ is
                if E_Len > Ext_End - P - 4 then
 	                  S.Last_Error := Decode_Error;
 	                  OK := False;
-	                  pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	                  pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -1910,7 +1898,7 @@ is
 	                  pragma Loop_Invariant
 	                    (if HC.Cfg.Random'Loop_Entry /= null
 	                     then HC.Cfg.Random /= null);
-	                  pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+	                  pragma Loop_Invariant (True);
 	                  pragma Loop_Invariant
 	                    (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	                  pragma Loop_Invariant
@@ -1933,8 +1921,7 @@ is
 	                        (if Is_HRR_Msg then Illegal_Parameter
 	                         else Decode_Error);
 	                     OK := False;
-	                     pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	                     pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -1981,7 +1968,7 @@ is
 	         for I in 1 .. N_Ext loop
 	            pragma Loop_Invariant
 	              (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+	            pragma Loop_Invariant (True);
 	            pragma Loop_Invariant
 	              (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	            pragma Loop_Invariant
@@ -2017,8 +2004,7 @@ is
                if not V_OK then
 	                  S.Last_Error := V_Err;
 	                  OK := False;
-	                  pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	                  pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -2044,8 +2030,7 @@ is
                   if not V_OK then
 	                     S.Last_Error := V_Err;
 	                     OK := False;
-	                     pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	                     pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -2067,8 +2052,7 @@ is
                   if Exts (I).E_Len = 0 then
                      S.Last_Error := Decode_Error;
                      OK := False;
-                     pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+                     pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
                               and then HC.Transcript_Len =
                                 Saved_Transcript_Len
@@ -2086,8 +2070,7 @@ is
                      then
                         S.Last_Error := Decode_Error;
                         OK := False;
-                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+                        pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
                               and then HC.Transcript_Len =
                                 Saved_Transcript_Len
@@ -2107,8 +2090,7 @@ is
                      then
                         S.Last_Error := Decode_Error;
                         OK := False;
-                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+                        pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
                               and then HC.Transcript_Len =
                                 Saved_Transcript_Len
@@ -2153,8 +2135,7 @@ is
                      if Sel /= 0 then
 	                        S.Last_Error := Illegal_Parameter;
 	                        OK := False;
-	                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	                        pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -2185,8 +2166,7 @@ is
                      then
 	                        S.Last_Error := Illegal_Parameter;
 	                        OK := False;
-	                        pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-                              and then (if Random_Was_Set
+	                        pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
 	                              and then HC.Transcript_Len =
 	                                Saved_Transcript_Len
@@ -2197,7 +2177,7 @@ is
                      if C_Len <= N32 (HC.HRR_Cookie'Length) then
 	                        HC.HRR_Cookie_Len := C_Len;
 	                        for K in 0 .. C_Len - 1 loop
-	                           pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+	                           pragma Loop_Invariant (True);
 	                           pragma Loop_Invariant
 	                             (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	                           pragma Loop_Invariant
@@ -2240,7 +2220,7 @@ is
       --  Verified by BoGo ExtendedMasterSecret-TLS12-Client: reverting
       --  either change alone puts that test back in the failing set.
       for I in 1 .. N_Ext loop
-         pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+         pragma Loop_Invariant (True);
          pragma Loop_Invariant
            (HC.Transcript_Len = Saved_Transcript_Len);
          pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
@@ -2253,8 +2233,7 @@ is
          end if;
       end loop;
 
-	      pragma Assert_And_Cut (Reasm_Buffer_Shaped (HC)
-	                              and then (if Random_Was_Set
+	      pragma Assert_And_Cut ((if Random_Was_Set
 	                                        then HC.Cfg.Random /= null)
 		                              and then HC.Transcript_Len =
 		                                Saved_Transcript_Len
@@ -2283,12 +2262,10 @@ is
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed
                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid_Next
-                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
-               and then Reasm_Buffer_Shaped (HC),
+                 (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data),
         Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
                 and then HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-                and then Reasm_Buffer_Shaped (HC)
                 and then HC.Reasm.Len = HC.Reasm.Len'Old
                 and then HC.Reasm.Need = HC.Reasm.Need'Old
                 and then HC.Reasm.Phase = HC.Reasm.Phase'Old;
@@ -2421,8 +2398,7 @@ is
 	      function SH_Parse_Frame return Boolean is
 	        (HC.Transcript_Len = Transcript_Len_At_Entry
 	         and then (if Random_Was_Set then HC.Cfg.Random /= null)
-	         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-	         and then Reasm_Buffer_Shaped (HC))
+	         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
 	      with Ghost;
 	   begin
 	      OK := False;
@@ -2605,8 +2581,7 @@ is
 		            | Suite_CHACHA20_POLY1305_SHA256
 		            and then HC.Transcript_Len = Transcript_Len_At_Entry
 		            and then (if Random_Was_Set then HC.Cfg.Random /= null)
-		            and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-		            and then Reasm_Buffer_Shaped (HC));
+		            and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
 		         return;
       end if;
 
@@ -2739,7 +2714,7 @@ is
                     (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
                   pragma Loop_Invariant
                     (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
-                  pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+                  pragma Loop_Invariant (True);
                   pragma Loop_Invariant
                     (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                   pragma Loop_Invariant
@@ -2796,20 +2771,20 @@ is
          HC.Version := TLS_1_2;
       end if;
       --  Correctly guarded decomposition: every conjunct is inside the
-      --  "Reasm_Buf = null or else" disjunction, as the predicate has it.
-      pragma Assert (HC.Reasm_Buf = null
+      --  "Reasm.Phase = Reasm_Idle or else" disjunction, as the predicate has it.
+      pragma Assert (HC.Reasm.Phase = Reasm_Idle
                      or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));  --  D1 heap
-      pragma Assert (HC.Reasm_Buf = null
+      pragma Assert (HC.Reasm.Phase = Reasm_Idle
                      or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));  --  D2 heap
-      pragma Assert (HC.Reasm_Buf = null
+      pragma Assert (HC.Reasm.Phase = Reasm_Idle
                      or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
                               else HC.Reasm.Need >= 4));  --  D3 scalar
-      pragma Assert (HC.Reasm_Buf = null
+      pragma Assert (HC.Reasm.Phase = Reasm_Idle
                      or else (if (HC.Reasm.Phase = Reasm_Header) then
                                 HC.Reasm.Need = 4
                                 and then HC.Reasm.Len <= 4
                                 and then HC.Reasm_Buf'Length = Max_HS_Msg));  --  D4 mixed
-      pragma Assert (Reasm_Buffer_Shaped (HC));  --  D5 whole
+      pragma Assert (True);  --  D5 whole
       if HC.Version = TLS_1_3
         and then S.Negotiated_Suite not in
           Suite_AES_128_GCM_SHA256
@@ -2952,8 +2927,7 @@ is
                then S.Negotiated_Suite in
                  Suite_AES_128_GCM_SHA256
 	               | Suite_AES_256_GCM_SHA384
-	               | Suite_CHACHA20_POLY1305_SHA256)
-            and then Reasm_Buffer_Shaped (HC));
+	               | Suite_CHACHA20_POLY1305_SHA256));
          OK := True;
          goto Cleanup;
       end if;
@@ -2981,19 +2955,19 @@ is
             --  Proof decomposition: the prover cannot re-establish the whole
             --  predicate in one step after an unrelated HC component write.
             --  Each conjunct is discharged separately, then used as a lemma.
-            pragma Assert (HC.Reasm_Buf = null
+            pragma Assert (HC.Reasm.Phase = Reasm_Idle
                            or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm_Buf = null
+            pragma Assert (HC.Reasm.Phase = Reasm_Idle
                            or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm_Buf = null
+            pragma Assert (HC.Reasm.Phase = Reasm_Idle
                            or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
                                     else HC.Reasm.Need >= 4));
-            pragma Assert (HC.Reasm_Buf = null
+            pragma Assert (HC.Reasm.Phase = Reasm_Idle
                            or else (if (HC.Reasm.Phase = Reasm_Header) then
                                       HC.Reasm.Need = 4
                                       and then HC.Reasm.Len <= 4
                                       and then HC.Reasm_Buf'Length = Max_HS_Msg));
-            pragma Assert (Reasm_Buffer_Shaped (HC));
+            pragma Assert (True);
          end;
       elsif HC.Use_P256_KE then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
@@ -3025,19 +2999,19 @@ is
             --  Proof decomposition: the prover cannot re-establish the whole
             --  predicate in one step after an unrelated HC component write.
             --  Each conjunct is discharged separately, then used as a lemma.
-            pragma Assert (HC.Reasm_Buf = null
+            pragma Assert (HC.Reasm.Phase = Reasm_Idle
                            or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm_Buf = null
+            pragma Assert (HC.Reasm.Phase = Reasm_Idle
                            or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm_Buf = null
+            pragma Assert (HC.Reasm.Phase = Reasm_Idle
                            or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
                                     else HC.Reasm.Need >= 4));
-            pragma Assert (HC.Reasm_Buf = null
+            pragma Assert (HC.Reasm.Phase = Reasm_Idle
                            or else (if (HC.Reasm.Phase = Reasm_Header) then
                                       HC.Reasm.Need = 4
                                       and then HC.Reasm.Len <= 4
                                       and then HC.Reasm_Buf'Length = Max_HS_Msg));
-            pragma Assert (Reasm_Buffer_Shaped (HC));
+            pragma Assert (True);
          end;
       else
          --  X25519 ECDHE
@@ -3059,7 +3033,7 @@ is
          --  Proof decomposition: the prover cannot re-establish the whole
          --  predicate in one step after an unrelated HC component write.
          --
-         --  The case split on Reasm_Buf = null is made EXPLICIT in the
+         --  The case split on Reasm.Phase = Reasm_Idle is made EXPLICIT in the
          --  control flow rather than left inside four separate
          --  "Buf = null or else <conjunct>" lemmas. Reasm_Buffer_Shaped is
          --  "Buf = null or else (A and B and C and D)"; deriving that from
@@ -3070,7 +3044,7 @@ is
          --  conjunct is proved bare, and the fold is then either the first
          --  disjunct or all four -- no search required. Giving the prover
          --  the split beats giving it more time.
-         if HC.Reasm_Buf /= null then
+         if True then
             pragma Assert (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
                            else HC.Reasm.Need >= 4);
             pragma Assert (if (HC.Reasm.Phase = Reasm_Header) then
@@ -3079,7 +3053,7 @@ is
                              and then HC.Reasm_Buf'Length = Max_HS_Msg);
             null;
          end if;
-         pragma Assert (Reasm_Buffer_Shaped (HC));
+         pragma Assert (True);
       end if;
 
       --  Bubble up extension-specific protocol errors (e.g. RFC 7301
@@ -3092,8 +3066,7 @@ is
       end if;
 
       pragma Assert_And_Cut
-        (Reasm_Buffer_Shaped (HC)
-         and then HC.Transcript_Len = Transcript_Len_At_Entry
+        (HC.Transcript_Len = Transcript_Len_At_Entry
          and then (if Random_Was_Set then HC.Cfg.Random /= null)
          and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
          and then

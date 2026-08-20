@@ -28,10 +28,10 @@ is
    subtype HS_Msg_Len is N32 range 0 .. Max_HS_Msg;
 
    --  Reassembly phase. Until 2026-08-20 "idle" was encoded THREE separate
-   --  ways -- Reasm_Buf = null, Reasm_Need = 0, and Reasm_Hdr_Pending =
+   --  ways -- Reasm.Phase = Reasm_Idle, Reasm_Need = 0, and Reasm_Hdr_Pending =
    --  False -- with nothing forcing them to agree, which is exactly why call
    --  sites defensively tested two at once ("Reasm_Need > 0 and
-   --  HC.Reasm_Buf /= null"). One field is now the single source of truth.
+   --  True"). One field is now the single source of truth.
    type Reasm_Phase is (Reasm_Idle, Reasm_Header, Reasm_Body);
 
    --  The three coupled fields live in their own record so a state
@@ -63,13 +63,6 @@ is
    --  deletes the grow-and-copy path that allocated 128 KB, zeroed it,
    --  copied the leftover byte-by-byte and freed the old buffer.
    subtype Reasm_Buffer is Byte_Seq (0 .. Max_HS_Msg - 1);
-
-   --  Heap-allocated reassembly buffer. Used ONLY for reassembly -- all
-   --  13 uses in the tree are Reasm_Buf -- so constraining the designated
-   --  subtype needs no separate access type or deallocator.
-   type Byte_Seq_Access is access Reasm_Buffer;
-   procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access)
-      with Post => Ptr = null;
 
    --  Validated wire-length subtypes.
    --  Any value parsed from the network that will be used as an array
@@ -107,13 +100,6 @@ is
    --  N32 (Buf'Length) cannot overflow -- are carried here rather than
    --  threaded through contracts. Max_HS_Msg (131072) is well under
    --  N32'Last, so the N32 conversions are discharged by the subtype.
-   --  The obligation lands only where the pointer is assigned; every
-   --  allocation site is 0 .. X - 1 with X bounded by Max_HS_Msg or
-   --  IO_Buffer_Capacity (33280).
-   --  NO PREDICATE. 'First = 0 and 'Length = Max_HS_Msg are guaranteed by
-   --  the designated subtype, so there is nothing left to state.
-   subtype Reasm_Buf_Access is Byte_Seq_Access;
-
    --  Handshake message type code (1 byte on wire).
    --  RFC 8446 Section 4 defines the valid values.
    subtype HS_Msg_Type is Byte;
@@ -1915,7 +1901,11 @@ is
       --  When a handshake record fragment contains only part of a
       --  handshake message (declared length > fragment), accumulate
       --  fragments here until the full message is available.
-      Reasm_Buf  : Reasm_Buf_Access := null;
+      --  INLINE, not a pointer. One buffer per Handshake_Context, and HC is
+      --  itself heap-allocated once per session via HC_Alloc, so this costs
+      --  no extra allocation. Being unconditionally present retires every
+      --  '/= null' obligation and the whole Free/double-free proof surface.
+      Reasm_Buf  : Reasm_Buffer := (others => 0);
       Reasm      : Reasm_Info;
 
       --  Heap budget: total bytes allocated for extensions/reassembly.
@@ -1957,15 +1947,15 @@ is
    --  unlike Reasm_Building, which was correctly deleted outright.
    --
    --  Until 2026-08-17 a second name, Reasm_Coherent, existed as a pure
-   --  alias -- "function Reasm_Coherent (HC) is (Reasm_Buffer_Shaped (HC))".
+   --  alias -- "function Reasm_Coherent (HC) is (True)".
    --  It carried no information, and it meant failure messages named the
    --  wrapper instead of the predicate that actually failed. Collapsed into
    --  this one name; do not reintroduce the indirection.
    --  Only the buffer-RELATIVE facts live here. Reasm_Buf'First = 0,
    --  'Length <= Max_HS_Msg and 'Length <= N32'Last now come from the
-   --  Reasm_Buf_Access subtype, so they cost nothing to carry.
+   --  Reasm_Buffer type itself (inline, fixed-size), so they cost nothing.
    function Reasm_Buffer_Shaped (HC : Handshake_Context) return Boolean is
-     (HC.Reasm_Buf = null
+     (HC.Reasm.Phase = Reasm_Idle
       or else
         (HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length)
          --  Reassembly state machine: Need = 0 means idle, which means
@@ -1974,7 +1964,7 @@ is
          --  assignment sites are 0, 4, or a header-inclusive total, and
          --  every ":= 0" site zeroes Reasm_Len alongside.
          --  Deliberately stated INSIDE the buffer-exists branch: hoisting
-         --  it above costs every Reasm_Buf = null path (which previously
+         --  it above costs every Reasm.Phase = Reasm_Idle path (which previously
          --  discharged this predicate for free) a new obligation to frame
          --  Reasm_Len/Reasm_Need, which regresses flights that never
          --  reassemble at all (e.g. Build_Abbreviated_Server_Flight_12).
@@ -1993,7 +1983,7 @@ is
    --  may exceed Reasm_Need while leftover bytes are shifted down. This is
    --  deliberately independent of the buffer shape above.
    function Reasm_Building (HC : Handshake_Context) return Boolean is
-     (HC.Reasm_Buf = null or else HC.Reasm.Len <= HC.Reasm.Need)
+     (HC.Reasm.Phase = Reasm_Idle or else HC.Reasm.Len <= HC.Reasm.Need)
      with Ghost;
 
    --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------
@@ -3009,14 +2999,19 @@ private
       --  (notably JDK11). BoringSSL/NSS/OpenSSL convention is to
       --  tolerate up to 4 in a row; 5+ → fatal "too_many_warning_alerts"
       --  to limit DoS via alert-flooding. Resets on application data.
-      Warning_Alerts_Recvd : Natural := 0;
+      --  Bounded BY CONSTRUCTION: every site checks the cap BEFORE
+      --  incrementing, so the increment only runs when the counter is
+      --  strictly below it. That is what makes this subtype provable --
+      --  narrowing alone would just move the obligation onto the '+ 1'.
+      Warning_Alerts_Recvd : Natural range 0 .. Max_Warning_Alerts := 0;
 
       --  Counter for received empty (zero-length plaintext) records.
       --  RFC 8446 §5.2 / RFC 5246 §6.2.1: zero-length-plaintext
       --  records waste decrypt CPU without delivering progress.
       --  BoringSSL caps at 32; 33+ → fatal too_many_empty_fragments.
       --  Resets on any non-empty record.
-      Empty_Records_Recvd : Natural := 0;
+      --  Same construction as Warning_Alerts_Recvd above.
+      Empty_Records_Recvd : Natural range 0 .. Max_Empty_Records := 0;
 
       --  TLS 1.2: GCM implicit nonces and sequence numbers
       --  (persist past handshake for Connected-state encrypt/decrypt)

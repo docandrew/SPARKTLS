@@ -4,7 +4,7 @@ package body SPARKTLS.Client.TLS12.Packed with
    SPARK_Mode => On
 is
       procedure Shift_To_Next_Packed_Message
-        (Reasm_Buf   : in out Byte_Seq_Access;
+        (Reasm_Buf   : in out Reasm_Buffer;
          Reasm       : in out Reasm_Info;
          Msg_Type    :    out Byte;
          Msg_Len     :    out N32;
@@ -28,7 +28,6 @@ is
       for I in N32 range 0 .. Leftover - 1 loop
             pragma Loop_Invariant
               (I <= Leftover - 1
-               and Reasm_Buf /= null
                and Reasm_Buf'First = 0
                and Old_Need + Leftover <= N32 (Reasm_Buf'Length));
             Reasm_Buf (I) := Reasm_Buf (Old_Need + I);
@@ -52,7 +51,6 @@ is
                Next_Total : constant N32 := Next_Len + 4;
             begin
                if Next_Total > Max_HS_Msg then
-                  Free_Byte_Seq (Reasm_Buf);
                   Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
                   Bad_Next := True;
                   return;

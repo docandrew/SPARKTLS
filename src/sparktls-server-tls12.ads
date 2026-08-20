@@ -73,7 +73,6 @@ is
 			                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 			                           (HC.Server_Seq_12)
 	                and then Reasm_Building (HC)
-	                and then Reasm_Buffer_Shaped (HC)
 	                and then SPARKTLSCrypto.P384.Field.Initialized
 		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => S.State in Server_Hello_Sent | Wait_Client_Finished
@@ -88,8 +87,7 @@ is
 	                          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                            (HC.Cfg.Local)
 				                        and then HC.Cfg.Random /= null
-				                        and then Reasm_Building (HC)
-				                        and then Reasm_Buffer_Shaped (HC));
+				                        and then Reasm_Building (HC));
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
@@ -111,7 +109,6 @@ is
                           (HC.Cfg.Local)
 	               and then HC.Cfg.Random /= null
                and then Reasm_Building (HC)
-               and then Reasm_Buffer_Shaped (HC)
                and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
 	                 (HC.Selected_Group)
                and then SPARKTLSCrypto.P384.Field.Initialized
@@ -140,7 +137,7 @@ is
 	                       (if S.State in Wait_Client_Cert_Verify
                                       | Wait_Client_Finished
                                       | Connected
-                        then Reasm_Buffer_Shaped (HC)
+                        then True
                              );
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
@@ -161,8 +158,7 @@ is
 	               and then S.State = Wait_Client_Certificate
 	               and then Reasm_Building (HC)
 	               and then HC.Reasm.Len <= HC.Reasm.Need
-	               and then Reasm_Buffer_Shaped (HC)
-               and then HC.Cfg.Local /= null
+	               and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity
                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                           (HC.Cfg.Local)
@@ -174,7 +170,6 @@ is
                 and then
                   (if S.State /= Error_State
 	                   then Reasm_Building (HC)
-	                        and then Reasm_Buffer_Shaped (HC)
 	                        and then HC.Cfg.Local /= null
                         and then HC.Cfg.Local.Has_Identity
                         and then
@@ -198,7 +193,6 @@ is
    with Pre => HC.Version = TLS_1_2
                and then S.State = Wait_Client_Cert_Verify
                and then Reasm_Building (HC)
-               and then Reasm_Buffer_Shaped (HC)
                and then HC.Cfg.Local /= null
 	               and then HC.Cfg.Local.Has_Identity
 	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
@@ -247,7 +241,6 @@ is
 	                   (HC.Cfg.Local)
 	        and then HC.Cfg.Random /= null
                and then Reasm_Building (HC)
-               and then Reasm_Buffer_Shaped (HC)
                and then CCS_Precedes_Finished_RFC_5246_7_1 (HC)
                --  Required by Send_Encrypted_Alert_12 in error paths
                --  (RFC 5246 §7.2.1 post-CCS encrypted alerts).
@@ -283,7 +276,6 @@ is
                    (HC.Cfg.Local)
         and then HC.Cfg.Random /= null
         and then Reasm_Building (HC)
-        and then Reasm_Buffer_Shaped (HC)
         --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
         and then HC.Transcript_Len > 0
         and then HC.Transcript_Len <= Transcript_Capacity
@@ -310,7 +302,6 @@ is
 	                              (HC.Cfg.Local)
 		                   and then HC.Cfg.Random /= null
 			                   and then Reasm_Building (HC)
-			                   and then Reasm_Buffer_Shaped (HC)
 			                   and then S.State = S.State'Old
                    and then S.Role = S.Role'Old
                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old

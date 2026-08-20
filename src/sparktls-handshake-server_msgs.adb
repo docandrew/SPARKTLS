@@ -3749,8 +3749,7 @@ is
       KS_Raw_Len :    out N32;
       OK         :    out Boolean)
 	   with Pre  => HC.Cfg.Random /= null
-	                and then Reasm_Building (HC)
-                    and then Reasm_Buffer_Shaped (HC),
+	                and then Reasm_Building (HC),
 	        Post => (if OK then KS_Raw_Len = 36 else KS_Raw_Len = 0)
 	                and then HC.Cfg.Random /= null
 	                and then
@@ -3770,7 +3769,6 @@ is
                          HC.Legacy_Session_ID_Len'Old
 	                and then HC.Server_Random = HC.Server_Random'Old
 	                and then Reasm_Building (HC)
-                    and then Reasm_Buffer_Shaped (HC)
    is
       procedure Gen_Random (Output : out Byte_Seq)
         renames HC.Cfg.Random.all;
@@ -3823,8 +3821,7 @@ is
       KS_Raw_Len :    out N32;
       OK         :    out Boolean)
 	   with Pre  => HC.Cfg.Random /= null
-	                and then Reasm_Building (HC)
-                    and then Reasm_Buffer_Shaped (HC),
+	                and then Reasm_Building (HC),
 	        Post => (if OK then KS_Raw_Len = 69 else KS_Raw_Len = 0)
 	                and then HC.Cfg.Random /= null
 	                and then
@@ -3844,7 +3841,6 @@ is
                          HC.Legacy_Session_ID_Len'Old
 	                and then HC.Server_Random = HC.Server_Random'Old
 	                and then Reasm_Building (HC)
-                    and then Reasm_Buffer_Shaped (HC)
    is
       use SPARKTLSCrypto.P256.Point;
       procedure Gen_Random (Output : out Byte_Seq)
@@ -3899,8 +3895,7 @@ is
       OK         :    out Boolean)
 	   with Pre  => HC.Cfg.Random /= null
 		                and then Reasm_Building (HC)
-                    and then Reasm_Buffer_Shaped (HC)
-		                and then SPARKTLSCrypto.P384.Field.Initialized,
+                    and then SPARKTLSCrypto.P384.Field.Initialized,
 	        Post => (if OK then KS_Raw_Len = 101 else KS_Raw_Len = 0)
 	                and then HC.Cfg.Random /= null
 	                and then
@@ -3916,7 +3911,6 @@ is
                          HC.Legacy_Session_ID_Len'Old
 	                and then HC.Server_Random = HC.Server_Random'Old
 	                and then Reasm_Building (HC)
-                    and then Reasm_Buffer_Shaped (HC)
    is
       procedure Gen_Random (Output : out Byte_Seq)
         renames HC.Cfg.Random.all;
@@ -4319,8 +4313,7 @@ is
       OK         :    out Boolean)
 	   with Pre => HC.Cfg.Random /= null
 	               and then Reasm_Building (HC)
-                   and then Reasm_Buffer_Shaped (HC)
-	               and then SPARKTLSCrypto.P384.Field.Initialized
+                   and then SPARKTLSCrypto.P384.Field.Initialized
                and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
                and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
 	        Post => (if OK then KS_Raw_Len in 36 | 69 | 101 else KS_Raw_Len = 0)
@@ -4336,8 +4329,7 @@ is
                                and then HC.Cfg.Local.Has_Identity)
                 and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
 	                and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random)
-	                and then Reasm_Building (HC)
-                    and then Reasm_Buffer_Shaped (HC);
+	                and then Reasm_Building (HC);
 
    procedure Select_Server_Key_Share
      (HC         : in out Handshake_Context;

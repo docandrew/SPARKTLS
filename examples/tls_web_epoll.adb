@@ -141,12 +141,22 @@ procedure TLS_Web_Epoll is
    --  Single-slot file cache: avoids re-reading the same file from
    --  disk (and re-allocating its Byte_Seq) on every request. The
    --  bench drives one path repeatedly, so this turns N reads into 1.
-   --  Reuses SPARKTLS.Byte_Seq_Access (already visible via use clause).
+   --  Its OWN access type over an UNCONSTRAINED Byte_Seq. This used to
+   --  borrow SPARKTLS.Byte_Seq_Access "already visible via the use clause";
+   --  that type became `access Reasm_Buffer` (fixed 0 .. Max_HS_Msg - 1)
+   --  when the reassembly buffer was constrained, which left this code
+   --  compiling but allocating a constrained subtype from an unconstrained
+   --  value -- a latent Constraint_Error for any body not exactly 128 KB.
+   --  An example must not share a type with the library's internals.
+   type Cached_Body_Access is access Byte_Seq;
+   procedure Free_Cached_Body is new
+     Ada.Unchecked_Deallocation (Byte_Seq, Cached_Body_Access);
+
    Cache_Path     : String (1 .. 256) := (others => ' ');
    Cache_Path_Len : Natural := 0;
-   Cache_Body     : Byte_Seq_Access := null;
+   Cache_Body     : Cached_Body_Access := null;
 
-   function Get_Cached (Full : String) return Byte_Seq_Access is
+   function Get_Cached (Full : String) return Cached_Body_Access is
    begin
       if Cache_Body /= null
          and then Full'Length <= Cache_Path'Length
@@ -162,7 +172,7 @@ procedure TLS_Web_Epoll is
             return null;
          end if;
          if Cache_Body /= null then
-            Free_Byte_Seq (Cache_Body);
+            Free_Cached_Body (Cache_Body);
          end if;
          Cache_Body := new Byte_Seq'(Loaded);
          if Full'Length <= Cache_Path'Length then
@@ -361,7 +371,7 @@ procedure TLS_Web_Epoll is
 
                                        Full : constant String :=
                                           Docroot (1 .. Doc_Len) & Path;
-                                       Body_Ref : Byte_Seq_Access :=
+                                       Body_Ref : Cached_Body_Access :=
                                           Get_Cached (Full);
                                        --  Header is small; build inline (no body copy).
                                        Hdr_Str : constant String :=

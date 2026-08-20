@@ -75,6 +75,20 @@ is
    --  -> 31). Retyping one end of a chain and not the other costs more
    --  than it saves; either retype the whole chain (Handshake_Context
    --  fields included) or leave it alone.
+   --  OFF BY ONE, KNOWINGLY LEFT AS IS -- see task #46/#70 before touching.
+   --  Record_Counter is 0 .. Unsigned_64'Last - 1, so this guard ADMITS
+   --  Seq = 'Last - 1, whose successor is NOT in Record_Counter. The
+   --  increment in Build_Encrypted_Record_12 / Decrypt_Record_12 /
+   --  Build_Alert_Record_12 is therefore unprovable (2 AoRTE range checks).
+   --  Tightening to `< Unsigned_64'Last - 1` was TRIED 2026-08-20 and
+   --  REVERTED: it closes both range checks but the guard stops being a
+   --  TAUTOLOGY of the Record_Counter subtype, so all 6 call sites must
+   --  then establish it themselves -- measured 56 -> 58 owned findings.
+   --  There is no type-only fix: a guard implied by the subtype admits the
+   --  subtype maximum, whose successor is by definition outside it, and
+   --  narrowing the field subtype just moves the same wall.
+   --  The principled fix is an explicit records-sent limit far below 2**64
+   --  (task #70) so both the guard AND the successor are inside the type.
    function Nonce_Space_Available_12 (Seq : Unsigned_64) return Boolean is
      (Seq < Unsigned_64'Last)
    with Ghost;

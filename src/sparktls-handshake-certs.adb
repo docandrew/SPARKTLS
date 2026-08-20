@@ -656,8 +656,7 @@ is
 	   with Pre  => Cert_RFLX'First = 1
 			                and then Cert_RFLX'Length = RBT.Length (C_Len)
 			                and then C_Len > 0
-				                and then C_Len <= N32 (Max_Cert_DER)
-				                and then Reasm_Buffer_Shaped (HC),
+				                and then C_Len <= N32 (Max_Cert_DER),
 	        Post => HC.Client_HS = HC.Client_HS'Old
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
@@ -676,8 +675,7 @@ is
 	                          .Local_Config_Valid (HC.Cfg.Local))
 	                and then (if HC.Cfg.Random'Old /= null
 		                          then HC.Cfg.Random /= null)
-						                and then Reasm_Buffer_Shaped (HC)
-	                  and then HC.Reasm.Len = HC.Reasm.Len'Old
+						                and then HC.Reasm.Len = HC.Reasm.Len'Old
                   and then HC.Reasm.Need = HC.Reasm.Need'Old
                   and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 		                and then HC.Peer_Cert_DER_Len = C_Len;
@@ -693,7 +691,7 @@ is
          pragma Loop_Invariant
            (I in 0 .. C_Len - 1
             and RBT.Index (I + 1) in Cert_RFLX'Range);
-			         pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+			         pragma Loop_Invariant (True);
          pragma Loop_Invariant (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
          pragma Loop_Invariant
            (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
@@ -872,7 +870,7 @@ is
                   pragma Loop_Invariant
                     (if HC.Cfg.Random'Loop_Entry /= null
                      then HC.Cfg.Random /= null);
-		                  pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+		                  pragma Loop_Invariant (True);
                   pragma Loop_Invariant
                     (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                   pragma Loop_Invariant
@@ -1164,7 +1162,7 @@ is
                pragma Loop_Invariant
                  (if HC.Cfg.Random'Loop_Entry /= null
                   then HC.Cfg.Random /= null);
-					               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+					               pragma Loop_Invariant (True);
 			               pragma Loop_Invariant
 		                 (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant

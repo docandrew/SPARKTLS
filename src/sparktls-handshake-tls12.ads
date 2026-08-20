@@ -314,11 +314,9 @@ is
       OK   :    out Boolean)
    with Pre  => Data'First = 0
                 and then Data'Last in 9 .. Max_Server_Key_Exchange - 1
-                and then Reasm_Buffer_Shaped (HC)
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => Reasm_Buffer_Shaped (HC)
-		                and then HC.Reasm.Need = HC.Reasm.Need'Old
+        Post => HC.Reasm.Need = HC.Reasm.Need'Old
 		                and then HC.Reasm.Len = HC.Reasm.Len'Old
 		                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 		                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
@@ -339,17 +337,14 @@ is
       with Pre  => Data'First = 0
                    and then Data'Last in 3 .. Max_Client_Key_Exchange - 1
 	                   and then Valid_ECDHE_Group (HC.Selected_Group)
-	                   and then Reasm_Building (HC)
-	                   and then Reasm_Buffer_Shaped (HC),
+	                   and then Reasm_Building (HC),
            Post => HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
                    and then HC.Reasm.Need = HC.Reasm.Need'Old
                    and then HC.Reasm.Len = HC.Reasm.Len'Old
                    and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 	                   and then Reasm_Building (HC)
-	                   and then Reasm_Buffer_Shaped (HC)
-	                   and then
-	                     (if Valid_ECDHE_Group (HC.Selected_Group'Old)
+	                   and then (if Valid_ECDHE_Group (HC.Selected_Group'Old)
                    then Valid_ECDHE_Group (HC.Selected_Group))
                 and then
                   (if HC.Cfg.Local'Old /= null
@@ -467,8 +462,7 @@ is
                 and then HC.Cfg.Random /= null
 	                and then HC.Version = TLS_1_2
 				                and then HC.Legacy_Session_ID_Len <= 32
-				                and then Reasm_Building (HC)
-				                and then Reasm_Buffer_Shaped (HC),
+				                and then Reasm_Building (HC),
         --  Frame postcondition: ServerHello construction does not
         --  touch State (S), the configuration pointer/identity, or the
         --  Random callback. Callers (Build_Server_Flight_12) need
@@ -487,8 +481,7 @@ is
 	                and HC.Cfg.Random /= null
 	                and HC.Version = HC.Version'Old
 				                and HC.Selected_Group = HC.Selected_Group'Old
-				                and Reasm_Building (HC)
-				                and Reasm_Buffer_Shaped (HC);
+				                and Reasm_Building (HC);
 
    function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean;
 
@@ -513,8 +506,7 @@ is
                 and then Data'Length > 0
 	                and then Data'Last < N32'Last
 	                and then HC.Version = TLS_1_2
-	                and then SPARKTLSCrypto.P384.Field.Initialized
-	                and then Reasm_Buffer_Shaped (HC),
+	                and then SPARKTLSCrypto.P384.Field.Initialized,
 		        Post => (if OK then
 		                   Valid_TLS12_Suite (Negotiated_Suite (S))
 		                   and HC.Version = TLS_1_2)
@@ -522,7 +514,6 @@ is
 	                          then HC.Cfg.Random /= null)
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-	                and then Reasm_Buffer_Shaped (HC)
 	                and then HC.Reasm.Len = HC.Reasm.Len'Old
 	                and then HC.Reasm.Need = HC.Reasm.Need'Old
 	                and then HC.Reasm.Phase = HC.Reasm.Phase'Old

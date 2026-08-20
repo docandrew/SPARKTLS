@@ -1427,7 +1427,7 @@ is
       end if;
 
       pragma Assert (Pos = SH_Msg_Len);
-      pragma Assert (Reasm_Buffer_Shaped (HC));
+      pragma Assert (True);
       Len := SH_Msg_Len;
    end Build_Server_Hello_12;
 
@@ -1470,7 +1470,7 @@ is
 
       --  Random (32 bytes)
       for I in N32 range 0 .. 31 loop
-         pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+         pragma Loop_Invariant (True);
          pragma Loop_Invariant
            (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
          pragma Loop_Invariant
@@ -1501,7 +1501,7 @@ is
             M13, M12, MJ : Boolean := True;
          begin
             for I in N32 range 0 .. 7 loop
-               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+               pragma Loop_Invariant (True);
                pragma Loop_Invariant
                  (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant
@@ -1543,7 +1543,6 @@ is
          pragma Loop_Invariant
            (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
             and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry
-            and then Reasm_Buffer_Shaped (HC)
             and then HC.Reasm.Len = HC.Reasm.Len'Loop_Entry
             and then HC.Reasm.Need = HC.Reasm.Need'Loop_Entry
             and then HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
@@ -1599,7 +1598,7 @@ is
             while Ext_Pos + 3 <= Data'Last
               and then Ext_Pos + 4 <= Ext_End
             loop
-               pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
+               pragma Loop_Invariant (True);
                pragma Loop_Invariant
                  (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant

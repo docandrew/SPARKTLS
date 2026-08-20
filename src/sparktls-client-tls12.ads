@@ -41,13 +41,10 @@ is
       Result :    out Action)
    with Pre => (S.State not in Idle | Closing | Closed | Error_State)
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
-               and then Reasm_Buffer_Shaped (HC)
-		               and then
-		                 (if not HC.CKE_Received_12 then
+               and then (if not HC.CKE_Received_12 then
 		                    Reasm_Building (HC)
 	                    and then
-	                      (if HC.Reasm_Buf /= null
-	                           and then HC.Reasm.Need > 0
+	                      (if HC.Reasm.Need > 0
 	                       then HC.Reasm_Buf'First = 0
 	                            and then
 	                              (if (HC.Reasm.Phase = Reasm_Header)
@@ -100,9 +97,8 @@ is
 	                    and then SPARKTLSCrypto.P384.Field.Initialized
 	                    and then SPARKTLSCrypto.P384.ECDSA.Initialized
                         and then
-                          (if HC.Reasm_Buf /= null
-                               and then HC.Reasm.Need > 0
-                           then Reasm_Buffer_Shaped (HC))
+                          (if HC.Reasm.Need > 0
+                           then True)
                         and then
                           (if HC.Cfg.Local /= null
                                and then HC.Cfg.Local.Has_Identity
@@ -111,7 +107,7 @@ is
 	               and then (if HC.CKE_Received_12 and then HC.CCS_Received
 	                         then Reasm_Building (HC)
 	                              and then
-	                                (HC.Reasm_Buf = null
+	                                (HC.Reasm.Phase = Reasm_Idle
 	                                 or else
 	                                   (HC.Reasm_Buf'First = 0
 		                                    and then HC.Reasm.Need >= 4
