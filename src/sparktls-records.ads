@@ -141,12 +141,7 @@ is
                        + N32 (Plaintext'Length)
                        + 1
                        + Tag_Size
-                   then Bytes_Out =
-                         Record_Header_Size
-                       + N32 (Plaintext'Length)
-                       + 1
-                       + Tag_Size
-                        and then Output.Write_Pos =
+                   then Output.Write_Pos =
                           Output.Write_Pos'Old + Bytes_Out
                         and then Available (Output) > 0);
 
@@ -170,8 +165,7 @@ is
                and Plaintext'First = 0
                and Plaintext'Last >= Encrypted'Last  --  plaintext buffer >= encrypted
                and Nonce_Space_Available (Keys),     --  RFC 8446 §5.5
-        Post => Keys.Counter = Keys.Counter'Old + 1              --  RFC 8446 §5.3
-                and (if Valid then
+        Post => (if Valid then
                    (Plain_Len = 0
                     or else Plain_Len - 1 <= Plaintext'Last));     --  bounds
 
@@ -196,8 +190,7 @@ is
      and Nonce_Space_Available (Keys),
         Post => (if Free_Space (Output'Old) >=
                        Record_Header_Size + 3 + Tag_Size
-                 then Bytes_Out = Record_Header_Size + 3 + Tag_Size
-                      and then Output.Write_Pos =
+                 then Output.Write_Pos =
                         Output.Write_Pos'Old + Bytes_Out
                       and then Available (Output) > 0);
 

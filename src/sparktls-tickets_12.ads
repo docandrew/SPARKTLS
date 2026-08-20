@@ -78,10 +78,17 @@ is
    --  key that sealed it. Wire layout is Key_ID (4) | Nonce (12) | Ct | Tag.
    --  This is what makes decryption the O(1) lookup the RFC 5077 notes
    --  describe, rather than trying every key in turn.
+   --  Width of the Key_ID prefix. Callers MUST check a candidate ticket is
+   --  at least this long before calling Ticket_Key_ID -- a peer controls the
+   --  ticket length, and a 1..3 byte ticket would otherwise reach the slice
+   --  below and violate the precondition.
+   Ticket_Key_ID_Size : constant := 4;
+
    function Ticket_Key_ID (Ticket : Byte_Seq) return Byte_Seq
-   with Pre  => Ticket'First = 0 and then Ticket'Length >= 4,
+   with Pre  => Ticket'First = 0
+                and then Ticket'Length >= Ticket_Key_ID_Size,
         Post => Ticket_Key_ID'Result'First = 0
-                and then Ticket_Key_ID'Result'Length = 4;
+                and then Ticket_Key_ID'Result'Length = Ticket_Key_ID_Size;
 
    --  Decrypt with a single caller-supplied key -- the one named by
    --  Ticket_Key_ID. Takes raw key bytes rather than a key record so it

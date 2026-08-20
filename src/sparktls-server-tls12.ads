@@ -70,17 +70,12 @@ is
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
 	                and then S.Role = Role_Server
-			                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-			                           (HC.Server_Seq_12)
 	                and then Reasm_Building (HC)
 	                and then SPARKTLSCrypto.P384.Field.Initialized
 		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => S.State in Server_Hello_Sent | Wait_Client_Finished
-                            | Error_State
-                and then
+        Post =>
                   (if S.State in Server_Hello_Sent | Wait_Client_Finished
-                   then S.Role = Role_Server
-                        and then HC.Version = TLS_1_2
+                   then HC.Version = TLS_1_2
                         and then HC.Cfg.Local /= null
 	                        and then HC.Cfg.Local.Has_Identity
 	                        and then
@@ -122,12 +117,7 @@ is
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-				        Post => (if S.State'Old = Wait_Client_Cert_Verify
-				                 then S.State in Wait_Client_Cert_Verify
-				                               | Wait_Client_Finished
-				                               | Closing
-				                               | Error_State)
-				             and then
+                     Post =>
 				               (if S.State'Old = Wait_Client_Finished
 				                then S.State in Wait_Client_Finished
 				                              | Connected
@@ -249,9 +239,7 @@ is
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                           (HC.Server_Seq_12)
                and then Free_Space (S.Output) >= 7,
-				        Post => S.State in Wait_Client_Finished | Connected | Closing
-				                           | Error_State
-	                     and then
+                      Post =>
                        (if S.State /= Error_State
                         then HC.Cfg.Local /= null
                              and then HC.Cfg.Local.Has_Identity

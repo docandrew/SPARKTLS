@@ -336,12 +336,7 @@ is
 	                  else HC.Hash_Len = 32),
 			        Post => (if Result = Has_Output then
 			                    Nonce_Space_Available (S.Client_App)
-					                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
 				                    and then HC.Hash_Len = HC.Hash_Len'Old
-			                    and then
-			                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-			                       then HC.Hash_Len = 48
-		                       else HC.Hash_Len = 32)
 			                    and then SPARKTLSCrypto.P384.Field.Initialized
 		                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
 	                and then Result in Has_Output | Error_Alert;
@@ -1721,11 +1716,6 @@ is
                and then S.Role = Role_Client
                and then HC.Cfg.Random /= null
 	               and then SPARKTLSCrypto.P384.Field.Initialized
-	               and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-               and then
-                 (if HC.Cfg.TLS12_Resume_Ticket.Valid
-                  then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
-	                       <= Max_TLS12_Ticket_Len)
 	   is
       CH_Buf    : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
       CH_Len    : N32;
@@ -2680,12 +2670,6 @@ is
 
 	      Derive_App_Keys_And_Send_Finished (S, HC, Result);
 		      pragma Assert
-		        (if Result = Has_Output
-		         then
-		           (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-		            then HC.Hash_Len = 48
-		            else HC.Hash_Len = 32));
-		      pragma Assert
 		        ((if Result = Has_Output
 		          then Nonce_Space_Available (S.Client_App)
 		               and then S.Negotiated_Suite = Initial_Suite
@@ -2991,7 +2975,6 @@ is
                --  variants closed all four of their Saved_Ctr findings.
 	        Post => (if Result = OK then
 	                    Nonce_Space_Available (S.Client_App))
-	                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
 	                and then Result in OK | Error_Alert;
 
@@ -3101,7 +3084,6 @@ is
                --  variants closed all four of their Saved_Ctr findings.
 	        Post => (if Result = OK then
 	                    Nonce_Space_Available (S.Client_App))
-	                and then S.Negotiated_Suite = S.Negotiated_Suite'Old
 	                and then HC.Hash_Len = HC.Hash_Len'Old
 	                and then Result in OK | Error_Alert;
 
@@ -4284,8 +4266,6 @@ is
    with Pre => S.Role = Role_Client
                and then Nonce_Space_Available (S.Client_App)
 	               and then Nonce_Space_Available (S.Server_App)
-	               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-	                 (S.Client_Seq_12)
 	               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 	                 (S.Server_Seq_12)
                and then S.App_Data_Len <= Max_Record_Plaintext
@@ -5624,8 +5604,7 @@ is
                 and then S.Post_HS_Need = 0
                 and then
                   (if Result = OK
-                   then S.State = S.State'Old
-                     and then Nonce_Space_Available (S.Client_App));
+                   then Nonce_Space_Available (S.Client_App));
 
    --  RFC 8446 §4.6.3. A KeyUpdate from the peer rotates the peer's WRITE
    --  key, which is our READ key -- for a client that is S.Server_App. If

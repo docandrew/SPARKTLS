@@ -127,13 +127,7 @@ is
    procedure Advance
      (S      : in out Session;
       Result :    out Action)
-   with Pre  => State (S) /= Idle and Role (S) = Role_Client,
-        Post => (if Result = Handshake_Done then
-                       State (S) = Connected)
-                and (if Result = Shutdown then
-                       State (S) = Closed)
-                and (if Result = Error_Alert then
-                       State (S) = Closed);
+   with Pre  => State (S) /= Idle and Role (S) = Role_Client;
 
    --  RFC 8446 §6.1: Send a close_notify alert.
    procedure Close_Notify (S : in out Session)

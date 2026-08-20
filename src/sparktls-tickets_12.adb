@@ -168,9 +168,9 @@ is
 
 
    function Ticket_Key_ID (Ticket : Byte_Seq) return Byte_Seq is
-      Result : Byte_Seq (0 .. 3);
+      Result : Byte_Seq (0 .. Ticket_Key_ID_Size - 1);
    begin
-      Result := Ticket (0 .. 3);
+      Result := Ticket (0 .. Ticket_Key_ID_Size - 1);
       return Result;
    end Ticket_Key_ID;
 

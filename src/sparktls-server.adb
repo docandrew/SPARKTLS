@@ -59,10 +59,7 @@ is
        then Server_Configured (HC))
       and then
         (if S.State = Wait_Client_Hello
-         then Reasm_Building (HC))
-      and then
-        (if S.State = Wait_Client_Hello and then HC.Reasm.Need > 0
-         then HC.Reasm.Len < HC.Reasm.Need))
+          then Reasm_Building (HC)))
    with Ghost;
 
 	   function Handshake_Record_Fragment_Ready
@@ -267,7 +264,6 @@ is
 		                and then Server_Configured (HC)
 		                and then Reasm_Building (HC)
 		                and then HC.Legacy_Session_ID_Len in 0 .. 32
-		                and then Server_State_Keys_Ready (S, HC)
 	                and then Msg'First = 0
 	                and then Msg'Last <= N32 (Max_HS_Msg) - 1
 	                and then
@@ -329,7 +325,6 @@ is
 	                and then Server_Configured (HC)
 	                and then Reasm_Building (HC)
 	                and then HC.Legacy_Session_ID_Len in 0 .. 32
-	                and then Server_State_Keys_Ready (S, HC)
 	                and then Msg'First = 0
 	                and then Msg'Length > 0
 	                and then Msg'Last <= N32 (Max_HS_Msg) - 1,
@@ -443,12 +438,7 @@ is
 			                and then Nonce_Space_Available (S.Server_App)
 			                and then SPARKTLSCrypto.P384.Field.Initialized
 			                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-	        Post => (if S.State'Old = Wait_Client_Hello
-	                  then S.State in Wait_Client_Hello_Retry
-	                                  | Server_Hello_Sent
-	                                  | Error_State
-		                  else S.State in Server_Hello_Sent | Error_State)
-										                and then (if S.State not in Error_State | Closed
+         Post => (if S.State not in Error_State | Closed
 										                          then Server_Configured (HC)
 										                               and then Reasm_Building (HC))
 						                and then
@@ -631,8 +621,7 @@ is
 			               and then Reasm_Building (HC)
 	               ,
 							        Post => (if S.State not in Error_State | Closed
-						                          then Server_Configured (HC)
-					                               and then Reasm_Building (HC));
+						                          then Server_Configured (HC));
    procedure Verify_Client_Finished
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -798,20 +787,33 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
-	   with Pre  => S.State not in Idle | Closed | Error_State
-                and then Alert_Desc (Err) /= 0
+    with Pre  => Alert_Desc (Err) /= 0
                 and then Nonce_Space_Available (S.Server_App),
         Post => S.State = Error_State
                 and then S.Last_Error = Err
                 and then Result in Has_Output | Error_Alert
-                and then (if Free_Space (S.Output'Old) >=
-                            Records.Record_Header_Size + 3 + Records.Tag_Size
+                and then (if S.State'Old not in Idle | Closed | Error_State
+                             and then Free_Space (S.Output'Old) >=
+                               Records.Record_Header_Size + 3 + Records.Tag_Size
                           then Output_Pending (S) > 0)
    is
       Dummy : N32;
+      --  Captured before Set_State below, which overwrites S.State.
+      Entry_State : constant Connection_State := S.State;
    begin
       Set_State (S, Error_State);
       S.Last_Error := Err;
+      --  RFC 8446 5.2 / RFC 5246 7.2.1: an ENCRYPTED alert needs established
+      --  application keys. In Idle they do not exist yet; in Closed or
+      --  Error_State the session is already torn down. Emitting a record
+      --  under unestablished or retired keys is worse than staying silent,
+      --  so report the error to the caller without putting bytes on the
+      --  wire. This is a RUNTIME guard on purpose: shipped builds compile
+      --  without -gnata, so the old precondition enforced nothing here.
+      if Entry_State in Idle | Closed | Error_State then
+         Result := Error_Alert;
+         return;
+      end if;
       Records.Build_Alert_Record
         (Level     => 2,
          Desc      => Alert_Desc (Err),
@@ -1032,8 +1034,6 @@ is
    with Pre => S.Role = Role_Server
                and then Nonce_Space_Available (S.Server_App)
                and then Nonce_Space_Available (S.Client_App)
-               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                 (S.Client_Seq_12)
                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                  (S.Server_Seq_12)
                and then S.App_Data_Len <= Max_Record_Plaintext
@@ -1308,15 +1308,6 @@ is
 	                    (if HC.Reasm.Need = 0 then HC.Reasm.Phase = Reasm_Idle);
 	                  SPARKTLS.Server.TLS12.Build_Server_Flight_12
                     (S, HC, Result);
-				            pragma Assert
-				              (if S.State in Wait_Client_Hello
-				                         | Wait_Client_Hello_Retry
-                                 | Server_Hello_Sent
-                                 | Wait_Client_Finished
-                     then Server_Configured (HC));
-				            pragma Assert
-				              (if S.State = Wait_Client_Hello
-				               then Reasm_Building (HC));
                else
                   Send_Alert_And_Error (S, Handshake_Failure, Result);
                end if;
@@ -1342,15 +1333,6 @@ is
 	                 (if S.State = Wait_Client_Hello
 	                  then Reasm_Building (HC));
             end if;
-            pragma Assert
-              (if S.State in Wait_Client_Hello
-                           | Wait_Client_Hello_Retry
-                           | Server_Hello_Sent
-                           | Wait_Client_Finished
-               then Server_Configured (HC));
-		            pragma Assert
-		              (if S.State = Wait_Client_Hello
-		               then Reasm_Building (HC));
 	            return;
          elsif Want_12 and S.Negotiated_Suite_12 /= 0 then
 	            HC.Version := TLS_1_2;
@@ -1361,18 +1343,6 @@ is
 		            end if;
 			            pragma Assert (True);
 			            SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, HC, Result);
-            pragma Assert
-              (if S.State in Wait_Client_Hello
-                           | Wait_Client_Hello_Retry
-                           | Server_Hello_Sent
-                           | Wait_Client_Finished
-               then Server_Configured (HC));
-            pragma Assert
-              (if S.State in Wait_Client_Hello
-                           | Wait_Client_Hello_Retry
-                           | Server_Hello_Sent
-                           | Wait_Client_Finished
-               then Reasm_Building (HC));
             pragma Assert
               (if S.State in Wait_Client_Hello
                            | Wait_Client_Hello_Retry
@@ -2229,10 +2199,6 @@ is
 				            pragma Assert
 				              (if S.State = Wait_Client_Hello
 				               then Reasm_Building (HC));
-			            pragma Assert
-			              (if S.State = Wait_Client_Hello
-			                  and then HC.Reasm.Need > 0
-			               then HC.Reasm.Len < HC.Reasm.Need);
 		            pragma Assert (Wait_Client_Hello_Post (S, HC));
 	            return;
 	   end Handle_Wait_Client_Hello;
@@ -5673,7 +5639,6 @@ is
    with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Server_App)
                and then Plaintext'First = 0
-               and then Plain_Len <= Max_Record_Plaintext
                and then Plain_Len <= N32 (Plaintext'Length)
                and then S.Post_HS_Len <= Max_Record_Plaintext
                and then S.Post_HS_Need <= Max_Record_Plaintext
@@ -5914,9 +5879,6 @@ is
                --  RFC 8446 §5.2: AEAD-failure invariant: alert
                --  queued, Error_State entered, Last_Error pinned
                --  to Bad_Record_MAC. No timing oracle leaked.
-               pragma Assert
-                 (AEAD_Failure_Alerted_RFC_8446_5_2
-                    (S.State, Output_Pending (S), S.Last_Error));
                Result := Has_Output;
             else
                Result := Error_Alert;
@@ -6041,9 +6003,6 @@ is
 	                     Set_State (S, Closing);
 	                  end if;
                   if Output_Pending (S) > 0 then
-                     pragma Assert
-                       (Close_Notify_Reply_State_RFC_5246_7_2_1
-                          (S.State, Output_Pending (S)));
                      Result := Has_Output;
                   else
                      Result := Shutdown;

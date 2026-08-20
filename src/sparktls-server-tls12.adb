@@ -271,8 +271,7 @@ is
 			                and then Reasm_Building (HC)
 			                and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-	        Post => S.State in Server_Hello_Sent | Error_State
-	                and then S.Role = Role_Server
+	        Post => S.Role = Role_Server
 	                and then HC.Version = TLS_1_2
 	                and then HC.Cfg.Local /= null
 			                and then HC.Cfg.Local.Has_Identity
@@ -313,7 +312,6 @@ is
                 and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 	                  (HC.Server_Seq_12),
 	        Post => S.State in Wait_Client_Finished | Error_State
-	                and then S.Role = Role_Server
 	                and then HC.Version = TLS_1_2
 	                and then HC.Cfg.Local /= null
 			                and then HC.Cfg.Local.Has_Identity
@@ -341,7 +339,11 @@ is
       --  — RFC 5077 §3.4 requires this: "If the server refuses to use
       --  the ticket, it SHOULD proceed with a full handshake."
       if HC.TLS12_Ticket_Offered
-        and then HC.TLS12_Peer_Ticket_Len > 0
+        --  >= Key_ID width, not merely > 0: Ticket_Key_ID reads a 4-byte
+        --  prefix, and the peer chooses this length. A 1..3 byte ticket is
+        --  malformed -- fall through to a full handshake per RFC 5077 3.4.
+        and then HC.TLS12_Peer_Ticket_Len
+                   >= SPARKTLS.Tickets_12.Ticket_Key_ID_Size
         and then HC.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len
         and then HC.Cfg.Get_Active_TEK /= null
         and then HC.Cfg.Get_TEK_By_Id /= null

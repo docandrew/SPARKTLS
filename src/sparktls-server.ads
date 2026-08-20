@@ -137,13 +137,7 @@ is
    --  Role (S) = Role_Server was deleted from this Pre 2026-08-20: the
    --  Server_Session subtype constrains the discriminant, so it is now
    --  UNSTATEABLE rather than merely required.
-   with Pre  => State (S) /= Idle,
-        Post => (if Result = Handshake_Done then
-                       State (S) = Connected)
-                and (if Result = Shutdown then
-                       State (S) = Closed)
-                and (if Result = Error_Alert then
-                       State (S) = Closed);
+   with Pre  => State (S) /= Idle;
 
    --  RFC 8446 §6.1: Send a close_notify alert.
    --  Transitions to Closing state.

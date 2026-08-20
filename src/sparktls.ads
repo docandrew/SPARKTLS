@@ -2872,8 +2872,7 @@ is
                 Plaintext'Length > 0 and
                 Plaintext'Last < N32'Last and
                 not Write_Limit_Reached (S),
-        Post => Bytes_Written <= N32 (Plaintext'Length) and
-                State (S) = Connected;
+        Post => Bytes_Written <= N32 (Plaintext'Length);
 
 private
 

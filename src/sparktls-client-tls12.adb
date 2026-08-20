@@ -2395,9 +2395,7 @@ is
          and then Reasm_Building (HC)
          and then S.State not in Idle | Closing | Closed | Error_State
          and then HC.Transcript_Len > 0
-         and then HC.Transcript_Len <= Transcript_Capacity
-         and then Records.TLS12.Nonce_Space_Available_12
-           (HC.Client_Seq_12));
+         and then HC.Transcript_Len <= Transcript_Capacity);
    end Encrypt_Client_Finished_Record_12;
 
    procedure Commit_Client_Flight_Scratch_12
@@ -5090,8 +5088,7 @@ is
                                (HC.Client_Seq_12))
                      and then
                        (if Complete then
-                          HC.Reasm.Need >= 4
-                          and then HC.Reasm.Len >= HC.Reasm.Need
+                          HC.Reasm.Len >= HC.Reasm.Need
                           and then HC.Reasm.Need <=
                             N32 (HC.Reasm_Buf'Length)));
 

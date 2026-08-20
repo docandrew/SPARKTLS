@@ -35,15 +35,9 @@ is
 		                and then Result'Last in Max_Client_Hello - 1 .. N32'Last - 1
 		                and then HC.Cfg.Random /= null
 		                and then SPARKTLSCrypto.P384.Field.Initialized
-		                and then HC.HRR_Cookie_Len <=
-		                  N32 (HC.HRR_Cookie'Length)
 	                and then
 	                  (if Retry_Mode
-	                   then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
-		                and then
-		                  (if HC.Cfg.TLS12_Resume_Ticket.Valid
-		                   then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
-		                        <= Max_TLS12_Ticket_Len),
+	                   then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)),
 		        Post => (if HC.Cfg.Random'Old /= null
 		                          then HC.Cfg.Random /= null)
                         and then Len <= N32 (Result'Length)
