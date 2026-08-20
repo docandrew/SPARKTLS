@@ -342,15 +342,23 @@ is
 
          if S.Role = Role_Client then
             exit when not Nonce_Space_Available (S.Client_App);
+            --  TLS 1.2 cannot rekey, so the RFC 8446 s5.5 AEAD limit is a
+            --  hard stop rather than a rotation trigger. Was
+            --  `= Unsigned_64'Last` (the arithmetic limit), which
+            --  enforced no cryptographic margin.
             if S.Negotiated_Version = TLS_1_2
-               and then S.Client_Seq_12 = Unsigned_64'Last
+               and then S.Client_Seq_12 >= Rekey_After_Records
             then
                exit;
             end if;
          else
             exit when not Nonce_Space_Available (S.Server_App);
+            --  TLS 1.2 cannot rekey, so the RFC 8446 s5.5 AEAD limit is a
+            --  hard stop rather than a rotation trigger. Was
+            --  `= Unsigned_64'Last` (the arithmetic limit), which
+            --  enforced no cryptographic margin.
             if S.Negotiated_Version = TLS_1_2
-               and then S.Server_Seq_12 = Unsigned_64'Last
+               and then S.Server_Seq_12 >= Rekey_After_Records
             then
                exit;
             end if;

@@ -2564,6 +2564,24 @@ is
 
    function State (S : Session) return Connection_State;
 
+   --  True when this session's WRITE direction has reached the RFC 8446 s5.5
+   --  AEAD usage limit and no more records may be encrypted under the current
+   --  key.
+   --
+   --  TLS 1.3 rotates automatically at Rekey_After_Records, so this is
+   --  normally False there and only becomes True if rotation could not happen.
+   --  TLS 1.2 has no KeyUpdate and renegotiation is deprecated, so there is no
+   --  way to continue safely: the application MUST close the connection.
+   --  Write_Plaintext will write 0 bytes once this is True, which is otherwise
+   --  indistinguishable from ordinary output-buffer backpressure.
+   --
+   --  DELIBERATELY NOT Ghost. This is exactly Write_Plaintext's nonce-space
+   --  precondition, which until 2026-08-20 was stated via Client_App /
+   --  Client_Seq_12 -- both Ghost, hence unevaluable by the caller. A
+   --  precondition the caller cannot check is unenforceable, and that only
+   --  became reachable when the TLS 1.2 bound dropped from 2**64 to 2**23.
+   function Write_Limit_Reached (S : Session) return Boolean;
+
    --  Human-readable description of an error code.
    --
    --  Error_Code'Image yields the enumeration identifier ("BAD_RECORD_MAC"),
@@ -2853,12 +2871,7 @@ is
                 Plaintext'First = 0 and
                 Plaintext'Length > 0 and
                 Plaintext'Last < N32'Last and
-                (if Role (S) = Role_Client then
-                   Nonce_Space_Available (Client_App (S)) and
-                   Client_Seq_12 (S) < Unsigned_64'Last
-                 else
-                   Nonce_Space_Available (Server_App (S)) and
-                   Server_Seq_12 (S) < Unsigned_64'Last),
+                not Write_Limit_Reached (S),
         Post => Bytes_Written <= N32 (Plaintext'Length) and
                 State (S) = Connected;
 
@@ -3086,6 +3099,15 @@ private
    --  Query function completions: one field each, verbatim.
 
    function State (S : Session) return Connection_State is (S.State);
+
+   --  Both disjuncts on both versions, so this is exactly the precondition it
+   --  replaced: the TLS 1.3 arithmetic backstop AND the TLS 1.2 crypto cap.
+   function Write_Limit_Reached (S : Session) return Boolean is
+     (if S.Role = Role_Client
+      then not Nonce_Space_Available (S.Client_App)
+           or else S.Client_Seq_12 >= Rekey_After_Records
+      else not Nonce_Space_Available (S.Server_App)
+           or else S.Server_Seq_12 >= Rekey_After_Records);
    function Role (S : Session) return TLS_Role is (S.Role);
    function Last_Error (S : Session) return Error_Code is (S.Last_Error);
    function Peer_Closed_Cleanly (S : Session) return Boolean is

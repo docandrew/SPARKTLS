@@ -58,7 +58,7 @@ is
      (Implicit_IV : Byte_Seq;
       Seq_Num     : Record_Counter) return Boolean is
      (Implicit_IV'Length = Implicit_IV_Len
-      and Seq_Num < Unsigned_64'Last)  --  nonce space not exhausted
+      and Seq_Num < Rekey_After_Records)  --  RFC 8446 s5.5 AEAD limit
    with Ghost;
 
    --  RFC 5246 §6.1: Sequence numbers.
@@ -89,8 +89,21 @@ is
    --  narrowing the field subtype just moves the same wall.
    --  The principled fix is an explicit records-sent limit far below 2**64
    --  (task #70) so both the guard AND the successor are inside the type.
+   --  RFC 8446 s5.5 "Limits on Key Usage" -- the CRYPTOGRAPHIC bound, not the
+   --  arithmetic one. TLS 1.3 enforces this by rotating at Rekey_After_Records
+   --  (sparktls.adb Write_Key_Exhausted); TLS 1.2 has no KeyUpdate and
+   --  renegotiation is deprecated, so the only compliant remedy is to STOP
+   --  encrypting. Until 2026-08-20 this read `Seq < Unsigned_64'Last`, which is
+   --  the ~584,000-year ARITHMETIC limit and enforces no AEAD margin at all.
+   --
+   --  Closing this also discharges the two AoRTE range checks on `Seq + 1`
+   --  (records-tls12.adb:290 and :351): with the bound at 2**23 the successor
+   --  is trivially inside Record_Counter. Tightening the OLD bound to
+   --  'Last - 1 was tried and reverted -- it stopped being a tautology of the
+   --  subtype and pushed 6 unmeetable obligations onto callers. A limit far
+   --  below the type maximum makes both the guard and the successor cheap.
    function Nonce_Space_Available_12 (Seq : Unsigned_64) return Boolean is
-     (Seq < Unsigned_64'Last)
+     (Seq < Rekey_After_Records)
    with Ghost;
 
    ----------------------------------------------------------------------------
