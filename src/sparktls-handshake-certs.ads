@@ -138,13 +138,12 @@ is
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
 						                and then Reasm_Buffer_Shaped (HC)
-				                  and then HC.Reasm_Len = HC.Reasm_Len'Old
-	                  and then HC.Reasm_Need = HC.Reasm_Need'Old
+				                  and then HC.Reasm.Len = HC.Reasm.Len'Old
+	                  and then HC.Reasm.Need = HC.Reasm.Need'Old
 	                  and then
-	                    (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
-	                     then HC.Reasm_Len <= HC.Reasm_Need)
-	                and then HC.Reasm_Hdr_Pending =
-	                  HC.Reasm_Hdr_Pending'Old
+	                    (if HC.Reasm.Len'Old <= HC.Reasm.Need'Old
+	                     then HC.Reasm.Len <= HC.Reasm.Need)
+	                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 		                and then
 		                  (if HC.Peer_Cert_Valid
 	                   then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
@@ -185,13 +184,12 @@ is
 	                and then (if HC.Cfg.Random'Old /= null
 	                          then HC.Cfg.Random /= null)
 			                and then Reasm_Buffer_Shaped (HC)
-			                and then HC.Reasm_Len = HC.Reasm_Len'Old
-                and then HC.Reasm_Need = HC.Reasm_Need'Old
+			                and then HC.Reasm.Len = HC.Reasm.Len'Old
+                and then HC.Reasm.Need = HC.Reasm.Need'Old
                 and then
-                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
-                   then HC.Reasm_Len <= HC.Reasm_Need)
-                and then HC.Reasm_Hdr_Pending =
-                  HC.Reasm_Hdr_Pending'Old
+                  (if HC.Reasm.Len'Old <= HC.Reasm.Need'Old
+                   then HC.Reasm.Len <= HC.Reasm.Need)
+                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
                 and then
                   (if HC.Peer_Cert_Valid
                    then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len

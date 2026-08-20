@@ -361,10 +361,9 @@ is
 			                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
 				                and then Reasm_Buffer_Shaped (HC)
-				                and then HC.Reasm_Len = HC.Reasm_Len'Old
-				                and then HC.Reasm_Need = HC.Reasm_Need'Old
-				                and then HC.Reasm_Hdr_Pending =
-				                  HC.Reasm_Hdr_Pending'Old
+				                and then HC.Reasm.Len = HC.Reasm.Len'Old
+				                and then HC.Reasm.Need = HC.Reasm.Need'Old
+				                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 				                and then Len <= N32 (Result'Length);
 
    procedure Append_PSK_Extension
@@ -1661,16 +1660,16 @@ is
       --  predicate in one step after the HC component writes above.
       --  Each conjunct is discharged separately, then used as a lemma.
       pragma Assert (HC.Reasm_Buf = null
-                     or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+                     or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
       pragma Assert (HC.Reasm_Buf = null
-                     or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+                     or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
       pragma Assert (HC.Reasm_Buf = null
-                     or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
-                              else HC.Reasm_Need >= 4));
+                     or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
+                              else HC.Reasm.Need >= 4));
       pragma Assert (HC.Reasm_Buf = null
-                     or else (if HC.Reasm_Hdr_Pending then
-                                HC.Reasm_Need = 4
-                                and then HC.Reasm_Len <= 4
+                     or else (if (HC.Reasm.Phase = Reasm_Header) then
+                                HC.Reasm.Need = 4
+                                and then HC.Reasm.Len <= 4
                                 and then HC.Reasm_Buf'Length = Max_HS_Msg));
       pragma Assert (Reasm_Buffer_Shaped (HC));
       if Len > 0 then
@@ -1867,12 +1866,11 @@ is
 	            pragma Loop_Invariant (N_Ext <= Exts'Last);
 	            pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 	            pragma Loop_Invariant
-	              (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	              (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	            pragma Loop_Invariant
-	              (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	              (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
 	            pragma Loop_Invariant
-	              (HC.Reasm_Hdr_Pending =
-	                 HC.Reasm_Hdr_Pending'Loop_Entry);
+	              (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
 		            pragma Loop_Invariant
 		              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
 		            pragma Loop_Invariant
@@ -1914,12 +1912,11 @@ is
 	                     then HC.Cfg.Random /= null);
 	                  pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 	                  pragma Loop_Invariant
-	                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	                    (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	                  pragma Loop_Invariant
-	                    (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	                    (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
 	                  pragma Loop_Invariant
-	                    (HC.Reasm_Hdr_Pending =
-	                       HC.Reasm_Hdr_Pending'Loop_Entry);
+	                    (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
 	                  pragma Loop_Invariant
 	                    (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
 	                  pragma Loop_Invariant
@@ -1986,12 +1983,11 @@ is
 	              (N_Ext <= Exts'Last);
 	            pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 	            pragma Loop_Invariant
-	              (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	              (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	            pragma Loop_Invariant
-	              (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	              (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
 	            pragma Loop_Invariant
-	              (HC.Reasm_Hdr_Pending =
-	                 HC.Reasm_Hdr_Pending'Loop_Entry);
+	              (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
 		            pragma Loop_Invariant
 		              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
 		            pragma Loop_Invariant
@@ -2203,12 +2199,11 @@ is
 	                        for K in 0 .. C_Len - 1 loop
 	                           pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
 	                           pragma Loop_Invariant
-	                             (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+	                             (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	                           pragma Loop_Invariant
-	                             (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+	                             (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
 	                           pragma Loop_Invariant
-	                             (HC.Reasm_Hdr_Pending =
-	                                HC.Reasm_Hdr_Pending'Loop_Entry);
+	                             (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
 	                           pragma Loop_Invariant
 		                             (HC.Transcript_Len =
 		                              HC.Transcript_Len'Loop_Entry);
@@ -2294,10 +2289,9 @@ is
                 and then HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
                 and then Reasm_Buffer_Shaped (HC)
-                and then HC.Reasm_Len = HC.Reasm_Len'Old
-                and then HC.Reasm_Need = HC.Reasm_Need'Old
-                and then HC.Reasm_Hdr_Pending =
-                  HC.Reasm_Hdr_Pending'Old;
+                and then HC.Reasm.Len = HC.Reasm.Len'Old
+                and then HC.Reasm.Need = HC.Reasm.Need'Old
+                and then HC.Reasm.Phase = HC.Reasm.Phase'Old;
 
    procedure Apply_SH_Key_Share
      (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
@@ -2747,12 +2741,11 @@ is
                     (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
                   pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
                   pragma Loop_Invariant
-                    (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+                    (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                   pragma Loop_Invariant
-                    (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+                    (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
                   pragma Loop_Invariant
-                    (HC.Reasm_Hdr_Pending =
-                       HC.Reasm_Hdr_Pending'Loop_Entry);
+                    (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                   declare
                      Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                   begin
@@ -2805,16 +2798,16 @@ is
       --  Correctly guarded decomposition: every conjunct is inside the
       --  "Reasm_Buf = null or else" disjunction, as the predicate has it.
       pragma Assert (HC.Reasm_Buf = null
-                     or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));  --  D1 heap
+                     or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));  --  D1 heap
       pragma Assert (HC.Reasm_Buf = null
-                     or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));  --  D2 heap
+                     or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));  --  D2 heap
       pragma Assert (HC.Reasm_Buf = null
-                     or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
-                              else HC.Reasm_Need >= 4));  --  D3 scalar
+                     or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
+                              else HC.Reasm.Need >= 4));  --  D3 scalar
       pragma Assert (HC.Reasm_Buf = null
-                     or else (if HC.Reasm_Hdr_Pending then
-                                HC.Reasm_Need = 4
-                                and then HC.Reasm_Len <= 4
+                     or else (if (HC.Reasm.Phase = Reasm_Header) then
+                                HC.Reasm.Need = 4
+                                and then HC.Reasm.Len <= 4
                                 and then HC.Reasm_Buf'Length = Max_HS_Msg));  --  D4 mixed
       pragma Assert (Reasm_Buffer_Shaped (HC));  --  D5 whole
       if HC.Version = TLS_1_3
@@ -2989,16 +2982,16 @@ is
             --  predicate in one step after an unrelated HC component write.
             --  Each conjunct is discharged separately, then used as a lemma.
             pragma Assert (HC.Reasm_Buf = null
-                           or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+                           or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
             pragma Assert (HC.Reasm_Buf = null
-                           or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+                           or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
             pragma Assert (HC.Reasm_Buf = null
-                           or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
-                                    else HC.Reasm_Need >= 4));
+                           or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
+                                    else HC.Reasm.Need >= 4));
             pragma Assert (HC.Reasm_Buf = null
-                           or else (if HC.Reasm_Hdr_Pending then
-                                      HC.Reasm_Need = 4
-                                      and then HC.Reasm_Len <= 4
+                           or else (if (HC.Reasm.Phase = Reasm_Header) then
+                                      HC.Reasm.Need = 4
+                                      and then HC.Reasm.Len <= 4
                                       and then HC.Reasm_Buf'Length = Max_HS_Msg));
             pragma Assert (Reasm_Buffer_Shaped (HC));
          end;
@@ -3033,16 +3026,16 @@ is
             --  predicate in one step after an unrelated HC component write.
             --  Each conjunct is discharged separately, then used as a lemma.
             pragma Assert (HC.Reasm_Buf = null
-                           or else HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+                           or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
             pragma Assert (HC.Reasm_Buf = null
-                           or else HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+                           or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
             pragma Assert (HC.Reasm_Buf = null
-                           or else (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
-                                    else HC.Reasm_Need >= 4));
+                           or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
+                                    else HC.Reasm.Need >= 4));
             pragma Assert (HC.Reasm_Buf = null
-                           or else (if HC.Reasm_Hdr_Pending then
-                                      HC.Reasm_Need = 4
-                                      and then HC.Reasm_Len <= 4
+                           or else (if (HC.Reasm.Phase = Reasm_Header) then
+                                      HC.Reasm.Need = 4
+                                      and then HC.Reasm.Len <= 4
                                       and then HC.Reasm_Buf'Length = Max_HS_Msg));
             pragma Assert (Reasm_Buffer_Shaped (HC));
          end;
@@ -3078,13 +3071,11 @@ is
          --  disjunct or all four -- no search required. Giving the prover
          --  the split beats giving it more time.
          if HC.Reasm_Buf /= null then
-            pragma Assert (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
-                           else HC.Reasm_Need >= 4);
-            pragma Assert (if HC.Reasm_Hdr_Pending then
-                             HC.Reasm_Need = 4
-                             and then HC.Reasm_Len <= 4
+            pragma Assert (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
+                           else HC.Reasm.Need >= 4);
+            pragma Assert (if (HC.Reasm.Phase = Reasm_Header) then
+                             HC.Reasm.Need = 4
+                             and then HC.Reasm.Len <= 4
                              and then HC.Reasm_Buf'Length = Max_HS_Msg);
             null;
          end if;

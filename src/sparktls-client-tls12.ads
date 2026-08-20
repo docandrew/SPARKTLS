@@ -47,17 +47,12 @@ is
 		                    Reasm_Building (HC)
 	                    and then
 	                      (if HC.Reasm_Buf /= null
-	                           and then HC.Reasm_Need > 0
+	                           and then HC.Reasm.Need > 0
 	                       then HC.Reasm_Buf'First = 0
-	                            and then HC.Reasm_Buf'Length <= Max_HS_Msg
-	                            and then HC.Reasm_Need <=
-	                              N32 (HC.Reasm_Buf'Length)
-	                            and then HC.Reasm_Len <=
-	                              N32 (HC.Reasm_Buf'Length)
 	                            and then
-	                              (if HC.Reasm_Hdr_Pending
-	                               then HC.Reasm_Need = 4
-	                                    and then HC.Reasm_Len <= 4
+	                              (if (HC.Reasm.Phase = Reasm_Header)
+	                               then HC.Reasm.Need = 4
+	                                    and then HC.Reasm.Len <= 4
 	                                    and then HC.Reasm_Buf'Length =
 	                                      Max_HS_Msg))
 	                    and then HC.Cfg.Random /= null
@@ -106,7 +101,7 @@ is
 	                    and then SPARKTLSCrypto.P384.ECDSA.Initialized
                         and then
                           (if HC.Reasm_Buf /= null
-                               and then HC.Reasm_Need > 0
+                               and then HC.Reasm.Need > 0
                            then Reasm_Buffer_Shaped (HC))
                         and then
                           (if HC.Cfg.Local /= null
@@ -119,17 +114,11 @@ is
 	                                (HC.Reasm_Buf = null
 	                                 or else
 	                                   (HC.Reasm_Buf'First = 0
-	                                    and then HC.Reasm_Buf'Length <=
-	                                      Max_HS_Msg
-		                                    and then HC.Reasm_Len <=
-		                                      N32 (HC.Reasm_Buf'Length)
-		                                    and then HC.Reasm_Need <=
-		                                      N32 (HC.Reasm_Buf'Length)
-		                                    and then HC.Reasm_Need >= 4
+		                                    and then HC.Reasm.Need >= 4
 		                                    and then
-		                                      (if HC.Reasm_Hdr_Pending
-	                                       then HC.Reasm_Need = 4
-	                                            and then HC.Reasm_Len <= 4
+		                                      (if (HC.Reasm.Phase = Reasm_Header)
+	                                       then HC.Reasm.Need = 4
+	                                            and then HC.Reasm.Len <= 4
 	                                            and then HC.Reasm_Buf'Length =
 	                                              Max_HS_Msg)))
 	                              and then S.State in Wait_Server_Finished

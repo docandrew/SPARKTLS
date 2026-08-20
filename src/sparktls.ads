@@ -22,8 +22,52 @@ is
    subtype Index_48 is N32 range 0 .. 47;
    subtype Bytes_48 is Byte_Seq (Index_48);
 
-   --  Heap-allocated byte sequence (for reassembly buffers)
-   type Byte_Seq_Access is access Byte_Seq;
+   --  RFC 8446 4: largest handshake message we will reassemble. Anything
+   --  larger is a decode error (enforced at 6 sites).
+   Max_HS_Msg : constant := 131072;
+   subtype HS_Msg_Len is N32 range 0 .. Max_HS_Msg;
+
+   --  Reassembly phase. Until 2026-08-20 "idle" was encoded THREE separate
+   --  ways -- Reasm_Buf = null, Reasm_Need = 0, and Reasm_Hdr_Pending =
+   --  False -- with nothing forcing them to agree, which is exactly why call
+   --  sites defensively tested two at once ("Reasm_Need > 0 and
+   --  HC.Reasm_Buf /= null"). One field is now the single source of truth.
+   type Reasm_Phase is (Reasm_Idle, Reasm_Header, Reasm_Body);
+
+   --  The three coupled fields live in their own record so a state
+   --  transition is ONE aggregate assignment. That matters twice:
+   --    * the predicate is never observed mid-update -- the field-by-field
+   --      failure catalogued in task #60; and
+   --    * only these 12 bytes are copied. The reassembly buffer is
+   --      deliberately NOT a component here, so no transition copies it.
+   --  There is deliberately no "Len <= Need" conjunct: in the packed
+   --  handshake case leftover bytes make Len > Need legal, and
+   --  Shift_To_Next_Packed_Message's precondition REQUIRES Need < Len.
+   type Reasm_Info is record
+      Phase : Reasm_Phase := Reasm_Idle;
+      Len   : HS_Msg_Len  := 0;   --  bytes accumulated so far
+      Need  : HS_Msg_Len  := 0;   --  total bytes needed (type+len+body)
+   end record
+     with Predicate =>
+       (case Reasm_Info.Phase is
+          when Reasm_Idle   => Reasm_Info.Len = 0 and then Reasm_Info.Need = 0,
+          when Reasm_Header => Reasm_Info.Need = 4 and then Reasm_Info.Len <= 4,
+          when Reasm_Body   => Reasm_Info.Need >= 4);
+
+   --  FIXED-SIZE reassembly buffer. Constrained deliberately: with
+   --  'First = 0 and 'Length = Max_HS_Msg guaranteed BY THE TYPE, the
+   --  bound conjuncts that used to live in Reasm_Buffer_Shaped
+   --  ("Reasm_Len <= Buf'Length", "Reasm_Need <= Buf'Length") become
+   --  tautologies against HS_Msg_Len, which is already 0 .. Max_HS_Msg.
+   --  It also collapses six different allocation sizes into one and
+   --  deletes the grow-and-copy path that allocated 128 KB, zeroed it,
+   --  copied the leftover byte-by-byte and freed the old buffer.
+   subtype Reasm_Buffer is Byte_Seq (0 .. Max_HS_Msg - 1);
+
+   --  Heap-allocated reassembly buffer. Used ONLY for reassembly -- all
+   --  13 uses in the tree are Reasm_Buf -- so constraining the designated
+   --  subtype needs no separate access type or deallocator.
+   type Byte_Seq_Access is access Reasm_Buffer;
    procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access)
       with Post => Ptr = null;
 
@@ -57,8 +101,6 @@ is
 
    --  Handshake message length (3 bytes on wire, max 2^24 - 1).
    --  Bounded to Max_HS_Msg (128 KB) for reassembled messages.
-   Max_HS_Msg : constant := 131072;
-   subtype HS_Msg_Len is N32 range 0 .. Max_HS_Msg;
 
    --  Reassembly buffer pointer. The two facts every indexing site needs
    --  from the buffer itself -- zero-based, and short enough that
@@ -68,11 +110,9 @@ is
    --  The obligation lands only where the pointer is assigned; every
    --  allocation site is 0 .. X - 1 with X bounded by Max_HS_Msg or
    --  IO_Buffer_Capacity (33280).
-   subtype Reasm_Buf_Access is Byte_Seq_Access
-     with Dynamic_Predicate =>
-       Reasm_Buf_Access = null
-       or else (Reasm_Buf_Access'First = 0
-                and then Reasm_Buf_Access'Length <= Max_HS_Msg);
+   --  NO PREDICATE. 'First = 0 and 'Length = Max_HS_Msg are guaranteed by
+   --  the designated subtype, so there is nothing left to state.
+   subtype Reasm_Buf_Access is Byte_Seq_Access;
 
    --  Handshake message type code (1 byte on wire).
    --  RFC 8446 Section 4 defines the valid values.
@@ -1876,13 +1916,7 @@ is
       --  handshake message (declared length > fragment), accumulate
       --  fragments here until the full message is available.
       Reasm_Buf  : Reasm_Buf_Access := null;
-      Reasm_Len  : HS_Msg_Len := 0;   --  bytes accumulated so far
-      Reasm_Need : HS_Msg_Len := 0;   --  total bytes needed (type+len+body)
-      --  When fragmentation splits the 4-byte handshake header itself
-      --  (BoGo MaxHandshakeRecordLength=1), Reasm_Need is initialized
-      --  to 4 with this flag set; the reassembly path decodes the
-      --  real HS_Total once 4 bytes are present and clears the flag.
-      Reasm_Hdr_Pending : Boolean := False;
+      Reasm      : Reasm_Info;
 
       --  Heap budget: total bytes allocated for extensions/reassembly.
       --  Prevents DoS via large extensions in ClientHello/ServerHello.
@@ -1895,43 +1929,12 @@ is
       --  RecordFlux's Initialize/Take_Buffer at non-heap storage), note that
       --  server_msgs.adb holds a message buffer and an extension buffer live
       --  simultaneously, so a single shared block is not sufficient.
-   end record
-     with Predicate =>
-       --  All seven single-field length/count bounds that used to be stated
-       --  here now live on the FIELD subtypes (Transcript_Length,
-       --  Hash_Length, Cert_DER_Length, Cert_Pool_Count, PSK_Binder_Length,
-       --  PSK_Value_Length, TLS12_Ticket_Length) -- see their declarations
-       --  above for why. What remains is the one genuine MULTI-field
-       --  relationship, which no subtype can express.
-       --
-       --  Reassembly buffer shape -- the same conditions the Ghost function
-       --  Reasm_Buffer_Shaped states, inlined here because that function is
-       --  declared after this record and a predicate cannot call it.
-       --
-       --  Stated as an invariant so the ~430 Pre/Post mentions that
-       --  currently thread it by hand become redundant. Unlike the Session
-       --  output-compaction rule (tried and moved to IO_Buffer on
-       --  2026-08-17), this one sits at the SAME level as the parameter:
-       --  HC is passed whole as "in out Handshake_Context", so each callee
-       --  discharges it once rather than every caller re-establishing it.
-       --  The 68 sites that pass HC.Reasm_Buf as a component to
-       --  Free_Byte_Seq are safe because that procedure carries
-       --  Post => Ptr = null, which satisfies the null disjunct directly.
-       (Handshake_Context.Reasm_Buf = null
-            or else
-              (Handshake_Context.Reasm_Len <=
-                 N32 (Handshake_Context.Reasm_Buf'Length)
-               and then Handshake_Context.Reasm_Need <=
-                 N32 (Handshake_Context.Reasm_Buf'Length)
-               and then (if Handshake_Context.Reasm_Need = 0
-                         then Handshake_Context.Reasm_Len = 0
-                         else Handshake_Context.Reasm_Need >= 4)
-               and then
-                 (if Handshake_Context.Reasm_Hdr_Pending
-                  then Handshake_Context.Reasm_Need = 4
-                       and then Handshake_Context.Reasm_Len <= 4
-                       and then Handshake_Context.Reasm_Buf'Length =
-                         Max_HS_Msg)));
+   end record;
+   --  No Predicate on this record any more. Every field bound lives on a
+   --  FIELD SUBTYPE, and the one genuine MULTI-field relationship -- the
+   --  reassembly state machine -- moved into Reasm_Info, which carries its
+   --  own predicate and is updated by a single aggregate assignment. That
+   --  removes Handshake_Context from the task #60 class entirely.
 
    Max_Handshake_Heap : constant := 262_144;  --  256 KB per handshake
 
@@ -1964,8 +1967,7 @@ is
    function Reasm_Buffer_Shaped (HC : Handshake_Context) return Boolean is
      (HC.Reasm_Buf = null
       or else
-        (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length)
-         and then HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length)
+        (HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length)
          --  Reassembly state machine: Need = 0 means idle, which means
          --  no buffered bytes; otherwise the target total always
          --  includes the 4-byte handshake header. All 83 Reasm_Need
@@ -1976,13 +1978,13 @@ is
          --  discharged this predicate for free) a new obligation to frame
          --  Reasm_Len/Reasm_Need, which regresses flights that never
          --  reassemble at all (e.g. Build_Abbreviated_Server_Flight_12).
-         and then (if HC.Reasm_Need = 0
-                   then HC.Reasm_Len = 0
-                   else HC.Reasm_Need >= 4)
+         and then (if HC.Reasm.Need = 0
+                   then HC.Reasm.Len = 0
+                   else HC.Reasm.Need >= 4)
          and then
-           (if HC.Reasm_Hdr_Pending then
-              HC.Reasm_Need = 4
-              and then HC.Reasm_Len <= 4
+           (if (HC.Reasm.Phase = Reasm_Header) then
+              HC.Reasm.Need = 4
+              and then HC.Reasm.Len <= 4
               and then HC.Reasm_Buf'Length = Max_HS_Msg)))
      with Ghost;
 
@@ -1991,7 +1993,7 @@ is
    --  may exceed Reasm_Need while leftover bytes are shifted down. This is
    --  deliberately independent of the buffer shape above.
    function Reasm_Building (HC : Handshake_Context) return Boolean is
-     (HC.Reasm_Buf = null or else HC.Reasm_Len <= HC.Reasm_Need)
+     (HC.Reasm_Buf = null or else HC.Reasm.Len <= HC.Reasm.Need)
      with Ghost;
 
    --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------
@@ -2543,7 +2545,17 @@ is
    --      "in out Session" throughout; do not introduce copies.
    --
    --  Config is ~5.9 KB and Session_Ticket ~600 bytes, for comparison.
-   type Session is private;
+   --  SPIKE 2026-08-20: Role is a DISCRIMINANT, not a field. There is no
+   --  variant part -- no component's subtype depends on Role, so SPARK's
+   --  mutable-discriminant restrictions largely do not apply. The point is
+   --  the constrained subtypes below: a subprogram taking Server_Session
+   --  cannot be called with a client session, so ~50 "Role = Role_Server"
+   --  preconditions become UNSTATEABLE rather than merely satisfied.
+   --  Existing "S : SPARKTLS.Session;" keeps compiling via the default.
+   type Session (Role : TLS_Role := Role_Client) is private;
+
+   subtype Client_Session is Session (Role_Client);
+   subtype Server_Session is Session (Role_Server);
 
    ---------------------------------------------------------------------------
    --  Session query functions.
@@ -2868,11 +2880,10 @@ private
    --  components, but the private part can, and GNATprove reads
    --  expression-function completions here exactly as it did before.
 
-   type Session is record
+   type Session (Role : TLS_Role := Role_Client) is record
       --  State
       State        : Connection_State := Idle;
       Last_Error   : Error_Code       := No_Error;
-      Role         : TLS_Role         := Role_Client;
 
       --  I/O buffers
       Input        : IO_Buffer;

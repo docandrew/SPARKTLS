@@ -272,9 +272,16 @@ UNSUPPORTED_SKIPS=(
   # UNSKIPPED 2026-08-18 (task #54): the resumption / session-ticket
   # family, ~30 globs. Skipped as behaviours "SPARKTLS intentionally does
   # not expose THROUGH THE BOGO SHIM today" -- again a harness limitation
-  # rather than a protocol decision. Resumption is core TLS 1.3 and we
-  # implement it (tickets and session IDs), so this is likely the largest
-  # block of hidden PASSING tests. Measure, then re-skip individually.
+  # rather than a protocol decision. Measure, then re-skip individually.
+  #
+  # CORRECTION 2026-08-20: this block used to claim "we implement it
+  # (tickets and session IDs)". The session-ID half was FALSE. Resumption
+  # here is ticket/PSK-only -- Session_Cache.Lookup_Session is keyed by a
+  # TICKET identity (Pre: ID'Length = Ticket_ID_Len) and returns a PSK, and
+  # every Session_ID reference in the server is Legacy_Session_ID appearing
+  # only in frame conditions (= 'Old), i.e. the RFC 8446 compatibility echo,
+  # never a cache key. Measuring was still right: it surfaced 20 real gaps
+  # (re-skipped below with the honest reason) and left the rest measured.
   #   was: 'Resume-*' 'TLS13-TestBadTicketAge-Client'
   #        'TLS13-Client-*TicketFlags*' 'TLS13-Client-EmptyTicketFlags'
   #        'TLS13-Client-NonminimalTicketFlags'
@@ -291,6 +298,23 @@ UNSUPPORTED_SKIPS=(
   #        'TLS13-Client-*ResumptionAcrossNames'
   #        'EmptySessionID' 'Client-ShortSessionID' 'Client-TooLongSessionID'
   #        'Basic-Client-NoTicket-*' 'Basic-Server-NoTickets-*'
+  # RE-SKIPPED 2026-08-20 (task #74): TLS 1.2 session-ID resumption
+  # (RFC 5246 s7.3, the stateful abbreviated handshake keyed by session_id)
+  # is NOT implemented, and is a DELIBERATE NON-GOAL -- it is the only
+  # resumption mechanism requiring a server-side cache of master secrets,
+  # which contradicts the stateless-ticket design (RFC 5077 TEKs for TLS
+  # 1.2, ticket-store identifiers for TLS 1.3), the app-owned-storage model
+  # (#28/#31), and the bounded-static-memory direction. TLS 1.3 removed
+  # session-ID resumption entirely, so it is TLS-1.2-only investment.
+  # Resumption itself IS supported and measured -- only this mechanism is
+  # absent. All 20 fail with "didResume is false, but we expected the
+  # opposite". Verified individually; families with other symptoms are
+  # deliberately left UNSKIPPED (Basic-Client-RenewTicket-* fails with
+  # "bad record MAC", a different and unexplained defect -- see #75).
+  'Basic-Client-NoTicket-*' 'Basic-Server-NoTickets-*'
+  'Client-ShortSessionID' 'Resume-Server-NoTickets-TLS12-TLS12'
+  'ResumeTLS12SessionID-TLS13' 'SupportTicketsWithSessionID'
+
   # Despite the ALPN prefix, this TLS 1.2 case disables tickets and expects
   # session-ID resumption through BoringSSL's async session callback.
   'ALPNServer-Async-TLS-TLS12'

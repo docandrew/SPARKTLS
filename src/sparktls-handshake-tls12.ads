@@ -318,9 +318,9 @@ is
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Reasm_Buffer_Shaped (HC)
-		                and then HC.Reasm_Need = HC.Reasm_Need'Old
-		                and then HC.Reasm_Len = HC.Reasm_Len'Old
-		                and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
+		                and then HC.Reasm.Need = HC.Reasm.Need'Old
+		                and then HC.Reasm.Len = HC.Reasm.Len'Old
+		                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 		                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
 		                and then (if HC.Cfg.Random'Old /= null
 		                          then HC.Cfg.Random /= null)
@@ -343,9 +343,9 @@ is
 	                   and then Reasm_Buffer_Shaped (HC),
            Post => HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
-                   and then HC.Reasm_Need = HC.Reasm_Need'Old
-                   and then HC.Reasm_Len = HC.Reasm_Len'Old
-                   and then HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Old
+                   and then HC.Reasm.Need = HC.Reasm.Need'Old
+                   and then HC.Reasm.Len = HC.Reasm.Len'Old
+                   and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 	                   and then Reasm_Building (HC)
 	                   and then Reasm_Buffer_Shaped (HC)
 	                   and then
@@ -523,10 +523,9 @@ is
 	                and then HC.Transcript_Len = HC.Transcript_Len'Old
 	                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
 	                and then Reasm_Buffer_Shaped (HC)
-	                and then HC.Reasm_Len = HC.Reasm_Len'Old
-	                and then HC.Reasm_Need = HC.Reasm_Need'Old
-	                and then HC.Reasm_Hdr_Pending =
-	                  HC.Reasm_Hdr_Pending'Old
+	                and then HC.Reasm.Len = HC.Reasm.Len'Old
+	                and then HC.Reasm.Need = HC.Reasm.Need'Old
+	                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 			                and then
 			                  (if HC.HRR_Cookie_Len'Old <=
 			                        N32 (HC.HRR_Cookie'Length)

@@ -160,7 +160,7 @@ is
    with Pre => HC.Version = TLS_1_2
 	               and then S.State = Wait_Client_Certificate
 	               and then Reasm_Building (HC)
-	               and then HC.Reasm_Len <= HC.Reasm_Need
+	               and then HC.Reasm.Len <= HC.Reasm.Need
 	               and then Reasm_Buffer_Shaped (HC)
                and then HC.Cfg.Local /= null
                and then HC.Cfg.Local.Has_Identity

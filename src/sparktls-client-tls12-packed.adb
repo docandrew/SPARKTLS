@@ -4,24 +4,22 @@ package body SPARKTLS.Client.TLS12.Packed with
    SPARK_Mode => On
 is
       procedure Shift_To_Next_Packed_Message
-        (Reasm_Buf         : in out Byte_Seq_Access;
-         Reasm_Len         : in out N32;
-         Reasm_Need        : in out N32;
-         Reasm_Hdr_Pending : in out Boolean;
+        (Reasm_Buf   : in out Byte_Seq_Access;
+         Reasm       : in out Reasm_Info;
          Msg_Type    :    out Byte;
          Msg_Len     :    out N32;
          More_Packed :    out Boolean;
          Bad_Next    :    out Boolean)
       is
-         Old_Need : constant N32 := Reasm_Need;
-         Leftover : constant N32 := Reasm_Len - Old_Need;
+         Old_Need : constant N32 := Reasm.Need;
+         Leftover : constant N32 := Reasm.Len - Old_Need;
       begin
       Msg_Type := 0;
       Msg_Len := 0;
       More_Packed := False;
       Bad_Next := False;
 
-         pragma Assert (Old_Need + Leftover = Reasm_Len);
+         pragma Assert (Old_Need + Leftover = Reasm.Len);
          pragma Assert
            (Old_Need + Leftover <= N32 (Reasm_Buf'Length));
 
@@ -35,39 +33,17 @@ is
                and Old_Need + Leftover <= N32 (Reasm_Buf'Length));
             Reasm_Buf (I) := Reasm_Buf (Old_Need + I);
          end loop;
-         Reasm_Len := Leftover;
+         Reasm := (Reasm with delta Len => Leftover);
 
       if Leftover < 4 then
-         --  Partial header at tail; defer to next call via
-         --  Hdr_Pending sentinel. Normalize to a max-sized buffer so
-         --  the eventual decoded message length remains within the
-         --  allocated reassembly capacity.
-            declare
-               New_Buf : Byte_Seq_Access :=
-                  new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
-            begin
-               pragma Assert (New_Buf /= null);
-               pragma Assert (New_Buf'First = 0);
-               pragma Assert (New_Buf'Length = Max_HS_Msg);
-               for I in N32 range 0 .. Leftover - 1 loop
-                  pragma Loop_Invariant (I <= Leftover - 1);
-                  pragma Loop_Invariant (New_Buf /= null);
-                  pragma Loop_Invariant (New_Buf'First = 0);
-                  pragma Loop_Invariant (New_Buf'Length = Max_HS_Msg);
-                  pragma Loop_Invariant (Reasm_Buf /= null);
-                  pragma Loop_Invariant (Reasm_Buf'First = 0);
-                  pragma Loop_Invariant
-                    (Leftover <= N32 (Reasm_Buf'Length));
-                  New_Buf (I) := Reasm_Buf (I);
-               end loop;
-               Free_Byte_Seq (Reasm_Buf);
-               Reasm_Buf := New_Buf;
-            end;
-            Reasm_Need := 4;
-            Reasm_Hdr_Pending := True;
-            pragma Assert (Reasm_Need <= N32 (Reasm_Buf'Length));
+         --  Partial header at tail; defer to next call via the
+         --  Hdr_Pending sentinel. The buffer is already Max_HS_Msg
+         --  (Reasm_Buffer is a fixed subtype), so the leftover bytes are
+         --  already in place at 0 .. Leftover - 1 after the shift above.
+         --  Only the stale tail needs clearing.
+            Reasm_Buf (Leftover .. Max_HS_Msg - 1) := (others => 0);
+            Reasm := (Phase => Reasm_Header, Len => Leftover, Need => 4);
          else
-            pragma Assert (Reasm_Buf'Last >= 3);
             declare
                Next_Len : constant N32 :=
                   N32 (Reasm_Buf (1)) * 65536
@@ -77,9 +53,7 @@ is
             begin
                if Next_Total > Max_HS_Msg then
                   Free_Byte_Seq (Reasm_Buf);
-                  Reasm_Len := 0;
-                  Reasm_Need := 0;
-                  Reasm_Hdr_Pending := False;
+                  Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
                   Bad_Next := True;
                   return;
                end if;
@@ -90,30 +64,18 @@ is
                   pragma Assert (Leftover < Old_Need + Leftover);
                   Msg_Type := Reasm_Buf (0);
                   Msg_Len := Next_Len;
-                  Reasm_Need := Next_Total;
-                  pragma Assert (not Reasm_Hdr_Pending);
-                  pragma Assert (Msg_Len <= Reasm_Need - 4);
-                  pragma Assert (Reasm_Need <= Reasm_Len);
-                  pragma Assert (Reasm_Len < Old_Need + Leftover);
+                  Reasm := (Reasm with delta Need => Next_Total);
+                  pragma Assert (Reasm.Phase = Reasm_Body);
+                  pragma Assert (Msg_Len <= Reasm.Need - 4);
+                  pragma Assert (Reasm.Need <= Reasm.Len);
+                  pragma Assert (Reasm.Len < Old_Need + Leftover);
                   More_Packed := True;
                else
                   --  Partial body; defer to next call.
-                  if Next_Total > N32 (Reasm_Buf'Length) then
-                     declare
-                        New_Buf : Byte_Seq_Access :=
-                           new Byte_Seq'(0 .. Next_Total - 1 => 0);
-                  begin
-                     pragma Assert (New_Buf /= null);
-                        pragma Assert (New_Buf'First = 0);
-                        pragma Assert (New_Buf'Length = Next_Total);
-                        New_Buf (0 .. Leftover - 1) :=
-                           Reasm_Buf (0 .. Leftover - 1);
-                        Free_Byte_Seq (Reasm_Buf);
-                        Reasm_Buf := New_Buf;
-                     end;
-                  end if;
-                  pragma Assert (Next_Total <= N32 (Reasm_Buf'Length));
-                  Reasm_Need := Next_Total;
+                  --  No grow step: Next_Total <= Max_HS_Msg is enforced
+                  --  by the explicit rejection above, and the buffer is
+                  --  always exactly Max_HS_Msg, so it already fits.
+                  Reasm := (Reasm with delta Need => Next_Total);
                end if;
             end;
          end if;

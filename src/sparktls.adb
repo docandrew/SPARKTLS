@@ -13,7 +13,7 @@ package body SPARKTLS with
 is
    procedure Free_Byte_Seq (Ptr : in out Byte_Seq_Access) is
       procedure Dealloc is new Ada.Unchecked_Deallocation
-        (Object => Byte_Seq, Name => Byte_Seq_Access);
+        (Object => Reasm_Buffer, Name => Byte_Seq_Access);
    begin
       Dealloc (Ptr);
    end Free_Byte_Seq;

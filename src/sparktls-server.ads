@@ -105,7 +105,18 @@ is
    --  frames it).
    with Pre  => Cfg.Random /= null
                 and then Cfg.Local /= null
-                and then Cfg.Local.Has_Identity,
+                and then Cfg.Local.Has_Identity
+                --  Init's body assigns a whole aggregate naming
+                --  Role => Role_Server, which CHANGES the discriminant.
+                --  That is only legal for an unconstrained actual, so
+                --  either pass an unconstrained Session (the discriminant
+                --  is then set here) or one already constrained to
+                --  Role_Server. Without this, gnatprove cannot discharge
+                --  the generated discriminant check at server.adb:998 and
+                --  a caller passing a Client_Session would get
+                --  Constraint_Error -- or, with checks suppressed, silent
+                --  corruption.
+                and then (not S'Constrained or else S.Role = Role_Server),
         Post => Role (S) = Role_Server and
                 State (S) in Wait_Client_Hello | Error_State;
 
@@ -121,9 +132,12 @@ is
    --    Shutdown     → clean close complete, state = Closed
    --    Error_Alert  → fatal error, alert was sent, state = Closed
    procedure Advance
-     (S      : in out Session;
+     (S      : in out Server_Session;
       Result :    out Action)
-   with Pre  => State (S) /= Idle and Role (S) = Role_Server,
+   --  Role (S) = Role_Server was deleted from this Pre 2026-08-20: the
+   --  Server_Session subtype constrains the discriminant, so it is now
+   --  UNSTATEABLE rather than merely required.
+   with Pre  => State (S) /= Idle,
         Post => (if Result = Handshake_Done then
                        State (S) = Connected)
                 and (if Result = Shutdown then

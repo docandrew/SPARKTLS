@@ -1472,11 +1472,11 @@ is
       for I in N32 range 0 .. 31 loop
          pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
          pragma Loop_Invariant
-           (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+           (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
          pragma Loop_Invariant
-           (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+           (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
          pragma Loop_Invariant
-           (HC.Reasm_Hdr_Pending = HC.Reasm_Hdr_Pending'Loop_Entry);
+           (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
          HC.Server_Random (I) := Data (Pos + I);
       end loop;
       Pos := Pos + 32;
@@ -1503,12 +1503,11 @@ is
             for I in N32 range 0 .. 7 loop
                pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
                pragma Loop_Invariant
-                 (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+                 (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant
-                 (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+                 (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
                pragma Loop_Invariant
-                 (HC.Reasm_Hdr_Pending =
-                    HC.Reasm_Hdr_Pending'Loop_Entry);
+                 (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                pragma Loop_Invariant
                  (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
                   and then HC.HRR_Cookie_Len =
@@ -1545,10 +1544,9 @@ is
            (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
             and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry
             and then Reasm_Buffer_Shaped (HC)
-            and then HC.Reasm_Len = HC.Reasm_Len'Loop_Entry
-            and then HC.Reasm_Need = HC.Reasm_Need'Loop_Entry
-            and then HC.Reasm_Hdr_Pending =
-              HC.Reasm_Hdr_Pending'Loop_Entry);
+            and then HC.Reasm.Len = HC.Reasm.Len'Loop_Entry
+            and then HC.Reasm.Need = HC.Reasm.Need'Loop_Entry
+            and then HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
          HC.Legacy_Session_ID (I) := Data (Pos + I);
       end loop;
       Pos := Pos + SID_Len;
@@ -1603,12 +1601,11 @@ is
             loop
                pragma Loop_Invariant (Reasm_Buffer_Shaped (HC));
                pragma Loop_Invariant
-                 (HC.Reasm_Len = HC.Reasm_Len'Loop_Entry);
+                 (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant
-                 (HC.Reasm_Need = HC.Reasm_Need'Loop_Entry);
+                 (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
                pragma Loop_Invariant
-                 (HC.Reasm_Hdr_Pending =
-                    HC.Reasm_Hdr_Pending'Loop_Entry);
+                 (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                declare
                   Ext_Type : constant Unsigned_16 :=
                      Unsigned_16 (Data (Ext_Pos)) * 256 +

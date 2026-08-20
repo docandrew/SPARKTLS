@@ -61,8 +61,8 @@ is
         (if S.State = Wait_Client_Hello
          then Reasm_Building (HC))
       and then
-        (if S.State = Wait_Client_Hello and then HC.Reasm_Need > 0
-         then HC.Reasm_Len < HC.Reasm_Need))
+        (if S.State = Wait_Client_Hello and then HC.Reasm.Need > 0
+         then HC.Reasm.Len < HC.Reasm.Need))
    with Ghost;
 
 	   function Handshake_Record_Fragment_Ready
@@ -181,12 +181,12 @@ is
 			                and then HC.Legacy_Session_ID_Len in 0 .. 32
 				                and then
 						                  (if S.State = Wait_Client_Hello
-					                     and then HC.Reasm_Need > 0
-					                   then HC.Reasm_Len < HC.Reasm_Need
+					                     and then HC.Reasm.Need > 0
+					                   then HC.Reasm.Len < HC.Reasm.Need
 						                        and then Reasm_Buffer_Shaped (HC))
 						                and then
 							                  (if S.State = Wait_Client_Hello
-							                     and then HC.Reasm_Need = 0
+							                     and then HC.Reasm.Need = 0
 						                   then HC.Reasm_Buf = null)
 					                and then
 						                  (if S.State = Wait_Client_Hello_Retry
@@ -194,7 +194,7 @@ is
 					                and then
 						                  (if S.State in Wait_Client_Certificate
 						                               | Wait_Client_Cert_Verify
-						                   then HC.Reasm_Len <= HC.Reasm_Need)
+						                   then HC.Reasm.Len <= HC.Reasm.Need)
 					                and then
 					                  (if HC.Version = TLS_1_3
 					                   and then S.State = Wait_Client_Certificate
@@ -309,7 +309,7 @@ is
 			                   then Reasm_Building (HC))
 		                and then
 		                  (if S.State = Wait_Client_Hello_Retry
-		                      and then HC.Reasm_Need = 0
+		                      and then HC.Reasm.Need = 0
 		                   then HC.Reasm_Buf = null)
 				                and then
 				                  (if S.State in Wait_Client_Hello_Retry
@@ -458,8 +458,8 @@ is
 										                               and then Reasm_Building (HC))
 						                and then
 					                  (if S.State = Wait_Client_Hello
-			                     and then HC.Reasm_Need > 0
-			                   then HC.Reasm_Len < HC.Reasm_Need);
+			                     and then HC.Reasm.Need > 0
+			                   then HC.Reasm.Len < HC.Reasm.Need);
 
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
@@ -582,7 +582,7 @@ is
 			                and then
 			                  (if S.State = Wait_Client_Certificate
 			                   then Reasm_Buffer_Shaped (HC))
-			                and then HC.Reasm_Len <= HC.Reasm_Need
+			                and then HC.Reasm.Len <= HC.Reasm.Need
 		                and then
 	                  (if S.State = Wait_Client_Cert_Verify then
                      HC.Peer_Cert_Valid
@@ -898,11 +898,11 @@ is
 						                     then Reasm_Buffer_Shaped (HC))
 						                and (if Reasm_Buffer_Shaped (HC)'Old
 						                     then Reasm_Buffer_Shaped (HC))
-						                and HC.Reasm_Len = HC.Reasm_Len'Old
-					                and HC.Reasm_Need = HC.Reasm_Need'Old
+						                and HC.Reasm.Len = HC.Reasm.Len'Old
+					                and HC.Reasm.Need = HC.Reasm.Need'Old
 						                and
-					                  (if HC.Reasm_Len'Old <= HC.Reasm_Need'Old
-				                   then HC.Reasm_Len <= HC.Reasm_Need)
+					                  (if HC.Reasm.Len'Old <= HC.Reasm.Need'Old
+				                   then HC.Reasm.Len <= HC.Reasm.Need)
 				                and HC.Server_Seq_12 = HC.Server_Seq_12'Old
 				                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and HC.Client_HS.Counter = HC.Client_HS.Counter'Old
@@ -1171,7 +1171,7 @@ is
    end Advance_Server_Non_Handshake;
 
    procedure Advance
-     (S      : in out Session;
+     (S      : in out Server_Session;
       Result :    out Action)
    is
       Handled : Boolean;
@@ -1220,7 +1220,7 @@ is
 	               and then HC.Legacy_Session_ID_Len in 0 .. 32
 		               and then HC.Transcript_Len > 0
 							                              and then Reasm_Building (HC)
-					               and then HC.Reasm_Need = 0
+					               and then HC.Reasm.Need = 0
 					               and then HC.Reasm_Buf = null
 					               and then SPARKTLSCrypto.P384.Field.Initialized
 	               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
@@ -1324,7 +1324,7 @@ is
 	                    (SPARKTLS.Records.TLS12.Nonce_Space_Available_12
 	                       (HC.Server_Seq_12));
 	                  pragma Assert
-	                    (if HC.Reasm_Need = 0 then HC.Reasm_Buf = null);
+	                    (if HC.Reasm.Need = 0 then HC.Reasm_Buf = null);
 	                  SPARKTLS.Server.TLS12.Build_Server_Flight_12
                     (S, HC, Result);
 				            pragma Assert
@@ -1448,12 +1448,12 @@ is
 		               and then Server_Configured (HC)
 				               and then Reasm_Building (HC)
                         and then
-                          (if HC.Reasm_Need > 0
+                          (if HC.Reasm.Need > 0
                            then Reasm_Buffer_Shaped (HC))
                         and then HC.Legacy_Session_ID_Len in 0 .. 32
 		               and then
-		                 (if HC.Reasm_Need > 0
-		                  then HC.Reasm_Len < HC.Reasm_Need)
+		                 (if HC.Reasm.Need > 0
+		                  then HC.Reasm.Len < HC.Reasm.Need)
 		               and then Server_State_Keys_Ready (S, HC),
 	        Post => Wait_Client_Hello_Post (S, HC);
 
@@ -1555,7 +1555,7 @@ is
 	                              and then Server_Configured (HC)
 				                              and then Reasm_Building (HC)
 					                              and then
-					                                (if HC.Reasm_Need > 0
+					                                (if HC.Reasm.Need > 0
 					                                 then Reasm_Buffer_Shaped (HC))
 					                              and then HC.Legacy_Session_ID_Len in 0 .. 32
 	                              and then Server_State_Keys_Ready (S, HC)
@@ -1599,16 +1599,14 @@ is
 					                               and then HC.Legacy_Session_ID_Len
 					                                 in 0 .. 32
 				                               and then HC.Reasm_Buf = null
-	                               and then HC.Reasm_Len = 0
-	                               and then HC.Reasm_Need = 0
-	                               and then not HC.Reasm_Hdr_Pending
+	                               and then HC.Reasm.Len = 0
+	                               and then HC.Reasm.Need = 0
+	                               and then HC.Reasm.Phase /= Reasm_Header
 	                               and then Reasm_Building (HC)
 	   is
                   begin
                      Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0;
-                     HC.Reasm_Need := 0;
-                     HC.Reasm_Hdr_Pending := False;
+                     HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
                   end Free_Reasm;
 
 			                  procedure Continue_Reassembly
@@ -1622,22 +1620,15 @@ is
 	                                (Rec)
 	                              and then Rec.Record_Len <=
 	                                Available (S.Input)
-	                              and then HC.Reasm_Need > 0
-	                              and then HC.Reasm_Len < HC.Reasm_Need
+	                              and then HC.Reasm.Need > 0
+	                              and then HC.Reasm.Len < HC.Reasm.Need
 			                              and then HC.Reasm_Buf /= null
-			                              and then HC.Reasm_Buf'First = 0
-			                              and then HC.Reasm_Buf'Last < N32'Last
-			                                 and then HC.Reasm_Buf'Length <= Max_HS_Msg
 			                                 and then
-			                                   (if HC.Reasm_Hdr_Pending
-			                                    then HC.Reasm_Need = 4
-			                                         and then HC.Reasm_Len <= 4
+			                                   (if (HC.Reasm.Phase = Reasm_Header)
+			                                    then HC.Reasm.Need = 4
+			                                         and then HC.Reasm.Len <= 4
 			                                         and then HC.Reasm_Buf'Length =
 			                                           Max_HS_Msg)
-		                              and then HC.Reasm_Need <=
-		                                N32 (HC.Reasm_Buf'Length)
-	                              and then HC.Reasm_Len <=
-	                                N32 (HC.Reasm_Buf'Length)
 	                              and then Frag_Start <=
 	                                S.Input.Write_Pos - 1
 		                              and then Frag_Len <=
@@ -1654,11 +1645,10 @@ is
 					                                 and then Server_Configured (HC)
 					                                 and then HC.Legacy_Session_ID_Len
 					                                   in 0 .. 32
-							                                 and then HC.Reasm_Hdr_Pending
-				                                 and then HC.Reasm_Len = 4
-							                                 and then HC.Reasm_Need = 4
+							                                 and then (HC.Reasm.Phase = Reasm_Header)
+				                                 and then HC.Reasm.Len = 4
+							                                 and then HC.Reasm.Need = 4
 						                                 and then HC.Reasm_Buf /= null
-						                                 and then HC.Reasm_Buf'First = 0
 						                                 and then HC.Reasm_Buf'Length =
 						                                   131072,
 													                          Post =>
@@ -1673,13 +1663,9 @@ is
 							                                    and then
 							                                      HC.Legacy_Session_ID_Len
 							                                        in 0 .. 32
-				                                    and then not HC.Reasm_Hdr_Pending
+				                                    and then HC.Reasm.Phase /= Reasm_Header
 			                                 and then HC.Reasm_Buf /= null
-			                                 and then HC.Reasm_Buf'First = 0
-			                                 and then HC.Reasm_Buf'Last < N32'Last
-			                                 and then HC.Reasm_Buf'Length <=
-			                                   Max_HS_Msg
-				                                    and then HC.Reasm_Len <=
+				                                    and then HC.Reasm.Len <=
 				                                      N32 (HC.Reasm_Buf'Length));
 
 	                     procedure Decode_Pending_Reassembly_Header
@@ -1689,7 +1675,7 @@ is
 	                          + N32 (HC.Reasm_Buf (2)) * 256
 	                          + N32 (HC.Reasm_Buf (3)) + 4;
 	                     begin
-	                        HC.Reasm_Hdr_Pending := False;
+	                        HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
 	                        if HS_Total < 4 or HS_Total > Max_HS_Msg then
 		                           Free_Reasm;
 		                           Send_Alert_And_Error
@@ -1707,30 +1693,29 @@ is
 				                              and then Reasm_Building (HC)
 				                              and then HC.Legacy_Session_ID_Len
 				                                in 0 .. 32
-				                              and then not HC.Reasm_Hdr_Pending
+				                              and then HC.Reasm.Phase /= Reasm_Header
 				                              and then Wait_Client_Hello_Post
 				                                (S, HC));
 				                           return;
 			                        end if;
-		                        HC.Reasm_Need := HS_Total;
+		                        HC.Reasm := (HC.Reasm with delta Need => HS_Total);
 		                        pragma Assert (S.State = Wait_Client_Hello);
 		                        pragma Assert (Server_Configured (HC));
 		                        pragma Assert (HC.Reasm_Buf /= null);
-		                        pragma Assert (HC.Reasm_Buf'First = 0);
 		                        pragma Assert
 		                          (HC.Reasm_Buf'Length = 131072);
-		                        pragma Assert (HC.Reasm_Len = 4);
-		                        pragma Assert (HC.Reasm_Need in 4 .. Max_HS_Msg);
+		                        pragma Assert (HC.Reasm.Len = 4);
+		                        pragma Assert (HC.Reasm.Need in 4 .. Max_HS_Msg);
 		                        pragma Assert
-		                          (HC.Reasm_Len <= HC.Reasm_Need);
+		                          (HC.Reasm.Len <= HC.Reasm.Need);
 		                        pragma Assert
-		                          (HC.Reasm_Need <=
+		                          (HC.Reasm.Need <=
 		                           N32 (HC.Reasm_Buf'Length));
 		                        pragma Assert
-		                          (HC.Reasm_Len <=
+		                          (HC.Reasm.Len <=
 		                           N32 (HC.Reasm_Buf'Length));
 			                        pragma Assert (Reasm_Building (HC));
-					                        pragma Assert (not HC.Reasm_Hdr_Pending);
+					                        pragma Assert (HC.Reasm.Phase /= Reasm_Header);
 					                        pragma Assert (S.State = Wait_Client_Hello);
 						                        pragma Assert_And_Cut
 							                          (S.Role = Role_Server
@@ -1743,14 +1728,9 @@ is
 							                           and then Reasm_Building (HC)
 						                           and then HC.Legacy_Session_ID_Len
 						                             in 0 .. 32
-								                           and then not HC.Reasm_Hdr_Pending
+								                           and then HC.Reasm.Phase /= Reasm_Header
 						                           and then HC.Reasm_Buf /= null
-						                           and then HC.Reasm_Buf'First = 0
-						                           and then HC.Reasm_Buf'Length <=
-						                             Max_HS_Msg
-						                           and then HC.Reasm_Buf'Length <=
-						                             N32'Last
-								                           and then HC.Reasm_Len <=
+								                           and then HC.Reasm.Len <=
 								                             N32 (HC.Reasm_Buf'Length));
 								                        pragma Assert_And_Cut
 									                          (S.Role = Role_Server
@@ -1760,12 +1740,9 @@ is
 								                                and then Reasm_Building (HC)
 								                                and then HC.Legacy_Session_ID_Len
 							                                  in 0 .. 32
-							                                and then not HC.Reasm_Hdr_Pending
+							                                and then HC.Reasm.Phase /= Reasm_Header
 							                                and then HC.Reasm_Buf /= null
-							                                and then HC.Reasm_Buf'First = 0
-								                                and then HC.Reasm_Buf'Length <= Max_HS_Msg
-									                                and then HC.Reasm_Buf'Length <= N32'Last
-									                                and then HC.Reasm_Len <=
+									                                and then HC.Reasm.Len <=
 									                                  N32 (HC.Reasm_Buf'Length))
 								                           and then S.State in
 								                             Wait_Client_Hello | Error_State);
@@ -1783,23 +1760,15 @@ is
 	                                   (Rec)
 		                                 and then Rec.Record_Len <=
 		                                   Available (S.Input)
-		                                 and then HC.Reasm_Need > 0
-		                                 and then HC.Reasm_Len < HC.Reasm_Need
+		                                 and then HC.Reasm.Need > 0
+		                                 and then HC.Reasm.Len < HC.Reasm.Need
 		                                 and then HC.Reasm_Buf /= null
-		                                 and then HC.Reasm_Buf'First = 0
-		                                 and then HC.Reasm_Buf'Last < N32'Last
-		                                 and then HC.Reasm_Buf'Length <=
-		                                   Max_HS_Msg
 		                                 and then
-		                                   (if HC.Reasm_Hdr_Pending
-		                                    then HC.Reasm_Need = 4
-		                                         and then HC.Reasm_Len <= 4
+		                                   (if (HC.Reasm.Phase = Reasm_Header)
+		                                    then HC.Reasm.Need = 4
+		                                         and then HC.Reasm.Len <= 4
 		                                         and then HC.Reasm_Buf'Length =
 		                                           Max_HS_Msg)
-		                                 and then HC.Reasm_Need <=
-		                                   N32 (HC.Reasm_Buf'Length)
-		                                 and then HC.Reasm_Len <=
-		                                   N32 (HC.Reasm_Buf'Length)
 		                                 and then Frag_Start <=
 		                                   S.Input.Write_Pos - 1
 		                                 and then Frag_Len <=
@@ -1818,16 +1787,9 @@ is
 				                                    and then Reasm_Building (HC)
 				                                    and then
 			                                      (if More_Input_Needed
-			                                       then HC.Reasm_Len < HC.Reasm_Need
-			                                       else HC.Reasm_Len >= HC.Reasm_Need
+			                                       then HC.Reasm.Len < HC.Reasm.Need
+			                                       else HC.Reasm.Len >= HC.Reasm.Need
 			                                            and then HC.Reasm_Buf /= null
-			                                            and then HC.Reasm_Buf'First = 0
-			                                            and then HC.Reasm_Buf'Last <
-			                                              N32'Last
-			                                            and then HC.Reasm_Buf'Length <=
-			                                              Max_HS_Msg
-					                                            and then HC.Reasm_Len <=
-					                                              N32 (HC.Reasm_Buf'Length)
 					                                            and then
 					                                              HC.Legacy_Session_ID_Len
 					                                                in 0 .. 32));
@@ -1837,32 +1799,31 @@ is
 		                     begin
 		                        Result := OK;
 		                        More_Input_Needed := False;
-			                     pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
+			                     pragma Assert (HC.Reasm.Len <= HC.Reasm.Need);
 		                     pragma Assert (HC.Reasm_Buf /= null);
-		                     pragma Assert (HC.Reasm_Buf'First = 0);
 		                     pragma Assert
 		                       (HC.Reasm_Buf'Length <= Max_HS_Msg);
 		                     pragma Assert
 		                       (HC.Reasm_Buf'Length <= N32'Last);
 		                     pragma Assert
-		                       (HC.Reasm_Need <=
+		                       (HC.Reasm.Need <=
 		                          N32 (HC.Reasm_Buf'Length));
 			                     pragma Assert
-			                       (HC.Reasm_Len <=
+			                       (HC.Reasm.Len <=
 			                          N32 (HC.Reasm_Buf'Length));
 		                        pragma Assert
-		                          (if HC.Reasm_Hdr_Pending
-		                           then HC.Reasm_Need = 4
+		                          (if (HC.Reasm.Phase = Reasm_Header)
+		                           then HC.Reasm.Need = 4
 		                                and then HC.Reasm_Buf'Length =
 		                                  Max_HS_Msg);
 			                     --  Append this fragment to the reassembly buffer
 		                     declare
                         Copy_Len : constant N32 :=
                            N32'Min (Frag_Len,
-                                    HC.Reasm_Need - HC.Reasm_Len);
+                                    HC.Reasm.Need - HC.Reasm.Len);
 	                     begin
 	                        if HC.Reasm_Buf /= null and then
-	                           HC.Reasm_Len + Copy_Len <=
+	                           HC.Reasm.Len + Copy_Len <=
 	                              N32 (HC.Reasm_Buf'Length)
 	                        then
 	                           pragma Assert
@@ -1873,17 +1834,19 @@ is
 		                             (Frag_Start + Copy_Len - 1 <=
 		                                S.Input.Write_Pos - 1);
 	                           HC.Reasm_Buf
-	                             (HC.Reasm_Len ..
-                              HC.Reasm_Len + Copy_Len - 1) :=
+	                             (HC.Reasm.Len ..
+                              HC.Reasm.Len + Copy_Len - 1) :=
                               S.Input.Data (Frag_Start ..
                                             Frag_Start + Copy_Len - 1);
-                           HC.Reasm_Len := HC.Reasm_Len + Copy_Len;
+                           HC.Reasm :=
+                             (HC.Reasm with delta
+                                Len => HC.Reasm.Len + Copy_Len);
 		                        end if;
 			                     end;
-			                     pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
+			                     pragma Assert (HC.Reasm.Len <= HC.Reasm.Need);
 		                        pragma Assert
-		                          (if HC.Reasm_Hdr_Pending
-		                           then HC.Reasm_Need = 4
+		                          (if (HC.Reasm.Phase = Reasm_Header)
+		                           then HC.Reasm.Need = 4
 		                                and then HC.Reasm_Buf'Length =
 		                                  Max_HS_Msg);
 	                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1891,17 +1854,17 @@ is
                      --  Header-pending sentinel: once 4 bytes are
                      --  present, decode the actual HS_Total and
                      --  upgrade Reasm_Need.
-		                     if HC.Reasm_Hdr_Pending
-		                       and then HC.Reasm_Len >= 4
+		                     if (HC.Reasm.Phase = Reasm_Header)
+		                       and then HC.Reasm.Len >= 4
 		                       and then HC.Reasm_Buf /= null
 		                     then
 		                        pragma Assert (S.State = Wait_Client_Hello);
 			                        pragma Assert (S.Role = Role_Server);
 			                        pragma Assert (Server_Configured (HC));
-		                        pragma Assert (HC.Reasm_Need = 4);
+		                        pragma Assert (HC.Reasm.Need = 4);
 			                        pragma Assert
 			                          (HC.Reasm_Buf'Length = 131072);
-			                        pragma Assert (HC.Reasm_Len = HC.Reasm_Need);
+			                        pragma Assert (HC.Reasm.Len = HC.Reasm.Need);
 					                        Decode_Pending_Reassembly_Header;
 				                        if S.State /= Wait_Client_Hello then
 		            return;
@@ -1909,13 +1872,10 @@ is
 		                     end if;
 		                     pragma Assert (S.State = Wait_Client_Hello);
 		                     pragma Assert (HC.Reasm_Buf /= null);
-		                     pragma Assert (HC.Reasm_Buf'First = 0);
-		                     pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
-		                     pragma Assert (HC.Reasm_Buf'Length <= N32'Last);
 		                     pragma Assert
-		                       (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+		                       (HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
 
-		                     if HC.Reasm_Len < HC.Reasm_Need then
+		                     if HC.Reasm.Len < HC.Reasm.Need then
 	                        --  Still need more fragments
 		                        Result := OK;
 		                        More_Input_Needed := True;
@@ -1927,16 +1887,13 @@ is
 				                          (S.State = Wait_Client_Hello);
 					                        return;
 				                     end if;
-			                     pragma Assert (HC.Reasm_Len >= HC.Reasm_Need);
+			                     pragma Assert (HC.Reasm.Len >= HC.Reasm.Need);
 			                     pragma Assert (S.Role = Role_Server);
 			                     pragma Assert (Server_Configured (HC));
 			                     pragma Assert (Reasm_Building (HC));
 				                     pragma Assert (HC.Reasm_Buf /= null);
-			                     pragma Assert (HC.Reasm_Buf'First = 0);
-			                     pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
-			                     pragma Assert (HC.Reasm_Buf'Length <= N32'Last);
 			                     pragma Assert
-			                       (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+			                       (HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
 				                  end Append_Reassembly_Fragment;
 
 			                  procedure Parse_Completed_Reassembly
@@ -1947,13 +1904,10 @@ is
 					                              and then SPARKTLSCrypto.P384.Field.Initialized
 				                              and then SPARKTLSCrypto.P384.ECDSA.Initialized
 						                              and then HC.Reasm_Buf /= null
-			                              and then HC.Reasm_Buf'First = 0
-			                              and then HC.Reasm_Buf'Last < N32'Last
-			                              and then HC.Reasm_Buf'Length <= Max_HS_Msg
-				                              and then HC.Reasm_Len >= HC.Reasm_Need
+				                              and then HC.Reasm.Len >= HC.Reasm.Need
 			                              and then HC.Legacy_Session_ID_Len
 			                                in 0 .. 32
-			                              and then HC.Reasm_Len <=
+			                              and then HC.Reasm.Len <=
 			                                N32 (HC.Reasm_Buf'Length),
 				                       Post => Wait_Client_Hello_Post (S, HC);
 
@@ -1965,8 +1919,8 @@ is
 		                     --  This message will be appended to the transcript;
 		                     --  reject anything larger than the transcript
 		                     --  buffer before slicing and parsing it.
-		                     if HC.Reasm_Len = 0
-		                       or HC.Reasm_Len > Transcript_Capacity
+		                     if HC.Reasm.Len = 0
+		                       or HC.Reasm.Len > Transcript_Capacity
 		                     then
 		                        Free_Reasm;
 		                        Send_Alert_And_Error (S, Decode_Error, Result);
@@ -1975,7 +1929,7 @@ is
 			                           return;
 				                        end if;
 	                     declare
-	                        R_Len : constant N32 := HC.Reasm_Len;
+	                        R_Len : constant N32 := HC.Reasm.Len;
 	                        Full_Msg : constant Byte_Seq :=
 	                           HC.Reasm_Buf (0 .. R_Len - 1);
 	                     begin
@@ -2013,9 +1967,9 @@ is
 			                  end Parse_Completed_Reassembly;
 			                  begin
 			                     pragma Assert
-			                       (if HC.Reasm_Hdr_Pending then
-			                          HC.Reasm_Need = 4
-			                          and then HC.Reasm_Len <= 4
+			                       (if (HC.Reasm.Phase = Reasm_Header) then
+			                          HC.Reasm.Need = 4
+			                          and then HC.Reasm.Len <= 4
 			                          and then HC.Reasm_Buf /= null
 			                          and then HC.Reasm_Buf'Length =
 			                            Max_HS_Msg);
@@ -2039,12 +1993,9 @@ is
 			                     pragma Assert (Server_Configured (HC));
 			                     pragma Assert (Reasm_Building (HC));
 				                     pragma Assert (HC.Reasm_Buf /= null);
-			                     pragma Assert (HC.Reasm_Buf'First = 0);
-			                     pragma Assert (HC.Reasm_Buf'Length <= Max_HS_Msg);
-			                     pragma Assert (HC.Reasm_Buf'Length <= N32'Last);
-			                     pragma Assert (HC.Reasm_Len >= HC.Reasm_Need);
+			                     pragma Assert (HC.Reasm.Len >= HC.Reasm.Need);
 			                     pragma Assert
-			                       (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+			                       (HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
 			                     Parse_Completed_Reassembly;
 			                     pragma Assert (Wait_Client_Hello_Post (S, HC));
 			                  end Continue_Reassembly;
@@ -2062,7 +2013,7 @@ is
 			                                Available (S.Input)
 			                              and then S.Input.Read_Pos <=
 			                                IO_Buffer_Capacity - Rec.Record_Len
-			                              and then HC.Reasm_Need = 0
+			                              and then HC.Reasm.Need = 0
 		                              and then Frag_Start <=
 		                                S.Input.Write_Pos - 1
 		                              and then Frag_Len <=
@@ -2083,7 +2034,7 @@ is
 			                                Available (S.Input)
 			                              and then S.Input.Read_Pos <=
 			                                IO_Buffer_Capacity - Rec.Record_Len
-			                              and then HC.Reasm_Need = 0
+			                              and then HC.Reasm.Need = 0
 		                              and then Frag_Len >= 4
 		                              and then Frag_Start <=
 		                                S.Input.Write_Pos - 1
@@ -2130,10 +2081,8 @@ is
 			                     S.Input.Read_Pos :=
 			                        S.Input.Read_Pos + Rec.Record_Len;
 			                     Free_Byte_Seq (HC.Reasm_Buf);
-			                     HC.Reasm_Len := 0;
-			                     HC.Reasm_Need := 0;
-			                     HC.Reasm_Hdr_Pending := False;
 
+			                     HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
 					                     pragma Assert (Server_Configured (HC));
 						                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
 							                     pragma Assert (HC.Transcript_Len > 0);
@@ -2147,7 +2096,7 @@ is
 		                  with Pre => S.State = Wait_Client_Hello
 		                              and then Server_Configured (HC)
 		                              and then Reasm_Building (HC)
-		                              and then HC.Reasm_Need = 0
+		                              and then HC.Reasm.Need = 0
 			                              and then Frag_Len in 1 .. 3
 			                              and then Rec.Record_Len <=
 			                                Available (S.Input)
@@ -2163,11 +2112,11 @@ is
 		                  is
 		                  begin
 		                     Free_Byte_Seq (HC.Reasm_Buf);
-		                     HC.Reasm_Need := 4;
-		                     HC.Reasm_Hdr_Pending := True;
-		                     HC.Reasm_Len := Frag_Len;
-		                     HC.Reasm_Buf := new Byte_Seq'
-		                        (0 .. Max_HS_Msg - 1 => 0);
+		                     HC.Reasm_Buf := new Reasm_Buffer'(others => 0);
+		                     HC.Reasm :=
+		                       (Phase => Reasm_Header,
+		                        Len => Frag_Len,
+		                        Need => 4);
 		                     HC.Reasm_Buf (0 .. Frag_Len - 1) :=
 		                        S.Input.Data (Frag_Start ..
 		                                      Frag_Start + Frag_Len - 1);
@@ -2185,7 +2134,7 @@ is
 		                  with Pre => S.State = Wait_Client_Hello
 		                              and then Server_Configured (HC)
 		                              and then Reasm_Building (HC)
-		                              and then HC.Reasm_Need = 0
+		                              and then HC.Reasm.Need = 0
 		                              and then Frag_Len >= 4
 		                              and then HS_Total in 4 .. Max_HS_Msg
 			                              and then HS_Total > Frag_Len
@@ -2204,11 +2153,11 @@ is
 		                  is
 		                  begin
 			                     Free_Byte_Seq (HC.Reasm_Buf);
-			                     HC.Reasm_Need := HS_Total;
-			                     HC.Reasm_Len := Frag_Len;
-		                        HC.Reasm_Hdr_Pending := False;
-			                     HC.Reasm_Buf := new Byte_Seq'
-			                        (0 .. HS_Total - 1 => 0);
+			                     HC.Reasm_Buf := new Reasm_Buffer'(others => 0);
+			                     HC.Reasm :=
+			                       (Phase => Reasm_Body,
+			                        Len => Frag_Len,
+			                        Need => HS_Total);
 			                     HC.Reasm_Buf (0 .. Frag_Len - 1) :=
 		                        S.Input.Data (Frag_Start ..
 		                                      Frag_Start + Frag_Len - 1);
@@ -2218,16 +2167,14 @@ is
 			                     pragma Assert (S.State = Wait_Client_Hello);
 			                     pragma Assert (Server_Configured (HC));
 			                     pragma Assert (HC.Reasm_Buf /= null);
-			                     pragma Assert (HC.Reasm_Buf'First = 0);
-			                     pragma Assert (HC.Reasm_Buf'Length = HS_Total);
-			                     pragma Assert (HC.Reasm_Need = HS_Total);
-			                     pragma Assert (HC.Reasm_Len = Frag_Len);
-			                     pragma Assert (HC.Reasm_Need in 4 .. Max_HS_Msg);
-			                     pragma Assert (HC.Reasm_Len <= HC.Reasm_Need);
+			                     pragma Assert (HC.Reasm.Need = HS_Total);
+			                     pragma Assert (HC.Reasm.Len = Frag_Len);
+			                     pragma Assert (HC.Reasm.Need in 4 .. Max_HS_Msg);
+			                     pragma Assert (HC.Reasm.Len <= HC.Reasm.Need);
 			                     pragma Assert
-			                       (HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+			                       (HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
 			                     pragma Assert
-			                       (HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+			                       (HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
 			                     pragma Assert (Reasm_Building (HC));
 			                     pragma Assert (Wait_Client_Hello_Post (S, HC));
 		                  end Start_Known_Length_Reassembly;
@@ -2239,7 +2186,7 @@ is
 		                     --  spans multiple records by reading the 3-byte
 		                     --  handshake length.
 	                     pragma Assert (Reasm_Building (HC));
-			                     pragma Assert (HC.Reasm_Need = 0);
+			                     pragma Assert (HC.Reasm.Need = 0);
 			                     if Frag_Len < 4 then
 		                        --  RFC 8446 Section 5.1: handshake messages MAY
 		                        --  span records. The first fragment is shorter
@@ -2295,7 +2242,7 @@ is
 		               begin
 			                  Result := Error_Alert;
 			                  --  Check if we're in the middle of reassembly
-			                  if HC.Reasm_Need > 0 then
+			                  if HC.Reasm.Need > 0 then
 			                     if HC.Reasm_Buf = null then
 			                        Send_Alert_And_Error
 			                          (S, Decode_Error, Result);
@@ -2308,7 +2255,7 @@ is
 
 			                  end if;
 
-			                  pragma Assert (HC.Reasm_Need = 0);
+			                  pragma Assert (HC.Reasm.Need = 0);
 			                  pragma Assert (Frag_Len < Transcript_Capacity);
 		                  Process_Fresh_Handshake_Record;
 		                  pragma Assert (Wait_Client_Hello_Post (S, HC));
@@ -2329,8 +2276,8 @@ is
 				               then Reasm_Building (HC));
 			            pragma Assert
 			              (if S.State = Wait_Client_Hello
-			                  and then HC.Reasm_Need > 0
-			               then HC.Reasm_Len < HC.Reasm_Need);
+			                  and then HC.Reasm.Need > 0
+			               then HC.Reasm.Len < HC.Reasm.Need);
 		            pragma Assert (Wait_Client_Hello_Post (S, HC));
 	            return;
 	   end Handle_Wait_Client_Hello;
@@ -2454,9 +2401,7 @@ is
 	   is
 	      begin
 	         Free_Byte_Seq (HC.Reasm_Buf);
-	         HC.Reasm_Len := 0;
-	         HC.Reasm_Need := 0;
-	         HC.Reasm_Hdr_Pending := False;
+	         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
 	      end Free_CH2_Reasm;
 	   begin
                      Ready_To_Build := False;
@@ -2586,7 +2531,7 @@ is
 			                     then Reasm_Building (HC));
 			                  pragma Assert
 			                    (if S.State = Wait_Client_Hello_Retry
-			                        and then HC.Reasm_Need = 0
+			                        and then HC.Reasm.Need = 0
 			                     then Reasm_Building (HC));
 			                  return;
 		               end if;
@@ -2600,7 +2545,7 @@ is
 			                     then Reasm_Building (HC));
 				                  pragma Assert
 				                    (if S.State = Wait_Client_Hello_Retry
-				                        and then HC.Reasm_Need = 0
+				                        and then HC.Reasm.Need = 0
 				                     then Reasm_Building (HC));
 			                  return;
 		               end if;
@@ -2614,14 +2559,14 @@ is
 			                        then Reasm_Building (HC));
 				                     pragma Assert
 				                       (if S.State = Wait_Client_Hello_Retry
-				                           and then HC.Reasm_Need = 0
+				                           and then HC.Reasm.Need = 0
 				                        then Reasm_Building (HC));
 			                  else
 		                     Result := Need_Input;
 		                     pragma Assert (S.State = Wait_Client_Hello_Retry);
 		                     pragma Assert (Reasm_Building (HC));
 			                     pragma Assert
-			                       (if HC.Reasm_Need = 0
+			                       (if HC.Reasm.Need = 0
 			                        then Reasm_Building (HC));
 		                  end if;
 	                  return;
@@ -2651,7 +2596,7 @@ is
 			                        then Reasm_Building (HC));
 				                     pragma Assert
 				                       (if S.State = Wait_Client_Hello_Retry
-				                           and then HC.Reasm_Need = 0
+				                           and then HC.Reasm.Need = 0
 				                        then Reasm_Building (HC));
 			               end;
 	                  return;
@@ -2665,7 +2610,7 @@ is
 					                     then Reasm_Building (HC));
 						                  pragma Assert
 						                    (if S.State = Wait_Client_Hello_Retry
-						                        and then HC.Reasm_Need = 0
+						                        and then HC.Reasm.Need = 0
 						                     then Reasm_Building (HC));
 				                  return;
 		               end if;
@@ -2691,16 +2636,14 @@ is
                   procedure Free_CH2_Reasm is
                   begin
                      Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Len := 0;
-                     HC.Reasm_Need := 0;
-                     HC.Reasm_Hdr_Pending := False;
+                     HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
                   end Free_CH2_Reasm;
 
 
                begin
-                  if HC.Reasm_Need > 0 then
+                  if HC.Reasm.Need > 0 then
 	                        if HC.Reasm_Buf = null
-	                          or else HC.Reasm_Len >= HC.Reasm_Need
+	                          or else HC.Reasm.Len >= HC.Reasm.Need
 	                     then
 	                        Consume_Record;
 		                        Send_Alert_And_Error (S, Decode_Error, Result);
@@ -2709,39 +2652,43 @@ is
 		                           then Reasm_Building (HC));
 			                        pragma Assert
 			                          (if S.State = Wait_Client_Hello_Retry
-			                              and then HC.Reasm_Need = 0
+			                              and then HC.Reasm.Need = 0
 			                           then Reasm_Building (HC));
 		                        return;
 		                     end if;
 
                      declare
                         Remaining : constant N32 :=
-                           HC.Reasm_Need - HC.Reasm_Len;
+                           HC.Reasm.Need - HC.Reasm.Len;
                         Take      : constant N32 :=
                            N32'Min (Frag_Len, Remaining);
                      begin
                         if Take > 0
-                          and then HC.Reasm_Len + Take <=
+                          and then HC.Reasm.Len + Take <=
                                      N32 (HC.Reasm_Buf'Length)
                         then
                            HC.Reasm_Buf
-                             (HC.Reasm_Len ..
-                              HC.Reasm_Len + Take - 1) :=
+                             (HC.Reasm.Len ..
+                              HC.Reasm.Len + Take - 1) :=
                               S.Input.Data
                                 (Frag_Start .. Frag_Start + Take - 1);
-                           HC.Reasm_Len := HC.Reasm_Len + Take;
+                           HC.Reasm :=
+                             (HC.Reasm with delta
+                                Len => HC.Reasm.Len + Take);
                         end if;
                      end;
                      Consume_Record;
 
-                     if HC.Reasm_Hdr_Pending and then HC.Reasm_Len >= 4 then
+                     if (HC.Reasm.Phase = Reasm_Header) and then HC.Reasm.Len >= 4 then
                         declare
                            HS_Total : constant N32 :=
                               N32 (HC.Reasm_Buf (1)) * 65536
                               + N32 (HC.Reasm_Buf (2)) * 256
                               + N32 (HC.Reasm_Buf (3)) + 4;
                         begin
-                           HC.Reasm_Hdr_Pending := False;
+                           HC.Reasm :=
+                             (HC.Reasm with delta
+                                Phase => Reasm_Body);
                            if HS_Total > Max_HS_Msg
                              or else HS_Total > N32 (HC.Reasm_Buf'Length)
 	                           then
@@ -2752,22 +2699,22 @@ is
 		                                 then Reasm_Building (HC));
 			                              pragma Assert
 			                                (if S.State = Wait_Client_Hello_Retry
-			                                    and then HC.Reasm_Need = 0
+			                                    and then HC.Reasm.Need = 0
 			                                 then Reasm_Building (HC));
 		                              return;
 		                           end if;
-                           HC.Reasm_Need := HS_Total;
+                           HC.Reasm := (HC.Reasm with delta Need => HS_Total);
                         end;
                      end if;
 
-                     if HC.Reasm_Len < HC.Reasm_Need then
+                     if HC.Reasm.Len < HC.Reasm.Need then
                         Result := OK;
                         pragma Assert (Reasm_Building (HC));
                         return;
                      end if;
 
 	                     declare
-	                        Full_Len : constant N32 := HC.Reasm_Need;
+	                        Full_Len : constant N32 := HC.Reasm.Need;
 	                        Full_Msg : constant Byte_Seq :=
 	                           HC.Reasm_Buf (0 .. Full_Len - 1);
 	                        Ready_To_Build : Boolean;
@@ -2784,13 +2731,13 @@ is
                      Consume_Record;
                      Send_Alert_And_Error (S, Decode_Error, Result);
 	                  elsif Frag_Len < 4 then
-	                     pragma Assert (HC.Reasm_Need = 0);
+	                     pragma Assert (HC.Reasm.Need = 0);
 	                     Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Need := 4;
-                     HC.Reasm_Hdr_Pending := True;
-                     HC.Reasm_Len := Frag_Len;
-	                     HC.Reasm_Buf := new Byte_Seq'
-	                       (0 .. Max_HS_Msg - 1 => 0);
+	                     HC.Reasm_Buf := new Reasm_Buffer'(others => 0);
+                     HC.Reasm :=
+                       (Phase => Reasm_Header,
+                        Len => Frag_Len,
+                        Need => 4);
                      HC.Reasm_Buf (0 .. Frag_Len - 1) :=
                         S.Input.Data (Frag_Start ..
                                       Frag_Start + Frag_Len - 1);
@@ -2810,13 +2757,13 @@ is
 	                           Consume_Record;
 	                           Send_Alert_And_Error (S, Decode_Error, Result);
 		                        elsif HS_Total > Frag_Len then
-		                           pragma Assert (HC.Reasm_Need = 0);
+		                           pragma Assert (HC.Reasm.Need = 0);
 		                           Free_Byte_Seq (HC.Reasm_Buf);
-                           HC.Reasm_Need := HS_Total;
-                           HC.Reasm_Hdr_Pending := False;
-                           HC.Reasm_Len := Frag_Len;
-		                           HC.Reasm_Buf := new Byte_Seq'
-	                             (0 .. HS_Total - 1 => 0);
+		                           HC.Reasm_Buf := new Reasm_Buffer'(others => 0);
+                           HC.Reasm :=
+                             (Phase => Reasm_Body,
+                              Len => Frag_Len,
+                              Need => HS_Total);
                            HC.Reasm_Buf (0 .. Frag_Len - 1) :=
                               S.Input.Data (Frag_Start ..
                                             Frag_Start + Frag_Len - 1);
@@ -2848,7 +2795,7 @@ is
 			            end;
 			            pragma Assert
 				              (if S.State = Wait_Client_Hello_Retry
-				                  and then HC.Reasm_Need = 0
+				                  and then HC.Reasm.Need = 0
 				               then Reasm_Building (HC));
 				   end Handle_Client_Hello_Retry;
 
@@ -4302,7 +4249,7 @@ is
 		                  and then HC.Transcript_Len > 0
 		                  and then Reasm_Building (HC)
 		                  and then Reasm_Buffer_Shaped (HC)
-				                and then HC.Reasm_Len <= HC.Reasm_Need,
+				                and then HC.Reasm.Len <= HC.Reasm.Need,
 			        Post => (if S.State not in Error_State | Closed
 				                          then Server_Configured (HC)
 			                               and then Reasm_Building (HC));
@@ -5376,74 +5323,82 @@ is
 	                  return;
                end if;
 
-               if HC.Reasm_Need > 0 and then HC.Reasm_Buf /= null then
+               if HC.Reasm.Need > 0 and then HC.Reasm_Buf /= null then
                   declare
                      Pos : N32 := 0;
                   begin
-                     if HC.Reasm_Len < HC.Reasm_Need then
+                     if HC.Reasm.Len < HC.Reasm.Need then
                         declare
                            Need : constant N32 :=
-                             HC.Reasm_Need - HC.Reasm_Len;
+                             HC.Reasm.Need - HC.Reasm.Len;
                            Take : constant N32 := N32'Min (Plain_Len, Need);
                         begin
                            if Take > 0
-                             and then HC.Reasm_Len + Take <=
+                             and then HC.Reasm.Len + Take <=
                                       N32 (HC.Reasm_Buf'Length)
                            then
                               HC.Reasm_Buf
-                                (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
+                                (HC.Reasm.Len .. HC.Reasm.Len + Take - 1) :=
                                   Plaintext (0 .. Take - 1);
-                              HC.Reasm_Len := HC.Reasm_Len + Take;
+                              HC.Reasm :=
+                                (HC.Reasm with delta
+                                   Len => HC.Reasm.Len + Take);
                               Pos := Take;
                            end if;
                         end;
                      end if;
 
-                     if HC.Reasm_Hdr_Pending and then HC.Reasm_Len >= 4 then
+                     if (HC.Reasm.Phase = Reasm_Header) and then HC.Reasm.Len >= 4 then
                         declare
                            HS_Total : constant N32 :=
                              N32 (HC.Reasm_Buf (1)) * 65536
                              + N32 (HC.Reasm_Buf (2)) * 256
                              + N32 (HC.Reasm_Buf (3)) + 4;
                         begin
-                           HC.Reasm_Hdr_Pending := False;
+                           HC.Reasm :=
+                             (HC.Reasm with delta
+                                Phase => Reasm_Body);
                            if HS_Total > Max_HS_Msg
                              or else HS_Total > N32 (HC.Reasm_Buf'Length)
                            then
                               Free_Byte_Seq (HC.Reasm_Buf);
-                              HC.Reasm_Len := 0;
-                              HC.Reasm_Need := 0;
+                              HC.Reasm :=
+                                (Phase => Reasm_Idle,
+                                 Len => 0,
+                                 Need => 0);
                               Send_Encrypted_Alert (S, Decode_Error, Result);
 	                              return;
 	                           end if;
-	                           HC.Reasm_Need := HS_Total;
-	                           pragma Assert (HC.Reasm_Need > 0);
+	                           HC.Reasm := (HC.Reasm with delta Need => HS_Total);
+	                           pragma Assert (HC.Reasm.Need > 0);
 	                        end;
 	                     end if;
-	                     pragma Assert (HC.Reasm_Need > 0);
+	                     pragma Assert (HC.Reasm.Need > 0);
 
-	                     if HC.Reasm_Len < HC.Reasm_Need and then Pos < Plain_Len
+	                     if HC.Reasm.Len < HC.Reasm.Need and then Pos < Plain_Len
 	                     then
                         declare
                            Need : constant N32 :=
-                             HC.Reasm_Need - HC.Reasm_Len;
+                             HC.Reasm.Need - HC.Reasm.Len;
                            Take : constant N32 :=
                              N32'Min (Plain_Len - Pos, Need);
                         begin
                            if Take > 0
-                             and then HC.Reasm_Len + Take <=
+                             and then HC.Reasm.Len + Take <=
                                       N32 (HC.Reasm_Buf'Length)
                            then
                               HC.Reasm_Buf
-                                (HC.Reasm_Len .. HC.Reasm_Len + Take - 1) :=
+                                (HC.Reasm.Len .. HC.Reasm.Len + Take - 1) :=
                                   Plaintext (Pos .. Pos + Take - 1);
-                              HC.Reasm_Len := HC.Reasm_Len + Take;
+                              HC.Reasm :=
+                                (HC.Reasm with delta
+                                   Len => HC.Reasm.Len + Take);
                               Pos := Pos + Take;
                            end if;
                         end;
                      end if;
 
-	                     if HC.Reasm_Len < HC.Reasm_Need then
+	                     if HC.Reasm.Len < HC.Reasm.Need then
 	                        Result := OK;
 	                        pragma Assert (Reasm_Building (HC));
 	                        --  Proof decomposition for the assert below.
@@ -5456,31 +5411,29 @@ is
 	                        pragma Assert (HC.Reasm_Buf /= null);
 	                        pragma Assert
 	                          (if HC.Reasm_Buf /= null then
-	                             HC.Reasm_Len <= N32 (HC.Reasm_Buf'Length));
+	                             HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
 	                        pragma Assert
 	                          (if HC.Reasm_Buf /= null then
-	                             HC.Reasm_Need <= N32 (HC.Reasm_Buf'Length));
+	                             HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
 	                        pragma Assert
-	                          (if HC.Reasm_Need = 0 then HC.Reasm_Len = 0
-	                           else HC.Reasm_Need >= 4);
+	                          (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
+	                           else HC.Reasm.Need >= 4);
 	                        pragma Assert
-	                          (if HC.Reasm_Hdr_Pending then
-	                             HC.Reasm_Need = 4
-	                             and then HC.Reasm_Len <= 4);
+	                          (if (HC.Reasm.Phase = Reasm_Header) then
+	                             HC.Reasm.Need = 4
+	                             and then HC.Reasm.Len <= 4);
 	                        pragma Assert (Reasm_Buffer_Shaped (HC));
 	                        return;
 	                     end if;
 
-                     pragma Assert (HC.Reasm_Need > 0);
+                     pragma Assert (HC.Reasm.Need > 0);
                      declare
-                        Full_Len : constant N32 := HC.Reasm_Need;
+                        Full_Len : constant N32 := HC.Reasm.Need;
                         Full     : constant Byte_Seq :=
                           HC.Reasm_Buf (0 .. Full_Len - 1);
                      begin
                         Free_Byte_Seq (HC.Reasm_Buf);
-                        HC.Reasm_Len := 0;
-                        HC.Reasm_Need := 0;
-                        HC.Reasm_Hdr_Pending := False;
+                        HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
                         pragma Assert (Full_Len > 0);
                         pragma Assert (Full'First = 0);
                         pragma Assert (Full'Last < N32'Last);
@@ -5495,10 +5448,11 @@ is
 
                if Plain_Len < 4 then
                   Free_Byte_Seq (HC.Reasm_Buf);
-                  HC.Reasm_Need := 4;
-                  HC.Reasm_Hdr_Pending := True;
-                  HC.Reasm_Len := Plain_Len;
-                  HC.Reasm_Buf := new Byte_Seq'(0 .. Max_HS_Msg - 1 => 0);
+                  HC.Reasm_Buf := new Reasm_Buffer'(others => 0);
+                  HC.Reasm :=
+                    (Phase => Reasm_Header,
+                     Len => Plain_Len,
+                     Need => 4);
 	                  HC.Reasm_Buf (0 .. Plain_Len - 1) :=
 	                    Plaintext (0 .. Plain_Len - 1);
 	                  Result := OK;
@@ -5518,10 +5472,11 @@ is
                      return;
                   elsif HS_Total > Plain_Len then
                      Free_Byte_Seq (HC.Reasm_Buf);
-                     HC.Reasm_Need := HS_Total;
-                     HC.Reasm_Hdr_Pending := False;
-                     HC.Reasm_Len := Plain_Len;
-                     HC.Reasm_Buf := new Byte_Seq'(0 .. HS_Total - 1 => 0);
+                     HC.Reasm_Buf := new Reasm_Buffer'(others => 0);
+                     HC.Reasm :=
+                       (Phase => Reasm_Body,
+                        Len => Plain_Len,
+                        Need => HS_Total);
 	                     HC.Reasm_Buf (0 .. Plain_Len - 1) :=
 	                       Plaintext (0 .. Plain_Len - 1);
 	                     Result := OK;
