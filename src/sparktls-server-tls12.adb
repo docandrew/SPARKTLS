@@ -166,30 +166,30 @@ is
    --  Pre bound) rather than HC.Cfg.Local = HC.Cfg.Local'Old.
    with Pre  => Data'Length > 0
                 and then Data'Length <= HC.Transcript'Length
-	                and then HC.Cfg.Local /= null
-	                and then HC.Cfg.Local.Has_Identity
-	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                           (HC.Cfg.Local)
-				                   and then HC.Cfg.Random /= null
-					                   and then True,
-		           Post => HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                              (HC.Cfg.Local)
-	                   and then HC.Cfg.Random /= null
+                        and then HC.Cfg.Local /= null
+                        and then HC.Cfg.Local.Has_Identity
+                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                   (HC.Cfg.Local)
+                                                   and then HC.Cfg.Random /= null
+                                                           and then True,
+                           Post => HC.Cfg.Local /= null
+                           and then HC.Cfg.Local.Has_Identity
+                           and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                      (HC.Cfg.Local)
+                           and then HC.Cfg.Random /= null
                    and then HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
                    and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
                    and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
                    and then HC.Peer_Cert = HC.Peer_Cert'Old
                    and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
-	                   and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
-	                   and then
-	                     HC.Reasm.Len = HC.Reasm.Len'Old
-	                   and then HC.Reasm.Need = HC.Reasm.Need'Old
-	                   and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-				                   and then
-				                     (if HC.Peer_Cert_Valid'Old
+                           and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
+                           and then
+                             HC.Reasm.Len = HC.Reasm.Len'Old
+                           and then HC.Reasm.Need = HC.Reasm.Need'Old
+                           and then HC.Reasm.Phase = HC.Reasm.Phase'Old
+                                                   and then
+                                                     (if HC.Peer_Cert_Valid'Old
                          and then HC.Peer_Cert_DER_Len'Old
                            in 1 .. Max_Cert_DER_Len
                          and then X509.Spans_Valid
@@ -225,23 +225,23 @@ is
 
    procedure Set_Server_Random_12
      (HC     : in out Handshake_Context;
-	      Random : in     Bytes_32)
-			   with Pre  => True,
-	        Post => HC.Version = HC.Version'Old
-	                and then (if HC.Cfg.Local'Old /= null
-	                          then HC.Cfg.Local /= null)
-		                and then (if HC.Cfg.Local'Old /= null
-		                              and then HC.Cfg.Local'Old.Has_Identity
-	                   then HC.Cfg.Local /= null
-		                               and then HC.Cfg.Local.Has_Identity)
-		                and then
-		                  (if SPARKTLS.Handshake.Server_Msgs
-		                        .Local_Config_Valid (HC.Cfg.Local'Old)
-		                   then SPARKTLS.Handshake.Server_Msgs
-		                          .Local_Config_Valid (HC.Cfg.Local))
-				                and then (if HC.Cfg.Random'Old /= null
-				                          then HC.Cfg.Random /= null)
-				                and then True;
+              Random : in     Bytes_32)
+                           with Pre  => True,
+                Post => HC.Version = HC.Version'Old
+                        and then (if HC.Cfg.Local'Old /= null
+                                  then HC.Cfg.Local /= null)
+                                and then (if HC.Cfg.Local'Old /= null
+                                              and then HC.Cfg.Local'Old.Has_Identity
+                           then HC.Cfg.Local /= null
+                                               and then HC.Cfg.Local.Has_Identity)
+                                and then
+                                  (if SPARKTLS.Handshake.Server_Msgs
+                                        .Local_Config_Valid (HC.Cfg.Local'Old)
+                                   then SPARKTLS.Handshake.Server_Msgs
+                                          .Local_Config_Valid (HC.Cfg.Local))
+                                                and then (if HC.Cfg.Random'Old /= null
+                                                          then HC.Cfg.Random /= null)
+                                                and then True;
 
    procedure Set_Server_Random_12
      (HC     : in out Handshake_Context;
@@ -257,26 +257,26 @@ is
    procedure Build_Server_Flight_12_Full
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => HC.Version = TLS_1_2
-	                and then HC.Cfg.Local /= null
-	                and then HC.Cfg.Local.Has_Identity
-	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                           (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null
-			                and then S.State = Wait_Client_Hello
-			                and then S.Role = Role_Server
-			                and then SPARKTLSCrypto.P384.Field.Initialized
+                        and then HC.Cfg.Local /= null
+                        and then HC.Cfg.Local.Has_Identity
+                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                   (HC.Cfg.Local)
+                        and then HC.Cfg.Random /= null
+                                        and then S.State = Wait_Client_Hello
+                                        and then S.Role = Role_Server
+                                        and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-	        Post => S.Role = Role_Server
-	                and then HC.Version = TLS_1_2
-	                and then HC.Cfg.Local /= null
-			                and then HC.Cfg.Local.Has_Identity
-			                and then
-				                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-				                    (HC.Cfg.Local)
-				                and then HC.Cfg.Random /= null
-					                and then
-						                  (if S.State = Server_Hello_Sent
-						                   then True);
+                Post => S.Role = Role_Server
+                        and then HC.Version = TLS_1_2
+                        and then HC.Cfg.Local /= null
+                                        and then HC.Cfg.Local.Has_Identity
+                                        and then
+                                                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                                    (HC.Cfg.Local)
+                                                and then HC.Cfg.Random /= null
+                                                        and then
+                                                                  (if S.State = Server_Hello_Sent
+                                                                   then True);
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
    --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
@@ -287,31 +287,31 @@ is
    procedure Build_Abbreviated_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => HC.Version = TLS_1_2
-	                and then HC.Cfg.Local /= null
-	                and then HC.Cfg.Local.Has_Identity
-	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                           (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null
+                        and then HC.Cfg.Local /= null
+                        and then HC.Cfg.Local.Has_Identity
+                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                   (HC.Cfg.Local)
+                        and then HC.Cfg.Random /= null
                 and then HC.Cfg.Get_Active_TEK /= null
-	                and then HC.Cfg.Get_TEK_By_Id /= null
-	                and then S.State = Wait_Client_Hello
-	                and then S.Role = Role_Server
-		                and then S.Negotiated_Suite in
-	                  Suite_ECDHE_RSA_AES128_GCM_SHA256
-	                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
-	                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-	                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-		                  | Suite_ECDHE_RSA_CHACHA20_SHA256
-		                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                        and then HC.Cfg.Get_TEK_By_Id /= null
+                        and then S.State = Wait_Client_Hello
+                        and then S.Role = Role_Server
+                                and then S.Negotiated_Suite in
+                          Suite_ECDHE_RSA_AES128_GCM_SHA256
+                          | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                                  | Suite_ECDHE_RSA_CHACHA20_SHA256
+                                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 and then True,
-	        Post => S.State in Wait_Client_Finished | Error_State
-	                and then HC.Version = TLS_1_2
-	                and then HC.Cfg.Local /= null
-			                and then HC.Cfg.Local.Has_Identity
-			                and then
-				                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-				                    (HC.Cfg.Local)
-					                and then HC.Cfg.Random /= null;
+                Post => S.State in Wait_Client_Finished | Error_State
+                        and then HC.Version = TLS_1_2
+                        and then HC.Cfg.Local /= null
+                                        and then HC.Cfg.Local.Has_Identity
+                                        and then
+                                                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                                    (HC.Cfg.Local)
+                                                        and then HC.Cfg.Random /= null;
 
    procedure Build_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
@@ -625,8 +625,8 @@ is
       declare
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1); Hello_Len : N32;
       begin
-			         Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
-		         pragma Assert (S.Role = Role_Server);
+                                 Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+                         pragma Assert (S.Role = Role_Server);
          if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
          end if;
@@ -781,24 +781,24 @@ is
    --  assignments) without the master-secret PRF step.
    procedure Derive_Keys_Resumed_12
      (S : in out Session; HC : in out Handshake_Context)
-	   with Pre  => HC.Version = TLS_1_2
-	                   and then HC.Cfg.Local /= null
-		                   and then HC.Cfg.Local.Has_Identity
-		                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-		                              (HC.Cfg.Local)
-	                   and then HC.Cfg.Random /= null
+           with Pre  => HC.Version = TLS_1_2
+                           and then HC.Cfg.Local /= null
+                                   and then HC.Cfg.Local.Has_Identity
+                                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                              (HC.Cfg.Local)
+                           and then HC.Cfg.Random /= null
                    and then S.Negotiated_Suite in
-	                  Suite_ECDHE_RSA_AES128_GCM_SHA256
+                          Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_RSA_AES256_GCM_SHA384
                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                   | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                   | Suite_ECDHE_RSA_CHACHA20_SHA256
                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-	        Post => HC.Version = TLS_1_2
-		                   and then HC.Cfg.Local /= null
-		                   and then HC.Cfg.Local.Has_Identity
-		                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-		                              (HC.Cfg.Local)
+                Post => HC.Version = TLS_1_2
+                                   and then HC.Cfg.Local /= null
+                                   and then HC.Cfg.Local.Has_Identity
+                                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                              (HC.Cfg.Local)
                    and then HC.Cfg.Random /= null
                    and then S.State = S.State'Old
                 and then S.Role = S.Role'Old
@@ -894,13 +894,13 @@ is
       --  doesn't try to echo a stale value.
       HC.Negotiated_Sig_Algo := 0;
 
-	      --  Fresh server random (32 bytes).
-	      declare
-	         Server_Random : Bytes_32;
-	      begin
-	         Gen_Random (Byte_Seq (Server_Random));
-	         Set_Server_Random_12 (HC, Server_Random);
-	      end;
+              --  Fresh server random (32 bytes).
+              declare
+                 Server_Random : Bytes_32;
+              begin
+                 Gen_Random (Byte_Seq (Server_Random));
+                 Set_Server_Random_12 (HC, Server_Random);
+              end;
 
       if HC.Cfg.Require_ALPN
         and then not Has_ALPN_Match_12 (HC)
@@ -915,8 +915,8 @@ is
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1);
          Hello_Len : N32;
       begin
-			         Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
-		         if Hello_Len = 0 then
+                                 Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
+                         if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
          end if;
          Append_Transcript (HC, Hello_Buf (0 .. Hello_Len - 1));
@@ -1180,116 +1180,116 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_Key_Exchange_12
-	     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-	   is
-	      Rec : Records.Parse_Result;
-		      CKE_Transcript_Nonempty : Boolean := False
-		        with Ghost;
+             (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+           is
+              Rec : Records.Parse_Result;
+                      CKE_Transcript_Nonempty : Boolean := False
+                        with Ghost;
 
-	      procedure Compute_Shared_Secret_12
-	        (OK  :    out Boolean;
-	         Err :    out Error_Code)
-	      with Pre  => HC.Version = TLS_1_2
-	                   and then HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	                   and then SPARKTLS.Handshake.Server_Msgs
-	                              .Local_Config_Valid (HC.Cfg.Local)
-		                   and then HC.Cfg.Random /= null
-		                   and then Valid_ECDHE_Group (HC.Selected_Group)
-	                   and then SPARKTLSCrypto.P384.Field.Initialized,
-	           Post => HC.Version = HC.Version'Old
-	                   and then HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	                   and then SPARKTLS.Handshake.Server_Msgs
-	                              .Local_Config_Valid (HC.Cfg.Local)
-		                   and then HC.Cfg.Random /= null
-		                   and then HC.Selected_Group = HC.Selected_Group'Old
-		                   and then Valid_ECDHE_Group (HC.Selected_Group)
-			                   and then HC.Transcript_Len =
-			                     HC.Transcript_Len'Old
-	      is
-	      begin
-	         OK := False;
-	         --  RFC 5246 §7.2.2 / RFC 8446 §6.2: invalid peer share is
-	         --  illegal_parameter; an unselectable group is the generic
-	         --  handshake_failure.
+              procedure Compute_Shared_Secret_12
+                (OK  :    out Boolean;
+                 Err :    out Error_Code)
+              with Pre  => HC.Version = TLS_1_2
+                           and then HC.Cfg.Local /= null
+                           and then HC.Cfg.Local.Has_Identity
+                           and then SPARKTLS.Handshake.Server_Msgs
+                                      .Local_Config_Valid (HC.Cfg.Local)
+                                   and then HC.Cfg.Random /= null
+                                   and then Valid_ECDHE_Group (HC.Selected_Group)
+                           and then SPARKTLSCrypto.P384.Field.Initialized,
+                   Post => HC.Version = HC.Version'Old
+                           and then HC.Cfg.Local /= null
+                           and then HC.Cfg.Local.Has_Identity
+                           and then SPARKTLS.Handshake.Server_Msgs
+                                      .Local_Config_Valid (HC.Cfg.Local)
+                                   and then HC.Cfg.Random /= null
+                                   and then HC.Selected_Group = HC.Selected_Group'Old
+                                   and then Valid_ECDHE_Group (HC.Selected_Group)
+                                           and then HC.Transcript_Len =
+                                             HC.Transcript_Len'Old
+              is
+              begin
+                 OK := False;
+                 --  RFC 5246 §7.2.2 / RFC 8446 §6.2: invalid peer share is
+                 --  illegal_parameter; an unselectable group is the generic
+                 --  handshake_failure.
 
-	         case HC.Selected_Group is
-	            when Group_X25519 =>
-	               HC.Shared_Secret (0 .. 31) :=
-	                  SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
-	               --  RFC 7748 §6.1 / RFC 8422 §5.10: reject all-zeros
-	               --  shared secret (small-subgroup defence). The
-	               --  helper's Post is formally proven by SPARK.
-	               OK := Shared_Secret_Is_Acceptable_X25519
-	                       (HC.Shared_Secret (0 .. 31));
-	               if OK then
-	                  Err := No_Error;
-	               else
-	                  Err := Illegal_Parameter;
-	               end if;
+                 case HC.Selected_Group is
+                    when Group_X25519 =>
+                       HC.Shared_Secret (0 .. 31) :=
+                          SPARKNaCl.Scalar.Mult (HC.Local_SK, HC.Peer_PK);
+                       --  RFC 7748 §6.1 / RFC 8422 §5.10: reject all-zeros
+                       --  shared secret (small-subgroup defence). The
+                       --  helper's Post is formally proven by SPARK.
+                       OK := Shared_Secret_Is_Acceptable_X25519
+                               (HC.Shared_Secret (0 .. 31));
+                       if OK then
+                          Err := No_Error;
+                       else
+                          Err := Illegal_Parameter;
+                       end if;
 
-	            when Group_Secp256r1 =>
-	               declare
-	                  use SPARKTLSCrypto.P256.Point;
-	                  subtype P256_SK_Seq is Byte_Seq (0 .. 31);
-	                  subtype P256_PK_Seq is Byte_Seq (0 .. 64);
-	                  Pt       : P256_Jacobian;
-	                  V        : SPARKNaCl.U32;
-	                  Local_SK : constant P256_SK_Seq := HC.P256_Local_SK;
-	                  Peer_PK  : constant P256_PK_Seq := HC.P256_Peer_PK;
-	               begin
-	                  pragma Assert (Local_SK'First = 0);
-	                  pragma Assert (Local_SK'Length = 32);
-	                  pragma Assert (Peer_PK'First = 0);
-	                  pragma Assert (Peer_PK'Length = 65);
-	                  P256_Decode (Pt, Peer_PK, V);
-	                  if V /= 0 then
-	                     P256_Mul (Pt, Local_SK, 32);
-	                     P256_To_Affine (Pt);
-	                     declare
-	                        E : Byte_Seq (0 .. 64);
-	                     begin
-	                        P256_Encode (E, Pt);
-	                        HC.Shared_Secret := (others => 0);
-	                        HC.Shared_Secret (0 .. 31) := E (1 .. 32);
-	                     end;
-	                     OK := True;
-	                     Err := No_Error;
-	                  else
-	                     Err := Illegal_Parameter;
-	                  end if;
-	               end;
+                    when Group_Secp256r1 =>
+                       declare
+                          use SPARKTLSCrypto.P256.Point;
+                          subtype P256_SK_Seq is Byte_Seq (0 .. 31);
+                          subtype P256_PK_Seq is Byte_Seq (0 .. 64);
+                          Pt       : P256_Jacobian;
+                          V        : SPARKNaCl.U32;
+                          Local_SK : constant P256_SK_Seq := HC.P256_Local_SK;
+                          Peer_PK  : constant P256_PK_Seq := HC.P256_Peer_PK;
+                       begin
+                          pragma Assert (Local_SK'First = 0);
+                          pragma Assert (Local_SK'Length = 32);
+                          pragma Assert (Peer_PK'First = 0);
+                          pragma Assert (Peer_PK'Length = 65);
+                          P256_Decode (Pt, Peer_PK, V);
+                          if V /= 0 then
+                             P256_Mul (Pt, Local_SK, 32);
+                             P256_To_Affine (Pt);
+                             declare
+                                E : Byte_Seq (0 .. 64);
+                             begin
+                                P256_Encode (E, Pt);
+                                HC.Shared_Secret := (others => 0);
+                                HC.Shared_Secret (0 .. 31) := E (1 .. 32);
+                             end;
+                             OK := True;
+                             Err := No_Error;
+                          else
+                             Err := Illegal_Parameter;
+                          end if;
+                       end;
 
-	            when Group_Secp384r1 =>
-	               declare
-	                  subtype P384_SK_Seq is Byte_Seq (0 .. 47);
-	                  subtype P384_PK_Seq is Byte_Seq (0 .. 96);
-	                  SS       : Bytes_48;
-	                  OK384    : Boolean;
-	                  Local_SK : constant P384_SK_Seq := HC.P384_Local_SK;
-	                  Peer_PK  : constant P384_PK_Seq := HC.P384_Peer_PK;
-	               begin
-	                  pragma Assert (Local_SK'First = 0);
-	                  pragma Assert (Local_SK'Length = 48);
-	                  pragma Assert (Peer_PK'First = 0);
-	                  pragma Assert (Peer_PK'Length = 97);
-	                  SPARKTLSCrypto.P384.Point.P384_ECDHE
-	                    (SS, OK384, Local_SK, Peer_PK);
-	                  if OK384 then
-	                     HC.Shared_Secret := SS;
-	                     OK := True;
-	                     Err := No_Error;
-	                  else
-	                     Err := Illegal_Parameter;
-	                  end if;
-	               end;
+                    when Group_Secp384r1 =>
+                       declare
+                          subtype P384_SK_Seq is Byte_Seq (0 .. 47);
+                          subtype P384_PK_Seq is Byte_Seq (0 .. 96);
+                          SS       : Bytes_48;
+                          OK384    : Boolean;
+                          Local_SK : constant P384_SK_Seq := HC.P384_Local_SK;
+                          Peer_PK  : constant P384_PK_Seq := HC.P384_Peer_PK;
+                       begin
+                          pragma Assert (Local_SK'First = 0);
+                          pragma Assert (Local_SK'Length = 48);
+                          pragma Assert (Peer_PK'First = 0);
+                          pragma Assert (Peer_PK'Length = 97);
+                          SPARKTLSCrypto.P384.Point.P384_ECDHE
+                            (SS, OK384, Local_SK, Peer_PK);
+                          if OK384 then
+                             HC.Shared_Secret := SS;
+                             OK := True;
+                             Err := No_Error;
+                          else
+                             Err := Illegal_Parameter;
+                          end if;
+                       end;
 
-	            when others =>
-	               pragma Assert (False);
-	         end case;
-	      end Compute_Shared_Secret_12;
-	   begin
+                    when others =>
+                       pragma Assert (False);
+                 end case;
+              end Compute_Shared_Secret_12;
+           begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
          return;
@@ -1427,18 +1427,18 @@ is
                begin
                   Handshake.Parse_Handshake_Header
                     (Frag, Msg_Type, Msg_Len, Parse_OK);
-	            if not Parse_OK then
-	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	               Send_Alert_And_Error
-	                 (S,
-	                  (if Frag (Frag'First) in
-	                     16#01# | 16#02# | 16#04# | 16#08# |
-	                     16#0B# | 16#0C# | 16#0D# | 16#0E# |
-	                     16#0F# | 16#10# | 16#14#
-	                   then Decode_Error else Unexpected_Message),
-	                  Result);
-	               return;
-	            end if;
+                    if not Parse_OK then
+                       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                       Send_Alert_And_Error
+                         (S,
+                          (if Frag (Frag'First) in
+                             16#01# | 16#02# | 16#04# | 16#08# |
+                             16#0B# | 16#0C# | 16#0D# | 16#0E# |
+                             16#0F# | 16#10# | 16#14#
+                           then Decode_Error else Unexpected_Message),
+                          Result);
+                       return;
+                    end if;
 
                   if Msg_Type = Handshake.HT_Certificate_Verify then
                      if Msg_Len < 4
@@ -1449,25 +1449,25 @@ is
                         return;
                      end if;
 
-	                     declare
-	                        F : constant N32 := Frag'First;
-	                     begin
-	                        pragma Assert (Frag_Len >= 8);
-	                        pragma Assert (F + 7 <= Frag'Last);
-	                        declare
-	                           Sig_Len : constant N32 :=
-	                             N32 (Frag (F + 6)) * 256
-	                             + N32 (Frag (F + 7));
-	                        begin
-	                           if Sig_Len /= Msg_Len - 4 then
-	                              S.Input.Read_Pos :=
-	                                S.Input.Read_Pos + Rec.Record_Len;
-	                              Send_Alert_And_Error
-	                                (S, Decode_Error, Result);
-	                              return;
-	                           end if;
-	                        end;
-	                     end;
+                             declare
+                                F : constant N32 := Frag'First;
+                             begin
+                                pragma Assert (Frag_Len >= 8);
+                                pragma Assert (F + 7 <= Frag'Last);
+                                declare
+                                   Sig_Len : constant N32 :=
+                                     N32 (Frag (F + 6)) * 256
+                                     + N32 (Frag (F + 7));
+                                begin
+                                   if Sig_Len /= Msg_Len - 4 then
+                                      S.Input.Read_Pos :=
+                                        S.Input.Read_Pos + Rec.Record_Len;
+                                      Send_Alert_And_Error
+                                        (S, Decode_Error, Result);
+                                      return;
+                                   end if;
+                                end;
+                             end;
                   end if;
                end;
             end;
@@ -1481,27 +1481,27 @@ is
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
 
-	         procedure Parse_Complete_CKE
-	           (Msg      : in     Byte_Seq;
-	            CKE_Good :    out Boolean)
-	         with Pre => Msg'Length > 0
-	                     and then Msg'Length <= HC.Transcript'Length
-		                     and then Msg'Last < N32 (Natural'Last)
-			                     and then HC.Cfg.Local /= null
-	                     and then HC.Cfg.Local.Has_Identity
-	                     and then SPARKTLS.Handshake.Server_Msgs
+                 procedure Parse_Complete_CKE
+                   (Msg      : in     Byte_Seq;
+                    CKE_Good :    out Boolean)
+                 with Pre => Msg'Length > 0
+                             and then Msg'Length <= HC.Transcript'Length
+                                     and then Msg'Last < N32 (Natural'Last)
+                                             and then HC.Cfg.Local /= null
+                             and then HC.Cfg.Local.Has_Identity
+                             and then SPARKTLS.Handshake.Server_Msgs
                        .Local_Config_Valid (HC.Cfg.Local)
                      and then HC.Cfg.Random /= null
                      and then Valid_ECDHE_Group (HC.Selected_Group),
-		              Post => HC.Version = HC.Version'Old
-		                      and then HC.Cfg.Local /= null
-	                      and then HC.Cfg.Local.Has_Identity
-	                      and then SPARKTLS.Handshake.Server_Msgs
-	                        .Local_Config_Valid (HC.Cfg.Local)
-	                      and then HC.Cfg.Random /= null
-			                      and then HC.Selected_Group = HC.Selected_Group'Old
-			                      and then Valid_ECDHE_Group (HC.Selected_Group)
-	         is
+                              Post => HC.Version = HC.Version'Old
+                                      and then HC.Cfg.Local /= null
+                              and then HC.Cfg.Local.Has_Identity
+                              and then SPARKTLS.Handshake.Server_Msgs
+                                .Local_Config_Valid (HC.Cfg.Local)
+                              and then HC.Cfg.Random /= null
+                                              and then HC.Selected_Group = HC.Selected_Group'Old
+                                              and then Valid_ECDHE_Group (HC.Selected_Group)
+                 is
             Msg_Type : Byte;
             Msg_Len  : N32;
             POK      : Boolean;
@@ -1522,20 +1522,20 @@ is
                return;
             end if;
 
-	            declare
-	               Msg_Len_Const : constant N32 := Msg_Len;
-	               Body_Data     : Byte_Seq (0 .. Msg_Len_Const - 1);
-	            begin
-	               pragma Assert (Msg'First + 4 <= Msg'Last);
-	               pragma Assert
-	                 (Msg'First + 4 + Msg_Len - 1 = Msg'Last);
-	               Body_Data :=
-	                 Msg (Msg'First + 4 .. Msg'First + 4 + Msg_Len - 1);
-	               Parse_Client_Key_Exchange (HC, Body_Data, CKE_Good);
+                    declare
+                       Msg_Len_Const : constant N32 := Msg_Len;
+                       Body_Data     : Byte_Seq (0 .. Msg_Len_Const - 1);
+                    begin
+                       pragma Assert (Msg'First + 4 <= Msg'Last);
+                       pragma Assert
+                         (Msg'First + 4 + Msg_Len - 1 = Msg'Last);
+                       Body_Data :=
+                         Msg (Msg'First + 4 .. Msg'First + 4 + Msg_Len - 1);
+                       Parse_Client_Key_Exchange (HC, Body_Data, CKE_Good);
             end;
          end Parse_Complete_CKE;
 
-	         procedure Fail_Decode
+                 procedure Fail_Decode
          with Pre  => True
                       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
                       and then S.Input.Read_Pos + Rec.Record_Len
@@ -1551,32 +1551,32 @@ is
          begin
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Decode_Error, Result);
-	         end Fail_Decode;
+                 end Fail_Decode;
 
-	         procedure Fail_Unexpected
-	         with Pre  => True
-	                      and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-	                      and then S.Input.Read_Pos + Rec.Record_Len
-	                        <= S.Input.Write_Pos
-	                      and then S.Input.Read_Pos + Rec.Record_Len
-	                        <= IO_Buffer_Capacity,
-	              Post => True
-	                      and then S.State = Error_State
-	                      and then Result /= OK
-	                      and then S.Negotiated_Suite =
-	                        S.Negotiated_Suite'Old
-	         is
-	         begin
-	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	            Send_Alert_And_Error (S, Unexpected_Message, Result);
-	         end Fail_Unexpected;
+                 procedure Fail_Unexpected
+                 with Pre  => True
+                              and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+                              and then S.Input.Read_Pos + Rec.Record_Len
+                                <= S.Input.Write_Pos
+                              and then S.Input.Read_Pos + Rec.Record_Len
+                                <= IO_Buffer_Capacity,
+                      Post => True
+                              and then S.State = Error_State
+                              and then Result /= OK
+                              and then S.Negotiated_Suite =
+                                S.Negotiated_Suite'Old
+                 is
+                 begin
+                    S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                    Send_Alert_And_Error (S, Unexpected_Message, Result);
+                 end Fail_Unexpected;
 
-	         procedure Finish_CKE
-		           (Msg : in Byte_Seq)
-			         with Pre  => True
-			                      and then Msg'Length > 0
-		                      and then Msg'Length <= HC.Transcript'Length
-	                      and then Msg'Last < N32 (Natural'Last)
+                 procedure Finish_CKE
+                           (Msg : in Byte_Seq)
+                                 with Pre  => True
+                                              and then Msg'Length > 0
+                                      and then Msg'Length <= HC.Transcript'Length
+                              and then Msg'Last < N32 (Natural'Last)
                       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
                       and then S.Input.Read_Pos + Rec.Record_Len
                         <= S.Input.Write_Pos
@@ -1588,108 +1588,108 @@ is
                         .Local_Config_Valid (HC.Cfg.Local)
                       and then HC.Cfg.Random /= null
                       and then Valid_ECDHE_Group (HC.Selected_Group),
-		              Post => True
-		                      and then HC.Version = HC.Version'Old
-	                      and then HC.Cfg.Local /= null
-	                      and then HC.Cfg.Local.Has_Identity
-	                      and then SPARKTLS.Handshake.Server_Msgs
-	                        .Local_Config_Valid (HC.Cfg.Local)
-			                      and then HC.Cfg.Random /= null
-			                      and then S.Negotiated_Suite =
-			                        S.Negotiated_Suite'Old
-				                      and then HC.Selected_Group = HC.Selected_Group'Old
-				                      and then
-			                        (if Result = OK
-		                         then S.State = S.State'Old
-	                              and then HC.Transcript_Len > 0
-	                              and then HC.Transcript_Len <= Transcript_Capacity
-		                              and then
-		                                HC.TLS12_EMS_Transcript_Len <=
-		                                  Transcript_Capacity
-		                         else S.State = Error_State)
-	         is
-	            CKE_OK : Boolean;
-	            Saved_Negotiated_Suite : constant Unsigned_16 :=
-	              S.Negotiated_Suite
-	              with Ghost;
-		         begin
-		            Parse_Complete_CKE (Msg, CKE_OK);
-	            if not CKE_OK then
-	               if HC.Ext_Parse_Err /= No_Error then
-	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	                  Send_Alert_And_Error (S, HC.Ext_Parse_Err, Result);
-	                  pragma Assert
-	                    (S.Negotiated_Suite = Saved_Negotiated_Suite);
-	               else
-	                  Fail_Decode;
-	                  pragma Assert
-	                    (S.Negotiated_Suite = Saved_Negotiated_Suite);
-	               end if;
-	               return;
-	            end if;
+                              Post => True
+                                      and then HC.Version = HC.Version'Old
+                              and then HC.Cfg.Local /= null
+                              and then HC.Cfg.Local.Has_Identity
+                              and then SPARKTLS.Handshake.Server_Msgs
+                                .Local_Config_Valid (HC.Cfg.Local)
+                                              and then HC.Cfg.Random /= null
+                                              and then S.Negotiated_Suite =
+                                                S.Negotiated_Suite'Old
+                                                      and then HC.Selected_Group = HC.Selected_Group'Old
+                                                      and then
+                                                (if Result = OK
+                                         then S.State = S.State'Old
+                                      and then HC.Transcript_Len > 0
+                                      and then HC.Transcript_Len <= Transcript_Capacity
+                                              and then
+                                                HC.TLS12_EMS_Transcript_Len <=
+                                                  Transcript_Capacity
+                                         else S.State = Error_State)
+                 is
+                    CKE_OK : Boolean;
+                    Saved_Negotiated_Suite : constant Unsigned_16 :=
+                      S.Negotiated_Suite
+                      with Ghost;
+                         begin
+                            Parse_Complete_CKE (Msg, CKE_OK);
+                    if not CKE_OK then
+                       if HC.Ext_Parse_Err /= No_Error then
+                          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                          Send_Alert_And_Error (S, HC.Ext_Parse_Err, Result);
+                          pragma Assert
+                            (S.Negotiated_Suite = Saved_Negotiated_Suite);
+                       else
+                          Fail_Decode;
+                          pragma Assert
+                            (S.Negotiated_Suite = Saved_Negotiated_Suite);
+                       end if;
+                       return;
+                    end if;
 
-	            Append_Transcript (HC, Msg);
-	            HC.TLS12_EMS_Transcript_Len := HC.Transcript_Len;
-	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-		            Result := OK;
-	            pragma Assert
-	              (S.Negotiated_Suite = Saved_Negotiated_Suite);
-		         end Finish_CKE;
+                    Append_Transcript (HC, Msg);
+                    HC.TLS12_EMS_Transcript_Len := HC.Transcript_Len;
+                    S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                            Result := OK;
+                    pragma Assert
+                      (S.Negotiated_Suite = Saved_Negotiated_Suite);
+                         end Finish_CKE;
 
-	         procedure Start_CKE_Reassembly
-	           (Source         : in     Byte_Seq;
-	            New_Need       : in     N32;
-	            Buffer_Length  : in     N32;
-	            Header_Pending : in     Boolean)
-			         with Pre  => Source'Length > 0
-		                      and then Source'Last < N32'Last
-	                      --  >= 4, not > 0: an active reassembly always
-	                      --  includes the 4-byte handshake header, per
-	                      --  Reasm_Buffer_Shaped. Both callers pass 4 or
-	                      --  HS_Msg_Len + 4.
-	                      and then New_Need >= 4
-	                      and then New_Need <= Buffer_Length
-	                      and then Buffer_Length <= Max_HS_Msg
+                 procedure Start_CKE_Reassembly
+                   (Source         : in     Byte_Seq;
+                    New_Need       : in     N32;
+                    Buffer_Length  : in     N32;
+                    Header_Pending : in     Boolean)
+                                 with Pre  => Source'Length > 0
+                                      and then Source'Last < N32'Last
+                              --  >= 4, not > 0: an active reassembly always
+                              --  includes the 4-byte handshake header, per
+                              --  Reasm_Buffer_Shaped. Both callers pass 4 or
+                              --  HS_Msg_Len + 4.
+                              and then New_Need >= 4
+                              and then New_Need <= Buffer_Length
+                              and then Buffer_Length <= Max_HS_Msg
                               and then
                                 (if Header_Pending then
                                    New_Need = 4
                                    and then Buffer_Length = Max_HS_Msg)
                               and then N32 (Source'Length) <= New_Need
                               and then HC.Reasm.Need = 0,
-	              Post => HC.Reasm.Len = N32 (Source'Length)
-	                      and then HC.Reasm.Need = New_Need
-	                      and then (HC.Reasm.Phase = Reasm_Header) = Header_Pending
+                      Post => HC.Reasm.Len = N32 (Source'Length)
+                              and then HC.Reasm.Need = New_Need
+                              and then (HC.Reasm.Phase = Reasm_Header) = Header_Pending
          is
             Source_Len : constant N32 := N32 (Source'Length);
          begin
 
-	            HC.Reasm :=
-	              (Phase =>
-	                 (if Header_Pending then Reasm_Header else Reasm_Body),
-	               Len  => Source_Len,
-	               Need => New_Need);
-	            for I in N32 range 0 .. Source_Len - 1 loop
-	               		               pragma Loop_Invariant (Buffer_Length <= Max_HS_Msg);
-		               pragma Loop_Invariant (Buffer_Length <= N32'Last);
-		               pragma Loop_Invariant (HC.Reasm.Need = New_Need);
-		               pragma Loop_Invariant
-		                 ((HC.Reasm.Phase = Reasm_Header) = Header_Pending);
-		               pragma Loop_Invariant (HC.Reasm.Len = Source_Len);
-		               pragma Loop_Invariant (Source_Len <= New_Need);
-		               pragma Loop_Invariant (New_Need <= Buffer_Length);
-		               pragma Loop_Invariant
-		                 (if Header_Pending then
-		                    New_Need = 4
-		                    and then Source_Len <= 4
-		                    and then Buffer_Length = Max_HS_Msg);
-		               pragma Loop_Invariant (I <= Source_Len - 1);
-	               pragma Loop_Invariant
-	                 (Source'First + I in Source'Range);
-	               pragma Loop_Invariant (I in HC.Reasm_Buf'Range);
-	               HC.Reasm_Buf (I) := Source (Source'First + I);
-	            end loop;
-	         end Start_CKE_Reassembly;
-	      begin
+                    HC.Reasm :=
+                      (Phase =>
+                         (if Header_Pending then Reasm_Header else Reasm_Body),
+                       Len  => Source_Len,
+                       Need => New_Need);
+                    for I in N32 range 0 .. Source_Len - 1 loop
+                                               pragma Loop_Invariant (Buffer_Length <= Max_HS_Msg);
+                               pragma Loop_Invariant (Buffer_Length <= N32'Last);
+                               pragma Loop_Invariant (HC.Reasm.Need = New_Need);
+                               pragma Loop_Invariant
+                                 ((HC.Reasm.Phase = Reasm_Header) = Header_Pending);
+                               pragma Loop_Invariant (HC.Reasm.Len = Source_Len);
+                               pragma Loop_Invariant (Source_Len <= New_Need);
+                               pragma Loop_Invariant (New_Need <= Buffer_Length);
+                               pragma Loop_Invariant
+                                 (if Header_Pending then
+                                    New_Need = 4
+                                    and then Source_Len <= 4
+                                    and then Buffer_Length = Max_HS_Msg);
+                               pragma Loop_Invariant (I <= Source_Len - 1);
+                       pragma Loop_Invariant
+                         (Source'First + I in Source'Range);
+                       pragma Loop_Invariant (I in HC.Reasm_Buf'Range);
+                       HC.Reasm_Buf (I) := Source (Source'First + I);
+                    end loop;
+                 end Start_CKE_Reassembly;
+              begin
          --  Slice bound: Parse_Record_Header Post gives Record_Len <= Avail,
          --  i.e., Read_Pos + Record_Len <= Write_Pos <= IO_Buffer_Capacity.
          --  So FS + Frag_Len = Read_Pos + Fragment_Pos + Fragment_Len
@@ -1741,16 +1741,16 @@ is
                      N32 (HC.Reasm_Buf (3));
                   HS_Total : constant N32 := HS_Msg_Len + 4;
                begin
-	                  if HC.Reasm_Buf (0) /= HT_Client_Key_Exchange then
-	                     HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-	                     Fail_Unexpected;
-	                     return;
-	                  end if;
-	                  if HS_Msg_Len > Max_Client_Key_Exchange then
-	                     HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-	                     Fail_Decode;
-	                     return;
-	                  end if;
+                          if HC.Reasm_Buf (0) /= HT_Client_Key_Exchange then
+                             HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
+                             Fail_Unexpected;
+                             return;
+                          end if;
+                          if HS_Msg_Len > Max_Client_Key_Exchange then
+                             HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
+                             Fail_Decode;
+                             return;
+                          end if;
                   pragma Assert (HS_Total <= Max_HS_Msg);
 
                   HC.Reasm :=
@@ -1769,43 +1769,43 @@ is
                return;
             end if;
 
-	            declare
-	               Need : constant N32 := HC.Reasm.Need;
-	            begin
-	               if Need > HC.Transcript'Length then
-	                  Fail_Decode;
-	                  return;
-	               end if;
+                    declare
+                       Need : constant N32 := HC.Reasm.Need;
+                    begin
+                       if Need > HC.Transcript'Length then
+                          Fail_Decode;
+                          return;
+                       end if;
 
-	               declare
-	                  Full : constant Byte_Seq :=
-	                    HC.Reasm_Buf (0 .. Need - 1);
-	               begin
-	                  HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
-	                  Result := OK;
-		                  Finish_CKE (Full);
-			                  if Result /= OK then
-			                     return;
-			                  end if;
-			                  pragma Assert (HC.Transcript_Len > 0);
-			                  CKE_Transcript_Nonempty :=
+                       declare
+                          Full : constant Byte_Seq :=
+                            HC.Reasm_Buf (0 .. Need - 1);
+                       begin
+                          HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                          Result := OK;
+                                  Finish_CKE (Full);
+                                          if Result /= OK then
+                                             return;
+                                          end if;
+                                          pragma Assert (HC.Transcript_Len > 0);
+                                          CKE_Transcript_Nonempty :=
                             (HC.Transcript_Len > 0);
-			               end;
-		            end;
+                                       end;
+                            end;
          elsif Frag_Len < 4 then
-	            if Frag_Len = 0 then
-	               Fail_Decode;
-	               return;
-	            end if;
+                    if Frag_Len = 0 then
+                       Fail_Decode;
+                       return;
+                    end if;
 
                   pragma Assert (HC.Reasm.Need = 0);
-	            Start_CKE_Reassembly
-	              (Source         => S.Input.Data (FS .. FS + Frag_Len - 1),
-	               New_Need       => 4,
-	               Buffer_Length  => Max_HS_Msg,
-	               Header_Pending => True);
-	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	            Result := OK;
+                    Start_CKE_Reassembly
+                      (Source         => S.Input.Data (FS .. FS + Frag_Len - 1),
+                       New_Need       => 4,
+                       Buffer_Length  => Max_HS_Msg,
+                       Header_Pending => True);
+                    S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                    Result := OK;
             return;
          else
             declare
@@ -1815,26 +1815,26 @@ is
                   N32 (S.Input.Data (FS + 3));
                HS_Total : constant N32 := HS_Msg_Len + 4;
             begin
-	               if S.Input.Data (FS) /= HT_Client_Key_Exchange then
-	                  Fail_Unexpected;
-	                  return;
-	               end if;
-	               if HS_Msg_Len > Max_Client_Key_Exchange then
-	                  Fail_Decode;
-	                  return;
-	               end if;
+                       if S.Input.Data (FS) /= HT_Client_Key_Exchange then
+                          Fail_Unexpected;
+                          return;
+                       end if;
+                       if HS_Msg_Len > Max_Client_Key_Exchange then
+                          Fail_Decode;
+                          return;
+                       end if;
 
-	               if HS_Total > Frag_Len then
-	                  pragma Assert (HS_Total <= Max_HS_Msg);
+                       if HS_Total > Frag_Len then
+                          pragma Assert (HS_Total <= Max_HS_Msg);
                   pragma Assert (HC.Reasm.Need = 0);
-	                  Start_CKE_Reassembly
-	                    (Source         =>
-	                       S.Input.Data (FS .. FS + Frag_Len - 1),
-	                     New_Need       => HS_Total,
-	                     Buffer_Length  => HS_Total,
-	                     Header_Pending => False);
-	                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	                  Result := OK;
+                          Start_CKE_Reassembly
+                            (Source         =>
+                               S.Input.Data (FS .. FS + Frag_Len - 1),
+                             New_Need       => HS_Total,
+                             Buffer_Length  => HS_Total,
+                             Header_Pending => False);
+                          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                          Result := OK;
                   return;
                end if;
             end;
@@ -1844,26 +1844,26 @@ is
                  S.Input.Data (FS .. FS + Frag_Len - 1);
             begin
                Result := OK;
-	               Finish_CKE (Frag);
-		               if Result /= OK then
-		                  return;
-		               end if;
-		               pragma Assert (HC.Transcript_Len > 0);
-		               CKE_Transcript_Nonempty := (HC.Transcript_Len > 0);
-		            end;
-		         end if;
+                       Finish_CKE (Frag);
+                               if Result /= OK then
+                                  return;
+                               end if;
+                               pragma Assert (HC.Transcript_Len > 0);
+                               CKE_Transcript_Nonempty := (HC.Transcript_Len > 0);
+                            end;
+                         end if;
       end;
 
-	      --  Compute ECDHE shared secret
-	      pragma Assert
-	        (SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group (HC.Selected_Group));
-	      declare
-	         SS_OK  : Boolean    := False;
-	         SS_Err : Error_Code := Handshake_Failure;
-	      begin
-	         Compute_Shared_Secret_12 (SS_OK, SS_Err);
-	            pragma Assert
-	              (HC.Reasm.Phase = Reasm_Idle or else HC.Reasm.Len <= HC.Reasm.Need);
+              --  Compute ECDHE shared secret
+              pragma Assert
+                (SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group (HC.Selected_Group));
+              declare
+                 SS_OK  : Boolean    := False;
+                 SS_Err : Error_Code := Handshake_Failure;
+              begin
+                 Compute_Shared_Secret_12 (SS_OK, SS_Err);
+                    pragma Assert
+                      (HC.Reasm.Phase = Reasm_Idle or else HC.Reasm.Len <= HC.Reasm.Need);
             if not SS_OK then
                Send_Alert_And_Error (S, SS_Err, Result);
                return;
@@ -1871,16 +1871,16 @@ is
       end;
 
       pragma Assert (S.State in Wait_Client_Cert_Verify | Wait_Client_Finished);
-	      pragma Assert
-	        (S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
-	                            | Suite_ECDHE_RSA_AES256_GCM_SHA384
-	                            | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-	                            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-	                            | Suite_ECDHE_RSA_CHACHA20_SHA256
-	                            | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
-	      pragma Assert (CKE_Transcript_Nonempty);
-		      pragma Assert (HC.Transcript_Len > 0);
-	      Derive_Keys_12 (S, HC);
+              pragma Assert
+                (S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                                    | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                                    | Suite_ECDHE_RSA_CHACHA20_SHA256
+                                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
+              pragma Assert (CKE_Transcript_Nonempty);
+                      pragma Assert (HC.Transcript_Len > 0);
+              Derive_Keys_12 (S, HC);
       HC.CKE_Received_12 := True;
       Result := (if Input_Available (S) > 0 then OK else Need_Input);
       --  RFC 5246 §7.4.7: at this exit point, the single-CKE
@@ -1888,11 +1888,11 @@ is
       --  HC.CKE_Received_12 := True assignment above would fail
          --  this pragma — that's the point.
          pragma Assert (Single_CKE_RFC_5246_7_4_7 (HC));
-	      end Process_Client_Key_Exchange_12;
+              end Process_Client_Key_Exchange_12;
 
-	   procedure Process_Client_Certificate_12
-	     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-	   is
+           procedure Process_Client_Certificate_12
+             (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+           is
       Rec : Records.Parse_Result;
    begin
       if Input_Available (S) = 0 then
@@ -1970,30 +1970,30 @@ is
                return;
             end if;
 
-	            declare
-	               F : constant N32 := Frag'First;
-	            begin
-	               pragma Assert (Frag_Len >= 7);
-	               pragma Assert (F + 6 <= Frag'Last);
-	               declare
-	                  List_Len : constant N32 :=
-	                    N32 (Frag (F + 4)) * 65536
-	                    + N32 (Frag (F + 5)) * 256
-	                    + N32 (Frag (F + 6));
-	               begin
-	                  if List_Len /= Msg_Len - 3 then
-	                     S.Input.Read_Pos :=
-	                       S.Input.Read_Pos + Rec.Record_Len;
-	                     Send_Alert_And_Error (S, Decode_Error, Result);
-	                     return;
-	                  end if;
+                    declare
+                       F : constant N32 := Frag'First;
+                    begin
+                       pragma Assert (Frag_Len >= 7);
+                       pragma Assert (F + 6 <= Frag'Last);
+                       declare
+                          List_Len : constant N32 :=
+                            N32 (Frag (F + 4)) * 65536
+                            + N32 (Frag (F + 5)) * 256
+                            + N32 (Frag (F + 6));
+                       begin
+                          if List_Len /= Msg_Len - 3 then
+                             S.Input.Read_Pos :=
+                               S.Input.Read_Pos + Rec.Record_Len;
+                             Send_Alert_And_Error (S, Decode_Error, Result);
+                             return;
+                          end if;
                      if List_Len = 0 and then HC.Cfg.Require_Client_Cert then
                         S.Input.Read_Pos :=
                           S.Input.Read_Pos + Rec.Record_Len;
                         Send_Alert_And_Error (S, Handshake_Failure, Result);
                         return;
                      end if;
-	               end;
+                       end;
             end;
 
             declare
@@ -2001,14 +2001,14 @@ is
                Chain_OK  : Boolean;
                Chain_Err : Error_Code;
             begin
-	               for I in N32 range 0 .. Frag_Len - 1 loop
-	                  HS_Msg (I) := Frag (Frag'First + I);
-	               end loop;
-	               SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
-		                 (HC     => HC,
-			                  HS_Msg => HS_Msg,
-		                  OK     => Chain_OK,
-		                  Err    => Chain_Err);
+                       for I in N32 range 0 .. Frag_Len - 1 loop
+                          HS_Msg (I) := Frag (Frag'First + I);
+                       end loop;
+                       SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
+                                 (HC     => HC,
+                                          HS_Msg => HS_Msg,
+                                  OK     => Chain_OK,
+                                  Err    => Chain_Err);
 
                if not Chain_OK then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2016,12 +2016,12 @@ is
                   return;
                end if;
                   pragma Assert
-	                  (if HC.Peer_Cert_Valid
-	                     then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-	                          and then X509.Spans_Valid
-		                            (HC.Peer_Cert,
-		                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-		            end;
+                          (if HC.Peer_Cert_Valid
+                             then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                                  and then X509.Spans_Valid
+                                            (HC.Peer_Cert,
+                                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                            end;
 
             Append_Transcript (HC, Frag);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2099,32 +2099,32 @@ is
             Handshake.Parse_Handshake_Header
               (Frag, Msg_Type, Msg_Len, Parse_OK);
 
-	            if not Parse_OK then
-	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	               Send_Alert_And_Error
-	                 (S,
-	                  (if Frag (Frag'First) in
-	                     16#01# | 16#02# | 16#04# | 16#08# |
-	                     16#0B# | 16#0C# | 16#0D# | 16#0E# |
-	                     16#0F# | 16#10# | 16#14#
-	                   then Decode_Error else Unexpected_Message),
-	                  Result);
-	               return;
-	            end if;
+                    if not Parse_OK then
+                       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                       Send_Alert_And_Error
+                         (S,
+                          (if Frag (Frag'First) in
+                             16#01# | 16#02# | 16#04# | 16#08# |
+                             16#0B# | 16#0C# | 16#0D# | 16#0E# |
+                             16#0F# | 16#10# | 16#14#
+                           then Decode_Error else Unexpected_Message),
+                          Result);
+                       return;
+                    end if;
 
-	            if Msg_Type /= Handshake.HT_Certificate_Verify then
-	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	               Send_Alert_And_Error (S, Unexpected_Message, Result);
-	               return;
-	            end if;
+                    if Msg_Type /= Handshake.HT_Certificate_Verify then
+                       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                       Send_Alert_And_Error (S, Unexpected_Message, Result);
+                       return;
+                    end if;
 
-	            if Msg_Len < 4
-	              or else Msg_Len + 4 /= Frag_Len
-	            then
-	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	               Send_Alert_And_Error (S, Decode_Error, Result);
-	               return;
-	            end if;
+                    if Msg_Len < 4
+                      or else Msg_Len + 4 /= Frag_Len
+                    then
+                       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                       Send_Alert_And_Error (S, Decode_Error, Result);
+                       return;
+                    end if;
 
             declare
                F          : constant N32 := Frag'First;
@@ -2288,31 +2288,31 @@ is
          --  state. We're past the client's CCS (READ side encrypted)
          --  but before our own CCS (WRITE side still plaintext), so
          --  the alert MUST be plaintext.
-	         if Rec.Bad_Version then
-	            Send_Alert_And_Error (S, Protocol_Version, Result);
-	         elsif Rec.Overflow then
-	            Send_Alert_And_Error (S, Record_Overflow, Result);
-	         else
-	            Result := Need_Input;
-	         end if;
-	         return;
-	      end if;
+                 if Rec.Bad_Version then
+                    Send_Alert_And_Error (S, Protocol_Version, Result);
+                 elsif Rec.Overflow then
+                    Send_Alert_And_Error (S, Record_Overflow, Result);
+                 else
+                    Result := Need_Input;
+                 end if;
+                 return;
+              end if;
 
-	      if Rec.Content /= Records.Content_Handshake then
-	         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	         Send_Alert_And_Error (S, Unexpected_Message, Result);
-	         return;
-	      end if;
+              if Rec.Content /= Records.Content_Handshake then
+                 S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                 Send_Alert_And_Error (S, Unexpected_Message, Result);
+                 return;
+              end if;
 
       declare
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
       begin
-	         if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
-	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	            Send_Alert_And_Error (S, Record_Overflow, Result);
-	            return;
-	         end if;
+                 if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
+                    S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                    Send_Alert_And_Error (S, Record_Overflow, Result);
+                    return;
+                 end if;
 
          declare
             Min_Frag : constant N32 :=
@@ -2320,11 +2320,11 @@ is
                then GCM_Tag_Len + 1
                else Explicit_Nonce_Len + GCM_Tag_Len + 1);
          begin
-	            if Frag_Len < Min_Frag then
-	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-	               Send_Alert_And_Error (S, Decode_Error, Result);
-	               return;
-	            end if;
+                    if Frag_Len < Min_Frag then
+                       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                       Send_Alert_And_Error (S, Decode_Error, Result);
+                       return;
+                    end if;
          end;
 
          pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
@@ -2342,32 +2342,32 @@ is
                Hdr (I) := S.Input.Data (S.Input.Read_Pos + I);
             end loop;
 
-	            Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
-	                               HC.Client_Write_IV_12, HC.Client_Seq_12,
-	                               Plaintext, PL, DV);
-	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                    Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
+                                       HC.Client_Write_IV_12, HC.Client_Seq_12,
+                                       Plaintext, PL, DV);
+                    S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
-	            if not DV then
-	               Send_Alert_And_Error (S, Bad_Record_MAC, Result);
-	               return;
-	            end if;
+                    if not DV then
+                       Send_Alert_And_Error (S, Bad_Record_MAC, Result);
+                       return;
+                    end if;
 
             if HC.Reasm.Need > 0 or else PL < 4 then
-	               if HC.Reasm.Need = 0 then
-	                  if PL = 0 then
-	                     Send_Alert_And_Error (S, Decode_Error, Result);
-	                     return;
-	                  end if;
+                       if HC.Reasm.Need = 0 then
+                          if PL = 0 then
+                             Send_Alert_And_Error (S, Decode_Error, Result);
+                             return;
+                          end if;
 
                   HC.Reasm := (Phase => Reasm_Header, Len => PL, Need => 4);
                   HC.Reasm_Buf (0 .. PL - 1) := Plaintext (0 .. PL - 1);
                else
-	                  if HC.Reasm.Phase = Reasm_Idle
-	                    or else HC.Reasm.Len > N32 (HC.Reasm_Buf'Length)
-	                  then
-	                     Send_Alert_And_Error (S, Decode_Error, Result);
-	                     return;
-	                  end if;
+                          if HC.Reasm.Phase = Reasm_Idle
+                            or else HC.Reasm.Len > N32 (HC.Reasm_Buf'Length)
+                          then
+                             Send_Alert_And_Error (S, Decode_Error, Result);
+                             return;
+                          end if;
 
                   declare
                      Remaining : constant N32 :=
@@ -2379,10 +2379,10 @@ is
                      if Take > 0 then
                         if HC.Reasm.Len + Take >
                            N32 (HC.Reasm_Buf'Length)
-	                        then
-	                           Send_Alert_And_Error (S, Decode_Error, Result);
-	                           return;
-	                        end if;
+                                then
+                                   Send_Alert_And_Error (S, Decode_Error, Result);
+                                   return;
+                                end if;
                         HC.Reasm_Buf
                           (HC.Reasm.Len .. HC.Reasm.Len + Take - 1) :=
                           Plaintext (0 .. Take - 1);
@@ -2391,32 +2391,32 @@ is
                              Len => HC.Reasm.Len + Take);
                      end if;
 
-	                     if Take /= PL then
-	                        HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-	                        Send_Alert_And_Error (S, Unexpected_Message, Result);
-	                        return;
-	                     end if;
+                             if Take /= PL then
+                                HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
+                                Send_Alert_And_Error (S, Unexpected_Message, Result);
+                                return;
+                             end if;
                   end;
                end if;
 
                if (HC.Reasm.Phase = Reasm_Header)
                  and then HC.Reasm.Len >= 4
                then
-	                  if HC.Reasm_Buf (0) /= HT_Finished then
-	                     HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-	                     Send_Alert_And_Error
-	                       (S, Unexpected_Message, Result);
-	                     return;
-	                  end if;
+                          if HC.Reasm_Buf (0) /= HT_Finished then
+                             HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
+                             Send_Alert_And_Error
+                               (S, Unexpected_Message, Result);
+                             return;
+                          end if;
                   if HC.Reasm_Buf (1) /= 0
                     or else HC.Reasm_Buf (2) /= 0
                     or else HC.Reasm_Buf (3) /= Byte (Finished_Verify_Len)
                   then
-	                     HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-	                     Send_Alert_And_Error
-	                       (S, Certificate_Verify_Failed, Result);
-	                     return;
-	                  end if;
+                             HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
+                             Send_Alert_And_Error
+                               (S, Certificate_Verify_Failed, Result);
+                             return;
+                          end if;
                   HC.Reasm :=
                     (HC.Reasm with delta
                        Phase => Reasm_Body,
@@ -2430,11 +2430,11 @@ is
 
                declare
                   Need : constant N32 := HC.Reasm.Need;
-	               begin
-	                  if Need > N32 (Plaintext'Length) then
-	                     Send_Alert_And_Error (S, Decode_Error, Result);
-	                     return;
-	                  end if;
+                       begin
+                          if Need > N32 (Plaintext'Length) then
+                             Send_Alert_And_Error (S, Decode_Error, Result);
+                             return;
+                          end if;
 
                   Plaintext (0 .. Need - 1) :=
                     HC.Reasm_Buf (0 .. Need - 1);
@@ -2458,18 +2458,18 @@ is
                end if;
             end if;
 
-	            if PL < 4 then
-	               Send_Alert_And_Error (S, Decode_Error, Result);
-	               return;
-	            end if;
+                    if PL < 4 then
+                       Send_Alert_And_Error (S, Decode_Error, Result);
+                       return;
+                    end if;
 
             declare
                Msg_Type : constant Byte := Plaintext (0);
             begin
-	               if Msg_Type /= HT_Finished then
-	                  Send_Alert_And_Error (S, Unexpected_Message, Result);
-	                  return;
-	               end if;
+                       if Msg_Type /= HT_Finished then
+                          Send_Alert_And_Error (S, Unexpected_Message, Result);
+                          return;
+                       end if;
                if Plaintext (1) /= 0
                  or else Plaintext (2) /= 0
                  or else Plaintext (3) /= Byte (Finished_Verify_Len)
@@ -2478,10 +2478,10 @@ is
                   --  decrypt_error (alert 51). BoGo
                   --  TrailingMessageData-ClientFinished expects this
                   --  rather than decode_error.
-	                  Send_Alert_And_Error
-	                    (S, Certificate_Verify_Failed, Result);
-	                  return;
-	               end if;
+                          Send_Alert_And_Error
+                            (S, Certificate_Verify_Failed, Result);
+                          return;
+                       end if;
                --  RFC 5246 §7.4.9: Finished is the last handshake
                --  message in the client's flight. Any bytes in the same
                --  record beyond `4 + Finished_Verify_Len` are excess
@@ -2502,49 +2502,49 @@ is
                declare
                   Exp : Verify_Data_12;
                   TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
-	               begin
-	                  if Use_384 then
-	                     SPARKNaCl.Hashing.SHA384.Hash
-	                       (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
-	                     Prove_Client_Finished_Label;
-	                     pragma Assert (Valid_Finished_Label
-	                                      (Label_Client_Finished));
-	                     pragma Assert (TH4'Length = 48);
-	                     declare
-	                        TH_Bytes : constant Byte_Seq (0 .. 47) :=
-	                          Byte_Seq (TH4);
-	                     begin
-	                        pragma Assert (TH_Bytes'First = 0);
-	                        pragma Assert (TH_Bytes'Last = 47);
-	                        pragma Assert (TH_Bytes'Length = 48);
-	                        pragma Assert
-	                          (TH_Bytes'Length = 32
-	                           or else TH_Bytes'Length = 48);
-	                        Compute_Finished_12 (Exp, HC.Master_Secret_12,
-	                                             Label_Client_Finished,
-	                                             TH_Bytes, True);
-	                     end;
-	                  else
-	                     Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
-	                     Prove_Client_Finished_Label;
-	                     pragma Assert (Valid_Finished_Label
-	                                      (Label_Client_Finished));
-	                     pragma Assert (TH'Length = 32);
-	                     declare
-	                        TH_Bytes : constant Byte_Seq (0 .. 31) :=
-	                          Byte_Seq (TH);
-	                     begin
-	                        pragma Assert (TH_Bytes'First = 0);
-	                        pragma Assert (TH_Bytes'Last = 31);
-	                        pragma Assert (TH_Bytes'Length = 32);
-	                        pragma Assert
-	                          (TH_Bytes'Length = 32
-	                           or else TH_Bytes'Length = 48);
-	                        Compute_Finished_12 (Exp, HC.Master_Secret_12,
-	                                             Label_Client_Finished,
-	                                             TH_Bytes, False);
-	                     end;
-	                  end if;
+                       begin
+                          if Use_384 then
+                             SPARKNaCl.Hashing.SHA384.Hash
+                               (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                             Prove_Client_Finished_Label;
+                             pragma Assert (Valid_Finished_Label
+                                              (Label_Client_Finished));
+                             pragma Assert (TH4'Length = 48);
+                             declare
+                                TH_Bytes : constant Byte_Seq (0 .. 47) :=
+                                  Byte_Seq (TH4);
+                             begin
+                                pragma Assert (TH_Bytes'First = 0);
+                                pragma Assert (TH_Bytes'Last = 47);
+                                pragma Assert (TH_Bytes'Length = 48);
+                                pragma Assert
+                                  (TH_Bytes'Length = 32
+                                   or else TH_Bytes'Length = 48);
+                                Compute_Finished_12 (Exp, HC.Master_Secret_12,
+                                                     Label_Client_Finished,
+                                                     TH_Bytes, True);
+                             end;
+                          else
+                             Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                             Prove_Client_Finished_Label;
+                             pragma Assert (Valid_Finished_Label
+                                              (Label_Client_Finished));
+                             pragma Assert (TH'Length = 32);
+                             declare
+                                TH_Bytes : constant Byte_Seq (0 .. 31) :=
+                                  Byte_Seq (TH);
+                             begin
+                                pragma Assert (TH_Bytes'First = 0);
+                                pragma Assert (TH_Bytes'Last = 31);
+                                pragma Assert (TH_Bytes'Length = 32);
+                                pragma Assert
+                                  (TH_Bytes'Length = 32
+                                   or else TH_Bytes'Length = 48);
+                                Compute_Finished_12 (Exp, HC.Master_Secret_12,
+                                                     Label_Client_Finished,
+                                                     TH_Bytes, False);
+                             end;
+                          end if;
 
                   --  Constant-time comparison (prevents timing attacks
                   --  on the verify_data). SPARKNaCl.Equal uses XOR
@@ -2559,9 +2559,9 @@ is
                         --  mismatch → fatal alert. Server WRITE state
                         --  is still plaintext (no CCS sent yet) so the
                         --  alert MUST be plaintext, not encrypted.
-	                        Send_Alert_And_Error
-	                          (S, Handshake_Failure, Result);
-	                        pragma Assert (Output_Pending (S) > 0);
+                                Send_Alert_And_Error
+                                  (S, Handshake_Failure, Result);
+                                pragma Assert (Output_Pending (S) > 0);
                         pragma Assert
                           (S.Last_Error /= Unexpected_Message);
                         pragma Assert
@@ -2663,11 +2663,11 @@ is
                   Result        => NST_Buf,
                   Len           => NST_Total);
                if NST_Total = 0 then
-	                  S.Last_Error := Insufficient_Buffer;
-	                  Set_State (S, Error_State);
-	                  Result := Error_Alert;
-	                  return;
-	               end if;
+                          S.Last_Error := Insufficient_Buffer;
+                          Set_State (S, Error_State);
+                          Result := Error_Alert;
+                          return;
+                       end if;
                pragma Assert (NST_Total > 0);
                pragma Assert (NST_Total - 1 <= NST_Buf'Last);
 
@@ -2686,92 +2686,92 @@ is
                   Records.Build_Handshake_Record
                     (NST_Data, Scratch, NST_Rec_Out);
                   if NST_Rec_Out = 0 then
-	                     S.Last_Error := Insufficient_Buffer;
-	                     Set_State (S, Error_State);
-	                     Result := Error_Alert;
-	                     return;
-	                  end if;
+                             S.Last_Error := Insufficient_Buffer;
+                             Set_State (S, Error_State);
+                             Result := Error_Alert;
+                             return;
+                          end if;
                end;
             end;
          end if;
 
          Records.Build_CCS_Record (Scratch, CCS_Out);
          if CCS_Out = 0 then
-	            S.Last_Error := Insufficient_Buffer;
-	            Set_State (S, Error_State);
-	            Result := Error_Alert;
-	            return;
-	         end if;
+                    S.Last_Error := Insufficient_Buffer;
+                    Set_State (S, Error_State);
+                    Result := Error_Alert;
+                    return;
+                 end if;
 
-	         if Use_384 then
-		            SPARKNaCl.Hashing.SHA384.Hash
-		              (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
-		            Prove_Server_Finished_Label;
-		            pragma Assert (Valid_Finished_Label (Label_Server_Finished));
-		            pragma Assert (TH4'Length = 48);
-		            declare
-		               TH_Bytes : constant Byte_Seq (0 .. 47) :=
-		                 Byte_Seq (TH4);
-		            begin
-		               pragma Assert (TH_Bytes'First = 0);
-		               pragma Assert (TH_Bytes'Last = 47);
-		               pragma Assert (TH_Bytes'Length = 48);
-		               pragma Assert
-		                 (TH_Bytes'Length = 32
-		                  or else TH_Bytes'Length = 48);
-		               Build_Finished_12
-		                 (HC.Master_Secret_12, Label_Server_Finished,
-		                  TH_Bytes, True, FB, FL);
-		            end;
-		         else
-		            Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
-		            Prove_Server_Finished_Label;
-		            pragma Assert (Valid_Finished_Label (Label_Server_Finished));
-		            pragma Assert (TH'Length = 32);
-		            declare
-		               TH_Bytes : constant Byte_Seq (0 .. 31) :=
-		                 Byte_Seq (TH);
-		            begin
-		               pragma Assert (TH_Bytes'First = 0);
-		               pragma Assert (TH_Bytes'Last = 31);
-		               pragma Assert (TH_Bytes'Length = 32);
-		               pragma Assert
-		                 (TH_Bytes'Length = 32
-		                  or else TH_Bytes'Length = 48);
-		               Build_Finished_12
-		                 (HC.Master_Secret_12, Label_Server_Finished,
-		                  TH_Bytes, False, FB, FL);
-		            end;
-		         end if;
+                 if Use_384 then
+                            SPARKNaCl.Hashing.SHA384.Hash
+                              (TH4, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                            Prove_Server_Finished_Label;
+                            pragma Assert (Valid_Finished_Label (Label_Server_Finished));
+                            pragma Assert (TH4'Length = 48);
+                            declare
+                               TH_Bytes : constant Byte_Seq (0 .. 47) :=
+                                 Byte_Seq (TH4);
+                            begin
+                               pragma Assert (TH_Bytes'First = 0);
+                               pragma Assert (TH_Bytes'Last = 47);
+                               pragma Assert (TH_Bytes'Length = 48);
+                               pragma Assert
+                                 (TH_Bytes'Length = 32
+                                  or else TH_Bytes'Length = 48);
+                               Build_Finished_12
+                                 (HC.Master_Secret_12, Label_Server_Finished,
+                                  TH_Bytes, True, FB, FL);
+                            end;
+                         else
+                            Hash (TH, HC.Transcript (0 .. HC.Transcript_Len - 1));
+                            Prove_Server_Finished_Label;
+                            pragma Assert (Valid_Finished_Label (Label_Server_Finished));
+                            pragma Assert (TH'Length = 32);
+                            declare
+                               TH_Bytes : constant Byte_Seq (0 .. 31) :=
+                                 Byte_Seq (TH);
+                            begin
+                               pragma Assert (TH_Bytes'First = 0);
+                               pragma Assert (TH_Bytes'Last = 31);
+                               pragma Assert (TH_Bytes'Length = 32);
+                               pragma Assert
+                                 (TH_Bytes'Length = 32
+                                  or else TH_Bytes'Length = 48);
+                               Build_Finished_12
+                                 (HC.Master_Secret_12, Label_Server_Finished,
+                                  TH_Bytes, False, FB, FL);
+                            end;
+                         end if;
 
-	         pragma Assert (FL = Finished_12_Total_Len);
-	         pragma Assert (FB'First = 0);
-	         pragma Assert (FB'Last = Finished_12_Total_Len - 1);
-	         pragma Assert (HC.Server_Write_IV_12'First = 0);
-	         pragma Assert (HC.Server_Write_IV_12'Last = 11);
-	         pragma Assert
-	           (HC.Server_Write_IV_12'Length =
-	            Records.TLS12.Implicit_IV_Len);
-	         Build_Encrypted_Record_12
-	           (FB (0 .. FL - 1), 16#16#, S.Server_App,
-	            HC.Server_Write_IV_12, HC.Server_Seq_12, Scratch, EO);
-	         if EO = 0 then
-	            HC.Server_Seq_12 := Saved_Seq;  --  Build_Encrypted_Record_12
-	                                            --  always advances; rollback.
-	            S.Last_Error := Insufficient_Buffer;
-	            Set_State (S, Error_State);
-	            Result := Error_Alert;
-	            return;
-	         end if;
+                 pragma Assert (FL = Finished_12_Total_Len);
+                 pragma Assert (FB'First = 0);
+                 pragma Assert (FB'Last = Finished_12_Total_Len - 1);
+                 pragma Assert (HC.Server_Write_IV_12'First = 0);
+                 pragma Assert (HC.Server_Write_IV_12'Last = 11);
+                 pragma Assert
+                   (HC.Server_Write_IV_12'Length =
+                    Records.TLS12.Implicit_IV_Len);
+                 Build_Encrypted_Record_12
+                   (FB (0 .. FL - 1), 16#16#, S.Server_App,
+                    HC.Server_Write_IV_12, HC.Server_Seq_12, Scratch, EO);
+                 if EO = 0 then
+                    HC.Server_Seq_12 := Saved_Seq;  --  Build_Encrypted_Record_12
+                                                    --  always advances; rollback.
+                    S.Last_Error := Insufficient_Buffer;
+                    Set_State (S, Error_State);
+                    Result := Error_Alert;
+                    return;
+                 end if;
 
          --  Atomic commit
-	         if Free_Space (S.Output) < Scratch.Write_Pos then
-	            HC.Server_Seq_12 := Saved_Seq;
-	            S.Last_Error := Insufficient_Buffer;
-	            Set_State (S, Error_State);
-	            Result := Error_Alert;
-	            return;
-	         end if;
+                 if Free_Space (S.Output) < Scratch.Write_Pos then
+                    HC.Server_Seq_12 := Saved_Seq;
+                    S.Last_Error := Insufficient_Buffer;
+                    Set_State (S, Error_State);
+                    Result := Error_Alert;
+                    return;
+                 end if;
          S.Output.Data (S.Output.Write_Pos ..
                         S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
             Scratch.Data (0 .. Scratch.Write_Pos - 1);
@@ -2786,11 +2786,11 @@ is
       S.Client_Seq_12 := HC.Client_Seq_12;
       S.Server_Seq_12 := HC.Server_Seq_12;
 
-	      Set_State (S, Connected);
-	      S.Handshake_Just_Done := True;
-	      Result := (if Output_Pending (S) > 0 then Has_Output else Handshake_Done);
-	      if Result = Handshake_Done then S.Handshake_Just_Done := False; end if;
-	   end Process_Client_Finished_12;
+              Set_State (S, Connected);
+              S.Handshake_Just_Done := True;
+              Result := (if Output_Pending (S) > 0 then Has_Output else Handshake_Done);
+              if Result = Handshake_Done then S.Handshake_Just_Done := False; end if;
+           end Process_Client_Finished_12;
 
    ------------------------------------------------------------------
    procedure Process_Connected_12 (S : in out Session; Result : out Action)
@@ -2850,11 +2850,11 @@ is
                Desc        => 100,
                Keys        => S.Server_App,
                Implicit_IV => S.Server_IV_12,
-	               Seq_Num     => S.Server_Seq_12,
-	               Output      => S.Output,
-	               Bytes_Out   => A);
+                       Seq_Num     => S.Server_Seq_12,
+                       Output      => S.Output,
+                       Bytes_Out   => A);
             pragma Assert (A <= N32 (S.Output.Data'Length));
-	         end;
+                 end;
          Result := (if Output_Pending (S) > 0
                     then Has_Output else OK);
          return;
@@ -2979,11 +2979,11 @@ is
                            Desc        => 0,
                            Keys        => S.Server_App,
                            Implicit_IV => S.Server_IV_12,
-	                           Seq_Num     => S.Server_Seq_12,
-	                           Output      => S.Output,
-	                           Bytes_Out   => A);
+                                   Seq_Num     => S.Server_Seq_12,
+                                   Output      => S.Output,
+                                   Bytes_Out   => A);
                         pragma Assert (A <= N32 (S.Output.Data'Length));
-	                     end;
+                             end;
                      if S.State = Connected then
                         Set_State (S, Closing);
                      end if;

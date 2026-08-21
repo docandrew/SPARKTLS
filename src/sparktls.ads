@@ -905,12 +905,12 @@ is
      with Dynamic_Predicate =>
        Selected_Identity_Access = null
        or else
-	         (Selected_Identity_Access.Has_Identity
-	          and then Selected_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
-	          and then Selected_Identity_Access.Int_Count <= Max_Pool_Size
-	          and then
-	            (for all I in 0 .. Max_Pool_Size - 1 =>
-	               Selected_Identity_Access.Ints (I).DER_Len
+                 (Selected_Identity_Access.Has_Identity
+                  and then Selected_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+                  and then Selected_Identity_Access.Int_Count <= Max_Pool_Size
+                  and then
+                    (for all I in 0 .. Max_Pool_Size - 1 =>
+                       Selected_Identity_Access.Ints (I).DER_Len
                  <= X509.N32 (Max_Cert_DER))
           and then
             (if Selected_Identity_Access.Sign_Algo = Sign_RSA_PSS
@@ -1108,14 +1108,14 @@ is
       --  above any legitimate peer.
       Max_Cipher_Suites    : N32 := 256;
 
-	      --  Max supported_groups entries consumed from the named-group
-	      --  extension. Real clients send 4-12; cap of 64.
-	      Max_Supported_Groups : N32 := 64;
+              --  Max supported_groups entries consumed from the named-group
+              --  extension. Real clients send 4-12; cap of 64.
+              Max_Supported_Groups : N32 := 64;
 
-	      --  Max key_share entries consumed from a TLS 1.3 ClientHello.
-	      --  Real clients send 1-3; cap of 64 leaves ample room while
-	      --  bounding duplicate/share parsing work.
-	      Max_Key_Shares       : N32 := 64;
+              --  Max key_share entries consumed from a TLS 1.3 ClientHello.
+              --  Real clients send 1-3; cap of 64 leaves ample room while
+              --  bounding duplicate/share parsing work.
+              Max_Key_Shares       : N32 := 64;
 
       --  Max signature_algorithms entries CONSUMED from the wire
       --  (distinct from Max_Sig_Algos which caps how many we STORE
@@ -1134,11 +1134,11 @@ is
       Max_Warning_Alerts   : N32 := 4;
    end record;
 
-	   Default_DoS_Caps : constant DoS_Caps :=
-	     (Max_Cipher_Suites    => 256,
-	      Max_Supported_Groups => 64,
-	      Max_Key_Shares       => 64,
-	      Max_Sig_Algs_Wire    => 64,
+           Default_DoS_Caps : constant DoS_Caps :=
+             (Max_Cipher_Suites    => 256,
+              Max_Supported_Groups => 64,
+              Max_Key_Shares       => 64,
+              Max_Sig_Algs_Wire    => 64,
       Max_ALPN_Protocols   => 32,
       Max_Warning_Alerts   => 4);
 

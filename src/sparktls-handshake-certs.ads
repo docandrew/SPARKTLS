@@ -114,18 +114,18 @@ is
       OK                     :    out Boolean;
       Err                    :    out Error_Code)
    with Pre => HS_Msg'First = 0
-	               and then HS_Msg'Length >= 4
-				               and then HS_Msg'Length <= Max_Cert_Msg,
-			        Post => HC.Client_HS.Counter =
-			                  HC.Client_HS.Counter'Old
-			                and then HC.Transcript_Len = HC.Transcript_Len'Old
-	                and then HC.Hash_Len = HC.Hash_Len'Old
-	                and then (if HC.Cfg.Local'Old /= null
-	                          then HC.Cfg.Local /= null)
-	                and then (if HC.Cfg.Local'Old /= null
-	                              and then HC.Cfg.Local'Old.Has_Identity
-	                          then HC.Cfg.Local /= null
-	                               and then HC.Cfg.Local.Has_Identity)
+                       and then HS_Msg'Length >= 4
+                                               and then HS_Msg'Length <= Max_Cert_Msg,
+                                Post => HC.Client_HS.Counter =
+                                          HC.Client_HS.Counter'Old
+                                        and then HC.Transcript_Len = HC.Transcript_Len'Old
+                        and then HC.Hash_Len = HC.Hash_Len'Old
+                        and then (if HC.Cfg.Local'Old /= null
+                                  then HC.Cfg.Local /= null)
+                        and then (if HC.Cfg.Local'Old /= null
+                                      and then HC.Cfg.Local'Old.Has_Identity
+                                  then HC.Cfg.Local /= null
+                                       and then HC.Cfg.Local.Has_Identity)
                    and then
                      (if HC.Cfg.Local'Old /= null
                          and then SPARKTLS.Handshake.Server_Msgs
@@ -133,20 +133,20 @@ is
                       then HC.Cfg.Local /= null
                            and then SPARKTLS.Handshake.Server_Msgs
                              .Local_Config_Valid (HC.Cfg.Local))
-	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
-						                and then HC.Reasm.Len = HC.Reasm.Len'Old
-	                  and then HC.Reasm.Need = HC.Reasm.Need'Old
-	                  and then
-	                    (if HC.Reasm.Len'Old <= HC.Reasm.Need'Old
-	                     then HC.Reasm.Len <= HC.Reasm.Need)
-	                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-		                and then
-		                  (if HC.Peer_Cert_Valid
-	                   then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-	                        and then X509.Spans_Valid
-	                          (HC.Peer_Cert,
-	                           X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                        and then (if HC.Cfg.Random'Old /= null
+                                  then HC.Cfg.Random /= null)
+                                                                and then HC.Reasm.Len = HC.Reasm.Len'Old
+                          and then HC.Reasm.Need = HC.Reasm.Need'Old
+                          and then
+                            (if HC.Reasm.Len'Old <= HC.Reasm.Need'Old
+                             then HC.Reasm.Len <= HC.Reasm.Need)
+                        and then HC.Reasm.Phase = HC.Reasm.Phase'Old
+                                and then
+                                  (if HC.Peer_Cert_Valid
+                           then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                                and then X509.Spans_Valid
+                                  (HC.Peer_Cert,
+                                   X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 
    --  RFC 5246 §7.4.2 TLS 1.2 Certificate parser. Takes the complete
    --  handshake message bytes (4-byte header + cert_list_len(3) +
@@ -160,16 +160,16 @@ is
       OK     :    out Boolean;
       Err    :    out Error_Code)
    with Pre => HS_Msg'First = 0
-		               and then HS_Msg'Length >= 7
-		               and then HS_Msg'Length <= Max_Cert_Msg,
+                               and then HS_Msg'Length >= 7
+                               and then HS_Msg'Length <= Max_Cert_Msg,
         Post => HC.Transcript_Len = HC.Transcript_Len'Old
                 and then HC.Hash_Len = HC.Hash_Len'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
-	                and then (if HC.Cfg.Local'Old /= null
-	                              and then HC.Cfg.Local'Old.Has_Identity
-	                          then HC.Cfg.Local /= null
-	                               and then HC.Cfg.Local.Has_Identity)
+                        and then (if HC.Cfg.Local'Old /= null
+                                      and then HC.Cfg.Local'Old.Has_Identity
+                                  then HC.Cfg.Local /= null
+                                       and then HC.Cfg.Local.Has_Identity)
                    and then
                      (if HC.Cfg.Local'Old /= null
                          and then SPARKTLS.Handshake.Server_Msgs
@@ -177,9 +177,9 @@ is
                       then HC.Cfg.Local /= null
                            and then SPARKTLS.Handshake.Server_Msgs
                              .Local_Config_Valid (HC.Cfg.Local))
-	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
-			                and then HC.Reasm.Len = HC.Reasm.Len'Old
+                        and then (if HC.Cfg.Random'Old /= null
+                                  then HC.Cfg.Random /= null)
+                                        and then HC.Reasm.Len = HC.Reasm.Len'Old
                 and then HC.Reasm.Need = HC.Reasm.Need'Old
                 and then
                   (if HC.Reasm.Len'Old <= HC.Reasm.Need'Old

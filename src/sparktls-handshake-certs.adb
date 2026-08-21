@@ -653,32 +653,32 @@ is
      (Cert_RFLX : in     RBT.Bytes;
       HC        : in out Handshake_Context;
       C_Len     : in     N32)
-	   with Pre  => Cert_RFLX'First = 1
-			                and then Cert_RFLX'Length = RBT.Length (C_Len)
-			                and then C_Len > 0
-				                and then C_Len <= N32 (Max_Cert_DER),
-	        Post => HC.Client_HS = HC.Client_HS'Old
-	                and then HC.Transcript_Len = HC.Transcript_Len'Old
-	                and then HC.Hash_Len = HC.Hash_Len'Old
-	                and then (if HC.Cfg.Local'Old /= null
-	                          then HC.Cfg.Local /= null)
-	                and then (if HC.Cfg.Local'Old /= null
-	                              and then HC.Cfg.Local'Old.Has_Identity
-		                          then HC.Cfg.Local /= null
-		                               and then HC.Cfg.Local.Has_Identity)
-	                and then
-	                  (if HC.Cfg.Local'Old /= null
-	                      and then SPARKTLS.Handshake.Server_Msgs
-	                        .Local_Config_Valid (HC.Cfg.Local'Old)
-	                   then HC.Cfg.Local /= null
-	                        and then SPARKTLS.Handshake.Server_Msgs
-	                          .Local_Config_Valid (HC.Cfg.Local))
-	                and then (if HC.Cfg.Random'Old /= null
-		                          then HC.Cfg.Random /= null)
-						                and then HC.Reasm.Len = HC.Reasm.Len'Old
+           with Pre  => Cert_RFLX'First = 1
+                                        and then Cert_RFLX'Length = RBT.Length (C_Len)
+                                        and then C_Len > 0
+                                                and then C_Len <= N32 (Max_Cert_DER),
+                Post => HC.Client_HS = HC.Client_HS'Old
+                        and then HC.Transcript_Len = HC.Transcript_Len'Old
+                        and then HC.Hash_Len = HC.Hash_Len'Old
+                        and then (if HC.Cfg.Local'Old /= null
+                                  then HC.Cfg.Local /= null)
+                        and then (if HC.Cfg.Local'Old /= null
+                                      and then HC.Cfg.Local'Old.Has_Identity
+                                          then HC.Cfg.Local /= null
+                                               and then HC.Cfg.Local.Has_Identity)
+                        and then
+                          (if HC.Cfg.Local'Old /= null
+                              and then SPARKTLS.Handshake.Server_Msgs
+                                .Local_Config_Valid (HC.Cfg.Local'Old)
+                           then HC.Cfg.Local /= null
+                                and then SPARKTLS.Handshake.Server_Msgs
+                                  .Local_Config_Valid (HC.Cfg.Local))
+                        and then (if HC.Cfg.Random'Old /= null
+                                          then HC.Cfg.Random /= null)
+                                                                and then HC.Reasm.Len = HC.Reasm.Len'Old
                   and then HC.Reasm.Need = HC.Reasm.Need'Old
                   and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-		                and then HC.Peer_Cert_DER_Len = C_Len;
+                                and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
@@ -982,8 +982,8 @@ is
                         end if;
                      end if;
 
-	                     C13_Entries.Update (Entries_Ctx, E_Ctx);
-	                     if not C13_Entries.Has_Buffer (Entries_Ctx) then
+                             C13_Entries.Update (Entries_Ctx, E_Ctx);
+                             if not C13_Entries.Has_Buffer (Entries_Ctx) then
                         pragma Assert
                           (if HC.Peer_Cert_Valid
                            then HC.Peer_Cert_DER_Len
@@ -995,9 +995,9 @@ is
                           (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                         return;
                      end if;
-	                     if not C13_Entries.Valid (Entries_Ctx) then
-	                        C13_Entries.Take_Buffer (Entries_Ctx, Buf);
-	                        RFLX_Free (Buf);
+                             if not C13_Entries.Valid (Entries_Ctx) then
+                                C13_Entries.Take_Buffer (Entries_Ctx, Buf);
+                                RFLX_Free (Buf);
                         pragma Assert
                           (if HC.Peer_Cert_Valid
                            then HC.Peer_Cert_DER_Len
@@ -1014,46 +1014,46 @@ is
 
                C13_Entries.Take_Buffer (Entries_Ctx, Buf);
                RFLX_Free (Buf);
-	               if Ext_Reject then
-	                  OK := False;
-	                  Err := Unsupported_Extension;
-	               else
-	                  OK := True;
-	                  Err := No_Error;
-	               end if;
-		               pragma Assert
-		                 (if HC.Peer_Cert_Valid
-		                  then HC.Peer_Cert_DER_Len
-		                       in 1 .. Max_Cert_DER_Len
-		                       and then X509.Spans_Valid
-		                         (HC.Peer_Cert,
-		                          X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-		               pragma Assert
-		                 (HC.Client_HS.Counter = Saved_Client_HS_Counter);
-		               return;
-		            end;
+                       if Ext_Reject then
+                          OK := False;
+                          Err := Unsupported_Extension;
+                       else
+                          OK := True;
+                          Err := No_Error;
+                       end if;
+                               pragma Assert
+                                 (if HC.Peer_Cert_Valid
+                                  then HC.Peer_Cert_DER_Len
+                                       in 1 .. Max_Cert_DER_Len
+                                       and then X509.Spans_Valid
+                                         (HC.Peer_Cert,
+                                          X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                               pragma Assert
+                                 (HC.Client_HS.Counter = Saved_Client_HS_Counter);
+                               return;
+                            end;
          end if;
       end;
 
       C13.Take_Buffer (Ctx, Buf);
       RFLX_Free (Buf);
 
-	      if Ext_Reject then
-	         OK := False;
-	         Err := Unsupported_Extension;
-	      else
-	         OK := True;
-	         Err := No_Error;
-	      end if;
-		      pragma Assert
-		        (if HC.Peer_Cert_Valid
-		         then HC.Peer_Cert_DER_Len
-		              in 1 .. Max_Cert_DER_Len
-		              and then X509.Spans_Valid
-		                (HC.Peer_Cert,
-		                 X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-		      pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
-	   end Parse_Certificate_Chain_13;
+              if Ext_Reject then
+                 OK := False;
+                 Err := Unsupported_Extension;
+              else
+                 OK := True;
+                 Err := No_Error;
+              end if;
+                      pragma Assert
+                        (if HC.Peer_Cert_Valid
+                         then HC.Peer_Cert_DER_Len
+                              in 1 .. Max_Cert_DER_Len
+                              and then X509.Spans_Valid
+                                (HC.Peer_Cert,
+                                 X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                      pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
+           end Parse_Certificate_Chain_13;
 
    procedure Parse_Certificate_Chain_12
      (HC     : in out Handshake_Context;
@@ -1160,8 +1160,8 @@ is
                pragma Loop_Invariant
                  (if HC.Cfg.Random'Loop_Entry /= null
                   then HC.Cfg.Random /= null);
-			               pragma Loop_Invariant
-		                 (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
+                                       pragma Loop_Invariant
+                                 (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant
                  (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
                pragma Loop_Invariant

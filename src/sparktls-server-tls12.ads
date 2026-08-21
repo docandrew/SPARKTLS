@@ -58,29 +58,29 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre  => HC.Version = TLS_1_2
-	                and then HC.Cfg.Local /= null
-	                and then HC.Cfg.Local.Has_Identity
-	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                           (HC.Cfg.Local)
-	                and then HC.Cfg.Random /= null
+                        and then HC.Cfg.Local /= null
+                        and then HC.Cfg.Local.Has_Identity
+                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                   (HC.Cfg.Local)
+                        and then HC.Cfg.Random /= null
                 --  Server-side state on entry. Client_Hello_Sent (the
                 --  client's own post-CH state) is intentionally NOT
                 --  permitted here -- the only valid transition out of
                 --  Client_Hello_Sent is Wait_Server_Hello, which would
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
-	                and then S.Role = Role_Server
-	                and then SPARKTLSCrypto.P384.Field.Initialized
-		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+                        and then S.Role = Role_Server
+                        and then SPARKTLSCrypto.P384.Field.Initialized
+                                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post =>
                   (if S.State in Server_Hello_Sent | Wait_Client_Finished
                    then HC.Version = TLS_1_2
                         and then HC.Cfg.Local /= null
-	                        and then HC.Cfg.Local.Has_Identity
-	                        and then
-	                          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                            (HC.Cfg.Local)
-				                        and then HC.Cfg.Random /= null);
+                                and then HC.Cfg.Local.Has_Identity
+                                and then
+                                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                    (HC.Cfg.Local)
+                                                        and then HC.Cfg.Random /= null);
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
@@ -94,13 +94,13 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Post =>
-				               (if S.State'Old = Wait_Client_Finished
-				                then S.State in Wait_Client_Finished
-				                              | Connected
-				                              | Closing
-				                              | Error_State)
-	                     and then
-	                       (if S.State in Wait_Client_Cert_Verify
+                                               (if S.State'Old = Wait_Client_Finished
+                                                then S.State in Wait_Client_Finished
+                                                              | Connected
+                                                              | Closing
+                                                              | Error_State)
+                             and then
+                               (if S.State in Wait_Client_Cert_Verify
                                       | Wait_Client_Finished
                                       | Connected
                         then True
@@ -122,8 +122,8 @@ is
       Result :    out Action)
    with Post =>
                   (if S.State /= Error_State
-	                   then True
-	                        and then HC.Cfg.Local /= null
+                           then True
+                                and then HC.Cfg.Local /= null
                         and then HC.Cfg.Local.Has_Identity
                         and then
                           SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
@@ -144,7 +144,7 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-	                          | Error_State
+                                  | Error_State
                 and then
                   (if S.State /= Error_State then True);
 
@@ -176,9 +176,9 @@ is
                         then HC.Cfg.Local /= null
                              and then HC.Cfg.Local.Has_Identity
                              and then
-	                               SPARKTLS.Handshake.Server_Msgs
-	                                 .Local_Config_Valid (HC.Cfg.Local)
-	                             and then HC.Cfg.Random /= null);
+                                       SPARKTLS.Handshake.Server_Msgs
+                                         .Local_Config_Valid (HC.Cfg.Local)
+                                     and then HC.Cfg.Random /= null);
 
    --  Derive TLS 1.2 key material from the pre-master secret.
    --  Computes master_secret, then expands into:
@@ -214,13 +214,13 @@ is
         --  returns, HC.MS_Derivation matches HC.Use_EMS via the
         --  EMS_PRF_Binding_RFC_7627_4 predicate. This is the v9→v12
         --  invariant whose absence caused the TLS-Anvil regression.
-	           Post => HC.Version = TLS_1_2
-	                   and then HC.Cfg.Local /= null
-	                   and then HC.Cfg.Local.Has_Identity
-	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                              (HC.Cfg.Local)
-		                   and then HC.Cfg.Random /= null
-			                   and then S.State = S.State'Old
+                   Post => HC.Version = TLS_1_2
+                           and then HC.Cfg.Local /= null
+                           and then HC.Cfg.Local.Has_Identity
+                           and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                      (HC.Cfg.Local)
+                                   and then HC.Cfg.Random /= null
+                                           and then S.State = S.State'Old
                    and then S.Role = S.Role'Old
                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                    and then HC.Client_Seq_12 = 0

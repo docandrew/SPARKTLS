@@ -31,50 +31,50 @@ is
       Result     :    out Byte_Seq;
       Len        :    out N32;
       Retry_Mode : in     Boolean := False)
-		   with Pre  => Result'First = 0
-		                and then Result'Last in Max_Client_Hello - 1 .. N32'Last - 1
-		                and then HC.Cfg.Random /= null
-		                and then SPARKTLSCrypto.P384.Field.Initialized
-	                and then
-	                  (if Retry_Mode
-	                   then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)),
-		        Post => (if HC.Cfg.Random'Old /= null
-		                          then HC.Cfg.Random /= null)
+                   with Pre  => Result'First = 0
+                                and then Result'Last in Max_Client_Hello - 1 .. N32'Last - 1
+                                and then HC.Cfg.Random /= null
+                                and then SPARKTLSCrypto.P384.Field.Initialized
+                        and then
+                          (if Retry_Mode
+                           then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)),
+                        Post => (if HC.Cfg.Random'Old /= null
+                                          then HC.Cfg.Random /= null)
                         and then Len <= N32 (Result'Length)
-							                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-			                and then HC.Reasm.Len = HC.Reasm.Len'Old
-		                and then HC.Reasm.Need = HC.Reasm.Need'Old
-		                and then HC.Reasm.Phase = HC.Reasm.Phase'Old;
+                                                                        and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+                                        and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
+                                        and then HC.Reasm.Len = HC.Reasm.Len'Old
+                                and then HC.Reasm.Need = HC.Reasm.Need'Old
+                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old;
 
    --  Parse a ServerHello from raw handshake message bytes.
    --  Extracts: server random, cipher suite, key share (server public key).
-	   procedure Parse_Server_Hello
-	     (S    : in out Session;
-	      HC   : in out Handshake_Context;
-	      Data : in     Byte_Seq;
-	      OK   :    out Boolean)
-				   with Pre => Data'Length > 0
-				               and then SPARKTLSCrypto.P384.Field.Initialized
-					               and then HC.HRR_Cookie_Len <=
-					                 N32 (HC.HRR_Cookie'Length),
-										        Post =>
-											                  (if OK
-											                   or else Last_Error (S) = No_Error
-											                   then
-											                     (if HC.Cfg.Random'Old /= null
-											                      then HC.Cfg.Random /= null)
-										                     and then HC.Transcript_Len =
-										                       HC.Transcript_Len'Old
-											                     and then HC.HRR_Cookie_Len <=
-											                       N32 (HC.HRR_Cookie'Length))
-											                and then
-											                  (if OK
-											                   and then HC.Version = TLS_1_3
-										                   then Negotiated_Suite (S) in
-										                     Suite_AES_128_GCM_SHA256
-									                   | Suite_AES_256_GCM_SHA384
-									                   | Suite_CHACHA20_POLY1305_SHA256)
-												                ;
+           procedure Parse_Server_Hello
+             (S    : in out Session;
+              HC   : in out Handshake_Context;
+              Data : in     Byte_Seq;
+              OK   :    out Boolean)
+                                   with Pre => Data'Length > 0
+                                               and then SPARKTLSCrypto.P384.Field.Initialized
+                                                       and then HC.HRR_Cookie_Len <=
+                                                         N32 (HC.HRR_Cookie'Length),
+                                                                                        Post =>
+                                                                                                          (if OK
+                                                                                                           or else Last_Error (S) = No_Error
+                                                                                                           then
+                                                                                                             (if HC.Cfg.Random'Old /= null
+                                                                                                              then HC.Cfg.Random /= null)
+                                                                                                     and then HC.Transcript_Len =
+                                                                                                       HC.Transcript_Len'Old
+                                                                                                             and then HC.HRR_Cookie_Len <=
+                                                                                                               N32 (HC.HRR_Cookie'Length))
+                                                                                                        and then
+                                                                                                          (if OK
+                                                                                                           and then HC.Version = TLS_1_3
+                                                                                                   then Negotiated_Suite (S) in
+                                                                                                     Suite_AES_128_GCM_SHA256
+                                                                                           | Suite_AES_256_GCM_SHA384
+                                                                                           | Suite_CHACHA20_POLY1305_SHA256)
+                                                                                                                ;
 
 end SPARKTLS.Handshake.Client_Msgs;

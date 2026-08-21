@@ -317,13 +317,13 @@ is
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => HC.Reasm.Need = HC.Reasm.Need'Old
-		                and then HC.Reasm.Len = HC.Reasm.Len'Old
-		                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-		                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
-		                and then (if HC.Cfg.Random'Old /= null
-		                          then HC.Cfg.Random /= null)
-	                and then
-	                  (if OK then Valid_ECDHE_Group (HC.Selected_Group));
+                                and then HC.Reasm.Len = HC.Reasm.Len'Old
+                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
+                                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
+                                and then (if HC.Cfg.Random'Old /= null
+                                          then HC.Cfg.Random /= null)
+                        and then
+                          (if OK then Valid_ECDHE_Group (HC.Selected_Group));
 
    --  RFC 8422 §5.7: Parse ClientKeyExchange.
    --
@@ -336,14 +336,14 @@ is
       OK   :    out Boolean)
       with Pre  => Data'First = 0
                    and then Data'Last in 3 .. Max_Client_Key_Exchange - 1
-	                   and then Valid_ECDHE_Group (HC.Selected_Group)
-	                   and then True,
+                           and then Valid_ECDHE_Group (HC.Selected_Group)
+                           and then True,
            Post => HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
                    and then HC.Reasm.Need = HC.Reasm.Need'Old
                    and then HC.Reasm.Len = HC.Reasm.Len'Old
                    and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-	                   and then (if Valid_ECDHE_Group (HC.Selected_Group'Old)
+                           and then (if Valid_ECDHE_Group (HC.Selected_Group'Old)
                    then Valid_ECDHE_Group (HC.Selected_Group))
                 and then
                   (if HC.Cfg.Local'Old /= null
@@ -454,14 +454,14 @@ is
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and then Result'Last >= Max_Server_Hello_12 - 1
-	                and then HC.Cfg.Local /= null
-	                and then HC.Cfg.Local.Has_Identity
-	                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                           (HC.Cfg.Local)
+                        and then HC.Cfg.Local /= null
+                        and then HC.Cfg.Local.Has_Identity
+                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                   (HC.Cfg.Local)
                 and then HC.Cfg.Random /= null
-	                and then HC.Version = TLS_1_2
-				                and then HC.Legacy_Session_ID_Len <= 32
-				                and then True,
+                        and then HC.Version = TLS_1_2
+                                                and then HC.Legacy_Session_ID_Len <= 32
+                                                and then True,
         --  Frame postcondition: ServerHello construction does not
         --  touch State (S), the configuration pointer/identity, or the
         --  Random callback. Callers (Build_Server_Flight_12) need
@@ -473,14 +473,14 @@ is
                 and State (S) = State (S)'Old
                 and Role (S) = Role (S)'Old
                 and Negotiated_Suite (S) = Negotiated_Suite (S)'Old
-	                and HC.Cfg.Local /= null
-	                and HC.Cfg.Local.Has_Identity
-	                and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                      (HC.Cfg.Local)
-	                and HC.Cfg.Random /= null
-	                and HC.Version = HC.Version'Old
-				                and HC.Selected_Group = HC.Selected_Group'Old
-				                and True;
+                        and HC.Cfg.Local /= null
+                        and HC.Cfg.Local.Has_Identity
+                        and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                              (HC.Cfg.Local)
+                        and HC.Cfg.Random /= null
+                        and HC.Version = HC.Version'Old
+                                                and HC.Selected_Group = HC.Selected_Group'Old
+                                                and True;
 
    function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean;
 
@@ -503,26 +503,26 @@ is
       OK   :    out Boolean)
    with Pre  => Data'First = 0
                 and then Data'Length > 0
-	                and then Data'Last < N32'Last
-	                and then HC.Version = TLS_1_2
-	                and then SPARKTLSCrypto.P384.Field.Initialized,
-		        Post => (if OK then
-		                   Valid_TLS12_Suite (Negotiated_Suite (S))
-		                   and HC.Version = TLS_1_2)
-	                and then (if HC.Cfg.Random'Old /= null
-	                          then HC.Cfg.Random /= null)
-	                and then HC.Transcript_Len = HC.Transcript_Len'Old
-	                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-	                and then HC.Reasm.Len = HC.Reasm.Len'Old
-	                and then HC.Reasm.Need = HC.Reasm.Need'Old
-	                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-			                and then
-			                  (if HC.HRR_Cookie_Len'Old <=
-			                        N32 (HC.HRR_Cookie'Length)
-		                   then HC.HRR_Cookie_Len <=
-		                        N32 (HC.HRR_Cookie'Length))
-		                and then SPARKTLSCrypto.P384.Field.Initialized
-		                and then State (S) = State (S)'Old;
+                        and then Data'Last < N32'Last
+                        and then HC.Version = TLS_1_2
+                        and then SPARKTLSCrypto.P384.Field.Initialized,
+                        Post => (if OK then
+                                   Valid_TLS12_Suite (Negotiated_Suite (S))
+                                   and HC.Version = TLS_1_2)
+                        and then (if HC.Cfg.Random'Old /= null
+                                  then HC.Cfg.Random /= null)
+                        and then HC.Transcript_Len = HC.Transcript_Len'Old
+                        and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+                        and then HC.Reasm.Len = HC.Reasm.Len'Old
+                        and then HC.Reasm.Need = HC.Reasm.Need'Old
+                        and then HC.Reasm.Phase = HC.Reasm.Phase'Old
+                                        and then
+                                          (if HC.HRR_Cookie_Len'Old <=
+                                                N32 (HC.HRR_Cookie'Length)
+                                   then HC.HRR_Cookie_Len <=
+                                        N32 (HC.HRR_Cookie'Length))
+                                and then SPARKTLSCrypto.P384.Field.Initialized
+                                and then State (S) = State (S)'Old;
 
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket builder.
    --
@@ -576,15 +576,15 @@ is
      (Id     : in     Identity;
       Result :    out Byte_Seq;
       Len    :    out N32)
-	   with Pre  => Result'First = 0
-	                and then Result'Last >= 15
-	                and then Result'Last < N32'Last
-	                and then Id.Has_Identity
-	                and then Id.NaCl_Cert_Len <= N32 (Max_Cert_DER)
-	                and then Id.Int_Count <= Max_Pool_Size
-	                and then
-	                  (for all I in 0 .. Max_Pool_Size - 1 =>
-	                     Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER)),
-	        Post => Len <= N32 (Result'Length);
+           with Pre  => Result'First = 0
+                        and then Result'Last >= 15
+                        and then Result'Last < N32'Last
+                        and then Id.Has_Identity
+                        and then Id.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+                        and then Id.Int_Count <= Max_Pool_Size
+                        and then
+                          (for all I in 0 .. Max_Pool_Size - 1 =>
+                             Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER)),
+                Post => Len <= N32 (Result'Length);
 
 end SPARKTLS.Handshake.TLS12;

@@ -425,10 +425,10 @@ is
                      AAD    => AAD);
                end;
 
-	            when others =>
-	               declare
-	                  Key : constant ChaCha20_Key := Construct (Keys.Key);
-	               begin
+                    when others =>
+                       declare
+                          Key : constant ChaCha20_Key := Construct (Keys.Key);
+                       begin
                   Verify_ChaCha20_Empty_Ciphertext
                     (Tag => Tag,
                      N   => ChaCha20_IETF_Nonce (Nonce),
@@ -436,7 +436,7 @@ is
                      AAD => AAD,
                      Valid => Valid);
                end;
-	         end case;
+                 end case;
          return;
       end if;
 

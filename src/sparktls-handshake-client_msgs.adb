@@ -288,21 +288,21 @@ is
                     >= RBT.Bit_Length (8) *
                        (RBT.Bit_Length (4) +
                         RBT.Bit_Length (Data'Length)),
-	        Post => RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Buffer
-	                  (Exts_Ctx)
-	                and then RFLX.TLS_Handshake.CH_Extensions_TLS.Valid
-	                  (Exts_Ctx)
-	                and then Exts_Ctx.Buffer_First = Exts_Ctx.Buffer_First'Old
-	                and then Exts_Ctx.Buffer_Last = Exts_Ctx.Buffer_Last'Old
-	                and then Exts_Ctx.First = Exts_Ctx.First'Old
-	                and then Exts_Ctx.Last = Exts_Ctx.Last'Old
-	                and then RFLX.TLS_Handshake.CH_Extensions_TLS
-	                  .Available_Space (Exts_Ctx)
-	                  = RFLX.TLS_Handshake.CH_Extensions_TLS
-	                      .Available_Space (Exts_Ctx)'Old
-	                    - RBT.Bit_Length (8)
-	                      * (RBT.Bit_Length (4)
-	                         + RBT.Bit_Length (Data'Length));
+                Post => RFLX.TLS_Handshake.CH_Extensions_TLS.Has_Buffer
+                          (Exts_Ctx)
+                        and then RFLX.TLS_Handshake.CH_Extensions_TLS.Valid
+                          (Exts_Ctx)
+                        and then Exts_Ctx.Buffer_First = Exts_Ctx.Buffer_First'Old
+                        and then Exts_Ctx.Buffer_Last = Exts_Ctx.Buffer_Last'Old
+                        and then Exts_Ctx.First = Exts_Ctx.First'Old
+                        and then Exts_Ctx.Last = Exts_Ctx.Last'Old
+                        and then RFLX.TLS_Handshake.CH_Extensions_TLS
+                          .Available_Space (Exts_Ctx)
+                          = RFLX.TLS_Handshake.CH_Extensions_TLS
+                              .Available_Space (Exts_Ctx)'Old
+                            - RBT.Bit_Length (8)
+                              * (RBT.Bit_Length (4)
+                                 + RBT.Bit_Length (Data'Length));
 
    procedure Append_CH_Extension
      (Exts_Ctx : in out RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
@@ -350,19 +350,19 @@ is
       Retry_Mode : in    Boolean;
       Result    : in out Byte_Seq;
       Len       : in out N32)
-	   with Pre  => Result'First = 0
-	                and then Result'Last <= N32'Last - 1
-		                and then Result'Length >= 600
-		                and then Len > 0
-		                and then Len <= N32 (Result'Length),
-		        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-			                and then HC.Transcript_Len = HC.Transcript_Len'Old
-			                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-			                and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-				                and then HC.Reasm.Len = HC.Reasm.Len'Old
-				                and then HC.Reasm.Need = HC.Reasm.Need'Old
-				                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-				                and then Len <= N32 (Result'Length);
+           with Pre  => Result'First = 0
+                        and then Result'Last <= N32'Last - 1
+                                and then Result'Length >= 600
+                                and then Len > 0
+                                and then Len <= N32 (Result'Length),
+                        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+                                        and then HC.Transcript_Len = HC.Transcript_Len'Old
+                                        and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+                                        and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
+                                                and then HC.Reasm.Len = HC.Reasm.Len'Old
+                                                and then HC.Reasm.Need = HC.Reasm.Need'Old
+                                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
+                                                and then Len <= N32 (Result'Length);
 
    procedure Append_PSK_Extension
      (S         : in     Session;
@@ -886,7 +886,7 @@ is
       CH_Body_Len : constant N32 := 59 + Session_ID_Len + Ext_Total_All;
       CH_Msg_Len  : constant N32 := 4 + CH_Body_Len;
 
-			         Buf      : RBT.Bytes_Ptr := null;
+                                 Buf      : RBT.Bytes_Ptr := null;
       Ctx      : Context;
       PK_Bytes    : Byte_Seq (0 .. 31);   --  X25519 public key
       P256_PK_Enc : Byte_Seq (0 .. 64);   --  P-256 public key (uncompressed)
@@ -1061,18 +1061,18 @@ is
          Append_Cipher_Suite
            (Suites_Ctx,
             RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 16);
-	         Append_Cipher_Suite
-	           (Suites_Ctx,
-	            RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-	            0);
-	         Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
-	      end;
+                 Append_Cipher_Suite
+                   (Suites_Ctx,
+                    RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+                    0);
+                 Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
+              end;
 
       pragma Assert
         (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods_Length)
          = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (55 + Session_ID_Len)));
 
-	      Set_Legacy_Compression_Methods_Length (Ctx, 1);
+              Set_Legacy_Compression_Methods_Length (Ctx, 1);
       --  Field_Size of the compression-methods field is data-dependent:
       --  it follows from the length field just written (1 byte = 8 bits).
       pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
@@ -1080,14 +1080,14 @@ is
       pragma Assert
         (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
          = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (56 + Session_ID_Len)));
-	      Set_Legacy_Compression_Methods
-	        (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
+              Set_Legacy_Compression_Methods
+                (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
       pragma Assert
         (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
          = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (57 + Session_ID_Len)));
-	      Set_Extensions_Length
-	        (Ctx,
-	         RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
+              Set_Extensions_Length
+                (Ctx,
+                 RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
       --  Likewise: the extensions field size follows from the length
       --  field just written.
       pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
@@ -1111,13 +1111,13 @@ is
         (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
          >= RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS));
 
-	      --  Build extensions sequence
-	      declare
-		         Exts_Ctx : RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
+              --  Build extensions sequence
+              declare
+                         Exts_Ctx : RFLX.TLS_Handshake.CH_Extensions_TLS.Context;
             Remaining_Ext_Bits : RBT.Bit_Length :=
               RBT.Bit_Length (8) * RBT.Bit_Length (Ext_Total_All)
               with Ghost;
-			      begin
+                              begin
             --  Byte-alignment of the extensions field start, which
             --  Switch_To_Extensions_TLS demands as a precondition.
             --
@@ -1155,7 +1155,7 @@ is
                  (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
                rem RBT.Byte'Size = 1);
 
-			         Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
+                                 Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
             --  Walk the sequence context's free space back to the field
             --  size we already pinned above. Switch_To_Extensions_TLS
             --  publishes all three links: the sequence spans exactly the
@@ -1186,27 +1186,27 @@ is
               (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                  (Exts_Ctx) = Remaining_Ext_Bits);
 
-		         --  Extension 1: server_name (0x0000)
-		         declare
+                         --  Extension 1: server_name (0x0000)
+                         declare
               SNI_Raw : constant Byte_Seq :=
                 Build_SNI_Raw (HC.Cfg.Server_Name);
-		         begin
+                         begin
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) >=
                   RBT.Bit_Length (8) *
                     (RBT.Bit_Length (4) + RBT.Bit_Length (SNI_Raw'Length)));
-		            Append_CH_Extension
-		              (Exts_Ctx,
-		               RFLX.Tls_Extensiontype_Values.Server_Name,
-		               SNI_Raw);
+                            Append_CH_Extension
+                              (Exts_Ctx,
+                               RFLX.Tls_Extensiontype_Values.Server_Name,
+                               SNI_Raw);
                Remaining_Ext_Bits := Remaining_Ext_Bits -
                  RBT.Bit_Length (8) *
                    (RBT.Bit_Length (4) + RBT.Bit_Length (SNI_Raw'Length));
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) = Remaining_Ext_Bits);
-		         end;
+                         end;
 
          --  Extension 2: supported_groups (0x000A)
          declare
@@ -1218,17 +1218,17 @@ is
                     (Exts_Ctx) >=
                   RBT.Bit_Length (8) *
                     (RBT.Bit_Length (4) + RBT.Bit_Length (SG_Raw'Length)));
-		            Append_CH_Extension
-		              (Exts_Ctx,
-		               RFLX.Tls_Extensiontype_Values.Supported_Groups,
-		               SG_Raw);
+                            Append_CH_Extension
+                              (Exts_Ctx,
+                               RFLX.Tls_Extensiontype_Values.Supported_Groups,
+                               SG_Raw);
                Remaining_Ext_Bits := Remaining_Ext_Bits -
                  RBT.Bit_Length (8) *
                    (RBT.Bit_Length (4) + RBT.Bit_Length (SG_Raw'Length));
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) = Remaining_Ext_Bits);
-		         end;
+                         end;
 
          --  Extension 3: signature_algorithms (0x000D)
          declare
@@ -1284,17 +1284,17 @@ is
                     (Exts_Ctx) >=
                   RBT.Bit_Length (8) *
                     (RBT.Bit_Length (4) + RBT.Bit_Length (SA_Raw'Length)));
-		            Append_CH_Extension
-		              (Exts_Ctx,
-		               RFLX.Tls_Extensiontype_Values.Signature_Algorithms,
-		               SA_Raw);
+                            Append_CH_Extension
+                              (Exts_Ctx,
+                               RFLX.Tls_Extensiontype_Values.Signature_Algorithms,
+                               SA_Raw);
                Remaining_Ext_Bits := Remaining_Ext_Bits -
                  RBT.Bit_Length (8) *
                    (RBT.Bit_Length (4) + RBT.Bit_Length (SA_Raw'Length));
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) = Remaining_Ext_Bits);
-		         end;
+                         end;
 
          --  Extension 4: key_share (0x0033).
          --  CH1 / retry-no-group-change: three KeyShareEntry (X25519
@@ -1351,17 +1351,17 @@ is
                     (Exts_Ctx) >=
                   RBT.Bit_Length (8) *
                     (RBT.Bit_Length (4) + RBT.Bit_Length (KS_Raw'Length)));
-		            Append_CH_Extension
-		              (Exts_Ctx,
-		               RFLX.Tls_Extensiontype_Values.Key_Share,
-		               KS_Raw);
+                            Append_CH_Extension
+                              (Exts_Ctx,
+                               RFLX.Tls_Extensiontype_Values.Key_Share,
+                               KS_Raw);
                Remaining_Ext_Bits := Remaining_Ext_Bits -
                  RBT.Bit_Length (8) *
                    (RBT.Bit_Length (4) + RBT.Bit_Length (KS_Raw'Length));
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) = Remaining_Ext_Bits);
-		         end;
+                         end;
 
          --  Extension 4.5 (retry only): cookie (0x002C) — echo back
          --  the cookie the server sent in HRR. RFC 8446 §4.2.2.
@@ -1381,10 +1381,10 @@ is
                      RBT.Bit_Length (8) *
                        (RBT.Bit_Length (4) +
                         RBT.Bit_Length (Cookie_Raw'Length)));
-		               Append_CH_Extension
-		                 (Exts_Ctx,
-		                  RFLX.Tls_Extensiontype_Values.Cookie,
-		                  Cookie_Raw);
+                               Append_CH_Extension
+                                 (Exts_Ctx,
+                                  RFLX.Tls_Extensiontype_Values.Cookie,
+                                  Cookie_Raw);
                   Remaining_Ext_Bits := Remaining_Ext_Bits -
                     RBT.Bit_Length (8) *
                       (RBT.Bit_Length (4) +
@@ -1392,8 +1392,8 @@ is
                   pragma Assert
                     (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                        (Exts_Ctx) = Remaining_Ext_Bits);
-		            end;
-		         end if;
+                            end;
+                         end if;
 
          --  Extension 5: psk_key_exchange_modes (0x002D)
          declare
@@ -1405,17 +1405,17 @@ is
                     (Exts_Ctx) >=
                   RBT.Bit_Length (8) *
                     (RBT.Bit_Length (4) + RBT.Bit_Length (PSK_Raw'Length)));
-		            Append_CH_Extension
-		              (Exts_Ctx,
-		               RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes,
-		               PSK_Raw);
+                            Append_CH_Extension
+                              (Exts_Ctx,
+                               RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes,
+                               PSK_Raw);
                Remaining_Ext_Bits := Remaining_Ext_Bits -
                  RBT.Bit_Length (8) *
                    (RBT.Bit_Length (4) + RBT.Bit_Length (PSK_Raw'Length));
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) = Remaining_Ext_Bits);
-		         end;
+                         end;
 
          --  Extension 6: supported_versions (0x002B).
          declare
@@ -1437,17 +1437,17 @@ is
                     (Exts_Ctx) >=
                   RBT.Bit_Length (8) *
                     (RBT.Bit_Length (4) + RBT.Bit_Length (SV_Raw'Length)));
-		            Append_CH_Extension
-		              (Exts_Ctx,
-		               RFLX.Tls_Extensiontype_Values.Supported_Versions,
-		               SV_Raw);
+                            Append_CH_Extension
+                              (Exts_Ctx,
+                               RFLX.Tls_Extensiontype_Values.Supported_Versions,
+                               SV_Raw);
                Remaining_Ext_Bits := Remaining_Ext_Bits -
                  RBT.Bit_Length (8) *
                    (RBT.Bit_Length (4) + RBT.Bit_Length (SV_Raw'Length));
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) = Remaining_Ext_Bits);
-		         end;
+                         end;
 
          --  Extension 7: ec_point_formats (0x000B) — RFC 8422 §5.1.2.
          declare
@@ -1459,36 +1459,36 @@ is
                     (Exts_Ctx) >=
                   RBT.Bit_Length (8) *
                     (RBT.Bit_Length (4) + RBT.Bit_Length (EPF_Raw'Length)));
-		            Append_CH_Extension
-		              (Exts_Ctx,
-		               RFLX.Tls_Extensiontype_Values.Ec_Point_Formats,
-		               EPF_Raw);
+                            Append_CH_Extension
+                              (Exts_Ctx,
+                               RFLX.Tls_Extensiontype_Values.Ec_Point_Formats,
+                               EPF_Raw);
                Remaining_Ext_Bits := Remaining_Ext_Bits -
                  RBT.Bit_Length (8) *
                    (RBT.Bit_Length (4) + RBT.Bit_Length (EPF_Raw'Length));
                pragma Assert
                  (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                     (Exts_Ctx) = Remaining_Ext_Bits);
-		         end;
+                         end;
 
-	         --  Extension 9: ALPN (0x0010) — if configured
-	         if ALPN_Count > 0 then
-	            declare
-	               ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
-	                             := (others => 0);
-	            begin
-	               Build_ALPN_Extension_Data (HC.Cfg, ALPN_Raw);
+                 --  Extension 9: ALPN (0x0010) — if configured
+                 if ALPN_Count > 0 then
+                    declare
+                       ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1)
+                                     := (others => 0);
+                    begin
+                       Build_ALPN_Extension_Data (HC.Cfg, ALPN_Raw);
                   pragma Assert
                     (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                        (Exts_Ctx) >=
                      RBT.Bit_Length (8) *
                        (RBT.Bit_Length (4) +
                         RBT.Bit_Length (ALPN_Raw'Length)));
-			               Append_CH_Extension
-			                 (Exts_Ctx,
-			                  RFLX.Tls_Extensiontype_Values
-		                    .Application_Layer_Protocol_Negotiation,
-		                  ALPN_Raw);
+                                       Append_CH_Extension
+                                         (Exts_Ctx,
+                                          RFLX.Tls_Extensiontype_Values
+                                    .Application_Layer_Protocol_Negotiation,
+                                  ALPN_Raw);
                   Remaining_Ext_Bits := Remaining_Ext_Bits -
                     RBT.Bit_Length (8) *
                       (RBT.Bit_Length (4) +
@@ -1496,66 +1496,66 @@ is
                   pragma Assert
                     (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                        (Exts_Ctx) = Remaining_Ext_Bits);
-		            end;
-		         end if;
+                            end;
+                         end if;
 
-	         --  Extension 9b (conditional): RFC 5077 session_ticket (0x0023).
-	         --  Empty data on initial CH; resume ticket bytes when resuming.
-	         if Offer_TLS12_Ticket then
-		            if TLS12_Ticket_Data_Len > 0 then
-		                  pragma Assert
-		                    (TLS12_Ticket_Data_Len <= Max_TLS12_Ticket_Len);
-		                  pragma Assert (TLS12_Ticket_Data_Len <= 4096);
-		                  --  Link the slice length back to the bounded
-		                  --  constant; without it the Available_Space fact
-		                  --  below cannot reach Data'Length in
-		                  --  Append_CH_Extension's precondition.
-		                  pragma Assert
-		                    (HC.Cfg.TLS12_Resume_Ticket.Ticket
-		                       (0 .. TLS12_Ticket_Data_Len - 1)'Length
-		                     = TLS12_Ticket_Data_Len);
-		                  pragma Assert
-		                    (HC.Cfg.TLS12_Resume_Ticket.Ticket
-		                       (0 .. TLS12_Ticket_Data_Len - 1)'Length
-		                     <= 4096);
-		                  pragma Assert
-		                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
-	                       (Exts_Ctx) >=
-	                     RBT.Bit_Length (8) *
-	                       (RBT.Bit_Length (4) +
-	                        RBT.Bit_Length (TLS12_Ticket_Data_Len)));
-			               Append_CH_Extension
-			                 (Exts_Ctx,
-			                  RFLX.Tls_Extensiontype_Values.Session_Ticket,
-			                  HC.Cfg.TLS12_Resume_Ticket.Ticket
-			                    (0 .. TLS12_Ticket_Data_Len - 1));
-	                  Remaining_Ext_Bits := Remaining_Ext_Bits -
-	                    RBT.Bit_Length (8) *
-	                      (RBT.Bit_Length (4) +
-	                       RBT.Bit_Length (TLS12_Ticket_Data_Len));
-	                  pragma Assert
-	                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
-	                       (Exts_Ctx) = Remaining_Ext_Bits);
-			            else
-	               --  Empty body: Append_CH_Extension's Data is zero-len.
-	               declare
-	                  Empty : constant Byte_Seq (1 .. 0) := (others => 0);
-	               begin
+                 --  Extension 9b (conditional): RFC 5077 session_ticket (0x0023).
+                 --  Empty data on initial CH; resume ticket bytes when resuming.
+                 if Offer_TLS12_Ticket then
+                            if TLS12_Ticket_Data_Len > 0 then
+                                  pragma Assert
+                                    (TLS12_Ticket_Data_Len <= Max_TLS12_Ticket_Len);
+                                  pragma Assert (TLS12_Ticket_Data_Len <= 4096);
+                                  --  Link the slice length back to the bounded
+                                  --  constant; without it the Available_Space fact
+                                  --  below cannot reach Data'Length in
+                                  --  Append_CH_Extension's precondition.
+                                  pragma Assert
+                                    (HC.Cfg.TLS12_Resume_Ticket.Ticket
+                                       (0 .. TLS12_Ticket_Data_Len - 1)'Length
+                                     = TLS12_Ticket_Data_Len);
+                                  pragma Assert
+                                    (HC.Cfg.TLS12_Resume_Ticket.Ticket
+                                       (0 .. TLS12_Ticket_Data_Len - 1)'Length
+                                     <= 4096);
+                                  pragma Assert
+                                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                               (Exts_Ctx) >=
+                             RBT.Bit_Length (8) *
+                               (RBT.Bit_Length (4) +
+                                RBT.Bit_Length (TLS12_Ticket_Data_Len)));
+                                       Append_CH_Extension
+                                         (Exts_Ctx,
+                                          RFLX.Tls_Extensiontype_Values.Session_Ticket,
+                                          HC.Cfg.TLS12_Resume_Ticket.Ticket
+                                            (0 .. TLS12_Ticket_Data_Len - 1));
+                          Remaining_Ext_Bits := Remaining_Ext_Bits -
+                            RBT.Bit_Length (8) *
+                              (RBT.Bit_Length (4) +
+                               RBT.Bit_Length (TLS12_Ticket_Data_Len));
+                          pragma Assert
+                            (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
+                               (Exts_Ctx) = Remaining_Ext_Bits);
+                                    else
+                       --  Empty body: Append_CH_Extension's Data is zero-len.
+                       declare
+                          Empty : constant Byte_Seq (1 .. 0) := (others => 0);
+                       begin
                      pragma Assert
                        (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                           (Exts_Ctx) >=
                         RBT.Bit_Length (8) * RBT.Bit_Length (4));
-		                  Append_CH_Extension
-		                    (Exts_Ctx,
-		                     RFLX.Tls_Extensiontype_Values.Session_Ticket,
-		                     Empty);
+                                  Append_CH_Extension
+                                    (Exts_Ctx,
+                                     RFLX.Tls_Extensiontype_Values.Session_Ticket,
+                                     Empty);
                      Remaining_Ext_Bits := Remaining_Ext_Bits -
                        RBT.Bit_Length (8) * RBT.Bit_Length (4);
                      pragma Assert
                        (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                           (Exts_Ctx) = Remaining_Ext_Bits);
-		               end;
-		            end if;
+                               end;
+                            end if;
             HC.TLS12_Sent_Ticket_Ext := True;
          end if;
 
@@ -1606,30 +1606,30 @@ is
                        (Exts_Ctx) >=
                      RBT.Bit_Length (8) *
                        (RBT.Bit_Length (4) + RBT.Bit_Length (Pad_Raw'Length)));
-		               Append_CH_Extension
-		                 (Exts_Ctx,
-		                  RFLX.Tls_Extensiontype_Values.Padding,
-		                  Pad_Raw);
+                               Append_CH_Extension
+                                 (Exts_Ctx,
+                                  RFLX.Tls_Extensiontype_Values.Padding,
+                                  Pad_Raw);
                   Remaining_Ext_Bits := Remaining_Ext_Bits -
                     RBT.Bit_Length (8) *
                       (RBT.Bit_Length (4) + RBT.Bit_Length (Pad_Raw'Length));
                   pragma Assert
                     (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space
                        (Exts_Ctx) = Remaining_Ext_Bits);
-		            end;
-		         end if;
+                            end;
+                         end if;
 
-	         Update_Extensions_TLS (Ctx, Exts_Ctx);
-	      end;
+                 Update_Extensions_TLS (Ctx, Exts_Ctx);
+              end;
 
       --  Extract serialized body and prepend handshake header
       Take_Buffer (Ctx, Buf);
 
-	      if CH_Msg_Len > N32 (Result'Length) then
-	         RFLX_Free (Buf);
-	         pragma Assert (HC.Cfg.Random /= null);
-	         return;
-	      end if;
+              if CH_Msg_Len > N32 (Result'Length) then
+                 RFLX_Free (Buf);
+                 pragma Assert (HC.Cfg.Random /= null);
+                 return;
+              end if;
 
       Result (0) := HT_Client_Hello;
       Result (1) := Byte (CH_Body_Len / 65536);
@@ -1674,7 +1674,7 @@ is
       end if;
       pragma Assert (HC.Cfg.Random /= null);
 
-	   end Build_Client_Hello;
+           end Build_Client_Hello;
 
    ----------------------------------------------------------------------------
    --  Parse procedures (using RecordFlux-generated parsers)
@@ -1707,16 +1707,16 @@ is
       HC         : in out Handshake_Context;
       S          : in out Session;
       Is_HRR_Msg : in     Boolean;
-	      OK         :    out Boolean)
-			   with Pre => Data'Length in 39 .. Max_HS_Msg
-				               and then Data'Last < N32 (Natural'Last)
-			                  and then HC.HRR_Cookie_Len <=
-			                    N32 (HC.HRR_Cookie'Length),
-	        Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-	          and then HC.Transcript_Len = HC.Transcript_Len'Old
-	          and then (if HC.Got_HRR'Old then HC.Got_HRR)
-			                  and then HC.HRR_Cookie_Len <=
-		                    N32 (HC.HRR_Cookie'Length);
+              OK         :    out Boolean)
+                           with Pre => Data'Length in 39 .. Max_HS_Msg
+                                               and then Data'Last < N32 (Natural'Last)
+                                          and then HC.HRR_Cookie_Len <=
+                                            N32 (HC.HRR_Cookie'Length),
+                Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
+                  and then HC.Transcript_Len = HC.Transcript_Len'Old
+                  and then (if HC.Got_HRR'Old then HC.Got_HRR)
+                                          and then HC.HRR_Cookie_Len <=
+                                    N32 (HC.HRR_Cookie'Length);
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
@@ -1733,66 +1733,66 @@ is
          E_Len  : N32;
          Offset : N32;          --  start of body bytes in Data
       end record;
-	      Exts  : array (1 .. 32) of SH_Ext_Entry :=
-	                (others => (0, 0, 0));
-	      N_Ext : Natural := 0;
-	      Random_Was_Set : constant Boolean := HC.Cfg.Random /= null
-	        with Ghost;
-	      Saved_Transcript_Len : constant N32 := HC.Transcript_Len
-	        with Ghost;
-	      Saved_Got_HRR : constant Boolean := HC.Got_HRR with Ghost;
+              Exts  : array (1 .. 32) of SH_Ext_Entry :=
+                        (others => (0, 0, 0));
+              N_Ext : Natural := 0;
+              Random_Was_Set : constant Boolean := HC.Cfg.Random /= null
+                with Ghost;
+              Saved_Transcript_Len : constant N32 := HC.Transcript_Len
+                with Ghost;
+              Saved_Got_HRR : constant Boolean := HC.Got_HRR with Ghost;
    begin
       OK := True;
 
       --  Caller has already verified Data'Length >= 39. SH body
       --  minimum is version(2)+random(32)+sid_len(1) = 35 bytes
-	      --  past the 4-byte handshake header.
-	      if N32 (Data'Length) - 4 < 35 then
-		                        pragma Assert_And_Cut ((if Random_Was_Set
-	                                        then HC.Cfg.Random /= null)
-		                              and then HC.Transcript_Len =
-		                                Saved_Transcript_Len
-		                              and then
-		                                (if Saved_Got_HRR then HC.Got_HRR)
-		                              and then HC.HRR_Cookie_Len <=
-		                                N32 (HC.HRR_Cookie'Length));
-	         return;
-	      end if;
+              --  past the 4-byte handshake header.
+              if N32 (Data'Length) - 4 < 35 then
+                                        pragma Assert_And_Cut ((if Random_Was_Set
+                                                then HC.Cfg.Random /= null)
+                                              and then HC.Transcript_Len =
+                                                Saved_Transcript_Len
+                                              and then
+                                                (if Saved_Got_HRR then HC.Got_HRR)
+                                              and then HC.HRR_Cookie_Len <=
+                                                N32 (HC.HRR_Cookie'Length));
+                 return;
+              end if;
 
-	      Sid_Len := N32 (Data (B + 34));
-	      if Sid_Len > 32 then
-		         S.Last_Error := Decode_Error;
-		         OK := False;
-		         pragma Assert_And_Cut ((if Random_Was_Set
+              Sid_Len := N32 (Data (B + 34));
+              if Sid_Len > 32 then
+                         S.Last_Error := Decode_Error;
+                         OK := False;
+                         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-		         return;
-	      end if;
-	      pragma Assert (Sid_Len <= 32);
-	      if B > N32'Last - 38
-	        or else Sid_Len > N32'Last - B - 38
-		      then
-		         pragma Assert_And_Cut ((if Random_Was_Set
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                         return;
+              end if;
+              pragma Assert (Sid_Len <= 32);
+              if B > N32'Last - 38
+                or else Sid_Len > N32'Last - B - 38
+                      then
+                         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-		         return;
-		      end if;
-	      P := B + 38 + Sid_Len;  --  past sid + cipher + comp
-		      if P > Data'Last - 2 then
-		         pragma Assert_And_Cut ((if Random_Was_Set
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                         return;
+                      end if;
+              P := B + 38 + Sid_Len;  --  past sid + cipher + comp
+                      if P > Data'Last - 2 then
+                         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-		         return;
-		      end if;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                         return;
+                      end if;
 
       --  RFC 8446 §4.1.4 / §4.1.3: in TLS 1.3 ServerHello + HRR,
       --  legacy_compression_method MUST be 0. The TLS 1.2 parser
@@ -1805,29 +1805,29 @@ is
       if Is_HRR_Msg
         and then Data (B + 35 + Sid_Len + 2) /= 0
       then
-	         S.Last_Error := Decode_Error;
-	         OK := False;
-	         pragma Assert_And_Cut ((if Random_Was_Set
+                 S.Last_Error := Decode_Error;
+                 OK := False;
+                 pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	         return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                 return;
       end if;
 
       Ext_Total := N32 (Data (P)) * 256 + N32 (Data (P + 1));
       P := P + 2;
       if Ext_Total > Data'Last - P + 1 then
-	         S.Last_Error := Decode_Error;
-	         OK := False;
-	         pragma Assert_And_Cut ((if Random_Was_Set
+                 S.Last_Error := Decode_Error;
+                 OK := False;
+                 pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	         return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                 return;
       end if;
 
       declare
@@ -1836,95 +1836,95 @@ is
          --  RFC 8446 §4: HS message MUST end exactly at its declared
          --  length. BoGo TrailingMessageData-ServerHello.
          if Ext_End /= Data'Last + 1 then
-	            S.Last_Error := Decode_Error;
-	            OK := False;
-	            pragma Assert_And_Cut ((if Random_Was_Set
+                    S.Last_Error := Decode_Error;
+                    OK := False;
+                    pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	            return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                    return;
          end if;
 
          --  Pass 1: walk bytes, dup-check, collect (tag, len, off)
          --  into Exts, decide TLS-1.3-vs-1.2 from supported_versions.
-	         pragma Assert (N_Ext <= Exts'Last);
-	         while P <= Ext_End - 4 loop
-	            pragma Loop_Invariant (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant
-	              (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-	            pragma Loop_Invariant
-	              (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-	            pragma Loop_Invariant
-	              (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
-		            pragma Loop_Invariant
-		              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
-		            pragma Loop_Invariant
-		              (if Saved_Got_HRR then HC.Got_HRR);
-		            pragma Loop_Invariant
-		              (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-	            pragma Loop_Invariant (P >= Data'First);
-	            pragma Loop_Invariant (P <= Ext_End);
-	            pragma Loop_Invariant (Ext_End = Data'Last + 1);
+                 pragma Assert (N_Ext <= Exts'Last);
+                 while P <= Ext_End - 4 loop
+                    pragma Loop_Invariant (N_Ext <= Exts'Last);
+                    pragma Loop_Invariant
+                      (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
+                    pragma Loop_Invariant
+                      (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
+                    pragma Loop_Invariant
+                      (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
+                            pragma Loop_Invariant
+                              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                            pragma Loop_Invariant
+                              (if Saved_Got_HRR then HC.Got_HRR);
+                            pragma Loop_Invariant
+                              (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
+                    pragma Loop_Invariant (P >= Data'First);
+                    pragma Loop_Invariant (P <= Ext_End);
+                    pragma Loop_Invariant (Ext_End = Data'Last + 1);
             pragma Loop_Invariant
               (for all J in 1 .. N_Ext =>
                  Exts (J).Offset >= Data'First
                  and then Exts (J).Offset <= Data'Last + 1
                  and then Exts (J).E_Len <=
-	                   Data'Last + 1 - Exts (J).Offset);
-	            declare
+                           Data'Last + 1 - Exts (J).Offset);
+                    declare
                   pragma Assert (P <= Data'Last - 3);
-	               Tag_U16 : constant Unsigned_16 :=
-	                  Unsigned_16 (Data (P)) * 256
+                       Tag_U16 : constant Unsigned_16 :=
+                          Unsigned_16 (Data (P)) * 256
                   + Unsigned_16 (Data (P + 1));
                E_Len : constant N32 :=
                   N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
             begin
                if E_Len > Ext_End - P - 4 then
-	                  S.Last_Error := Decode_Error;
-	                  OK := False;
-	                  pragma Assert_And_Cut ((if Random_Was_Set
+                          S.Last_Error := Decode_Error;
+                          OK := False;
+                          pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	                  return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                          return;
                end if;
-	               for I in 1 .. N_Ext loop
-	                  pragma Loop_Invariant
-	                    (if HC.Cfg.Random'Loop_Entry /= null
-	                     then HC.Cfg.Random /= null);
-	                  pragma Loop_Invariant
-	                    (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-	                  pragma Loop_Invariant
-	                    (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-	                  pragma Loop_Invariant
-	                    (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
-	                  pragma Loop_Invariant
-	                    (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
-	                  pragma Loop_Invariant
-	                    (if Saved_Got_HRR then HC.Got_HRR);
-	                  pragma Loop_Invariant
-	                    (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
+                       for I in 1 .. N_Ext loop
+                          pragma Loop_Invariant
+                            (if HC.Cfg.Random'Loop_Entry /= null
+                             then HC.Cfg.Random /= null);
+                          pragma Loop_Invariant
+                            (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
+                          pragma Loop_Invariant
+                            (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
+                          pragma Loop_Invariant
+                            (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
+                          pragma Loop_Invariant
+                            (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                          pragma Loop_Invariant
+                            (if Saved_Got_HRR then HC.Got_HRR);
+                          pragma Loop_Invariant
+                            (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
                   if Exts (I).Tag = Tag_U16 then
                      --  RFC 8446 §4.2: duplicate ext in SH/EE →
                      --  decode_error. In HRR specifically BoringSSL
                      --  expects illegal_parameter
                      --  (HelloRetryRequest-DuplicateCookie /
                      --  DuplicateCurve).
-	                     S.Last_Error :=
-	                        (if Is_HRR_Msg then Illegal_Parameter
-	                         else Decode_Error);
-	                     OK := False;
-	                     pragma Assert_And_Cut ((if Random_Was_Set
+                             S.Last_Error :=
+                                (if Is_HRR_Msg then Illegal_Parameter
+                                 else Decode_Error);
+                             OK := False;
+                             pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	                     return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                             return;
                   end if;
                end loop;
                if N_Ext < Exts'Last then
@@ -1962,21 +1962,21 @@ is
             else E_SH12);
       begin
          pragma Assert (N_Ext <= Exts'Last);
-	         for I in 1 .. N_Ext loop
-	            pragma Loop_Invariant
-	              (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant
-	              (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-	            pragma Loop_Invariant
-	              (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-	            pragma Loop_Invariant
-	              (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
-		            pragma Loop_Invariant
-		              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
-		            pragma Loop_Invariant
-		              (if Saved_Got_HRR then HC.Got_HRR);
-		            pragma Loop_Invariant
-		              (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
+                 for I in 1 .. N_Ext loop
+                    pragma Loop_Invariant
+                      (N_Ext <= Exts'Last);
+                    pragma Loop_Invariant
+                      (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
+                    pragma Loop_Invariant
+                      (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
+                    pragma Loop_Invariant
+                      (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
+                            pragma Loop_Invariant
+                              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                            pragma Loop_Invariant
+                              (if Saved_Got_HRR then HC.Got_HRR);
+                            pragma Loop_Invariant
+                              (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
             pragma Loop_Invariant
               (if HC.Cfg.Random'Loop_Entry /= null
                then HC.Cfg.Random /= null);
@@ -1998,15 +1998,15 @@ is
                   OK       => V_OK,
                   Err      => V_Err);
                if not V_OK then
-	                  S.Last_Error := V_Err;
-	                  OK := False;
-	                  pragma Assert_And_Cut ((if Random_Was_Set
+                          S.Last_Error := V_Err;
+                          OK := False;
+                          pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	                  return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                          return;
                end if;
 
                --  Per-tag body validation (RFC 7301 ALPN — shared
@@ -2024,15 +2024,15 @@ is
                      OK         => V_OK,
                      Err        => V_Err);
                   if not V_OK then
-	                     S.Last_Error := V_Err;
-	                     OK := False;
-	                     pragma Assert_And_Cut ((if Random_Was_Set
+                             S.Last_Error := V_Err;
+                             OK := False;
+                             pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	                     return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                             return;
                   end if;
                end if;
 
@@ -2102,11 +2102,11 @@ is
                --  (no key_exchange); cookie body is `cookie_len(2) +
                --  cookie<cookie_len>` (RFC 8446 §4.2.2). Stash both
                --  in HC for the caller's CH2-rebuild step.
-	               if Is_HRR_Msg
-	                 and then Exts (I).Tag = 16#0033#  --  key_share
-	                 and then Exts (I).Offset <= Data'Last - 1
-	                 and then Exts (I).E_Len = 2
-	               then
+                       if Is_HRR_Msg
+                         and then Exts (I).Tag = 16#0033#  --  key_share
+                         and then Exts (I).Offset <= Data'Last - 1
+                         and then Exts (I).E_Len = 2
+                       then
                   HC.HRR_Selected_Group :=
                      Unsigned_16 (Data (Exts (I).Offset)) * 256
                      + Unsigned_16 (Data (Exts (I).Offset + 1));
@@ -2118,26 +2118,26 @@ is
                --  is illegal_parameter. The matrix has already
                --  rejected pre_shared_key in SH if we did not
                --  offer it (Requires_Offer => True).
-	               if not Is_HRR_Msg
-	                 and then Exts (I).Tag = 16#0029#  --  pre_shared_key
-	                 and then Exts (I).Offset <= Data'Last - 1
-	                 and then Exts (I).E_Len = 2
-	               then
+                       if not Is_HRR_Msg
+                         and then Exts (I).Tag = 16#0029#  --  pre_shared_key
+                         and then Exts (I).Offset <= Data'Last - 1
+                         and then Exts (I).E_Len = 2
+                       then
                   declare
                      Sel : constant Unsigned_16 :=
                        Unsigned_16 (Data (Exts (I).Offset)) * 256 +
                        Unsigned_16 (Data (Exts (I).Offset + 1));
                   begin
                      if Sel /= 0 then
-	                        S.Last_Error := Illegal_Parameter;
-	                        OK := False;
-	                        pragma Assert_And_Cut ((if Random_Was_Set
+                                S.Last_Error := Illegal_Parameter;
+                                OK := False;
+                                pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	                        return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                                return;
                      end if;
                      HC.Using_PSK := True;
                   end;
@@ -2160,42 +2160,42 @@ is
                      if C_Len = 0
                        or else 2 + C_Len /= Exts (I).E_Len
                      then
-	                        S.Last_Error := Illegal_Parameter;
-	                        OK := False;
-	                        pragma Assert_And_Cut ((if Random_Was_Set
+                                S.Last_Error := Illegal_Parameter;
+                                OK := False;
+                                pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-	                              and then HC.Transcript_Len =
-	                                Saved_Transcript_Len
-	                              and then
-	                                (if Saved_Got_HRR then HC.Got_HRR));
-	                        return;
+                                      and then HC.Transcript_Len =
+                                        Saved_Transcript_Len
+                                      and then
+                                        (if Saved_Got_HRR then HC.Got_HRR));
+                                return;
                      end if;
                      if C_Len <= N32 (HC.HRR_Cookie'Length) then
-	                        HC.HRR_Cookie_Len := C_Len;
-	                        for K in 0 .. C_Len - 1 loop
-	                           pragma Loop_Invariant
-	                             (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-	                           pragma Loop_Invariant
-	                             (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-	                           pragma Loop_Invariant
-	                             (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
-	                           pragma Loop_Invariant
-		                             (HC.Transcript_Len =
-		                              HC.Transcript_Len'Loop_Entry);
-		                           pragma Loop_Invariant
-		                             (if Saved_Got_HRR then HC.Got_HRR);
-		                           pragma Loop_Invariant
-		                             (HC.HRR_Cookie_Len <=
-	                              N32 (HC.HRR_Cookie'Length));
-	                           HC.HRR_Cookie (K) :=
-	                              Data (Exts (I).Offset + 2 + K);
+                                HC.HRR_Cookie_Len := C_Len;
+                                for K in 0 .. C_Len - 1 loop
+                                   pragma Loop_Invariant
+                                     (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
+                                   pragma Loop_Invariant
+                                     (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
+                                   pragma Loop_Invariant
+                                     (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
+                                   pragma Loop_Invariant
+                                             (HC.Transcript_Len =
+                                              HC.Transcript_Len'Loop_Entry);
+                                           pragma Loop_Invariant
+                                             (if Saved_Got_HRR then HC.Got_HRR);
+                                           pragma Loop_Invariant
+                                             (HC.HRR_Cookie_Len <=
+                                      N32 (HC.HRR_Cookie'Length));
+                                   HC.HRR_Cookie (K) :=
+                                      Data (Exts (I).Offset + 2 + K);
                         end loop;
                      end if;
                   end;
                end if;
             end;
-	         end loop;
-	      end;
+                 end loop;
+              end;
 
 
 
@@ -2227,15 +2227,15 @@ is
          end if;
       end loop;
 
-	      pragma Assert_And_Cut ((if Random_Was_Set
-	                                        then HC.Cfg.Random /= null)
-		                              and then HC.Transcript_Len =
-		                                Saved_Transcript_Len
-		                              and then
-		                                (if Saved_Got_HRR then HC.Got_HRR)
-		                              and then HC.HRR_Cookie_Len <=
-	                                N32 (HC.HRR_Cookie'Length));
-	   end Pre_Scan_SH_Extensions;
+              pragma Assert_And_Cut ((if Random_Was_Set
+                                                then HC.Cfg.Random /= null)
+                                              and then HC.Transcript_Len =
+                                                Saved_Transcript_Len
+                                              and then
+                                                (if Saved_Got_HRR then HC.Got_HRR)
+                                              and then HC.HRR_Cookie_Len <=
+                                        N32 (HC.HRR_Cookie'Length));
+           end Pre_Scan_SH_Extensions;
 
    --  RFC 8446 §4.2.8 ServerHello key_share: a single KeyShareEntry
    --     group(2) + key_exchange_length(2) + key_exchange(key_exchange_length)
@@ -2386,37 +2386,37 @@ is
       Curr_Is_HRR : Boolean := False;
       Transcript_Len_At_Entry : constant N32 :=
         HC.Transcript_Len with Ghost;
-	      Random_Was_Set : constant Boolean :=
-	        HC.Cfg.Random /= null with Ghost;
-	      Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
-	      function SH_Parse_Frame return Boolean is
-	        (HC.Transcript_Len = Transcript_Len_At_Entry
-	         and then (if Random_Was_Set then HC.Cfg.Random /= null)
-	         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
-	      with Ghost;
-	   begin
-	      OK := False;
+              Random_Was_Set : constant Boolean :=
+                HC.Cfg.Random /= null with Ghost;
+              Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
+              function SH_Parse_Frame return Boolean is
+                (HC.Transcript_Len = Transcript_Len_At_Entry
+                 and then (if Random_Was_Set then HC.Cfg.Random /= null)
+                 and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
+              with Ghost;
+           begin
+              OK := False;
 
-	      if Data'Length < 39 then
-	         pragma Assert_And_Cut (SH_Parse_Frame);
-	         return;
-	      end if;
+              if Data'Length < 39 then
+                 pragma Assert_And_Cut (SH_Parse_Frame);
+                 return;
+              end if;
 
-	      if Data'Last >= N32 (Natural'Last) then
-	         pragma Assert_And_Cut (SH_Parse_Frame);
-	         return;
-	      end if;
+              if Data'Last >= N32 (Natural'Last) then
+                 pragma Assert_And_Cut (SH_Parse_Frame);
+                 return;
+              end if;
 
-	      if Data'Length > Max_HS_Msg then
-	         pragma Assert_And_Cut (SH_Parse_Frame);
-	         return;
-	      end if;
+              if Data'Length > Max_HS_Msg then
+                 pragma Assert_And_Cut (SH_Parse_Frame);
+                 return;
+              end if;
 
-	      --  Check handshake type byte
-	      if Data (Data'First) /= HT_Server_Hello then
-	         pragma Assert_And_Cut (SH_Parse_Frame);
-	         return;
-	      end if;
+              --  Check handshake type byte
+              if Data (Data'First) /= HT_Server_Hello then
+                 pragma Assert_And_Cut (SH_Parse_Frame);
+                 return;
+              end if;
 
       --  RFC 5246 §7.4.1.2 / RFC 8446 §4.1.3: legacy_session_id
       --  length field is 0..32. The full ServerHello body is
@@ -2427,12 +2427,12 @@ is
       --  (BoGo's Client-TooLongSessionID test).
       if N32 (Data'Length) - 4 >= 35
         and then N32 (Data (Data'First + 4 + 34)) > 32
-	      then
-	         S.Last_Error := Decode_Error;
-	         pragma Assert_And_Cut
-	           (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
-	         return;
-	      end if;
+              then
+                 S.Last_Error := Decode_Error;
+                 pragma Assert_And_Cut
+                   (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+                 return;
+              end if;
 
       --  RFC 8446 §4.1.4: HelloRetryRequest is on-wire a ServerHello
       --  with a magic random value. Compare here so the SH parser
@@ -2454,17 +2454,17 @@ is
             if Sentinel_Match then
                --  RFC 8446 §4.1.4: a server MUST send at most one
                --  HRR. A second HRR is unexpected_message.
-	               if HC.Got_HRR then
-	                  S.Last_Error := Unexpected_Message;
-	                  pragma Assert_And_Cut
-	                    (if OK or else S.Last_Error = No_Error
-	                     then SH_Parse_Frame);
-	                  return;
-	               end if;
-	               HC.Got_HRR  := True;
-	               Curr_Is_HRR := True;
-	               pragma Assert (not Got_HRR_At_Entry);
-	            end if;
+                       if HC.Got_HRR then
+                          S.Last_Error := Unexpected_Message;
+                          pragma Assert_And_Cut
+                            (if OK or else S.Last_Error = No_Error
+                             then SH_Parse_Frame);
+                          return;
+                       end if;
+                       HC.Got_HRR  := True;
+                       Curr_Is_HRR := True;
+                       pragma Assert (not Got_HRR_At_Entry);
+                    end if;
          end;
       end if;
 
@@ -2473,12 +2473,12 @@ is
       begin
          Pre_Scan_SH_Extensions
            (Data, HC, S, Is_HRR_Msg => Curr_Is_HRR, OK => Pre_OK);
-	         if not Pre_OK then
-	            pragma Assert_And_Cut
-	              (if OK or else S.Last_Error = No_Error
-	               then SH_Parse_Frame);
-	            return;
-	         end if;
+                 if not Pre_OK then
+                    pragma Assert_And_Cut
+                      (if OK or else S.Last_Error = No_Error
+                       then SH_Parse_Frame);
+                    return;
+                 end if;
       end;
 
       --  RFC 8446 §4.1.4: a valid HRR must contain at least one of
@@ -2487,12 +2487,12 @@ is
       if Curr_Is_HRR
         and then HC.HRR_Selected_Group = 0
         and then HC.HRR_Cookie_Len = 0
-	      then
-	         S.Last_Error := Illegal_Parameter;
-	         pragma Assert_And_Cut
-	           (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
-	         return;
-	      end if;
+              then
+                 S.Last_Error := Illegal_Parameter;
+                 pragma Assert_And_Cut
+                   (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+                 return;
+              end if;
 
       --  RFC 8446 §4.1.4: "Clients MUST abort the handshake with an
       --  'illegal_parameter' alert if the HelloRetryRequest would
@@ -2509,12 +2509,12 @@ is
           (if HC.Cfg.Client_Key_Share_Group in 16#001D# | 16#0017# | 16#0018#
            then True
            else HC.HRR_Selected_Group = 16#001D#)
-	      then
-	         S.Last_Error := Illegal_Parameter;
-	         pragma Assert_And_Cut
-	           (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
-	         return;
-	      end if;
+              then
+                 S.Last_Error := Illegal_Parameter;
+                 pragma Assert_And_Cut
+                   (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+                 return;
+              end if;
 
       --  HRR is well-formed. Return OK := True; the caller in
       --  sparktls-client.adb sees HC.Got_HRR and runs the retry
@@ -2524,92 +2524,92 @@ is
          --  Stash HRR cipher suite for the CH2 build's transcript
          --  + the cipher-mismatch check on the second SH (RFC
          --  8446 §4.1.4: cipher_suite from HRR and SH MUST match).
-	         declare
-	            Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
-	         begin
-		            if N32 (Data'Length) < 41 + Sid_Len then
-		               S.Last_Error := Decode_Error;
-		               pragma Assert_And_Cut
-		                 (if OK or else S.Last_Error = No_Error
-		                  then SH_Parse_Frame);
-		               return;
-		            end if;
-	            declare
-	               Cs_Off : constant N32 := Data'First + 39 + Sid_Len;
-	               Suite_Val : constant Unsigned_16 :=
-	                 Unsigned_16 (Data (Cs_Off)) * 256
-	                 + Unsigned_16 (Data (Cs_Off + 1));
-	            begin
-	               pragma Assert (Cs_Off + 1 <= Data'Last);
-	               if Suite_Val not in Suite_AES_128_GCM_SHA256
-	                                 | Suite_AES_256_GCM_SHA384
-	                                 | Suite_CHACHA20_POLY1305_SHA256
-		               then
-		                  S.Last_Error := Illegal_Parameter;
-		                  pragma Assert_And_Cut
-		                    (if OK or else S.Last_Error = No_Error
-		                     then SH_Parse_Frame);
-		                  return;
-		               end if;
-	               HC.HRR_Cipher_Suite := Suite_Val;
-	               S.Negotiated_Suite := Suite_Val;
-	               HC.Version := TLS_1_3;
-	            end;
-	         end;
-		         OK := True;
-		         pragma Assert (HC.Got_HRR);
-		         pragma Assert (not Got_HRR_At_Entry);
-		         pragma Assert
-		           (S.Negotiated_Suite in
-		              Suite_AES_128_GCM_SHA256
-		            | Suite_AES_256_GCM_SHA384
-		            | Suite_CHACHA20_POLY1305_SHA256);
-		         pragma Assert_And_Cut
-		           (OK
-		            and then HC.Got_HRR
-		            and then not Got_HRR_At_Entry
-		            and then HC.Version = TLS_1_3
-		            and then S.Negotiated_Suite in
-		              Suite_AES_128_GCM_SHA256
-		            | Suite_AES_256_GCM_SHA384
-		            | Suite_CHACHA20_POLY1305_SHA256
-		            and then HC.Transcript_Len = Transcript_Len_At_Entry
-		            and then (if Random_Was_Set then HC.Cfg.Random /= null)
-		            and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-		         return;
+                 declare
+                    Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
+                 begin
+                            if N32 (Data'Length) < 41 + Sid_Len then
+                               S.Last_Error := Decode_Error;
+                               pragma Assert_And_Cut
+                                 (if OK or else S.Last_Error = No_Error
+                                  then SH_Parse_Frame);
+                               return;
+                            end if;
+                    declare
+                       Cs_Off : constant N32 := Data'First + 39 + Sid_Len;
+                       Suite_Val : constant Unsigned_16 :=
+                         Unsigned_16 (Data (Cs_Off)) * 256
+                         + Unsigned_16 (Data (Cs_Off + 1));
+                    begin
+                       pragma Assert (Cs_Off + 1 <= Data'Last);
+                       if Suite_Val not in Suite_AES_128_GCM_SHA256
+                                         | Suite_AES_256_GCM_SHA384
+                                         | Suite_CHACHA20_POLY1305_SHA256
+                               then
+                                  S.Last_Error := Illegal_Parameter;
+                                  pragma Assert_And_Cut
+                                    (if OK or else S.Last_Error = No_Error
+                                     then SH_Parse_Frame);
+                                  return;
+                               end if;
+                       HC.HRR_Cipher_Suite := Suite_Val;
+                       S.Negotiated_Suite := Suite_Val;
+                       HC.Version := TLS_1_3;
+                    end;
+                 end;
+                         OK := True;
+                         pragma Assert (HC.Got_HRR);
+                         pragma Assert (not Got_HRR_At_Entry);
+                         pragma Assert
+                           (S.Negotiated_Suite in
+                              Suite_AES_128_GCM_SHA256
+                            | Suite_AES_256_GCM_SHA384
+                            | Suite_CHACHA20_POLY1305_SHA256);
+                         pragma Assert_And_Cut
+                           (OK
+                            and then HC.Got_HRR
+                            and then not Got_HRR_At_Entry
+                            and then HC.Version = TLS_1_3
+                            and then S.Negotiated_Suite in
+                              Suite_AES_128_GCM_SHA256
+                            | Suite_AES_256_GCM_SHA384
+                            | Suite_CHACHA20_POLY1305_SHA256
+                            and then HC.Transcript_Len = Transcript_Len_At_Entry
+                            and then (if Random_Was_Set then HC.Cfg.Random /= null)
+                            and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
+                         return;
       end if;
 
       --  Skip 4-byte handshake header, pass body to Server_Hello context
-	      declare
-	         Body_Len : constant N32 := N32 (Data'Length) - 4;
-		         Buf      : RBT.Bytes_Ptr;
-	         Ctx      : Context;
-	         procedure Release_SH_Buffer
-	           (Ctx : in out Context;
-	            Buf : in out RBT.Bytes_Ptr)
-		         with Pre  => Has_Buffer (Ctx) and then Buf = null,
-	              Post => not Has_Buffer (Ctx) and then Buf = null;
-	         pragma Inline (Release_SH_Buffer);
+              declare
+                 Body_Len : constant N32 := N32 (Data'Length) - 4;
+                         Buf      : RBT.Bytes_Ptr;
+                 Ctx      : Context;
+                 procedure Release_SH_Buffer
+                   (Ctx : in out Context;
+                    Buf : in out RBT.Bytes_Ptr)
+                         with Pre  => Has_Buffer (Ctx) and then Buf = null,
+                      Post => not Has_Buffer (Ctx) and then Buf = null;
+                 pragma Inline (Release_SH_Buffer);
 
-	         procedure Release_SH_Buffer
-	           (Ctx : in out Context;
-	            Buf : in out RBT.Bytes_Ptr)
-	         is
-	         begin
-	            Take_Buffer (Ctx, Buf);
-	            RFLX_Free (Buf);
-	         end Release_SH_Buffer;
-	      begin
+                 procedure Release_SH_Buffer
+                   (Ctx : in out Context;
+                    Buf : in out RBT.Bytes_Ptr)
+                 is
+                 begin
+                    Take_Buffer (Ctx, Buf);
+                    RFLX_Free (Buf);
+                 end Release_SH_Buffer;
+              begin
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
       Initialize (Ctx, Buf,
                   Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       Verify_Message (Ctx);
 
-	      if not Well_Formed_Message (Ctx) then
-	         pragma Assert_And_Cut (SH_Parse_Frame);
-	         goto Cleanup;
-	      end if;
+              if not Well_Formed_Message (Ctx) then
+                 pragma Assert_And_Cut (SH_Parse_Frame);
+                 goto Cleanup;
+              end if;
 
       --  Extract server random (32 bytes)
       declare
@@ -2619,11 +2619,11 @@ is
          HC.Server_Random := To_NaCl (Random_Bytes);
       end;
 
-	      --  Extract and validate cipher suite
-		      if not Well_Formed (Ctx, F_Cipher_Suite_TLS_Suite) then
-		         pragma Assert_And_Cut (SH_Parse_Frame);
-		         goto Cleanup;
-		      end if;
+              --  Extract and validate cipher suite
+                      if not Well_Formed (Ctx, F_Cipher_Suite_TLS_Suite) then
+                         pragma Assert_And_Cut (SH_Parse_Frame);
+                         goto Cleanup;
+                      end if;
 
       declare
          Suite     : constant RFLX.Tls_Parameters.TLS_Cipher_Suites :=
@@ -2639,22 +2639,22 @@ is
                            | Suite_ECDHE_RSA_AES256_GCM_SHA384
                            | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                            | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-	                           | Suite_ECDHE_RSA_CHACHA20_SHA256
-	                           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-		         then
-		            pragma Assert_And_Cut (SH_Parse_Frame);
-		            goto Cleanup;
-		         end if;
+                                   | Suite_ECDHE_RSA_CHACHA20_SHA256
+                                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+                         then
+                            pragma Assert_And_Cut (SH_Parse_Frame);
+                            goto Cleanup;
+                         end if;
          --  RFC 8446 §4.1.4: after HRR, the cipher_suite in SH2 MUST
          --  match the cipher_suite the server chose in HRR. BoGo
          --  HelloRetryRequest-CipherChange-TLS13.
          if HC.Got_HRR
            and then HC.HRR_Cipher_Suite /= 0
            and then Suite_Val /= HC.HRR_Cipher_Suite
-	         then
-	            S.Last_Error := Illegal_Parameter;
-	            goto Cleanup;
-	         end if;
+                 then
+                    S.Last_Error := Illegal_Parameter;
+                    goto Cleanup;
+                 end if;
          S.Negotiated_Suite := Suite_Val;
       end;
 
@@ -2795,7 +2795,7 @@ is
          | Suite_AES_256_GCM_SHA384
          | Suite_CHACHA20_POLY1305_SHA256);
 
-	      --  RFC 8446 §4.1.3: TLS 1.3 server's legacy_session_id_echo
+              --  RFC 8446 §4.1.3: TLS 1.3 server's legacy_session_id_echo
       --  MUST be byte-for-byte equal to the client's
       --  legacy_session_id. We always send a 32-byte SID (unless
       --  TLS_1_2_Only), so when the server picked TLS 1.3 the echo
@@ -2815,25 +2815,25 @@ is
             Mismatch : Boolean := SH_SID_Len /= 32;
          begin
             if not Mismatch then
-	               for I in N32 range 0 .. 31 loop
-	                  pragma Loop_Invariant
-	                    (if HC.Version = TLS_1_3
-	                     then S.Negotiated_Suite in
-	                       Suite_AES_128_GCM_SHA256
-	                     | Suite_AES_256_GCM_SHA384
-	                     | Suite_CHACHA20_POLY1305_SHA256);
-	                  if Data (SH_SID_Off + I)
+                       for I in N32 range 0 .. 31 loop
+                          pragma Loop_Invariant
+                            (if HC.Version = TLS_1_3
+                             then S.Negotiated_Suite in
+                               Suite_AES_128_GCM_SHA256
+                             | Suite_AES_256_GCM_SHA384
+                             | Suite_CHACHA20_POLY1305_SHA256);
+                          if Data (SH_SID_Off + I)
                        /= HC.Legacy_Session_ID (I)
                   then
                      Mismatch := True;
                   end if;
                end loop;
             end if;
-	            if Mismatch then
-	               S.Last_Error := Illegal_Parameter;
-	               OK := False;
-	               goto Cleanup;
-	            end if;
+                    if Mismatch then
+                       S.Last_Error := Illegal_Parameter;
+                       OK := False;
+                       goto Cleanup;
+                    end if;
          end;
       end if;
 
@@ -2919,8 +2919,8 @@ is
                    and then (not HC.Got_HRR or else Got_HRR_At_Entry)
                then S.Negotiated_Suite in
                  Suite_AES_128_GCM_SHA256
-	               | Suite_AES_256_GCM_SHA384
-	               | Suite_CHACHA20_POLY1305_SHA256));
+                       | Suite_AES_256_GCM_SHA384
+                       | Suite_CHACHA20_POLY1305_SHA256));
          OK := True;
          goto Cleanup;
       end if;
@@ -2970,11 +2970,11 @@ is
          begin
             SPARKTLSCrypto.P256.Point.P256_Decode
               (Peer_Pt, HC.P256_Peer_PK, Valid);
-		            if Valid = 0 then
-		               OK := False;
-		               pragma Assert_And_Cut (SH_Parse_Frame);
-		               goto Cleanup;
-		            end if;
+                            if Valid = 0 then
+                               OK := False;
+                               pragma Assert_And_Cut (SH_Parse_Frame);
+                               goto Cleanup;
+                            end if;
             --  Multiply peer's public key by our private scalar
             SPARKTLSCrypto.P256.Point.P256_Mul
               (Peer_Pt, HC.P256_Local_SK, 32);
@@ -3062,24 +3062,24 @@ is
          and then
            (if HC.Version = TLS_1_3
             then S.Negotiated_Suite in
-		              Suite_AES_128_GCM_SHA256
-		            | Suite_AES_256_GCM_SHA384
-		            | Suite_CHACHA20_POLY1305_SHA256));
-	      OK := True;
-	      <<Cleanup>>
-	      if Buf /= null then
-	         RFLX_Free (Buf);
-	      end if;
-	      pragma Assert (Buf = null);
-		      if Has_Buffer (Ctx) then
-		         Release_SH_Buffer (Ctx, Buf);
-		      end if;
-		      pragma Assert (Buf = null);
-		      pragma Assert (not Has_Buffer (Ctx));
-		      pragma Assert
-		        (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
-		      return;
-	      end;
+                              Suite_AES_128_GCM_SHA256
+                            | Suite_AES_256_GCM_SHA384
+                            | Suite_CHACHA20_POLY1305_SHA256));
+              OK := True;
+              <<Cleanup>>
+              if Buf /= null then
+                 RFLX_Free (Buf);
+              end if;
+              pragma Assert (Buf = null);
+                      if Has_Buffer (Ctx) then
+                         Release_SH_Buffer (Ctx, Buf);
+                      end if;
+                      pragma Assert (Buf = null);
+                      pragma Assert (not Has_Buffer (Ctx));
+                      pragma Assert
+                        (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+                      return;
+              end;
    end Parse_Server_Hello;
 
 end SPARKTLS.Handshake.Client_Msgs;

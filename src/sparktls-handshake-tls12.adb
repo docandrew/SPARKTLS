@@ -1653,10 +1653,10 @@ is
      (Id     : in     Identity;
       Result :    out Byte_Seq;
       Len    :    out N32)
-	   is
-	      Pos : N32;
-	      List_Start : N32;
-	      List_Len : N32;
+           is
+              Pos : N32;
+              List_Start : N32;
+              List_Len : N32;
    begin
       Result := (others => 0);
       Len := 0;
@@ -1670,22 +1670,22 @@ is
       --  Compute the full certificate_list length first. TLS 1.2
       --  Certificate entries are 3-byte DER length plus DER bytes.
       List_Len := 3 + Id.NaCl_Cert_Len;
-	      for I in 0 .. Id.Int_Count - 1 loop
-	         pragma Loop_Invariant
-	           (List_Len <= 3 + Id.NaCl_Cert_Len
-	                        + N32 (I) * (3 + N32 (Max_Cert_DER)));
+              for I in 0 .. Id.Int_Count - 1 loop
+                 pragma Loop_Invariant
+                   (List_Len <= 3 + Id.NaCl_Cert_Len
+                                + N32 (I) * (3 + N32 (Max_Cert_DER)));
          if Id.Ints (I).Present then
             List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len);
          end if;
       end loop;
 
       --  Handshake header (4) + certificate_list_length (3) + list.
-	      if List_Len > 2**24 - 4
-	        or else List_Len > N32 (Result'Length) - 7
-	      then
-	         return;
-	      end if;
-	      pragma Assert (List_Len + 3 < 2**24);
+              if List_Len > 2**24 - 4
+                or else List_Len > N32 (Result'Length) - 7
+              then
+                 return;
+              end if;
+              pragma Assert (List_Len + 3 < 2**24);
 
       --  Handshake header placeholder (fill length later)
       Result (0) := 16#0B#;  --  Certificate
@@ -1709,11 +1709,11 @@ is
          return;
       end if;
 
-	      --  Intermediate certificates
-	      for I in 0 .. Id.Int_Count - 1 loop
-	         pragma Loop_Invariant (Pos >= 7);
-	         pragma Loop_Invariant (Pos <= Result'Last + 1);
-	         if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
+              --  Intermediate certificates
+              for I in 0 .. Id.Int_Count - 1 loop
+                 pragma Loop_Invariant (Pos >= 7);
+                 pragma Loop_Invariant (Pos <= Result'Last + 1);
+                 if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
             declare
                Int_Len : constant N32 := N32 (Id.Ints (I).DER_Len);
             begin
@@ -1743,11 +1743,11 @@ is
       --  Fill certificate list length
       Put24 (Result, List_Start, List_Len);
 
-	      --  Fill handshake message length
-	      Put24 (Result, 1, List_Len + 3);
+              --  Fill handshake message length
+              Put24 (Result, 1, List_Len + 3);
 
-	      Len := List_Len + 7;
-	   end Build_Certificate_Chain_12;
+              Len := List_Len + 7;
+           end Build_Certificate_Chain_12;
 
    ------------------------------------------------------------------
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket build/parse via RFLX
