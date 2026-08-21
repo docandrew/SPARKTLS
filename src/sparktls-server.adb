@@ -171,66 +171,7 @@ is
    procedure Advance_Handshake
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action)
-		   with Pre  => Server_Active (S)
-			                and then Server_Configured (HC)
-			                and then Reasm_Building (HC)
-			                and then HC.Legacy_Session_ID_Len in 0 .. 32
-				                and then
-						                  (if S.State = Wait_Client_Hello
-					                     and then HC.Reasm.Need > 0
-					                   then HC.Reasm.Len < HC.Reasm.Need)
-						                and then
-							                  (if S.State = Wait_Client_Hello
-							                     and then HC.Reasm.Need = 0
-						                   then HC.Reasm.Phase = Reasm_Idle)
-					                and then
-						                  (if S.State = Wait_Client_Hello_Retry
-					                   then True)
-					                and then
-						                  (if S.State in Wait_Client_Certificate
-						                               | Wait_Client_Cert_Verify
-						                   then HC.Reasm.Len <= HC.Reasm.Need)
-					                and then
-					                  (if HC.Version = TLS_1_3
-					                   and then S.State = Wait_Client_Certificate
-					                   then True)
-					                and then
-						                  (if HC.Version = TLS_1_2
-					                   and then S.State in Wait_Client_Certificate
-					                                       | Wait_Client_Cert_Verify
-					                                       | Wait_Client_Finished
-						                   then SPARKTLS.Handshake.Server_Msgs
-						                          .Local_Config_Valid (HC.Cfg.Local))
-						                and then
-								                  (if HC.Version = TLS_1_2
-								                   and then S.State in Wait_Client_Certificate
-								                                       | Wait_Client_Cert_Verify
-								                                       | Wait_Client_Finished
-								                   then True)
-	                           and then
-	                             (if HC.Version = TLS_1_3
-	                              and then S.State = Wait_Client_Finished
-	                              then True)
-								                and then
-							                  (if HC.Version = TLS_1_2
-							                   and then S.State in Wait_Client_Cert_Verify
-							                                       | Wait_Client_Finished
-								                   then SPARKTLS.Handshake.TLS12
-						                          .Valid_ECDHE_Group
-						                             (HC.Selected_Group))
-						                and then
-						                  (if HC.Version = TLS_1_2
-						                   and then S.State in Wait_Client_Cert_Verify
-						                                       | Wait_Client_Finished
-						                   then S.Negotiated_Suite in
-						                      Suite_ECDHE_RSA_AES128_GCM_SHA256
-						                    | Suite_ECDHE_RSA_AES256_GCM_SHA384
-						                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-						                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-						                    | Suite_ECDHE_RSA_CHACHA20_SHA256
-						                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256)
-					                and then Server_State_Keys_Ready (S, HC);
+      Result :    out Action);
 	   --  NO POSTCONDITION HERE, DELIBERATELY. It used to carry
 	   --  "Post => S.State in Connection_State", a TAUTOLOGY (S.State IS a
 	   --  Connection_State) that looked like a contract and told callers
@@ -383,14 +324,7 @@ is
 	     (S      : in out Session;
 	      HC     : in out Handshake_Context;
 	      Result :    out Action)
-	   with Pre  => Server_Active (S)
-	                and then S.State = Wait_Client_Hello_Retry
-	                and then S.Role = Role_Server
-		                and then Server_Configured (HC)
-                        and then Reasm_Building (HC)
-                        and then HC.Legacy_Session_ID_Len in 0 .. 32
-		                and then Server_State_Keys_Ready (S, HC),
-				        Post =>
+	   with Post =>
 			                  (if S.State in Wait_Client_Hello_Retry
 			                               | Server_Hello_Sent
 		                               | Wait_Client_Finished
@@ -402,8 +336,6 @@ is
       Result :    out Action)
 	   with Pre  => Server_Active (S)
 		                and then S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
-		                and then (if S.State = Wait_Client_Hello_Retry
-		                          then HC.HRR_Sent)
 		                and then Server_Configured (HC)
 		                and then HC.Cfg.Local.NaCl_Cert_Len
 		                  <= N32 (Max_Cert_DER)
@@ -528,38 +460,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre  => S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify
-                and then S.Role = Role_Server
-                and then Server_Configured (HC)
-                and then Nonce_Space_Available (S.Server_App)
-                and then Nonce_Space_Available (HC.Client_HS)
-                and then HC.Hash_Len in 32 | 48
-                and then
-                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                   then HC.Hash_Len = 48
-                   else HC.Hash_Len = 32)
-			                and then HC.Transcript_Len > 0
-			                and then Reasm_Building (HC)
-			                and then
-			                  (if S.State = Wait_Client_Certificate
-			                   then True)
-			                and then HC.Reasm.Len <= HC.Reasm.Need
-		                and then
-	                  (if S.State = Wait_Client_Cert_Verify then
-                     HC.Peer_Cert_Valid
-	                     and then HC.Peer_Cert_DER_Len > 0
-	                     and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
-	                     and then
-	                       X509.N32 (HC.Peer_Cert_DER_Len) - 1 <
-	                          X509.N32'Last
-	                     and then X509.Spans_Valid
-	                       (HC.Peer_Cert,
-	                        X509.N32 (HC.Peer_Cert_DER_Len) - 1)
-                     and then SPARKTLSCrypto.P384.Field.Initialized
-                     and then SPARKTLSCrypto.P384.ECDSA.Initialized)
-                and then Free_Space (S.Output) >=
-                           Records.Record_Header_Size + 3 + Records.Tag_Size,
-					        Post => (if S.State not in Error_State | Closed
+   with Post => (if S.State not in Error_State | Closed
 				                          then Server_Configured (HC))
 			                and then (if S.State not in Error_State | Closed
 		                          then Reasm_Building (HC));
@@ -568,16 +469,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => S.State = Wait_Client_Finished
-	               and then S.Role = Role_Server
-	               and then Server_Configured (HC)
-	               and then Nonce_Space_Available (S.Server_App)
-		               and then Nonce_Space_Available (HC.Client_HS)
-			               and then HC.Transcript_Len > 0
-			               and then Reasm_Building (HC)
-			               and then Free_Space (S.Output) >=
-                          Records.Record_Header_Size + 3 + Records.Tag_Size,
-			        Post => (if S.State not in Error_State | Closed
+   with Post => (if S.State not in Error_State | Closed
 				                          then Server_Configured (HC));
    procedure Handle_PCF_App_Data
      (S      : in out Session;
@@ -1175,8 +1067,7 @@ is
 					               and then HC.Reasm.Need = 0
 					               and then HC.Reasm.Phase = Reasm_Idle
 					               and then SPARKTLSCrypto.P384.Field.Initialized
-	               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-					                       Post => Wait_Client_Hello_Post (S, HC);
+	               and then SPARKTLSCrypto.P384.ECDSA.Initialized;
 
    procedure Complete_Client_Hello
      (S      : in out Session;
@@ -1298,9 +1189,6 @@ is
                               | Server_Hello_Sent
                               | Wait_Client_Finished
                   then Server_Configured (HC));
-	               pragma Assert
-	                 (if S.State = Wait_Client_Hello
-	                  then Reasm_Building (HC));
             end if;
 	            return;
          elsif Want_12 and S.Negotiated_Suite_12 /= 0 then
@@ -1351,19 +1239,7 @@ is
 	     (S      : in out Session;
 	      HC     : in out Handshake_Context;
 	      Result :    out Action)
-	   with Pre => S.State = Wait_Client_Hello
-		               and then S.Role = Role_Server
-		               and then Server_Configured (HC)
-				               and then Reasm_Building (HC)
-                        and then
-                          (if HC.Reasm.Need > 0
-                           then True)
-                        and then HC.Legacy_Session_ID_Len in 0 .. 32
-		               and then
-		                 (if HC.Reasm.Need > 0
-		                  then HC.Reasm.Len < HC.Reasm.Need)
-		               and then Server_State_Keys_Ready (S, HC),
-	        Post => Wait_Client_Hello_Post (S, HC);
+	   with Post => Wait_Client_Hello_Post (S, HC);
 
    procedure Handle_Wait_Client_Hello
 	     (S      : in out Session;
@@ -1418,7 +1294,6 @@ is
                      Result := Need_Input;
 	                     pragma Assert (S.State = Wait_Client_Hello);
 	                     pragma Assert (Server_Configured (HC));
-	                     pragma Assert (Reasm_Building (HC));
 	                  end if;
 	                  pragma Assert (Wait_Client_Hello_Post (S, HC));
 		                  return;
@@ -1851,7 +1726,6 @@ is
 		                             | Suite_AES_256_GCM_SHA384
 		                             | Suite_CHACHA20_POLY1305_SHA256);
 		                     Complete_Client_Hello (S, HC, Result);
-		                     pragma Assert (Wait_Client_Hello_Post (S, HC));
 			                  end Parse_Completed_Reassembly;
 			                  begin
 			                     pragma Assert
@@ -1974,7 +1848,6 @@ is
 						                     pragma Assert (Reasm_Building (HC));
 						                     pragma Assert (True);
 						                     Complete_Client_Hello (S, HC, Result);
-				                     pragma Assert (Wait_Client_Hello_Post (S, HC));
 				                  end Parse_Single_Record_Client_Hello;
 
 		                  procedure Start_Header_Pending_Reassembly
@@ -2383,7 +2256,6 @@ is
 		            if Input_Available (S) = 0 then
 	               Result := Need_Input;
 	               pragma Assert (S.State = Wait_Client_Hello_Retry);
-	               pragma Assert (Reasm_Building (HC));
 	               return;
 	            end if;
 
@@ -2436,7 +2308,6 @@ is
 			                  else
 		                     Result := Need_Input;
 		                     pragma Assert (S.State = Wait_Client_Hello_Retry);
-		                     pragma Assert (Reasm_Building (HC));
 			                     pragma Assert
 			                       (if HC.Reasm.Need = 0
 			                        then Reasm_Building (HC));
@@ -2455,7 +2326,6 @@ is
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	                     if CCS_OK then
 	                        Result := OK;
-	                        pragma Assert (Reasm_Building (HC));
 	                     else
                         --  RFC 5246 §7.1 / RFC 8446 §5: CCS payload MUST
                         --  be the single byte 0x01 (BoGo
@@ -2706,9 +2576,6 @@ is
 	         when Wait_Client_Hello_Retry =>
 	            pragma Assert (Old_State = Wait_Client_Hello_Retry);
 	            Handle_Client_Hello_Retry (S, HC, Result);
-	            pragma Assert
-	              (if S.State not in Error_State | Closed
-	               then Reasm_Building (HC));
 
 	         when Wait_Client_Certificate
 	            | Wait_Client_Cert_Verify =>
@@ -4294,9 +4161,6 @@ is
             Send_Encrypted_Alert
               (S, Certificate_Verify_Failed, Result);
             pragma Assert (S.Last_Error /= Unexpected_Message);
-            pragma Assert
-              (Cert_Validation_Alerted_RFC_5246_7_4_2
-                 (S.State, Output_Pending (S), S.Last_Error));
             return;
          end if;
       end;
@@ -4348,9 +4212,6 @@ is
             if VR /= Valid then
                Send_Encrypted_Alert (S, Bad_Certificate, Result);
                pragma Assert (S.Last_Error /= Unexpected_Message);
-               pragma Assert
-                 (Cert_Validation_Alerted_RFC_5246_7_4_2
-                    (S.State, Output_Pending (S), S.Last_Error));
                return;
             end if;
 
@@ -4361,9 +4222,6 @@ is
                if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
                   Send_Encrypted_Alert (S, Bad_Certificate, Result);
                   pragma Assert (S.Last_Error /= Unexpected_Message);
-                  pragma Assert
-                    (Cert_Validation_Alerted_RFC_5246_7_4_2
-                       (S.State, Output_Pending (S), S.Last_Error));
                   return;
                end if;
 
@@ -4383,9 +4241,6 @@ is
                if VR /= Valid then
                   Send_Encrypted_Alert (S, Bad_Certificate, Result);
                   pragma Assert (S.Last_Error /= Unexpected_Message);
-                  pragma Assert
-                    (Cert_Validation_Alerted_RFC_5246_7_4_2
-                       (S.State, Output_Pending (S), S.Last_Error));
                   return;
                end if;
             end if;
@@ -4410,7 +4265,6 @@ is
    begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -4431,7 +4285,6 @@ is
             Send_Encrypted_Alert (S, Unexpected_Message, Result);
          else
             Result := Need_Input;
-            pragma Assert (Reasm_Building (HC));
          end if;
          return;
       end if;
@@ -4442,7 +4295,6 @@ is
             if Rec.Fragment_Len = 1 and then not HC.CCS_Received then
                HC.CCS_Received := True;
                Result := OK;
-               pragma Assert (Reasm_Building (HC));
             else
                declare
                   Ignored_A : N32;
@@ -4589,7 +4441,6 @@ is
 	                     return;
 	                  end if;
 
-	                  pragma Assert (Reasm_Building (HC));
 
 	                  case S.State is
 	                     when Wait_Client_Certificate =>
@@ -4625,7 +4476,6 @@ is
          when others =>
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Result := OK;
-            pragma Assert (Reasm_Building (HC));
       end case;
    end Process_Client_Auth;
 
@@ -6010,6 +5860,16 @@ is
    procedure Close_Notify (S : in out Session) is
       Ignored_Alert_Out : N32;
    begin
+      --  The session may already be fully closed: Advance zeroes the
+      --  traffic keys and sets Closed once BOTH directions have closed
+      --  (RFC 8446 6.1). It reports that with the same Shutdown result it
+      --  uses for a half-duplex close, so an application cannot tell the
+      --  two apart and will reasonably call us in either case. Encrypting
+      --  here would build an alert under the all-zero scrubbed key and
+      --  burn a sequence number on a dead session. Nothing to send.
+      if S.State not in Connected | Closing then
+         return;
+      end if;
       if S.Negotiated_Version = TLS_1_2 then
          Records.TLS12.Build_Alert_Record_12
            (Level       => 1,

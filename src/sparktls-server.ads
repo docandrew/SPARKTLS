@@ -142,12 +142,25 @@ is
    --  RFC 8446 §6.1: Send a close_notify alert.
    --  Transitions to Closing state.
    procedure Close_Notify (S : in out Session)
-   with Pre  => (State (S) = Connected or State (S) = Closing)
-                and Role (S) = Role_Server
+   --  Deliberately callable on an already-closed session: Advance reports
+   --  both a half-duplex close and a completed close with Shutdown, and the
+   --  application cannot distinguish them. On a finished session this is a
+   --  no-op (the body returns before touching the scrubbed keys).
+   with Pre  => Role (S) = Role_Server
                 and Nonce_Space_Available (Server_App (S))
                 and SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                       (Server_Seq_12 (S)),
-        Post => State (S) = Closing;                 --  RFC 8446 §6.1
+        Post => (if State (S)'Old in Connected | Closing
+                 then State (S) = Closing)             --  RFC 8446 6.1
+                and
+                --  Plain "and"/"or", never the short-circuit forms. The right
+                --  operand of "and then"/"or else" is potentially unevaluated,
+                --  and Ada RM 6.1.1(27) bars a function call as the prefix of
+                --  'Old in such a position. S'Old is not the escape hatch:
+                --  Session is a deep type, so it introduces aliasing and SPARK
+                --  RM 3.10(13) rejects it -- which aborted proof round 26.
+                (State (S)'Old in Connected | Closing
+                 or State (S) = State (S)'Old);
 
    --  True if a client certificate was received (mutual TLS).
    --

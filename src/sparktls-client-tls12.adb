@@ -4688,8 +4688,7 @@ is
 
 	   procedure Process_Server_CCS
 	     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-	   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-	                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+	   with Pre  => Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1

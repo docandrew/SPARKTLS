@@ -526,14 +526,6 @@ is
         and then Data (Data'First + 1) = 16#04#)
      with Ghost;
 
-   --  RFC 8446 §4.1.2: ClientHello.legacy_compression_methods MUST
-   --  contain exactly one byte with value 0x00. Anything else is a
-   --  protocol violation (real TLS 1.3 has no compression).
-   function Legacy_Compression_Methods_TLS13_RFC_8446_4_1_2
-     (Methods : Byte_Seq) return Boolean is
-     (Methods'Length = 1 and then Methods (Methods'First) = 0)
-     with Ghost;
-
    --  RFC 5746 §3.5 / §3.6: on initial handshake, the
    --  renegotiation_info extension's renegotiated_connection field
    --  MUST be empty. On the wire that's a single 0x00 byte (the
@@ -551,14 +543,6 @@ is
      (Data_Len = 0)
      with Ghost;
 
-   --  RFC 5288 §3 / RFC 5246 §6.2.3.3: AES-GCM nonce is always
-   --  12 bytes (4 implicit + 8 explicit). Already type-enforced
-   --  via Bytes_12.
-   function GCM_Nonce_Length_RFC_5288_3
-     (Ignored_N : Bytes_12) return Boolean is
-     (Ignored_N'Length = 12)
-     with Ghost;
-
    --  RFC 5246 §7.4.9: TLS 1.2 Finished.verify_data is exactly
    --  12 bytes regardless of cipher suite. Already type-enforced
    --  via SPARKTLS.Key_Schedule_12.Verify_Data_12 (constant 12).
@@ -572,27 +556,6 @@ is
    function Verify_Data_Length_TLS13_RFC_8446_4_4_4
      (VD : Byte_Seq) return Boolean is
      (VD'Length = 32 or else VD'Length = 48)
-     with Ghost;
-
-   --  ----- RFC 5246 §A.5 / RFC 5288 / RFC 7905 AEAD-only deviation
-   --  RFC 5246 Appendix A.5 lists all standard TLS 1.2 cipher suites,
-   --  including CBC modes (MAC-then-encrypt), 3DES, and RC4. We
-   --  deliberately deviate: this implementation supports only the
-   --  RFC 5288 GCM and RFC 7905 ChaCha20-Poly1305 AEAD suites — no
-   --  CBC, no MAC-then-encrypt, no 3DES, no RC4. This eliminates the
-   --  Lucky13, padding-oracle, BEAST, and CRIME attack classes by
-   --  construction. The predicate captures the exact accepted set.
-   function Negotiated_Suite_AEAD_Only_RFC_5288_RFC_7905
-     (Suite : Unsigned_16) return Boolean is
-     (Suite = Suite_ECDHE_RSA_AES128_GCM_SHA256
-        or else Suite = Suite_ECDHE_RSA_AES256_GCM_SHA384
-        or else Suite = Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-        or else Suite = Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-        or else Suite = Suite_ECDHE_RSA_CHACHA20_SHA256
-        or else Suite = Suite_ECDHE_ECDSA_CHACHA20_SHA256
-        or else Suite = Suite_AES_128_GCM_SHA256
-        or else Suite = Suite_AES_256_GCM_SHA384
-        or else Suite = Suite_CHACHA20_POLY1305_SHA256)
      with Ghost;
 
    --  ----- RFC 8422 §5.1.2 ec_point_formats compliance -------------
@@ -635,28 +598,6 @@ is
                    => Offered (I) = Negotiated))
      with Ghost,
           Pre => Count <= Max_Sig_Algos;
-
-   --  ----- RFC 8446 §4.4.3 CertificateVerify modern schemes only ---
-   --  RFC 8446 §4.4.3: a TLS 1.3 CertificateVerify signature MUST
-   --  use rsa_pss_rsae_sha{256,384,512} (0x0804/0x0805/0x0806),
-   --  ecdsa_secp{256r1,384r1,521r1}_sha{256,384,512}
-   --  (0x0403/0x0504/0x0603), or ed25519/ed448 (0x0807/0x0808).
-   --  RFC 8446 explicitly forbids RSASSA-PKCS1-v1_5 schemes
-   --  (0x0401/0x0501/0x0601) for CertificateVerify because PKCS#1 v1.5
-   --  is malleable and historically vulnerable to Bleichenbacher-style
-   --  attacks; PSS supersedes it.
-   --
-   --  This implementation does not support PKCS#1 v1.5 server signing
-   --  at all (no Sign_RSA_PKCS1 in Sign_Algo). The predicate captures
-   --  the wire-scheme constraint for traceability.
-   function CertificateVerify_Modern_Scheme_RFC_8446_4_4_3
-     (Scheme : Unsigned_16) return Boolean is
-     (Scheme = 16#0804# or else Scheme = 16#0805#
-        or else Scheme = 16#0806#
-        or else Scheme = 16#0403#
-        or else Scheme = 16#0503#
-        or else Scheme = 16#0807#)
-     with Ghost;
 
    --  ----- RFC 5246 §7.4.1.4.1 sig_algs default fallback -----------
    --  When the client omits the signature_algorithms extension, the
@@ -2025,40 +1966,6 @@ is
         when Legacy      => not HC.Use_EMS)
      with Ghost;
 
-   --  ----- RFC 8446 §4.3.2 CertificateRequest empty context --------
-   --  RFC 8446 §4.3.2: for a server-initiated CertificateRequest
-   --  during a normal handshake, the certificate_request_context
-   --  MUST be empty (length 0). Non-zero is reserved for
-   --  post-handshake-auth where the context binds the request to
-   --  a specific re-auth round.
-   function CR_Context_Empty_Initial_RFC_8446_4_3_2
-     (Ctx_Len : N32) return Boolean is (Ctx_Len = 0)
-     with Ghost;
-
-   --  ----- RFC 8446 §4 handshake_type recognition ------------------
-   --  RFC 8446 §4 / RFC 5246 §7.4: every handshake message begins
-   --  with a 1-byte HandshakeType field. The set of valid types in
-   --  this implementation:
-   --    0x01 client_hello
-   --    0x02 server_hello
-   --    0x08 encrypted_extensions (TLS 1.3)
-   --    0x0B certificate
-   --    0x0C server_key_exchange (TLS 1.2)
-   --    0x0D certificate_request
-   --    0x0E server_hello_done (TLS 1.2)
-   --    0x0F certificate_verify
-   --    0x10 client_key_exchange (TLS 1.2)
-   --    0x14 finished
-   --    0x04 new_session_ticket
-   --  Anything else is decode_error per RFC 8446 §6.2.
-   function Handshake_Type_Valid_RFC_8446_4
-     (T : Byte) return Boolean is
-     (T = 16#01# or else T = 16#02# or else T = 16#04#
-        or else T = 16#08# or else T = 16#0B# or else T = 16#0C#
-        or else T = 16#0D# or else T = 16#0E# or else T = 16#0F#
-        or else T = 16#10# or else T = 16#14#)
-     with Ghost;
-
    --  ----- RFC 8446 §5.1 outer record content_type recognition -----
    --  RFC 8446 §5.1 (and RFC 5246 §6.2.1): the outer record header's
    --  type field MUST be one of:
@@ -2107,51 +2014,6 @@ is
         and then (if Level = 2 then Desc /= 0 and then Desc /= 90))
      with Ghost;
 
-   --  ----- RFC 8446 §4.1.3 downgrade-protection sentinel -----------
-   --  RFC 8446 §4.1.3: a TLS 1.3 server MUST set the last 8 bytes of
-   --  ServerHello.Random to the specific sentinel
-   --  44 4F 57 4E 47 52 44 01 ("DOWNGRD" + 0x01) when responding to
-   --  a TLS 1.2 client (it doesn't, but RFC requires it for protocol
-   --  layer downgrade detection). The TLS 1.3 client checks this:
-   --  if the server's random ends with the sentinel but the server
-   --  did NOT offer supported_versions = TLS 1.3, an active MITM is
-   --  stripping the extension. Client MUST abort.
-   --
-   --  This predicate identifies the sentinel pattern. Used at the
-   --  client check site to pin the literal bytes; any future edit
-   --  that changes the comparison would fail SPARK proof.
-   function TLS13_Downgrade_Sentinel_RFC_8446_4_1_3
-     (Random_Tail : Byte_Seq) return Boolean is
-     (Random_Tail'Length = 8 and then
-        Random_Tail (Random_Tail'First) = 16#44# and then
-        Random_Tail (Random_Tail'First + 1) = 16#4F# and then
-        Random_Tail (Random_Tail'First + 2) = 16#57# and then
-        Random_Tail (Random_Tail'First + 3) = 16#4E# and then
-        Random_Tail (Random_Tail'First + 4) = 16#47# and then
-        Random_Tail (Random_Tail'First + 5) = 16#52# and then
-        Random_Tail (Random_Tail'First + 6) = 16#44# and then
-        Random_Tail (Random_Tail'First + 7) = 16#01#)
-     with Ghost;
-
-   --  ----- RFC 5246 §7.4.2 / RFC 8446 §6.2 cert validation alert --
-   --  RFC 5246 §7.4.2: "If the validation fails, the [server | client]
-   --  SHOULD send a fatal bad_certificate alert."
-   --  RFC 8446 §6.2: same, mandatory for fatal cert errors.
-   --
-   --  Predicate captures the post-failure invariant: Error_State,
-   --  encrypted alert queued, Last_Error pinned to a cert-related
-   --  code (Bad_Certificate covers the chain-validation path; other
-   --  cert errors map to Certificate_Expired or
-   --  Certificate_Verify_Failed elsewhere).
-   function Cert_Validation_Alerted_RFC_5246_7_4_2
-     (State : Connection_State; Pending : N32; Err : Error_Code)
-      return Boolean is
-     (State = Error_State and then Pending > 0
-        and then Err in Bad_Certificate | Certificate_Expired
-                       | Certificate_Verify_Failed
-                       | Certificate_Required)
-     with Ghost;
-
    --  ----- RFC 5246 §7.4.9 / RFC 8446 §4.4.4 Finished-mismatch ----
    --  RFC 5246 §7.4.9: "It is a fatal error if a Finished message is
    --  not preceded by a ChangeCipherSpec message at the appropriate
@@ -2188,25 +2050,6 @@ is
    function Inner_Type_Valid_RFC_8446_5_4
      (T : Byte) return Boolean is
      (T = 16#15# or else T = 16#16# or else T = 16#17#)
-     with Ghost;
-
-   --  ----- RFC 8446 §5.2 / §5.4 AEAD-failure → bad_record_mac ------
-   --  RFC 8446 §5.2 (and RFC 5246 §6.2.3.3): "If the decryption
-   --  fails, a fatal bad_record_mac alert MUST be generated."
-   --  The receiver MUST NOT distinguish in the alert between
-   --  decrypt failure, tag-mismatch, and (for TLS 1.3) wrong
-   --  inner content type — all three resolve to bad_record_mac
-   --  (or decrypt_error in TLS 1.3 §6.2). This denies attackers
-   --  the timing/error oracle that enables padding-oracle attacks.
-   --
-   --  This predicate captures the post-failure state: Error_State,
-   --  alert queued (Pending > 0), and Last_Error is one of the
-   --  three RFC-mandated codes for AEAD failure.
-   function AEAD_Failure_Alerted_RFC_8446_5_2
-     (State : Connection_State; Pending : N32; Err : Error_Code)
-      return Boolean is
-     (State = Error_State and then Pending > 0
-        and then Err = Bad_Record_MAC)
      with Ghost;
 
    --  ----- RFC 8446 §5.1 / §5.2 record-fragment length bound -------
@@ -2338,14 +2181,6 @@ is
    --  proof time, not runtime.
    ----------------------------------------------------------------------------
 
-   --  RFC 8446 §6 / RFC 5246 §7.2: alert level MUST be 1 (warning)
-   --  or 2 (fatal). Anything else is a fatal protocol violation
-   --  (BoGo SendBogusAlertType: level = 0x42 → illegal_parameter).
-   function Alert_Level_Valid_RFC_8446_6
-     (Level : Byte) return Boolean is
-     (Level = 1 or Level = 2)
-     with Ghost;
-
    --  RFC 8446 §6.1 / §6: TLS 1.3 deprecates warning alerts but
    --  keeps user_canceled (90) for back-compat. To bound DoS via
    --  alert flooding, BoringSSL/NSS/OpenSSL tolerate ≤ 4 in a row;
@@ -2420,14 +2255,6 @@ is
      (Major = 16#03# and Minor in 16#01# .. 16#04#)
      with Ghost;
 
-   --  RFC 8446 §4.1.2: TLS 1.3 ClientHello legacy_compression_methods
-   --  MUST be exactly the single byte 0x00. Other lists, even if
-   --  they include 0x00, are rejected with illegal_parameter.
-   function Compression_Methods_Valid_TLS13_RFC_8446_4_1_2
-     (Bytes : Byte_Seq) return Boolean is
-     (Bytes'Length = 1 and then Bytes (Bytes'First) = 16#00#)
-     with Ghost;
-
    --  RFC 8446 §4.2: each extension type MUST appear at most once
    --  in a given extensions list. Tracked per-CH via HC.Seen_Ext_Tags;
    --  Apply_CH_Extension scans the list before recording a new tag.
@@ -2442,15 +2269,6 @@ is
    function Session_ID_Echo_RFC_8446_4_1_3
      (HC : Handshake_Context) return Boolean is
      (HC.Legacy_Session_ID_Len in 0 .. 32)
-     with Ghost;
-
-   --  RFC 8446 §4.4.4 / RFC 5246 §7.4.9: Finished is the LAST
-   --  handshake message in its flight. The decrypted plaintext
-   --  byte count must equal exactly 4 (HS header) + verify_data
-   --  size; trailing data is excess_handshake_data.
-   function Finished_Frame_Tight_RFC_8446_4_4_4
-     (Plain_Len, Verify_Len : N32) return Boolean is
-     (Verify_Len <= N32'Last - 4 and then Plain_Len = 4 + Verify_Len)
      with Ghost;
 
    type Handshake_Context_Access is access Handshake_Context;

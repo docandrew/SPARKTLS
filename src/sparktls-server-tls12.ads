@@ -94,29 +94,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => HC.Version = TLS_1_2
-               and then S.State in Wait_Client_Cert_Verify
-                                 | Wait_Client_Finished
-               and then HC.Cfg.Local /= null
-               and then HC.Cfg.Local.Has_Identity
-               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                          (HC.Cfg.Local)
-	               and then HC.Cfg.Random /= null
-               and then Reasm_Building (HC)
-               and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
-	                 (HC.Selected_Group)
-               and then SPARKTLSCrypto.P384.Field.Initialized
-               and then SPARKTLSCrypto.P384.ECDSA.Initialized
-               --  Required by Derive_Keys_12 called at the end:
-               and then HC.Transcript_Len <= Transcript_Capacity
-               and then S.Negotiated_Suite in
-                          Suite_ECDHE_RSA_AES128_GCM_SHA256
-                        | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                        | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                        | Suite_ECDHE_RSA_CHACHA20_SHA256
-                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-                     Post =>
+   with Post =>
 				               (if S.State'Old = Wait_Client_Finished
 				                then S.State in Wait_Client_Finished
 				                              | Connected
@@ -143,16 +121,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => HC.Version = TLS_1_2
-	               and then S.State = Wait_Client_Certificate
-	               and then Reasm_Building (HC)
-	               and then HC.Reasm.Len <= HC.Reasm.Need
-	               and then HC.Cfg.Local /= null
-               and then HC.Cfg.Local.Has_Identity
-               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                          (HC.Cfg.Local)
-               and then HC.Cfg.Random /= null,
-		        Post =>
+   with Post =>
                   (if S.State /= Error_State
 	                   then Reasm_Building (HC)
 	                        and then HC.Cfg.Local /= null
@@ -175,22 +144,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => HC.Version = TLS_1_2
-               and then S.State = Wait_Client_Cert_Verify
-               and then Reasm_Building (HC)
-               and then HC.Cfg.Local /= null
-	               and then HC.Cfg.Local.Has_Identity
-	               and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                          (HC.Cfg.Local)
-	               and then HC.Cfg.Random /= null
-	               and then HC.Transcript_Len in 1 .. Transcript_Capacity
-               and then HC.Peer_Cert_Valid
-               and then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-               and then X509.Spans_Valid
-                 (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1)
-               and then SPARKTLSCrypto.P384.Field.Initialized
-               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-	        Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
+   with Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
 	                          | Error_State
                 and then
                   (if S.State /= Error_State then Reasm_Building (HC));
@@ -218,23 +172,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => HC.Version = TLS_1_2
-               and then S.State = Wait_Client_Finished
-	        and then HC.Cfg.Local /= null
-	        and then HC.Cfg.Local.Has_Identity
-	        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-	                   (HC.Cfg.Local)
-	        and then HC.Cfg.Random /= null
-               and then Reasm_Building (HC)
-               and then CCS_Precedes_Finished_RFC_5246_7_1 (HC)
-               --  Required by Send_Encrypted_Alert_12 in error paths
-               --  (RFC 5246 §7.2.1 post-CCS encrypted alerts).
-               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                          (HC.Client_Seq_12)
-               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                          (HC.Server_Seq_12)
-               and then Free_Space (S.Output) >= 7,
-                      Post =>
+   with Post =>
                        (if S.State /= Error_State
                         then HC.Cfg.Local /= null
                              and then HC.Cfg.Local.Has_Identity

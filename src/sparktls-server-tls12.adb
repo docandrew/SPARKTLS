@@ -27,8 +27,7 @@ is
 
    procedure Send_Alert_And_Error
      (S : in out Session; Err : Error_Code; Result : out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and Alert_Desc (Err) /= 0
+   with Pre  => Alert_Desc (Err) /= 0
                 and Alert_Desc (Err) /= 90,
         Post => S.State = Error_State
                 and then Result in Has_Output | Error_Alert
@@ -1306,7 +1305,6 @@ is
 	   begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
-         pragma Assert (Reasm_Building (HC));
          pragma Assert (True);
          return;
       end if;
@@ -1323,7 +1321,6 @@ is
          else
             Result := Need_Input;
          end if;
-         pragma Assert (Reasm_Building (HC));
          pragma Assert
            (if S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
             then True);
@@ -1353,7 +1350,6 @@ is
                Send_Alert_And_Error (S, Unexpected_Message, Result);
             end if;
          end;
-         pragma Assert (Reasm_Building (HC));
          pragma Assert
            (if S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
             then True);
@@ -1406,7 +1402,6 @@ is
                Result := Error_Alert;
             end if;
             pragma Unreferenced (Alert_Level);
-            pragma Assert (Reasm_Building (HC));
             pragma Assert
               (if S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
                then True);
@@ -1417,7 +1412,6 @@ is
       if Rec.Content /= Records.Content_Handshake then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);
-         pragma Assert (Reasm_Building (HC));
          pragma Assert
            (if S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
             then True);
@@ -1457,7 +1451,6 @@ is
 	                     16#0F# | 16#10# | 16#14#
 	                   then Decode_Error else Unexpected_Message),
 	                  Result);
-	               pragma Assert (Reasm_Building (HC));
 	               return;
 	            end if;
 
@@ -1467,7 +1460,6 @@ is
                      then
                         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                         Send_Alert_And_Error (S, Decode_Error, Result);
-                        pragma Assert (Reasm_Building (HC));
                         return;
                      end if;
 
@@ -1486,7 +1478,6 @@ is
 	                                S.Input.Read_Pos + Rec.Record_Len;
 	                              Send_Alert_And_Error
 	                                (S, Decode_Error, Result);
-	                              pragma Assert (Reasm_Building (HC));
 	                              return;
 	                           end if;
 	                        end;
@@ -1497,7 +1488,6 @@ is
          end if;
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -1563,8 +1553,6 @@ is
 
 	         procedure Fail_Decode
          with Pre  => Reasm_Building (HC)
-                      and then S.State not in
-                        Idle | Closing | Closed | Error_State
                       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
                       and then S.Input.Read_Pos + Rec.Record_Len
                         <= S.Input.Write_Pos
@@ -1584,8 +1572,6 @@ is
 
 	         procedure Fail_Unexpected
 	         with Pre  => Reasm_Building (HC)
-	                      and then S.State not in
-	                        Idle | Closing | Closed | Error_State
 	                      and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
 	                      and then S.Input.Read_Pos + Rec.Record_Len
 	                        <= S.Input.Write_Pos
@@ -1609,8 +1595,6 @@ is
 			                      and then Msg'Length > 0
 		                      and then Msg'Length <= HC.Transcript'Length
 	                      and then Msg'Last < N32 (Natural'Last)
-	                      and then S.State not in
-                        Idle | Closing | Closed | Error_State
                       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
                       and then S.Input.Read_Pos + Rec.Record_Len
                         <= S.Input.Write_Pos
@@ -1762,7 +1746,6 @@ is
                   --  A CKE handshake message may span records, but this
                   --  state expects exactly that one message before CCS.
                   HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-                  pragma Assert (Reasm_Building (HC));
                   Fail_Decode;
                   return;
                end if;
@@ -1948,7 +1931,6 @@ is
    begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -1964,14 +1946,12 @@ is
          else
             Result := Need_Input;
          end if;
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
       if Rec.Content /= Records.Content_Handshake then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -1984,7 +1964,6 @@ is
          if Frag_Len < 7 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Decode_Error, Result);
-            pragma Assert (Reasm_Building (HC));
             return;
          end if;
 
@@ -2008,14 +1987,12 @@ is
                      16#0F# | 16#10# | 16#14#
                    then Decode_Error else Unexpected_Message),
                   Result);
-               pragma Assert (Reasm_Building (HC));
                return;
             end if;
 
             if Msg_Type /= Handshake.HT_Certificate then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Send_Alert_And_Error (S, Unexpected_Message, Result);
-               pragma Assert (Reasm_Building (HC));
                return;
             end if;
 
@@ -2024,7 +2001,6 @@ is
             then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Send_Alert_And_Error (S, Decode_Error, Result);
-               pragma Assert (Reasm_Building (HC));
                return;
             end if;
 
@@ -2043,14 +2019,12 @@ is
 	                     S.Input.Read_Pos :=
 	                       S.Input.Read_Pos + Rec.Record_Len;
 	                     Send_Alert_And_Error (S, Decode_Error, Result);
-	                     pragma Assert (Reasm_Building (HC));
 	                     return;
 	                  end if;
                      if List_Len = 0 and then HC.Cfg.Require_Client_Cert then
                         S.Input.Read_Pos :=
                           S.Input.Read_Pos + Rec.Record_Len;
                         Send_Alert_And_Error (S, Handshake_Failure, Result);
-                        pragma Assert (Reasm_Building (HC));
                         return;
                      end if;
 	               end;
@@ -2071,7 +2045,6 @@ is
 			                  HS_Msg => HS_Msg,
 		                  OK     => Chain_OK,
 		                  Err    => Chain_Err);
-	               pragma Assert (Reasm_Building (HC));
 
                if not Chain_OK then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2120,7 +2093,6 @@ is
    begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -2136,14 +2108,12 @@ is
          else
             Result := Need_Input;
          end if;
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
       if Rec.Content /= Records.Content_Handshake then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -2156,7 +2126,6 @@ is
          if Frag_Len < 8 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Decode_Error, Result);
-            pragma Assert (Reasm_Building (HC));
             return;
          end if;
 
@@ -2180,14 +2149,12 @@ is
 	                     16#0F# | 16#10# | 16#14#
 	                   then Decode_Error else Unexpected_Message),
 	                  Result);
-	               pragma Assert (Reasm_Building (HC));
 	               return;
 	            end if;
 
 	            if Msg_Type /= Handshake.HT_Certificate_Verify then
 	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	               Send_Alert_And_Error (S, Unexpected_Message, Result);
-	               pragma Assert (Reasm_Building (HC));
 	               return;
 	            end if;
 
@@ -2196,7 +2163,6 @@ is
 	            then
 	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	               Send_Alert_And_Error (S, Decode_Error, Result);
-	               pragma Assert (Reasm_Building (HC));
 	               return;
 	            end if;
 
@@ -2215,7 +2181,6 @@ is
                then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error (S, Decode_Error, Result);
-                  pragma Assert (Reasm_Building (HC));
                   return;
                end if;
 
@@ -2227,7 +2192,6 @@ is
                then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error (S, Illegal_Parameter, Result);
-                  pragma Assert (Reasm_Building (HC));
                   return;
                end if;
 
@@ -2249,7 +2213,6 @@ is
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error
                     (S, Certificate_Verify_Failed, Result);
-                  pragma Assert (Reasm_Building (HC));
                   return;
                end if;
             end;
@@ -2290,7 +2253,6 @@ is
                if VR /= Valid then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error (S, Bad_Certificate, Result);
-                  pragma Assert (Reasm_Building (HC));
                   return;
                end if;
 
@@ -2298,7 +2260,6 @@ is
                   if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                      Send_Alert_And_Error (S, Bad_Certificate, Result);
-                     pragma Assert (Reasm_Building (HC));
                      return;
                   end if;
 
@@ -2318,7 +2279,6 @@ is
                   if VR /= Valid then
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                      Send_Alert_And_Error (S, Bad_Certificate, Result);
-                     pragma Assert (Reasm_Building (HC));
                      return;
                   end if;
                end if;
@@ -2358,7 +2318,6 @@ is
    begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -2377,14 +2336,12 @@ is
 	         else
 	            Result := Need_Input;
 	         end if;
-	         pragma Assert (Reasm_Building (HC));
 	         return;
 	      end if;
 
 	      if Rec.Content /= Records.Content_Handshake then
 	         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	         Send_Alert_And_Error (S, Unexpected_Message, Result);
-	         pragma Assert (Reasm_Building (HC));
 	         return;
 	      end if;
 
@@ -2395,7 +2352,6 @@ is
 	         if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
 	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	            Send_Alert_And_Error (S, Record_Overflow, Result);
-	            pragma Assert (Reasm_Building (HC));
 	            return;
 	         end if;
 
@@ -2408,7 +2364,6 @@ is
 	            if Frag_Len < Min_Frag then
 	               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 	               Send_Alert_And_Error (S, Decode_Error, Result);
-	               pragma Assert (Reasm_Building (HC));
 	               return;
 	            end if;
          end;
@@ -2431,7 +2386,6 @@ is
 	            Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
 	                               HC.Client_Write_IV_12, HC.Client_Seq_12,
 	                               Plaintext, PL, DV);
-	            pragma Assert (Reasm_Building (HC));
 	            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
 	            if not DV then

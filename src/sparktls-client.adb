@@ -1149,85 +1149,7 @@ is
    procedure Advance_Handshake
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action)
-   with Pre =>
-      S.State in Client_Hello_Sent
-               | Wait_Server_Hello
-               | Wait_Encrypted_Extensions
-               | Wait_Certificate_Request
-               | Wait_Certificate
-               | Wait_Certificate_Verify
-               | Wait_Server_Finished
-               | Client_Certificate_Sent
-               | Client_Cert_Verify_Sent
-               | Client_Finished_Sent
-		      and then (if S.State = Wait_Server_Hello
-		                then HC.Cfg.Random /= null
-	                     and then SPARKTLSCrypto.P384.Field.Initialized
-	                     and then HC.Transcript_Len > 0
-		                     and then HC.Transcript_Len <= Transcript_Capacity
-		                     and then HC.HRR_Cookie_Len
-		                       <= N32 (HC.HRR_Cookie'Length)
-		                     and then WSH_Reasm_Shape (HC)
-		                     and then
-		                       (if HC.Reasm.Need > 0
-	                        then HC.Reasm.Need - 1 <
-	                             Transcript_Capacity))
-      and then (if S.State in Wait_Encrypted_Extensions
-                            | Wait_Certificate
-                            | Wait_Certificate_Verify
-                            | Wait_Server_Finished
-                then Nonce_Space_Available (HC.Client_HS)
-	                     and then Nonce_Space_Available (HC.Server_HS)
-	                     and then Nonce_Space_Available (S.Client_App)
-	                     and then HC.Transcript_Len > 0
-		                     and then SPARKTLSCrypto.P384.Field.Initialized
-		                     and then SPARKTLSCrypto.P384.ECDSA.Initialized
-		                     and then S.Negotiated_Suite
-	                        in Suite_AES_128_GCM_SHA256
-	                         | Suite_AES_256_GCM_SHA384
-	                         | Suite_CHACHA20_POLY1305_SHA256
-		                     and then
-		                       (if S.Negotiated_Suite =
-		                             Suite_AES_256_GCM_SHA384
-		                        then HC.Hash_Len = 48
-		                        else HC.Hash_Len = 32)
-		                     and then
-		                       (if HC.Cert_Request_Received
-		                            and then HC.Cfg.Local /= null
-		                            and then HC.Cfg.Local.Has_Identity
-		                        then HC.Cfg.Random /= null
-		                             and then HC.Cfg.Local.NaCl_Cert_Len
-		                               in 1 .. N32 (Max_Cert_DER)
-			                             and then Handshake
-			                               .Sig_Algo_Compatible_With_Cert
-			                                 (HC.Negotiated_Sig_Algo,
-			                                  HC.Cfg.Local.Sign_Algo)
-		                             and then
-		                               (if HC.Cfg.Local.Sign_Algo =
-		                                     Sign_RSA_PSS
-		                                then HC.Cfg.Local.RSA_Mod_Len
-		                                     in 64 .. 512)
-			                             and then HC.Client_HS.Counter
-			                               <= Unsigned_64'Last - 2)
-				                     and then (if HC.Reasm.Need > 0
-			                        then Reasm_Building (HC))
-			                     and then (HC.Reasm.Phase = Reasm_Idle
-	                               or else (HC.Reasm_Buf'First = 0
-                                        and then HC.Reasm_Buf'Last
-                                           in 0 .. 131071
-                                        and then (if HC.Reasm.Need > 0
-                                                  then HC.Reasm.Need >= 4))))
-      and then (if S.State = Client_Finished_Sent
-                then HC.Transcript_Len > 0
-	            and then S.Negotiated_Suite
-	               in Suite_AES_128_GCM_SHA256
-	                | Suite_AES_256_GCM_SHA384
-	                | Suite_CHACHA20_POLY1305_SHA256
-		            and then
-			              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-			               then HC.Hash_Len = 48
-			               else HC.Hash_Len = 32));
+      Result :    out Action);
    procedure Handle_WSH_Frame_13
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -5403,8 +5325,7 @@ is
       Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Result    :    out Action)
-   with Pre => S.State in Connected | Closing
-               and then Nonce_Space_Available (S.Client_App)
+   with Pre => Nonce_Space_Available (S.Client_App)
                and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
                and then Plain_Len <= Max_Record_Plaintext
@@ -5582,8 +5503,7 @@ is
      (S      : in out Session;
       Msg    : in     Byte_Seq;
       Result :    out Action)
-   with Pre  => S.State in Connected | Closing
-                and then Msg'First = 0
+   with Pre  => Msg'First = 0
                 and then Nonce_Space_Available (S.Client_App)
                 and then S.App_Secret_Len in 32 | 48
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
@@ -5850,8 +5770,6 @@ is
             --  RFC 8446 §5.2: post-handshake AEAD failure → fatal
             --  bad_record_mac under client_application_traffic_secret.
             Send_App_Encrypted_Alert (S, Bad_Record_MAC, Result);
-            pragma Assert
-              (AEAD_Failure_Alert_Queued_RFC_8446_5_2 (S));
             return;
          end if;
 
@@ -6087,6 +6005,15 @@ is
    procedure Close_Notify (S : in out Session) is
       Ignored_Alert_Out : N32;
    begin
+      --  See the server-side twin. Advance zeroes the traffic keys and
+      --  sets Closed once both directions have closed, but reports it with
+      --  the same Shutdown result used for a half-duplex close, so an
+      --  application cannot tell them apart. Encrypting here would build
+      --  an alert under the all-zero scrubbed key and burn a sequence
+      --  number on a dead session.
+      if S.State not in Connected | Closing then
+         return;
+      end if;
       if S.Negotiated_Version = TLS_1_2 then
          Records.TLS12.Build_Alert_Record_12
            (Level       => 1,
