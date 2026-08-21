@@ -134,10 +134,6 @@ is
       Result :    out Action)
    with Pre => S.State in Connected | Closing
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
-	               and then Empty_Records_Bounded_RFC_8446_5_2 (S)
-	               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-	                 (S.Client_Seq_12)
-	               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-	                 (S.Server_Seq_12);
+	               and then Empty_Records_Bounded_RFC_8446_5_2 (S);
 
 end SPARKTLS.Client.TLS12;

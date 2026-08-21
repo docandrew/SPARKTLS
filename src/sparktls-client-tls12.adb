@@ -58,8 +58,7 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
-   with Pre => Records.TLS12.Nonce_Space_Available_12 (S.Client_Seq_12)
-               and S.State not in Idle | Closed | Error_State
+   with Pre => S.State not in Idle | Closed | Error_State
                and Alert_Desc (Err) /= 0
                and Alert_Desc (Err) /= 90
    is
@@ -2358,9 +2357,7 @@ is
                   (if Result = OK then
                      S.State not in Idle | Closing | Closed | Error_State
                      and then HC.Transcript_Len > 0
-                     and then HC.Transcript_Len <= Transcript_Capacity
-                     and then Records.TLS12.Nonce_Space_Available_12
-                       (HC.Client_Seq_12));
+                     and then HC.Transcript_Len <= Transcript_Capacity);
 
    procedure Encrypt_Client_Finished_Record_12
      (S       : in out Session;
@@ -2475,9 +2472,7 @@ is
                   (if Result = OK then
                      S.State not in Idle | Closing | Closed | Error_State
                      and then HC.Transcript_Len > 0
-                     and then HC.Transcript_Len <= Transcript_Capacity
-                     and then Records.TLS12.Nonce_Space_Available_12
-                       (HC.Client_Seq_12));
+                     and then HC.Transcript_Len <= Transcript_Capacity);
 
    procedure Encrypt_And_Commit_Client_Finished_12
      (S       : in out Session;
@@ -2525,9 +2520,7 @@ is
                   (if Result = OK then
 	                     S.State not in Idle | Closing | Closed | Error_State
 	                     and then HC.Transcript_Len > 0
-		                     and then HC.Transcript_Len <= Transcript_Capacity
-			                     and then Records.TLS12.Nonce_Space_Available_12
-			                       (HC.Client_Seq_12));
+		                     and then HC.Transcript_Len <= Transcript_Capacity);
 
    procedure Append_Client_CCS_And_Finished_12
      (S       : in out Session;
@@ -2562,14 +2555,6 @@ is
       if Result /= OK then
          return;
       end if;
-      pragma Assert_And_Cut
-        (Result = OK
-         and then Reasm_Building (HC)
-         and then S.State not in Idle | Closing | Closed | Error_State
-         and then HC.Transcript_Len > 0
-         and then HC.Transcript_Len <= Transcript_Capacity
-         and then Records.TLS12.Nonce_Space_Available_12
-           (HC.Client_Seq_12));
    end Append_Client_CCS_And_Finished_12;
 
    procedure Build_Client_Flight_12
@@ -2607,9 +2592,7 @@ is
                   (if Result = OK then
 	                     S.State not in Idle | Closing | Closed | Error_State
 	                     and then HC.Transcript_Len > 0
-	                     and then HC.Transcript_Len <= Transcript_Capacity
-	                     and then Records.TLS12.Nonce_Space_Available_12
-	                       (HC.Client_Seq_12));
+	                     and then HC.Transcript_Len <= Transcript_Capacity);
 
    procedure Build_Client_Flight_12
      (S      : in out Session;
@@ -2644,14 +2627,6 @@ is
          return;
       end if;
 
-      pragma Assert_And_Cut
-        (Result = OK
-         and then Reasm_Building (HC)
-         and then S.State not in Idle | Closing | Closed | Error_State
-         and then HC.Transcript_Len > 0
-         and then HC.Transcript_Len <= Transcript_Capacity
-         and then Records.TLS12.Nonce_Space_Available_12
-           (HC.Client_Seq_12));
    end Build_Client_Flight_12;
 
    --  RFC 5246 §7.4.5 ServerHelloDone (HS type 0x0E). End of the

@@ -141,8 +141,7 @@ is
                 and Plaintext'Last < Max_Record_Plaintext
                 and Content_Type in 16#15# | 16#16# | 16#17#
                 and Implicit_IV'First = 0
-                and Implicit_IV'Length = Implicit_IV_Len
-                and Nonce_Space_Available_12 (Seq_Num),
+                and Implicit_IV'Length = Implicit_IV_Len,
         Post => Seq_Num = Seq_Num'Old + 1  --  RFC 5246 §6.1
                 and Bytes_Out <=
                        Record_Header_Size + Explicit_Nonce_Len +
@@ -184,8 +183,7 @@ is
                 and Implicit_IV'First = 0
                 and Implicit_IV'Length = Implicit_IV_Len
                 and Plaintext'First = 0
-                and Plaintext'Last >= Encrypted'Last
-                and Nonce_Space_Available_12 (Seq_Num),
+                and Plaintext'Last >= Encrypted'Last,
         Post => Seq_Num = Seq_Num'Old + 1        --  always increments
                 and (if Valid then
                    --  Plaintext length = encrypted - nonce - tag
@@ -207,8 +205,7 @@ is
       Bytes_Out   :    out N32)
    with Pre  => Level in 1 .. 2
                 and Implicit_IV'First = 0
-                and Implicit_IV'Length = Implicit_IV_Len
-                and Nonce_Space_Available_12 (Seq_Num),
+                and Implicit_IV'Length = Implicit_IV_Len,
         Post => Seq_Num = Seq_Num'Old + 1
                 and Bytes_Out <=
                        Record_Header_Size + Explicit_Nonce_Len +

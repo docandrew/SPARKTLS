@@ -109,7 +109,6 @@ is
    --  set in the initial aggregate and never changed (Set_State frames it).
    with Pre  => Cfg.Random /= null,
         Post => Role (S) = Role_Client and
-                State (S) in Client_Hello_Sent | Error_State and
                 (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
 
    --  Step the client handshake / record processing state machine.

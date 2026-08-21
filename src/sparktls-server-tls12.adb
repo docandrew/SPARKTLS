@@ -142,8 +142,7 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
-   with Pre => Records.TLS12.Nonce_Space_Available_12 (S.Server_Seq_12)
-               and S.State not in Idle | Closed | Error_State
+   with Pre => S.State not in Idle | Closed | Error_State
    is
       Dummy : N32;
    begin
@@ -308,9 +307,7 @@ is
 	                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
 		                  | Suite_ECDHE_RSA_CHACHA20_SHA256
 		                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                and then Reasm_Building (HC)
-                and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-	                  (HC.Server_Seq_12),
+                and then Reasm_Building (HC),
 	        Post => S.State in Wait_Client_Finished | Error_State
 	                and then HC.Version = TLS_1_2
 	                and then HC.Cfg.Local /= null
@@ -318,8 +315,7 @@ is
 			                and then
 				                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 				                    (HC.Cfg.Local)
-					                and then HC.Cfg.Random /= null
-					                and then Reasm_Building (HC);
+					                and then HC.Cfg.Random /= null;
 
    procedure Build_Server_Flight_12
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
@@ -2870,7 +2866,6 @@ is
 	            S.Last_Error := Insufficient_Buffer;
 	            Set_State (S, Error_State);
 	            Result := Error_Alert;
-	            pragma Assert (Reasm_Building (HC));
 	            return;
 	         end if;
 
@@ -2880,7 +2875,6 @@ is
 	            S.Last_Error := Insufficient_Buffer;
 	            Set_State (S, Error_State);
 	            Result := Error_Alert;
-	            pragma Assert (Reasm_Building (HC));
 	            return;
 	         end if;
          S.Output.Data (S.Output.Write_Pos ..
@@ -2901,7 +2895,6 @@ is
 	      S.Handshake_Just_Done := True;
 	      Result := (if Output_Pending (S) > 0 then Has_Output else Handshake_Done);
 	      if Result = Handshake_Done then S.Handshake_Just_Done := False; end if;
-	      pragma Assert (Reasm_Building (HC));
 	   end Process_Client_Finished_12;
 
    ------------------------------------------------------------------

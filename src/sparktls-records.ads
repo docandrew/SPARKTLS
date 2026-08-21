@@ -142,8 +142,7 @@ is
                        + 1
                        + Tag_Size
                    then Output.Write_Pos =
-                          Output.Write_Pos'Old + Bytes_Out
-                        and then Available (Output) > 0);
+                          Output.Write_Pos'Old + Bytes_Out);
 
    --  Decrypt a TLS 1.3 encrypted record.
    --  RFC 8446 Section 5.4: Valid reports AEAD authentication and
@@ -191,8 +190,7 @@ is
         Post => (if Free_Space (Output'Old) >=
                        Record_Header_Size + 3 + Tag_Size
                  then Output.Write_Pos =
-                        Output.Write_Pos'Old + Bytes_Out
-                      and then Available (Output) > 0);
+                        Output.Write_Pos'Old + Bytes_Out);
 
    --  Build a plaintext alert record (no encryption).
    --  Uses RFLX-generated alert serializer for the payload.

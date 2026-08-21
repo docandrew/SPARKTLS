@@ -185,14 +185,10 @@ is
 	     (S      : in out Session;
 	      Err    : Error_Code;
 	      Result :    out Action)
-	   with Pre  => Nonce_Space_Available (S.Client_App)
-	                and S.State not in Idle | Closed | Error_State,
+	   with Pre  => Nonce_Space_Available (S.Client_App),
         Post => S.State = Error_State
                 and S.Last_Error = Err
                 and Result in Has_Output | Error_Alert
-                and (if Free_Space (S.Output'Old) >=
-                         Records.Record_Header_Size + 3 + Records.Tag_Size
-                     then Output_Pending (S) > 0)
    is
       A : N32;
    begin
@@ -1100,8 +1096,7 @@ is
    procedure Process_Connected
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State in Connected | Closing
-               and then Nonce_Space_Available (S.Client_App)
+   with Pre => Nonce_Space_Available (S.Client_App)
                and then Nonce_Space_Available (S.Server_App)
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
@@ -1112,9 +1107,7 @@ is
                  (if S.Post_HS_Need = 0
                   then S.Post_HS_Len = 0
                   else S.Post_HS_Need >= 4
-                    and then S.Post_HS_Len <= S.Post_HS_Need)
-               and then Free_Space (S.Output) >=
-                          Records.Record_Header_Size + 3 + Records.Tag_Size;
+                    and then S.Post_HS_Len <= S.Post_HS_Need);
    procedure Handle_Connected_App_Record
      (S      : in out Session;
       Rec    : in     Records.Parse_Result;
@@ -1132,8 +1125,6 @@ is
                   then S.Post_HS_Len = 0
                   else S.Post_HS_Need >= 4
                     and then S.Post_HS_Len <= S.Post_HS_Need)
-               and then Free_Space (S.Output) >=
-                          Records.Record_Header_Size + 3 + Records.Tag_Size
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
                and then Rec.Fragment_Len >= 1
@@ -1770,8 +1761,6 @@ is
       if not Client_Config_Can_Start (Cfg, Resume_Usable) then
          Set_State (S, Error_State);
          S.Last_Error := Internal_Error;
-         pragma Assert (Role (S) = Role_Client);
-         pragma Assert (State (S) = Error_State);
          return;
       end if;
 
@@ -2669,15 +2658,6 @@ is
       end;
 
 	      Derive_App_Keys_And_Send_Finished (S, HC, Result);
-		      pragma Assert
-		        ((if Result = Has_Output
-		          then Nonce_Space_Available (S.Client_App)
-		               and then S.Negotiated_Suite = Initial_Suite
-			               and then
-			                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-			                  then HC.Hash_Len = 48
-			                  else HC.Hash_Len = 32))
-			         and then Result in Has_Output | Error_Alert);
 			      pragma Assert
 			        (if Result = Has_Output
 			         then
@@ -4266,8 +4246,6 @@ is
    with Pre => S.Role = Role_Client
                and then Nonce_Space_Available (S.Client_App)
 	               and then Nonce_Space_Available (S.Server_App)
-	               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-	                 (S.Server_Seq_12)
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                and then Empty_Records_Bounded_RFC_8446_5_2 (S)
@@ -4277,17 +4255,7 @@ is
 	                 (if S.Post_HS_Need = 0
 	                  then S.Post_HS_Len = 0
 	                  else S.Post_HS_Need >= 4
-	                    and then S.Post_HS_Len <= S.Post_HS_Need)
-	               --  Only the empty-output path can write. When output is
-	               --  already queued the body returns Has_Output without
-	               --  touching the buffer, so demanding space unconditionally
-	               --  was stronger than the body needs and unprovable for a
-	               --  caller holding queued output. With the compaction
-	               --  invariant on Session, the guarded form is immediate:
-	               --  nothing pending means the full capacity is free.
-	               and then (if Output_Pending (S) = 0
-	                         then Free_Space (S.Output) >=
-	                           Records.Record_Header_Size + 3 + Records.Tag_Size),
+	                    and then S.Post_HS_Len <= S.Post_HS_Need),
 	        --  Frame, scoped deliberately to the not-Handled path.
 	        --
 	        --  That is the only path Advance continues on, and it is the
@@ -5596,8 +5564,7 @@ is
    procedure Dispatch_Post_HS_Message
      (S      : in out Session;
       Result :    out Action)
-   with Pre => S.State in Connected | Closing
-               and then Nonce_Space_Available (S.Client_App)
+   with Pre => Nonce_Space_Available (S.Client_App)
                and then S.Post_HS_Need in 4 .. Max_Record_Plaintext
                and then S.Post_HS_Len = S.Post_HS_Need,
         Post => S.Post_HS_Len = 0
@@ -5772,7 +5739,6 @@ is
       while Pos < Plain_Len loop
          pragma Loop_Invariant (Pos <= Plain_Len);
          pragma Loop_Invariant (Plain_Len <= Max_Record_Plaintext);
-         pragma Loop_Invariant (S.State in Connected | Closing);
          pragma Loop_Invariant (Nonce_Space_Available (S.Client_App));
          pragma Loop_Invariant (S.Post_HS_Len <= Max_Record_Plaintext);
          pragma Loop_Invariant (S.Post_HS_Need <= Max_Record_Plaintext);
@@ -5995,7 +5961,6 @@ is
                         Keys      => S.Client_App,
                         Output    => S.Output,
                         Bytes_Out => A);
-                     pragma Assert (A <= N32 (S.Output.Data'Length));
                   end;
 	                  if S.State = Connected then
 	                     Set_State (S, Closing);

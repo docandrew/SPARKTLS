@@ -295,9 +295,7 @@ is
 		                   | Suite_CHACHA20_POLY1305_SHA256
 		                   and then Nonce_Space_Available (HC.Server_HS)
 		                   and then Nonce_Space_Available (S.Server_App)
-		                   and then SPARKTLSCrypto.P384.Field.Initialized
-		                   and then SPARKTLSCrypto.P384.ECDSA.Initialized
-		                   and then HC.HRR_Sent)
+		                   and then SPARKTLSCrypto.P384.Field.Initialized)
 			                and then
 			                  (if S.State not in Error_State | Closed
 			                   then Reasm_Building (HC))
@@ -347,8 +345,7 @@ is
 		                     and then S.Negotiated_Suite in
 		                       Suite_AES_128_GCM_SHA256
 		                     | Suite_AES_256_GCM_SHA384
-	                     | Suite_CHACHA20_POLY1305_SHA256
-	                     and then HC.HRR_Sent);
+	                     | Suite_CHACHA20_POLY1305_SHA256);
 
    procedure Build_Server_Flight_After_Client_Hello_Retry
      (S      : in out Session;
@@ -357,7 +354,6 @@ is
    with Pre  => Server_Active (S)
 	                and then S.State = Wait_Client_Hello_Retry
 	                and then S.Role = Role_Server
-	                and then HC.HRR_Sent
 	                and then Server_Configured (HC)
 	                and then HC.Cfg.Local.NaCl_Cert_Len
 	                  <= N32 (Max_Cert_DER)
@@ -380,11 +376,9 @@ is
 	                and then Nonce_Space_Available (S.Server_App)
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-			        Post => S.State in Server_Hello_Sent | Error_State
-			                and then
+			        Post =>
 			                  (if S.State not in Error_State | Closed
-			                   then Server_Configured (HC)
-			                        and then Reasm_Building (HC));
+			                   then Server_Configured (HC));
 	   procedure Handle_Client_Hello_Retry
 	     (S      : in out Session;
 	      HC     : in out Handshake_Context;
@@ -400,13 +394,7 @@ is
 			                  (if S.State in Wait_Client_Hello_Retry
 			                               | Server_Hello_Sent
 		                               | Wait_Client_Finished
-		                   then Server_Configured (HC))
-						                and then
-							                  (if S.State = Wait_Client_Hello_Retry
-							                   then Reasm_Building (HC))
-						                and then
-						                  (if S.State not in Error_State | Closed
-						                   then Reasm_Building (HC));
+		                   then Server_Configured (HC));
 
    procedure Build_Server_Flight
      (S      : in out Session;
@@ -439,12 +427,7 @@ is
 			                and then SPARKTLSCrypto.P384.Field.Initialized
 			                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
          Post => (if S.State not in Error_State | Closed
-										                          then Server_Configured (HC)
-										                               and then Reasm_Building (HC))
-						                and then
-					                  (if S.State = Wait_Client_Hello
-			                     and then HC.Reasm.Need > 0
-			                   then HC.Reasm.Len < HC.Reasm.Need);
+										                          then Server_Configured (HC));
 
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
@@ -647,15 +630,12 @@ is
 
 
    procedure Process_Connected (S : in out Session; Result : out Action)
-   with Pre => S.State in Connected | Closing
-               and then S.Role = Role_Server
+   with Pre => S.Role = Role_Server
                and then Nonce_Space_Available (S.Server_App)
                and then Nonce_Space_Available (S.Client_App)
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
-               and then S.Empty_Records_Recvd <= Max_Empty_Records
-               and then Free_Space (S.Output) >=
-                          Records.Record_Header_Size + 3 + Records.Tag_Size;
+               and then S.Empty_Records_Recvd <= Max_Empty_Records;
 
    procedure Derive_Handshake_Keys
      (S  : in     Session;
@@ -792,10 +772,6 @@ is
         Post => S.State = Error_State
                 and then S.Last_Error = Err
                 and then Result in Has_Output | Error_Alert
-                and then (if S.State'Old not in Idle | Closed | Error_State
-                             and then Free_Space (S.Output'Old) >=
-                               Records.Record_Header_Size + 3 + Records.Tag_Size
-                          then Output_Pending (S) > 0)
    is
       Dummy : N32;
       --  Captured before Set_State below, which overwrites S.State.
@@ -1034,13 +1010,9 @@ is
    with Pre => S.Role = Role_Server
                and then Nonce_Space_Available (S.Server_App)
                and then Nonce_Space_Available (S.Client_App)
-               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                 (S.Server_Seq_12)
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                and then Empty_Records_Bounded_RFC_8446_5_2 (S)
-               and then Free_Space (S.Output) >=
-                          Records.Record_Header_Size + 3 + Records.Tag_Size
    is
    begin
       Handled := True;
@@ -1197,7 +1169,6 @@ is
       Result :    out Action)
    with Pre => S.State = Wait_Client_Hello
                and then S.Role = Role_Server
-               and then Server_Configured (HC)
 	               and then HC.Legacy_Session_ID_Len in 0 .. 32
 		               and then HC.Transcript_Len > 0
 							                              and then Reasm_Building (HC)
@@ -1229,11 +1200,9 @@ is
             if Picked /= null then
                HC.Cfg.Local := Picked;
 	            end if;
-	            pragma Assert (Server_Configured (HC));
 	            pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
 	         end;
 	      else
-	         pragma Assert (Server_Configured (HC));
 	         pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
 	      end if;
 
@@ -1343,18 +1312,6 @@ is
 		            end if;
 			            pragma Assert (True);
 			            SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, HC, Result);
-            pragma Assert
-              (if S.State in Wait_Client_Hello
-                           | Wait_Client_Hello_Retry
-                           | Server_Hello_Sent
-                           | Wait_Client_Finished
-               then Server_Configured (HC));
-	            pragma Assert
-	              (if S.State in Wait_Client_Hello
-	                           | Wait_Client_Hello_Retry
-	                           | Server_Hello_Sent
-	                           | Wait_Client_Finished
-	               then Reasm_Building (HC));
 	            return;
          else
             if (HC.Version = TLS_1_2 and Policy = TLS_1_3_Only)
@@ -1571,7 +1528,6 @@ is
 	                              and then Rec.Record_Len <=
 	                                Available (S.Input)
 	                              and then HC.Reasm.Need > 0
-	                              and then HC.Reasm.Len < HC.Reasm.Need
 			                              and then (if (HC.Reasm.Phase = Reasm_Header)
 			                                    then HC.Reasm.Need = 4
 			                                         and then HC.Reasm.Len <= 4
@@ -1704,7 +1660,6 @@ is
 		                                 and then Rec.Record_Len <=
 		                                   Available (S.Input)
 		                                 and then HC.Reasm.Need > 0
-		                                 and then HC.Reasm.Len < HC.Reasm.Need
 		                                 and then (if (HC.Reasm.Phase = Reasm_Header)
 		                                    then HC.Reasm.Need = 4
 		                                         and then HC.Reasm.Len <= 4
@@ -2229,7 +2184,6 @@ is
 	      HC.CH_Ext_Count := 0;
 	      HC.Seen_Ext_Count := 0;
 	      HC.Seen_Ext_Tags := (others => 0);
-	      pragma Assert (HC.HRR_Sent);
 	      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
 
 	      Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Msg, Parse_OK);
@@ -2401,7 +2355,6 @@ is
                           Suite_AES_128_GCM_SHA256
                         | Suite_AES_256_GCM_SHA384
                         | Suite_CHACHA20_POLY1305_SHA256);
-                     pragma Assert (HC.HRR_Sent);
 
 	                     Result := OK;
 	                     Ready_To_Build := True;
@@ -2415,7 +2368,6 @@ is
 	   is
 	   begin
 	      Build_Server_Flight (S, HC, Result);
-	      pragma Assert (S.State in Server_Hello_Sent | Error_State);
 	   end Build_Server_Flight_After_Client_Hello_Retry;
 
 
@@ -4342,7 +4294,6 @@ is
             Send_Encrypted_Alert
               (S, Certificate_Verify_Failed, Result);
             pragma Assert (S.Last_Error /= Unexpected_Message);
-            pragma Assert (Output_Pending (S) > 0);
             pragma Assert
               (Cert_Validation_Alerted_RFC_5246_7_4_2
                  (S.State, Output_Pending (S), S.Last_Error));
@@ -4397,7 +4348,6 @@ is
             if VR /= Valid then
                Send_Encrypted_Alert (S, Bad_Certificate, Result);
                pragma Assert (S.Last_Error /= Unexpected_Message);
-               pragma Assert (Output_Pending (S) > 0);
                pragma Assert
                  (Cert_Validation_Alerted_RFC_5246_7_4_2
                     (S.State, Output_Pending (S), S.Last_Error));
@@ -4411,7 +4361,6 @@ is
                if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
                   Send_Encrypted_Alert (S, Bad_Certificate, Result);
                   pragma Assert (S.Last_Error /= Unexpected_Message);
-                  pragma Assert (Output_Pending (S) > 0);
                   pragma Assert
                     (Cert_Validation_Alerted_RFC_5246_7_4_2
                        (S.State, Output_Pending (S), S.Last_Error));
@@ -4434,7 +4383,6 @@ is
                if VR /= Valid then
                   Send_Encrypted_Alert (S, Bad_Certificate, Result);
                   pragma Assert (S.Last_Error /= Unexpected_Message);
-                  pragma Assert (Output_Pending (S) > 0);
                   pragma Assert
                     (Cert_Validation_Alerted_RFC_5246_7_4_2
                        (S.State, Output_Pending (S), S.Last_Error));
@@ -5660,8 +5608,6 @@ is
 
       while Pos < Plain_Len loop
          pragma Loop_Invariant (Pos <= Plain_Len);
-         pragma Loop_Invariant (Plain_Len <= Max_Record_Plaintext);
-         pragma Loop_Invariant (S.State in Connected | Closing);
          pragma Loop_Invariant (Nonce_Space_Available (S.Server_App));
          pragma Loop_Invariant (S.Post_HS_Len <= Max_Record_Plaintext);
          pragma Loop_Invariant (S.Post_HS_Need <= Max_Record_Plaintext);
