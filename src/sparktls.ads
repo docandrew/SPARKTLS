@@ -1,5 +1,6 @@
 with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
+with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
 with RFLX.RFLX_Builtin_Types;
 with X509;
 
@@ -22,47 +23,11 @@ is
    subtype Index_48 is N32 range 0 .. 47;
    subtype Bytes_48 is Byte_Seq (Index_48);
 
-   --  RFC 8446 4: largest handshake message we will reassemble. Anything
-   --  larger is a decode error (enforced at 6 sites).
-   Max_HS_Msg : constant := 131072;
-   subtype HS_Msg_Len is N32 range 0 .. Max_HS_Msg;
 
-   --  Reassembly phase. Until 2026-08-20 "idle" was encoded THREE separate
-   --  ways -- Reasm.Phase = Reasm_Idle, Reasm_Need = 0, and Reasm_Hdr_Pending =
-   --  False -- with nothing forcing them to agree, which is exactly why call
-   --  sites defensively tested two at once ("Reasm_Need > 0 and
-   --  True"). One field is now the single source of truth.
-   type Reasm_Phase is (Reasm_Idle, Reasm_Header, Reasm_Body);
-
-   --  The three coupled fields live in their own record so a state
-   --  transition is ONE aggregate assignment. That matters twice:
-   --    * the predicate is never observed mid-update -- the field-by-field
-   --      failure catalogued in task #60; and
-   --    * only these 12 bytes are copied. The reassembly buffer is
-   --      deliberately NOT a component here, so no transition copies it.
-   --  There is deliberately no "Len <= Need" conjunct: in the packed
-   --  handshake case leftover bytes make Len > Need legal, and
-   --  Shift_To_Next_Packed_Message's precondition REQUIRES Need < Len.
-   type Reasm_Info is record
-      Phase : Reasm_Phase := Reasm_Idle;
-      Len   : HS_Msg_Len  := 0;   --  bytes accumulated so far
-      Need  : HS_Msg_Len  := 0;   --  total bytes needed (type+len+body)
-   end record
-     with Predicate =>
-       (case Reasm_Info.Phase is
-          when Reasm_Idle   => Reasm_Info.Len = 0 and then Reasm_Info.Need = 0,
-          when Reasm_Header => Reasm_Info.Need = 4 and then Reasm_Info.Len <= 4,
-          when Reasm_Body   => Reasm_Info.Need >= 4);
-
-   --  FIXED-SIZE reassembly buffer. Constrained deliberately: with
-   --  'First = 0 and 'Length = Max_HS_Msg guaranteed BY THE TYPE, the
-   --  bound conjuncts that used to live in Reasm_Buffer_Shaped
-   --  ("Reasm_Len <= Buf'Length", "Reasm_Need <= Buf'Length") become
-   --  tautologies against HS_Msg_Len, which is already 0 .. Max_HS_Msg.
-   --  It also collapses six different allocation sizes into one and
-   --  deletes the grow-and-copy path that allocated 128 KB, zeroed it,
-   --  copied the leftover byte-by-byte and freed the old buffer.
-   subtype Reasm_Buffer is Byte_Seq (0 .. Max_HS_Msg - 1);
+   --  Reassembly state now lives in SPARKTLS_Reassembly.Buffer, which owns
+   --  the bytes and the accounting together. Reasm_Phase, Reasm_Info and
+   --  Reasm_Buffer are gone: the phase is a QUERY (Header_Ready,
+   --  Has_Message), not stored state that can disagree with the buffer.
 
    --  Validated wire-length subtypes.
    --  Any value parsed from the network that will be used as an array
@@ -108,14 +73,6 @@ is
    --  Always 1 .. Max_Fragment + 256 (encrypted records).
    subtype Record_Frag_Len is N32 range 1 .. 16384 + 256;
 
-   Max_Record_Plaintext : constant := 16384;  --  RFC 8446 limit
-   Max_Record_Overhead  : constant := 256;    --  tag + content type
-   Max_Record_Size      : constant :=
-      Max_Record_Plaintext + Max_Record_Overhead;
-
-   --  I/O buffer capacity. Large enough for two max-size records
-   --  so the caller doesn't have to drain after every record.
-   IO_Buffer_Capacity : constant N32 := 2 * Max_Record_Size;
 
    Transcript_Capacity  : constant N32 := 32768;  --  32 KB
 
@@ -1846,8 +1803,7 @@ is
       --  itself heap-allocated once per session via HC_Alloc, so this costs
       --  no extra allocation. Being unconditionally present retires every
       --  '/= null' obligation and the whole Free/double-free proof surface.
-      Reasm_Buf  : Reasm_Buffer := (others => 0);
-      Reasm      : Reasm_Info;
+      Reasm      : SPARKTLS_Reassembly.Buffer;
 
       --  Heap budget: total bytes allocated for extensions/reassembly.
       --  Prevents DoS via large extensions in ClientHello/ServerHello.
@@ -1873,52 +1829,6 @@ is
      (HC : Handshake_Context; Size : N32) return Boolean
    is (Size <= Max_Handshake_Heap
        and then HC.Heap_Used <= Max_Handshake_Heap - Size);
-
-   --  Reassembly predicates.
-   --
-   --  Reasm_Buffer_Shaped pins the concrete buffer bounds that every site
-   --  indexing Reasm_Buf depends on, including Reasm_Buf'Length <= N32'Last,
-   --  which the N32 (HC.Reasm_Buf'Length) conversions need.
-   --
-   --  It is threaded through the handshake contracts (~430 Pre/Post
-   --  mentions): a callee that does not touch Reasm_* gets it for free, and
-   --  a caller regains it on return. It was briefly reduced to True, which
-   --  silently dropped the buffer bounds from every one of those contracts
-   --  and broke the callers that index the buffer -- so it is load-bearing,
-   --  unlike Reasm_Building, which was correctly deleted outright.
-   --
-   --  Until 2026-08-17 a second name, Reasm_Coherent, existed as a pure
-   --  alias -- "function Reasm_Coherent (HC) is (True)".
-   --  It carried no information, and it meant failure messages named the
-   --  wrapper instead of the predicate that actually failed. Collapsed into
-   --  this one name; do not reintroduce the indirection.
-   --  Only the buffer-RELATIVE facts live here. Reasm_Buf'First = 0,
-   --  'Length <= Max_HS_Msg and 'Length <= N32'Last now come from the
-   --  Reasm_Buffer type itself (inline, fixed-size), so they cost nothing.
-   function Reasm_Buffer_Shaped (HC : Handshake_Context) return Boolean is
-     (HC.Reasm.Phase = Reasm_Idle
-      or else
-        (HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length)
-         --  Reassembly state machine: Need = 0 means idle, which means
-         --  no buffered bytes; otherwise the target total always
-         --  includes the 4-byte handshake header. All 83 Reasm_Need
-         --  assignment sites are 0, 4, or a header-inclusive total, and
-         --  every ":= 0" site zeroes Reasm_Len alongside.
-         --  Deliberately stated INSIDE the buffer-exists branch: hoisting
-         --  it above costs every Reasm.Phase = Reasm_Idle path (which previously
-         --  discharged this predicate for free) a new obligation to frame
-         --  Reasm_Len/Reasm_Need, which regresses flights that never
-         --  reassemble at all (e.g. Build_Abbreviated_Server_Flight_12).
-         and then (if HC.Reasm.Need = 0
-                   then HC.Reasm.Len = 0
-                   else HC.Reasm.Need >= 4)
-         and then
-           (if (HC.Reasm.Phase = Reasm_Header) then
-              HC.Reasm.Need = 4
-              and then HC.Reasm.Len <= 4
-              and then HC.Reasm_Buf'Length = Max_HS_Msg)))
-     with Ghost;
-
 
    --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------
    --  TLS 1.2 §7.4.7: the client sends exactly one ClientKeyExchange
