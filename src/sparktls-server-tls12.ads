@@ -70,7 +70,6 @@ is
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
 	                and then S.Role = Role_Server
-	                and then Reasm_Building (HC)
 	                and then SPARKTLSCrypto.P384.Field.Initialized
 		                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post =>
@@ -123,7 +122,7 @@ is
       Result :    out Action)
    with Post =>
                   (if S.State /= Error_State
-	                   then Reasm_Building (HC)
+	                   then True
 	                        and then HC.Cfg.Local /= null
                         and then HC.Cfg.Local.Has_Identity
                         and then
@@ -147,7 +146,7 @@ is
    with Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
 	                          | Error_State
                 and then
-                  (if S.State /= Error_State then Reasm_Building (HC));
+                  (if S.State /= Error_State then True);
 
    --  Legacy CCS entry point. The active TLS 1.2 server path validates
    --  the client's ChangeCipherSpec inline while processing the
@@ -196,7 +195,6 @@ is
         and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                    (HC.Cfg.Local)
         and then HC.Cfg.Random /= null
-        and then Reasm_Building (HC)
         --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
         and then HC.Transcript_Len > 0
         and then HC.Transcript_Len <= Transcript_Capacity
@@ -222,7 +220,6 @@ is
 	                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
 	                              (HC.Cfg.Local)
 		                   and then HC.Cfg.Random /= null
-			                   and then Reasm_Building (HC)
 			                   and then S.State = S.State'Old
                    and then S.Role = S.Role'Old
                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old

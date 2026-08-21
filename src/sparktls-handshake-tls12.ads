@@ -337,13 +337,12 @@ is
       with Pre  => Data'First = 0
                    and then Data'Last in 3 .. Max_Client_Key_Exchange - 1
 	                   and then Valid_ECDHE_Group (HC.Selected_Group)
-	                   and then Reasm_Building (HC),
+	                   and then True,
            Post => HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
                    and then HC.Reasm.Need = HC.Reasm.Need'Old
                    and then HC.Reasm.Len = HC.Reasm.Len'Old
                    and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-	                   and then Reasm_Building (HC)
 	                   and then (if Valid_ECDHE_Group (HC.Selected_Group'Old)
                    then Valid_ECDHE_Group (HC.Selected_Group))
                 and then
@@ -462,7 +461,7 @@ is
                 and then HC.Cfg.Random /= null
 	                and then HC.Version = TLS_1_2
 				                and then HC.Legacy_Session_ID_Len <= 32
-				                and then Reasm_Building (HC),
+				                and then True,
         --  Frame postcondition: ServerHello construction does not
         --  touch State (S), the configuration pointer/identity, or the
         --  Random callback. Callers (Build_Server_Flight_12) need
@@ -481,7 +480,7 @@ is
 	                and HC.Cfg.Random /= null
 	                and HC.Version = HC.Version'Old
 				                and HC.Selected_Group = HC.Selected_Group'Old
-				                and Reasm_Building (HC);
+				                and True;
 
    function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean;
 

@@ -691,7 +691,6 @@ is
          pragma Loop_Invariant
            (I in 0 .. C_Len - 1
             and RBT.Index (I + 1) in Cert_RFLX'Range);
-			         pragma Loop_Invariant (True);
          pragma Loop_Invariant (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
          pragma Loop_Invariant
            (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
@@ -870,7 +869,6 @@ is
                   pragma Loop_Invariant
                     (if HC.Cfg.Random'Loop_Entry /= null
                      then HC.Cfg.Random /= null);
-		                  pragma Loop_Invariant (True);
                   pragma Loop_Invariant
                     (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                   pragma Loop_Invariant
@@ -1162,7 +1160,6 @@ is
                pragma Loop_Invariant
                  (if HC.Cfg.Random'Loop_Entry /= null
                   then HC.Cfg.Random /= null);
-					               pragma Loop_Invariant (True);
 			               pragma Loop_Invariant
 		                 (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant

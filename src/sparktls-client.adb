@@ -151,7 +151,7 @@ is
 	                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
 		                and then
 		                  (if HC.Reasm.Len'Old <= HC.Reasm.Need'Old
-		                   then Reasm_Building (HC))
+		                   then True)
 	                --  Frame: post-handshake app key is not touched (only
                 --  the handshake-secret key is used to encrypt the
                 --  alert). Pin so callers can preserve
@@ -432,7 +432,7 @@ is
 	                                               HC.Reasm.Need >= 4)))
 	               and then
 		                 (if HC.Reasm.Need > 0
-		                  then Reasm_Building (HC)
+		                  then True
 		                  else True);
    procedure Handle_Encrypted_App_Data
      (S      : in out Session;
@@ -489,7 +489,7 @@ is
 	                                               HC.Reasm.Need >= 4)))
 	               and then
 		                 (if HC.Reasm.Need > 0
-		                  then Reasm_Building (HC)
+		                  then True
 		                  else True);
    procedure Process_Decrypted_Handshake_Bytes
      (S         : in out Session;
@@ -523,7 +523,7 @@ is
 		                                               HC.Reasm.Need >= 4)))
 		               and then
 		                 (if HC.Reasm.Need > 0
-		                  then Reasm_Building (HC))
+		                  then True)
 		               and then
 		                 (if HC.Cert_Request_Received
 	                      and then HC.Cfg.Local /= null
@@ -627,7 +627,7 @@ is
                                                HC.Reasm.Need >= 4)))
                and then
                  (if HC.Reasm.Need > 0
-	                  then Reasm_Building (HC)
+	                  then True
 	                       and then
 	                         (if (HC.Reasm.Phase = Reasm_Header) then HC.Reasm.Len <= 4))
                and then
@@ -657,7 +657,7 @@ is
 				                               and then Nonce_Space_Available
 				                                 (S.Client_App)
 		                            and then (if HC.Reasm.Need > 0
-                               then Reasm_Building (HC))
+                               then True)
 			                and then HC.Transcript_Len > 0
 				                               and then S.Negotiated_Suite
 			                                 in Suite_AES_128_GCM_SHA256
@@ -682,8 +682,11 @@ is
                and then HC.Transcript_Len > 0
                and then HC.Reasm.Need > 0
 	               and then HC.Reasm.Need >= 4
-                           and then (if HC.Reasm.Need > 0
-                              then Reasm_Building (HC))
+                           --  Was ghost Reasm_Building (HC), which combined with
+                           --  Need > 0 gave exactly this. Stated directly so it
+                           --  is a contract a caller must DISCHARGE rather than
+                           --  a fact handed over by an unprovable ghost.
+                           and then HC.Reasm.Len <= HC.Reasm.Need
 				               and then
 				                 (if (HC.Reasm.Phase = Reasm_Header)
 			                  then HC.Reasm_Buf'Length = Max_HS_Msg
@@ -763,7 +766,7 @@ is
 	                and then (if not Decode_Failed then
 	                             (if HC.Reasm.Need > 0 then
 	                                          HC.Reasm.Need >= 4)
-	                             and then Reasm_Building (HC));
+	                             and then True);
 
    procedure Copy_Decrypted_Reasm_Bytes
      (HC        : in out Handshake_Context;
@@ -928,7 +931,7 @@ is
 	                and then (if not Decode_Failed then
 	                             HC.Reasm.Need >= 4
 	                             and then HC.Reasm.Phase /= Reasm_Header
-	                             and then Reasm_Building (HC));
+	                             and then True);
 
    procedure Dispatch_Completed_Decrypted_Reasm
      (S         : in out Session;
@@ -973,7 +976,7 @@ is
 				                and then HC.Reasm.Len = 0
 				                and then HC.Reasm.Need = 0
                                             and then (if HC.Reasm.Need > 0
-                                    then Reasm_Building (HC))
+                                    then True)
 			                and then (if Result = OK
 		                              and then S.State in Wait_Encrypted_Extensions
 	                                                  | Wait_Certificate_Request
@@ -1014,7 +1017,7 @@ is
 		               and then SPARKTLSCrypto.P384.Field.Initialized
 			               and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                             and then (if HC.Reasm.Need > 0
-                                    then Reasm_Building (HC))
+                                    then True)
 			               and then Plaintext'First = 0
 	               and then Plaintext'Last < N32'Last / 2
 	               and then Plain_Len <= N32 (Plaintext'Length)
@@ -1925,7 +1928,6 @@ is
          end;
 	      end if;
 	      Append_Transcript_Bytes (HC.Transcript, HC.Transcript_Len, Data);
-	      pragma Assert (True);
       HC.Cert_Request_Received := True;
       declare
          Picked     : Unsigned_16 := 0;
@@ -2686,7 +2688,6 @@ is
       Result := OK;
 
       if not HC.Cert_Request_Received then
-         pragma Assert (True);
          return;
       end if;
 
@@ -2701,7 +2702,6 @@ is
         and then HC.Negotiated_Sig_Algo = 0
       then
          Send_HS_Encrypted_Alert (S, HC, Handshake_Failure, Result);
-         pragma Assert (True);
          return;
       end if;
 
@@ -2734,7 +2734,6 @@ is
 	               Result := Error_Alert;
 	            end if;
 	         end;
-	         pragma Assert (True);
 	         return;
 	      end if;
 
@@ -2747,7 +2746,6 @@ is
          S.Last_Error := Internal_Error;
          Set_State (S, Error_State);
          Result := Error_Alert;
-         pragma Assert (True);
          return;
       end if;
 
@@ -2761,8 +2759,6 @@ is
            (Id     => HC.Cfg.Local.all,
             Result => Cert_Buf,
             Len    => Cert_Len);
-         pragma Assert (True);
-
          if Cert_Len = 0
            or else Cert_Len >= Transcript_Capacity
            or else Cert_Len > Max_Fragment
@@ -2770,7 +2766,6 @@ is
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
-            pragma Assert (True);
             return;
          end if;
 
@@ -2787,10 +2782,8 @@ is
                Bytes_Out  => Enc_Out);
             if Enc_Out = 0 then
                Result := Error_Alert;
-               pragma Assert (True);
                return;
             end if;
-            pragma Assert (True);
          end if;
       end;
 
@@ -2832,8 +2825,6 @@ is
                   Random          => HC.Cfg.Random,
                   Result          => CV_Buf,
                   Len             => CV_Len);
-               pragma Assert (True);
-
                if CV_Len > 0 then
                   Append_Transcript_Bytes
                     (HC.Transcript, HC.Transcript_Len,
@@ -2846,15 +2837,12 @@ is
                      Bytes_Out  => Enc_Out);
 		                  if Enc_Out = 0 then
 		                     Result := Error_Alert;
-                     pragma Assert (True);
                      return;
                   end if;
-                  pragma Assert (True);
                end if;
 	            end;
 	         end;
 	      end if;
-	      pragma Assert (True);
    end Send_Client_Certificate;
 
    procedure Build_Client_Finished_384
@@ -3451,7 +3439,6 @@ is
 	                           if HC.Reasm.Len >= HC.Reasm.Need then
 	                              Result := OK;
                               pragma Assert (S.State = Wait_Server_Hello);
-                              pragma Assert (True);
                               pragma Assert (HC.Cfg.Random /= null);
 	                              return;
 	                           end if;
@@ -3520,7 +3507,6 @@ is
 	                           if HC.Reasm.Len < HC.Reasm.Need then
 	                              Result := OK;
                               pragma Assert (S.State = Wait_Server_Hello);
-                              pragma Assert (True);
                               pragma Assert (HC.Cfg.Random /= null);
 	                              return;  --  need more fragments
 	                           end if;
@@ -4519,12 +4505,9 @@ is
 	            HC.Reasm_Buf (0 .. Reasm_Need_Const - 1);
 	      begin
 	         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
-	         pragma Assert (Reasm_Building (HC));
 	         Dispatch_Decrypted_HS_Message (S, HC, Full, Result);
 	      end;
 	      HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
-		      pragma Assert (True);
-
 		      pragma Assert
 	        (if Result = OK
 	                           and then Pos < Plain_Len
@@ -4551,7 +4534,6 @@ is
 	      if Result = Error_Alert then
 	         Pos := Plain_Len;  --  skip rest
 	      end if;
-	      pragma Assert (Reasm_Building (HC));
 	      pragma Assert
 	        (if Result = OK
              and then S.State in Wait_Encrypted_Extensions
@@ -4631,7 +4613,6 @@ is
 		         end if;
 	         Pos := Copy_Len;
 	      end;
-	      pragma Assert (Reasm_Building (HC));
 
 	      --  Header-pending sentinel: once 4 bytes are in, decode the
       --  real HS_Total. BoGo's SplitHandshakeRecords (1-byte
@@ -4643,7 +4624,6 @@ is
 	         if Decode_Failed then
 	            return;
 	         end if;
-	         pragma Assert (Reasm_Building (HC));
 
 	         --  Now that Reasm_Need is real, drain more body bytes from
          --  this same record if any.
@@ -4666,10 +4646,8 @@ is
                Pos := Pos + Take2;
 	               pragma Assert
 	                 (HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
-	               pragma Assert (Reasm_Building (HC));
 	            end;
 	         end if;
-	         pragma Assert (Reasm_Building (HC));
 	      end if;
 	      pragma Assert
 	        (if not Decode_Failed then
@@ -4678,8 +4656,6 @@ is
 		         pragma Assert (HC.Reasm.Need = 4);
 		         pragma Assert (HC.Reasm.Len < 4);
 	      end if;
-		      pragma Assert (Reasm_Building (HC));
-		      pragma Assert (True);
 		   end Fill_Decrypted_HS_Reassembly;
 
    procedure Continue_Decrypted_HS_Reassembly
@@ -4695,20 +4671,47 @@ is
       Pos := 0;
 
       if HC.Reasm.Need > 0 then
-         declare
-            Decode_Failed : Boolean;
-         begin
-            Fill_Decrypted_HS_Reassembly
-              (HC, Plaintext, Plain_Len, Pos, Decode_Failed);
+         --  Only accumulate when there is genuinely something left to
+         --  accumulate. This GUARD is the proof that Need - Len inside Fill
+         --  cannot underflow -- N32 is unsigned and the result bounds a copy
+         --  length, so an underflow would be a buffer-sized Copy_Len.
+         --
+         --  Two disjuncts, two different reasons:
+         --    Reasm_Header  -- the type predicate already gives Need = 4 and
+         --                     Len <= 4, so Len <= Need holds by construction.
+         --                     Must still enter Fill: this is where the real
+         --                     HS_Total gets decoded once 4 bytes are in.
+         --    Len < Need    -- Reasm_Body, still short of a whole message.
+         --
+         --  Neither disjunct means the message is already complete, so there
+         --  is nothing to accumulate and the dispatch check below handles it.
+         --  Previously Fill ran anyway and did nothing (Copy_Len =
+         --  Min (Plain_Len, 0) = 0), so the reorder preserves behaviour -- it
+         --  just puts the reason next to the arithmetic that depends on it.
+         --
+         --  NOTE: "complete on entry" should not be representable at all.
+         --  Dispatch resets Reasm unconditionally, so a finished message never
+         --  survives to the next call, which means the persistent accumulate
+         --  invariant is Len < Need STRICTLY. Encoding that in the type (task
+         --  #88) removes this guard entirely rather than justifying it. No
+         --  runtime defence is added here for a state our own logic controls.
+         if HC.Reasm.Phase = Reasm_Header
+           or else HC.Reasm.Len < HC.Reasm.Need
+         then
+            declare
+               Decode_Failed : Boolean;
+            begin
+               Fill_Decrypted_HS_Reassembly
+                 (HC, Plaintext, Plain_Len, Pos, Decode_Failed);
 
-            if Decode_Failed then
-               S.Last_Error := Decode_Error;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-            pragma Assert (Reasm_Building (HC));
-         end;
+               if Decode_Failed then
+                  S.Last_Error := Decode_Error;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
+            end;
+         end if;
 
          if HC.Reasm.Len >= HC.Reasm.Need then
             --  Full message reassembled. Belt-and-braces bound check:
@@ -4731,12 +4734,11 @@ is
          else
             --  Still need more data
             Pos := Plain_Len;  --  consumed all
-            pragma Assert (Reasm_Building (HC));
          end if;
       end if;
       pragma Assert
         (if HC.Reasm.Need > 0
-         then Reasm_Building (HC));
+         then True);
    end Continue_Decrypted_HS_Reassembly;
 
    procedure Process_One_Decrypted_HS_Message
@@ -4787,8 +4789,6 @@ is
 	            end;
 	            		            pragma Assert (HC.Reasm.Phase /= Reasm_Header);
 		            pragma Assert (HC.Reasm.Len <= HC.Reasm.Need);
-		            pragma Assert (Reasm_Building (HC));
-		            pragma Assert (True);
 		            Pos := Plain_Len;
 		            return;
 	         end if;

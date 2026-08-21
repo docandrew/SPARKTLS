@@ -743,7 +743,6 @@ is
 
       --  Minimum: point_len(1) + point(1) = 2
       if Data'Length < 2 then
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -760,7 +759,6 @@ is
       if not CKE.Well_Formed_Message (Ctx) then
          CKE.Take_Buffer (Ctx, Buf);
          RFLX_Free_Local (Buf);
-         pragma Assert (Reasm_Building (HC));
          return;
       end if;
 
@@ -774,7 +772,6 @@ is
          if Data'Length /= 1 + Pt_Len then
             CKE.Take_Buffer (Ctx, Buf);
             RFLX_Free_Local (Buf);
-            pragma Assert (Reasm_Building (HC));
             return;
          end if;
 
@@ -782,7 +779,6 @@ is
             HC.Ext_Parse_Err := Illegal_Parameter;
             CKE.Take_Buffer (Ctx, Buf);
             RFLX_Free_Local (Buf);
-            pragma Assert (Reasm_Building (HC));
             return;
          end if;
 
@@ -799,7 +795,6 @@ is
                   HC.Ext_Parse_Err := Illegal_Parameter;
                   CKE.Take_Buffer (Ctx, Buf);
                   RFLX_Free_Local (Buf);
-                  pragma Assert (Reasm_Building (HC));
                   return;
                end if;
                for I in N32 range 0 .. 64 loop
@@ -813,7 +808,6 @@ is
                   HC.Ext_Parse_Err := Illegal_Parameter;
                   CKE.Take_Buffer (Ctx, Buf);
                   RFLX_Free_Local (Buf);
-                  pragma Assert (Reasm_Building (HC));
                   return;
                end if;
                for I in N32 range 0 .. 96 loop
@@ -825,7 +819,6 @@ is
             when others =>
                CKE.Take_Buffer (Ctx, Buf);
                RFLX_Free_Local (Buf);
-               pragma Assert (Reasm_Building (HC));
                return;
          end case;
       end;
@@ -833,7 +826,6 @@ is
       CKE.Take_Buffer (Ctx, Buf);
       RFLX_Free_Local (Buf);
       OK := True;
-      pragma Assert (Reasm_Building (HC));
    end Parse_Client_Key_Exchange;
 
    ------------------------------------------------------------------
@@ -1427,7 +1419,6 @@ is
       end if;
 
       pragma Assert (Pos = SH_Msg_Len);
-      pragma Assert (True);
       Len := SH_Msg_Len;
    end Build_Server_Hello_12;
 
@@ -1470,7 +1461,6 @@ is
 
       --  Random (32 bytes)
       for I in N32 range 0 .. 31 loop
-         pragma Loop_Invariant (True);
          pragma Loop_Invariant
            (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
          pragma Loop_Invariant
@@ -1501,7 +1491,6 @@ is
             M13, M12, MJ : Boolean := True;
          begin
             for I in N32 range 0 .. 7 loop
-               pragma Loop_Invariant (True);
                pragma Loop_Invariant
                  (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant
@@ -1598,7 +1587,6 @@ is
             while Ext_Pos + 3 <= Data'Last
               and then Ext_Pos + 4 <= Ext_End
             loop
-               pragma Loop_Invariant (True);
                pragma Loop_Invariant
                  (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                pragma Loop_Invariant

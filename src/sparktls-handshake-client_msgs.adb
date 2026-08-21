@@ -1669,7 +1669,6 @@ is
                                 HC.Reasm.Need = 4
                                 and then HC.Reasm.Len <= 4
                                 and then HC.Reasm_Buf'Length = Max_HS_Msg));
-      pragma Assert (True);
       if Len > 0 then
          Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
       end if;
@@ -1853,7 +1852,6 @@ is
 	         pragma Assert (N_Ext <= Exts'Last);
 	         while P <= Ext_End - 4 loop
 	            pragma Loop_Invariant (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant (True);
 	            pragma Loop_Invariant
 	              (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	            pragma Loop_Invariant
@@ -1898,7 +1896,6 @@ is
 	                  pragma Loop_Invariant
 	                    (if HC.Cfg.Random'Loop_Entry /= null
 	                     then HC.Cfg.Random /= null);
-	                  pragma Loop_Invariant (True);
 	                  pragma Loop_Invariant
 	                    (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	                  pragma Loop_Invariant
@@ -1968,7 +1965,6 @@ is
 	         for I in 1 .. N_Ext loop
 	            pragma Loop_Invariant
 	              (N_Ext <= Exts'Last);
-	            pragma Loop_Invariant (True);
 	            pragma Loop_Invariant
 	              (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	            pragma Loop_Invariant
@@ -2177,7 +2173,6 @@ is
                      if C_Len <= N32 (HC.HRR_Cookie'Length) then
 	                        HC.HRR_Cookie_Len := C_Len;
 	                        for K in 0 .. C_Len - 1 loop
-	                           pragma Loop_Invariant (True);
 	                           pragma Loop_Invariant
 	                             (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
 	                           pragma Loop_Invariant
@@ -2220,7 +2215,6 @@ is
       --  Verified by BoGo ExtendedMasterSecret-TLS12-Client: reverting
       --  either change alone puts that test back in the failing set.
       for I in 1 .. N_Ext loop
-         pragma Loop_Invariant (True);
          pragma Loop_Invariant
            (HC.Transcript_Len = Saved_Transcript_Len);
          pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
@@ -2714,7 +2708,6 @@ is
                     (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
                   pragma Loop_Invariant
                     (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
-                  pragma Loop_Invariant (True);
                   pragma Loop_Invariant
                     (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
                   pragma Loop_Invariant
@@ -2967,7 +2960,6 @@ is
                                       HC.Reasm.Need = 4
                                       and then HC.Reasm.Len <= 4
                                       and then HC.Reasm_Buf'Length = Max_HS_Msg));
-            pragma Assert (True);
          end;
       elsif HC.Use_P256_KE then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
@@ -3011,7 +3003,6 @@ is
                                       HC.Reasm.Need = 4
                                       and then HC.Reasm.Len <= 4
                                       and then HC.Reasm_Buf'Length = Max_HS_Msg));
-            pragma Assert (True);
          end;
       else
          --  X25519 ECDHE
@@ -3053,7 +3044,6 @@ is
                              and then HC.Reasm_Buf'Length = Max_HS_Msg);
             null;
          end if;
-         pragma Assert (True);
       end if;
 
       --  Bubble up extension-specific protocol errors (e.g. RFC 7301

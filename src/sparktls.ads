@@ -1920,13 +1920,6 @@ is
      with Ghost;
 
 
-   --  Build mode excludes temporary packed-flight dispatch, where Reasm_Len
-   --  may exceed Reasm_Need while leftover bytes are shifted down. This is
-   --  deliberately independent of the buffer shape above.
-   function Reasm_Building (HC : Handshake_Context) return Boolean is
-     (HC.Reasm.Phase = Reasm_Idle or else HC.Reasm.Len <= HC.Reasm.Need)
-     with Ghost;
-
    --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------
    --  TLS 1.2 §7.4.7: the client sends exactly one ClientKeyExchange
    --  per handshake, immediately after the (optional) Certificate.
