@@ -139,11 +139,10 @@ fi
 #  -loose-errors : map every un-mapped error to "" (we don't yet
 #                  produce BoringSSL-specific error strings)
 #
-#  -skip SKIPS : drop BoGo tests that are either genuinely unsupported
-#                or, in the default profile, still-open compatibility
-#                gaps. Set BOGO_STRICT_SUPPORTED=1 to skip only genuinely
-#                unsupported features. See CLASSIFICATION.md for the full
-#                design rationale per bucket.
+#  -skip SKIPS : drop BoGo tests for genuinely unsupported features only,
+#                each with a reason in UNSUPPORTED_SKIPS below. There is
+#                ONE mode -- see the "ONE MODE ONLY" note further down.
+#                Anything failing fails visibly. See CLASSIFICATION.md.
 #
 #  Pattern syntax: semicolon-separated globs (Go path.Match), no
 #  comma support. `*` matches anything except `-`.

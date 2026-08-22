@@ -3213,6 +3213,24 @@ is
             Msg_Type := Frag (0);
             Msg_Len  := Frag'Length - 4;
 
+            --  RFC 5246 §7.4.6: ServerHelloDone is the last message of the
+            --  server's flight, so nothing may trail it. Residue here is
+            --  excess handshake data, NOT the head of a later message that
+            --  a further record will complete -- which is what Consume
+            --  otherwise assumes (BoGo appends one stray NST type byte in
+            --  PartialNewSessionTicketWithServerHelloDone).
+            --
+            --  Checked BEFORE dispatch on purpose: the handler queues our
+            --  CCS+Finished and switches write keys, after which a plaintext
+            --  alert would be wrong.
+            if Msg_Type = HT_Server_Hello_Done
+              and then Used (HC.Reasm) > Frag'Length
+            then
+               Reset (HC.Reasm);
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               return;
+            end if;
+
             Dispatch_Server_Flight_Message
               (S        => S,
                HC       => HC,
