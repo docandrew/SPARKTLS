@@ -359,9 +359,6 @@ is
                                         and then HC.Transcript_Len = HC.Transcript_Len'Old
                                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
                                         and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-                                                and then HC.Reasm.Len = HC.Reasm.Len'Old
-                                                and then HC.Reasm.Need = HC.Reasm.Need'Old
-                                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
                                                 and then Len <= N32 (Result'Length);
 
    procedure Append_PSK_Extension
@@ -1657,18 +1654,6 @@ is
       --  Proof decomposition: the prover cannot re-establish the whole
       --  predicate in one step after the HC component writes above.
       --  Each conjunct is discharged separately, then used as a lemma.
-      pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                     or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
-      pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                     or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
-      pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                     or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
-                              else HC.Reasm.Need >= 4));
-      pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                     or else (if (HC.Reasm.Phase = Reasm_Header) then
-                                HC.Reasm.Need = 4
-                                and then HC.Reasm.Len <= 4
-                                and then HC.Reasm_Buf'Length = Max_HS_Msg));
       if Len > 0 then
          Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
       end if;
@@ -1852,12 +1837,6 @@ is
                  pragma Assert (N_Ext <= Exts'Last);
                  while P <= Ext_End - 4 loop
                     pragma Loop_Invariant (N_Ext <= Exts'Last);
-                    pragma Loop_Invariant
-                      (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-                    pragma Loop_Invariant
-                      (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-                    pragma Loop_Invariant
-                      (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                             pragma Loop_Invariant
                               (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
                             pragma Loop_Invariant
@@ -1896,12 +1875,6 @@ is
                           pragma Loop_Invariant
                             (if HC.Cfg.Random'Loop_Entry /= null
                              then HC.Cfg.Random /= null);
-                          pragma Loop_Invariant
-                            (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-                          pragma Loop_Invariant
-                            (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-                          pragma Loop_Invariant
-                            (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                           pragma Loop_Invariant
                             (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
                           pragma Loop_Invariant
@@ -1965,12 +1938,6 @@ is
                  for I in 1 .. N_Ext loop
                     pragma Loop_Invariant
                       (N_Ext <= Exts'Last);
-                    pragma Loop_Invariant
-                      (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-                    pragma Loop_Invariant
-                      (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-                    pragma Loop_Invariant
-                      (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                             pragma Loop_Invariant
                               (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
                             pragma Loop_Invariant
@@ -2174,12 +2141,6 @@ is
                                 HC.HRR_Cookie_Len := C_Len;
                                 for K in 0 .. C_Len - 1 loop
                                    pragma Loop_Invariant
-                                     (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-                                   pragma Loop_Invariant
-                                     (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-                                   pragma Loop_Invariant
-                                     (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
-                                   pragma Loop_Invariant
                                              (HC.Transcript_Len =
                                               HC.Transcript_Len'Loop_Entry);
                                            pragma Loop_Invariant
@@ -2259,10 +2220,7 @@ is
                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data),
         Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
                 and then HC.Transcript_Len = HC.Transcript_Len'Old
-                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-                and then HC.Reasm.Len = HC.Reasm.Len'Old
-                and then HC.Reasm.Need = HC.Reasm.Need'Old
-                and then HC.Reasm.Phase = HC.Reasm.Phase'Old;
+                and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old;
 
    procedure Apply_SH_Key_Share
      (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
@@ -2708,12 +2666,6 @@ is
                     (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
                   pragma Loop_Invariant
                     (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
-                  pragma Loop_Invariant
-                    (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-                  pragma Loop_Invariant
-                    (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-                  pragma Loop_Invariant
-                    (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                   declare
                      Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                   begin
@@ -2763,21 +2715,6 @@ is
       else
          HC.Version := TLS_1_2;
       end if;
-      --  Correctly guarded decomposition: every conjunct is inside the
-      --  "Reasm.Phase = Reasm_Idle or else" disjunction, as the predicate has it.
-      pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                     or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));  --  D1 heap
-      pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                     or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));  --  D2 heap
-      pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                     or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
-                              else HC.Reasm.Need >= 4));  --  D3 scalar
-      pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                     or else (if (HC.Reasm.Phase = Reasm_Header) then
-                                HC.Reasm.Need = 4
-                                and then HC.Reasm.Len <= 4
-                                and then HC.Reasm_Buf'Length = Max_HS_Msg));  --  D4 mixed
-      pragma Assert (True);  --  D5 whole
       if HC.Version = TLS_1_3
         and then S.Negotiated_Suite not in
           Suite_AES_128_GCM_SHA256
@@ -2945,21 +2882,6 @@ is
                goto Cleanup;
             end if;
             HC.Shared_Secret := Secret_384;
-            --  Proof decomposition: the prover cannot re-establish the whole
-            --  predicate in one step after an unrelated HC component write.
-            --  Each conjunct is discharged separately, then used as a lemma.
-            pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                           or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                           or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                           or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
-                                    else HC.Reasm.Need >= 4));
-            pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                           or else (if (HC.Reasm.Phase = Reasm_Header) then
-                                      HC.Reasm.Need = 4
-                                      and then HC.Reasm.Len <= 4
-                                      and then HC.Reasm_Buf'Length = Max_HS_Msg));
          end;
       elsif HC.Use_P256_KE then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
@@ -2970,11 +2892,11 @@ is
          begin
             SPARKTLSCrypto.P256.Point.P256_Decode
               (Peer_Pt, HC.P256_Peer_PK, Valid);
-                            if Valid = 0 then
-                               OK := False;
-                               pragma Assert_And_Cut (SH_Parse_Frame);
-                               goto Cleanup;
-                            end if;
+            if Valid = 0 then
+               OK := False;
+               pragma Assert_And_Cut (SH_Parse_Frame);
+               goto Cleanup;
+            end if;
             --  Multiply peer's public key by our private scalar
             SPARKTLSCrypto.P256.Point.P256_Mul
               (Peer_Pt, HC.P256_Local_SK, 32);
@@ -2988,21 +2910,6 @@ is
             end;
             HC.Shared_Secret := (others => 0);
             HC.Shared_Secret (0 .. 31) := X_Bytes;
-            --  Proof decomposition: the prover cannot re-establish the whole
-            --  predicate in one step after an unrelated HC component write.
-            --  Each conjunct is discharged separately, then used as a lemma.
-            pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                           or else HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                           or else HC.Reasm.Need <= N32 (HC.Reasm_Buf'Length));
-            pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                           or else (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
-                                    else HC.Reasm.Need >= 4));
-            pragma Assert (HC.Reasm.Phase = Reasm_Idle
-                           or else (if (HC.Reasm.Phase = Reasm_Header) then
-                                      HC.Reasm.Need = 4
-                                      and then HC.Reasm.Len <= 4
-                                      and then HC.Reasm_Buf'Length = Max_HS_Msg));
          end;
       else
          --  X25519 ECDHE
@@ -3020,29 +2927,6 @@ is
             S.Last_Error := Illegal_Parameter;
             OK := False;
             goto Cleanup;
-         end if;
-         --  Proof decomposition: the prover cannot re-establish the whole
-         --  predicate in one step after an unrelated HC component write.
-         --
-         --  The case split on Reasm.Phase = Reasm_Idle is made EXPLICIT in the
-         --  control flow rather than left inside four separate
-         --  "Buf = null or else <conjunct>" lemmas. Reasm_Buffer_Shaped is
-         --  "Buf = null or else (A and B and C and D)"; deriving that from
-         --  four independent disjunctions requires the solver to split on
-         --  Buf = null and recombine, which it failed to find inside a VC
-         --  this large (it timed out at level 1 on chungus, 2026-08-19).
-         --  Inside the branch below Buf /= null is a hypothesis, so each
-         --  conjunct is proved bare, and the fold is then either the first
-         --  disjunct or all four -- no search required. Giving the prover
-         --  the split beats giving it more time.
-         if True then
-            pragma Assert (if HC.Reasm.Need = 0 then HC.Reasm.Len = 0
-                           else HC.Reasm.Need >= 4);
-            pragma Assert (if (HC.Reasm.Phase = Reasm_Header) then
-                             HC.Reasm.Need = 4
-                             and then HC.Reasm.Len <= 4
-                             and then HC.Reasm_Buf'Length = Max_HS_Msg);
-            null;
          end if;
       end if;
 

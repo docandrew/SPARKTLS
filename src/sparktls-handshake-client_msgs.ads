@@ -42,10 +42,7 @@ is
                                           then HC.Cfg.Random /= null)
                         and then Len <= N32 (Result'Length)
                                                                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-                                        and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
-                                        and then HC.Reasm.Len = HC.Reasm.Len'Old
-                                and then HC.Reasm.Need = HC.Reasm.Need'Old
-                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old;
+                                        and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old;
 
    --  Parse a ServerHello from raw handshake message bytes.
    --  Extracts: server random, cipher suite, key share (server public key).

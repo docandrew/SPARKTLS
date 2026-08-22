@@ -316,10 +316,7 @@ is
                 and then Data'Last in 9 .. Max_Server_Key_Exchange - 1
                 and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => HC.Reasm.Need = HC.Reasm.Need'Old
-                                and then HC.Reasm.Len = HC.Reasm.Len'Old
-                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-                                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
+        Post => HC.Client_Seq_12 = HC.Client_Seq_12'Old
                                 and then (if HC.Cfg.Random'Old /= null
                                           then HC.Cfg.Random /= null)
                         and then
@@ -340,9 +337,6 @@ is
                            and then True,
            Post => HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
-                   and then HC.Reasm.Need = HC.Reasm.Need'Old
-                   and then HC.Reasm.Len = HC.Reasm.Len'Old
-                   and then HC.Reasm.Phase = HC.Reasm.Phase'Old
                            and then (if Valid_ECDHE_Group (HC.Selected_Group'Old)
                    then Valid_ECDHE_Group (HC.Selected_Group))
                 and then
@@ -513,9 +507,6 @@ is
                                   then HC.Cfg.Random /= null)
                         and then HC.Transcript_Len = HC.Transcript_Len'Old
                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-                        and then HC.Reasm.Len = HC.Reasm.Len'Old
-                        and then HC.Reasm.Need = HC.Reasm.Need'Old
-                        and then HC.Reasm.Phase = HC.Reasm.Phase'Old
                                         and then
                                           (if HC.HRR_Cookie_Len'Old <=
                                                 N32 (HC.HRR_Cookie'Length)

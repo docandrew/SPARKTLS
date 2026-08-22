@@ -16,11 +16,18 @@ package body SPARKTLS_Reassembly with SPARK_Mode => On is
       +   256 * N32 (B.Data (2))
       +         N32 (B.Data (3)));
 
+   function Declared_Type (B : Buffer) return Byte is (B.Data (0));
+
    function Message_Too_Large (B : Buffer) return Boolean is
      (Header_Ready (B) and then Declared_Size (B) > Max_HS_Msg);
 
    function Has_Message (B : Buffer) return Boolean is
      (Header_Ready (B) and then B.Filled >= Declared_Size (B));
+
+   function Wanted (B : Buffer) return HS_Msg_Len is
+     (if not Header_Ready (B) then 4 - B.Filled
+      elsif B.Filled >= Declared_Size (B) then 0
+      else Declared_Size (B) - B.Filled);
 
    function Message_Length (B : Buffer) return HS_Msg_Len is
      (Declared_Size (B));

@@ -225,7 +225,6 @@ is
                                           HC.Selected_Group'Old
                                         and then HC.Transcript_Len =
                                           HC.Transcript_Len'Old
-                                                and then HC.Reasm.Len = HC.Reasm.Len'Old
                         and then HC.Client_Seq_12 = 0
                         and then Records.TLS12.Nonce_Space_Available_12
                           (HC.Client_Seq_12)
@@ -447,15 +446,6 @@ is
                                           .Local_Config_Valid (HC.Cfg.Local))
                                 and then Records.TLS12.Nonce_Space_Available_12
                                   (HC.Client_Seq_12)
-                        and then
-                          (if HC.Reasm.Need > 0
-                                   then HC.Reasm_Buf'First = 0
-                                and then
-                                  (if (HC.Reasm.Phase = Reasm_Header)
-                                   then HC.Reasm.Need = 4
-                                        and then HC.Reasm.Len <= 4
-                                        and then HC.Reasm_Buf'Length =
-                                          Max_HS_Msg))
                         and then SPARKTLSCrypto.P384.Field.Initialized
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => True;
@@ -525,7 +515,6 @@ is
                         and then HC.Transcript_Len = HC.Transcript_Len'Old
                                 and then HC.Hash_Len = HC.Hash_Len'Old
                                 and then HC.Selected_Group = HC.Selected_Group'Old
-                                and then HC.Reasm.Len = HC.Reasm.Len'Old
                                                 and then (if HC.Cfg.Random'Old /= null
                                   then HC.Cfg.Random /= null)
                         and then HC.Peer_Cert_DER_Len = C_Len
@@ -546,10 +535,6 @@ is
                  pragma Loop_Invariant
                    (I in 0 .. C_Len - 1
                     and RBT.Index (I + 1) in Cert_RFLX'Range);
-                 pragma Loop_Invariant
-                   (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry
-                    and then HC.Reasm.Need = HC.Reasm.Need'Loop_Entry
-                    and then HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
          HC.Peer_Cert_DER (I) :=
             Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;
@@ -611,7 +596,6 @@ is
                         and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
                         and then HC.Peer_Cert = HC.Peer_Cert'Old
                         and then HC.Selected_Group = HC.Selected_Group'Old
-                                        and then HC.Reasm.Len = HC.Reasm.Len'Old
                                         and then (if HC.Cfg.Random'Old /= null
                                   then HC.Cfg.Random /= null)
                         and then (if HC.Peer_Cert_Valid then
@@ -637,10 +621,7 @@ is
                    procedure Reset_Peer_Cert_Chain_12
                      (HC : in out Handshake_Context)
                            with Pre  => True,
-                                        Post => HC.Reasm.Len = HC.Reasm.Len'Old
-                                                and then HC.Reasm.Need = HC.Reasm.Need'Old
-                                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-                                                and then HC.Selected_Group =
+                                        Post => HC.Selected_Group =
                                                   HC.Selected_Group'Old
                                     and then (if HC.Cfg.Random'Old /= null
                                               then HC.Cfg.Random /= null)
@@ -670,9 +651,7 @@ is
                         and then
                           (if OK then
                              X509.Spans_Valid (Cert, X509.N32 (C_Len) - 1)),
-                                                Post => HC.Reasm.Len = HC.Reasm.Len'Old
-                                                and then HC.Reasm.Need = HC.Reasm.Need'Old
-                                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
+                                                Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
                                                 and then HC.Selected_Group =
                                                   HC.Selected_Group'Old
                                     and then (if HC.Cfg.Random'Old /= null
@@ -696,10 +675,6 @@ is
               C_Len : in     N32;
               OK    : in     Boolean)
            is
-      Saved_Reasm_Len : constant N32 := HC.Reasm.Len with Ghost;
-      Saved_Reasm_Need : constant N32 := HC.Reasm.Need with Ghost;
-      Saved_Reasm_Hdr_Pending : constant Boolean :=
-        (HC.Reasm.Phase = Reasm_Header) with Ghost;
            begin
       if OK then
                  HC.Peer_Cert := Cert;
@@ -707,10 +682,6 @@ is
       else
          HC.Peer_Cert_Valid := False;
       end if;
-      pragma Assert (HC.Reasm.Len = Saved_Reasm_Len);
-      pragma Assert (HC.Reasm.Need = Saved_Reasm_Need);
-      pragma Assert
-        ((HC.Reasm.Phase = Reasm_Header) = Saved_Reasm_Hdr_Pending);
    end Set_Peer_Cert_12;
 
            --  RFC 5246 §7.4.2 Certificate (HS type 0x0B). Parses the on-wire
@@ -740,11 +711,9 @@ is
                          --  "Frag'First + 3 + Msg_Len" ones. No gain, one fact lost.
                          and then Msg_Len <= N32'Last - Frag'First - 4
                          and then Frag'First + 3 + Msg_Len <= Frag'Last,
-                                Post => (if OK then
-                                    HC.Reasm.Len = HC.Reasm.Len'Old
-                                            and then HC.Reasm.Need = HC.Reasm.Need'Old
-                                                and then HC.Reasm.Phase = HC.Reasm.Phase'Old
-                                                and then HC.Selected_Group =
+                                Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
+                                         and then (if OK then
+                                    HC.Selected_Group =
                                                   HC.Selected_Group'Old
                                                 --  Frame the TLS 1.2 send counter. The body never
                                                 --  touches it, but without saying so the caller
@@ -782,10 +751,6 @@ is
       B   : constant N32 := Frag'First + 4;
               Body_Bytes : Byte_Seq (0 .. Msg_Len - 1);
               Cert_Idx : Natural := 0;
-         Saved_Reasm_Len : constant N32 := HC.Reasm.Len with Ghost;
-         Saved_Reasm_Need : constant N32 := HC.Reasm.Need with Ghost;
-                 Saved_Reasm_Hdr_Pending : constant Boolean :=
-                   (HC.Reasm.Phase = Reasm_Header) with Ghost;
                  Saved_Selected_Group : constant Unsigned_16 :=
                    HC.Selected_Group with Ghost;
                  Random_Was_Set : constant Boolean :=
@@ -874,16 +839,8 @@ is
                                      X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                           pragma Loop_Invariant
                             (if HC.Peer_Cert_Valid then Cert_Idx > 0);
-                                          pragma Loop_Invariant
-                                            (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry
-                                                     and then HC.Reasm.Need = HC.Reasm.Need'Loop_Entry
-                                                     and then HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                                       pragma Loop_Invariant
-                                        (HC.Reasm.Len = Saved_Reasm_Len
-                                         and then HC.Reasm.Need = Saved_Reasm_Need
-                                         and then (HC.Reasm.Phase = Reasm_Header) =
-                                           Saved_Reasm_Hdr_Pending
-                                         and then HC.Selected_Group =
+                                        (HC.Selected_Group =
                                            Saved_Selected_Group
                                          and then HC.Client_Seq_12 =
                                            Saved_Client_Seq
@@ -980,10 +937,6 @@ is
                                         X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                                   end;
                                        end loop;
-                       pragma Assert (HC.Reasm.Len = Saved_Reasm_Len);
-                       pragma Assert (HC.Reasm.Need = Saved_Reasm_Need);
-                               pragma Assert
-                                 ((HC.Reasm.Phase = Reasm_Header) = Saved_Reasm_Hdr_Pending);
                                pragma Assert
                                  (HC.Selected_Group = Saved_Selected_Group);
                                pragma Assert
@@ -1027,9 +980,6 @@ is
                         and then SPARKTLSCrypto.P384.ECDSA.Initialized,
                                                 Post => (if Result = OK then
                                                        S.State not in Idle | Closing | Closed | Error_State
-                                                       and then HC.Reasm.Len = HC.Reasm.Len'Old
-                                                       and then HC.Reasm.Need = HC.Reasm.Need'Old
-                                                       and then HC.Reasm.Phase = HC.Reasm.Phase'Old
                                                        and then HC.Selected_Group =
                                                          HC.Selected_Group'Old
                                                        and then S.Negotiated_Suite =
@@ -1152,7 +1102,7 @@ is
                Purpose    => HC.Cfg.Verify_Purpose,
                Mode       => HC.Cfg.Verify_Mode);
             if VR /= Valid then
-               HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+               Reset (HC.Reasm);
                Send_Alert_And_Error (S, Bad_Certificate, Result);
                return;
             end if;
@@ -1297,7 +1247,7 @@ is
          end;
       end if;
       if not Body_OK then
-         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+         Reset (HC.Reasm);
                  Send_Alert_And_Error (S, Decode_Error, Result);
                  pragma Assert (Result /= OK);
                  pragma Assert_And_Cut
@@ -1377,7 +1327,7 @@ is
             end;
          end if;
          if SA_Empty then
-                    HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                    Reset (HC.Reasm);
                     Send_Alert_And_Error (S, Decode_Error, Result);
                     pragma Assert (Result /= OK);
                     pragma Assert_And_Cut
@@ -1408,7 +1358,7 @@ is
            and then HC.Cfg.Local.Has_Identity
            and then not HC.TLS12_Client_Cert_Allowed
          then
-            HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+            Reset (HC.Reasm);
             Send_Alert_And_Error (S, Illegal_Parameter, Result);
             pragma Assert (Result /= OK);
             pragma Assert_And_Cut
@@ -1480,9 +1430,6 @@ is
                      and then Records.TLS12.Nonce_Space_Available_12
                        (HC.Client_Seq_12)
                         and then
-                          (if HC.Reasm.Need > 0
-                           then True)
-                        and then
                           (if HC.Cfg.Local /= null
                                and then HC.Cfg.Local.Has_Identity
                            then SPARKTLS.Handshake.Server_Msgs
@@ -1491,9 +1438,6 @@ is
                                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
                         Post => (if Result = OK then
                                      S.State = S.State'Old
-                                     and then HC.Reasm.Len = HC.Reasm.Len'Old
-                                     and then HC.Reasm.Need = HC.Reasm.Need'Old
-                                             and then HC.Reasm.Phase = HC.Reasm.Phase'Old
                                              and then HC.Selected_Group in
                                                Group_X25519 | Group_Secp256r1
                                                | Group_Secp384r1
@@ -1534,7 +1478,7 @@ is
    begin
       Result := OK;
       if Msg_Len = 0 then
-         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+         Reset (HC.Reasm);
          Send_Alert_And_Error (S, Decode_Error, Result);
          return;
       end if;
@@ -1567,7 +1511,7 @@ is
            or else Msg_Len < 10
            or else Msg_Len > N32 (Max_Server_Key_Exchange)
          then
-            HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+            Reset (HC.Reasm);
             Send_Alert_And_Error (S, Decode_Error, Result);
             return;
          end if;
@@ -1580,7 +1524,7 @@ is
          Body_Data := Frag (Body_Start .. Body_Start + Msg_Len - 1);
          Parse_Server_Key_Exchange (HC, Body_Data, SKE_OK);
          if not SKE_OK then
-            HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+            Reset (HC.Reasm);
             if HC.Ext_Parse_Err /= No_Error then
                Send_Alert_And_Error (S, HC.Ext_Parse_Err, Result);
             else
@@ -1592,7 +1536,7 @@ is
          if not Selected_Group_Allowed_TLS12
            (HC.Cfg.Client_Key_Share_Group, HC.Selected_Group)
          then
-            HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+            Reset (HC.Reasm);
             Send_Alert_And_Error (S, Illegal_Parameter, Result);
             return;
          end if;
@@ -1783,7 +1727,7 @@ is
               Result :    out Action)
            is
            begin
-      HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+      Reset (HC.Reasm);
       Send_Alert_And_Error (S, Err, Result);
       pragma Assert (Result /= OK);
       pragma Assert_And_Cut
@@ -1940,7 +1884,7 @@ is
          Records.Build_Handshake_Record
            (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out);
          if Rec_Out = 0 then
-            HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+            Reset (HC.Reasm);
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
             pragma Assert (Result /= OK);
             pragma Assert_And_Cut
@@ -2680,21 +2624,13 @@ is
            begin
       Result := OK;
       if Msg_Len /= 0 then
-         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+         Reset (HC.Reasm);
                         Send_Alert_And_Error (S, Decode_Error, Result);
                         pragma Assert (Result /= OK);
                                 pragma Assert_And_Cut
                                   (Result /= OK);
                         return;
       end if;
-      if HC.Reasm.Len > HC.Reasm.Need then
-         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
-                        Send_Alert_And_Error (S, Unexpected_Message, Result);
-                        pragma Assert (Result /= OK);
-                                pragma Assert_And_Cut
-                                  (Result /= OK);
-                 return;
-              end if;
               Append_Transcript_Building (HC, Frag);
               --  Compute ECDHE shared secret per Selected_Group.
               declare
@@ -2703,7 +2639,7 @@ is
               begin
                  Derive_Client_Shared_Secret_12 (HC, SS_OK, SS_Err);
                  if not SS_OK then
-                    HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                    Reset (HC.Reasm);
                             Send_Alert_And_Error (S, SS_Err, Result);
                             pragma Assert (Result /= OK);
                                     pragma Assert_And_Cut
@@ -2751,19 +2687,7 @@ is
    --
            --  Frag is the reassembled HS message bytes (header + body), Msg_Len
            --  the declared body length from the HS header.
-   function Finished_Reasm_Shape_12 (HC : Handshake_Context) return Boolean is
-     (HC.Reasm.Phase = Reasm_Idle
-      or else
-        (HC.Reasm_Buf'First = 0
-                 and then HC.Reasm.Need >= 4
-         and then
-           (if (HC.Reasm.Phase = Reasm_Header) then
-              HC.Reasm.Need = 4
-              and then HC.Reasm.Len <= 4
-              and then HC.Reasm_Buf'Length = Max_HS_Msg)))
-   with Ghost;
-
-           procedure Send_Encrypted_Finished_Error_12
+   procedure Send_Encrypted_Finished_Error_12
              (S         : in out Session;
       HC        : in out Handshake_Context;
       Desc_Code : in     Byte;
@@ -2774,10 +2698,7 @@ is
                         and Records.TLS12.Nonce_Space_Available_12
                               (HC.Client_Seq_12),
                 Post => S.State = Error_State
-                        and Finished_Reasm_Shape_12 (HC)
-                        and HC.Reasm.Phase = Reasm_Idle
-                        and HC.Reasm.Len = 0
-                        and HC.Reasm.Need = 0
+                        and Used (HC.Reasm) = 0
                         and S.Last_Error = Err
                         and Result in Has_Output | Error_Alert;
 
@@ -2799,7 +2720,7 @@ is
       Result :    out Action)
    is
    begin
-      HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+      Reset (HC.Reasm);
       if HC.TLS12_Resuming then
          Send_Alert_And_Error (S, Decode_Error, Result);
       else
@@ -2882,9 +2803,6 @@ is
                                 Post => (if Result = OK then
                                                      S.State not in Idle | Closing | Closed
                                                        | Error_State
-                                                     and then HC.Reasm.Len = HC.Reasm.Len'Old
-                                                     and then HC.Reasm.Need = HC.Reasm.Need'Old
-                                                             and then HC.Reasm.Phase = HC.Reasm.Phase'Old
                                                              and then HC.Selected_Group in
                                                                Group_X25519 | Group_Secp256r1
                                                                | Group_Secp384r1
@@ -3052,7 +2970,7 @@ is
             --  (keyUsage, suite<->cert algorithm match, hostname,
             --  chain) live in Validate_Server_Cert_12.
             if Msg_Len < 3 then
-               HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+               Reset (HC.Reasm);
                Send_Alert_And_Error (S, Decode_Error, Result);
                return;
             end if;
@@ -3061,7 +2979,7 @@ is
             begin
                Parse_Cert_Chain_12 (HC, Frag, Msg_Len, Parse_OK);
                if not Parse_OK then
-                  HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                  Reset (HC.Reasm);
                   Send_Alert_And_Error (S, Decode_Error, Result);
                   return;
                end if;
@@ -3096,7 +3014,7 @@ is
 
          when 16#04# =>
             if Msg_Len < 6 then
-                       HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                       Reset (HC.Reasm);
                        if HC.CKE_Received_12 then
                           pragma Assert
                             (Records.TLS12.Nonce_Space_Available_12
@@ -3119,7 +3037,7 @@ is
             --  flight is unexpected_message (BoGo WrongMessageType-*
             --  injects type+42). After the client CCS+Finished flight,
             --  the peer expects encrypted alerts.
-                    HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                    Reset (HC.Reasm);
                     if HC.CKE_Received_12 then
                        pragma Assert
                          (Records.TLS12.Nonce_Space_Available_12
@@ -3352,20 +3270,9 @@ is
                                           (if HC.CKE_Received_12
                                            then Records.TLS12.Nonce_Space_Available_12
                                                   (HC.Client_Seq_12))
-                                                and then
-                                                  (if HC.Reasm.Need > 0
-                                           then HC.Reasm_Buf'First = 0
-                                        and then
-                                          (if (HC.Reasm.Phase = Reasm_Header)
-                                           then HC.Reasm.Need = 4
-                                                and then HC.Reasm.Len <= 4
-                                                and then HC.Reasm_Buf'Length =
-                                                  Max_HS_Msg))
                         and then SPARKTLSCrypto.P384.Field.Initialized
                         and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-                              Post => HC.Reasm.Len = HC.Reasm.Len'Old
-                        and then HC.Reasm.Need = HC.Reasm.Need'Old
-                        and then HC.Reasm.Phase = HC.Reasm.Phase'Old
+                              Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
                     and then
                       (if SPARKTLS.Handshake.Server_Msgs
                              .Local_Config_Valid (HC.Cfg.Local'Old)
@@ -3380,15 +3287,6 @@ is
                                (if HC.CKE_Received_12
                                 then Records.TLS12.Nonce_Space_Available_12
                                        (HC.Client_Seq_12))
-                             and then
-                               (if HC.Reasm.Need > 0
-                                then HC.Reasm_Buf'First = 0
-                                     and then
-                                       (if (HC.Reasm.Phase = Reasm_Header)
-                                        then HC.Reasm.Need = 4
-                                             and then HC.Reasm.Len <= 4
-                                             and then HC.Reasm_Buf'Length =
-                                               Max_HS_Msg))
                              and then Rec.Fragment_Pos <=
                                N32'Last - Rec.Fragment_Len
                      and then Rec.Record_Len =
@@ -3547,40 +3445,6 @@ is
       Result := OK;
    end Read_Server_Flight_Record;
 
-   procedure Copy_To_Reassembly_Buffer
-     (Reasm_Buf : in out Reasm_Buffer;
-      Old_Len   : in     N32;
-      Source    : in     Byte_Seq;
-      Copy_Len  : in     N32;
-      Required_Len : in N32)
-   with Pre  => Copy_Len > 0
-                and then Source'Last < N32'Last
-                and then Source'Length <= Max_HS_Msg
-                and then Source'Length = Copy_Len
-                and then Required_Len <= N32 (Reasm_Buf'Length)
-                and then Old_Len <= N32'Last - Copy_Len
-                and then Old_Len + Copy_Len <= N32 (Reasm_Buf'Length),
-        Post => Required_Len <= N32 (Reasm_Buf'Length);
-
-   procedure Copy_To_Reassembly_Buffer
-     (Reasm_Buf : in out Reasm_Buffer;
-      Old_Len   : in     N32;
-      Source    : in     Byte_Seq;
-      Copy_Len  : in     N32;
-      Required_Len : in N32)
-   is
-   begin
-      for I in N32 range 0 .. Copy_Len - 1 loop
-         pragma Loop_Invariant (I <= Copy_Len - 1);
-                  pragma Loop_Invariant
-           (Old_Len + Copy_Len <= N32 (Reasm_Buf'Length));
-         pragma Loop_Invariant (Required_Len <= N32 (Reasm_Buf'Length));
-         pragma Loop_Invariant (Source'Length = Copy_Len);
-         Reasm_Buf (Old_Len + I) :=
-            Source (Source'First + I);
-      end loop;
-   end Copy_To_Reassembly_Buffer;
-
    procedure Prepare_Leftover_Server_Flight_Message
      (S        : in out Session;
       HC       : in out Handshake_Context;
@@ -3589,9 +3453,6 @@ is
       Ready    :    out Boolean;
       Result   :    out Action)
            with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                        and then HC.Reasm.Need > 0
-                and then HC.Reasm.Phase /= Reasm_Header
-                and then HC.Reasm.Need <= HC.Reasm.Len
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -3614,11 +3475,6 @@ is
                                         Post => (if Ready then
                              Result = OK
                         and then S.State not in Idle | Closing | Closed | Error_State
-                     and then HC.Reasm.Phase /= Reasm_Header
-                     and then HC.Reasm.Need >= 4
-                     and then HC.Reasm.Need <= HC.Reasm.Len
-                     and then HC.Reasm.Need <= Transcript_Capacity
-                     and then Msg_Len <= HC.Reasm.Need - 4
                      and then Msg_Len <= Max_HS_Msg - 4
                      and then HC.Cfg.Random /= null
                      and then HC.Selected_Group in
@@ -3664,11 +3520,10 @@ is
       Result := OK;
 
       Handshake.Parse_Handshake_Header
-        (HC.Reasm_Buf (0 .. HC.Reasm.Need - 1),
-         Msg_Type, Msg_Len, Parse_OK);
+        (Message (HC.Reasm), Msg_Type, Msg_Len, Parse_OK);
       if not Parse_OK then
          declare
-            Raw_Type : constant Byte := HC.Reasm_Buf (0);
+            Raw_Type : constant Byte := Message (HC.Reasm) (0);
             Is_Known : constant Boolean :=
               Raw_Type in 16#01# | 16#02# | 16#04# | 16#08# |
                           16#0B# | 16#0C# | 16#0D# | 16#0E# |
@@ -3678,7 +3533,7 @@ is
             Desc     : constant Byte :=
               (if Is_Known then 50 else 10);
          begin
-            HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+            Reset (HC.Reasm);
             if HC.CKE_Received_12 then
                Send_Encrypted_Finished_Error_12 (S, HC, Desc, Err, Result);
             else
@@ -3687,9 +3542,8 @@ is
          end;
          return;
       end if;
-      pragma Assert (Msg_Len <= HC.Reasm.Need - 4);
-      if HC.Reasm.Need > Transcript_Capacity then
-         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+      if Message_Length (HC.Reasm) > Transcript_Capacity then
+         Reset (HC.Reasm);
          Send_Alert_And_Error (S, Decode_Error, Result);
          return;
       end if;
@@ -3700,9 +3554,7 @@ is
    procedure Decode_Pending_Reassembly_Header
      (HC     : in out Handshake_Context;
       Failed :    out Boolean)
-   with Pre  => (HC.Reasm.Phase = Reasm_Header)
-                and then HC.Reasm.Need = 4
-                and then HC.Reasm.Len >= 4
+   with Pre  => Header_Ready (HC.Reasm)
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -3716,10 +3568,7 @@ is
                                 and then HC.Transcript_Len > 0
                                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then
-                  (if not Failed then
-                     HC.Reasm.Phase /= Reasm_Header
-                     and then HC.Reasm.Need >= 4
-                     and then HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length))
+                  (if not Failed then not Message_Too_Large (HC.Reasm))
                 and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
                 and then HC.CKE_Received_12 = HC.CKE_Received_12'Old;
 
@@ -3727,21 +3576,14 @@ is
      (HC     : in out Handshake_Context;
       Failed :    out Boolean)
    is
-      B1 : constant Byte := HC.Reasm_Buf (1);
-      B2 : constant Byte := HC.Reasm_Buf (2);
-      B3 : constant Byte := HC.Reasm_Buf (3);
-      HS_Total : constant N32 :=
-         N32 (B1) * 65536 + N32 (B2) * 256 + N32 (B3) + 4;
    begin
-      Failed := False;
-      HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-      if HS_Total < 4 or HS_Total > Max_HS_Msg then
-         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
-         Failed := True;
-         return;
+      --  Nothing to decode into stored state: the buffer derives the declared
+      --  size from its own header bytes. Only the peer-controlled bound check
+      --  survives, and it is a protocol decision, not accounting.
+      Failed := Message_Too_Large (HC.Reasm);
+      if Failed then
+         Reset (HC.Reasm);
       end if;
-
-      HC.Reasm := (HC.Reasm with delta Need => HS_Total);
    end Decode_Pending_Reassembly_Header;
 
    procedure Continue_Server_Flight_Reassembly
@@ -3761,15 +3603,7 @@ is
                 and then Rec.Record_Len <=
                   S.Input.Write_Pos - S.Input.Read_Pos
                 and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-                and then HC.Reasm.Need > 0
-                        and then ((HC.Reasm.Phase = Reasm_Header)
-                                  or else HC.Reasm.Len < HC.Reasm.Need)
-                        and then HC.Reasm.Len <= HC.Reasm.Need
-                        and then
-                          (if (HC.Reasm.Phase = Reasm_Header) then
-                             HC.Reasm_Buf'Length = Max_HS_Msg
-                             and then HC.Reasm.Need = 4
-                             and then HC.Reasm.Len <= 4)
+                        and then not Has_Message (HC.Reasm)
                         and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -3792,11 +3626,6 @@ is
         Post => (if Ready then
                      Result = OK
                      and then S.State not in Idle | Closing | Closed | Error_State
-                     and then HC.Reasm.Phase /= Reasm_Header
-                     and then HC.Reasm.Need >= 4
-                     and then HC.Reasm.Need <= HC.Reasm.Len
-                     and then HC.Reasm.Need <= Transcript_Capacity
-                     and then Msg_Len <= HC.Reasm.Need - 4
                      and then Msg_Len <= Max_HS_Msg - 4
                      and then HC.Cfg.Random /= null
                      and then HC.Selected_Group in
@@ -3834,40 +3663,19 @@ is
       Result := OK;
 
       declare
-         Remaining : constant N32 := HC.Reasm.Need - HC.Reasm.Len;
-         Copy_Len  : constant N32 := N32'Min (Frag_Len, Remaining);
-         Old_Len   : constant N32 := HC.Reasm.Len;
+         Copy_Len : constant HS_Msg_Len :=
+            N32'Min (N32'Min (Wanted (HC.Reasm), Frag_Len),
+                     Free_Space (HC.Reasm));
       begin
-         if Copy_Len > 0
-           and then HC.Reasm.Len + Copy_Len <=
-                      N32 (HC.Reasm_Buf'Length)
-         then
-            pragma Assert
-              (Rec.Record_Len = Rec.Fragment_Pos + Rec.Fragment_Len);
-            pragma Assert
-              (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
-            pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
-            pragma Assert (FS + Copy_Len <= S.Input.Write_Pos);
-            declare
-               Source : Byte_Seq renames
-                  S.Input.Data (FS .. FS + Copy_Len - 1);
-            begin
-               Copy_To_Reassembly_Buffer
-                 (Reasm_Buf => HC.Reasm_Buf,
-                  Old_Len   => Old_Len,
-                  Source    => Source,
-                  Copy_Len  => Copy_Len,
-                  Required_Len => HC.Reasm.Need);
-            end;
-            HC.Reasm := (HC.Reasm with delta Len => Old_Len + Copy_Len);
+         if Copy_Len > 0 then
+            Append (HC.Reasm, S.Input.Data (FS .. FS + Copy_Len - 1));
          end if;
       end;
-            pragma Assert (HC.Reasm.Need > 0);
       pragma Assert (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
       pragma Assert (S.Input.Read_Pos <= N32'Last - Rec.Record_Len);
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
-      if (HC.Reasm.Phase = Reasm_Header) and then HC.Reasm.Len >= 4 then
+      if Header_Ready (HC.Reasm) then
          declare
             Failed : Boolean;
          begin
@@ -3881,21 +3689,10 @@ is
          end;
       end if;
 
-      if HC.Reasm.Len < HC.Reasm.Need then
+      if not Has_Message (HC.Reasm) then
          Result := OK;
-         if (HC.Reasm.Phase = Reasm_Header) then
-            pragma Assert (HC.Reasm.Need = 4);
-            pragma Assert (HC.Reasm.Len < 4);
-         end if;
          return;
       end if;
-      pragma Assert (HC.Reasm.Len >= HC.Reasm.Need);
-      if (HC.Reasm.Phase = Reasm_Header) then
-         pragma Assert (HC.Reasm.Need = 4);
-         pragma Assert (HC.Reasm.Len < 4);
-      end if;
-      pragma Assert (HC.Reasm.Phase /= Reasm_Header);
-      pragma Assert (HC.Reasm.Need <= HC.Reasm.Len);
 
       Prepare_Leftover_Server_Flight_Message
         (S        => S,
@@ -3923,8 +3720,6 @@ is
                 and then Rec.Record_Len <=
                   S.Input.Write_Pos - S.Input.Read_Pos
                 and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-                        and then HC.Reasm.Need = 0
-                        and then HC.Reasm.Phase = Reasm_Idle
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -3954,11 +3749,6 @@ is
         Post => (if Ready then
                      Result = OK
                      and then S.State not in Idle | Closing | Closed | Error_State
-                     and then HC.Reasm.Phase /= Reasm_Header
-                     and then HC.Reasm.Need >= 4
-                     and then HC.Reasm.Need <= HC.Reasm.Len
-                     and then HC.Reasm.Need <= Transcript_Capacity
-                     and then Msg_Len <= HC.Reasm.Need - 4
                      and then Msg_Len <= Max_HS_Msg - 4
                      and then HC.Cfg.Random /= null
                     and then HC.Selected_Group in
@@ -4005,8 +3795,6 @@ is
                 and then Frag_Len in 1 .. 3
                 and then FS = S.Input.Read_Pos + Rec.Fragment_Pos
                 and then FS + Frag_Len <= S.Input.Write_Pos
-                        and then HC.Reasm.Need = 0
-                        and then HC.Reasm.Phase = Reasm_Idle
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -4024,9 +3812,6 @@ is
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Result = OK
                 and then S.State not in Idle | Closing | Closed | Error_State
-                and then HC.Reasm.Need = 4
-                and then (HC.Reasm.Phase = Reasm_Header)
-                and then HC.Reasm.Len = Frag_Len
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -4053,12 +3838,8 @@ is
       Result   :    out Action)
    is
    begin
-      HC.Reasm := (Phase => Reasm_Header, Len => Frag_Len, Need => 4);
-      for I in N32 range 0 .. Frag_Len - 1 loop
-         pragma Loop_Invariant (I <= Frag_Len - 1);
-                  pragma Loop_Invariant (FS + Frag_Len <= S.Input.Write_Pos);
-         HC.Reasm_Buf (I) := S.Input.Data (FS + I);
-      end loop;
+      Reset (HC.Reasm);
+      Append (HC.Reasm, S.Input.Data (FS .. FS + Frag_Len - 1));
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
       Result := OK;
    end Start_Fresh_Pending_Header_Reassembly;
@@ -4086,8 +3867,6 @@ is
                 and then FS + Frag_Len <= S.Input.Write_Pos
                 and then Msg_Len <= Max_HS_Msg - 4
                 and then Msg_Len + 4 > Frag_Len
-                        and then HC.Reasm.Need = 0
-                        and then HC.Reasm.Phase = Reasm_Idle
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -4105,9 +3884,6 @@ is
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Result = OK
                 and then S.State not in Idle | Closing | Closed | Error_State
-                and then HC.Reasm.Need = Msg_Len + 4
-                and then HC.Reasm.Len = Frag_Len
-                and then HC.Reasm.Phase /= Reasm_Header
                 and then HC.Cfg.Random /= null
                              and then HC.Selected_Group in
                                Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -4136,13 +3912,8 @@ is
    is
       Total : constant N32 := Msg_Len + 4;
    begin
-      HC.Reasm := (Phase => Reasm_Body, Len => Frag_Len, Need => Total);
-      for I in N32 range 0 .. Frag_Len - 1 loop
-         pragma Loop_Invariant (I <= Frag_Len - 1);
-                  pragma Loop_Invariant (Frag_Len <= Total);
-         pragma Loop_Invariant (FS + Frag_Len <= S.Input.Write_Pos);
-         HC.Reasm_Buf (I) := S.Input.Data (FS + I);
-      end loop;
+      Reset (HC.Reasm);
+      Append (HC.Reasm, S.Input.Data (FS .. FS + Frag_Len - 1));
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
       Result := OK;
    end Start_Fresh_Spanning_Reassembly;
@@ -4171,8 +3942,6 @@ is
                 and then FS + Frag_Len <= S.Input.Write_Pos
                 and then Msg_Len <= Frag_Len - 4
                 and then Msg_Len <= Max_HS_Msg - 4
-                        and then HC.Reasm.Phase = Reasm_Idle
-                        and then HC.Reasm.Need = 0
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -4190,11 +3959,6 @@ is
                 and then SPARKTLSCrypto.P384.ECDSA.Initialized,
         Post => Result = OK
                 and then S.State not in Idle | Closing | Closed | Error_State
-                and then HC.Reasm.Need = Msg_Len + 4
-                and then HC.Reasm.Need <= Max_HS_Msg
-                and then HC.Reasm.Len = Frag_Len
-                and then HC.Reasm.Need <= HC.Reasm.Len
-                and then HC.Reasm.Phase /= Reasm_Header
                 and then HC.Cfg.Random /= null
                 and then HC.Selected_Group in
                   Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -4222,12 +3986,8 @@ is
       Result   :    out Action)
    is
    begin
-      HC.Reasm := (Phase => Reasm_Body, Len => Frag_Len, Need => Msg_Len + 4);
-      for I in N32 range 0 .. Frag_Len - 1 loop
-         pragma Loop_Invariant (I <= Frag_Len - 1);
-                  pragma Loop_Invariant (FS + Frag_Len <= S.Input.Write_Pos);
-         HC.Reasm_Buf (I) := S.Input.Data (FS + I);
-      end loop;
+      Reset (HC.Reasm);
+      Append (HC.Reasm, S.Input.Data (FS .. FS + Frag_Len - 1));
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
       Result := OK;
    end Start_Fresh_Complete_Message;
@@ -4338,9 +4098,6 @@ is
          Frag_Len => Frag_Len,
          Msg_Len  => Msg_Len,
          Result   => Result);
-      pragma Assert (HC.Reasm.Need <= HC.Reasm.Len);
-      pragma Assert (HC.Reasm.Phase /= Reasm_Header);
-      pragma Assert (Msg_Len <= HC.Reasm.Need - 4);
       Ready := True;
       Result := OK;
    end Prepare_Fresh_Server_Flight_Message;
@@ -4353,8 +4110,6 @@ is
                       Ready    :    out Boolean;
               Result   :    out Action)
            with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                                and then (if HC.Reasm.Need > 0
-                                   then True)
                         and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                         and then HC.Cfg.Random /= null
                         and then HC.Selected_Group in
@@ -4383,11 +4138,6 @@ is
                 Post => (if Ready then
                              Result = OK
                              and then S.State not in Idle | Closing | Closed | Error_State
-                             and then HC.Reasm.Phase /= Reasm_Header
-                             and then HC.Reasm.Need >= 4
-                             and then HC.Reasm.Need <= HC.Reasm.Len
-                             and then HC.Reasm.Need <= Transcript_Capacity
-                             and then Msg_Len <= HC.Reasm.Need - 4
                              and then Msg_Len <= Max_HS_Msg - 4
                              and then HC.Cfg.Random /= null
                              and then HC.Selected_Group in
@@ -4424,15 +4174,20 @@ is
       Result   :    out Action)
    is
       Rec : Records.Parse_Result;
-      Have_Leftover_Msg : constant Boolean :=
-        HC.Reasm.Need > 0
-        and then HC.Reasm.Phase /= Reasm_Header
-        and then HC.Reasm.Len >= HC.Reasm.Need;
+      Have_Leftover_Msg : constant Boolean := Has_Message (HC.Reasm);
    begin
       Msg_Type := 0;
       Msg_Len := 0;
       Ready := False;
       Result := OK;
+
+      --  A declared size past the cap is a protocol error, not something to
+      --  carry forward: the buffer can never hold the message it promises.
+      if Message_Too_Large (HC.Reasm) then
+         Reset (HC.Reasm);
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
 
       if Have_Leftover_Msg then
          Prepare_Leftover_Server_Flight_Message
@@ -4458,9 +4213,8 @@ is
             pragma Assert (Rec.OK);
             pragma Assert (Rec.Content = Records.Content_Handshake);
 
-            if HC.Reasm.Need > 0
-              and then ((HC.Reasm.Phase = Reasm_Header)
-                        or else HC.Reasm.Len < HC.Reasm.Need)
+            if Used (HC.Reasm) > 0
+              and then not Has_Message (HC.Reasm)
             then
                Continue_Server_Flight_Reassembly
                  (S        => S,
@@ -4470,10 +4224,7 @@ is
                   Msg_Len  => Msg_Len,
                   Ready    => Ready,
                   Result   => Result);
-            elsif HC.Reasm.Need > 0
-            then
-               pragma Assert (HC.Reasm.Phase /= Reasm_Header);
-               pragma Assert (HC.Reasm.Need <= HC.Reasm.Len);
+            elsif Used (HC.Reasm) > 0 then
                Prepare_Leftover_Server_Flight_Message
                  (S        => S,
                   HC       => HC,
@@ -4483,9 +4234,7 @@ is
                   Result   => Result);
                     else
                        pragma Assert (not Have_Leftover_Msg);
-                       HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
-                       pragma Assert (HC.Reasm.Phase = Reasm_Idle);
-                       pragma Assert (HC.Reasm.Need = 0);
+                       Reset (HC.Reasm);
                        Prepare_Fresh_Server_Flight_Message
                  (S        => S,
                   HC       => HC,
@@ -4573,9 +4322,6 @@ is
                                 and then Records.TLS12.Nonce_Space_Available_12
                                   (HC.Client_Seq_12)
                                 and then
-                                  (if HC.Reasm.Need > 0
-                                   then True)
-                                and then
                                   (if HC.Cfg.Local /= null
                                        and then HC.Cfg.Local.Has_Identity
                                    then SPARKTLS.Handshake.Server_Msgs
@@ -4591,10 +4337,6 @@ is
          Result  : out Action)
       with Pre  => S.State not in
                      Idle | Closing | Closed | Error_State
-                           and then HC.Reasm.Need >= 4
-                           and then HC.Reasm.Need <= HC.Reasm.Len
-                                   and then HC.Reasm.Need <= Transcript_Capacity
-                                   and then Msg_Len <= HC.Reasm.Need - 4
                                    and then Msg_Len <= Max_HS_Msg - 4
                            and then Records.TLS12.Nonce_Space_Available_12
                              (HC.Client_Seq_12),
@@ -4608,12 +4350,13 @@ is
         (Msg_Len : in N32;
          Result  : out Action)
       is
+         NST_Msg : constant Byte_Seq := Message (HC.Reasm);
       begin
-         if HC.Reasm_Buf (0) /= 16#04# or else Msg_Len < 6 then
+         if NST_Msg (0) /= 16#04# or else Msg_Len < 6 then
             Send_Encrypted_Finished_Error_12
               (S, HC,
-               (if HC.Reasm_Buf (0) = 16#04# then 50 else 10),
-               (if HC.Reasm_Buf (0) = 16#04#
+               (if NST_Msg (0) = 16#04# then 50 else 10),
+               (if NST_Msg (0) = 16#04#
                 then Decode_Error else Unexpected_Message),
                 Result);
             return;
@@ -4621,7 +4364,7 @@ is
 
          declare
             NST_Body   : constant Byte_Seq (0 .. Msg_Len - 1) :=
-              HC.Reasm_Buf (4 .. 4 + Msg_Len - 1);
+              NST_Msg (4 .. 4 + Msg_Len - 1);
             Lifetime   : Unsigned_32;
             Ticket_Len : N32;
             Parse_OK   : Boolean;
@@ -4651,20 +4394,15 @@ is
               (if HC.Use_EMS then EMS_Negotiated else EMS_Absent);
             S.TLS12_New_Ticket.Valid := True;
 
-            declare
-               NST_Msg : constant Byte_Seq :=
-                 HC.Reasm_Buf (0 .. HC.Reasm.Need - 1);
-            begin
-               Append_Transcript (HC, NST_Msg);
-            end;
-            HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+            Append_Transcript (HC, NST_Msg);
+            Reset (HC.Reasm);
             Result := OK;
          end;
       end Consume_Reassembled_NST;
    begin
       if Input_Available (S) = 0 then Result := Need_Input; return; end if;
 
-      if HC.Reasm.Need > 0 then
+      if Used (HC.Reasm) > 0 then
          declare
             Msg_Type : Byte;
             Msg_Len  : N32;
@@ -4834,51 +4572,25 @@ is
          HC.Client_Seq_12 := Saved_Seq;
       end if;
 
-      HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+      Reset (HC.Reasm);
       S.Last_Error := Err;
       Set_State (S, Error_State);
       Result := (if Output_Pending (S) > 0
                  then Has_Output else Error_Alert);
    end Send_Encrypted_Finished_Error_12;
 
-           procedure Ensure_Finished_Reasm_Buffer_12
-             (HC : in out Handshake_Context)
-           with Pre  => True
-                        and then Finished_Reasm_Shape_12 (HC),
-        Post => True
-                and Finished_Reasm_Shape_12 (HC)
-                and HC.Reasm.Len <= HC.Reasm.Need
-                and HC.Client_Seq_12 = HC.Client_Seq_12'Old;
-
-   procedure Ensure_Finished_Reasm_Buffer_12
-     (HC : in out Handshake_Context)
-   is
-   begin
-      if HC.Reasm.Phase = Reasm_Idle then
-         HC.Reasm := (Phase => Reasm_Header, Len => 0, Need => 4);
-      end if;
-   end Ensure_Finished_Reasm_Buffer_12;
-
    procedure Copy_Finished_Reasm_Bytes_12
      (HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       PL        : in     N32;
       P_Pos     : in out N32)
-   with Pre  => True
-                and then Finished_Reasm_Shape_12 (HC)
-                and then HC.Reasm.Len <= HC.Reasm.Need
-                and then Plaintext'First = 0
+   with Pre  => Plaintext'First = 0
                 and then PL > 0
                 and then PL - 1 <= Plaintext'Last
-                and then P_Pos <= PL
-                and then HC.Reasm.Phase /= Reasm_Header,
-                Post => True
-                                and Finished_Reasm_Shape_12 (HC)
-                                and P_Pos >= P_Pos'Old
-                        and P_Pos <= PL
-                        and HC.Reasm.Len >= HC.Reasm.Len'Old
-                        and HC.Reasm.Len <= HC.Reasm.Need
-                        and HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                and then P_Pos <= PL,
+        Post => P_Pos >= P_Pos'Old
+                and P_Pos <= PL
+                and HC.Client_Seq_12 = HC.Client_Seq_12'Old;
 
    procedure Copy_Finished_Reasm_Bytes_12
      (HC        : in out Handshake_Context;
@@ -4886,18 +4598,15 @@ is
       PL        : in     N32;
       P_Pos     : in out N32)
    is
-      Take : constant N32 :=
-         N32'Min (HC.Reasm.Need - HC.Reasm.Len, PL - P_Pos);
+      --  HS_Msg_Len, not N32: Take is bounded by Wanted and Free_Space, both
+      --  of which are HS_Msg_Len. Declaring it N32 would throw that away and
+      --  make every downstream bound re-derive it.
+      Take : constant HS_Msg_Len :=
+         N32'Min (N32'Min (Wanted (HC.Reasm), PL - P_Pos),
+                  Free_Space (HC.Reasm));
    begin
       if Take > 0 then
-         pragma Assert (P_Pos + Take <= PL);
-         pragma Assert (P_Pos + Take - 1 <= Plaintext'Last);
-         pragma Assert
-           (HC.Reasm.Len + Take <= N32 (HC.Reasm_Buf'Length));
-         HC.Reasm_Buf
-           (HC.Reasm.Len .. HC.Reasm.Len + Take - 1) :=
-           Plaintext (P_Pos .. P_Pos + Take - 1);
-         HC.Reasm := (HC.Reasm with delta Len => HC.Reasm.Len + Take);
+         Append (HC.Reasm, Plaintext (P_Pos .. P_Pos + Take - 1));
          P_Pos := P_Pos + Take;
       end if;
    end Copy_Finished_Reasm_Bytes_12;
@@ -4910,14 +4619,12 @@ is
       Complete  :    out Boolean;
       Result    :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then Finished_Reasm_Shape_12 (HC)
                 and then Plaintext'First = 0
                 and then PL > 0
                 and then PL - 1 <= Plaintext'Last
                 and then Records.TLS12.Nonce_Space_Available_12
                       (HC.Client_Seq_12),
         Post => True
-                and then Finished_Reasm_Shape_12 (HC)
                 and then
                   (if Result = OK then
                      S.State = S.State'Old
@@ -4927,10 +4634,7 @@ is
                         then Records.TLS12.Nonce_Space_Available_12
                                (HC.Client_Seq_12))
                      and then
-                       (if Complete then
-                          HC.Reasm.Len >= HC.Reasm.Need
-                          and then HC.Reasm.Need <=
-                            N32 (HC.Reasm_Buf'Length)));
+                       (if Complete then Has_Message (HC.Reasm)));
 
    procedure Accumulate_Finished_Plaintext_12
      (S         : in out Session;
@@ -4940,104 +4644,44 @@ is
       Complete  :    out Boolean;
       Result    :    out Action)
    is
+      P_Pos : N32 := 0;  --  bytes consumed from Plaintext
    begin
       Complete := False;
       Result := OK;
 
-      --  Append decrypted plaintext to HC.Reasm_Buf. Allocate the
-      --  buffer on first chunk; size cap is Max_HS_Msg which
-      --  trivially holds Finished's 16 bytes. Use Hdr_Pending
-      --  while we still need 4 bytes to know the real HS_Total.
-      Ensure_Finished_Reasm_Buffer_12 (HC);
-            pragma Assert (Finished_Reasm_Shape_12 (HC));
-      pragma Assert
-        (if (HC.Reasm.Phase = Reasm_Header) then
-           HC.Reasm_Buf'First = 0
-           and then HC.Reasm.Len <= 4);
+      --  First take completes the 4-byte header, which is what makes the
+      --  declared size readable; the second takes as much of the body as
+      --  this record carries.
+      Copy_Finished_Reasm_Bytes_12 (HC, Plaintext, PL, P_Pos);
 
-      declare
-         P_Pos : N32 := 0;  --  bytes consumed from Plaintext
-      begin
-         --  First-take bounded by current Reasm_Need (which may
-         --  still be the Hdr_Pending sentinel of 4).
-         if (HC.Reasm.Phase = Reasm_Header) then
-            declare
-               Take : constant N32 :=
-                  N32'Min (PL, 4 - HC.Reasm.Len);
-            begin
-               if Take > 0 then
-                  pragma Assert (P_Pos + Take <= PL);
-                  pragma Assert (P_Pos + Take - 1 <= Plaintext'Last);
-                  pragma Assert
-                    (HC.Reasm.Len + Take <=
-                       N32 (HC.Reasm_Buf'Length));
-                          HC.Reasm_Buf
-                            (HC.Reasm.Len .. HC.Reasm.Len + Take - 1) :=
-                            Plaintext (P_Pos .. P_Pos + Take - 1);
-                          HC.Reasm :=
-                            (HC.Reasm with delta
-                               Len => HC.Reasm.Len + Take);
-                          P_Pos := P_Pos + Take;
-                          pragma Assert (Finished_Reasm_Shape_12 (HC));
-                          pragma Assert
-                            (if (HC.Reasm.Phase = Reasm_Header) then
-                               HC.Reasm_Buf'First = 0
-                               and then HC.Reasm.Len <= 4);
-                          pragma Assert
-                            (if HC.Reasm.Len < 4 then True);
-                       end if;
-                    end;
+      if Message_Too_Large (HC.Reasm) then
+         Reset (HC.Reasm);
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+
+      Copy_Finished_Reasm_Bytes_12 (HC, Plaintext, PL, P_Pos);
+      Complete := Has_Message (HC.Reasm);
+
+      --  RFC 5246 §7.4.9: server Finished is the last server
+      --  handshake message and must be the last thing in its
+      --  TLS record. Any leftover plaintext after the Finished
+      --  body is fatal unexpected_message (BoGo
+      --  TrailingDataWithFinished-Client-TLS12). In the full
+      --  handshake the client already sent CCS before waiting for
+      --  the server Finished, so the alert is encrypted. In the
+      --  abbreviated resume flow the client sends CCS after the
+      --  server Finished, so the alert is still plaintext.
+      if Complete and then P_Pos < PL then
+         if HC.TLS12_Resuming then
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
          else
-            Copy_Finished_Reasm_Bytes_12 (HC, Plaintext, PL, P_Pos);
+            Send_Encrypted_Finished_Error_12
+              (S, HC, 10, Unexpected_Message, Result);
          end if;
-
-                 pragma Assert (Finished_Reasm_Shape_12 (HC));
-                 if (HC.Reasm.Phase = Reasm_Header) and then HC.Reasm.Len >= 4 then
-                                            pragma Assert (HC.Reasm.Len = 4);
-                    declare
-                       HS_Total : constant N32 :=
-                          N32 (HC.Reasm_Buf (1)) * 65536
-                  + N32 (HC.Reasm_Buf (2)) * 256
-                  + N32 (HC.Reasm_Buf (3)) + 4;
-            begin
-               HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-               if HS_Total < 4 or HS_Total > Max_HS_Msg then
-                          HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
-                          Send_Alert_And_Error (S, Decode_Error, Result);
-                          return;
-                       end if;
-                       HC.Reasm := (HC.Reasm with delta Need => HS_Total);
-                       pragma Assert (HC.Reasm.Len = 4);
-                            end;
-            --  Drain remaining plaintext bytes from this same
-            --  record (non-split case: full Finished in one record).
-            if P_Pos < PL and HC.Reasm.Len < HC.Reasm.Need then
-               Copy_Finished_Reasm_Bytes_12 (HC, Plaintext, PL, P_Pos);
-            end if;
-
-            --  RFC 5246 §7.4.9: server Finished is the last server
-            --  handshake message and must be the last thing in its
-            --  TLS record. Any leftover plaintext after the Finished
-            --  body is fatal unexpected_message (BoGo
-            --  TrailingDataWithFinished-Client-TLS12). In the full
-            --  handshake the client already sent CCS before waiting for
-            --  the server Finished, so the alert is encrypted. In the
-            --  abbreviated resume flow the client sends CCS after the
-            --  server Finished, so the alert is still plaintext.
-            if HC.Reasm.Len = HC.Reasm.Need and P_Pos < PL then
-               if HC.TLS12_Resuming then
-                  Send_Alert_And_Error (S, Unexpected_Message, Result);
-               else
-                  Send_Encrypted_Finished_Error_12
-                    (S, HC, 10, Unexpected_Message, Result);
-               end if;
-               return;
-            end if;
-         end if;
-      end;
-
-              Complete := HC.Reasm.Len >= HC.Reasm.Need;
-           end Accumulate_Finished_Plaintext_12;
+         return;
+      end if;
+   end Accumulate_Finished_Plaintext_12;
 
    --  RFC 5077 §3.3 abbreviated handshake client flight: CCS plus
    --  encrypted Finished. In the resumed flow the CLIENT sends these
@@ -5120,7 +4764,6 @@ is
    procedure Process_Server_Finished
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => S.State in Wait_Server_Finished | Client_Finished_Sent
-                and then Finished_Reasm_Shape_12 (HC)
                 and then HC.Transcript_Len > 0
                 and then Records.TLS12.Nonce_Space_Available_12
                       (HC.Client_Seq_12)
@@ -5160,7 +4803,7 @@ is
       end if;
 
       --  Decrypt one encrypted record and append its plaintext to
-      --  HC.Reasm_Buf. BoGo's MaxHandshakeRecordLength=1 fragments
+      --  the reassembly buffer. BoGo's MaxHandshakeRecordLength=1 fragments
       --  the encrypted Finished into 16+ tiny records (each
       --  separately AEAD-encrypted with its own seq counter); we
       --  drain them into the same HC reassembly buffer until the
@@ -5222,19 +4865,16 @@ is
             end if;
          end;
 
-         if HC.Reasm.Len < HC.Reasm.Need then
+         if not Has_Message (HC.Reasm) then
             Result := OK;
             return;  --  more encrypted records to drain
          end if;
 
-         --  Full Finished plaintext now in HC.Reasm_Buf (0 .. RN-1).
          declare
-            RN : constant N32 := HC.Reasm.Need;
-            Msg_Type : constant Byte := HC.Reasm_Buf (0);
-            Msg_Len : constant N32 :=
-               N32 (HC.Reasm_Buf (1)) * 65536
-               + N32 (HC.Reasm_Buf (2)) * 256
-               + N32 (HC.Reasm_Buf (3));
+            Fin      : constant Byte_Seq := Message (HC.Reasm);
+            RN       : constant N32 := Fin'Length;
+            Msg_Type : constant Byte := Fin (0);
+            Msg_Len  : constant N32 := RN - 4;
          begin
             if Msg_Type /= HT_Finished
               or RN < 4 + Finished_Verify_Len
@@ -5267,12 +4907,6 @@ is
                  (S, HC, 51, Certificate_Verify_Failed, Result);
                return;
             end if;
-            if RN /= 4 + Finished_Verify_Len then
-               Send_Encrypted_Finished_Error_12
-                 (S, HC, 51, Certificate_Verify_Failed, Result);
-               return;
-            end if;
-
             --  Verify server Finished
             declare
                Exp : Verify_Data_12;
@@ -5294,13 +4928,12 @@ is
                declare
                   Received : constant Verify_Data_12 :=
                      Verify_Data_12
-                       (HC.Reasm_Buf
-                          (4 .. 4 + Finished_Verify_Len - 1));
+                       (Fin (4 .. 4 + Finished_Verify_Len - 1));
                begin
                   if not Equal (Byte_Seq (Received),
                                 Byte_Seq (Exp))
                   then
-                     HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                     Reset (HC.Reasm);
                      Send_Alert_And_Error (S, Handshake_Failure, Result);
                      return;
                   end if;
@@ -5311,17 +4944,16 @@ is
          --  Append server Finished plaintext to transcript so the
          --  client's own Finished verify_data (computed below in the
          --  abbreviated path) covers it. Copy into a local first —
-         --  passing a slice of HC.Reasm_Buf alongside `in out HC`
+         --  passing a slice of the reassembly buffer alongside `in out HC`
          --  is a SPARK 6.4.2 aliasing violation.
          declare
-            Fin_Snap : constant Byte_Seq :=
-               HC.Reasm_Buf (0 .. HC.Reasm.Need - 1);
+            Fin_Snap : constant Byte_Seq := Message (HC.Reasm);
          begin
             pragma Assert (Fin_Snap'Length = Finished_12_Total_Len);
             Append_Transcript (HC, Fin_Snap);
          end;
 
-         HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+         Reset (HC.Reasm);
       end;
 
       --  RFC 5077 §3.3 abbreviated handshake: in the resumed flow the

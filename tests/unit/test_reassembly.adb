@@ -1,4 +1,4 @@
---  Unit test for SPARKTLS.Reassembly -- the handshake reassembly ADT.
+--  Unit test for SPARKTLS_Reassembly -- the handshake reassembly ADT.
 --
 --  This is the oracle for porting the old Len/Need accounting onto the new
 --  Buffer. It exercises every framing shape the TLS record layer can hand us,
@@ -13,11 +13,11 @@ with Ada.Command_Line;
 with Interfaces;    use Interfaces;
 with SPARKNaCl;     use SPARKNaCl;
 with SPARKTLS;      use SPARKTLS;
-with SPARKTLS.Reassembly;
+with SPARKTLS_Reassembly;
 
 procedure Test_Reassembly is
 
-   package R renames SPARKTLS.Reassembly;
+   package R renames SPARKTLS_Reassembly;
 
    Total : Natural := 0;
    Pass  : Natural := 0;
@@ -58,7 +58,7 @@ begin
    R.Reset (B);
    Check ("empty: no message", not R.Has_Message (B));
    Check ("empty: used = 0", R.Used (B) = 0);
-   Check ("empty: full free space", R.Free_Space (B) = Max_HS_Msg);
+   Check ("empty: full free space", R.Free_Space (B) = R.Max_HS_Msg);
    Check ("empty: header not ready", not R.Header_Ready (B));
    Check ("empty: not too large", not R.Message_Too_Large (B));
 
@@ -205,17 +205,40 @@ begin
       Check ("oversize: header ready", R.Header_Ready (B));
       Check ("oversize: flagged too large", R.Message_Too_Large (B));
       Check ("oversize: not reported complete", not R.Has_Message (B));
+      --  The type byte is readable even for a message we will never buffer,
+      --  which is what lets a caller reject on type before reserving space.
+      Check ("oversize: type still readable", R.Declared_Type (B) = 16#0B#);
+   end;
+
+   ---------------------------------------------------------------------
+   --  Declared_Type -- readable from the header alone, before the body
+   ---------------------------------------------------------------------
+   R.Reset (B);
+   declare
+      Hdr : Byte_Seq (0 .. 3);
+   begin
+      Hdr (0) := 16#14#;      --  Finished
+      Hdr (1) := 0;
+      Hdr (2) := 0;
+      Hdr (3) := 12;
+      R.Append (B, Hdr);
+      Check ("type: readable with zero body bytes", R.Declared_Type (B) = 16#14#);
+      Check ("type: message not yet complete", not R.Has_Message (B));
+      Check ("type: 12 body bytes still wanted", R.Wanted (B) = 12);
+      R.Append (B, Byte_Seq'(0 .. 11 => 16#AA#));
+      Check ("type: unchanged once body lands", R.Declared_Type (B) = 16#14#);
+      Check ("type: now complete", R.Has_Message (B));
    end;
 
    ---------------------------------------------------------------------
    --  Free_Space accounting -- what callers check peer lengths against
    ---------------------------------------------------------------------
    R.Reset (B);
-   Check ("space: full when empty", R.Free_Space (B) = Max_HS_Msg);
+   Check ("space: full when empty", R.Free_Space (B) = R.Max_HS_Msg);
    R.Append (B, Msg (16#08#, 96, 16#66#));
-   Check ("space: reduced by 100", R.Free_Space (B) = Max_HS_Msg - 100);
+   Check ("space: reduced by 100", R.Free_Space (B) = R.Max_HS_Msg - 100);
    Check ("space: used + free = capacity",
-          R.Used (B) + R.Free_Space (B) = Max_HS_Msg);
+          R.Used (B) + R.Free_Space (B) = R.Max_HS_Msg);
 
    Put_Line ("  test_reassembly:" & Total'Image & " total," &
              Pass'Image & " passed," & Fail'Image & " failed");

@@ -1461,12 +1461,6 @@ is
 
       --  Random (32 bytes)
       for I in N32 range 0 .. 31 loop
-         pragma Loop_Invariant
-           (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-         pragma Loop_Invariant
-           (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-         pragma Loop_Invariant
-           (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
          HC.Server_Random (I) := Data (Pos + I);
       end loop;
       Pos := Pos + 32;
@@ -1491,12 +1485,6 @@ is
             M13, M12, MJ : Boolean := True;
          begin
             for I in N32 range 0 .. 7 loop
-               pragma Loop_Invariant
-                 (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-               pragma Loop_Invariant
-                 (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-               pragma Loop_Invariant
-                 (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                pragma Loop_Invariant
                  (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
                   and then HC.HRR_Cookie_Len =
@@ -1531,10 +1519,7 @@ is
       for I in N32 range 0 .. SID_Len - 1 loop
          pragma Loop_Invariant
            (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
-            and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry
-            and then HC.Reasm.Len = HC.Reasm.Len'Loop_Entry
-            and then HC.Reasm.Need = HC.Reasm.Need'Loop_Entry
-            and then HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
+            and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
          HC.Legacy_Session_ID (I) := Data (Pos + I);
       end loop;
       Pos := Pos + SID_Len;
@@ -1587,12 +1572,6 @@ is
             while Ext_Pos + 3 <= Data'Last
               and then Ext_Pos + 4 <= Ext_End
             loop
-               pragma Loop_Invariant
-                 (HC.Reasm.Len = HC.Reasm.Len'Loop_Entry);
-               pragma Loop_Invariant
-                 (HC.Reasm.Need = HC.Reasm.Need'Loop_Entry);
-               pragma Loop_Invariant
-                 (HC.Reasm.Phase = HC.Reasm.Phase'Loop_Entry);
                declare
                   Ext_Type : constant Unsigned_16 :=
                      Unsigned_16 (Data (Ext_Pos)) * 256 +

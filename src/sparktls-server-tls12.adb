@@ -1,5 +1,6 @@
 with Interfaces;                 use Interfaces;
 with SPARKNaCl;                  use SPARKNaCl;
+with SPARKTLS_Reassembly;        use SPARKTLS_Reassembly;
 with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
@@ -172,7 +173,8 @@ is
                                    (HC.Cfg.Local)
                                                    and then HC.Cfg.Random /= null
                                                            and then True,
-                           Post => HC.Cfg.Local /= null
+                           Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
+                           and then HC.Cfg.Local /= null
                            and then HC.Cfg.Local.Has_Identity
                            and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                                       (HC.Cfg.Local)
@@ -184,10 +186,6 @@ is
                    and then HC.Peer_Cert = HC.Peer_Cert'Old
                    and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
                            and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
-                           and then
-                             HC.Reasm.Len = HC.Reasm.Len'Old
-                           and then HC.Reasm.Need = HC.Reasm.Need'Old
-                           and then HC.Reasm.Phase = HC.Reasm.Phase'Old
                                                    and then
                                                      (if HC.Peer_Cert_Valid'Old
                          and then HC.Peer_Cert_DER_Len'Old
@@ -1636,59 +1634,6 @@ is
                       (S.Negotiated_Suite = Saved_Negotiated_Suite);
                          end Finish_CKE;
 
-                 procedure Start_CKE_Reassembly
-                   (Source         : in     Byte_Seq;
-                    New_Need       : in     N32;
-                    Buffer_Length  : in     N32;
-                    Header_Pending : in     Boolean)
-                                 with Pre  => Source'Length > 0
-                                      and then Source'Last < N32'Last
-                              --  >= 4, not > 0: an active reassembly always
-                              --  includes the 4-byte handshake header, per
-                              --  Reasm_Buffer_Shaped. Both callers pass 4 or
-                              --  HS_Msg_Len + 4.
-                              and then New_Need >= 4
-                              and then New_Need <= Buffer_Length
-                              and then Buffer_Length <= Max_HS_Msg
-                              and then
-                                (if Header_Pending then
-                                   New_Need = 4
-                                   and then Buffer_Length = Max_HS_Msg)
-                              and then N32 (Source'Length) <= New_Need
-                              and then HC.Reasm.Need = 0,
-                      Post => HC.Reasm.Len = N32 (Source'Length)
-                              and then HC.Reasm.Need = New_Need
-                              and then (HC.Reasm.Phase = Reasm_Header) = Header_Pending
-         is
-            Source_Len : constant N32 := N32 (Source'Length);
-         begin
-
-                    HC.Reasm :=
-                      (Phase =>
-                         (if Header_Pending then Reasm_Header else Reasm_Body),
-                       Len  => Source_Len,
-                       Need => New_Need);
-                    for I in N32 range 0 .. Source_Len - 1 loop
-                                               pragma Loop_Invariant (Buffer_Length <= Max_HS_Msg);
-                               pragma Loop_Invariant (Buffer_Length <= N32'Last);
-                               pragma Loop_Invariant (HC.Reasm.Need = New_Need);
-                               pragma Loop_Invariant
-                                 ((HC.Reasm.Phase = Reasm_Header) = Header_Pending);
-                               pragma Loop_Invariant (HC.Reasm.Len = Source_Len);
-                               pragma Loop_Invariant (Source_Len <= New_Need);
-                               pragma Loop_Invariant (New_Need <= Buffer_Length);
-                               pragma Loop_Invariant
-                                 (if Header_Pending then
-                                    New_Need = 4
-                                    and then Source_Len <= 4
-                                    and then Buffer_Length = Max_HS_Msg);
-                               pragma Loop_Invariant (I <= Source_Len - 1);
-                       pragma Loop_Invariant
-                         (Source'First + I in Source'Range);
-                       pragma Loop_Invariant (I in HC.Reasm_Buf'Range);
-                       HC.Reasm_Buf (I) := Source (Source'First + I);
-                    end loop;
-                 end Start_CKE_Reassembly;
               begin
          --  Slice bound: Parse_Record_Header Post gives Record_Len <= Avail,
          --  i.e., Read_Pos + Record_Len <= Write_Pos <= IO_Buffer_Capacity.
@@ -1696,92 +1641,59 @@ is
          --                  = Read_Pos + Record_Len <= Write_Pos.
          pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
 
-         if HC.Reasm.Need > 0 then
-            if HC.Reasm.Phase = Reasm_Idle
-              or else HC.Reasm.Len > N32 (HC.Reasm_Buf'Length)
-            then
-               Fail_Decode;
-               return;
-            end if;
+         if Used (HC.Reasm) > 0 then
 
             declare
-               Remaining : constant N32 :=
-                 (if HC.Reasm.Len <= HC.Reasm.Need
-                  then HC.Reasm.Need - HC.Reasm.Len
-                  else 0);
-               Take : constant N32 := N32'Min (Remaining, Frag_Len);
+               --  Was "(if Len <= Need then Need - Len else 0)" -- a guard
+               --  that substituted a ZERO-LENGTH COPY for a state it could
+               --  not handle, hiding the underflow rather than preventing it
+               --  (task #89). Wanted computes the shortfall inside the module
+               --  where the subtraction is safe, and the Min against
+               --  Free_Space discharges Append's precondition, so the
+               --  buffer-overflow branch is gone too.
+               Take : constant HS_Msg_Len :=
+                 N32'Min (N32'Min (Wanted (HC.Reasm), Frag_Len),
+                          Free_Space (HC.Reasm));
             begin
                if Take > 0 then
-                  if HC.Reasm.Len + Take > N32 (HC.Reasm_Buf'Length) then
-                     Fail_Decode;
-                     return;
-                  end if;
-                  HC.Reasm_Buf
-                    (HC.Reasm.Len .. HC.Reasm.Len + Take - 1) :=
-                    S.Input.Data (FS .. FS + Take - 1);
-                  HC.Reasm := (HC.Reasm with delta Len => HC.Reasm.Len + Take);
+                  Append (HC.Reasm, S.Input.Data (FS .. FS + Take - 1));
                end if;
 
                if Take /= Frag_Len then
                   --  A CKE handshake message may span records, but this
                   --  state expects exactly that one message before CCS.
-                  HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-                  Fail_Decode;
+                           Fail_Decode;
                   return;
                end if;
             end;
 
-            if (HC.Reasm.Phase = Reasm_Header)
-              and then HC.Reasm.Len >= 4
-            then
-               declare
-                  HS_Msg_Len : constant N32 :=
-                     N32 (HC.Reasm_Buf (1)) * 65536 +
-                     N32 (HC.Reasm_Buf (2)) * 256 +
-                     N32 (HC.Reasm_Buf (3));
-                  HS_Total : constant N32 := HS_Msg_Len + 4;
-               begin
-                          if HC.Reasm_Buf (0) /= HT_Client_Key_Exchange then
-                             HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-                             Fail_Unexpected;
-                             return;
-                          end if;
-                          if HS_Msg_Len > Max_Client_Key_Exchange then
-                             HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-                             Fail_Decode;
-                             return;
-                          end if;
-                  pragma Assert (HS_Total <= Max_HS_Msg);
-
-                  HC.Reasm :=
-                    (HC.Reasm with delta
-                       Phase => Reasm_Body,
-                       Need => HS_Total);
-               end;
+            if Header_Ready (HC.Reasm) then
+               if Declared_Type (HC.Reasm) /= HT_Client_Key_Exchange then
+                  Fail_Unexpected;
+                  return;
+               end if;
+               if Declared_Size (HC.Reasm) - 4 > Max_Client_Key_Exchange then
+                  Fail_Decode;
+                  return;
+               end if;
             end if;
 
-            if HC.Reasm.Len < HC.Reasm.Need then
+            if not Has_Message (HC.Reasm) then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;
-                              pragma Assert (HC.Reasm.Need > 0);
-               pragma Assert
-                 (HC.Reasm.Len <= N32 (HC.Reasm_Buf'Length));
                return;
             end if;
 
                     declare
-                       Need : constant N32 := HC.Reasm.Need;
+                       Full : constant Byte_Seq := Message (HC.Reasm);
                     begin
-                       if Need > HC.Transcript'Length then
+                       if Full'Length > HC.Transcript'Length then
                           Fail_Decode;
                           return;
                        end if;
 
-                       declare
-                          Full : constant Byte_Seq :=
-                            HC.Reasm_Buf (0 .. Need - 1);
                        begin
-                          HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                          Reset (HC.Reasm);
                           Result := OK;
                                   Finish_CKE (Full);
                                           if Result /= OK then
@@ -1798,12 +1710,8 @@ is
                        return;
                     end if;
 
-                  pragma Assert (HC.Reasm.Need = 0);
-                    Start_CKE_Reassembly
-                      (Source         => S.Input.Data (FS .. FS + Frag_Len - 1),
-                       New_Need       => 4,
-                       Buffer_Length  => Max_HS_Msg,
-                       Header_Pending => True);
+                    Reset (HC.Reasm);
+                    Append (HC.Reasm, S.Input.Data (FS .. FS + Frag_Len - 1));
                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                     Result := OK;
             return;
@@ -1825,14 +1733,10 @@ is
                        end if;
 
                        if HS_Total > Frag_Len then
-                          pragma Assert (HS_Total <= Max_HS_Msg);
-                  pragma Assert (HC.Reasm.Need = 0);
-                          Start_CKE_Reassembly
-                            (Source         =>
-                               S.Input.Data (FS .. FS + Frag_Len - 1),
-                             New_Need       => HS_Total,
-                             Buffer_Length  => HS_Total,
-                             Header_Pending => False);
+                          Reset (HC.Reasm);
+                          Append
+                            (HC.Reasm,
+                             S.Input.Data (FS .. FS + Frag_Len - 1));
                           S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                           Result := OK;
                   return;
@@ -1862,8 +1766,6 @@ is
                  SS_Err : Error_Code := Handshake_Failure;
               begin
                  Compute_Shared_Secret_12 (SS_OK, SS_Err);
-                    pragma Assert
-                      (HC.Reasm.Phase = Reasm_Idle or else HC.Reasm.Len <= HC.Reasm.Need);
             if not SS_OK then
                Send_Alert_And_Error (S, SS_Err, Result);
                return;
@@ -2352,94 +2254,57 @@ is
                        return;
                     end if;
 
-            if HC.Reasm.Need > 0 or else PL < 4 then
-                       if HC.Reasm.Need = 0 then
-                          if PL = 0 then
-                             Send_Alert_And_Error (S, Decode_Error, Result);
-                             return;
-                          end if;
-
-                  HC.Reasm := (Phase => Reasm_Header, Len => PL, Need => 4);
-                  HC.Reasm_Buf (0 .. PL - 1) := Plaintext (0 .. PL - 1);
-               else
-                          if HC.Reasm.Phase = Reasm_Idle
-                            or else HC.Reasm.Len > N32 (HC.Reasm_Buf'Length)
-                          then
-                             Send_Alert_And_Error (S, Decode_Error, Result);
-                             return;
-                          end if;
-
-                  declare
-                     Remaining : constant N32 :=
-                       (if HC.Reasm.Len <= HC.Reasm.Need
-                        then HC.Reasm.Need - HC.Reasm.Len
-                        else 0);
-                     Take : constant N32 := N32'Min (Remaining, PL);
-                  begin
-                     if Take > 0 then
-                        if HC.Reasm.Len + Take >
-                           N32 (HC.Reasm_Buf'Length)
-                                then
-                                   Send_Alert_And_Error (S, Decode_Error, Result);
-                                   return;
-                                end if;
-                        HC.Reasm_Buf
-                          (HC.Reasm.Len .. HC.Reasm.Len + Take - 1) :=
-                          Plaintext (0 .. Take - 1);
-                        HC.Reasm :=
-                          (HC.Reasm with delta
-                             Len => HC.Reasm.Len + Take);
-                     end if;
-
-                             if Take /= PL then
-                                HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-                                Send_Alert_And_Error (S, Unexpected_Message, Result);
-                                return;
-                             end if;
-                  end;
+            if Used (HC.Reasm) > 0 or else PL < 4 then
+               if Used (HC.Reasm) = 0 and then PL = 0 then
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+                  return;
                end if;
 
-               if (HC.Reasm.Phase = Reasm_Header)
-                 and then HC.Reasm.Len >= 4
-               then
-                          if HC.Reasm_Buf (0) /= HT_Finished then
-                             HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-                             Send_Alert_And_Error
-                               (S, Unexpected_Message, Result);
-                             return;
-                          end if;
-                  if HC.Reasm_Buf (1) /= 0
-                    or else HC.Reasm_Buf (2) /= 0
-                    or else HC.Reasm_Buf (3) /= Byte (Finished_Verify_Len)
-                  then
-                             HC.Reasm := (HC.Reasm with delta Phase => Reasm_Body);
-                             Send_Alert_And_Error
-                               (S, Certificate_Verify_Failed, Result);
-                             return;
-                          end if;
-                  HC.Reasm :=
-                    (HC.Reasm with delta
-                       Phase => Reasm_Body,
-                       Need => Finished_12_Total_Len);
+               declare
+                  Take : constant HS_Msg_Len :=
+                    N32'Min (N32'Min (Wanted (HC.Reasm), PL),
+                             Free_Space (HC.Reasm));
+               begin
+                  if Take > 0 then
+                     Append (HC.Reasm, Plaintext (0 .. Take - 1));
+                  end if;
+
+                  --  Finished is the last message of the client's flight;
+                  --  anything after it in the same record is unexpected.
+                  if Take /= PL then
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+               end;
+
+               if Header_Ready (HC.Reasm) then
+                  if Declared_Type (HC.Reasm) /= HT_Finished then
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+                  if Declared_Size (HC.Reasm) /= Finished_12_Total_Len then
+                     Send_Alert_And_Error
+                       (S, Certificate_Verify_Failed, Result);
+                     return;
+                  end if;
                end if;
 
-               if HC.Reasm.Len < HC.Reasm.Need then
+               if not Has_Message (HC.Reasm) then
                   Result := (if Input_Available (S) > 0 then OK else Need_Input);
                   return;
                end if;
 
                declare
-                  Need : constant N32 := HC.Reasm.Need;
-                       begin
-                          if Need > N32 (Plaintext'Length) then
-                             Send_Alert_And_Error (S, Decode_Error, Result);
-                             return;
-                          end if;
+                  Full : constant Byte_Seq := Message (HC.Reasm);
+               begin
+                  if Full'Length > N32 (Plaintext'Length) then
+                     Send_Alert_And_Error (S, Decode_Error, Result);
+                     return;
+                  end if;
 
-                  Plaintext (0 .. Need - 1) :=
-                    HC.Reasm_Buf (0 .. Need - 1);
-                  PL := Need;
-                  HC.Reasm := (Phase => Reasm_Idle, Len => 0, Need => 0);
+                  Plaintext (0 .. Full'Length - 1) := Full;
+                  PL := Full'Length;
+                  Reset (HC.Reasm);
                end;
             elsif PL >= 4 then
                if Plaintext (0) = HT_Finished
@@ -2448,11 +2313,8 @@ is
                  and then Plaintext (3) = Byte (Finished_Verify_Len)
                  and then Finished_12_Total_Len > PL
                then
-                  HC.Reasm :=
-                    (Phase => Reasm_Body,
-                     Len => PL,
-                     Need => Finished_12_Total_Len);
-                  HC.Reasm_Buf (0 .. PL - 1) := Plaintext (0 .. PL - 1);
+                  Reset (HC.Reasm);
+                  Append (HC.Reasm, Plaintext (0 .. PL - 1));
                   Result := (if Input_Available (S) > 0 then OK else Need_Input);
                   return;
                end if;

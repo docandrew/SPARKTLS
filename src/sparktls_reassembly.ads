@@ -55,7 +55,7 @@ package SPARKTLS_Reassembly with SPARK_Mode => On is
    subtype Wire_Chunk is Byte_Seq
      with Dynamic_Predicate => Wire_Chunk'Last < IO_Buffer_Capacity;
 
-   type Buffer is limited private;
+   type Buffer is private;
 
    --  Bytes currently buffered, from offset 0.
    function Used (B : Buffer) return HS_Msg_Len;
@@ -73,6 +73,12 @@ package SPARKTLS_Reassembly with SPARK_Mode => On is
    function Declared_Size (B : Buffer) return N32
      with Pre => Header_Ready (B);
 
+   --  Handshake message type of the message at offset 0. Readable as soon as
+   --  the header is, which is what lets a caller reject a wrong-type message
+   --  without first buffering a body it does not want.
+   function Declared_Type (B : Buffer) return Byte
+     with Pre => Header_Ready (B);
+
    --  The peer declared a message we can never buffer. A protocol error: the
    --  caller must alert rather than proceed.
    function Message_Too_Large (B : Buffer) return Boolean;
@@ -81,6 +87,16 @@ package SPARKTLS_Reassembly with SPARK_Mode => On is
    --  Consume: that is the packed-flight case, and it needs no separate
    --  concept, no second phase and no second set of fields.
    function Has_Message (B : Buffer) return Boolean;
+
+   --  Bytes still required to complete the message at offset 0: the rest of
+   --  the 4-byte header if it is not yet readable, otherwise the rest of the
+   --  declared body. Zero once a whole message is present.
+   --
+   --  This is the operation 13 scattered sites used to open-code as
+   --  "Need - Len", each having to justify its own underflow. Here both
+   --  subtractions are safe from the branch they sit in.
+   function Wanted (B : Buffer) return HS_Msg_Len
+     with Pre => not Message_Too_Large (B);
 
    function Message_Length (B : Buffer) return HS_Msg_Len
      with Pre  => Has_Message (B) and then not Message_Too_Large (B),
