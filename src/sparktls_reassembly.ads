@@ -81,6 +81,13 @@ package SPARKTLS_Reassembly with SPARK_Mode => On is
 
    --  The peer declared a message we can never buffer. A protocol error: the
    --  caller must alert rather than proceed.
+   --
+   --  MUTUALLY EXCLUSIVE WITH Has_Message, and that is why the operations
+   --  below require only Has_Message: Has_Message gives
+   --  Filled >= Declared_Size, and Filled is HS_Msg_Len so Filled <=
+   --  Max_HS_Msg; hence Declared_Size <= Max_HS_Msg, i.e. NOT too large.
+   --  Requiring both made every caller discharge a fact implied by the one it
+   --  had already established -- 8 of 92 unproved contracts in round 33.
    function Message_Too_Large (B : Buffer) return Boolean;
 
    --  A whole message is present at offset 0. May STILL be true after
@@ -93,20 +100,45 @@ package SPARKTLS_Reassembly with SPARK_Mode => On is
    --  declared body. Zero once a whole message is present.
    --
    --  This is the operation 13 scattered sites used to open-code as
-   --  "Need - Len", each having to justify its own underflow. Here both
-   --  subtractions are safe from the branch they sit in.
-   function Wanted (B : Buffer) return HS_Msg_Len
-     with Pre => not Message_Too_Large (B);
+   --  "Need - Len", each having to justify its own underflow. Here every
+   --  subtraction is safe from the branch it sits in.
+   --
+   --  TOTAL -- no precondition. It used to require `not Message_Too_Large`,
+   --  which three callers could not discharge (server.adb:1483, :2223, :4792
+   --  in the round-30 findings). An oversized declaration now answers
+   --  Free_Space: we can never complete that message, so "how much more do
+   --  you want" is honestly "everything you have room for". Callers already
+   --  Min against Free_Space and already test Message_Too_Large, so behaviour
+   --  is unchanged -- what goes away is an obligation at every call site.
+   function Wanted (B : Buffer) return HS_Msg_Len;
 
    function Message_Length (B : Buffer) return HS_Msg_Len
-     with Pre  => Has_Message (B) and then not Message_Too_Large (B),
+     with Pre  => Has_Message (B),
           Post => Message_Length'Result >= 4;
 
+   --  A complete handshake message handed back to a caller.
+   --
+   --  A DEDICATED TYPE, not a bare Byte_Seq, for the reason Wire_Chunk exists
+   --  on the input side. Byte_Seq is array (N32 range <>), so for an
+   --  unconstrained result the prover must first show 'Length does not
+   --  OVERFLOW N32 before it can use any postcondition about it -- and
+   --  "cannot prove upper bound for Frag'Length / Full'Length / Fin'Length"
+   --  was 9 of the 28 AoRTE findings in round 33, every one of them at a
+   --  Message (...) consumption site.
+   --  The bound is on the INDEX, not a Dynamic_Predicate: a predicate is
+   --  re-checked on every assignment and costs a VC each time, whereas a
+   --  bounded index subtype makes 'Length <= Max_HS_Msg true BY CONSTRUCTION
+   --  with nothing to discharge. Hence a distinct array type rather than a
+   --  subtype of Byte_Seq -- Byte_Seq is array (N32 range <>) with N32 =
+   --  0 .. I32'Last, and a subtype cannot narrow an index and stay
+   --  unconstrained.
+   subtype Message_Index is N32 range 0 .. Max_HS_Msg - 1;
+   type Message_Bytes is array (Message_Index range <>) of Byte;
+
    --  The complete message at offset 0, header included.
-   function Message (B : Buffer) return Byte_Seq
-     with Pre  => Has_Message (B) and then not Message_Too_Large (B),
-          Post => Message'Result'First = 0
-                  and then Message'Result'Length = Message_Length (B);
+   function Message (B : Buffer) return Message_Bytes
+     with Pre  => Has_Message (B),
+          Post => Message'Result'Length = Message_Length (B);
 
    procedure Reset (B : out Buffer)
      with Post => Used (B) = 0
@@ -119,13 +151,26 @@ package SPARKTLS_Reassembly with SPARK_Mode => On is
    --  our own flow-control error into "data".
    procedure Append (B : in out Buffer; Data : Wire_Chunk)
      with Pre  => Data'Length <= Free_Space (B),
-          --  Stated via Free_Space, not Used: both are true, but this form
-          --  keeps every term inside HS_Msg_Len's bounds.
-          Post => Free_Space (B) = Free_Space (B)'Old - Data'Length;
+          --  Pre stated via Free_Space, not Used: both are true, but this
+          --  form keeps every term inside HS_Msg_Len's bounds.
+          --
+          --  Post gives BOTH sides of the accounting. Free_Space alone was
+          --  not enough: the relation Used = Max_HS_Msg - Free_Space holds
+          --  inside this package, but the expression functions live in the
+          --  body, so a CALLER cannot see it and could not work out how many
+          --  bytes the buffer now holds. Stating Used directly is what lets a
+          --  caller conclude anything about the buffer after appending --
+          --  Header_Ready above all, which is just Used >= 4.
+          --  Plain `and`, not `and then`: short-circuiting would make the
+          --  second conjunct potentially unevaluated, and 'Old is illegal
+          --  there (RM 6.1.1(27)). Non-short-circuit keeps both always
+          --  evaluated, which is what makes the 'Old prefixes legal.
+          Post => Used (B) = Used (B)'Old + Data'Length
+                  and Free_Space (B) = Free_Space (B)'Old - Data'Length;
 
    --  Drop the message at offset 0; shift any trailing bytes down.
    procedure Consume (B : in out Buffer)
-     with Pre  => Has_Message (B) and then not Message_Too_Large (B),
+     with Pre  => Has_Message (B),
           Post => Used (B) = Used (B)'Old - Message_Length (B)'Old;
 
 private

@@ -447,8 +447,7 @@ is
                                 and then Records.TLS12.Nonce_Space_Available_12
                                   (HC.Client_Seq_12)
                         and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-        Post => True;
+                and then SPARKTLSCrypto.P384.ECDSA.Initialized;
 
    procedure Copy_Cert_To_X509
      (Cert_RFLX : in     RBT.Bytes;
@@ -3161,8 +3160,13 @@ is
             return;
          end if;
 
-         exit when not Has_Message (HC.Reasm);
-
+         --  INVARIANT FIRST, THEN THE EXIT. A Loop_Invariant is a CUT: past
+         --  it the prover knows only what the invariant states. With the exit
+         --  above the cut, the Has_Message fact it establishes was discarded
+         --  and the Message (...) call below could not discharge its
+         --  precondition -- a single-line proof of it exhausted the prover
+         --  even in isolation. Ordered this way the cut happens first and the
+         --  exit's fact survives to its use, with nothing added to either.
          pragma Loop_Invariant
            (Result = OK
               and then S.State not in Idle | Closing | Closed | Error_State
@@ -3188,6 +3192,9 @@ is
                                   .Local_Config_Valid (HC.Cfg.Local))
                                                      and then SPARKTLSCrypto.P384.Field.Initialized
                                                      and then SPARKTLSCrypto.P384.ECDSA.Initialized);
+
+         exit when not Has_Message (HC.Reasm);
+
          pragma Assert
            (if HC.Cfg.Local /= null
                 and then HC.Cfg.Local.Has_Identity
@@ -3200,7 +3207,7 @@ is
          declare
             --  Message_Length >= 4 by its postcondition, so Msg_Len below
             --  cannot underflow. The type carries it; nothing to assert.
-            Frag : constant Byte_Seq := Message (HC.Reasm);
+            Frag : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
          begin
             if Frag'Length - 1 >= Transcript_Capacity then
                Reset (HC.Reasm);
@@ -3538,7 +3545,7 @@ is
       Result := OK;
 
       Handshake.Parse_Handshake_Header
-        (Message (HC.Reasm), Msg_Type, Msg_Len, Parse_OK);
+        (Byte_Seq (Message (HC.Reasm)), Msg_Type, Msg_Len, Parse_OK);
       if not Parse_OK then
          declare
             Raw_Type : constant Byte := Message (HC.Reasm) (0);
@@ -4368,7 +4375,7 @@ is
         (Msg_Len : in N32;
          Result  : out Action)
       is
-         NST_Msg : constant Byte_Seq := Message (HC.Reasm);
+         NST_Msg : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
       begin
          if NST_Msg (0) /= 16#04# or else Msg_Len < 6 then
             Send_Encrypted_Finished_Error_12
@@ -4889,7 +4896,7 @@ is
          end if;
 
          declare
-            Fin      : constant Byte_Seq := Message (HC.Reasm);
+            Fin      : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
             RN       : constant N32 := Fin'Length;
             Msg_Type : constant Byte := Fin (0);
             Msg_Len  : constant N32 := RN - 4;
@@ -4965,7 +4972,7 @@ is
          --  passing a slice of the reassembly buffer alongside `in out HC`
          --  is a SPARK 6.4.2 aliasing violation.
          declare
-            Fin_Snap : constant Byte_Seq := Message (HC.Reasm);
+            Fin_Snap : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
          begin
             pragma Assert (Fin_Snap'Length = Finished_12_Total_Len);
             Append_Transcript (HC, Fin_Snap);

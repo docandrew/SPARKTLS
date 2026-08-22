@@ -504,8 +504,7 @@ is
                                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
                                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
                                and then HC.Client_HS.Counter
-                                 <= Unsigned_64'Last - 2),
-        Post => True;
+                                 <= Unsigned_64'Last - 2);
 
    procedure Dispatch_Decrypted_HS_Message
      (S      : in out Session;
@@ -3349,8 +3348,6 @@ is
                                      (S, HC, Rec, Frag_Len, Frag_Start, Result);
                            pragma Assert
                              (if Result = OK then S.State = Wait_Server_Hello);
-                           pragma Assert
-                             (if Result = OK then True);
                                    pragma Assert
                                      (if Result = OK then HC.Cfg.Random /= null);
                                         end if;
@@ -3435,7 +3432,7 @@ is
                         Result := OK;
                         --  Full ServerHello reassembled.
                         declare
-                           Frag : constant Byte_Seq := Message (HC.Reasm);
+                           Frag : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
                            Parse_OK : Boolean;
                         begin
                            --  RFC 8446 §4 / RFC 5246 §7.4: the first
@@ -4255,7 +4252,7 @@ is
    is
    begin
               declare
-                 Full : constant Byte_Seq := Message (HC.Reasm);
+                 Full : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
               begin
                  Reset (HC.Reasm);
                  Dispatch_Decrypted_HS_Message (S, HC, Full, Result);

@@ -144,9 +144,7 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Post => S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-                                  | Error_State
-                and then
-                  (if S.State /= Error_State then True);
+                                  | Error_State;
 
    --  Legacy CCS entry point. The active TLS 1.2 server path validates
    --  the client's ChangeCipherSpec inline while processing the

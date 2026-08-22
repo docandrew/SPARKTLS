@@ -2762,59 +2762,44 @@ private
 
       --  Handshake context (heap-allocated, freed after handshake)
       HC_Ptr : Handshake_Context_Access := null;
-   end record
-   with Dynamic_Predicate =>
-     --  WHAT LIVES HERE AND WHAT DOES NOT.
-     --
-     --  A Dynamic_Predicate is re-checked on EVERY assignment to ANY
-     --  component of the record, and at every call boundary that passes
-     --  a Session. So a conjunct constraining a single field costs a
-     --  proof obligation at every unrelated write elsewhere in the
-     --  record. A subtype on that field costs one range check at the
-     --  assignment that actually touches it.
-     --
-     --  Therefore: single-field bounds belong on the FIELD's subtype;
-     --  only genuine multi-field relationships belong here.
-     --
-     --  Moved out to subtypes (2026-08-18, was 78% of all owned proof
-     --  findings -- 159 VC_PREDICATE_CHECK across the four largest
-     --  units):
-     --    Client_App.Counter / Server_App.Counter < Unsigned_64'Last
-     --        -> already guaranteed by Traffic_Keys.Counter's type,
-     --           Record_Counter. These two conjuncts were pure
-     --           restatement and proved nothing the type did not.
-     --    Client_Seq_12 / Server_Seq_12 < Unsigned_64'Last
-     --        -> fields retyped Record_Counter.
-     --    App_Data_Len, Post_HS_Len, Post_HS_Need <= Max_Record_Plaintext
-     --        -> fields retyped Plaintext_Length.
-     --
-     --  NOT stated here: the RFC 8446 6.1 / 5.2 flood caps. Tried on
-     --  2026-08-17 and reverted -- they are NOT invariants of Session.
-     --  The receive paths increment the counter and only then test and
-     --  transition:
-     --      S.Warning_Alerts_Recvd := S.Warning_Alerts_Recvd + 1;
-     --      if S.Warning_Alerts_Recvd >= 5 then ... Error_State ...
-     --  so the counter transiently holds Max + 1 before the transition,
-     --  and assigning to a component of a predicated object checks the
-     --  predicate at exactly that point. The code shape is correct;
-     --  the invariant was simply false. These stay as the Ghost
-     --  functions Warning_Alerts_Bounded_RFC_8446_6_1 /
-     --  Empty_Records_Bounded_RFC_8446_5_2, used as preconditions where
-     --  they are actually needed.
-     --
-     --  Post-handshake reassembly coherence (TLS 1.3 NewSessionTicket may
-     --  arrive fragmented across records). This is a genuine relationship
-     --  BETWEEN two fields, so it cannot become a subtype and correctly
-     --  stays here: nothing pending means nothing buffered, and a pending
-     --  message is at least a 4-byte header with no more buffered than
-     --  needed.
-     (if Session.Post_HS_Need = 0
-               then Session.Post_HS_Len = 0
-               else Session.Post_HS_Need >= 4
-                    and then Session.Post_HS_Len <= Session.Post_HS_Need)
-     --  NOTE: the output-buffer compaction invariant deliberately lives on
-     --  IO_Buffer's own predicate, not here -- see the comment there.
-     ;
+   end record;
+
+   --  NO Dynamic_Predicate on Session. Deliberately.
+   --
+   --  WHAT WOULD LIVE HERE AND WHY NOTHING DOES.
+   --
+   --  A Dynamic_Predicate is re-checked on EVERY assignment to ANY component
+   --  of the record, and at every call boundary that passes a Session. So a
+   --  conjunct constraining a single field costs a proof obligation at every
+   --  unrelated write elsewhere in the record. A subtype on that field costs
+   --  one range check at the assignment that actually touches it.
+   --
+   --  Single-field bounds therefore belong on the FIELD's subtype. Moved out
+   --  2026-08-18, when they were 78% of all owned proof findings (159
+   --  VC_PREDICATE_CHECK across the four largest units):
+   --    Client_App.Counter / Server_App.Counter  -> Record_Counter
+   --    Client_Seq_12 / Server_Seq_12            -> Record_Counter
+   --    App_Data_Len, Post_HS_Len, Post_HS_Need  -> Plaintext_Length
+   --
+   --  That left ONE conjunct, the post-handshake reassembly relation
+   --  (Post_HS_Need = 0 -> Post_HS_Len = 0, else Need >= 4 and Len <= Need).
+   --  Removed 2026-08-22: it was a genuine two-field relationship, but as the
+   --  sole survivor it made every Session write and every call boundary pay a
+   --  predicate check to carry one fact about two fields -- and it was still
+   --  unproved. Session is passed to nearly every subprogram in the library,
+   --  and 13 of the 18 "precondition might fail" findings in server.adb were
+   --  Send_Alert_And_Error (S, ...) calls whose own Pre is a single state
+   --  test; the cost was this predicate riding along.
+   --
+   --  The individual bounds survive on Plaintext_Length. What is NOT
+   --  reinstated here is Len <= Need: see #90, which makes it STRUCTURAL by
+   --  moving the buffer and its accounting into the reassembly ADT, the same
+   --  way round 30 did for handshake reassembly. Until then, any site that
+   --  genuinely depends on the relation must show it as an honest AoRTE
+   --  check rather than inherit it from a predicate nothing could prove.
+   --
+   --  NOTE: the output-buffer compaction invariant deliberately lives on
+   --  IO_Buffer's own predicate, not here -- see the comment there.
 
    --  Query function completions: one field each, verbatim.
 

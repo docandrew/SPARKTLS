@@ -46,6 +46,31 @@ BORING_REV="${BORING_REV:-0b2b80bdb886ea106021512a16b66cfddafa8302}"
 export ALR_NON_INTERACTIVE=1
 export NO_COLOR=1
 
+#  --update-baseline: rewrite EXPECTED_FAILURES.txt from the LAST run's
+#  results. Deliberately does NOT re-run: refreshing a baseline from a fresh
+#  run would bake in whatever that run happened to produce, including a
+#  regression. Inspect the diff the previous run printed, then update.
+if [ "${1:-}" = "--update-baseline" ]; then
+    if [ ! -f "$CACHE/last_results.log" ]; then
+        echo "No $CACHE/last_results.log -- run the suite first."
+        exit 1
+    fi
+    if [ ! -f "$CACHE/last_run_full" ]; then
+        echo "Last run was FILTERED (-test ...). Refusing to rewrite the"
+        echo "baseline from a partial result set -- it would drop every"
+        echo "known failure that run did not execute. Do a full run first."
+        exit 1
+    fi
+    HDR=$(sed -n '/^#/p' "$DIR/EXPECTED_FAILURES.txt" 2>/dev/null)
+    { [ -n "$HDR" ] && echo "$HDR"
+      grep -ao 'FAILED ([^)]*)' "$CACHE/last_results.log" \
+        | sed 's/^FAILED (//; s/)$//' | sort -u
+    } > "$DIR/EXPECTED_FAILURES.txt.new"
+    mv "$DIR/EXPECTED_FAILURES.txt.new" "$DIR/EXPECTED_FAILURES.txt"
+    echo "Baseline updated: $(grep -vc '^#' "$DIR/EXPECTED_FAILURES.txt") known failures."
+    exit 0
+fi
+
 echo "=== BoGo (BoringSSL adversarial TLS tests) ==="
 
 mkdir -p "$CACHE"
@@ -404,6 +429,12 @@ RUN_STATUS=0
     "$@" > "$CACHE/last_results.log" 2>&1
 RUN_STATUS=$?
 
+#  Mark whether this run covered the WHOLE suite. A filtered run (-test ...)
+#  produces a partial result set; diffing that against a full-suite baseline
+#  reports every unrun known failure as "newly passing", and --update-baseline
+#  would then wipe the baseline. Found while testing the diff, 2026-08-22.
+if [ $# -eq 0 ]; then touch "$CACHE/last_run_full"; else rm -f "$CACHE/last_run_full"; fi
+
 #  Stats line is "failed/unimplemented/done/started/total"
 #  (per ssl/test/runner/runner.go:2244).
 LAST=$(grep -oE "[0-9]+/[0-9]+/[0-9]+/[0-9]+/[0-9]+" "$CACHE/last_results.log" \
@@ -434,29 +465,60 @@ if [ "${TEMPORARY_TRIAGE_GLOBS:-0}" -gt 0 ]; then
     echo "    Temporary triage: $TEMPORARY_TRIAGE_GLOBS skip globs applied (not included in total)"
 fi
 
-if [ "${FAILED:-0}" -gt 0 ]; then
-    echo "Failed cases:"
+BASELINE="$DIR/EXPECTED_FAILURES.txt"
+
+#  Regression detection by DIFF, not by count.
+#
+#  Counts cannot identify a regression: a run that fixes one test and breaks
+#  another shows the same totals. On 2026-08-22 the totals moved 1021/70 ->
+#  1020/71 and finding the single moved test cost a full extra suite run,
+#  because no baseline list existed.
+#
+#  The old code here dumped failures truncated at 80 names. Truncation is how
+#  defects hide -- never truncate the regression list.
+if [ -f "$BASELINE" ] && [ ! -f "$CACHE/last_run_full" ]; then
+    echo "    (filtered run -- not diffed against EXPECTED_FAILURES.txt)"
+    [ "${FAILED:-0}" -gt 0 ] && exit 1
+    exit 0
+fi
+
+if [ -f "$BASELINE" ]; then
+    ACTUAL=$(mktemp); EXPECTED=$(mktemp)
     grep -ao 'FAILED ([^)]*)' "$CACHE/last_results.log" \
-      | sed 's/^FAILED (//; s/)$//' \
-      | sort \
-      | sed -n '1,80p'
-    if [ "$FAILED" -gt 80 ]; then
-        echo "  ... $((FAILED - 80)) more; see $CACHE/last_results.log"
+      | sed 's/^FAILED (//; s/)$//' | sort -u > "$ACTUAL"
+    grep -v '^#' "$BASELINE" | grep -v '^[[:space:]]*$' | sort -u > "$EXPECTED"
+
+    NEW_FAIL=$(comm -23 "$ACTUAL" "$EXPECTED")
+    NEW_PASS=$(comm -13 "$ACTUAL" "$EXPECTED")
+    rm -f "$ACTUAL" "$EXPECTED"
+
+    if [ -n "$NEW_FAIL" ]; then
+        echo
+        echo "!!! REGRESSION: $(echo "$NEW_FAIL" | wc -l) test(s) newly FAILING:"
+        echo "$NEW_FAIL" | sed 's/^/    /'
     fi
+    if [ -n "$NEW_PASS" ]; then
+        echo
+        echo ">>> $(echo "$NEW_PASS" | wc -l) test(s) newly PASSING (update the baseline):"
+        echo "$NEW_PASS" | sed 's/^/    /'
+        echo "    Refresh with: $0 --update-baseline"
+    fi
+    if [ -z "$NEW_FAIL" ] && [ -z "$NEW_PASS" ]; then
+        echo "    Failures match EXPECTED_FAILURES.txt exactly ($FAILED known)."
+    fi
+
+    #  Exit non-zero ONLY on regression. Known failures are already tracked,
+    #  each with an owning task; failing the run on them would make the signal
+    #  useless. Newly-passing is not a failure but must be visible.
+    [ -n "$NEW_FAIL" ] && exit 1
+    exit 0
 fi
 
-if [ "${UNIMPL:-0}" -gt 0 ]; then
-    echo "Unimplemented cases:"
-    grep -ao 'UNIMPLEMENTED ([^)]*)' "$CACHE/last_results.log" \
-      | sed 's/^UNIMPLEMENTED (//; s/)$//' \
-      | sort \
-      | sed -n '1,80p'
-    if [ "$UNIMPL" -gt 80 ]; then
-        echo "  ... $((UNIMPL - 80)) more; see $CACHE/last_results.log"
-    fi
-fi
-
+#  No baseline: fall back to listing everything, untruncated.
 if [ "${FAILED:-0}" -gt 0 ]; then
+    echo "Failed cases (no EXPECTED_FAILURES.txt to diff against):"
+    grep -ao 'FAILED ([^)]*)' "$CACHE/last_results.log" \
+      | sed 's/^FAILED (//; s/)$//' | sort | sed 's/^/    /'
     exit 1
 fi
 exit 0

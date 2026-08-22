@@ -24,16 +24,24 @@ package body SPARKTLS_Reassembly with SPARK_Mode => On is
    function Has_Message (B : Buffer) return Boolean is
      (Header_Ready (B) and then B.Filled >= Declared_Size (B));
 
+   --  Every branch lands inside HS_Msg_Len without needing a precondition:
+   --    header not ready  -> Filled < 4, so 4 - Filled is 1 .. 4
+   --    too large         -> Free_Space is HS_Msg_Len by its own return type
+   --    already complete  -> 0
+   --    otherwise         -> Header_Ready and not too large give
+   --                         Declared_Size <= Max_HS_Msg, and Filled <
+   --                         Declared_Size, so the result is 1 .. Max_HS_Msg
    function Wanted (B : Buffer) return HS_Msg_Len is
      (if not Header_Ready (B) then 4 - B.Filled
+      elsif Message_Too_Large (B) then Free_Space (B)
       elsif B.Filled >= Declared_Size (B) then 0
       else Declared_Size (B) - B.Filled);
 
    function Message_Length (B : Buffer) return HS_Msg_Len is
      (Declared_Size (B));
 
-   function Message (B : Buffer) return Byte_Seq is
-     (B.Data (0 .. Declared_Size (B) - 1));
+   function Message (B : Buffer) return Message_Bytes is
+     (Message_Bytes (B.Data (0 .. Declared_Size (B) - 1)));
 
    procedure Reset (B : out Buffer) is
    begin

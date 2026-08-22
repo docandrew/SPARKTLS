@@ -830,6 +830,19 @@ procedure Bogo_Shim is
                --  lets BoGo distinguish active compatibility gaps from
                --  mere argv-parser gaps.
                null;
+            elsif A = "-new-x509-credential" then
+               --  A MARKER, not a feature. runner.go:appendCredentialFlags
+               --  emits it to open a credential block; the material itself
+               --  follows as -cert-file / -key-file, which we already parse.
+               --  Accepting it means the LAST credential in argv wins, since
+               --  Cfg.Cert_File / Key_File hold exactly one pair.
+               --
+               --  So: tests carrying a single credential now RUN. Tests that
+               --  genuinely need multi-credential selection now FAIL visibly
+               --  instead of hiding as UNIMPLEMENTED -- which is the point,
+               --  per CLASSIFICATION.md's "a stale skip and a real gap look
+               --  identical from the outside".
+               null;
             elsif A = "-resumption-across-names-enabled" then
                Cfg.Resumption_Across_Names := True;
             elsif A'Length >= 11

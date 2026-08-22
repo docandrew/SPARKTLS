@@ -316,7 +316,13 @@ is
              (S      : in out Session;
               HC     : in out Handshake_Context;
               Result :    out Action)
-           with Post =>
+           --  Same shape as Handle_Wait_Client_Hello: without a state Pre the
+           --  prover knows nothing about S.State on entry, so the eight
+           --  Send_Alert_And_Error (S, ...) calls in the body cannot discharge
+           --  that callee's one-line state precondition. Discharged by the
+           --  "when Wait_Client_Hello_Retry =>" arm of Advance_Handshake.
+           with Pre  => S.State = Wait_Client_Hello_Retry,
+                Post =>
                                           (if S.State in Wait_Client_Hello_Retry
                                                        | Server_Hello_Sent
                                                | Wait_Client_Finished
@@ -726,12 +732,6 @@ is
                                         and HC.HRR_Sent = HC.HRR_Sent'Old
                                         and HC.Legacy_Session_ID_Len =
                                               HC.Legacy_Session_ID_Len'Old
-                                                        and (if True'Old
-                                                             then True)
-                                                                and (if True'Old
-                                                                     then True)
-                                                                and (if True'Old
-                                                                     then True)
                                                                 and Used (HC.Reasm) = Used (HC.Reasm)'Old
                                                         
                                                 and HC.Server_Seq_12 = HC.Server_Seq_12'Old
@@ -1213,7 +1213,16 @@ is
              (S      : in out Session;
               HC     : in out Handshake_Context;
               Result :    out Action)
-           with Post => Wait_Client_Hello_Post (S, HC);
+           --  The state is not decoration: without it the prover knows
+           --  nothing about S.State on entry, so every
+           --  Send_Alert_And_Error (S, ...) in the body -- whose own Pre is
+           --  just "S.State not in Idle | Closed | Closing | Error_State" --
+           --  is unprovable. That accounted for 13 of the 18
+           --  "precondition might fail" findings in this unit (round 30).
+           --  Discharged trivially: the sole caller is the
+           --  "when Wait_Client_Hello =>" arm of Advance_Handshake's case.
+           with Pre  => S.State = Wait_Client_Hello,
+                Post => Wait_Client_Hello_Post (S, HC);
 
    procedure Handle_Wait_Client_Hello
              (S      : in out Session;
@@ -1562,7 +1571,7 @@ is
                                 --  had a peer packed anything after the ClientHello.
                                 --  The "Len = 0" arm is gone with it: Has_Message
                                 --  guarantees at least a 4-byte header.
-                                Full_Msg : constant Byte_Seq := Message (HC.Reasm);
+                                Full_Msg : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
                              begin
                                         Handshake.Server_Msgs.Parse_Client_Hello
                                           (S, HC, Full_Msg, Parse_OK);
@@ -2251,7 +2260,7 @@ is
 
                              declare
                                 Full_Msg : constant Byte_Seq :=
-                                   Message (HC.Reasm);
+                                   Byte_Seq (Message (HC.Reasm));
                                 Ready_To_Build : Boolean;
                              begin
                                 Complete_Client_Hello_Retry
@@ -4834,7 +4843,7 @@ is
                              end if;
 
                      declare
-                        Full     : constant Byte_Seq := Message (HC.Reasm);
+                        Full     : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
                         Full_Len : constant N32 := Full'Length;
                      begin
                         Reset (HC.Reasm);

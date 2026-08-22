@@ -1685,7 +1685,7 @@ is
             end if;
 
                     declare
-                       Full : constant Byte_Seq := Message (HC.Reasm);
+                       Full : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
                     begin
                        if Full'Length > HC.Transcript'Length then
                           Fail_Decode;
@@ -2295,7 +2295,7 @@ is
                end if;
 
                declare
-                  Full : constant Byte_Seq := Message (HC.Reasm);
+                  Full : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
                begin
                   if Full'Length > N32 (Plaintext'Length) then
                      Send_Alert_And_Error (S, Decode_Error, Result);
