@@ -258,9 +258,7 @@ is
    end Derive_Keys_Resumed_12;
 
    procedure Derive_Keys_12 (S : in out Session; HC : in out Handshake_Context)
-   with Pre => True
-               and then HC.Transcript_Len > 0
-               and then HC.Transcript_Len <= Transcript_Capacity
+   with Pre => HC.Transcript_Len > 0
                and then
                  (if HC.TLS12_EMS_Transcript_Len > 0
                   then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
@@ -277,6 +275,10 @@ is
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                 and then HC.Selected_Group = HC.Selected_Group'Old
                 and then HC.Transcript_Len = HC.Transcript_Len'Old
+                --  Fresh channels: install aggregates write Counter => 0;
+                --  Finished-send Space_Left Pres discharge from here.
+                and then S.Client_App.Counter = 0
+                and then S.Server_App.Counter = 0
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=

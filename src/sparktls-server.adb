@@ -33,29 +33,10 @@ is
    --  Server_Config_Can_Start moved to the spec's private part alongside
    --  Ready_Config, whose membership test it anchors.
 
-   function Server_Configured (HC : Handshake_Context) return Boolean is
-     (HC.Cfg.Local /= null
-      and then HC.Cfg.Local.Has_Identity
-      and then HC.Cfg.Random /= null)
-   with Ghost;
-
            function Server_Active (S : Session) return Boolean is
              (S.Role = Role_Server
                       and then S.State not in Idle | Closing | Closed | Error_State)
                    with Ghost;
-
-   function Wait_Client_Hello_Post
-     (S  : Session;
-      HC : Handshake_Context) return Boolean is
-     ((if S.State in Wait_Client_Hello
-                    | Wait_Client_Hello_Retry
-                    | Server_Hello_Sent
-                    | Wait_Client_Finished
-       then Server_Configured (HC))
-      and then
-        (if S.State = Wait_Client_Hello
-          then True))
-   with Ghost;
 
            function Handshake_Record_Fragment_Ready
              (Rec : Records.Parse_Result) return Boolean is
@@ -85,17 +66,6 @@ is
                 (if S.State = Wait_Client_Hello_Retry
                  then HC.Version = TLS_1_3
                       and then HC.HRR_Sent
-                      and then Server_Configured (HC)
-                              and then HC.Cfg.Local.NaCl_Cert_Len
-                                <= N32 (Max_Cert_DER)
-                              and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
-                              and then
-                                (for all I in 0 .. Max_Pool_Size - 1 =>
-                                   HC.Cfg.Local.Ints (I).DER_Len
-                             <= X509.N32 (Max_Cert_DER))
-                      and then
-                        (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                                 then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
                               and then Nonce_Space_Available (HC.Server_HS)
                               and then Nonce_Space_Available (S.Server_App))
               and then
@@ -133,11 +103,7 @@ is
                 Records.Record_Header_Size + 3 + Records.Tag_Size)
               and then
                 (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_2
-                 then HC.Cfg.Local /= null
-                      and then HC.Cfg.Local.Has_Identity
-                      and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                        (HC.Cfg.Local)
-                      and then SPARKTLS.Handshake.TLS12.Valid_TLS12_Suite
+                 then SPARKTLS.Handshake.TLS12.Valid_TLS12_Suite
                         (S.Negotiated_Suite)
                       and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
                 (HC.Selected_Group)
@@ -179,7 +145,6 @@ is
            with Pre  => Server_Active (S)
                         and then S.State = Wait_Client_Hello_Retry
                                 and then S.Role = Role_Server
-                                and then Server_Configured (HC)
                                 and then HC.Legacy_Session_ID_Len in 0 .. 32
                         and then Msg'First = 0
                         and then Msg'Last <= N32 (Max_HS_Msg) - 1
@@ -192,17 +157,6 @@ is
                                    and then S.State = Wait_Client_Hello_Retry
                                    and then S.Role = Role_Server
                                    and then Result = OK
-                                   and then Server_Configured (HC)
-                                   and then HC.Cfg.Local.NaCl_Cert_Len
-                                     <= N32 (Max_Cert_DER)
-                                   and then
-                                     (for all I in 0 .. Max_Pool_Size - 1 =>
-                                        HC.Cfg.Local.Ints (I).DER_Len
-                                          <= X509.N32 (Max_Cert_DER))
-                                   and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
-                                   and then
-                                     (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                                      then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
                                    and then HC.Legacy_Session_ID_Len in 0 .. 32
                                                         and then HC.Transcript_Len > 0
                                                         and then S.Negotiated_Suite in
@@ -214,11 +168,6 @@ is
                                         and then
                                           (if S.State not in Error_State | Closed
                                            then True)
-                                                and then
-                                                  (if S.State in Wait_Client_Hello_Retry
-                                                               | Server_Hello_Sent
-                                               | Wait_Client_Finished
-                                   then Server_Configured (HC))
                                         and then
                                           (if S.State not in Error_State | Closed
                                            then True);
@@ -231,7 +180,6 @@ is
            with Pre  => Server_Active (S)
                         and then S.State = Wait_Client_Hello_Retry
                         and then S.Role = Role_Server
-                        and then Server_Configured (HC)
                         and then HC.Legacy_Session_ID_Len in 0 .. 32
                         and then Msg'First = 0
                         and then Msg'Length > 0
@@ -239,7 +187,6 @@ is
                         Post => Server_Active (S)
                                 and then S.State = Wait_Client_Hello_Retry
                                 and then S.Role = Role_Server
-                                and then Server_Configured (HC)
                                 and then S.Input.Read_Pos =
                                   S.Input.Read_Pos'Old
                                 and then S.Input.Write_Pos =
@@ -259,21 +206,11 @@ is
    procedure Build_Server_Flight_After_Client_Hello_Retry
      (S      : in out Session;
       HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
       Result :    out Action)
    with Pre  => Server_Active (S)
                         and then S.State = Wait_Client_Hello_Retry
                         and then S.Role = Role_Server
-                        and then Server_Configured (HC)
-                        and then HC.Cfg.Local.NaCl_Cert_Len
-                          <= N32 (Max_Cert_DER)
-                        and then
-                          (for all I in 0 .. Max_Pool_Size - 1 =>
-                             HC.Cfg.Local.Ints (I).DER_Len
-                               <= X509.N32 (Max_Cert_DER))
-                        and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
-                        and then
-                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
                         and then HC.Legacy_Session_ID_Len in 0 .. 32
                 and then HC.Transcript_Len > 0
                 and then S.Negotiated_Suite in
@@ -281,10 +218,7 @@ is
                         | Suite_AES_256_GCM_SHA384
                         | Suite_CHACHA20_POLY1305_SHA256
                         and then Nonce_Space_Available (HC.Server_HS)
-                        and then Nonce_Space_Available (S.Server_App),
-                                Post =>
-                                          (if S.State not in Error_State | Closed
-                                           then Server_Configured (HC));
+                        and then Nonce_Space_Available (S.Server_App);
            procedure Handle_Client_Hello_Retry
              (S      : in out Server_Session;
               HC     : in out Handshake_Context;
@@ -294,40 +228,25 @@ is
            --  Send_Alert_And_Error (S, ...) calls in the body cannot discharge
            --  that callee's one-line state precondition. Discharged by the
            --  "when Wait_Client_Hello_Retry =>" arm of Advance_Handshake.
-           with Pre  => S.State = Wait_Client_Hello_Retry,
-                Post =>
-                                          (if S.State in Wait_Client_Hello_Retry
-                                                       | Server_Hello_Sent
-                                               | Wait_Client_Finished
-                                   then Server_Configured (HC));
+           with Pre  => S.State = Wait_Client_Hello_Retry;
 
    procedure Build_Server_Flight
      (S      : in out Session;
       HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
       Result :    out Action)
            with Pre  => Server_Active (S)
                                 and then S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
-                                and then Server_Configured (HC)
-                                and then HC.Cfg.Local.NaCl_Cert_Len
-                                  <= N32 (Max_Cert_DER)
-                                and then
-                                          (for all I in 0 .. Max_Pool_Size - 1 =>
-                                             HC.Cfg.Local.Ints (I).DER_Len
-                                               <= X509.N32 (Max_Cert_DER))
-                                        and then HC.Cfg.Local.Int_Count <= Max_Pool_Size
-                                        and then
-                                          (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                                           then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-                                        and then HC.Legacy_Session_ID_Len in 0 .. 32
+                                --  Identity bounds ride Cfg.Local's
+                                --  Valid_Identity_Access predicate; the
+                                --  Ready_Config formal carries the trio.
                                                         and then HC.Transcript_Len > 0
                                                         and then S.Negotiated_Suite in
                                                   Suite_AES_128_GCM_SHA256
                                           | Suite_AES_256_GCM_SHA384
                                           | Suite_CHACHA20_POLY1305_SHA256
                                         and then Nonce_Space_Available (HC.Server_HS)
-                                        and then Nonce_Space_Available (S.Server_App),
-         Post => (if S.State not in Error_State | Closed
-                                                                                                          then Server_Configured (HC));
+                                        and then Nonce_Space_Available (S.Server_App);
 
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
@@ -337,14 +256,11 @@ is
               HRR_Len   :    out N32;
               Rec_Out   :    out N32)
            with Pre  => Server_Active (S)
-                                and then Server_Configured (HC)
                                 and then True,
                         Post => (if HRR_Len > 0
                                  then HRR_Buf'First = 0
                                    and then HRR_Len - 1 <= HRR_Buf'Last)
                                         and then S.State = S.State'Old
-                and then (if S.State not in Error_State | Closed
-                          then Server_Configured (HC))
                                 and then (if HRR_Len > 0
                                                   then HC.Transcript_Len > 0)
                                 and then True;
@@ -357,7 +273,6 @@ is
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
-                        and then Server_Configured (HC)
                         and then HC.Transcript_Len > 0
                         and then Plaintext'Length > 0
                 and then Plaintext'Length <= Max_Fragment
@@ -365,7 +280,6 @@ is
                 and then Nonce_Space_Available (HC.Server_HS),
                 Post => (if Emitted
                                  then Server_Active (S)
-                                  and then Server_Configured (HC)
                                   and then HC.Transcript_Len > 0
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
@@ -385,14 +299,12 @@ is
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
-                and then Server_Configured (HC)
                 and then HC.Transcript_Len > 0
                 and then Plaintext'First = 0
                 and then Plaintext'Last in 0 .. N32 (Transcript_Capacity) - 2
                 and then HC.Server_HS.Counter <= Unsigned_64'Last - 2,
                 Post => (if Emitted
                                  then Server_Active (S)
-                                              and then Server_Configured (HC)
                                               and then HC.Transcript_Len > 0
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
@@ -419,9 +331,7 @@ is
    procedure Process_Client_Finished
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action)
-   with Post => (if S.State not in Error_State | Closed
-                                                          then Server_Configured (HC));
+      Result :    out Action);
    procedure Handle_PCF_App_Data
      (S      : in out Session;
       HC     : in out Handshake_Context;
@@ -431,7 +341,6 @@ is
                and then S.Role = Role_Server
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
-                       and then Server_Configured (HC)
                        and then HC.Transcript_Len > 0
                        and then Nonce_Space_Available (HC.Client_HS)
                        and then Nonce_Space_Available (S.Server_App)
@@ -444,9 +353,7 @@ is
                and then Rec.Record_Len >= Rec.Fragment_Pos
                        and then Rec.Fragment_Len = Rec.Record_Len - Rec.Fragment_Pos
                                and then Rec.Record_Len <= Available (S.Input)
-                       ,
-                                                                Post => (if S.State not in Error_State | Closed
-                                                                          then Server_Configured (HC));
+                       ;
    procedure Verify_Client_Finished
      (S         : in out Session;
       HC        : in out Handshake_Context;
@@ -456,17 +363,13 @@ is
       Result    :    out Action)
    with Pre => S.State = Wait_Client_Finished
                        and then S.Role = Role_Server
-                       and then Server_Configured (HC)
                                and then Nonce_Space_Available (S.Server_App)
                                and then Plaintext'First = 0
                                and then Plain_Len > 0
                                and then Plaintext'Last < N32'Last
                                and then Plain_Len - 1 <= Plaintext'Last
                                                        and then HC.Transcript_Len > 0
-,
-                                Post => (if S.State not in Error_State | Closed
-                                                                          then Server_Configured (HC)
-                                                                       and then True);
+;
 
 
 
@@ -486,10 +389,8 @@ is
                        and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                | Suite_AES_256_GCM_SHA384
                                                | Suite_CHACHA20_POLY1305_SHA256
-                               and Server_Configured (HC)
                                        and True,
-                        Post => Server_Configured (HC)
-                                and HC.Transcript_Len = HC.Transcript_Len'Old
+                        Post => HC.Transcript_Len = HC.Transcript_Len'Old
                                 and HC.Server_HS.Counter = 0
                                 and (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                                      then HC.Hash_Len = 48
@@ -505,10 +406,8 @@ is
                        and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                | Suite_AES_256_GCM_SHA384
                                                | Suite_CHACHA20_POLY1305_SHA256
-                       and Server_Configured (HC)
                        and True,
-                Post => Server_Configured (HC)
-                        and HC.Transcript_Len = HC.Transcript_Len'Old
+                Post => HC.Transcript_Len = HC.Transcript_Len'Old
                         and S.State = S.State'Old
                 and S.Role = S.Role'Old
                         and S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -659,17 +558,6 @@ is
                 and (if HC.Transcript_Len'Old > 0
                        or else Data'First <= Data'Last
                      then HC.Transcript_Len > 0)
-                                and (if Server_Configured (HC)'Old
-                                     then Server_Configured (HC))
-                                        and
-                                                  (if HC.Cfg.Local'Old /= null
-                                                     and then
-                                                       Handshake.Server_Msgs.Local_Config_Valid
-                                                         (HC.Cfg.Local'Old)
-                                                   then HC.Cfg.Local /= null
-                                                     and then
-                                                       Handshake.Server_Msgs.Local_Config_Valid
-                                                         (HC.Cfg.Local))
                                         and HC.Hash_Len = HC.Hash_Len'Old
 
                                         and HC.Version = HC.Version'Old
@@ -1045,21 +933,17 @@ is
                          Send_Alert_And_Error (S, Handshake_Failure, Result);
                          return;
               end if;
-
-              pragma Assert (Server_Configured (HC));
-              pragma Assert (HC.Cfg.Local.NaCl_Cert_Len <= N32 (Max_Cert_DER));
-              pragma Assert (HC.Cfg.Local.Int_Count <= Max_Pool_Size);
-              pragma Assert
-                (for all I in 0 .. Max_Pool_Size - 1 =>
-                   HC.Cfg.Local.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER));
-              pragma Assert
-                (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                 then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512);
-              pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-              pragma Assert (HC.Transcript_Len > 0);
-
       declare
-         Policy  : constant Version_Policy := HC.Cfg.Versions;
+         --  The Ready_Config VIEW, taken AFTER SNI identity selection --
+         --  a view copied any earlier would serve the pre-selection
+         --  identity. The predicate check discharges from the runtime
+         --  guard directly above (the callback result is app-controlled
+         --  input, validated at runtime per project doctrine); the
+         --  identity bounds ride Cfg.Local's own Valid_Identity_Access
+         --  predicate, which is what retired the assert battery that
+         --  used to sit here.
+         Cfg     : constant Ready_Config := HC.Cfg;
+         Policy  : constant Version_Policy := Cfg.Versions;
          Want_13 : constant Boolean :=
            HC.Version = TLS_1_3 and Policy /= TLS_1_2_Only;
          Want_12 : constant Boolean :=
@@ -1110,13 +994,7 @@ is
                                   Send_Alert_And_Error (S, Internal_Error, Result);
                                   return;
                                end if;
-                       Build_Server_Flight (S, HC, Result);
-               pragma Assert
-                 (if S.State in Wait_Client_Hello
-                              | Wait_Client_Hello_Retry
-                              | Server_Hello_Sent
-                              | Wait_Client_Finished
-                  then Server_Configured (HC));
+                       Build_Server_Flight (S, HC, Cfg, Result);
             end if;
                     return;
          elsif Want_12 and S.Negotiated_Suite_12 /= 0 then
@@ -1134,12 +1012,6 @@ is
             else
                Send_Alert_And_Error (S, Handshake_Failure, Result);
             end if;
-            pragma Assert
-              (if S.State in Wait_Client_Hello
-                           | Wait_Client_Hello_Retry
-                           | Server_Hello_Sent
-                           | Wait_Client_Finished
-               then Server_Configured (HC));
                     pragma Assert
                       (if S.State in Wait_Client_Hello
                                    | Wait_Client_Hello_Retry
@@ -1171,8 +1043,7 @@ is
            --  "precondition might fail" findings in this unit (round 30).
            --  Discharged trivially: the sole caller is the
            --  "when Wait_Client_Hello =>" arm of Advance_Handshake's case.
-           with Pre  => S.State = Wait_Client_Hello,
-                Post => Wait_Client_Hello_Post (S, HC);
+           with Pre  => S.State = Wait_Client_Hello;
 
    procedure Handle_Wait_Client_Hello
              (S      : in out Server_Session;
@@ -1183,9 +1054,7 @@ is
                     if Input_Available (S) = 0 then
                        Result := Need_Input;
                                pragma Assert (S.State = Wait_Client_Hello);
-                               pragma Assert (Server_Configured (HC));
                                pragma Assert_And_Cut (True);
-                               pragma Assert (Wait_Client_Hello_Post (S, HC));
                                return;
                     end if;
 
@@ -1207,7 +1076,6 @@ is
 
                                if Rec.Overflow then
                                   Send_Alert_And_Error (S, Record_Overflow, Result);
-                                          pragma Assert (Wait_Client_Hello_Post (S, HC));
                                           return;
                                end if;
 
@@ -1215,7 +1083,6 @@ is
                   --  RFC 8446 §5.1: legacy_record_version must lie
                           --  in {3,1}..{3,4}. Out-of-band → protocol_version.
                                   Send_Alert_And_Error (S, Protocol_Version, Result);
-                                          pragma Assert (Wait_Client_Hello_Post (S, HC));
                                           return;
                                end if;
 
@@ -1226,9 +1093,7 @@ is
                   else
                      Result := Need_Input;
                              pragma Assert (S.State = Wait_Client_Hello);
-                             pragma Assert (Server_Configured (HC));
                           end if;
-                          pragma Assert (Wait_Client_Hello_Post (S, HC));
                                   return;
                        end if;
 
@@ -1242,7 +1107,6 @@ is
                   --  exercises this.
                           S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                           Send_Alert_And_Error (S, Unexpected_Message, Result);
-                                  pragma Assert (Wait_Client_Hello_Post (S, HC));
                                   return;
                end if;
 
@@ -1252,7 +1116,6 @@ is
                   S.Last_Error := Unexpected_Message;
                           Set_State (S, Error_State);
                           Result := Error_Alert;
-                                  pragma Assert (Wait_Client_Hello_Post (S, HC));
                                   return;
                end if;
 
@@ -1260,7 +1123,6 @@ is
                   --  Application_data or unknown type before handshake
                           S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                           Send_Alert_And_Error (S, Unexpected_Message, Result);
-                                  pragma Assert (Wait_Client_Hello_Post (S, HC));
                                   return;
                end if;
 
@@ -1268,15 +1130,12 @@ is
                           procedure Process_Handshake_Record
                           with Pre => S.State = Wait_Client_Hello
                                       and then S.Role = Role_Server
-                                      and then Server_Configured (HC)
                                       and then HC.Legacy_Session_ID_Len in 0 .. 32
                                       and then Server_State_Keys_Ready (S, HC)
                                               and then Handshake_Record_Fragment_Ready
                                                 (Rec)
                                               and then Rec.Record_Len <=
-                                                Available (S.Input)
-                                      and then Wait_Client_Hello_Post (S, HC),
-                                               Post => Wait_Client_Hello_Post (S, HC);
+                                                Available (S.Input);
 
                                   procedure Process_Handshake_Record
                                   is
@@ -1289,7 +1148,6 @@ is
 
                                   procedure Free_Reasm
                                   with Pre  => Server_Active (S)
-                                                               and then Server_Configured (HC)
                                                                        and then HC.Legacy_Session_ID_Len
                                                                          in 0 .. 32,
                                                                Post => Server_Active (S)
@@ -1299,7 +1157,6 @@ is
                                                                          S.Negotiated_Suite'Old
                                                                        and then S.Server_App.Counter =
                                                                          S.Server_App.Counter'Old
-                                                                       and then Server_Configured (HC)
                                                                        and then HC.Version = HC.Version'Old
                                                                        and then HC.Transcript_Len =
                                                                          HC.Transcript_Len'Old
@@ -1317,7 +1174,6 @@ is
                                           procedure Continue_Reassembly
                                   with Pre => S.State = Wait_Client_Hello
                                               and then S.Role = Role_Server
-                                              and then Server_Configured (HC)
                                               and then HC.Legacy_Session_ID_Len in 0 .. 32
                                               and then Server_State_Keys_Ready (S, HC)
                                       and then Handshake_Record_Fragment_Ready
@@ -1327,8 +1183,7 @@ is
                                       and then Frag_Start <=
                                         S.Input.Write_Pos - 1
                                               and then Frag_Len <=
-                                                S.Input.Write_Pos - Frag_Start,
-                                               Post => Wait_Client_Hello_Post (S, HC);
+                                                S.Input.Write_Pos - Frag_Start;
 
                                   procedure Continue_Reassembly
                                   is
@@ -1337,7 +1192,6 @@ is
                                              procedure Decode_Pending_Reassembly_Header
                                                              with Pre => S.State = Wait_Client_Hello
                                                                          and then S.Role = Role_Server
-                                                                         and then Server_Configured (HC)
                                                                          and then HC.Legacy_Session_ID_Len
                                                                            in 0 .. 32
                                                                                          and then Header_Ready (HC.Reasm),
@@ -1348,8 +1202,7 @@ is
                                                                                                                  then S.Role = Role_Server)
                                                                                                               and then
                                                                                                       (if S.State = Wait_Client_Hello
-                                                                                       then Server_Configured (HC)
-                                                                                            and then
+                                                                                       then
                                                                                               HC.Legacy_Session_ID_Len
                                                                                                 in 0 .. 32);
 
@@ -1373,15 +1226,12 @@ is
                                                                       and then
                                                                         (if S.State /= Wait_Client_Hello
                                                                          then S.State = Error_State)
-                                                                      and then Server_Configured (HC)
                                                               and then HC.Legacy_Session_ID_Len
                                                                 in 0 .. 32
-                                                              and then Wait_Client_Hello_Post
-                                                                (S, HC));
+                                                              );
                                                            return;
                                                 end if;
                                         pragma Assert (S.State = Wait_Client_Hello);
-                                        pragma Assert (Server_Configured (HC));
                                                                         pragma Assert_And_Cut
                                                                                   (S.Role = Role_Server
                                                                                    and then S.State =
@@ -1389,15 +1239,13 @@ is
                                                                                    and then S.State in
                                                                                      Wait_Client_Hello
                                                                                    | Error_State
-                                                                                   and then Server_Configured (HC)
                                                                            and then HC.Legacy_Session_ID_Len
                                                                              in 0 .. 32);
                                                                                         pragma Assert_And_Cut
                                                                                                   (S.Role = Role_Server
                                                                                            and then
                                                                                            (if S.State = Wait_Client_Hello
-                                                                                           then Server_Configured (HC)
-                                                                                                and then HC.Legacy_Session_ID_Len
+                                                                                           then HC.Legacy_Session_ID_Len
                                                                                           in 0 .. 32)
                                                                                            and then S.State in
                                                                                              Wait_Client_Hello | Error_State);
@@ -1407,7 +1255,6 @@ is
                              procedure Append_Reassembly_Fragment
            with Pre => S.State = Wait_Client_Hello
                                          and then S.Role = Role_Server
-                                                              and then Server_Configured (HC)
                                                               and then HC.Legacy_Session_ID_Len
                                                                 in 0 .. 32
                                                  and then Handshake_Record_Fragment_Ready
@@ -1419,17 +1266,12 @@ is
                                                  and then Frag_Len <=
                                                    S.Input.Write_Pos - Frag_Start,
                                                                                                   Post =>
-                                                                                              (if S.State /= Wait_Client_Hello
-                                                                                                   or else More_Input_Needed
-                                                                                       then Wait_Client_Hello_Post (S, HC))
-                                                                                    and then
                                                                                       (if S.State = Wait_Client_Hello
                                                                                            and then not More_Input_Needed
                                                                                        then S.Role = Role_Server)
                                                                             and then
                                                                               (if S.State = Wait_Client_Hello
-                                                                       then Server_Configured (HC)
-                                                                    and then
+                                                                       then
                                                               (if More_Input_Needed
                                                                then not Has_Message (HC.Reasm)
                                                                else Has_Message (HC.Reasm)
@@ -1465,7 +1307,6 @@ is
                                      if Header_Ready (HC.Reasm) then
                                         pragma Assert (S.State = Wait_Client_Hello);
                                                 pragma Assert (S.Role = Role_Server);
-                                                pragma Assert (Server_Configured (HC));
                                                                 Decode_Pending_Reassembly_Header;
                                                         if S.State /= Wait_Client_Hello then
                             return;
@@ -1477,14 +1318,12 @@ is
                                         Result := OK;
                                         More_Input_Needed := True;
                                         pragma Assert (S.State = Wait_Client_Hello);
-                                                pragma Assert (Server_Configured (HC));
                                                 pragma Assert (S.Role = Role_Server);
                                                         pragma Assert
                                                           (S.State = Wait_Client_Hello);
                                                                 return;
                                                      end if;
                                              pragma Assert (S.Role = Role_Server);
-                                             pragma Assert (Server_Configured (HC));
                                                   end Append_Reassembly_Fragment;
 
                                           procedure Parse_Completed_Reassembly
@@ -1499,10 +1338,8 @@ is
                                           with Pre => Has_Message (HC.Reasm)
                                                               and then S.State = Wait_Client_Hello
                                                               and then S.Role = Role_Server
-                                                                      and then Server_Configured (HC)
                                                       and then HC.Legacy_Session_ID_Len
-                                                        in 0 .. 32,
-                                                       Post => Wait_Client_Hello_Post (S, HC);
+                                                        in 0 .. 32;
 
                                   procedure Parse_Completed_Reassembly
                                   is
@@ -1518,7 +1355,6 @@ is
                                         Free_Reasm;
                                         Send_Alert_And_Error (S, Decode_Error, Result);
                                                    pragma Assert (S.Role = Role_Server);
-                                                   pragma Assert (Wait_Client_Hello_Post (S, HC));
                                                    return;
                                                         end if;
                              declare
@@ -1533,7 +1369,6 @@ is
                                         Handshake.Server_Msgs.Parse_Client_Hello
                                           (S, HC, Byte_Seq (Full_Msg), Parse_OK);
                                                 if Parse_OK then
-                                                           pragma Assert (Server_Configured (HC));
                                                            pragma Assert
                                                              (HC.Legacy_Session_ID_Len in 0 .. 32);
                                                            Append_Transcript (HC, Byte_Seq (Full_Msg));
@@ -1544,11 +1379,8 @@ is
 
                                                   if not Parse_OK then
                                                 Dispatch_CH_Parse_Error_Alert (S, Result);
-                                                        pragma Assert (Wait_Client_Hello_Post (S, HC));
                                                 return;
                                      end if;
-
-                                     pragma Assert (Server_Configured (HC));
                                      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                                              pragma Assert (HC.Transcript_Len > 0);
                                      pragma Assert
@@ -1566,26 +1398,19 @@ is
                                      then
                                         pragma Assert
                                           (if S.State = Wait_Client_Hello
-                                           then Server_Configured (HC));
-                                        pragma Assert
-                                          (if S.State = Wait_Client_Hello
                                            then True);
-                                        pragma Assert (Wait_Client_Hello_Post (S, HC));
                                         return;
                                              end if;
 
                                                      pragma Assert (S.State = Wait_Client_Hello);
                                                      pragma Assert (S.Role = Role_Server);
                                                      pragma Assert (not More_Input_Needed);
-                                             pragma Assert (Server_Configured (HC));
                                              Parse_Completed_Reassembly;
-                                             pragma Assert (Wait_Client_Hello_Post (S, HC));
                                           end Continue_Reassembly;
 
                                   procedure Process_Fresh_Handshake_Record
                                   with Pre => S.State = Wait_Client_Hello
                                               and then S.Role = Role_Server
-                                                      and then Server_Configured (HC)
                                                       and then HC.Legacy_Session_ID_Len in 0 .. 32
                                               and then Server_State_Keys_Ready (S, HC)
                                               and then Handshake_Record_Fragment_Ready
@@ -1598,13 +1423,11 @@ is
                                                 S.Input.Write_Pos - 1
                                               and then Frag_Len <=
                                                 S.Input.Write_Pos - Frag_Start
-                                              and then Frag_Len < Transcript_Capacity,
-                                       Post => Wait_Client_Hello_Post (S, HC);
+                                              and then Frag_Len < Transcript_Capacity;
 
                                   procedure Parse_Single_Record_Client_Hello
                                   with Pre => S.State = Wait_Client_Hello
                                               and then S.Role = Role_Server
-                                        and then Server_Configured (HC)
                                         and then HC.Legacy_Session_ID_Len in 0 .. 32
                                               and then Server_State_Keys_Ready (S, HC)
                                               and then Handshake_Record_Fragment_Ready
@@ -1618,8 +1441,7 @@ is
                                                 S.Input.Write_Pos - 1
                                               and then Frag_Len <=
                                                 S.Input.Write_Pos - Frag_Start
-                                              and then Frag_Len < Transcript_Capacity,
-                                                                       Post => Wait_Client_Hello_Post (S, HC);
+                                              and then Frag_Len < Transcript_Capacity;
 
                                   procedure Parse_Single_Record_Client_Hello
                                   is
@@ -1643,10 +1465,8 @@ is
                                                            S.Input.Read_Pos :=
                                                       S.Input.Read_Pos + Rec.Record_Len;
                                                    pragma Assert (S.State = Error_State);
-                                                   pragma Assert (Wait_Client_Hello_Post (S, HC));
                                            return;
                                                 end if;
-                                                pragma Assert (Server_Configured (HC));
                                                 pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
 
                                                         pragma Assert
@@ -1660,7 +1480,6 @@ is
                                                 S.Input.Read_Pos + Rec.Record_Len;
 
                                              Reset (HC.Reasm);
-                                                             pragma Assert (Server_Configured (HC));
                                                                      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                                                                              pragma Assert (HC.Transcript_Len > 0);
                                                                      Complete_Client_Hello (S, HC, Result);
@@ -1668,7 +1487,6 @@ is
 
                                   procedure Start_Header_Pending_Reassembly
                                   with Pre => S.State = Wait_Client_Hello
-                                              and then Server_Configured (HC)
                                                       and then Frag_Len in 1 .. 3
                                                       and then Rec.Record_Len <=
                                                         Available (S.Input)
@@ -1677,8 +1495,7 @@ is
                                                       and then Frag_Start <=
                                                 S.Input.Write_Pos - 1
                                               and then Frag_Len <=
-                                                S.Input.Write_Pos - Frag_Start,
-                                               Post => Wait_Client_Hello_Post (S, HC);
+                                                S.Input.Write_Pos - Frag_Start;
 
                                   procedure Start_Header_Pending_Reassembly
                                   is
@@ -1696,14 +1513,11 @@ is
                                         S.Input.Read_Pos + Rec.Record_Len;
                                                      Result := OK;
                                                      pragma Assert (S.State = Wait_Client_Hello);
-                                                     pragma Assert (Server_Configured (HC));
-                                                     pragma Assert (Wait_Client_Hello_Post (S, HC));
                                   end Start_Header_Pending_Reassembly;
 
                                   procedure Start_Known_Length_Reassembly
                                     (HS_Total : N32)
                                   with Pre => S.State = Wait_Client_Hello
-                                              and then Server_Configured (HC)
                                               and then Frag_Len >= 4
                                               and then HS_Total in 4 .. Max_HS_Msg
                                                       and then HS_Total > Frag_Len
@@ -1714,8 +1528,7 @@ is
                                                       and then Frag_Start <=
                                                 S.Input.Write_Pos - 1
                                               and then Frag_Len <=
-                                                S.Input.Write_Pos - Frag_Start,
-                                               Post => Wait_Client_Hello_Post (S, HC);
+                                                S.Input.Write_Pos - Frag_Start;
 
                                   procedure Start_Known_Length_Reassembly
                                     (HS_Total : N32)
@@ -1736,8 +1549,6 @@ is
                                         S.Input.Read_Pos + Rec.Record_Len;
                                              Result := OK;
                                              pragma Assert (S.State = Wait_Client_Hello);
-                                             pragma Assert (Server_Configured (HC));
-                                             pragma Assert (Wait_Client_Hello_Post (S, HC));
                                   end Start_Known_Length_Reassembly;
 
                                   procedure Process_Fresh_Handshake_Record
@@ -1757,13 +1568,11 @@ is
                                            Send_Alert_And_Error
                                              (S, Decode_Error, Result);
                                            pragma Assert (S.State = Error_State);
-                                                   pragma Assert (Wait_Client_Hello_Post (S, HC));
                                                    return;
                                                 end if;
 
                                                 pragma Assert (Frag_Len in 1 .. 3);
                                                 Start_Header_Pending_Reassembly;
-                                                pragma Assert (Wait_Client_Hello_Post (S, HC));
                                                 return;
                                              end if;
 
@@ -1780,7 +1589,6 @@ is
                                            Send_Alert_And_Error
                                              (S, Decode_Error, Result);
                                            pragma Assert (S.State = Error_State);
-                           pragma Assert (Wait_Client_Hello_Post (S, HC));
                                            return;
                                         end if;
 
@@ -1789,14 +1597,12 @@ is
                                                      (HS_Total in 4 .. Max_HS_Msg);
                                                    Start_Known_Length_Reassembly
                                                      (HS_Total);
-                                                   pragma Assert (Wait_Client_Hello_Post (S, HC));
                                                    return;
                                                 end if;
                                      end;
 
                                              pragma Assert (Frag_Len >= 4);
                                              Parse_Single_Record_Client_Hello;
-                                             pragma Assert (Wait_Client_Hello_Post (S, HC));
                                                   end Process_Fresh_Handshake_Record;
                                begin
                                           Result := Error_Alert;
@@ -1809,7 +1615,6 @@ is
                                           --  cannot contradict itself.
                                           if Used (HC.Reasm) > 0 then
                                      Continue_Reassembly;
-                                             pragma Assert (Wait_Client_Hello_Post (S, HC));
                                              return;
 
                                           end if;
@@ -1817,23 +1622,15 @@ is
                                           pragma Assert (Used (HC.Reasm) = 0);
                                           pragma Assert (Frag_Len < Transcript_Capacity);
                                   Process_Fresh_Handshake_Record;
-                                  pragma Assert (Wait_Client_Hello_Post (S, HC));
                                                end Process_Handshake_Record;
                                        begin
                                           Result := Error_Alert;
                                           Process_Handshake_Record;
                                             end;
                                             end;
-                                    pragma Assert
-                                      (if S.State in Wait_Client_Hello
-                                                 | Wait_Client_Hello_Retry
-                                                 | Server_Hello_Sent
-                                                 | Wait_Client_Finished
-                                       then Server_Configured (HC));
                                             pragma Assert
                                               (if S.State = Wait_Client_Hello
                                                then True);
-                            pragma Assert (Wait_Client_Hello_Post (S, HC));
                     return;
            end Handle_Wait_Client_Hello;
 
@@ -1936,8 +1733,7 @@ is
               end Consume_Record;
 
       procedure Free_CH2_Reasm
-      with Pre  => Server_Configured (HC)
-                   and then Nonce_Space_Available (HC.Server_HS),
+      with Pre  => Nonce_Space_Available (HC.Server_HS),
            Post => Used (HC.Reasm) = 0
                    and then HC.Version = HC.Version'Old
                    and then HC.HRR_Sent = HC.HRR_Sent'Old
@@ -1949,7 +1745,6 @@ is
                              HC.Server_HS.Counter'Old
                            and then HC.Server_HS.Suite =
                              HC.Server_HS.Suite'Old
-                           and then Server_Configured (HC)
                            and then Nonce_Space_Available (HC.Server_HS)
            is
               begin
@@ -2008,22 +1803,6 @@ is
                                 return;
                      end if;
                      pragma Assert (S.State = Wait_Client_Hello_Retry);
-                     pragma Assert (Server_Configured (HC));
-                     pragma Assert
-                       (Handshake.Server_Msgs.Local_Config_Valid
-                          (HC.Cfg.Local));
-                     pragma Assert
-                       (HC.Cfg.Local.NaCl_Cert_Len <=
-                        N32 (Max_Cert_DER));
-                     pragma Assert
-                       (HC.Cfg.Local.Int_Count <= Max_Pool_Size);
-                     pragma Assert
-                       (for all I in 0 .. Max_Pool_Size - 1 =>
-                          HC.Cfg.Local.Ints (I).DER_Len <=
-                            X509.N32 (Max_Cert_DER));
-                     pragma Assert
-                       (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                        then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512);
                      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                      pragma Assert (Nonce_Space_Available (HC.Server_HS));
                      pragma Assert (Nonce_Space_Available (S.Server_App));
@@ -2041,10 +1820,11 @@ is
            procedure Build_Server_Flight_After_Client_Hello_Retry
              (S      : in out Session;
               HC     : in out Handshake_Context;
+              Cfg    : in     Ready_Config;
               Result :    out Action)
            is
            begin
-              Build_Server_Flight (S, HC, Result);
+              Build_Server_Flight (S, HC, Cfg, Result);
            end Build_Server_Flight_After_Client_Hello_Retry;
 
 
@@ -2224,8 +2004,19 @@ is
                                   (S, HC, Full_Msg, False, 0,
                                    Ready_To_Build, Result);
                                         if Ready_To_Build then
-                                           Build_Server_Flight_After_Client_Hello_Retry
-                                             (S, HC, Result);
+                                           if HC.Cfg not in Ready_Config then
+                                              --  Fail closed, as Advance's guard does.
+                                              S.Last_Error := Internal_Error;
+                                              Set_State (S, Error_State);
+                                              Result := Error_Alert;
+                                           else
+                                              declare
+                                                 Cfg : constant Ready_Config := HC.Cfg;
+                                              begin
+                                                 Build_Server_Flight_After_Client_Hello_Retry
+                                                   (S, HC, Cfg, Result);
+                                              end;
+                                           end if;
                                         end if;
                              end;
                   elsif Frag_Len = 0 then
@@ -2269,8 +2060,18 @@ is
                                         (S, HC, Frag, True, Rec.Record_Len,
                                          Ready_To_Build, Result);
                                       if Ready_To_Build then
-                                         Build_Server_Flight_After_Client_Hello_Retry
-                                           (S, HC, Result);
+                                         if HC.Cfg not in Ready_Config then
+                                            S.Last_Error := Internal_Error;
+                                            Set_State (S, Error_State);
+                                            Result := Error_Alert;
+                                         else
+                                            declare
+                                               Cfg : constant Ready_Config := HC.Cfg;
+                                            begin
+                                               Build_Server_Flight_After_Client_Hello_Retry
+                                                 (S, HC, Cfg, Result);
+                                            end;
+                                         end if;
                                       end if;
                                            end;
                                 end if;
@@ -2616,47 +2417,28 @@ is
    procedure Verify_PSK_Binder
      (S        : in out Session;
       HC       : in out Handshake_Context;
+      Cfg      : in     Ready_Config;
       Rejected :    out Boolean;
       Result   :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then HC.Cfg.Store_Session /= null
-                    and then HC.Cfg.Lookup_Session /= null
-                and then HC.Transcript_Len <= Transcript_Capacity
-                and then HC.PSK_Binder_Len <= Max_HS_Msg
-                and then Server_Configured (HC)
-                and then HC.Cfg.Local.NaCl_Cert_Len
-                  <= N32 (Max_Cert_DER)
-                and then
-                  (for all I in 0 .. Max_Pool_Size - 1 =>
-                     HC.Cfg.Local.Ints (I).DER_Len
-                       <= X509.N32 (Max_Cert_DER))
-                                and then
-                                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-                                and then HC.Legacy_Session_ID_Len in 0 .. 32
-                                and then True,
+                --  Callback facts on the FORMAL: the caller's guard tests
+                --  the same object, so the discharge is local. (The old
+                --  HC.Cfg form was unprovable across the view copy.)
+                and then Cfg.Store_Session /= null
+                and then Cfg.Lookup_Session /= null
+                and then HC.PSK_Binder_Len <= Max_HS_Msg,
                         Post => (if not Rejected
                                  then S.State = S.State'Old
                                       and S.Role = S.Role'Old
-                                              and Server_Configured (HC)
                                               and HC.Transcript_Len = HC.Transcript_Len'Old
                                       and HC.HRR_Sent = HC.HRR_Sent'Old
-                              and HC.Legacy_Session_ID_Len in 0 .. 32
-                              and HC.Cfg.Local.NaCl_Cert_Len
-                                <= N32 (Max_Cert_DER)
-                              and (for all I in 0 .. Max_Pool_Size - 1 =>
-                                     HC.Cfg.Local.Ints (I).DER_Len
-                                       <= X509.N32 (Max_Cert_DER))
-                              and
-                                (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                                 then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
                               and S.Negotiated_Suite = S.Negotiated_Suite'Old)
-                                         and then (if Rejected then S.State = Error_State)
-                                         and then True;
+                                         and then (if Rejected then S.State = Error_State);
 
    procedure Verify_PSK_Binder
      (S        : in out Session;
       HC       : in out Handshake_Context;
+      Cfg      : in     Ready_Config;
       Rejected :    out Boolean;
       Result   :    out Action)
    is
@@ -2667,7 +2449,7 @@ is
    begin
       Rejected := False;
       Result := OK;
-      HC.Cfg.Lookup_Session
+      Cfg.Lookup_Session
         (
          ID         => HC.PSK_Ticket_ID,
          Want_Suite => S.Negotiated_Suite,
@@ -2803,87 +2585,61 @@ is
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
       HC       : in out Handshake_Context;
+      Cfg      : in     Ready_Config;
       Algo_OK  :    out Boolean;
       Result   :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then Server_Configured (HC)
-                and then HC.Cfg.Local.NaCl_Cert_Len
-                  <= N32 (Max_Cert_DER)
-                and then
-                  (for all I in 0 .. Max_Pool_Size - 1 =>
-                     HC.Cfg.Local.Ints (I).DER_Len
-                       <= X509.N32 (Max_Cert_DER))
-                                and then
-                                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-                                and then HC.Legacy_Session_ID_Len in 0 .. 32
-                                and then True,
+   --  The identity-bounds conjuncts this contract used to carry (and the
+   --  loop invariants restating them in the body) are now FREE: Cfg's
+   --  Ready_Config predicate gives Local /= null, and Cfg.Local's own
+   --  Valid_Identity_Access predicate carries every bound.
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State,
                 Post => (if Algo_OK
                                  then S.State = S.State'Old
                                       and S.Role = S.Role'Old
                                               and S.Negotiated_Suite = S.Negotiated_Suite'Old
-                                              and Server_Configured (HC)
                                               and HC.Transcript_Len = HC.Transcript_Len'Old
                               and HC.HRR_Sent = HC.HRR_Sent'Old
-                              and HC.Legacy_Session_ID_Len in 0 .. 32
-                              and HC.Cfg.Local.NaCl_Cert_Len
-                                <= N32 (Max_Cert_DER)
-                              and (for all I in 0 .. Max_Pool_Size - 1 =>
-                                     HC.Cfg.Local.Ints (I).DER_Len
-                                       <= X509.N32 (Max_Cert_DER))
-                              and
-                                (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                                 then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
                               and HC.Negotiated_Sig_Algo /= 0
                               and Handshake.Sig_Algo_Compatible_With_Cert
                                 (HC.Negotiated_Sig_Algo,
-                                 HC.Cfg.Local.Sign_Algo))
-                                         and then (if not Algo_OK then S.State = Error_State)
-                                         and then True;
+                                 Cfg.Local.Sign_Algo))
+                                         and then (if not Algo_OK then S.State = Error_State);
 
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
       HC       : in out Handshake_Context;
+      Cfg      : in     Ready_Config;
       Algo_OK  :    out Boolean;
       Result   :    out Action)
    is
    begin
       Result := OK;
       Algo_OK := False;
-      if HC.Cfg.Sign_Sig_Algo_Count > 0 then
+      if Cfg.Sign_Sig_Algo_Count > 0 then
          for J in Sig_Algo_Index loop
             pragma Loop_Invariant (S.State = S.State'Loop_Entry);
             pragma Loop_Invariant (S.Role = S.Role'Loop_Entry);
             pragma Loop_Invariant
               (S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry);
-            pragma Loop_Invariant (Server_Configured (HC));
             pragma Loop_Invariant
               (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
             pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
             pragma Loop_Invariant (HC.Legacy_Session_ID_Len in 0 .. 32);
             pragma Loop_Invariant
-              (HC.Cfg.Local.NaCl_Cert_Len <= N32 (Max_Cert_DER));
-            pragma Loop_Invariant
-              (for all I in 0 .. Max_Pool_Size - 1 =>
-                 HC.Cfg.Local.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER));
-            pragma Loop_Invariant
-              (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-               then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512);
-            pragma Loop_Invariant
               (if Algo_OK then
                  HC.Negotiated_Sig_Algo /= 0
                  and then Handshake.Sig_Algo_Compatible_With_Cert
                             (HC.Negotiated_Sig_Algo,
-                             HC.Cfg.Local.Sign_Algo));
-            exit when J >= HC.Cfg.Sign_Sig_Algo_Count;
+                             Cfg.Local.Sign_Algo));
+            exit when J >= Cfg.Sign_Sig_Algo_Count;
             if Local_Sig_Compatible
-                 (HC.Cfg.Sign_Sig_Algos (J), HC.Cfg.Local.Sign_Algo)
+                 (Cfg.Sign_Sig_Algos (J), Cfg.Local.Sign_Algo)
               and then Sig_Scheme_In_List
-                         (HC.Cfg.Sign_Sig_Algos (J),
+                         (Cfg.Sign_Sig_Algos (J),
                           HC.Peer_Sig_Algos,
                           HC.Peer_Sig_Algo_Count)
             then
-               HC.Negotiated_Sig_Algo := HC.Cfg.Sign_Sig_Algos (J);
+               HC.Negotiated_Sig_Algo := Cfg.Sign_Sig_Algos (J);
                Algo_OK := True;
                exit;
             end if;
@@ -2894,27 +2650,18 @@ is
             pragma Loop_Invariant (S.Role = S.Role'Loop_Entry);
             pragma Loop_Invariant
               (S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry);
-            pragma Loop_Invariant (Server_Configured (HC));
             pragma Loop_Invariant
               (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
             pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
             pragma Loop_Invariant (HC.Legacy_Session_ID_Len in 0 .. 32);
             pragma Loop_Invariant
-              (HC.Cfg.Local.NaCl_Cert_Len <= N32 (Max_Cert_DER));
-            pragma Loop_Invariant
-              (for all K in 0 .. Max_Pool_Size - 1 =>
-                 HC.Cfg.Local.Ints (K).DER_Len <= X509.N32 (Max_Cert_DER));
-            pragma Loop_Invariant
-              (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-               then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512);
-            pragma Loop_Invariant
               (if Algo_OK then
                  HC.Negotiated_Sig_Algo /= 0
                  and then Handshake.Sig_Algo_Compatible_With_Cert
                             (HC.Negotiated_Sig_Algo,
-                             HC.Cfg.Local.Sign_Algo));
+                             Cfg.Local.Sign_Algo));
             if Local_Sig_Compatible
-                 (HC.Peer_Sig_Algos (I), HC.Cfg.Local.Sign_Algo)
+                 (HC.Peer_Sig_Algos (I), Cfg.Local.Sign_Algo)
             then
                HC.Negotiated_Sig_Algo := HC.Peer_Sig_Algos (I);
                Algo_OK := True;
@@ -3026,6 +2773,7 @@ is
    procedure Build_Server_Flight
      (S      : in out Session;
       HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
       Result :    out Action)
    is
       SH_Buf  : Byte_Seq (0 .. Handshake.Server_Msgs.Max_Server_Hello - 1);
@@ -3047,12 +2795,12 @@ is
    begin
       --  PSK resumption: verify binder, install if valid, fatal-alert
       --  on mismatch. Sets HC.Using_PSK on success.
-      if HC.PSK_Offered and then HC.Cfg.Store_Session /= null
-                    and then HC.Cfg.Lookup_Session /= null then
+      if HC.PSK_Offered and then Cfg.Store_Session /= null
+                    and then Cfg.Lookup_Session /= null then
          declare
             Rejected : Boolean;
          begin
-            Verify_PSK_Binder (S, HC, Rejected, Result);
+            Verify_PSK_Binder (S, HC, Cfg, Rejected, Result);
                     if Rejected then
                             return;
                     end if;
@@ -3065,7 +2813,7 @@ is
          declare
             Got_It : Boolean;
          begin
-            Negotiate_Sig_Algo (S, HC, Got_It, Result);
+            Negotiate_Sig_Algo (S, HC, Cfg, Got_It, Result);
                     if not Got_It then
                                             return;
                     end if;
@@ -3128,14 +2876,22 @@ is
          end;
       end if;
 
-      if HC.Cfg.Require_ALPN
+      if Cfg.Require_ALPN
         and then not Handshake.Server_Msgs.Has_ALPN_Match (HC)
       then
          Send_Alert_And_Error (S, No_Application_Protocol, Result);
          return;
       end if;
 
-      --  Build ServerHello
+      --  Build ServerHello. The Random guard discharges Build_Server_Hello's
+      --  cross-package Pre (view-copy equality is invisible to the prover);
+      --  semantically never null (Init's gate) -- fail closed if it ever is.
+      if HC.Cfg.Random = null then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
       Handshake.Server_Msgs.Build_Server_Hello (S, HC, SH_Buf, SH_Len);
       if SH_Len = 0 then
          --  RFC 7748 §6.1: small-subgroup X25519 rejection sets
@@ -3223,7 +2979,7 @@ is
       if not HC.Using_PSK then
 
       --  Build CertificateRequest if mTLS is configured
-      if HC.Cfg.Request_Client_Cert then
+      if Cfg.Request_Client_Cert then
          declare
             CR_Buf  : Byte_Seq (0 .. 31);
             CR_Len  : N32;
@@ -3256,12 +3012,12 @@ is
                  Cert_Len : N32;
                  Emitted  : Boolean;
               begin
-                 if HC.Cfg.Local = null
-                   or else HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
-                   or else HC.Cfg.Local.Int_Count > Max_Pool_Size
+                 if Cfg.Local = null
+                   or else Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
+                   or else Cfg.Local.Int_Count > Max_Pool_Size
                    or else
                      (for some I in 0 .. Max_Pool_Size - 1 =>
-                        HC.Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
+                        Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
                  then
                             S.Last_Error := Internal_Error;
                             Set_State (S, Error_State);
@@ -3269,7 +3025,7 @@ is
                          return;
                  end if;
                  Handshake.Certs.Build_Certificate_Chain
-                   (Id     => HC.Cfg.Local.all,
+                   (Id     => Cfg.Local.all,
                     Result => Cert_Buf,
             Len    => Cert_Len);
 
@@ -3325,8 +3081,8 @@ is
          end case;
 
                  if HC.Negotiated_Sig_Algo in 16#0804# | 16#0805# | 16#0806#
-                   and then (HC.Cfg.Random = null
-                             or else HC.Cfg.Local.RSA_Mod_Len not in 64 .. 512)
+                   and then (Cfg.Random = null
+                             or else Cfg.Local.RSA_Mod_Len not in 64 .. 512)
                  then
                     S.Last_Error := Internal_Error;
                     Set_State (S, Error_State);
@@ -3335,10 +3091,10 @@ is
                  end if;
                          Handshake.Certs.Build_Certificate_Verify
                            (Transcript_Hash => CV_Hash,
-            Id              => HC.Cfg.Local.all,
+            Id              => Cfg.Local.all,
             Sig_Algo_Wire   => HC.Negotiated_Sig_Algo,
             Role            => Role_Server,
-            Random          => HC.Cfg.Random,
+            Random          => Cfg.Random,
             Result          => CV_Buf,
             Len             => CV_Len);
 
@@ -3370,8 +3126,6 @@ is
                       end;
 
                               end if;  --  not Using_PSK (skip cert/cert_verify for resumption)
-
-                              pragma Assert (Server_Configured (HC));
 
                       --  Build Finished (encrypted)
               declare
@@ -4327,7 +4081,12 @@ is
                      --  Append client Finished to transcript for res_master derivation
                      Append_Transcript (HC, Data);
 
-                     --  Derive resumption master secret and send NewSessionTicket
+                     --  Derive resumption master secret and send NewSessionTicket.
+                     --  The Random guard replaces the deleted Server_Configured
+                     --  threading: semantically never null (Init's gate), and a
+                     --  session ticket is optional -- skipping it on the
+                     --  impossible branch fails SAFE, not closed.
+                     if HC.Cfg.Random /= null then
                      declare
                         use SPARKTLS.Ticket_Cache;
                         Ticket_Random : Byte_Seq (0 .. 5);
@@ -4499,6 +4258,7 @@ is
                            end;
                         end if;
                      end;
+                     end if;
 
                      Set_State (S, Connected);
                      S.Handshake_Just_Done := True;
@@ -4527,15 +4287,13 @@ is
       with Pre => S.State = Wait_Client_Finished
                   and then S.Role = Role_Server
                           and then Nonce_Space_Available (S.Server_App)
-                                  and then Server_Configured (HC)
                                           and then HC.Transcript_Len > 0
                           and then Data'First = 0
                   and then Len > 0
                   and then Data'Last < N32'Last
                   and then Len - 1 <= Data'Last,
            Post => (if S.State not in Error_State | Closed
-                                                     then Server_Configured (HC)
-                                                          and then True)
+                                                     then True)
       is
          Msg_Type : Byte;
          Msg_Len  : N32;

@@ -178,14 +178,17 @@ is
       Bytes_Out   :    out N32)
    with Pre  => Level in 1 .. 2
                 and Implicit_IV'First = 0
-                and Implicit_IV'Length = Implicit_IV_Len
-                --  Same channel discipline as the op this wraps: callers
-                --  branch on Space_Left of the SAME object. A channel at
-                --  the cap cannot seal even a final alert -- callers skip
-                --  the alert and close (fail closed, no cap overrun).
-                and Space_Left (Keys),
-        Post => Keys = (Keys'Old with delta
-                          Counter => Keys'Old.Counter + 1)
+                and Implicit_IV'Length = Implicit_IV_Len,
+                --  NO Space_Left Pre: alerts fire from ERROR paths, where
+                --  the caller may hold no cap fact at all (r42 measured 8
+                --  undischargeable sites). Alert emission is BEST-EFFORT:
+                --  at cap exhaustion the body emits nothing (Bytes_Out =
+                --  0) and the connection closes unalerted -- fail closed,
+                --  no cap overrun, one check in one place.
+        Post => (if Space_Left (Keys'Old)
+                 then Keys = (Keys'Old with delta
+                                Counter => Keys'Old.Counter + 1)
+                 else Keys = Keys'Old and Bytes_Out = 0)
                 and Bytes_Out <=
                        Record_Header_Size + Explicit_Nonce_Len +
                        2 + GCM_Tag_Len;  --  upper bound (GCM); ChaCha

@@ -535,6 +535,10 @@ is
       --  Alert payload: level[1] || description[1] = 2 bytes
       Alert : constant Byte_Seq (0 .. 1) := (0 => Level, 1 => Desc);
    begin
+      if not Space_Left (Keys) then
+         Bytes_Out := 0;
+         return;
+      end if;
       Build_Encrypted_Record_12
         (Plaintext    => Alert,
          Content_Type => 16#15#,  --  alert

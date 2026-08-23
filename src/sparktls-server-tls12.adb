@@ -92,8 +92,7 @@ is
                 and then HC.Cfg.Local.Has_Identity
                 and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                       (HC.Cfg.Local)
-                and then HC.Cfg.Random /= null
-                and then Space_Left (S.Server_App),
+                and then HC.Cfg.Random /= null,
         Post => S.State = Error_State
                 and S.Role = S.Role'Old
                 and S.Last_Error = Err
