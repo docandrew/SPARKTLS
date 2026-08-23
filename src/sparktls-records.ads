@@ -162,9 +162,24 @@ is
                and Record_Hdr'First = 0
                and Record_Hdr'Length = Record_Header_Size
                and Plaintext'First = 0
-               and Plaintext'Last >= Encrypted'Last  --  plaintext buffer >= encrypted
-               and Nonce_Space_Available (Keys),     --  RFC 8446 §5.5
-        Post => (if Valid then
+               and Plaintext'Last >= Encrypted'Last,  --  plaintext buffer >= encrypted
+               --  NO Nonce_Space_Available Pre (removed with carve 5a
+               --  phase 2): the body fails closed at the arithmetic limit
+               --  itself -- Valid = False, channel unchanged -- so the
+               --  obligation callers had to thread was redundant with a
+               --  check the read path needs anyway.
+        Post => --  Frame: decrypt touches ONLY the counter. Without this,
+                --  every caller lost all Keys facts at every decrypt call
+                --  ("postcondition should mention Keys" hints, r40).
+                Keys.Key = Keys'Old.Key
+                and Keys.IV = Keys'Old.IV
+                and Keys.Suite = Keys'Old.Suite
+                and (if Keys'Old.Counter < Record_Counter'Last
+                     then Keys.Counter in
+                            Keys'Old.Counter .. Keys'Old.Counter + 1
+                     else Keys.Counter = Keys'Old.Counter
+                          and not Valid)
+                and (if Valid then
                    (Plain_Len = 0
                     or else Plain_Len - 1 <= Plaintext'Last));     --  bounds
 

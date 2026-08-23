@@ -354,7 +354,6 @@ is
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
-      Saved_Ctr : in     Record_Counter;
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
@@ -364,14 +363,6 @@ is
                 and then Plaintext'Length <= Max_Fragment
                 and then Plaintext'Length < Transcript_Capacity
                 and then Nonce_Space_Available (HC.Server_HS),
-                --  Saved_Ctr is the caller's snapshot of
-                --  HC.Server_HS.Counter, restored on the failure path.
-                --  Counter is a Record_Counter (0 .. Unsigned_64'Last - 1,
-                --  sparktls.ads:803) so restoring an unbounded Unsigned_64
-                --  is a narrowing with no bound to work from. gnatprove
-                --  suggested exactly this precondition; adding it closed
-                --  all four Saved_Ctr findings (server.adb 26 -> 22 at
-                --  level 1) with no body change and no new findings.
                 Post => (if Emitted
                                  then Server_Active (S)
                                   and then Server_Configured (HC)
@@ -384,15 +375,13 @@ is
                       and then Result = OK)
                                 and then (if not Emitted
                                                   then S.State = Error_State
-                                                       and then Result = Error_Alert
-                                                       and then HC.Server_HS.Counter = Saved_Ctr);
+                                                       and then Result = Error_Alert);
 
    procedure Append_And_Encrypt_Server_HS_Fragmented
      (S         : in out Session;
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
-      Saved_Ctr : in     Record_Counter;
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
@@ -401,7 +390,6 @@ is
                 and then Plaintext'First = 0
                 and then Plaintext'Last in 0 .. N32 (Transcript_Capacity) - 2
                 and then HC.Server_HS.Counter <= Unsigned_64'Last - 2,
-                --  Same narrowing as the non-fragmented variant above.
                 Post => (if Emitted
                                  then Server_Active (S)
                                               and then Server_Configured (HC)
@@ -415,8 +403,7 @@ is
                       and then Result = OK)
                                 and then (if not Emitted
                                                   then S.State = Error_State
-                                                               and then Result = Error_Alert
-                                                               and then HC.Server_HS.Counter = Saved_Ctr);
+                                                               and then Result = Error_Alert);
 
    --  Cfg is the Ready_Config VIEW of HC.Cfg, established once by
    --  Advance_Handshake's membership guard and passed BY COPY (passing
@@ -2945,7 +2932,6 @@ is
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
-      Saved_Ctr : in     Record_Counter;
       Result    :    out Action;
       Emitted   :    out Boolean)
    is
@@ -2960,7 +2946,6 @@ is
          Bytes_Out  => Enc_Out);
 
       if Enc_Out = 0 then
-         HC.Server_HS.Counter := Saved_Ctr;
          S.Last_Error := Insufficient_Buffer;
          Set_State (S, Error_State);
          Result := Error_Alert;
@@ -2976,7 +2961,6 @@ is
       HC        : in out Handshake_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
-      Saved_Ctr : in     Record_Counter;
       Result    :    out Action;
       Emitted   :    out Boolean)
    is
@@ -2993,7 +2977,6 @@ is
             Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
-            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -3012,7 +2995,6 @@ is
             Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
-            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -3030,7 +3012,6 @@ is
             Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
-            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -3058,7 +3039,6 @@ is
       --  the counter so the next record's AEAD nonce stays in sync with
       --  what the peer actually sees.
       Scratch    : IO_Buffer;
-      Saved_Ctr  : Record_Counter;
       Flight_Suite    : constant Unsigned_16 := S.Negotiated_Suite;
       Flight_Hash_Len : N32 := 32;
       --  Track whether we've started writing encrypted records (so we
@@ -3197,8 +3177,7 @@ is
       --  (Post: Keys.Counter = Keys.Counter'Old + 1). If the final
       --  commit fails we restore this so the next record's nonce stays
       --  in sync with whatever the peer last saw.
-      Saved_Ctr := HC.Server_HS.Counter;
-      pragma Assert (Saved_Ctr = 0);
+      pragma Assert (HC.Server_HS.Counter = 0);
       pragma Assert (Nonce_Space_Available (HC.Server_HS));
 
       --  Send CCS for middlebox compatibility unless HRR already sent it.
@@ -3231,7 +3210,6 @@ is
             HC        => HC,
             Plaintext => EE_Buf (0 .. EE_Len - 1),
             Scratch   => Scratch,
-            Saved_Ctr => Saved_Ctr,
             Result    => Result,
             Emitted   => Emitted);
                  if not Emitted then
@@ -3260,7 +3238,6 @@ is
                   HC        => HC,
                   Plaintext => CR_Buf (0 .. CR_Len - 1),
                   Scratch   => Scratch,
-                  Saved_Ctr => Saved_Ctr,
                   Result    => Result,
                   Emitted   => Emitted);
                        if not Emitted then
@@ -3286,7 +3263,6 @@ is
                      (for some I in 0 .. Max_Pool_Size - 1 =>
                         HC.Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
                  then
-                    HC.Server_HS.Counter := Saved_Ctr;
                             S.Last_Error := Internal_Error;
                             Set_State (S, Error_State);
                             Result := Error_Alert;
@@ -3301,7 +3277,6 @@ is
            or else Cert_Len >= Transcript_Capacity
            or else Cert_Len > 2 * Max_Fragment
          then
-            HC.Server_HS.Counter := Saved_Ctr;
                     S.Last_Error := Internal_Error;
                     Set_State (S, Error_State);
                     Result := Error_Alert;
@@ -3316,14 +3291,12 @@ is
             HC        => HC,
             Plaintext => Cert_Buf (0 .. Cert_Len - 1),
             Scratch   => Scratch,
-            Saved_Ctr => Saved_Ctr,
             Result    => Result,
             Emitted   => Emitted);
                          if not Emitted then
                             return;
                          end if;
                  if not Nonce_Space_Available (HC.Server_HS) then
-                    HC.Server_HS.Counter := Saved_Ctr;
                             S.Last_Error := Internal_Error;
                             Set_State (S, Error_State);
                             Result := Error_Alert;
@@ -3355,7 +3328,6 @@ is
                    and then (HC.Cfg.Random = null
                              or else HC.Cfg.Local.RSA_Mod_Len not in 64 .. 512)
                  then
-                    HC.Server_HS.Counter := Saved_Ctr;
                     S.Last_Error := Internal_Error;
                     Set_State (S, Error_State);
                     Result := Error_Alert;
@@ -3371,7 +3343,6 @@ is
             Len             => CV_Len);
 
          if CV_Len = 0 then
-            HC.Server_HS.Counter := Saved_Ctr;
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -3385,14 +3356,12 @@ is
             HC        => HC,
             Plaintext => CV_Buf (0 .. CV_Len - 1),
             Scratch   => Scratch,
-            Saved_Ctr => Saved_Ctr,
             Result    => Result,
             Emitted   => Emitted);
                          if not Emitted then
                             return;
                          end if;
                  if not Nonce_Space_Available (HC.Server_HS) then
-                    HC.Server_HS.Counter := Saved_Ctr;
                             S.Last_Error := Internal_Error;
                             Set_State (S, Error_State);
                             Result := Error_Alert;
@@ -3442,7 +3411,6 @@ is
                      HC        => HC,
                      Plaintext => Big_Finished,
                      Scratch   => Scratch,
-                     Saved_Ctr => Saved_Ctr,
                              Result    => Result,
                              Emitted   => Emitted);
                        end;
@@ -3475,7 +3443,6 @@ is
                      HC        => HC,
                      Plaintext => Fin_Buf (0 .. Fin_Len - 1),
                      Scratch   => Scratch,
-                     Saved_Ctr => Saved_Ctr,
                              Result    => Result,
                              Emitted   => Emitted);
                        end;
@@ -3495,9 +3462,6 @@ is
       --  AEAD counter back so subsequent records (or the alert we may
       --  send) stay nonce-synchronised with the peer.
       if Free_Space (S.Output) < Scratch.Write_Pos then
-         if Encryption_Started then
-            HC.Server_HS.Counter := Saved_Ctr;
-         end if;
                  S.Last_Error := Insufficient_Buffer;
                  Set_State (S, Error_State);
                  Result := Error_Alert;
@@ -4523,20 +4487,15 @@ is
                               --  counter so the next encrypted record
                               --  on these keys keeps its nonce in sync
                               --  with what the peer last received.
-                              declare
-                                 Saved : constant Unsigned_64 :=
-                                    S.Server_App.Counter;
-                              begin
-                                 Records.Build_Encrypted_Record
-                                   (Plaintext  => NST (0 .. NST_Total - 1),
-                                    Inner_Type => 16#16#,  --  handshake
-                                    Keys       => S.Server_App,
-                                    Output     => S.Output,
-                                    Bytes_Out  => Enc_Out);
-                                 if Enc_Out = 0 then
-                                    S.Server_App.Counter := Saved;
-                                 end if;
-                              end;
+                              --  No save/restore: Build's Post already
+                              --  guarantees the counter is unchanged when
+                              --  Bytes_Out = 0 (space checked before seal).
+                              Records.Build_Encrypted_Record
+                                (Plaintext  => NST (0 .. NST_Total - 1),
+                                 Inner_Type => 16#16#,  --  handshake
+                                 Keys       => S.Server_App,
+                                 Output     => S.Output,
+                                 Bytes_Out  => Enc_Out);
                            end;
                         end if;
                      end;

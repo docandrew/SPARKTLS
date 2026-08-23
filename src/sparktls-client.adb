@@ -2678,19 +2678,11 @@ is
       HC              : in out Handshake_Context;
       Scratch         : in out IO_Buffer;
       App_TS_Hash_384 : in     Key_Schedule.Digest_384;
-      Saved_Ctr       : in     Record_Counter;
       Result          :    out Action)
    with Pre => S.State not in Idle | Closing | Closed | Error_State
                and then Nonce_Space_Available (HC.Client_HS)
                and then HC.Transcript_Len > 0
                and then S.Negotiated_Suite = Suite_AES_256_GCM_SHA384,
-               --  Saved_Ctr is the caller's snapshot of
-               --  HC.Client_HS.Counter, restored on the failure path.
-               --  Counter is a Record_Counter (0 .. Unsigned_64'Last - 1,
-               --  sparktls.ads:803), so restoring an unbounded Unsigned_64
-               --  is a narrowing with no bound. gnatprove named this
-               --  precondition; the same clause on the two server-side
-               --  variants closed all four of their Saved_Ctr findings.
                 Post => (if Result = OK then
                             Nonce_Space_Available (S.Client_App))
                         and then HC.Hash_Len = HC.Hash_Len'Old
@@ -2701,7 +2693,6 @@ is
       HC              : in out Handshake_Context;
       Scratch         : in out IO_Buffer;
       App_TS_Hash_384 : in     Key_Schedule.Digest_384;
-      Saved_Ctr       : in     Record_Counter;
       Result          :    out Action)
    is
       use HKDF384;
@@ -2746,7 +2737,6 @@ is
       end;
 
       if Enc_Out = 0 then
-         HC.Client_HS.Counter := Saved_Ctr;
          S.Last_Error := Insufficient_Buffer;
          Set_State (S, Error_State);
          Result := Error_Alert;
@@ -2786,20 +2776,12 @@ is
       HC              : in out Handshake_Context;
       Scratch         : in out IO_Buffer;
       App_TS_Hash_256 : in     Digest;
-      Saved_Ctr       : in     Record_Counter;
       Result          :    out Action)
    with Pre => S.State not in Idle | Closing | Closed | Error_State
                and then Nonce_Space_Available (HC.Client_HS)
                and then HC.Transcript_Len > 0
                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                            | Suite_CHACHA20_POLY1305_SHA256,
-               --  Saved_Ctr is the caller's snapshot of
-               --  HC.Client_HS.Counter, restored on the failure path.
-               --  Counter is a Record_Counter (0 .. Unsigned_64'Last - 1,
-               --  sparktls.ads:803), so restoring an unbounded Unsigned_64
-               --  is a narrowing with no bound. gnatprove named this
-               --  precondition; the same clause on the two server-side
-               --  variants closed all four of their Saved_Ctr findings.
                 Post => (if Result = OK then
                             Nonce_Space_Available (S.Client_App))
                         and then HC.Hash_Len = HC.Hash_Len'Old
@@ -2810,7 +2792,6 @@ is
       HC              : in out Handshake_Context;
       Scratch         : in out IO_Buffer;
       App_TS_Hash_256 : in     Digest;
-      Saved_Ctr       : in     Record_Counter;
       Result          :    out Action)
    is
       Finished_Buf       : Byte_Seq (0 .. 35);
@@ -2849,7 +2830,6 @@ is
          Bytes_Out  => Enc_Out);
 
       if Enc_Out = 0 then
-         HC.Client_HS.Counter := Saved_Ctr;
          S.Last_Error := Insufficient_Buffer;
          Set_State (S, Error_State);
          Result := Error_Alert;
@@ -2902,7 +2882,6 @@ is
       --  advances HC.Client_HS.Counter; we save it and restore on any
       --  failure to keep AEAD nonces in sync with what the peer saw.
       Scratch   : IO_Buffer;
-      Saved_Ctr : constant Record_Counter := HC.Client_HS.Counter;
       --  RFC 8446 §7.1: client_application_traffic_secret_0 uses
       --  the transcript hash through SERVER's Finished — NOT
       --  including any subsequent client Cert/CV. Snapshot the
@@ -2942,7 +2921,6 @@ is
       --  mTLS: send client certificate before Finished if requested
       Send_Client_Certificate (S, HC, Scratch, Cert_Result);
       if Cert_Result /= OK then
-         HC.Client_HS.Counter := Saved_Ctr;
          if S.State = Wait_Server_Finished then
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
@@ -2957,7 +2935,6 @@ is
       end if;
 
       if not Nonce_Space_Available (HC.Client_HS) then
-         HC.Client_HS.Counter := Saved_Ctr;
          S.Last_Error := Insufficient_Buffer;
          Set_State (S, Error_State);
          Result := Error_Alert;
@@ -2967,7 +2944,7 @@ is
       case S.Negotiated_Suite is
       when Suite_AES_256_GCM_SHA384 =>
          Build_Client_Finished_384
-           (S, HC, Scratch, App_TS_Hash_384, Saved_Ctr, Result);
+           (S, HC, Scratch, App_TS_Hash_384, Result);
          if Result /= OK then
             return;
          end if;
@@ -2976,7 +2953,7 @@ is
            (S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                 | Suite_CHACHA20_POLY1305_SHA256);
          Build_Client_Finished_256
-           (S, HC, Scratch, App_TS_Hash_256, Saved_Ctr, Result);
+           (S, HC, Scratch, App_TS_Hash_256, Result);
          if Result /= OK then
             return;
          end if;
@@ -2989,7 +2966,6 @@ is
 
       --  Atomic commit: full client flight assembled in Scratch.
       if Free_Space (S.Output) < Scratch.Write_Pos then
-         HC.Client_HS.Counter := Saved_Ctr;
          S.Last_Error := Insufficient_Buffer;
          Set_State (S, Error_State);
          Result := Error_Alert;
