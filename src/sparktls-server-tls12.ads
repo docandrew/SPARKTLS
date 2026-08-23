@@ -54,7 +54,7 @@ is
    --  All sent as plaintext records (no encryption yet).
    --  After this, state transitions to Server_Hello_Done_Sent_12.
    procedure Build_Server_Flight_12
-     (S      : in out Session;
+     (S      : in out Server_Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre  => HC.Version = TLS_1_2
@@ -69,9 +69,7 @@ is
                 --  Client_Hello_Sent is Wait_Server_Hello, which would
                 --  conflict with the final Set_State (Server_Hello_Sent).
                 and then S.State = Wait_Client_Hello
-                        and then S.Role = Role_Server
-                        and then SPARKTLSCrypto.P384.Field.Initialized
-                                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+                        and then S.Role = Role_Server,
         Post =>
                   (if S.State in Server_Hello_Sent | Wait_Client_Finished
                    then HC.Version = TLS_1_2
@@ -93,7 +91,15 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Post =>
+   --  Version is what the nested helpers (Compute_Shared_Secret_12,
+   --  Finish_CKE's flight builders) require. All three dispatcher call
+   --  sites hold it: one under `if HC.Version = TLS_1_2`, two under the
+   --  else of `if HC.Version = TLS_1_3` -- equivalent because TLS_Version
+   --  has exactly those two values. Same Defect-A shape as #95's
+   --  handlers: a Post with no Pre starved the body of a fact the caller
+   --  holds.
+   with Pre  => HC.Version = TLS_1_2,
+        Post =>
                                                (if S.State'Old = Wait_Client_Finished
                                                 then S.State in Wait_Client_Finished
                                                               | Connected

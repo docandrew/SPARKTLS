@@ -248,9 +248,7 @@ is
                 and Result'Last >= Max_Server_Key_Exchange - 1
                 and Random /= null
                 and Id.Has_Identity
-                and Valid_ECDHE_Group (HC.Selected_Group)
-                and SPARKTLSCrypto.P384.Field.Initialized
-                and SPARKTLSCrypto.P384.ECDSA.Initialized,
+                and Valid_ECDHE_Group (HC.Selected_Group),
         Post => Len <= Max_Server_Key_Exchange;
 
    --  RFC 5246 §7.4.5: Build ServerHelloDone.
@@ -290,8 +288,7 @@ is
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and Result'Last >= Max_Client_Key_Exchange - 1
-                and Valid_ECDHE_Group (HC.Selected_Group)
-                and SPARKTLSCrypto.P384.Field.Initialized,
+                and Valid_ECDHE_Group (HC.Selected_Group),
         Post => Len <= Max_Client_Key_Exchange;
 
    --  RFC 8422 §5.4: Parse ServerKeyExchange.
@@ -313,9 +310,7 @@ is
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre  => Data'First = 0
-                and then Data'Last in 9 .. Max_Server_Key_Exchange - 1
-                and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+                and then Data'Last in 9 .. Max_Server_Key_Exchange - 1,
         Post => HC.Client_Seq_12 = HC.Client_Seq_12'Old
                                 and then (if HC.Cfg.Random'Old /= null
                                           then HC.Cfg.Random /= null)
@@ -421,9 +416,7 @@ is
                    else
                      Transcript_Hash'Length = 32)
                 and Random /= null
-                and Id.Has_Identity
-                and SPARKTLSCrypto.P384.Field.Initialized
-                and SPARKTLSCrypto.P384.ECDSA.Initialized,
+                and Id.Has_Identity,
         Post => Len <= 520;
 
    --  RFC 5246 §7.4.1.2: Build TLS 1.2 ServerHello.
@@ -498,8 +491,7 @@ is
    with Pre  => Data'First = 0
                 and then Data'Length > 0
                         and then Data'Last < N32'Last
-                        and then HC.Version = TLS_1_2
-                        and then SPARKTLSCrypto.P384.Field.Initialized,
+                        and then HC.Version = TLS_1_2,
                         Post => (if OK then
                                    Valid_TLS12_Suite (Negotiated_Suite (S))
                                    and HC.Version = TLS_1_2)
@@ -512,7 +504,6 @@ is
                                                 N32 (HC.HRR_Cookie'Length)
                                    then HC.HRR_Cookie_Len <=
                                         N32 (HC.HRR_Cookie'Length))
-                                and then SPARKTLSCrypto.P384.Field.Initialized
                                 and then State (S) = State (S)'Old;
 
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket builder.

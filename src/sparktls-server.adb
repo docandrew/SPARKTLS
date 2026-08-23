@@ -88,9 +88,7 @@ is
                                          then Nonce_Space_Available (HC.Server_HS)
                                               and then Nonce_Space_Available (S.Server_App)
                                               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                                        (HC.Server_Seq_12)
-                                      and then SPARKTLSCrypto.P384.Field.Initialized
-                                      and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+                                        (HC.Server_Seq_12))
               and then
                         (if S.State = Wait_Client_Hello and then HC.Version = TLS_1_2
                          then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
@@ -111,9 +109,7 @@ is
                         (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
                                  then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
                               and then Nonce_Space_Available (HC.Server_HS)
-                              and then Nonce_Space_Available (S.Server_App)
-                              and then SPARKTLSCrypto.P384.Field.Initialized
-                              and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+                              and then Nonce_Space_Available (S.Server_App))
               and then
                 (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_3
                  then Nonce_Space_Available (HC.Client_HS)
@@ -144,9 +140,7 @@ is
                        X509.N32'Last
                    and then X509.Spans_Valid
                      (HC.Peer_Cert,
-                      X509.N32 (HC.Peer_Cert_DER_Len) - 1)
-                   and then SPARKTLSCrypto.P384.Field.Initialized
-                   and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+                      X509.N32 (HC.Peer_Cert_DER_Len) - 1))
               and then Free_Space (S.Output) >=
                 Records.Record_Header_Size + 3 + Records.Tag_Size)
               and then
@@ -159,8 +153,6 @@ is
                         (S.Negotiated_Suite)
                       and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
                 (HC.Selected_Group)
-              and then SPARKTLSCrypto.P384.Field.Initialized
-              and then SPARKTLSCrypto.P384.ECDSA.Initialized
               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
                 (HC.Client_Seq_12)
               and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
@@ -170,7 +162,7 @@ is
 
    --  Forward declarations
    procedure Advance_Handshake
-     (S      : in out Session;
+     (S      : in out Server_Session;
       HC     : in out Handshake_Context;
       Result :    out Action);
            --  NO POSTCONDITION HERE, DELIBERATELY. It used to carry
@@ -234,8 +226,7 @@ is
                                    | Suite_AES_256_GCM_SHA384
                                    | Suite_CHACHA20_POLY1305_SHA256
                                    and then Nonce_Space_Available (HC.Server_HS)
-                                   and then Nonce_Space_Available (S.Server_App)
-                                   and then SPARKTLSCrypto.P384.Field.Initialized)
+                                   and then Nonce_Space_Available (S.Server_App))
                                         and then
                                           (if S.State not in Error_State | Closed
                                            then True)
@@ -306,14 +297,12 @@ is
                         | Suite_AES_256_GCM_SHA384
                         | Suite_CHACHA20_POLY1305_SHA256
                         and then Nonce_Space_Available (HC.Server_HS)
-                        and then Nonce_Space_Available (S.Server_App)
-                and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+                        and then Nonce_Space_Available (S.Server_App),
                                 Post =>
                                           (if S.State not in Error_State | Closed
                                            then Server_Configured (HC));
            procedure Handle_Client_Hello_Retry
-             (S      : in out Session;
+             (S      : in out Server_Session;
               HC     : in out Handshake_Context;
               Result :    out Action)
            --  Same shape as Handle_Wait_Client_Hello: without a state Pre the
@@ -352,9 +341,7 @@ is
                                           | Suite_AES_256_GCM_SHA384
                                           | Suite_CHACHA20_POLY1305_SHA256
                                         and then Nonce_Space_Available (HC.Server_HS)
-                                        and then Nonce_Space_Available (S.Server_App)
-                                        and then SPARKTLSCrypto.P384.Field.Initialized
-                                        and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+                                        and then Nonce_Space_Available (S.Server_App),
          Post => (if S.State not in Error_State | Closed
                                                                                                           then Server_Configured (HC));
 
@@ -452,9 +439,7 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Post => (if S.State not in Error_State | Closed
-                                                          then Server_Configured (HC))
-                                        and then (if S.State not in Error_State | Closed
-                                          then True);
+                 then Server_Configured (HC));
 
    procedure Process_Client_Finished
      (S      : in out Session;
@@ -1042,9 +1027,7 @@ is
    with Pre => S.State = Wait_Client_Hello
                and then S.Role = Role_Server
                        and then HC.Legacy_Session_ID_Len in 0 .. 32
-                               and then HC.Transcript_Len > 0
-                                                       and then SPARKTLSCrypto.P384.Field.Initialized
-                       and then SPARKTLSCrypto.P384.ECDSA.Initialized;
+                               and then HC.Transcript_Len > 0;
 
    procedure Complete_Client_Hello
      (S      : in out Session;
@@ -1210,7 +1193,7 @@ is
    --  Advance_Handshake case dispatch so SPARK can prove each
    --  protocol state's logic in isolation.
    procedure Handle_Wait_Client_Hello
-             (S      : in out Session;
+             (S      : in out Server_Session;
               HC     : in out Handshake_Context;
               Result :    out Action)
            --  The state is not decoration: without it the prover knows
@@ -1225,7 +1208,7 @@ is
                 Post => Wait_Client_Hello_Post (S, HC);
 
    procedure Handle_Wait_Client_Hello
-             (S      : in out Session;
+             (S      : in out Server_Session;
               HC     : in out Handshake_Context;
               Result :    out Action)
            is
@@ -1538,11 +1521,18 @@ is
                                                   end Append_Reassembly_Fragment;
 
                                           procedure Parse_Completed_Reassembly
-                                          with Pre => S.State = Wait_Client_Hello
+                                          --  Has_Message is what the body needs to call Message_Length /
+                                          --  Message on HC.Reasm, and the caller already has it:
+                                          --  Append_Reassembly_Fragment's Post gives
+                                          --  not More_Input_Needed -> Has_Message, and the call site
+                                          --  asserts not More_Input_Needed immediately before. Omitting
+                                          --  it here is the same Defect A as the two handlers in #95 --
+                                          --  a Pre that leaves out a fact the body needs and the caller
+                                          --  holds.
+                                          with Pre => Has_Message (HC.Reasm)
+                                                              and then S.State = Wait_Client_Hello
                                                               and then S.Role = Role_Server
                                                                       and then Server_Configured (HC)
-                                                                      and then SPARKTLSCrypto.P384.Field.Initialized
-                                                              and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                                       and then HC.Legacy_Session_ID_Len
                                                         in 0 .. 32,
                                                        Post => Wait_Client_Hello_Post (S, HC);
@@ -1571,15 +1561,15 @@ is
                                 --  had a peer packed anything after the ClientHello.
                                 --  The "Len = 0" arm is gone with it: Has_Message
                                 --  guarantees at least a 4-byte header.
-                                Full_Msg : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
+                                Full_Msg : constant Message_Bytes := Message (HC.Reasm);
                              begin
                                         Handshake.Server_Msgs.Parse_Client_Hello
-                                          (S, HC, Full_Msg, Parse_OK);
+                                          (S, HC, Byte_Seq (Full_Msg), Parse_OK);
                                                 if Parse_OK then
                                                            pragma Assert (Server_Configured (HC));
                                                            pragma Assert
                                                              (HC.Legacy_Session_ID_Len in 0 .. 32);
-                                                           Append_Transcript (HC, Full_Msg);
+                                                           Append_Transcript (HC, Byte_Seq (Full_Msg));
                                                            pragma Assert (HC.Transcript_Len > 0);
                                                         end if;
                                                      end;
@@ -2092,7 +2082,7 @@ is
 
 
            procedure Handle_Client_Hello_Retry
-             (S      : in out Session;
+             (S      : in out Server_Session;
               HC     : in out Handshake_Context;
               Result :    out Action)
            is
@@ -2327,8 +2317,12 @@ is
                                    end Handle_Client_Hello_Retry;
 
    --  Dispatch handshake states to the appropriate handler
+   --  Server_Session, not Session: the subtype constrains the Role
+   --  discriminant, so S.Role = Role_Server is a structural fact inside --
+   --  which is what lets the Server_Active preconditions of the flight
+   --  builders discharge without threading a Role conjunct down the chain.
    procedure Advance_Handshake
-             (S      : in out Session;
+             (S      : in out Server_Session;
               HC     : in out Handshake_Context;
               Result :    out Action)
            is
@@ -3139,7 +3133,6 @@ is
                                           end if;
                             return;
                                end if;
-                               pragma Assert (S.State = Wait_Client_Hello);
                                Set_State (S, Wait_Client_Hello_Retry);
                                HC.HRR_Sent := True;
                --  RFC 8446 §4.1.4: at-most-one-HRR invariant. After
@@ -3809,33 +3802,20 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Data'First = 0
-                and then Data'Length > 0
-                and then Data'Last < N32'Last - 4
                 and then Data'Last < Transcript_Capacity
-                and then S.State = Wait_Client_Cert_Verify
                 and then Server_Configured (HC)
                 and then Nonce_Space_Available (S.Server_App)
-                and then HC.Hash_Len in 32 | 48
                 and then
                   (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                    then HC.Hash_Len = 48
                    else HC.Hash_Len = 32)
-                        and then HC.Transcript_Len > 0
-                        and then HC.Transcript_Len <= Transcript_Capacity
-                        and then HC.Peer_Cert_Valid
-                        and then HC.Peer_Cert_DER_Len > 0
-                        and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
-                        and then
-                          X509.N32 (HC.Peer_Cert_DER_Len) - 1 < X509.N32'Last
-                        and then X509.Spans_Valid
-                          (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1)
-                        and then SPARKTLSCrypto.P384.Field.Initialized
-                        and then SPARKTLSCrypto.P384.ECDSA.Initialized
-                        and then Free_Space (S.Output) >=
-                                   Records.Record_Header_Size + 3 + Records.Tag_Size,
-                        Post => (if S.State not in Error_State | Closed
-                                          then Server_Configured (HC)
-                                       and then True);
+                and then HC.Transcript_Len > 0
+                and then HC.Peer_Cert_DER_Len > 0
+                and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
+                and then X509.Spans_Valid
+                  (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1),
+        Post => (if S.State not in Error_State | Closed
+                 then Server_Configured (HC));
 
    procedure Handle_Client_CertVerify_13
      (S       : in out Session;
@@ -4242,8 +4222,7 @@ is
                   end case;
                   pragma Assert
                     (if S.State not in Error_State | Closed
-                     then Server_Configured (HC)
-                          and then True);
+                     then Server_Configured (HC));
                end;
             end;
 
@@ -4843,12 +4822,12 @@ is
                              end if;
 
                      declare
-                        Full     : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
+                        Full     : constant Message_Bytes := Message (HC.Reasm);
                         Full_Len : constant N32 := Full'Length;
                      begin
                         Reset (HC.Reasm);
                         Dispatch_Finished_Message
-                          (Full, Full_Len, Result);
+                          (Byte_Seq (Full), Full_Len, Result);
                      end;
                      return;
                   end;

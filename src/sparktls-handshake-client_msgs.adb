@@ -74,8 +74,7 @@ is
      (Secret  :    out Bytes_48;
       OK      :    out Boolean;
       SK      : in     Bytes_48;
-      Peer_PK : in     P384_Public_Key_Seq)
-   with Pre => SPARKTLSCrypto.P384.Field.Initialized;
+      Peer_PK : in     P384_Public_Key_Seq);
 
    procedure Compute_P384_Shared_Secret
      (Secret  :    out Bytes_48;

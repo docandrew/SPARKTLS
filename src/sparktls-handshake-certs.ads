@@ -63,9 +63,7 @@ is
                and then
                  (if Sig_Algo_Wire in 16#0804# | 16#0805# | 16#0806#
                   then Random /= null
-                       and then Id.RSA_Mod_Len in 64 .. 512)
-               and then SPARKTLSCrypto.P384.Field.Initialized
-               and then SPARKTLSCrypto.P384.ECDSA.Initialized,
+                       and then Id.RSA_Mod_Len in 64 .. 512),
         Post => Len <= N32 (Result'Length);
 
    --  RFC 8446 §4.4.2 TLS 1.3 Certificate parser. Replaces the

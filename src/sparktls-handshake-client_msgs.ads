@@ -34,7 +34,6 @@ is
                    with Pre  => Result'First = 0
                                 and then Result'Last in Max_Client_Hello - 1 .. N32'Last - 1
                                 and then HC.Cfg.Random /= null
-                                and then SPARKTLSCrypto.P384.Field.Initialized
                         and then
                           (if Retry_Mode
                            then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)),
@@ -52,7 +51,6 @@ is
               Data : in     Byte_Seq;
               OK   :    out Boolean)
                                    with Pre => Data'Length > 0
-                                               and then SPARKTLSCrypto.P384.Field.Initialized
                                                        and then HC.HRR_Cookie_Len <=
                                                          N32 (HC.HRR_Cookie'Length),
                                                                                         Post =>

@@ -99,8 +99,7 @@ is
                                 and then HC.Legacy_Session_ID_Len in 0 .. 32
                                 and then Negotiated_Suite (S) in Suite_AES_128_GCM_SHA256
                                                        | Suite_AES_256_GCM_SHA384
-                                                       | Suite_CHACHA20_POLY1305_SHA256
-                and then SPARKTLSCrypto.P384.Field.Initialized,
+                                                       | Suite_CHACHA20_POLY1305_SHA256,
            Post => Len <= N32 (Result'Length)
                    and then (if Len > 0 then Len >= 4)
                    and then HC.Cfg.Random /= null

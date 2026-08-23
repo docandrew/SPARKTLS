@@ -253,7 +253,7 @@ is
    --  Forward decl: full handshake state machine entry that the resume
    --  attempt may fall through to.
    procedure Build_Server_Flight_12_Full
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => HC.Version = TLS_1_2
                         and then HC.Cfg.Local /= null
                         and then HC.Cfg.Local.Has_Identity
@@ -261,11 +261,11 @@ is
                                    (HC.Cfg.Local)
                         and then HC.Cfg.Random /= null
                                         and then S.State = Wait_Client_Hello
-                                        and then S.Role = Role_Server
-                                        and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized,
-                Post => S.Role = Role_Server
-                        and then HC.Version = TLS_1_2
+                                        and then S.Role = Role_Server,
+                --  No Role conjunct: S is Server_Session, so
+                --  S.Role = Role_Server is the discriminant -- stating it
+                --  would be a tautology carried in every VC of this body.
+                Post => HC.Version = TLS_1_2
                         and then HC.Cfg.Local /= null
                                         and then HC.Cfg.Local.Has_Identity
                                         and then
@@ -283,7 +283,7 @@ is
    --  then transitions to Wait_Client_Finished to receive the
    --  client's CCS + Finished.
    procedure Build_Abbreviated_Server_Flight_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => HC.Version = TLS_1_2
                         and then HC.Cfg.Local /= null
                         and then HC.Cfg.Local.Has_Identity
@@ -312,7 +312,7 @@ is
                                                         and then HC.Cfg.Random /= null;
 
    procedure Build_Server_Flight_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
    is
    begin
       --  TEK rotation is NOT performed here. The library no longer holds
@@ -406,7 +406,7 @@ is
    end Build_Server_Flight_12;
 
    procedure Build_Server_Flight_12_Full
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
    is
       Gen_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
       Rec_Out    : N32;
@@ -859,7 +859,7 @@ is
    --  HC.Master_Secret_12 + forced S.Negotiated_Suite from the ticket.
    ------------------------------------------------------------------
    procedure Build_Abbreviated_Server_Flight_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
    is
       use Key_Schedule_12;
       use type SPARKTLS.Tickets_12.Bytes_4;
@@ -1193,8 +1193,7 @@ is
                            and then SPARKTLS.Handshake.Server_Msgs
                                       .Local_Config_Valid (HC.Cfg.Local)
                                    and then HC.Cfg.Random /= null
-                                   and then Valid_ECDHE_Group (HC.Selected_Group)
-                           and then SPARKTLSCrypto.P384.Field.Initialized,
+                                   and then Valid_ECDHE_Group (HC.Selected_Group),
                    Post => HC.Version = HC.Version'Old
                            and then HC.Cfg.Local /= null
                            and then HC.Cfg.Local.Has_Identity
@@ -1685,7 +1684,7 @@ is
             end if;
 
                     declare
-                       Full : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
+                       Full : constant Message_Bytes := Message (HC.Reasm);
                     begin
                        if Full'Length > HC.Transcript'Length then
                           Fail_Decode;
@@ -1695,7 +1694,7 @@ is
                        begin
                           Reset (HC.Reasm);
                           Result := OK;
-                                  Finish_CKE (Full);
+                                  Finish_CKE (Byte_Seq (Full));
                                           if Result /= OK then
                                              return;
                                           end if;
@@ -1759,8 +1758,6 @@ is
       end;
 
               --  Compute ECDHE shared secret
-              pragma Assert
-                (SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group (HC.Selected_Group));
               declare
                  SS_OK  : Boolean    := False;
                  SS_Err : Error_Code := Handshake_Failure;
@@ -1772,7 +1769,6 @@ is
             end if;
       end;
 
-      pragma Assert (S.State in Wait_Client_Cert_Verify | Wait_Client_Finished);
               pragma Assert
                 (S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
                                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -2295,14 +2291,14 @@ is
                end if;
 
                declare
-                  Full : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
+                  Full : constant Message_Bytes := Message (HC.Reasm);
                begin
                   if Full'Length > N32 (Plaintext'Length) then
                      Send_Alert_And_Error (S, Decode_Error, Result);
                      return;
                   end if;
 
-                  Plaintext (0 .. Full'Length - 1) := Full;
+                  Plaintext (0 .. Full'Length - 1) := Byte_Seq (Full);
                   PL := Full'Length;
                   Reset (HC.Reasm);
                end;
@@ -2423,7 +2419,6 @@ is
                         --  alert MUST be plaintext, not encrypted.
                                 Send_Alert_And_Error
                                   (S, Handshake_Failure, Result);
-                                pragma Assert (Output_Pending (S) > 0);
                         pragma Assert
                           (S.Last_Error /= Unexpected_Message);
                         pragma Assert

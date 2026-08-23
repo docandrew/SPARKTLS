@@ -15,9 +15,7 @@ is
      (Cert_DER : Byte_Seq;
       Cert     : X509.Certificate;
       Issuer   : X509.Certificate) return Boolean
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last
-               and SPARKTLSCrypto.P384.Field.Initialized
-               and SPARKTLSCrypto.P384.ECDSA.Initialized;
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last;
 
    --  Validation result
    type Validation_Result is
@@ -98,9 +96,7 @@ is
      (Cert_DER : X509.Byte_Seq;
       Cert     : X509.Certificate;
       Issuer   : X509.Certificate) return Boolean
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
-               and SPARKTLSCrypto.P384.Field.Initialized
-               and SPARKTLSCrypto.P384.ECDSA.Initialized;
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last;
 
    --  Validate one link in the chain: Issuer signs Cert.
    --
@@ -132,9 +128,7 @@ is
    with Pre  => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
                 and Issuer_DER'First = 0 and Issuer_DER'Last < X509.N32'Last
                 and X509.Spans_Valid (Cert, Cert_DER'Last)
-                and X509.Spans_Valid (Issuer, Issuer_DER'Last)
-                and SPARKTLSCrypto.P384.Field.Initialized
-                and SPARKTLSCrypto.P384.ECDSA.Initialized,
+                and X509.Spans_Valid (Issuer, Issuer_DER'Last),
         Post =>
           --  RFC 5280 §6.1.3: issuer must match
           (if Validate_Link'Result = Valid then
@@ -231,9 +225,7 @@ is
                and Data'Last < N32'Last - 64  --  +64 prefix in Ed25519 path
                and Sig'First = 0
                and Sig'Length > 0
-               and Sig'Last < N32'Last
-               and SPARKTLSCrypto.P384.Field.Initialized
-               and SPARKTLSCrypto.P384.ECDSA.Initialized;
+               and Sig'Last < N32'Last;
 
    --  TLS 1.2 signs ServerKeyExchange with hash_algorithm ||
    --  signature_algorithm.  The ECDSA signature algorithm does not bind
@@ -249,9 +241,7 @@ is
                and Data'Last < N32'Last - 64
                and Sig'First = 0
                and Sig'Length > 0
-               and Sig'Last < N32'Last
-               and SPARKTLSCrypto.P384.Field.Initialized
-               and SPARKTLSCrypto.P384.ECDSA.Initialized;
+               and Sig'Last < N32'Last;
 
    ----------------------------------------------------------------------------
    --  Credential loading helpers
@@ -340,8 +330,6 @@ is
    with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last
                and Int_Count <= Max_Pool_Size
                and Root_Count <= Max_Root_Pool_Size
-               and X509.Spans_Valid (Leaf, Leaf_DER'Last)
-               and SPARKTLSCrypto.P384.Field.Initialized
-               and SPARKTLSCrypto.P384.ECDSA.Initialized;
+               and X509.Spans_Valid (Leaf, Leaf_DER'Last);
 
 end SPARKTLS.Cert_Verify;

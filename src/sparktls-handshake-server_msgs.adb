@@ -3862,8 +3862,7 @@ is
       KS_Raw     :    out KS_Raw_Buffer;
       KS_Raw_Len :    out N32;
       OK         :    out Boolean)
-           with Pre  => HC.Cfg.Random /= null
-                    and then SPARKTLSCrypto.P384.Field.Initialized,
+           with Pre  => HC.Cfg.Random /= null,
                 Post => (if OK then KS_Raw_Len = 101 else KS_Raw_Len = 0)
                         and then HC.Cfg.Random /= null
                         and then
@@ -4279,7 +4278,6 @@ is
       KS_Raw_Len :    out N32;
       OK         :    out Boolean)
            with Pre => HC.Cfg.Random /= null
-                   and then SPARKTLSCrypto.P384.Field.Initialized
                and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
                and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
                 Post => (if OK then KS_Raw_Len in 36 | 69 | 101 else KS_Raw_Len = 0)

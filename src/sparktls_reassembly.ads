@@ -138,7 +138,13 @@ package SPARKTLS_Reassembly with SPARK_Mode => On is
    --  The complete message at offset 0, header included.
    function Message (B : Buffer) return Message_Bytes
      with Pre  => Has_Message (B),
-          Post => Message'Result'Length = Message_Length (B);
+          --  'First = 0 must be STATED. The index subtype bounds which index
+          --  VALUES are legal, not where a particular slice starts -- a
+          --  Message_Bytes value could legitimately run 5 .. 9. Dropping this
+          --  conjunct on the assumption that "the index type starts at 0
+          --  implies it" left `Frag (0)` unprovable at every consumer.
+          Post => Message'Result'First = 0
+                  and then Message'Result'Length = Message_Length (B);
 
    procedure Reset (B : out Buffer)
      with Post => Used (B) = 0

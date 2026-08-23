@@ -262,9 +262,7 @@ is
                                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
                                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
                                and then HC.Client_HS.Counter
-                                 <= Unsigned_64'Last - 2
-                               and then SPARKTLSCrypto.P384.Field.Initialized
-                               and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+                                 <= Unsigned_64'Last - 2)
                        and then
                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                           then HC.Hash_Len = 48
@@ -299,8 +297,6 @@ is
            with Pre => S.State = Wait_Server_Finished
                                        and then Nonce_Space_Available (HC.Client_HS)
                        and then HC.Transcript_Len > 0
-                       and then SPARKTLSCrypto.P384.Field.Initialized
-                       and then SPARKTLSCrypto.P384.ECDSA.Initialized
                        and then
                          (if HC.Cert_Request_Received
                               and then HC.Cfg.Local /= null
@@ -319,17 +315,13 @@ is
                                        and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                                    | Suite_AES_256_GCM_SHA384
                                                                    | Suite_CHACHA20_POLY1305_SHA256
-                                       and then SPARKTLSCrypto.P384.Field.Initialized
-                                       and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                        and then
                                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                           then HC.Hash_Len = 48
                           else HC.Hash_Len = 32),
                                 Post => (if Result = Has_Output then
                                             Nonce_Space_Available (S.Client_App)
-                                                    and then HC.Hash_Len = HC.Hash_Len'Old
-                                            and then SPARKTLSCrypto.P384.Field.Initialized
-                                    and then SPARKTLSCrypto.P384.ECDSA.Initialized)
+                                                    and then HC.Hash_Len = HC.Hash_Len'Old)
                         and then Result in Has_Output | Error_Alert;
    procedure Process_Handshake_Message
      (S      : in out Session;
@@ -344,8 +336,6 @@ is
                                                     and then HC.Transcript_Len > 0
                                 and then Nonce_Space_Available (HC.Client_HS)
                                 and then Nonce_Space_Available (S.Client_App)
-                                and then SPARKTLSCrypto.P384.Field.Initialized
-                                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                 and then
                                   (if HC.Cert_Request_Received
                                        and then HC.Cfg.Local /= null
@@ -395,8 +385,6 @@ is
                        and then Nonce_Space_Available (HC.Server_HS)
                        and then Nonce_Space_Available (S.Client_App)
                                and then HC.Transcript_Len > 0
-                               and then SPARKTLSCrypto.P384.Field.Initialized
-                               and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
@@ -429,8 +417,6 @@ is
                        and then Nonce_Space_Available (HC.Server_HS)
                        and then Nonce_Space_Available (S.Client_App)
                                and then HC.Transcript_Len > 0
-                               and then SPARKTLSCrypto.P384.Field.Initialized
-                               and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                            | Suite_AES_256_GCM_SHA384
                                                            | Suite_CHACHA20_POLY1305_SHA256
@@ -476,8 +462,6 @@ is
                and then Nonce_Space_Available (HC.Client_HS)
                and then Nonce_Space_Available (S.Client_App)
                                        and then HC.Transcript_Len > 0
-                                       and then SPARKTLSCrypto.P384.Field.Initialized
-                                       and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                        and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
@@ -485,8 +469,6 @@ is
                                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
-                               and then SPARKTLSCrypto.P384.Field.Initialized
-                               and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
                                        and then Plain_Len <= N32 (Plaintext'Length)
@@ -519,8 +501,6 @@ is
                                                                     and then HC.Transcript_Len > 0
                                and then Nonce_Space_Available (HC.Client_HS)
                                         and then Nonce_Space_Available (S.Client_App)
-                                        and then SPARKTLSCrypto.P384.Field.Initialized
-                                        and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                         and then
                                           (if HC.Cert_Request_Received
                                                and then HC.Cfg.Local /= null
@@ -581,8 +561,6 @@ is
                                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
-                               and then SPARKTLSCrypto.P384.Field.Initialized
-                               and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                and then Plaintext'First = 0
                                        and then Plaintext'Last < N32'Last / 2
                                                and then Plain_Len <= N32 (Plaintext'Length)
@@ -864,8 +842,6 @@ is
                                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
-                               and then SPARKTLSCrypto.P384.Field.Initialized
-                               and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                and then
                                  (if HC.Cert_Request_Received
                                       and then HC.Cfg.Local /= null
@@ -922,8 +898,6 @@ is
                                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
-                               and then SPARKTLSCrypto.P384.Field.Initialized
-                                       and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                        and then Plaintext'First = 0
                        and then Plaintext'Last < N32'Last / 2
                        and then Plain_Len <= N32 (Plaintext'Length)
@@ -973,8 +947,6 @@ is
                                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
-                               and then SPARKTLSCrypto.P384.Field.Initialized
-                               and then SPARKTLSCrypto.P384.ECDSA.Initialized
                        and then Plaintext'First = 0
                and then Plaintext'Last < N32'Last / 2
                                and then Plain_Len <= N32 (Plaintext'Length)
@@ -1064,13 +1036,10 @@ is
       HC     : in out Handshake_Context;
       Result :    out Action)
                            with Pre => S.State = Wait_Server_Hello
-                                       and then WSH_Reasm_Shape (HC)
                                and then HC.Cfg.Random /= null
-                       and then SPARKTLSCrypto.P384.Field.Initialized
                        and then HC.Transcript_Len > 0
                                and then HC.Transcript_Len <= Transcript_Capacity
                                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-                               and then WSH_Reasm_Shape (HC)
 ;
    procedure Handle_WSH_HS_Frame
      (S      : in out Session;
@@ -1079,11 +1048,9 @@ is
       Result :    out Action)
                    with Pre => S.State = Wait_Server_Hello
                                and then HC.Cfg.Random /= null
-                       and then SPARKTLSCrypto.P384.Field.Initialized
                                and then HC.Transcript_Len > 0
                                and then HC.Transcript_Len <= Transcript_Capacity
                                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-                               and then WSH_Reasm_Shape (HC)
 
                        and then Rec.OK
                and then Rec.Content = Records.Content_Handshake
@@ -1104,7 +1071,6 @@ is
       Result :    out Action)
    with Pre => S.State = Wait_Server_Hello
                        and then HC.Cfg.Random /= null
-                       and then SPARKTLSCrypto.P384.Field.Initialized
                                and then HC.Transcript_Len > 0
                                and then HC.Transcript_Len <= Transcript_Capacity
                                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
@@ -1123,15 +1089,6 @@ is
                                                          Suite_AES_128_GCM_SHA256
                                                | Suite_AES_256_GCM_SHA384
                                                | Suite_CHACHA20_POLY1305_SHA256));
-   --  Wait_Server_Hello reassembly shape.
-   --  Whatever the peer declared has to fit the transcript we will append it
-   --  to. Derived from the buffer's own bytes, so there is no second copy of
-   --  the size to keep in step.
-   function WSH_Reasm_Shape (HC : Handshake_Context) return Boolean is
-     (not Header_Ready (HC.Reasm)
-      or else (not Message_Too_Large (HC.Reasm)
-               and then Declared_Size (HC.Reasm) <= Transcript_Capacity))
-   with Ghost;
 
    procedure Finalize_SH_Processing
      (S      : in out Session;
@@ -1139,7 +1096,6 @@ is
       Result :    out Action)
                    with Pre => S.State = Wait_Server_Hello
                                and then HC.Cfg.Random /= null
-                               and then SPARKTLSCrypto.P384.Field.Initialized
                                and then HC.Transcript_Len > 0
                                and then HC.Transcript_Len <= Transcript_Capacity
                                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
@@ -1172,16 +1128,14 @@ is
                        and then S.Input.Read_Pos + Rec.Record_Len
                                         <= S.Input.Write_Pos
                                and then S.Input.Read_Pos + Rec.Record_Len
-                                                <= IO_Buffer_Capacity
-                                       and then WSH_Reasm_Shape (HC),
+                                                <= IO_Buffer_Capacity,
                 Post => (if Result = OK then
                                     S.State = Wait_Server_Hello
                                             and then HC.Cfg.Random /= null
                                                     and then HC.Transcript_Len > 0
                                                     and then HC.Transcript_Len <= Transcript_Capacity
                                                     and then HC.HRR_Cookie_Len <=
-                                                      N32 (HC.HRR_Cookie'Length)
-                                                    and then WSH_Reasm_Shape (HC));
+                                                      N32 (HC.HRR_Cookie'Length));
    procedure Reasm_Fresh_Fragment
      (S          : in out Session;
       HC         : in out Handshake_Context;
@@ -1219,8 +1173,7 @@ is
                                             and then HC.Transcript_Len > 0
                                                     and then HC.Transcript_Len <= Transcript_Capacity
                                                     and then HC.HRR_Cookie_Len <=
-                                                      N32 (HC.HRR_Cookie'Length)
-                                            and then WSH_Reasm_Shape (HC));
+                                                      N32 (HC.HRR_Cookie'Length));
 
 
 
@@ -1517,7 +1470,6 @@ is
                and then S.State = Client_Hello_Sent
                and then S.Role = Role_Client
                and then HC.Cfg.Random /= null
-                       and then SPARKTLSCrypto.P384.Field.Initialized
            is
       CH_Buf    : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
       CH_Len    : N32;
@@ -1632,8 +1584,6 @@ is
                                                             and then HC.Transcript_Len > 0
                         and then Nonce_Space_Available (HC.Client_HS)
                                 and then Nonce_Space_Available (S.Client_App)
-                                and then SPARKTLSCrypto.P384.Field.Initialized
-                                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                 and then
                                   (if HC.Cert_Request_Received
                                        and then HC.Cfg.Local /= null
@@ -1734,8 +1684,6 @@ is
                                                     and then HC.Transcript_Len > 0
                         and then Nonce_Space_Available (HC.Client_HS)
                                 and then Nonce_Space_Available (S.Client_App)
-                                and then SPARKTLSCrypto.P384.Field.Initialized
-                                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                 and then
                                   (if HC.Cert_Request_Received
                                        and then HC.Cfg.Local /= null
@@ -1976,8 +1924,6 @@ is
                                             and then HC.Transcript_Len > 0
                                 and then Nonce_Space_Available (HC.Client_HS)
                                 and then Nonce_Space_Available (S.Client_App)
-                                and then SPARKTLSCrypto.P384.Field.Initialized
-                                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                 and then
                                   (if HC.Cert_Request_Received
                                        and then HC.Cfg.Local /= null
@@ -2169,8 +2115,6 @@ is
                   (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                    then HC.Hash_Len = 48
                    else HC.Hash_Len = 32)
-                and then SPARKTLSCrypto.P384.Field.Initialized
-                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256,
@@ -2342,8 +2286,6 @@ is
                                                 and then HC.Transcript_Len > 0
                         and then Nonce_Space_Available (HC.Client_HS)
                                 and then Nonce_Space_Available (S.Client_App)
-                                and then SPARKTLSCrypto.P384.Field.Initialized
-                                and then SPARKTLSCrypto.P384.ECDSA.Initialized
                                 and then
                                   (if HC.Cert_Request_Received
                                        and then HC.Cfg.Local /= null
@@ -3119,7 +3061,6 @@ is
                                         and then HC.Transcript_Len > 0
                                         and then HC.Transcript_Len <= Transcript_Capacity
                                         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-                                        and then WSH_Reasm_Shape (HC)
                                         and then not Has_Message (HC.Reasm);
 
    procedure Start_Pending_SH_Reassembly
@@ -3163,8 +3104,7 @@ is
                                         and then HC.Cfg.Random /= null
                                                 and then HC.Transcript_Len > 0
                                                         and then HC.Transcript_Len <= Transcript_Capacity
-                                                        and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-                                                        and then WSH_Reasm_Shape (HC);
+                                                        and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
 
    procedure Start_Spanning_SH_Reassembly
      (S          : in out Session;
@@ -3206,8 +3146,7 @@ is
                                 and then HC.Cfg.Random /= null
                                                 and then HC.Transcript_Len > 0
                                                 and then HC.Transcript_Len <= Transcript_Capacity
-                                                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-                                                and then WSH_Reasm_Shape (HC);
+                                                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
 
    procedure Start_Complete_SH_Reassembly
      (S          : in out Session;
@@ -3432,7 +3371,7 @@ is
                         Result := OK;
                         --  Full ServerHello reassembled.
                         declare
-                           Frag : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
+                           Frag : constant Message_Bytes := Message (HC.Reasm);
                            Parse_OK : Boolean;
                         begin
                            --  RFC 8446 §4 / RFC 5246 §7.4: the first
@@ -3446,14 +3385,14 @@ is
                               S.Last_Error := Unexpected_Message;
                            end if;
                            Handshake.Client_Msgs.Parse_Server_Hello
-                             (S, HC, Frag, Parse_OK);
+                             (S, HC, Byte_Seq (Frag), Parse_OK);
 
                                    if not Parse_OK
                                      and then S.Last_Error = No_Error
                                    then
                                       HC.Version := TLS_1_2;
                                       Handshake.TLS12.Parse_Server_Hello_12
-                                        (S, HC, Frag, Parse_OK);
+                                        (S, HC, Byte_Seq (Frag), Parse_OK);
                                       pragma Assert
                                         (if Parse_OK then HC.Version = TLS_1_2);
                                    end if;
@@ -3534,7 +3473,7 @@ is
                                  HC.Transcript_Len := 36;
                                       end;
                                               Append_Transcript_Bytes
-                                                (HC.Transcript, HC.Transcript_Len, Frag);
+                                                (HC.Transcript, HC.Transcript_Len, Byte_Seq (Frag));
                                                       if HC.Cfg.Random = null
                                                         or else HC.HRR_Cookie_Len >
                                                           N32 (HC.HRR_Cookie'Length)
@@ -3610,7 +3549,7 @@ is
                                            end if;
 
                                                            Append_Transcript_Bytes
-                                                             (HC.Transcript, HC.Transcript_Len, Frag);
+                                                             (HC.Transcript, HC.Transcript_Len, Byte_Seq (Frag));
                                                            pragma Assert (HC.Transcript_Len > 0);
                                            pragma Assert
                                              (if HC.Version = TLS_1_3
@@ -4252,10 +4191,10 @@ is
    is
    begin
               declare
-                 Full : constant Byte_Seq := Byte_Seq (Message (HC.Reasm));
+                 Full : constant Message_Bytes := Message (HC.Reasm);
               begin
                  Reset (HC.Reasm);
-                 Dispatch_Decrypted_HS_Message (S, HC, Full, Result);
+                 Dispatch_Decrypted_HS_Message (S, HC, Byte_Seq (Full), Result);
               end;
                       pragma Assert
                 (if Result = OK

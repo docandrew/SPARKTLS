@@ -1141,9 +1141,7 @@ is
          Result   : out Validation_Result)
       with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
                   and PL_Depth <= Max_Chain_Depth
-                  and X509.Spans_Valid (Cert, Cert_DER'Last)
-                  and SPARKTLSCrypto.P384.Field.Initialized
-                  and SPARKTLSCrypto.P384.ECDSA.Initialized,
+                  and X509.Spans_Valid (Cert, Cert_DER'Last),
            Subprogram_Variant => (Decreases => Budget),
            Post => Budget <= Budget'Old
       is

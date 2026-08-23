@@ -141,7 +141,13 @@ is
                 and Plaintext'Last < Max_Record_Plaintext
                 and Content_Type in 16#15# | 16#16# | 16#17#
                 and Implicit_IV'First = 0
-                and Implicit_IV'Length = Implicit_IV_Len,
+                and Implicit_IV'Length = Implicit_IV_Len
+                --  The AEAD cap reaches the record layer HERE, not only at
+                --  the write path: without it Seq_Num + 1 in the body cannot
+                --  prove it stays inside Record_Counter (r39 AoRTE at
+                --  records-tls12.adb:290). Every caller already threads this
+                --  fact for the same counter, so it discharges on arrival.
+                and Nonce_Space_Available_12 (Seq_Num),
         Post => Seq_Num = Seq_Num'Old + 1  --  RFC 5246 §6.1
                 and Bytes_Out <=
                        Record_Header_Size + Explicit_Nonce_Len +
@@ -182,6 +188,9 @@ is
                 and Record_Hdr'Length = Record_Header_Size
                 and Implicit_IV'First = 0
                 and Implicit_IV'Length = Implicit_IV_Len
+                --  Same as Build_Encrypted_Record_12: lets Original_Seq + 1
+                --  prove (r39 AoRTE at records-tls12.adb:351).
+                and Nonce_Space_Available_12 (Seq_Num)
                 and Plaintext'First = 0
                 and Plaintext'Last >= Encrypted'Last,
         Post => Seq_Num = Seq_Num'Old + 1        --  always increments
