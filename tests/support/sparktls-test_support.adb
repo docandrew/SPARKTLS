@@ -63,12 +63,6 @@ is
    function Has_Handshake_Context (S : Session) return Boolean is
      (S.HC_Ptr /= null);
 
-   function Client_Seq_12 (S : Session) return Unsigned_64 is
-     (S.Client_Seq_12);
-
-   function Server_Seq_12 (S : Session) return Unsigned_64 is
-     (S.Server_Seq_12);
-
    function Client_App_Counter (S : Session) return Unsigned_64 is
      (S.Client_App.Counter);
 

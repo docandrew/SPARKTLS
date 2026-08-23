@@ -147,9 +147,14 @@ is
    --  application cannot distinguish them. On a finished session this is a
    --  no-op (the body returns before touching the scrubbed keys).
    with Pre  => Role (S) = Role_Server
-                and Nonce_Space_Available (Server_App (S))
-                and SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                      (Server_Seq_12 (S)),
+                --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
+                --  the caller cannot check is unenforceable). Covers the
+                --  arithmetic backstop on both versions and the 2**23 cap
+                --  on TLS 1.2, version-gated inside -- the old ghost _12
+                --  conjunct would wrongly reject a TLS 1.3 session sitting
+                --  at the cap awaiting rotation, now that the counter is
+                --  the shared channel counter.
+                and not Write_Limit_Reached (S),
         Post => (if State (S)'Old in Connected | Closing
                  then State (S) = Closing)             --  RFC 8446 6.1
                 and
@@ -214,5 +219,40 @@ private
 
    function Has_Peer_Certificate (S : Session) return Boolean is
       (S.Peer_Cert_Valid);
+
+   --  A server config that can actually run a handshake: identity present
+   --  and a randomness source wired. This is the gate Init applies before
+   --  the ONLY write of HC.Cfg, plus the mTLS coherence rule.
+   function Server_Config_Can_Start (Cfg : Config) return Boolean is
+     (Cfg.Local /= null
+      and then Cfg.Local.Has_Identity
+      and then Cfg.Random /= null
+      and then
+        (not Cfg.Request_Client_Cert
+         or else Cfg.Skip_Verify
+         or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
+
+   --  The configured-server fact as a TYPE, so the handler chain receives
+   --  it by construction instead of re-deriving it per call.
+   --
+   --  Why a view subtype and not a predicate on HC.Cfg itself: a
+   --  default-initialized Handshake_Context has Cfg.Local = null, so the
+   --  component cannot carry the predicate (same reason Session has none --
+   --  see the NO-Dynamic_Predicate note in sparktls.ads). HC.Cfg stays
+   --  plain Config; Advance establishes membership ONCE with a fail-closed
+   --  runtime test (three null checks -- semantically unreachable, since
+   --  Server_Config_Can_Start gates the only write), and everything below
+   --  takes `Cfg : Ready_Config` and reads config through the formal.
+   --
+   --  Deliberately ONLY the Server_Configured trio, not all of
+   --  Server_Config_Can_Start: every use site pays the predicate in VC
+   --  context, and the mTLS coherence conjunct is consumed by exactly one
+   --  path today (runtime-guarded there anyway). Strengthen with a second
+   --  subtype if that path ever wants it proved instead.
+   subtype Ready_Config is Config
+     with Dynamic_Predicate =>
+       Ready_Config.Local /= null
+       and then Ready_Config.Local.Has_Identity
+       and then Ready_Config.Random /= null;
 
 end SPARKTLS.Server;

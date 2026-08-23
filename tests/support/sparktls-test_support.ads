@@ -64,8 +64,6 @@ is
    --  TLS 1.2 record sequence counters. SPARKTLS exposes these as Ghost
    --  functions so contracts can name them; ghost entities cannot be called
    --  from ordinary code, which the BoGo shim needs for its debug output.
-   function Client_Seq_12 (S : Session) return Unsigned_64;
-   function Server_Seq_12 (S : Session) return Unsigned_64;
 
    --  TLS 1.3 application traffic counters. A KeyUpdate resets the
    --  rotated direction to zero, so these make rekeying observable from

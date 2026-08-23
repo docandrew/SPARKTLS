@@ -61,51 +61,6 @@ is
       and Seq_Num < Rekey_After_Records)  --  RFC 8446 s5.5 AEAD limit
    with Ghost;
 
-   --  RFC 5246 §6.1: Sequence numbers.
-   --  "MUST be set to zero whenever a connection state is made active"
-   --  "Sequence numbers do not wrap"
-   --  "The first record transmitted under a particular connection
-   --   state MUST use sequence number 0"
-   --  NOTE (2026-08-18): retyping Seq to Record_Counter here was TRIED and
-   --  REVERTED. It looks tidier -- the bound travels with the value -- but
-   --  the TLS 1.2 sequence counters are also held as plain Unsigned_64 in
-   --  Handshake_Context, so every call site passing one of those into an
-   --  `in out Record_Counter` acquired a range check in BOTH directions.
-   --  Measured on sparktls-client-tls12: 10 findings -> 38 (4 range checks
-   --  -> 31). Retyping one end of a chain and not the other costs more
-   --  than it saves; either retype the whole chain (Handshake_Context
-   --  fields included) or leave it alone.
-   --  OFF BY ONE, KNOWINGLY LEFT AS IS -- see task #46/#70 before touching.
-   --  Record_Counter is 0 .. Unsigned_64'Last - 1, so this guard ADMITS
-   --  Seq = 'Last - 1, whose successor is NOT in Record_Counter. The
-   --  increment in Build_Encrypted_Record_12 / Decrypt_Record_12 /
-   --  Build_Alert_Record_12 is therefore unprovable (2 AoRTE range checks).
-   --  Tightening to `< Unsigned_64'Last - 1` was TRIED 2026-08-20 and
-   --  REVERTED: it closes both range checks but the guard stops being a
-   --  TAUTOLOGY of the Record_Counter subtype, so all 6 call sites must
-   --  then establish it themselves -- measured 56 -> 58 owned findings.
-   --  There is no type-only fix: a guard implied by the subtype admits the
-   --  subtype maximum, whose successor is by definition outside it, and
-   --  narrowing the field subtype just moves the same wall.
-   --  The principled fix is an explicit records-sent limit far below 2**64
-   --  (task #70) so both the guard AND the successor are inside the type.
-   --  RFC 8446 s5.5 "Limits on Key Usage" -- the CRYPTOGRAPHIC bound, not the
-   --  arithmetic one. TLS 1.3 enforces this by rotating at Rekey_After_Records
-   --  (sparktls.adb Write_Key_Exhausted); TLS 1.2 has no KeyUpdate and
-   --  renegotiation is deprecated, so the only compliant remedy is to STOP
-   --  encrypting. Until 2026-08-20 this read `Seq < Unsigned_64'Last`, which is
-   --  the ~584,000-year ARITHMETIC limit and enforces no AEAD margin at all.
-   --
-   --  Closing this also discharges the two AoRTE range checks on `Seq + 1`
-   --  (records-tls12.adb:290 and :351): with the bound at 2**23 the successor
-   --  is trivially inside Record_Counter. Tightening the OLD bound to
-   --  'Last - 1 was tried and reverted -- it stopped being a tautology of the
-   --  subtype and pushed 6 unmeetable obligations onto callers. A limit far
-   --  below the type maximum makes both the guard and the successor cheap.
-   function Nonce_Space_Available_12 (Seq : Unsigned_64) return Boolean is
-     (Seq < Rekey_After_Records)
-   with Ghost;
-
    ----------------------------------------------------------------------------
    --  Procedures
    ----------------------------------------------------------------------------
@@ -127,14 +82,19 @@ is
    --    ciphertext[plaintext_len]
    --    tag[16]
    --
-   --  RFC 5246 §6.1: Seq_Num increments by 1 for each record.
-   --  The caller MUST NOT call this if nonce space is exhausted.
+   --  RFC 5246 §6.1: the sequence number increments by 1 per record. It
+   --  lives INSIDE Keys (the sealed-channel move, HC_REFACTOR.md carve
+   --  5a): the nonce derives from a counter only this operation advances,
+   --  so a nonce cannot be reused under a key and the counter cannot be
+   --  paired with the wrong keys. Space_Left is both the caller's runtime
+   --  branch and the precondition -- same object, same query, so the
+   --  discharge is local (the r41 lesson: a cap Pre whose fact lives
+   --  elsewhere pushed 5 undischargeable obligations to call sites).
    procedure Build_Encrypted_Record_12
      (Plaintext    : in     Byte_Seq;
       Content_Type : in     Byte;
-      Keys         : in     Traffic_Keys;
+      Keys         : in out Traffic_Keys;
       Implicit_IV  : in     Byte_Seq;
-      Seq_Num      : in out Record_Counter;
       Output       : in out IO_Buffer;
       Bytes_Out    :    out N32)
    with Pre  => Plaintext'First = 0
@@ -142,13 +102,11 @@ is
                 and Content_Type in 16#15# | 16#16# | 16#17#
                 and Implicit_IV'First = 0
                 and Implicit_IV'Length = Implicit_IV_Len
-                --  The AEAD cap reaches the record layer HERE, not only at
-                --  the write path: without it Seq_Num + 1 in the body cannot
-                --  prove it stays inside Record_Counter (r39 AoRTE at
-                --  records-tls12.adb:290). Every caller already threads this
-                --  fact for the same counter, so it discharges on arrival.
-                and Nonce_Space_Available_12 (Seq_Num),
-        Post => Seq_Num = Seq_Num'Old + 1  --  RFC 5246 §6.1
+                and Space_Left (Keys),
+        Post => Keys = (Keys'Old with delta
+                          Counter => Keys'Old.Counter + 1)
+                --  Increment AND frame in one conjunct: everything but
+                --  the counter is untouched.
                 and Bytes_Out <=
                        Record_Header_Size + Explicit_Nonce_Len +
                        N32 (Plaintext'Length) + GCM_Tag_Len;
@@ -170,14 +128,21 @@ is
    --  RFC 5246 §6.2.3.3: "If the decryption fails, a fatal
    --  bad_record_mac alert MUST be generated."
    --
-   --  RFC 5246 §6.1: Seq_Num increments even on failure.
-   --  This prevents nonce reuse on retry.
+   --  RFC 5246 §6.1: the counter increments even on decrypt FAILURE
+   --  (prevents nonce confusion on retry). It lives inside Keys; see
+   --  Build_Encrypted_Record_12 for the sealed-channel rationale.
+   --
+   --  NO cap precondition on the decrypt side, deliberately: the 2**23
+   --  AEAD confidentiality bound binds the ENCRYPTING side, and TLS 1.2
+   --  has no rekey -- the read path needs only increment safety. The one
+   --  unreachable corner (counter at the ARITHMETIC limit, ~584,000
+   --  years) fails closed HERE, in one place: Valid comes back False and
+   --  the channel is unchanged, rather than wrapping to a reused nonce.
    procedure Decrypt_Record_12
      (Encrypted   : in     Byte_Seq;
       Record_Hdr  : in     Byte_Seq;
-      Keys        : in     Traffic_Keys;
+      Keys        : in out Traffic_Keys;
       Implicit_IV : in     Byte_Seq;
-      Seq_Num     : in out Record_Counter;
       Plaintext   :    out Byte_Seq;
       Plain_Len   :    out N32;
       Valid       :    out Boolean)
@@ -188,12 +153,12 @@ is
                 and Record_Hdr'Length = Record_Header_Size
                 and Implicit_IV'First = 0
                 and Implicit_IV'Length = Implicit_IV_Len
-                --  Same as Build_Encrypted_Record_12: lets Original_Seq + 1
-                --  prove (r39 AoRTE at records-tls12.adb:351).
-                and Nonce_Space_Available_12 (Seq_Num)
                 and Plaintext'First = 0
                 and Plaintext'Last >= Encrypted'Last,
-        Post => Seq_Num = Seq_Num'Old + 1        --  always increments
+        Post => (if Keys'Old.Counter < Record_Counter'Last
+                 then Keys = (Keys'Old with delta
+                                Counter => Keys'Old.Counter + 1)
+                 else Keys = Keys'Old and not Valid)
                 and (if Valid then
                    --  Plaintext length = encrypted - nonce - tag
                    Plain_Len <= Max_Record_Plaintext
@@ -207,15 +172,20 @@ is
    procedure Build_Alert_Record_12
      (Level       : in     Byte;
       Desc        : in     Byte;
-      Keys        : in     Traffic_Keys;
+      Keys        : in out Traffic_Keys;
       Implicit_IV : in     Byte_Seq;
-      Seq_Num     : in out Record_Counter;
       Output      : in out IO_Buffer;
       Bytes_Out   :    out N32)
    with Pre  => Level in 1 .. 2
                 and Implicit_IV'First = 0
-                and Implicit_IV'Length = Implicit_IV_Len,
-        Post => Seq_Num = Seq_Num'Old + 1
+                and Implicit_IV'Length = Implicit_IV_Len
+                --  Same channel discipline as the op this wraps: callers
+                --  branch on Space_Left of the SAME object. A channel at
+                --  the cap cannot seal even a final alert -- callers skip
+                --  the alert and close (fail closed, no cap overrun).
+                and Space_Left (Keys),
+        Post => Keys = (Keys'Old with delta
+                          Counter => Keys'Old.Counter + 1)
                 and Bytes_Out <=
                        Record_Header_Size + Explicit_Nonce_Len +
                        2 + GCM_Tag_Len;  --  upper bound (GCM); ChaCha

@@ -93,8 +93,7 @@ is
                 and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                       (HC.Cfg.Local)
                 and then HC.Cfg.Random /= null
-                and then Records.TLS12.Nonce_Space_Available_12
-                      (HC.Server_Seq_12),
+                and then Space_Left (S.Server_App),
         Post => S.State = Error_State
                 and S.Role = S.Role'Old
                 and S.Last_Error = Err
@@ -124,7 +123,6 @@ is
          Desc        => Alert_Desc (Err),
          Keys        => S.Server_App,
          Implicit_IV => HC.Server_Write_IV_12,
-         Seq_Num     => HC.Server_Seq_12,
          Output      => S.Output,
          Bytes_Out   => Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
@@ -152,7 +150,6 @@ is
          Desc        => Alert_Desc (Err),
          Keys        => S.Server_App,
          Implicit_IV => S.Server_IV_12,
-         Seq_Num     => S.Server_Seq_12,
          Output      => S.Output,
          Bytes_Out   => Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
@@ -181,8 +178,6 @@ is
                            and then HC.Cfg.Random /= null
                    and then HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
-                   and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
-                   and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
                    and then HC.Peer_Cert = HC.Peer_Cert'Old
                    and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
                            and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
@@ -801,9 +796,7 @@ is
                    and then S.State = S.State'Old
                 and then S.Role = S.Role'Old
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                and then HC.Server_Seq_12 = 0
-                and then Records.TLS12.Nonce_Space_Available_12
-                  (HC.Server_Seq_12)
+                and then S.Server_App.Counter = 0
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
@@ -845,8 +838,6 @@ is
       end;
       HC.Client_Write_IV_12 := CI;
       HC.Server_Write_IV_12 := SI;
-      HC.Client_Seq_12 := 0;
-      HC.Server_Seq_12 := 0;
       S.Exporter_Secret := HC.Master_Secret_12;
       S.Exporter_Secret_Len := 48;
       S.Exporter_Client_Random := HC.Client_Random;
@@ -994,7 +985,6 @@ is
       end;
 
       --  5. Server Finished (encrypted with the just-derived app keys).
-      Saved_Seq := HC.Server_Seq_12;
       declare
          FB : Byte_Seq (0 .. Finished_12_Total_Len - 1); FL : N32;
          TH : Digest; TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
@@ -1018,9 +1008,12 @@ is
 
          Records.TLS12.Build_Encrypted_Record_12
            (FB (0 .. FL - 1), 16#16#, S.Server_App,
-            HC.Server_Write_IV_12, HC.Server_Seq_12, Scratch, EO);
+            HC.Server_Write_IV_12, Scratch, EO);
+         --  No counter rewind on the failure paths below: both are fatal
+         --  (Error_State), so the advanced counter is never used again --
+         --  and a burned nonce STAYS burned, rather than relying on the
+         --  discarded Scratch ciphertext never leaking.
          if EO = 0 then
-            HC.Server_Seq_12 := Saved_Seq;
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
             return;
          end if;
@@ -1028,7 +1021,6 @@ is
 
       --  Atomic commit.
       if Free_Space (S.Output) < Scratch.Write_Pos then
-         HC.Server_Seq_12 := Saved_Seq;
          Send_Alert_And_Error (S, Insufficient_Buffer, Result);
          return;
       end if;
@@ -1037,12 +1029,13 @@ is
          Scratch.Data (0 .. Scratch.Write_Pos - 1);
       S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
 
-      --  Mirror state into Session record.
+      --  Mirror state into Session record. The sequence counters no
+      --  longer need mirroring: they live INSIDE S.Server_App /
+      --  S.Client_App, which are already Session state -- the
+      --  handshake-to-connected counter handoff is gone by construction.
       S.Negotiated_Version := TLS_1_2;
       S.Client_IV_12  := HC.Client_Write_IV_12;
       S.Server_IV_12  := HC.Server_Write_IV_12;
-      S.Client_Seq_12 := HC.Client_Seq_12;
-      S.Server_Seq_12 := HC.Server_Seq_12;
 
       --  Mark CKE-received so the existing Process_Client_CCS_12 /
       --  Process_Client_Finished_12 state-check predicates don't
@@ -1168,8 +1161,6 @@ is
 
       HC.Client_Write_IV_12 := CI;
       HC.Server_Write_IV_12 := SI;
-      HC.Client_Seq_12 := 0;
-      HC.Server_Seq_12 := 0;
       S.Exporter_Secret := HC.Master_Secret_12;
       S.Exporter_Secret_Len := 48;
       S.Exporter_Client_Random := HC.Client_Random;
@@ -2241,7 +2232,7 @@ is
             end loop;
 
                     Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
-                                       HC.Client_Write_IV_12, HC.Client_Seq_12,
+                                       HC.Client_Write_IV_12,
                                        Plaintext, PL, DV);
                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
@@ -2436,7 +2427,7 @@ is
 
       --  Atomic flight assembly: build [NST?] + CCS + encrypted Finished
       --  into a scratch buffer; commit only if the whole flight fits in
-      --  S.Output. The Finished encryption advances HC.Server_Seq_12, so
+      --  S.Output. The Finished encryption advances S.Server_App.Counter, so
       --  we save it and roll back on commit failure to keep AEAD nonces
       --  in sync with what the peer actually sees.
       --
@@ -2454,7 +2445,6 @@ is
          Scratch       : IO_Buffer;
          CCS_Out       : N32;
          EO            : N32;
-         Saved_Seq     : constant Record_Counter := HC.Server_Seq_12;
          FB : Byte_Seq (0 .. Finished_12_Total_Len - 1); FL : N32;
          TH : Digest; TH4 : SPARKNaCl.Hashing.SHA384.Digest;
       begin
@@ -2611,10 +2601,10 @@ is
                     Records.TLS12.Implicit_IV_Len);
                  Build_Encrypted_Record_12
                    (FB (0 .. FL - 1), 16#16#, S.Server_App,
-                    HC.Server_Write_IV_12, HC.Server_Seq_12, Scratch, EO);
+                    HC.Server_Write_IV_12, Scratch, EO);
                  if EO = 0 then
-                    HC.Server_Seq_12 := Saved_Seq;  --  Build_Encrypted_Record_12
-                                                    --  always advances; rollback.
+                    --  Fatal path: no rewind, the burned nonce stays
+                    --  burned and the connection dies here.
                     S.Last_Error := Insufficient_Buffer;
                     Set_State (S, Error_State);
                     Result := Error_Alert;
@@ -2623,7 +2613,6 @@ is
 
          --  Atomic commit
                  if Free_Space (S.Output) < Scratch.Write_Pos then
-                    HC.Server_Seq_12 := Saved_Seq;
                     S.Last_Error := Insufficient_Buffer;
                     Set_State (S, Error_State);
                     Result := Error_Alert;
@@ -2640,8 +2629,7 @@ is
       S.Negotiated_Version := TLS_1_2;
       S.Client_IV_12 := HC.Client_Write_IV_12;
       S.Server_IV_12 := HC.Server_Write_IV_12;
-      S.Client_Seq_12 := HC.Client_Seq_12;
-      S.Server_Seq_12 := HC.Server_Seq_12;
+      --  Counters live inside S.Client_App / S.Server_App: no mirror.
 
               Set_State (S, Connected);
               S.Handshake_Just_Done := True;
@@ -2707,9 +2695,8 @@ is
                Desc        => 100,
                Keys        => S.Server_App,
                Implicit_IV => S.Server_IV_12,
-                       Seq_Num     => S.Server_Seq_12,
-                       Output      => S.Output,
-                       Bytes_Out   => A);
+               Output      => S.Output,
+               Bytes_Out   => A);
             pragma Assert (A <= N32 (S.Output.Data'Length));
                  end;
          Result := (if Output_Pending (S) > 0
@@ -2767,13 +2754,12 @@ is
                end if;
             end;
 
-            if S.Client_Seq_12 = Unsigned_64'Last then
-               Send_Encrypted_Alert_Connected_12 (S, Internal_Error, Result);
-               return;
-            end if;
-
+            --  The old `= Unsigned_64'Last` pre-guard is gone: it was dead
+            --  by type (Record_Counter tops out one below), the #46
+            --  off-by-one. Counter exhaustion now fails closed INSIDE
+            --  Decrypt_Record_12, once, as Valid = False.
             Decrypt_Record_12 (Encrypted, Hdr, S.Client_App,
-                               S.Client_IV_12, S.Client_Seq_12,
+                               S.Client_IV_12,
                                Plaintext, PL, DV);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
@@ -2836,9 +2822,8 @@ is
                            Desc        => 0,
                            Keys        => S.Server_App,
                            Implicit_IV => S.Server_IV_12,
-                                   Seq_Num     => S.Server_Seq_12,
-                                   Output      => S.Output,
-                                   Bytes_Out   => A);
+                           Output      => S.Output,
+                           Bytes_Out   => A);
                         pragma Assert (A <= N32 (S.Output.Data'Length));
                              end;
                      if S.State = Connected then

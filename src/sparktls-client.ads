@@ -134,9 +134,14 @@ is
    --  application cannot distinguish them. On a finished session this is a
    --  no-op (the body returns before touching the scrubbed keys).
    with Pre  => Role (S) = Role_Client
-                and Nonce_Space_Available (Client_App (S))
-                and SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                      (Client_Seq_12 (S)),
+                --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
+                --  the caller cannot check is unenforceable). Covers the
+                --  arithmetic backstop on both versions and the 2**23 cap
+                --  on TLS 1.2, version-gated inside -- the old ghost _12
+                --  conjunct would wrongly reject a TLS 1.3 session sitting
+                --  at the cap awaiting rotation, now that the counter is
+                --  the shared channel counter.
+                and not Write_Limit_Reached (S),
         Post => (if State (S)'Old in Connected | Closing
                  then State (S) = Closing)             --  RFC 8446 6.1
                 and

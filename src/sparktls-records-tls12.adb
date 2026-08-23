@@ -194,14 +194,19 @@ is
    procedure Build_Encrypted_Record_12
      (Plaintext    : in     Byte_Seq;
       Content_Type : in     Byte;
-      Keys         : in     Traffic_Keys;
+      Keys         : in out Traffic_Keys;
       Implicit_IV  : in     Byte_Seq;
-      Seq_Num      : in out Record_Counter;
       Output       : in out IO_Buffer;
       Bytes_Out    :    out N32)
    is
       pragma Assert (Plaintext'Last < Max_Record_Plaintext);
       PT_Len : constant N32 := N32 (Plaintext'Length);
+
+      --  The sequence number this record is sealed under. Snapshotted so
+      --  every use below is unambiguous; the channel counter advances
+      --  exactly once, at the end. Space_Left (the Pre) bounds it below
+      --  2**23, so the increment is trivially inside Record_Counter.
+      Seq_Num : constant Record_Counter := Keys.Counter;
 
       --  RFC 7905 §2: ChaCha20-Poly1305 omits the on-wire explicit
       --  nonce. AES-GCM (RFC 5288 §3) includes it.
@@ -286,8 +291,10 @@ is
             end;
       end case;
 
-      --  Increment sequence number AFTER using it for nonce
-      Seq_Num := Seq_Num + 1;
+      --  Advance the channel AFTER sealing with this nonce and BEFORE the
+      --  output writes: the AEAD call above consumed the nonce, so even
+      --  an output-full early return below must leave it burned.
+      Keys.Counter := Keys.Counter + 1;
 
       --  Build record header: content_type || 0x0303 || fragment_length.
       --  RFC 5246 §6.2.1: version = negotiated (0x0303 for TLS 1.2).
@@ -303,7 +310,7 @@ is
       if not OK then return; end if;
 
       if not Is_ChaCha20 then
-         Exp_Nonce := Seq_To_Bytes (Seq_Num - 1);  --  the seq we just used
+         Exp_Nonce := Seq_To_Bytes (Seq_Num);  --  the snapshot we sealed with
          Write_To_Output (Output, Exp_Nonce, OK);
          if not OK then return; end if;
       end if;
@@ -324,9 +331,8 @@ is
    procedure Decrypt_Record_12
      (Encrypted   : in     Byte_Seq;
       Record_Hdr  : in     Byte_Seq;
-      Keys        : in     Traffic_Keys;
+      Keys        : in out Traffic_Keys;
       Implicit_IV : in     Byte_Seq;
-      Seq_Num     : in out Record_Counter;
       Plaintext   :    out Byte_Seq;
       Plain_Len   :    out N32;
       Valid       :    out Boolean)
@@ -339,16 +345,23 @@ is
       Wire_Exp_Nonce_Len : constant N32 :=
          (if Is_ChaCha20 then 0 else Explicit_Nonce_Len);
 
-      Original_Seq : constant Unsigned_64 := Seq_Num;
+      Original_Seq : constant Unsigned_64 := Keys.Counter;
    begin
       Plaintext := (others => 0);
       Plain_Len := 0;
       Valid := False;
 
-      --  RFC 5246 §6.1: Seq_Num MUST advance even on failure. Do this
-      --  up front so every early-return path satisfies the Post
-      --  `Seq_Num = Seq_Num'Old + 1` and the runtime invariant.
-      Seq_Num := Original_Seq + 1;
+      --  The arithmetic limit, ~584,000 years of records. Fail closed
+      --  rather than wrap: a wrapped counter would reuse a nonce. The ONE
+      --  place this is checked, for every caller.
+      if Keys.Counter = Record_Counter'Last then
+         return;
+      end if;
+
+      --  RFC 5246 §6.1: the counter MUST advance even on failure. Do this
+      --  up front so every early-return path satisfies the Post and the
+      --  runtime invariant.
+      Keys.Counter := Original_Seq + 1;
 
       --  Defense-in-depth: verify input is large enough for [nonce] + tag,
       --  and (for ChaCha20-Poly1305 per RFC 7905 §2, body = ct + tag[16])
@@ -514,9 +527,8 @@ is
    procedure Build_Alert_Record_12
      (Level       : in     Byte;
       Desc        : in     Byte;
-      Keys        : in     Traffic_Keys;
+      Keys        : in out Traffic_Keys;
       Implicit_IV : in     Byte_Seq;
-      Seq_Num     : in out Record_Counter;
       Output      : in out IO_Buffer;
       Bytes_Out   :    out N32)
    is
@@ -528,7 +540,6 @@ is
          Content_Type => 16#15#,  --  alert
          Keys         => Keys,
          Implicit_IV  => Implicit_IV,
-         Seq_Num      => Seq_Num,
          Output       => Output,
          Bytes_Out    => Bytes_Out);
    end Build_Alert_Record_12;

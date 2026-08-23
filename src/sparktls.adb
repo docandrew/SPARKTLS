@@ -347,7 +347,7 @@ is
             --  `= Unsigned_64'Last` (the arithmetic limit), which
             --  enforced no cryptographic margin.
             if S.Negotiated_Version = TLS_1_2
-               and then S.Client_Seq_12 >= Rekey_After_Records
+               and then not Space_Left (S.Client_App)
             then
                exit;
             end if;
@@ -358,7 +358,7 @@ is
             --  `= Unsigned_64'Last` (the arithmetic limit), which
             --  enforced no cryptographic margin.
             if S.Negotiated_Version = TLS_1_2
-               and then S.Server_Seq_12 >= Rekey_After_Records
+               and then not Space_Left (S.Server_App)
             then
                exit;
             end if;
@@ -378,7 +378,6 @@ is
                      Content_Type => 16#17#,
                      Keys         => S.Client_App,
                      Implicit_IV  => S.Client_IV_12,
-                     Seq_Num      => S.Client_Seq_12,
                      Output       => S.Output,
                      Bytes_Out    => Enc_Out);
                else
@@ -396,7 +395,6 @@ is
                      Content_Type => 16#17#,
                      Keys         => S.Server_App,
                      Implicit_IV  => S.Server_IV_12,
-                     Seq_Num      => S.Server_Seq_12,
                      Output       => S.Output,
                      Bytes_Out    => Enc_Out);
                else
@@ -440,8 +438,8 @@ is
       --  Zero TLS 1.2 implicit IVs
       S.Client_IV_12 := (others => 0);
       S.Server_IV_12 := (others => 0);
-      S.Client_Seq_12 := 0;
-      S.Server_Seq_12 := 0;
+      --  The channel counters are zeroed with the channels themselves
+      --  (Client_App / Server_App are sanitized above, Counter included).
    end Sanitize_Keys;
 
    ----------------------------------------------------------------------------

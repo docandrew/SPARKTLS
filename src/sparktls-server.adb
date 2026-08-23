@@ -30,14 +30,8 @@ with SPARKTLS.Handshake.TLS12;
 package body SPARKTLS.Server with
    SPARK_Mode => On
 is
-   function Server_Config_Can_Start (Cfg : Config) return Boolean is
-     (Cfg.Local /= null
-      and then Cfg.Local.Has_Identity
-      and then Cfg.Random /= null
-      and then
-        (not Cfg.Request_Client_Cert
-         or else Cfg.Skip_Verify
-         or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
+   --  Server_Config_Can_Start moved to the spec's private part alongside
+   --  Ready_Config, whose membership test it anchors.
 
    function Server_Configured (HC : Handshake_Context) return Boolean is
      (HC.Cfg.Local /= null
@@ -86,13 +80,7 @@ is
               and then
               (if S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
                                          then Nonce_Space_Available (HC.Server_HS)
-                                              and then Nonce_Space_Available (S.Server_App)
-                                              and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                                        (HC.Server_Seq_12))
-              and then
-                        (if S.State = Wait_Client_Hello and then HC.Version = TLS_1_2
-                         then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                                (HC.Server_Seq_12))
+                                              and then Nonce_Space_Available (S.Server_App))
               and then
                 (if S.State = Wait_Client_Hello_Retry
                  then HC.Version = TLS_1_3
@@ -153,10 +141,6 @@ is
                         (S.Negotiated_Suite)
                       and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
                 (HC.Selected_Group)
-              and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                (HC.Client_Seq_12)
-              and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                (HC.Server_Seq_12)
               and then Free_Space (S.Output) >= 7))
    with Ghost;
 
@@ -434,12 +418,16 @@ is
                                                                and then Result = Error_Alert
                                                                and then HC.Server_HS.Counter = Saved_Ctr);
 
+   --  Cfg is the Ready_Config VIEW of HC.Cfg, established once by
+   --  Advance_Handshake's membership guard and passed BY COPY (passing
+   --  HC.Cfg directly alongside `in out HC` would alias). The configured-
+   --  server fact rides the subtype; no Server_Configured contract needed
+   --  anywhere in this chain.
    procedure Process_Client_Auth
      (S      : in out Session;
       HC     : in out Handshake_Context;
-      Result :    out Action)
-   with Post => (if S.State not in Error_State | Closed
-                 then Server_Configured (HC));
+      Cfg    : in     Ready_Config;
+      Result :    out Action);
 
    procedure Process_Client_Finished
      (S      : in out Session;
@@ -718,8 +706,6 @@ is
                                         and HC.Legacy_Session_ID_Len =
                                               HC.Legacy_Session_ID_Len'Old
                                                                 and Used (HC.Reasm) = Used (HC.Reasm)'Old
-                                                        
-                                                and HC.Server_Seq_12 = HC.Server_Seq_12'Old
                                                 and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and HC.Client_HS.Counter = HC.Client_HS.Counter'Old
                 and HC.Server_HS.Suite = HC.Server_HS.Suite'Old
@@ -1121,9 +1107,6 @@ is
             then
                if Want_12 and S.Negotiated_Suite_12 /= 0 then
                           HC.Version := TLS_1_2;
-                          pragma Assert
-                            (SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                               (HC.Server_Seq_12));
                           SPARKTLS.Server.TLS12.Build_Server_Flight_12
                     (S, HC, Result);
                else
@@ -1151,11 +1134,8 @@ is
                     return;
          elsif Want_12 and S.Negotiated_Suite_12 /= 0 then
                     HC.Version := TLS_1_2;
-                            if HC.Server_Seq_12 = Unsigned_64'Last
-                            then
-                               Send_Alert_And_Error (S, Internal_Error, Result);
-                               return;
-                            end if;
+                    --  Old dead guard (= Unsigned_64'Last, unreachable by
+                    --  type) deleted with the sealed-channel port.
                                     SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, HC, Result);
                     return;
          else
@@ -2328,6 +2308,20 @@ is
            is
               Old_State : constant Connection_State := S.State;
            begin
+              --  Establish the Ready_Config view ONCE for the whole dispatch.
+              --  Three null checks. In the six working states it cannot fail:
+              --  Server_Config_Can_Start gates the only write of HC.Cfg. If
+              --  it ever does fail (a session reached a working state without
+              --  passing Init's gate), fail closed with EXACTLY the unknown-
+              --  state arm's behaviour -- which is also what error/closed
+              --  sessions already get below, so no reachable path changes.
+              if HC.Cfg not in Ready_Config then
+                 S.Last_Error := Internal_Error;
+                 Set_State (S, Error_State);
+                 Result := Error_Alert;
+                 return;
+              end if;
+
               case S.State is
                  when Wait_Client_Hello =>
                     pragma Assert (Old_State = Wait_Client_Hello);
@@ -2380,7 +2374,15 @@ is
                             (S, HC, Result);
                        end if;
                     else
-                       Process_Client_Auth (S, HC, Result);
+                       declare
+                          --  By-copy view: HC.Cfg cannot be passed directly
+                          --  beside `in out HC` (aliasing). The predicate
+                          --  check here discharges from the membership
+                          --  guard at the top of this procedure.
+                          C : constant Ready_Config := HC.Cfg;
+                       begin
+                          Process_Client_Auth (S, HC, C, Result);
+                       end;
                     end if;
 
                          when Wait_Client_Finished =>
@@ -3735,23 +3737,21 @@ is
    procedure Handle_Client_Cert_13
      (S      : in out Session;
       HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
       Data   : in     Byte_Seq;
       Result :    out Action)
-           with Pre  => Data'First = 0
+   with Pre  => Data'First = 0
                 and then Data'Last >= 3
                 and then Data'Last < N32'Last - 4
                 and then Data'Last < Transcript_Capacity
-                        and then S.State = Wait_Client_Certificate
-                          and then Nonce_Space_Available (S.Server_App)
-                                  and then Server_Configured (HC)
-                                  and then HC.Transcript_Len > 0,
-                                Post => (if S.State not in Error_State | Closed
-                                                          then Server_Configured (HC)
-                                                       and then True);
+                and then S.State = Wait_Client_Certificate
+                and then Nonce_Space_Available (S.Server_App)
+                and then HC.Transcript_Len > 0;
 
    procedure Handle_Client_Cert_13
      (S      : in out Session;
       HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
       Data   : in     Byte_Seq;
       Result :    out Action)
    is
@@ -3776,7 +3776,7 @@ is
             Send_Encrypted_Alert (S, Decode_Error, Result);
             return;
          end if;
-         if HC.Cfg.Require_Client_Cert then
+         if Cfg.Require_Client_Cert then
             --  RFC 8446 §6 cert reject after server Finished — keys
             --  are live, MUST be encrypted alert.
             Send_Encrypted_Alert
@@ -3798,12 +3798,12 @@ is
    procedure Handle_Client_CertVerify_13
      (S       : in out Session;
       HC      : in out Handshake_Context;
+      Cfg     : in     Ready_Config;
       Data    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Data'First = 0
                 and then Data'Last < Transcript_Capacity
-                and then Server_Configured (HC)
                 and then Nonce_Space_Available (S.Server_App)
                 and then
                   (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
@@ -3813,13 +3813,12 @@ is
                 and then HC.Peer_Cert_DER_Len > 0
                 and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
                 and then X509.Spans_Valid
-                  (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1),
-        Post => (if S.State not in Error_State | Closed
-                 then Server_Configured (HC));
+                  (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1);
 
    procedure Handle_Client_CertVerify_13
      (S       : in out Session;
       HC      : in out Handshake_Context;
+      Cfg     : in     Ready_Config;
       Data    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
@@ -3880,11 +3879,11 @@ is
                   return;
                end if;
 
-               if HC.Cfg.Verify_Sig_Algo_Count > 0
+               if Cfg.Verify_Sig_Algo_Count > 0
                  and then not Sig_Scheme_In_List
                                 (Sig_Scheme,
-                                 HC.Cfg.Verify_Sig_Algos,
-                                 HC.Cfg.Verify_Sig_Algo_Count)
+                                 Cfg.Verify_Sig_Algos,
+                                 Cfg.Verify_Sig_Algo_Count)
                then
                   Send_Encrypted_Alert (S, Illegal_Parameter, Result);
                   return;
@@ -3963,7 +3962,7 @@ is
                     (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
                Hostname => "",
                Purpose  => Purpose_Client,
-               Mode     => HC.Cfg.Verify_Mode);
+               Mode     => Cfg.Verify_Mode);
             if VR /= Valid then
                Send_Encrypted_Alert (S, Bad_Certificate, Result);
                pragma Assert (S.Last_Error /= Unexpected_Message);
@@ -3973,8 +3972,8 @@ is
             --  Skip_Verify is the explicit "require any client
             --  certificate" mode: enforce leaf policy and proof of
             --  possession, but do not require a trusted issuer chain.
-            if not HC.Cfg.Skip_Verify then
-               if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
+            if not Cfg.Skip_Verify then
+               if Cfg.Trust = null or else Cfg.Get_Time = null then
                   Send_Encrypted_Alert (S, Bad_Certificate, Result);
                   pragma Assert (S.Last_Error /= Unexpected_Message);
                   return;
@@ -3987,12 +3986,12 @@ is
                   Leaf       => HC.Peer_Cert,
                   Ints       => HC.Peer_Ints,
                   Int_Count  => HC.Peer_Int_Count,
-                  Roots      => HC.Cfg.Trust.Roots,
-                  Root_Count => HC.Cfg.Trust.Root_Count,
-                  Now        => HC.Cfg.Get_Time.all,
+                  Roots      => Cfg.Trust.Roots,
+                  Root_Count => Cfg.Trust.Root_Count,
+                  Now        => Cfg.Get_Time.all,
                   Hostname   => "",
                   Purpose    => Purpose_Client,
-                  Mode       => HC.Cfg.Verify_Mode);
+                  Mode       => Cfg.Verify_Mode);
                if VR /= Valid then
                   Send_Encrypted_Alert (S, Bad_Certificate, Result);
                   pragma Assert (S.Last_Error /= Unexpected_Message);
@@ -4014,6 +4013,7 @@ is
    procedure Process_Client_Auth
      (S      : in out Session;
       HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
       Result :    out Action)
    is
       Rec : Records.Parse_Result;
@@ -4204,7 +4204,8 @@ is
                                      (S, Unexpected_Message, Result);
                                    return;
                                 end if;
-                                Handle_Client_Cert_13 (S, HC, Data, Result);
+                                Handle_Client_Cert_13
+                                  (S, HC, Cfg, Data, Result);
 
                      when Wait_Client_Cert_Verify =>
                         if Msg_Type /= Handshake.HT_Certificate_Verify then
@@ -4213,16 +4214,13 @@ is
                            return;
                         end if;
                         Handle_Client_CertVerify_13
-                          (S, HC, Data, Msg_Len, Result);
+                          (S, HC, Cfg, Data, Msg_Len, Result);
 
                      when others =>
                         S.Last_Error := Internal_Error;
                         Set_State (S, Error_State);
                         Result := Error_Alert;
                   end case;
-                  pragma Assert
-                    (if S.State not in Error_State | Closed
-                     then Server_Configured (HC));
                end;
             end;
 
@@ -5554,7 +5552,6 @@ is
             Desc        => 0,
             Keys        => S.Server_App,
             Implicit_IV => S.Server_IV_12,
-            Seq_Num     => S.Server_Seq_12,
             Output      => S.Output,
             Bytes_Out   => Ignored_Alert_Out);
       else

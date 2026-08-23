@@ -744,9 +744,39 @@ is
                              Suite_AES_256_GCM_SHA384 |
                              Suite_CHACHA20_POLY1305_SHA256;
 
+   --  RFC 8446 §5.5 "Limits on Key Usage". For AES-GCM the guidance is at
+   --  most 2**24.5 (~23.7 million) full-size records under one key, to keep
+   --  the AEAD security margin at roughly 2**-57. ChaCha20-Poly1305 has no
+   --  comparable confidentiality limit, so this conservative bound is
+   --  applied uniformly rather than per-suite.
+   --
+   --  We rotate well below the limit -- 2**23 records -- so the rekey
+   --  happens with margin rather than at the cliff edge. That matters
+   --  because rotation needs output-buffer space: if the buffer is full we
+   --  retry on the next write, and the margin is what makes those retries
+   --  harmless.
+   --
+   --  NOTE the two bounds are different things and both are needed:
+   --    * this one is the CRYPTOGRAPHIC limit, and rotating keeps the
+   --      connection alive and within the AEAD margin;
+   --    * Unsigned_64'Last is the ARITHMETIC limit, ~584,000 years away,
+   --      and reaching it must fail closed rather than wrap (a modular
+   --      wrap would reuse nonces). See #46.
+   Rekey_After_Records : constant := 2 ** 23;
+
    --  RFC 8446 §5.3: Nonce space must not be exhausted.
    function Nonce_Space_Available (K : Traffic_Keys) return Boolean is
      (K.Counter < Unsigned_64'Last);
+
+   --  The write-side AEAD confidentiality cap (RFC 8446 §5.5 for 1.3,
+   --  the same 2**23 bound adopted for 1.2 where no rekey exists), as a
+   --  query on the channel that owns the counter. This is BOTH the
+   --  runtime branch callers take and the precondition Encrypt-side ops
+   --  carry -- one object, one query, so the discharge is local at every
+   --  call site instead of threaded (the r41 lesson: a cap fact that
+   --  lives apart from its counter does not travel).
+   function Space_Left (K : Traffic_Keys) return Boolean is
+     (K.Counter < Rekey_After_Records);
 
    ----------------------------------------------------------------------------
    --  Random byte generation callback
@@ -1743,17 +1773,13 @@ is
       --  for the larger usage and zero-padded on the AES-GCM side.
       Client_Write_IV_12 : Byte_Seq (0 .. 11) := (others => 0);
       Server_Write_IV_12 : Byte_Seq (0 .. 11) := (others => 0);
-      --  Record_Counter, not Unsigned_64 (#46). Session already used the
-      --  constrained subtype; Handshake_Context did not, so
-      --  Nonce_Space_Available_12 (HC.*_Seq_12) had to be PROVED at every
-      --  call site while the Session-side twin was true by construction.
-      --  With the subtype the wrap is UNREPRESENTABLE: reaching
-      --  Unsigned_64'Last is a range check at the assignment that produces
-      --  it, not a silent modular wrap that would reuse a nonce. TLS 1.2
-      --  has no KeyUpdate, so there is no rotation to fall back on -- the
-      --  type is the only thing standing between us and nonce reuse.
-      Client_Seq_12      : Record_Counter := 0;
-      Server_Seq_12      : Record_Counter := 0;
+      --  NO loose sequence counters here (sealed-channel carve 5a): the
+      --  TLS 1.2 counters live inside the Traffic_Keys channels
+      --  (S.Client_App / S.Server_App), where the nonce derives from a
+      --  counter only the record ops can advance. The old HC/Session
+      --  twin-counter design needed a handoff copy at handshake
+      --  completion and rewind bookkeeping on error paths -- all gone by
+      --  construction.
 
       --  RFC 7627 §4: tracks which PRF path produced Master_Secret_12.
       --  Use_EMS ↔ extended PRF; (not Use_EMS) ↔ legacy PRF. The
@@ -2123,25 +2149,8 @@ is
    --  any sane schedule always refunds.
    Rekey_Refill_Records : constant := 2 ** 16;
 
-   --  RFC 8446 §5.5 "Limits on Key Usage". For AES-GCM the guidance is at
-   --  most 2**24.5 (~23.7 million) full-size records under one key, to keep
-   --  the AEAD security margin at roughly 2**-57. ChaCha20-Poly1305 has no
-   --  comparable confidentiality limit, so this conservative bound is
-   --  applied uniformly rather than per-suite.
-   --
-   --  We rotate well below the limit -- 2**23 records -- so the rekey
-   --  happens with margin rather than at the cliff edge. That matters
-   --  because rotation needs output-buffer space: if the buffer is full we
-   --  retry on the next write, and the margin is what makes those retries
-   --  harmless.
-   --
-   --  NOTE the two bounds are different things and both are needed:
-   --    * this one is the CRYPTOGRAPHIC limit, and rotating keeps the
-   --      connection alive and within the AEAD margin;
-   --    * Unsigned_64'Last is the ARITHMETIC limit, ~584,000 years away,
-   --      and reaching it must fail closed rather than wrap (a modular
-   --      wrap would reuse nonces). See #46.
-   Rekey_After_Records : constant := 2 ** 23;
+   --  Rekey_After_Records moved up beside Traffic_Keys / Space_Left,
+   --  which need it in their declarations.
 
    --  RFC 8446 §5.2 / RFC 5246 §6.2.1: zero-length-plaintext
    --  records waste decrypt CPU without delivering progress.
@@ -2757,8 +2766,6 @@ private
       --  checked once at assignment; as a Session predicate conjunct it
       --  had to be re-proved at every component assignment anywhere in
       --  the record, and at every call boundary.
-      Client_Seq_12       : Record_Counter := 0;
-      Server_Seq_12       : Record_Counter := 0;
 
       --  Handshake context (heap-allocated, freed after handshake)
       HC_Ptr : Handshake_Context_Access := null;
@@ -2805,14 +2812,19 @@ private
 
    function State (S : Session) return Connection_State is (S.State);
 
-   --  Both disjuncts on both versions, so this is exactly the precondition it
-   --  replaced: the TLS 1.3 arithmetic backstop AND the TLS 1.2 crypto cap.
+   --  On the CHANNEL counter since the sealed-channel carve: the TLS 1.3
+   --  arithmetic backstop, plus the TLS 1.2 crypto cap. The cap disjunct
+   --  is now VERSION-GATED where it used to apply to both: the counter is
+   --  shared with TLS 1.3, where sitting at 2**23 is the normal
+   --  about-to-rotate state, not a terminal condition.
    function Write_Limit_Reached (S : Session) return Boolean is
      (if S.Role = Role_Client
       then not Nonce_Space_Available (S.Client_App)
-           or else S.Client_Seq_12 >= Rekey_After_Records
+           or else (S.Negotiated_Version = TLS_1_2
+                    and then not Space_Left (S.Client_App))
       else not Nonce_Space_Available (S.Server_App)
-           or else S.Server_Seq_12 >= Rekey_After_Records);
+           or else (S.Negotiated_Version = TLS_1_2
+                    and then not Space_Left (S.Server_App)));
    function Role (S : Session) return TLS_Role is (S.Role);
    function Last_Error (S : Session) return Error_Code is (S.Last_Error);
    function Peer_Closed_Cleanly (S : Session) return Boolean is
@@ -2823,8 +2835,10 @@ private
    function Server_App (S : Session) return Traffic_Keys is (S.Server_App);
    function Input (S : Session) return IO_Buffer is (S.Input);
    function Output (S : Session) return IO_Buffer is (S.Output);
-   function Client_Seq_12 (S : Session) return Unsigned_64 is (S.Client_Seq_12);
-   function Server_Seq_12 (S : Session) return Unsigned_64 is (S.Server_Seq_12);
+   function Client_Seq_12 (S : Session) return Unsigned_64 is
+     (S.Client_App.Counter);
+   function Server_Seq_12 (S : Session) return Unsigned_64 is
+     (S.Server_App.Counter);
    function Res_Master (S : Session) return Bytes_48 is (S.Res_Master);
    function Exporter_Secret (S : Session) return Bytes_48 is (S.Exporter_Secret);
    function App_Data_Len (S : Session) return N32 is (S.App_Data_Len);

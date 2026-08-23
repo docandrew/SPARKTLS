@@ -5604,7 +5604,6 @@ is
             Desc        => 0,
             Keys        => S.Client_App,
             Implicit_IV => S.Client_IV_12,
-            Seq_Num     => S.Client_Seq_12,
             Output      => S.Output,
             Bytes_Out   => Ignored_Alert_Out);
       else

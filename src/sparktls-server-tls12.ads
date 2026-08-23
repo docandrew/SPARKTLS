@@ -227,12 +227,8 @@ is
                                            and then S.State = S.State'Old
                    and then S.Role = S.Role'Old
                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                   and then HC.Client_Seq_12 = 0
-                   and then HC.Server_Seq_12 = 0
-                   and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                              (HC.Client_Seq_12)
-                   and then SPARKTLS.Records.TLS12.Nonce_Space_Available_12
-                              (HC.Server_Seq_12)
+                   and then S.Client_App.Counter = 0
+                   and then S.Server_App.Counter = 0
                    and then EMS_PRF_Binding_RFC_7627_4 (HC)
                    and then HC.MS_Derivation /= Not_Derived;
 

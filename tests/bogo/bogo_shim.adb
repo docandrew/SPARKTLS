@@ -295,8 +295,8 @@ procedure Bogo_Shim is
                  (SPARKTLS.Test_Support.Key_Updates_Recvd (S))
              & " clean=" & Boolean'Image
                  (SPARKTLS.Peer_Closed_Cleanly (S))
-             & " cseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Client_Seq_12 (S))
-             & " sseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Server_Seq_12 (S)));
+             & " cseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Client_App_Counter (S))
+             & " sseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Server_App_Counter (S)));
    end Trace_Step;
 
    --  ------------------------------------------------------------------

@@ -311,8 +311,7 @@ is
       OK   :    out Boolean)
    with Pre  => Data'First = 0
                 and then Data'Last in 9 .. Max_Server_Key_Exchange - 1,
-        Post => HC.Client_Seq_12 = HC.Client_Seq_12'Old
-                                and then (if HC.Cfg.Random'Old /= null
+        Post => (if HC.Cfg.Random'Old /= null
                                           then HC.Cfg.Random /= null)
                         and then
                           (if OK then Valid_ECDHE_Group (HC.Selected_Group));

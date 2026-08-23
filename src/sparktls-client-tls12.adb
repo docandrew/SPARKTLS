@@ -71,7 +71,6 @@ is
          Desc        => Alert_Desc (Err),
          Keys        => S.Client_App,
          Implicit_IV => S.Client_IV_12,
-         Seq_Num     => S.Client_Seq_12,
          Output      => S.Output,
          Bytes_Out   => Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
@@ -90,17 +89,10 @@ is
                                              or else Data'First <= Data'Last
                                           then HC.Transcript_Len > 0)
                         and then HC.Selected_Group = HC.Selected_Group'Old
-                        and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
-                        and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
                   and then HC.Cert_Request_Received =
                     HC.Cert_Request_Received'Old
                   and then HC.TLS12_Client_Cert_Allowed =
                     HC.TLS12_Client_Cert_Allowed'Old
-                        and then
-                          (if Records.TLS12.Nonce_Space_Available_12
-                        (HC.Client_Seq_12'Old)
-                   then Records.TLS12.Nonce_Space_Available_12
-                        (HC.Client_Seq_12))
                 and then
                   (if HC.Cfg.Local'Old /= null
                    then HC.Cfg.Local /= null
@@ -152,17 +144,10 @@ is
                              or else Data'First <= Data'Last
                           then HC.Transcript_Len > 0)
                         and then HC.Selected_Group = HC.Selected_Group'Old
-                        and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
-                        and then HC.Server_Seq_12 = HC.Server_Seq_12'Old
                   and then HC.Cert_Request_Received =
                     HC.Cert_Request_Received'Old
                   and then HC.TLS12_Client_Cert_Allowed =
                     HC.TLS12_Client_Cert_Allowed'Old
-                        and then
-                          (if Records.TLS12.Nonce_Space_Available_12
-                        (HC.Client_Seq_12'Old)
-                   then Records.TLS12.Nonce_Space_Available_12
-                        (HC.Client_Seq_12))
                 and then
                   (if HC.Cfg.Local'Old /= null
                    then HC.Cfg.Local /= null
@@ -225,9 +210,6 @@ is
                                           HC.Selected_Group'Old
                                         and then HC.Transcript_Len =
                                           HC.Transcript_Len'Old
-                        and then HC.Client_Seq_12 = 0
-                        and then Records.TLS12.Nonce_Space_Available_12
-                          (HC.Client_Seq_12)
            is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
@@ -269,8 +251,6 @@ is
       end;
       HC.Client_Write_IV_12 := CI;
       HC.Server_Write_IV_12 := SI;
-      HC.Client_Seq_12 := 0;
-      HC.Server_Seq_12 := 0;
       S.Exporter_Secret := HC.Master_Secret_12;
       S.Exporter_Secret_Len := 48;
       S.Exporter_Client_Random := HC.Client_Random;
@@ -297,12 +277,6 @@ is
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                 and then HC.Selected_Group = HC.Selected_Group'Old
                 and then HC.Transcript_Len = HC.Transcript_Len'Old
-                and then HC.Client_Seq_12 = 0
-                and then HC.Server_Seq_12 = 0
-                and then Records.TLS12.Nonce_Space_Available_12
-                      (HC.Client_Seq_12)
-                and then Records.TLS12.Nonce_Space_Available_12
-                      (HC.Server_Seq_12)
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
@@ -397,8 +371,6 @@ is
 
       HC.Client_Write_IV_12 := CI;
       HC.Server_Write_IV_12 := SI;
-      HC.Client_Seq_12 := 0;
-      HC.Server_Seq_12 := 0;
       S.Exporter_Secret := HC.Master_Secret_12;
       S.Exporter_Secret_Len := 48;
       S.Exporter_Client_Random := HC.Client_Random;
@@ -443,9 +415,7 @@ is
                                   (if HC.Cfg.Local /= null
                                        and then HC.Cfg.Local.Has_Identity
                                    then SPARKTLS.Handshake.Server_Msgs
-                                          .Local_Config_Valid (HC.Cfg.Local))
-                                and then Records.TLS12.Nonce_Space_Available_12
-                                  (HC.Client_Seq_12);
+                                          .Local_Config_Valid (HC.Cfg.Local));
 
    procedure Copy_Cert_To_X509
      (Cert_RFLX : in     RBT.Bytes;
@@ -514,12 +484,7 @@ is
                                 and then HC.Selected_Group = HC.Selected_Group'Old
                                                 and then (if HC.Cfg.Random'Old /= null
                                   then HC.Cfg.Random /= null)
-                        and then HC.Peer_Cert_DER_Len = C_Len
-                        --  Frame the TLS 1.2 send counter: this helper never
-                        --  touches it, and Parse_Cert_Chain_12's Post must
-                        --  carry it out to keep Nonce_Space_Available_12 alive
-                        --  across the Certificate branch of the dispatcher.
-                        and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                        and then HC.Peer_Cert_DER_Len = C_Len;
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
@@ -598,12 +563,7 @@ is
                         and then (if HC.Peer_Cert_Valid then
                     HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                     and then X509.Spans_Valid
-                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1))
-                        --  Frame the TLS 1.2 send counter: this helper never
-                        --  touches it, and Parse_Cert_Chain_12's Post must
-                        --  carry it out to keep Nonce_Space_Available_12 alive
-                        --  across the Certificate branch of the dispatcher.
-                        and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 
    procedure Append_Intermediate_12
      (HC  : in out Handshake_Context;
@@ -623,12 +583,7 @@ is
                                     and then (if HC.Cfg.Random'Old /= null
                                               then HC.Cfg.Random /= null)
                                         and then not HC.Peer_Cert_Valid
-                                        and then HC.Peer_Int_Count = 0
-                        --  Frame the TLS 1.2 send counter: this helper never
-                        --  touches it, and Parse_Cert_Chain_12's Post must
-                        --  carry it out to keep Nonce_Space_Available_12 alive
-                        --  across the Certificate branch of the dispatcher.
-                        and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                                        and then HC.Peer_Int_Count = 0;
 
            procedure Reset_Peer_Cert_Chain_12
              (HC : in out Handshake_Context)
@@ -659,12 +614,7 @@ is
                              HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
                              and then X509.Spans_Valid
                                (HC.Peer_Cert,
-                                X509.N32 (HC.Peer_Cert_DER_Len) - 1))
-                        --  Frame the TLS 1.2 send counter: this helper never
-                        --  touches it, and Parse_Cert_Chain_12's Post must
-                        --  carry it out to keep Nonce_Space_Available_12 alive
-                        --  across the Certificate branch of the dispatcher.
-                        and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                                X509.N32 (HC.Peer_Cert_DER_Len) - 1));
 
            procedure Set_Peer_Cert_12
              (HC    : in out Handshake_Context;
@@ -725,7 +675,6 @@ is
                                                 --  monotonicity conjuncts on Validate_Server_Cert_12
                                                 --  and Append_Transcript that follow are left with
                                                 --  no antecedent and become vacuous.
-                                                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
                                     and then
                                       (if HC.Cfg.Random'Old /= null
                                then HC.Cfg.Random /= null)
@@ -757,8 +706,6 @@ is
                    HC.Selected_Group with Ghost;
                  Random_Was_Set : constant Boolean :=
                    HC.Cfg.Random /= null with Ghost;
-                 Saved_Client_Seq : constant Unsigned_64 :=
-                   HC.Client_Seq_12 with Ghost;
            begin
                       Reset_Peer_Cert_Chain_12 (HC);
       OK := False;
@@ -844,8 +791,6 @@ is
                                       pragma Loop_Invariant
                                         (HC.Selected_Group =
                                            Saved_Selected_Group
-                                         and then HC.Client_Seq_12 =
-                                           Saved_Client_Seq
                                          and then
                                            (if Random_Was_Set
                                             then HC.Cfg.Random /= null));
@@ -986,12 +931,7 @@ is
                                                          S.Negotiated_Suite'Old
                                                                                              and then
                                                                                                (if HC.Cfg.Random'Old /= null
-                                                                                        then HC.Cfg.Random /= null)
-                                   and then
-                                     (if Records.TLS12.Nonce_Space_Available_12
-                                           (HC.Client_Seq_12'Old)
-                                      then Records.TLS12.Nonce_Space_Available_12
-                                           (HC.Client_Seq_12)));
+                                                                                        then HC.Cfg.Random /= null));
 
    procedure Validate_Server_Cert_12
      (S      : in out Session;
@@ -1130,8 +1070,6 @@ is
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
                         and then Frag'Last - Frag'First < Transcript_Capacity
                         and then S.State not in Idle | Closing | Closed | Error_State
-                                                and then Records.TLS12.Nonce_Space_Available_12
-                          (HC.Client_Seq_12)
                         and then HC.Cfg.Random /= null
                     and then HC.Selected_Group in
                       Group_X25519 | Group_Secp256r1 | Group_Secp384r1
@@ -1184,14 +1122,7 @@ is
                                                                                         then SPARKTLS.Handshake
                                                                                                .Server_Msgs
                                                                                                .Local_Config_Valid
-                                                                                                 (HC.Cfg.Local))
-                                             and then
-                                               (if Records.TLS12
-                                                     .Nonce_Space_Available_12
-                                                       (HC.Client_Seq_12'Old)
-                                                then Records.TLS12
-                                                     .Nonce_Space_Available_12
-                                                       (HC.Client_Seq_12)));
+                                                                                                 (HC.Cfg.Local)));
 
    procedure Handle_CertReq_12
      (S       : in out Session;
@@ -1394,9 +1325,7 @@ is
                    (if HC.Cfg.Local /= null
                         and then HC.Cfg.Local.Has_Identity
                     then SPARKTLS.Handshake.Server_Msgs
-                           .Local_Config_Valid (HC.Cfg.Local))
-                 and then Records.TLS12.Nonce_Space_Available_12
-                   (HC.Client_Seq_12));
+                           .Local_Config_Valid (HC.Cfg.Local)));
            end Handle_CertReq_12;
 
    --  RFC 5246 §7.4.3 ServerKeyExchange (HS type 0x0C). Length-validates
@@ -1427,8 +1356,6 @@ is
                                      | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                      | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                      | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                     and then Records.TLS12.Nonce_Space_Available_12
-                       (HC.Client_Seq_12)
                         and then
                           (if HC.Cfg.Local /= null
                                and then HC.Cfg.Local.Has_Identity
@@ -1444,11 +1371,6 @@ is
                                              and then
                                                (if HC.Transcript_Len'Old > 0
                                                 then HC.Transcript_Len > 0)
-                                                             and then
-                                                               (if HC.CKE_Received_12
-                                                                then Records.TLS12
-                                                               .Nonce_Space_Available_12
-                                                                 (HC.Client_Seq_12))
                                              and then S.Negotiated_Suite in
                                                Suite_ECDHE_RSA_AES128_GCM_SHA256
                                              | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -1458,12 +1380,7 @@ is
                                              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                                                      and then
                                                        (if HC.Cfg.Random'Old /= null
-                                                        then HC.Cfg.Random /= null)
-                             and then
-                               (if Records.TLS12.Nonce_Space_Available_12
-                                     (HC.Client_Seq_12'Old)
-                                then Records.TLS12.Nonce_Space_Available_12
-                                     (HC.Client_Seq_12)));
+                                                        then HC.Cfg.Random /= null));
 
    procedure Handle_SKE_12
      (S       : in out Session;
@@ -1545,9 +1462,6 @@ is
                         (HC.Selected_Group in
                            Group_X25519 | Group_Secp256r1 | Group_Secp384r1);
                       pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
-                      pragma Assert
-                        (Records.TLS12.Nonce_Space_Available_12
-                           (HC.Client_Seq_12));
                    end Handle_SKE_12;
 
    procedure Derive_Client_Shared_Secret_12
@@ -2238,7 +2152,6 @@ is
       Scratch : in out IO_Buffer;
       FB      : in     Byte_Seq;
       FL      : in     N32;
-      Saved_Seq : out Record_Counter;
       Result  :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and then HC.Transcript_Len > 0
@@ -2246,11 +2159,12 @@ is
                 and then FB'First = 0
                 and then Valid_Finished_12_Len (FL)
                 and then FL - 1 <= FB'Last
-                and then Records.TLS12.Nonce_Space_Available_12
-                  (HC.Client_Seq_12)
-                and then HC.Client_Seq_12 <= Unsigned_64'Last - 2,
-        Post => True
-                and then Result in OK | Has_Output | Error_Alert
+                --  The channel's own cap query replaces the old loose-
+                --  counter conjuncts (Nonce_Space_Available_12 + the
+                --  'Last - 2 arithmetic backstop): one fact, on the one
+                --  object whose counter the encrypt advances.
+                and then Space_Left (S.Client_App),
+        Post => Result in OK | Has_Output | Error_Alert
                 and then
                   (if Result = OK then
                      S.State not in Idle | Closing | Closed | Error_State
@@ -2263,7 +2177,6 @@ is
       Scratch : in out IO_Buffer;
       FB      : in     Byte_Seq;
       FL      : in     N32;
-      Saved_Seq : out Record_Counter;
       Result  :    out Action)
    is
       use Records.TLS12;
@@ -2272,17 +2185,16 @@ is
       Result := OK;
       Append_Transcript_Building (HC, FB (0 .. FL - 1));
 
-      Saved_Seq := HC.Client_Seq_12;
       Build_Encrypted_Record_12
         (FB (0 .. FL - 1), 16#16#, S.Client_App,
-         HC.Client_Write_IV_12, HC.Client_Seq_12, Scratch, EO);
+         HC.Client_Write_IV_12, Scratch, EO);
       if EO = 0 then
-         HC.Client_Seq_12 := Saved_Seq;
+         --  Fatal path -- no counter rewind; the burned nonce stays
+         --  burned and the connection dies here.
          Send_Cleartext_Handshake_Error_12
            (S, HC, Insufficient_Buffer, Result);
          pragma Assert_And_Cut
-           (Result in Has_Output | Error_Alert
-            and then True);
+           (Result in Has_Output | Error_Alert);
          return;
       end if;
       pragma Assert_And_Cut
@@ -2296,38 +2208,32 @@ is
      (S         : in out Session;
       HC        : in out Handshake_Context;
       Scratch   : in     IO_Buffer;
-      Saved_Seq : in     Record_Counter;
       Result    :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and then HC.Transcript_Len > 0
                 and then HC.Transcript_Len <= Transcript_Capacity,
-        Post => True
-                and then Result in OK | Has_Output | Error_Alert
+        Post => Result in OK | Has_Output | Error_Alert
                 and then
                   (if Result = OK then
                      S.State not in Idle | Closing | Closed | Error_State
                      and then HC.Transcript_Len > 0
-                     and then HC.Transcript_Len <= Transcript_Capacity
-                     and then HC.Client_Seq_12 = HC.Client_Seq_12'Old);
+                     and then HC.Transcript_Len <= Transcript_Capacity);
 
    procedure Commit_Client_Flight_Scratch_12
      (S         : in out Session;
       HC        : in out Handshake_Context;
       Scratch   : in     IO_Buffer;
-      Saved_Seq : in     Record_Counter;
       Result    :    out Action)
    is
-      Entry_Client_Seq : constant Unsigned_64 := HC.Client_Seq_12
-      with Ghost;
    begin
       Result := OK;
       if Free_Space (S.Output) < Scratch.Write_Pos then
-         HC.Client_Seq_12 := Saved_Seq;
+         --  Fatal path -- no counter rewind (the counter lives inside
+         --  S.Client_App now); the connection dies here.
          Send_Cleartext_Handshake_Error_12
            (S, HC, Insufficient_Buffer, Result);
          pragma Assert_And_Cut
-           (Result in Has_Output | Error_Alert
-            and then True);
+           (Result in Has_Output | Error_Alert);
          return;
       end if;
 
@@ -2340,8 +2246,7 @@ is
         (Result = OK
          and then S.State not in Idle | Closing | Closed | Error_State
          and then HC.Transcript_Len > 0
-         and then HC.Transcript_Len <= Transcript_Capacity
-         and then HC.Client_Seq_12 = Entry_Client_Seq);
+         and then HC.Transcript_Len <= Transcript_Capacity);
    end Commit_Client_Flight_Scratch_12;
 
    procedure Encrypt_And_Commit_Client_Finished_12
@@ -2356,10 +2261,7 @@ is
                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then FB'First = 0
                 and then Valid_Finished_12_Len (FL)
-                and then FL - 1 <= FB'Last
-                and then Records.TLS12.Nonce_Space_Available_12
-                  (HC.Client_Seq_12)
-                and then HC.Client_Seq_12 <= Unsigned_64'Last - 2,
+                and then FL - 1 <= FB'Last,
         Post => True
                 and then Result in OK | Has_Output | Error_Alert
                 and then
@@ -2376,15 +2278,14 @@ is
       FL      : in     N32;
       Result  :    out Action)
    is
-      Saved_Seq : Record_Counter;
    begin
       Encrypt_Client_Finished_Record_12
-        (S, HC, Scratch, FB, FL, Saved_Seq, Result);
+        (S, HC, Scratch, FB, FL, Result);
       if Result /= OK then
          return;
       end if;
       Commit_Client_Flight_Scratch_12
-        (S, HC, Scratch, Saved_Seq, Result);
+        (S, HC, Scratch, Result);
    end Encrypt_And_Commit_Client_Finished_12;
 
    procedure Append_Client_CCS_And_Finished_12
@@ -2426,7 +2327,6 @@ is
       FL : N32;
    begin
       Derive_Keys_12 (S, HC);
-      pragma Assert (HC.Client_Seq_12 = 0);
 
       Records.Build_CCS_Record (Scratch, CCS_Out);
       if CCS_Out = 0 then
@@ -2440,8 +2340,6 @@ is
 
       Build_Client_Finished_12_Message (S, HC, FB, FL);
       pragma Assert (Valid_Finished_12_Len (FL));
-      pragma Assert (Records.TLS12.Nonce_Space_Available_12 (HC.Client_Seq_12));
-      pragma Assert (HC.Client_Seq_12 <= Unsigned_64'Last - 2);
       Encrypt_And_Commit_Client_Finished_12
         (S, HC, Scratch, FB, FL, Result);
       if Result /= OK then
@@ -2523,7 +2421,7 @@ is
    --  derives the AEAD keys, then builds and commits the entire
    --  client flight atomically: (optional Certificate + CKE +
    --  optional CertificateVerify + CCS + encrypted Finished) into a
-   --  stack-scratch IO_Buffer, with HC.Client_Seq_12 rolled back on
+   --  stack-scratch IO_Buffer; the channel counter is not rolled back on
    --  commit failure to keep AEAD nonces in sync with the peer.
    procedure Handle_SHD_12
      (S       : in out Session;
@@ -2551,18 +2449,7 @@ is
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 and then HC.Transcript_Len > 0
-                and then HC.Transcript_Len <= Transcript_Capacity
-                and then
-                  (if HC.Cert_Request_Received
-                       and then HC.Cfg.Local /= null
-                       and then HC.Cfg.Local.Has_Identity
-                       and then HC.TLS12_Client_Cert_Allowed
-                   then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                          (HC.Cfg.Local))
-                                                and then
-                                                  (if not HC.TLS12_Resuming then
-                                                     Records.TLS12.Nonce_Space_Available_12
-                                                       (HC.Client_Seq_12)),
+                and then HC.Transcript_Len <= Transcript_Capacity,
                                         Post => True
                                         --  ServerHelloDone never yields OK: the body ends with
                                         --  Result := (if Output_Pending > 0 then Has_Output
@@ -2582,10 +2469,6 @@ is
                                                                                      and then Valid_ECDHE_Group
                                                                                        (HC.Selected_Group)
                                                                                              and then HC.Transcript_Len > 0
-                                                                                             and then
-                                                                                               Records.TLS12
-                                                                                                 .Nonce_Space_Available_12
-                                                                                                   (HC.Client_Seq_12)
                                                                                              and then S.Negotiated_Suite in
                                                                                        Suite_ECDHE_RSA_AES128_GCM_SHA256
                                                                                      | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -2681,9 +2564,7 @@ is
       Err       : in     Error_Code;
       Result    :    out Action)
            with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                        and Desc_Code /= 0
-                        and Records.TLS12.Nonce_Space_Available_12
-                              (HC.Client_Seq_12),
+                        and Desc_Code /= 0,
                 Post => S.State = Error_State
                         and Used (HC.Reasm) = 0
                         and S.Last_Error = Err
@@ -2693,11 +2574,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and then
-                  (if not HC.TLS12_Resuming
-                   then Records.TLS12.Nonce_Space_Available_12
-                          (HC.Client_Seq_12)),
+   with Pre  => S.State not in Idle | Closing | Closed | Error_State,
         Post => S.State = Error_State
                 and then Result in Has_Output | Error_Alert;
 
@@ -2780,13 +2657,7 @@ is
                                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                                                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                                                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                                and then Records.TLS12.Nonce_Space_Available_12
-                                                  (HC.Client_Seq_12)
-                                                and then
-                                                  (if not HC.TLS12_Resuming
-                                                   then Records.TLS12.Nonce_Space_Available_12
-                                                  (HC.Client_Seq_12)),
+                                                | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
                                 Post => (if Result = OK then
                                                      S.State not in Idle | Closing | Closed
                                                        | Error_State
@@ -2807,10 +2678,7 @@ is
                                                              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                                                                      and then
                                                                                (if HC.Cfg.Random'Old /= null
-                                                                                then HC.Cfg.Random /= null)
-                                                                     and then Records.TLS12
-                                                                       .Nonce_Space_Available_12
-                                                                         (HC.Client_Seq_12));
+                                                                                then HC.Cfg.Random /= null));
 
    procedure Handle_NST_12
      (S       : in out Session;
@@ -2868,44 +2736,7 @@ is
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
                 and then Frag'Last - Frag'First < Transcript_Capacity
                         and then S.State not in Idle | Closing | Closed | Error_State
-                        and then HC.Cfg.Random /= null
-                                and then
-                                  (if HC.TLS12_EMS_Transcript_Len > 0
-                           then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
-                        and then HC.Selected_Group in
-                          Group_X25519 | Group_Secp256r1 | Group_Secp384r1
-                        and then Valid_ECDHE_Group (HC.Selected_Group)
-                                                     and then HC.Transcript_Len > 0
-                                                     and then HC.Transcript_Len <= Transcript_Capacity
-                                and then S.Negotiated_Suite in
-                                  Suite_ECDHE_RSA_AES128_GCM_SHA256
-                                | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                                | Suite_ECDHE_RSA_CHACHA20_SHA256
-                                | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                     and then Records.TLS12.Nonce_Space_Available_12
-                       (HC.Client_Seq_12)
-                     and then
-                       (if HC.Cfg.Local /= null
-                                       and then HC.Cfg.Local.Has_Identity
-                                   then SPARKTLS.Handshake.Server_Msgs
-                                          .Local_Config_Valid (HC.Cfg.Local))
-                                and then
-                                  (if Msg_Type = HT_Server_Hello_Done
-                               and then HC.Cert_Request_Received
-                               and then HC.Cfg.Local /= null
-                               and then HC.Cfg.Local.Has_Identity
-                               and then HC.TLS12_Client_Cert_Allowed
-                           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                  (HC.Cfg.Local))
-                        and then
-                          (if Msg_Type = HT_Server_Hello_Done
-                               or else HC.CKE_Received_12
-                               or else (Msg_Type = 16#04#
-                                        and then not HC.TLS12_Resuming)
-                           then Records.TLS12.Nonce_Space_Available_12
-                                  (HC.Client_Seq_12)),
+                        and then HC.Cfg.Random /= null,
                         Post => (if Result = OK then
                                                      S.State not in Idle | Closing | Closed | Error_State
                                                                      and then HC.Cfg.Random /= null
@@ -2923,9 +2754,6 @@ is
                                                              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                                                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                                                              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                                             and then Records.TLS12
-                                                               .Nonce_Space_Available_12
-                                                                 (HC.Client_Seq_12)
                                                              and then
                                                 (if Msg_Type = HT_Server_Hello_Done
                                                  then Result /= OK)
@@ -2992,18 +2820,12 @@ is
                            and then HC.TLS12_Client_Cert_Allowed
                        then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                               (HC.Cfg.Local));
-                    pragma Assert
-                      (Records.TLS12.Nonce_Space_Available_12
-                         (HC.Client_Seq_12));
                     Handle_SHD_12 (S, HC, Frag, Msg_Len, Result);
 
          when 16#04# =>
             if Msg_Len < 6 then
                        Reset (HC.Reasm);
                        if HC.CKE_Received_12 then
-                          pragma Assert
-                            (Records.TLS12.Nonce_Space_Available_12
-                               (HC.Client_Seq_12));
                           Send_Encrypted_Finished_Error_12
                             (S, HC, 50, Decode_Error, Result);
                else
@@ -3011,10 +2833,6 @@ is
                        end if;
                        return;
                     end if;
-                    pragma Assert
-                      (if not HC.TLS12_Resuming then
-                         Records.TLS12.Nonce_Space_Available_12
-                           (HC.Client_Seq_12));
                     Handle_NST_12 (S, HC, Frag, Msg_Len, Result);
 
                          when others =>
@@ -3024,9 +2842,6 @@ is
             --  the peer expects encrypted alerts.
                     Reset (HC.Reasm);
                     if HC.CKE_Received_12 then
-                       pragma Assert
-                         (Records.TLS12.Nonce_Space_Available_12
-                            (HC.Client_Seq_12));
                        Send_Encrypted_Finished_Error_12
                          (S, HC, 10, Unexpected_Message, Result);
             else
@@ -3048,8 +2863,6 @@ is
                               | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                                       | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                                       | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                                      and then Records.TLS12.Nonce_Space_Available_12
-                                                        (HC.Client_Seq_12)
                               and then
                                 (if Msg_Type = HT_Server_Hello_Done
                                  then Result /= OK)
@@ -3088,9 +2901,6 @@ is
                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                and then
-                  Records.TLS12.Nonce_Space_Available_12
-                    (HC.Client_Seq_12)
                 and then
                   (if HC.Cfg.Local /= null
                        and then HC.Cfg.Local.Has_Identity
@@ -3167,8 +2977,6 @@ is
                                      | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                                      | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                                      | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                and then Records.TLS12.Nonce_Space_Available_12
-                                  (HC.Client_Seq_12)
                         and then
                           (if HC.Cfg.Local /= null
                                and then HC.Cfg.Local.Has_Identity
@@ -3182,9 +2990,6 @@ is
                 and then HC.Cfg.Local.Has_Identity
             then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                    (HC.Cfg.Local));
-         pragma Assert
-           (Records.TLS12.Nonce_Space_Available_12
-              (HC.Client_Seq_12));
 
          declare
             --  Message_Length >= 4 by its postcondition, so Msg_Len below
@@ -3272,11 +3077,7 @@ is
                                 | Suite_ECDHE_RSA_CHACHA20_SHA256
                                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                and then
-                                          (if HC.CKE_Received_12
-                                           then Records.TLS12.Nonce_Space_Available_12
-                                                  (HC.Client_Seq_12)),
+                                | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
                               Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
                     and then
                       (if SPARKTLS.Handshake.Server_Msgs
@@ -3288,10 +3089,6 @@ is
                              Result = OK
                              and then Rec.OK
                              and then Rec.Content = Records.Content_Handshake
-                             and then
-                               (if HC.CKE_Received_12
-                                then Records.TLS12.Nonce_Space_Available_12
-                                       (HC.Client_Seq_12))
                              and then Rec.Fragment_Pos <=
                                N32'Last - Rec.Fragment_Len
                      and then Rec.Record_Len =
@@ -3313,13 +3110,7 @@ is
                                              | Suite_ECDHE_RSA_CHACHA20_SHA256
                                      | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                                      | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                     and then
-                                       (if HC.CKE_Received_12
-                                        then Records.TLS12.Nonce_Space_Available_12
-                                               (HC.Client_Seq_12))
-                       and then HC.Client_Seq_12 =
-                         HC.Client_Seq_12'Old);
+                                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
 
    procedure Read_Server_Flight_Record
      (S           : in out Session;
@@ -3468,11 +3259,7 @@ is
                              | Suite_ECDHE_RSA_CHACHA20_SHA256
                                              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                             | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                             and then
-                                               (if HC.CKE_Received_12
-                                                then Records.TLS12.Nonce_Space_Available_12
-                                                       (HC.Client_Seq_12)),
+                                             | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
                                         Post => (if Ready then
                              Result = OK
                         and then S.State not in Idle | Closing | Closed | Error_State
@@ -3490,8 +3277,6 @@ is
                                                              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                                                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                                                              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                                             and then HC.Client_Seq_12 =
-                                                               HC.Client_Seq_12'Old
                                                              and then
                                                        (if HC.Cfg.Local /= null
                                                     and then HC.Cfg.Local.Has_Identity
@@ -3568,7 +3353,6 @@ is
                                 and then HC.Transcript_Len <= Transcript_Capacity
                 and then
                   (if not Failed then not Message_Too_Large (HC.Reasm))
-                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old
                 and then HC.CKE_Received_12 = HC.CKE_Received_12'Old;
 
    procedure Decode_Pending_Reassembly_Header
@@ -3615,11 +3399,7 @@ is
                              | Suite_ECDHE_RSA_CHACHA20_SHA256
                              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                             | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                             and then
-                               (if HC.CKE_Received_12
-                                then Records.TLS12.Nonce_Space_Available_12
-                                       (HC.Client_Seq_12)),
+                             | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
         Post => (if Ready then
                      Result = OK
                      and then S.State not in Idle | Closing | Closed | Error_State
@@ -3636,9 +3416,7 @@ is
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                        and then HC.Client_Seq_12 =
-                          HC.Client_Seq_12'Old);
+                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
 
    procedure Continue_Server_Flight_Reassembly
      (S        : in out Session;
@@ -3734,11 +3512,7 @@ is
                         | Suite_ECDHE_RSA_CHACHA20_SHA256
                         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                   and then
-                     (if HC.CKE_Received_12 then
-                        Records.TLS12.Nonce_Space_Available_12
-                          (HC.Client_Seq_12)),
+                        | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
         Post => (if Ready then
                      Result = OK
                      and then S.State not in Idle | Closing | Closed | Error_State
@@ -3762,9 +3536,7 @@ is
                              | Suite_ECDHE_RSA_CHACHA20_SHA256
                              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                             and then HC.Client_Seq_12 =
-                               HC.Client_Seq_12'Old);
+                             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384);
 
    procedure Start_Fresh_Pending_Header_Reassembly
      (S        : in out Session;
@@ -3813,8 +3585,7 @@ is
                              | Suite_ECDHE_RSA_CHACHA20_SHA256
                              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                             | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                             | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
 
    procedure Start_Fresh_Pending_Header_Reassembly
      (S        : in out Session;
@@ -3881,8 +3652,7 @@ is
                              | Suite_ECDHE_RSA_CHACHA20_SHA256
                              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                             | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                             | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
 
    procedure Start_Fresh_Spanning_Reassembly
      (S        : in out Session;
@@ -3952,8 +3722,7 @@ is
                 | Suite_ECDHE_RSA_CHACHA20_SHA256
                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                and then HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
 
    procedure Start_Fresh_Complete_Message
      (S        : in out Session;
@@ -4104,10 +3873,6 @@ is
                                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                                 and then
-                                  (if HC.CKE_Received_12
-                                   then Records.TLS12.Nonce_Space_Available_12
-                                          (HC.Client_Seq_12))
-                                and then
                                   (if HC.Cfg.Local /= null
                                        and then HC.Cfg.Local.Has_Identity
                                    then SPARKTLS.Handshake.Server_Msgs
@@ -4129,11 +3894,6 @@ is
                              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                     and then
-                       (if Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12'Old)
-                        then Records.TLS12.Nonce_Space_Available_12
-                               (HC.Client_Seq_12))
                      and then
                        (if HC.Cfg.Local /= null
                             and then HC.Cfg.Local.Has_Identity
@@ -4262,9 +4022,6 @@ is
                          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                          | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
-                      pragma Assert
-                        (Records.TLS12.Nonce_Space_Available_12
-                           (HC.Client_Seq_12));
 
                       Drain_Packed_Server_Flight
         (S        => S,
@@ -4294,8 +4051,6 @@ is
                         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                and then Records.TLS12.Nonce_Space_Available_12
-                                  (HC.Client_Seq_12)
                                 and then
                                   (if HC.Cfg.Local /= null
                                        and then HC.Cfg.Local.Has_Identity
@@ -4310,14 +4065,7 @@ is
          Result  : out Action)
       with Pre  => S.State not in
                      Idle | Closing | Closed | Error_State
-                                   and then Msg_Len <= Max_HS_Msg - 4
-                           and then Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12),
-                           Post => (if Result = OK
-                              and then Records.TLS12.Nonce_Space_Available_12
-                                             (HC.Client_Seq_12'Old)
-                                      then Records.TLS12.Nonce_Space_Available_12
-                                             (HC.Client_Seq_12));
+                                   and then Msg_Len <= Max_HS_Msg - 4;
 
       procedure Consume_Reassembled_NST
         (Msg_Len : in N32;
@@ -4530,7 +4278,6 @@ is
               Err       : in     Error_Code;
               Result    :    out Action)
            is
-              Saved_Seq : constant Record_Counter := HC.Client_Seq_12;
       Dummy     : N32;
    begin
       Records.TLS12.Build_Alert_Record_12
@@ -4538,12 +4285,10 @@ is
          Desc        => Desc_Code,
          Keys        => S.Client_App,
          Implicit_IV => HC.Client_Write_IV_12,
-         Seq_Num     => HC.Client_Seq_12,
          Output      => S.Output,
          Bytes_Out   => Dummy);
-      if Dummy = 0 then
-         HC.Client_Seq_12 := Saved_Seq;
-      end if;
+      --  No rewind on Dummy = 0: this path sets Error_State below
+      --  unconditionally, so the advanced counter is never used again.
 
       Reset (HC.Reasm);
       S.Last_Error := Err;
@@ -4562,8 +4307,7 @@ is
                 and then PL - 1 <= Plaintext'Last
                 and then P_Pos <= PL,
         Post => P_Pos >= P_Pos'Old
-                and P_Pos <= PL
-                and HC.Client_Seq_12 = HC.Client_Seq_12'Old;
+                and P_Pos <= PL;
 
    procedure Copy_Finished_Reasm_Bytes_12
      (HC        : in out Handshake_Context;
@@ -4594,18 +4338,11 @@ is
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
                 and then Plaintext'First = 0
                 and then PL > 0
-                and then PL - 1 <= Plaintext'Last
-                and then Records.TLS12.Nonce_Space_Available_12
-                      (HC.Client_Seq_12),
+                and then PL - 1 <= Plaintext'Last,
         Post => True
                 and then
                   (if Result = OK then
                      S.State = S.State'Old
-                     and then
-                       (if Records.TLS12.Nonce_Space_Available_12
-                             (HC.Client_Seq_12'Old)
-                        then Records.TLS12.Nonce_Space_Available_12
-                               (HC.Client_Seq_12))
                      and then
                        (if Complete then Has_Message (HC.Reasm)));
 
@@ -4660,15 +4397,13 @@ is
    --  encrypted Finished. In the resumed flow the CLIENT sends these
    --  AFTER the server's Finished (inverse of the full handshake order
    --  where they were already sent). Atomic flight assembly: build
-   --  into Scratch first, roll back HC.Client_Seq_12 on commit fail.
+   --  into Scratch first; commit-fail paths are fatal (no rollback).
    procedure Send_Abbreviated_Client_Flight_12
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
    with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and HC.Transcript_Len > 0
-                and Records.TLS12.Nonce_Space_Available_12
-                      (HC.Client_Seq_12),
+                and HC.Transcript_Len > 0,
         Post => True
                 and (if Result = OK then
                        S.State = S.State'Old
@@ -4692,7 +4427,6 @@ is
       TH         : Digest;
       TH4        : SPARKNaCl.Hashing.SHA384.Digest;
       EO         : N32;
-      Saved_Seq  : Record_Counter;
    begin
       Result := OK;
       Records.Build_CCS_Record (Scratch, CCS_Out);
@@ -4712,18 +4446,17 @@ is
                             Label_Client_Finished,
                             Byte_Seq (TH), False, FB, FL);
       end if;
-      Saved_Seq := HC.Client_Seq_12;
       Build_Encrypted_Record_12
         (FB (0 .. FL - 1), 16#16#, S.Client_App,
-         HC.Client_Write_IV_12, HC.Client_Seq_12,
+         HC.Client_Write_IV_12,
          Scratch, EO);
+      --  Both failure paths below are fatal (Error_State): no counter
+      --  rewind, the burned nonce stays burned.
       if EO = 0 then
-         HC.Client_Seq_12 := Saved_Seq;
          Send_Alert_And_Error (S, Insufficient_Buffer, Result);
          return;
       end if;
       if Free_Space (S.Output) < Scratch.Write_Pos then
-         HC.Client_Seq_12 := Saved_Seq;
          Send_Alert_And_Error (S, Insufficient_Buffer, Result);
          return;
       end if;
@@ -4737,11 +4470,7 @@ is
    procedure Process_Server_Finished
      (S : in out Session; HC : in out Handshake_Context; Result : out Action)
    with Pre  => S.State in Wait_Server_Finished | Client_Finished_Sent
-                and then HC.Transcript_Len > 0
-                and then Records.TLS12.Nonce_Space_Available_12
-                      (HC.Client_Seq_12)
-                and then Records.TLS12.Nonce_Space_Available_12
-                      (HC.Server_Seq_12),
+                and then HC.Transcript_Len > 0,
         Post => True
                 and (if Result = OK then
                        S.State not in Idle | Closing | Closed | Error_State);
@@ -4813,7 +4542,7 @@ is
          end;
 
          Decrypt_Record_12 (Encrypted, Hdr, S.Server_App,
-                            HC.Server_Write_IV_12, HC.Server_Seq_12,
+                            HC.Server_Write_IV_12,
                             Plaintext, PL, DV);
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
@@ -4942,8 +4671,8 @@ is
       S.Negotiated_Version := TLS_1_2;
       S.Client_IV_12 := HC.Client_Write_IV_12;
       S.Server_IV_12 := HC.Server_Write_IV_12;
-      S.Client_Seq_12 := HC.Client_Seq_12;
-      S.Server_Seq_12 := HC.Server_Seq_12;
+      --  Sequence counters no longer mirrored: they live inside
+      --  S.Client_App / S.Server_App, which are already Session state.
 
       Set_State (S, Connected);
       S.Handshake_Just_Done := True;
@@ -5072,19 +4801,13 @@ is
 
             --  RFC 5246 §6.1: "If a TLS implementation would need to
             --  wrap a sequence number, it must renegotiate instead."
-            --  AEAD nonce uniqueness in GCM depends on the sequence
-            --  number never wrapping; reuse would catastrophically
-            --  leak the AEAD key. We don't support renegotiation, so
-            --  abort the connection. Decrypt_Record_12's Pre also
-            --  requires Seq_Num < Unsigned_64'Last so increment is
-            --  safe. 2^64 records is practically unreachable.
-            if S.Server_Seq_12 = Unsigned_64'Last then
-               Send_Encrypted_Alert_Connected_12 (S, Internal_Error, Result);
-               return;
-            end if;
-
+            --  We don't support renegotiation. Counter exhaustion now
+            --  fails closed INSIDE Decrypt_Record_12 (Valid = False ->
+            --  fatal alert below); the old pre-guard here tested
+            --  = Unsigned_64'Last, which Record_Counter cannot even
+            --  reach -- the #46 dead guard, deleted with the port.
             Decrypt_Record_12 (Encrypted, Hdr, S.Server_App,
-                               S.Server_IV_12, S.Server_Seq_12,
+                               S.Server_IV_12,
                                Plaintext, PL, DV);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
