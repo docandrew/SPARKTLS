@@ -4785,6 +4785,7 @@ is
    with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Server_App)
                and then Plaintext'First = 0
+               and then Plaintext'Last < IO_Buffer_Capacity
                and then Plain_Len <= N32 (Plaintext'Length);
 
    procedure Process_Post_HS_Handshake_Bytes

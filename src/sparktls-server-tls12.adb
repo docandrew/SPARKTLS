@@ -1839,18 +1839,13 @@ is
                   Send_Alert_And_Error (S, Chain_Err, Result);
                   return;
                end if;
-                  pragma Assert
-                          (if HC.Peer_Leaf.Present
-                             then True
-                                  and then X509.Spans_Valid
-                                            (HC.Peer_Leaf.Cert,
-                                             HC.Peer_Leaf.DER_Len - 1));
                             end;
 
             Append_Transcript (HC, Frag);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             if HC.Peer_Leaf.Present then
                --  Bounds + Spans_Valid ride Pool_Entry's predicate.
+               pragma Assert (HC.Peer_Leaf.Present);
                Set_State (S, Wait_Client_Cert_Verify);
             elsif HC.Peer_Leaf.DER_Len > 0 then
                Send_Alert_And_Error (S, Decode_Error, Result);
@@ -2011,8 +2006,7 @@ is
 
                VR := Validate_Leaf_Policy
                  (Leaf     => HC.Peer_Leaf.Cert,
-                  Leaf_DER => Cert_X
-                    (0 .. HC.Peer_Leaf.DER_Len - 1),
+                  Leaf_DER => Cert_X,
                   Hostname => "",
                   Purpose  => Purpose_Client,
                   Mode     => HC.Cfg.Verify_Mode);
@@ -2030,9 +2024,7 @@ is
                   end if;
 
                   VR := Validate_Chain
-                    (Leaf_DER   =>
-                       Cert_X
-                         (0 .. HC.Peer_Leaf.DER_Len - 1),
+                    (Leaf_DER   => Cert_X,
                      Leaf       => HC.Peer_Leaf.Cert,
                      Ints       => HC.Peer_Ints,
                      Int_Count  => HC.Peer_Int_Count,

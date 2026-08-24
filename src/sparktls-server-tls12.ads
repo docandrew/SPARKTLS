@@ -106,10 +106,7 @@ is
       Result :    out Action)
    with Post =>
                   (if S.State = Wait_Client_Cert_Verify
-                   then HC.Peer_Leaf.Present
-                        and then X509.Spans_Valid
-                          (HC.Peer_Leaf.Cert,
-                           HC.Peer_Leaf.DER_Len - 1));
+                   then HC.Peer_Leaf.Present);
 
    --  Process TLS 1.2 CertificateVerify from a client-authenticated peer.
    procedure Process_Client_CertVerify_12
