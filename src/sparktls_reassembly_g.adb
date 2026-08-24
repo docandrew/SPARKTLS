@@ -1,4 +1,4 @@
-package body SPARKTLS_Reassembly with SPARK_Mode => On is
+package body SPARKTLS_Reassembly_G with SPARK_Mode => On is
 
    function Used (B : Buffer) return HS_Msg_Len is (B.Filled);
 
@@ -76,4 +76,4 @@ package body SPARKTLS_Reassembly with SPARK_Mode => On is
       B.Filled := Left;
    end Consume;
 
-end SPARKTLS_Reassembly;
+end SPARKTLS_Reassembly_G;

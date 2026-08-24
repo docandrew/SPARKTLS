@@ -121,7 +121,7 @@ is
    --  Persist a resumption PSK and return the identity to put on the wire.
    procedure Store_Session
      (PSK     : Bytes_48;
-      PSK_Len : N32;
+      PSK_Len : PSK_Length;
       Suite   : Unsigned_16;
       Age_Add : Unsigned_32;
       ID_Out  : out Ticket_ID)

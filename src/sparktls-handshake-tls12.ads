@@ -327,12 +327,9 @@ is
       OK   :    out Boolean)
       with Pre  => Data'First = 0
                    and then Data'Last in 3 .. Max_Client_Key_Exchange - 1
-                           and then Valid_ECDHE_Group (HC.Selected_Group)
-                           and then True,
+                           and then Valid_ECDHE_Group (HC.Selected_Group),
            Post => HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
-                           and then (if Valid_ECDHE_Group (HC.Selected_Group'Old)
-                   then Valid_ECDHE_Group (HC.Selected_Group))
                 and then
                   (if HC.Cfg.Local'Old /= null
                      and then HC.Cfg.Local'Old.Has_Identity
@@ -446,8 +443,7 @@ is
                                    (HC.Cfg.Local)
                 and then HC.Cfg.Random /= null
                         and then HC.Version = TLS_1_2
-                                                and then HC.Legacy_Session_ID_Len <= 32
-                                                and then True,
+                                                and then HC.Legacy_Session_ID_Len <= 32,
         --  Frame postcondition: ServerHello construction does not
         --  touch State (S), the configuration pointer/identity, or the
         --  Random callback. Callers (Build_Server_Flight_12) need

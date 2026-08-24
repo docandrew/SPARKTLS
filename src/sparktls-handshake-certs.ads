@@ -79,19 +79,19 @@ is
    --  DER bytes are then passed to X509.Parse — the wire-parsing and
    --  cert-content-parsing layers stay distinct.
    --
-   --  On success: HC.Peer_Cert holds the leaf cert (if parseable),
-   --  HC.Peer_Cert_DER + HC.Peer_Cert_DER_Len hold its DER bytes,
+   --  On success: HC.Peer_Leaf.Cert holds the leaf cert (if parseable),
+   --  HC.Peer_Leaf.DER + HC.Peer_Leaf.DER_Len hold its DER bytes,
    --  HC.Peer_Ints (0 .. HC.Peer_Int_Count - 1) hold parseable
-   --  intermediates, HC.Peer_Cert_Valid reflects whether the leaf
+   --  intermediates, HC.Peer_Leaf.Present reflects whether the leaf
    --  parsed AND `X509.Is_Valid` is true. OK := True.
    --
    --  On any wire-format error (malformed RFLX message, length-field
-   --  mismatch): OK := False. HC.Peer_Cert_Valid := False.
+   --  mismatch): OK := False. HC.Peer_Leaf.Present := False.
    --
    --  Per-cert X509.Parse failures and intermediate-pool-overflow
    --  do NOT set OK := False — that matches the prior hand-rolled
    --  behavior (let the caller decide what to do with an unparseable
-   --  leaf based on HC.Peer_Cert_Valid + chain-validation policy).
+   --  leaf based on HC.Peer_Leaf.Present + chain-validation policy).
    --  Reject_Cert_Extensions: TLS 1.3 §4.4.2 / BoGo
    --  SendUnknownExtensionOnCertificate-TLS13. Set True on the client
    --  side: the server MAY echo only per-cert extensions the client
@@ -132,18 +132,12 @@ is
                            and then SPARKTLS.Handshake.Server_Msgs
                              .Local_Config_Valid (HC.Cfg.Local))
                         and then (if HC.Cfg.Random'Old /= null
-                                  then HC.Cfg.Random /= null)
-                                and then
-                                  (if HC.Peer_Cert_Valid
-                           then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                                and then X509.Spans_Valid
-                                  (HC.Peer_Cert,
-                                   X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                                  then HC.Cfg.Random /= null);
 
    --  RFC 5246 §7.4.2 TLS 1.2 Certificate parser. Takes the complete
    --  handshake message bytes (4-byte header + cert_list_len(3) +
    --  entries). On wire-format errors, OK := False and Err := Decode_Error.
-   --  X.509 parse failures leave OK = True but HC.Peer_Cert_Valid = False,
+   --  X.509 parse failures leave OK = True but HC.Peer_Leaf.Present = False,
    --  matching the TLS 1.3 parser's split between wire syntax and cert
    --  semantic validity.
    procedure Parse_Certificate_Chain_12
@@ -170,12 +164,6 @@ is
                            and then SPARKTLS.Handshake.Server_Msgs
                              .Local_Config_Valid (HC.Cfg.Local))
                         and then (if HC.Cfg.Random'Old /= null
-                                  then HC.Cfg.Random /= null)
-                and then
-                  (if HC.Peer_Cert_Valid
-                   then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                        and then X509.Spans_Valid
-                          (HC.Peer_Cert,
-                           X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                                  then HC.Cfg.Random /= null);
 
 end SPARKTLS.Handshake.Certs;

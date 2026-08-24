@@ -32,13 +32,6 @@ is
      (Local in Valid_Identity_Access)
    with Ghost;
 
-   function Local_Config_Frame
-     (Old_Local : Identity_Access;
-      New_Local : Identity_Access) return Boolean is
-     ((Old_Local = null or else Old_Local /= null)
-      and then Local_Config_Valid (New_Local))
-   with Ghost;
-
    --  Parse a ClientHello from raw handshake message bytes.
    --  Extracts: client_random, legacy_session_id, cipher suites offered,
    --  key share (client public key).
@@ -111,8 +104,7 @@ is
                                    and then (if HC.Cfg.Local'Old /= null
                                                  and then HC.Cfg.Local'Old.Has_Identity
                                              then HC.Cfg.Local /= null
-                                                  and then HC.Cfg.Local.Has_Identity)
-                                                   and then True;
+                                                  and then HC.Cfg.Local.Has_Identity);
 
    function Has_ALPN_Match (HC : Handshake_Context) return Boolean;
 

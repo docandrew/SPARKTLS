@@ -87,21 +87,10 @@ is
       Result : out Action)
    with Pre  => S.State not in Idle | Closed | Closing | Error_State
                 and then Alert_Desc (Err) /= 0
-                and then Alert_Desc (Err) /= 90
-                and then HC.Cfg.Local /= null
-                and then HC.Cfg.Local.Has_Identity
-                and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                      (HC.Cfg.Local)
-                and then HC.Cfg.Random /= null,
+                and then Alert_Desc (Err) /= 90,
         Post => S.State = Error_State
                 and S.Role = S.Role'Old
-                and S.Last_Error = Err
-                and HC.Cfg.Local /= null
-                and HC.Cfg.Local.Has_Identity
-                and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                      (HC.Cfg.Local)
-                and HC.Cfg.Random /= null
-                and True;
+                and S.Last_Error = Err;
                 --  Error_Has_Alert is NOT in this Post — see
                 --  matching note on Send_Encrypted_Alert in
                 --  sparktls-server.adb. Call sites bridge to
@@ -162,37 +151,11 @@ is
    --  so we restate the specific properties on exit (matching the
    --  Pre bound) rather than HC.Cfg.Local = HC.Cfg.Local'Old.
    with Pre  => Data'Length > 0
-                and then Data'Length <= HC.Transcript'Length
-                        and then HC.Cfg.Local /= null
-                        and then HC.Cfg.Local.Has_Identity
-                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                   (HC.Cfg.Local)
-                                                   and then HC.Cfg.Random /= null
-                                                           and then True,
+                and then Data'Length <= HC.Transcript'Length,
                            Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
-                           and then HC.Cfg.Local /= null
-                           and then HC.Cfg.Local.Has_Identity
-                           and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                      (HC.Cfg.Local)
-                           and then HC.Cfg.Random /= null
                    and then HC.Version = HC.Version'Old
                    and then HC.Selected_Group = HC.Selected_Group'Old
-                   and then HC.Peer_Cert = HC.Peer_Cert'Old
-                   and then HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
-                           and then HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
-                                                   and then
-                                                     (if HC.Peer_Cert_Valid'Old
-                         and then HC.Peer_Cert_DER_Len'Old
-                           in 1 .. Max_Cert_DER_Len
-                         and then X509.Spans_Valid
-                           (HC.Peer_Cert'Old,
-                            X509.N32 (HC.Peer_Cert_DER_Len'Old) - 1)
-                      then HC.Peer_Cert_Valid
-                           and then HC.Peer_Cert_DER_Len
-                             in 1 .. Max_Cert_DER_Len
-                           and then X509.Spans_Valid
-                             (HC.Peer_Cert,
-                              X509.N32 (HC.Peer_Cert_DER_Len) - 1))
+                   and then HC.Peer_Leaf = HC.Peer_Leaf'Old
                    --  RFC 5246 §7.4.9 transcript-monotonicity invariant:
                 --  the handshake transcript is the basis for Finished
                 --  verify_data. Once a byte enters the transcript it
@@ -218,22 +181,7 @@ is
    procedure Set_Server_Random_12
      (HC     : in out Handshake_Context;
               Random : in     Bytes_32)
-                           with Pre  => True,
-                Post => HC.Version = HC.Version'Old
-                        and then (if HC.Cfg.Local'Old /= null
-                                  then HC.Cfg.Local /= null)
-                                and then (if HC.Cfg.Local'Old /= null
-                                              and then HC.Cfg.Local'Old.Has_Identity
-                           then HC.Cfg.Local /= null
-                                               and then HC.Cfg.Local.Has_Identity)
-                                and then
-                                  (if SPARKTLS.Handshake.Server_Msgs
-                                        .Local_Config_Valid (HC.Cfg.Local'Old)
-                                   then SPARKTLS.Handshake.Server_Msgs
-                                          .Local_Config_Valid (HC.Cfg.Local))
-                                                and then (if HC.Cfg.Random'Old /= null
-                                                          then HC.Cfg.Random /= null)
-                                                and then True;
+                           with Post => HC.Version = HC.Version'Old;
 
    procedure Set_Server_Random_12
      (HC     : in out Handshake_Context;
@@ -247,25 +195,17 @@ is
    --  Forward decl: full handshake state machine entry that the resume
    --  attempt may fall through to.
    procedure Build_Server_Flight_12_Full
-     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
+     (S      : in out Server_Session;
+      HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
+      Result :    out Action)
    with Pre  => HC.Version = TLS_1_2
-                        and then HC.Cfg.Local /= null
-                        and then HC.Cfg.Local.Has_Identity
-                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                   (HC.Cfg.Local)
-                        and then HC.Cfg.Random /= null
                                         and then S.State = Wait_Client_Hello
                                         and then S.Role = Role_Server,
                 --  No Role conjunct: S is Server_Session, so
                 --  S.Role = Role_Server is the discriminant -- stating it
                 --  would be a tautology carried in every VC of this body.
                 Post => HC.Version = TLS_1_2
-                        and then HC.Cfg.Local /= null
-                                        and then HC.Cfg.Local.Has_Identity
-                                        and then
-                                                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                                    (HC.Cfg.Local)
-                                                and then HC.Cfg.Random /= null
                                                         and then
                                                                   (if S.State = Server_Hello_Sent
                                                                    then True);
@@ -277,13 +217,9 @@ is
    --  then transitions to Wait_Client_Finished to receive the
    --  client's CCS + Finished.
    procedure Build_Abbreviated_Server_Flight_12
-     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Server_Session; HC : in out Handshake_Context;
+      Cfg : in Ready_Config; Result : out Action)
    with Pre  => HC.Version = TLS_1_2
-                        and then HC.Cfg.Local /= null
-                        and then HC.Cfg.Local.Has_Identity
-                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                   (HC.Cfg.Local)
-                        and then HC.Cfg.Random /= null
                 and then HC.Cfg.Get_Active_TEK /= null
                         and then HC.Cfg.Get_TEK_By_Id /= null
                         and then S.State = Wait_Client_Hello
@@ -294,19 +230,15 @@ is
                           | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                                   | Suite_ECDHE_RSA_CHACHA20_SHA256
-                                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                and then True,
+                                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
                 Post => S.State in Wait_Client_Finished | Error_State
-                        and then HC.Version = TLS_1_2
-                        and then HC.Cfg.Local /= null
-                                        and then HC.Cfg.Local.Has_Identity
-                                        and then
-                                                  SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                                    (HC.Cfg.Local)
-                                                        and then HC.Cfg.Random /= null;
+                        and then HC.Version = TLS_1_2;
 
    procedure Build_Server_Flight_12
-     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
+     (S      : in out Server_Session;
+      HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
+      Result :    out Action)
    is
    begin
       --  TEK rotation is NOT performed here. The library no longer holds
@@ -390,19 +322,22 @@ is
                HC.Master_Secret_12 := Plain.Master_Secret;
                S.Negotiated_Suite := Plain.Suite;
                HC.TLS12_Resuming := True;
-               Build_Abbreviated_Server_Flight_12 (S, HC, Result);
+               Build_Abbreviated_Server_Flight_12 (S, HC, Cfg, Result);
                return;
             end if;
          end;
       end if;
 
-      Build_Server_Flight_12_Full (S, HC, Result);
+      Build_Server_Flight_12_Full (S, HC, Cfg, Result);
    end Build_Server_Flight_12;
 
    procedure Build_Server_Flight_12_Full
-     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
+     (S      : in out Server_Session;
+      HC     : in out Handshake_Context;
+      Cfg    : in     Ready_Config;
+      Result :    out Action)
    is
-      Gen_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
+      Gen_Random : constant Random_Bytes_Fn := Cfg.Random;
       Rec_Out    : N32;
       --  Atomic flight assembly: build every record into a scratch buffer
       --  first. We commit to S.Output only when the entire flight has
@@ -450,7 +385,7 @@ is
 
          function Compatible_Local_Sig (Scheme : Unsigned_16) return Boolean is
          begin
-            case HC.Cfg.Local.Sign_Algo is
+            case Cfg.Local.Sign_Algo is
                when Sign_RSA_PSS =>
                   return Scheme in 16#0804# | 16#0805# | 16#0806#
                                  | 16#0401# | 16#0501# | 16#0601#;
@@ -480,7 +415,7 @@ is
             --  cert's algorithm. TLS-Anvil's
             --  ecdsaNoSignatureAlgorithmsExtension test (5246-MjFVuYUzfF)
             --  exercises this path.
-            case HC.Cfg.Local.Sign_Algo is
+            case Cfg.Local.Sign_Algo is
                when Sign_RSA_PSS    => Negotiated := 16#0804#;  -- PSS-SHA256
                when Sign_ECDSA_P256 =>
                   if not Client_Sent_Recognized_Group
@@ -506,20 +441,20 @@ is
               (Negotiated = 0
                  or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1
                           (Negotiated));
-         elsif HC.Cfg.Sign_Sig_Algo_Count > 0 then
+         elsif Cfg.Sign_Sig_Algo_Count > 0 then
             for J in Sig_Algo_Index loop
                pragma Loop_Invariant
                  (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
                     (Negotiated, HC.Peer_Sig_Algos,
                      HC.Peer_Sig_Algo_Count));
-               exit when J >= HC.Cfg.Sign_Sig_Algo_Count;
-               if Compatible_Local_Sig (HC.Cfg.Sign_Sig_Algos (J))
+               exit when J >= Cfg.Sign_Sig_Algo_Count;
+               if Compatible_Local_Sig (Cfg.Sign_Sig_Algos (J))
                  and then Sig_Scheme_In_List
-                            (HC.Cfg.Sign_Sig_Algos (J),
+                            (Cfg.Sign_Sig_Algos (J),
                              HC.Peer_Sig_Algos,
                              HC.Peer_Sig_Algo_Count)
                then
-                  Negotiated := HC.Cfg.Sign_Sig_Algos (J);
+                  Negotiated := Cfg.Sign_Sig_Algos (J);
                   exit;
                end if;
             end loop;
@@ -536,7 +471,7 @@ is
                declare
                   Scheme : constant Unsigned_16 := HC.Peer_Sig_Algos (I);
                begin
-                  case HC.Cfg.Local.Sign_Algo is
+                  case Cfg.Local.Sign_Algo is
                      when Sign_RSA_PSS =>
                         --  An RSA key can sign with either PSS or
                         --  PKCS#1 v1.5 padding. RFC 5246 §7.4.1.4.1 +
@@ -606,7 +541,7 @@ is
          when others => null;
       end case;
 
-      if HC.Cfg.Require_ALPN
+      if Cfg.Require_ALPN
         and then not Has_ALPN_Match_12 (HC)
       then
          Send_Alert_And_Error (S, No_Application_Protocol, Result);
@@ -614,6 +549,16 @@ is
       end if;
 
       --  1. ServerHello
+      --  Re-establish HC.Cfg facts locally: Build_Server_Hello_12's Pre
+      --  names HC.Cfg (Handshake.TLS12 cannot see Server's Ready_Config),
+      --  and the prover cannot link the Cfg copy back to HC.Cfg. Three
+      --  null checks, semantically unreachable, fail closed.
+      if HC.Cfg not in Ready_Config then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
       declare
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1); Hello_Len : N32;
       begin
@@ -636,7 +581,7 @@ is
          Cert_Buf : Byte_Seq (0 .. Max_Record_Plaintext - 1);
          Cert_Len : N32;
       begin
-         Build_Certificate_Chain_12 (HC.Cfg.Local.all, Cert_Buf, Cert_Len);
+         Build_Certificate_Chain_12 (Cfg.Local.all, Cert_Buf, Cert_Len);
          if Cert_Len > 0 then
             Append_Transcript (HC, Cert_Buf (0 .. Cert_Len - 1));
             Records.Build_Handshake_Record
@@ -654,7 +599,7 @@ is
       begin
          pragma Assert (Valid_ECDHE_Group (HC.Selected_Group));
          Build_Server_Key_Exchange
-           (HC, HC.Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
+           (HC, Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
          if SKE_Len > 0 then
             Append_Transcript (HC, SKE_Buf (0 .. SKE_Len - 1));
             Records.Build_Handshake_Record
@@ -667,7 +612,7 @@ is
       end;
 
       --  4. CertificateRequest (optional client auth)
-      if HC.Cfg.Request_Client_Cert then
+      if Cfg.Request_Client_Cert then
          declare
             Cert_Type_RSA_Sign   : constant Byte := 16#01#;
             Cert_Type_ECDSA_Sign : constant Byte := 16#40#;
@@ -772,13 +717,8 @@ is
    --  the back half of Derive_Keys_12 (the Expand_Keys + S.Server_App
    --  assignments) without the master-secret PRF step.
    procedure Derive_Keys_Resumed_12
-     (S : in out Session; HC : in out Handshake_Context)
+     (S : in out Session; HC : in out Handshake_Context; Cfg : in Ready_Config)
            with Pre  => HC.Version = TLS_1_2
-                           and then HC.Cfg.Local /= null
-                                   and then HC.Cfg.Local.Has_Identity
-                                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                              (HC.Cfg.Local)
-                           and then HC.Cfg.Random /= null
                    and then S.Negotiated_Suite in
                           Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -787,11 +727,6 @@ is
                   | Suite_ECDHE_RSA_CHACHA20_SHA256
                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
                 Post => HC.Version = TLS_1_2
-                                   and then HC.Cfg.Local /= null
-                                   and then HC.Cfg.Local.Has_Identity
-                                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                                              (HC.Cfg.Local)
-                   and then HC.Cfg.Random /= null
                    and then S.State = S.State'Old
                 and then S.Role = S.Role'Old
                 and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -849,11 +784,12 @@ is
    --  HC.Master_Secret_12 + forced S.Negotiated_Suite from the ticket.
    ------------------------------------------------------------------
    procedure Build_Abbreviated_Server_Flight_12
-     (S : in out Server_Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Server_Session; HC : in out Handshake_Context;
+      Cfg : in Ready_Config; Result : out Action)
    is
       use Key_Schedule_12;
       use type SPARKTLS.Tickets_12.Bytes_4;
-      Gen_Random : constant Random_Bytes_Fn := HC.Cfg.Random;
+      Gen_Random : constant Random_Bytes_Fn := Cfg.Random;
       Rec_Out    : N32;
       Scratch    : IO_Buffer;
          Saved_Seq  : Record_Counter;
@@ -870,10 +806,10 @@ is
          --  Get_Time /= null for the same reason as the full flight: an
          --  unexpirable ticket is worse than no ticket. Have_TEK stays
          --  False, which the NST path already reads as "issue nothing".
-         if HC.Cfg.Get_Active_TEK /= null
-           and then HC.Cfg.Get_Time /= null
+         if Cfg.Get_Active_TEK /= null
+           and then Cfg.Get_Time /= null
          then
-            HC.Cfg.Get_Active_TEK.all (Active_Key_ID, Active_TEK, Have_TEK);
+            Cfg.Get_Active_TEK.all (Active_Key_ID, Active_TEK, Have_TEK);
          end if;
       --  Mirror the full-flight setup that Build_Server_Flight_12_Full
       --  did before we diverted. We don't pick a group (no ECDHE), we
@@ -890,7 +826,7 @@ is
                  Set_Server_Random_12 (HC, Server_Random);
               end;
 
-      if HC.Cfg.Require_ALPN
+      if Cfg.Require_ALPN
         and then not Has_ALPN_Match_12 (HC)
       then
          Send_Alert_And_Error (S, No_Application_Protocol, Result);
@@ -903,6 +839,12 @@ is
          Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1);
          Hello_Len : N32;
       begin
+         if HC.Cfg not in Ready_Config then
+            S.Last_Error := Internal_Error;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
                                  Build_Server_Hello_12 (S, HC, Hello_Buf, Hello_Len);
                          if Hello_Len = 0 then
             Send_Alert_And_Error (S, Internal_Error, Result); return;
@@ -918,7 +860,7 @@ is
 
       --  2. Derive AEAD keys (no master-secret PRF — restored from
       --     ticket; just expand to traffic keys + IVs).
-      Derive_Keys_Resumed_12 (S, HC);
+      Derive_Keys_Resumed_12 (S, HC, Cfg);
 
          --  3. NewSessionTicket (re-issued under our active TEK with a
          --     fresh nonce). RFC 5077 §3.3: the server MUST send NST in
@@ -936,9 +878,9 @@ is
          Plain.Master_Secret := HC.Master_Secret_12;
          Plain.Suite         := S.Negotiated_Suite;
          Plain.Created_At    :=
-           (if HC.Cfg.Get_Time /= null
+           (if Cfg.Get_Time /= null
             then SPARKTLS.Tickets_12.To_Unix_Seconds
-                   (HC.Cfg.Get_Time.all)
+                   (Cfg.Get_Time.all)
             else 0);
          Plain.SID_Len       := 0;
          Plain.SID           := (others => 0);
@@ -953,7 +895,7 @@ is
             Ticket_Len => Ticket_Len);
 
          SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12
-           (Lifetime_Hint => HC.Cfg.TLS12_Ticket_Lifetime,
+           (Lifetime_Hint => Cfg.TLS12_Ticket_Lifetime,
             Ticket        => Ticket_Buf (0 .. Ticket_Len - 1),
             Result        => NST_Buf,
             Len           => NST_Total);
@@ -1046,7 +988,8 @@ is
       Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
    end Build_Abbreviated_Server_Flight_12;
 
-   procedure Derive_Keys_12 (S : in out Session; HC : in out Handshake_Context)
+   procedure Derive_Keys_12
+     (S : in out Session; HC : in out Handshake_Context; Cfg : in Ready_Config)
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
@@ -1178,18 +1121,12 @@ is
                 (OK  :    out Boolean;
                  Err :    out Error_Code)
               with Pre  => HC.Version = TLS_1_2
-                           and then HC.Cfg.Local /= null
-                           and then HC.Cfg.Local.Has_Identity
                            and then SPARKTLS.Handshake.Server_Msgs
                                       .Local_Config_Valid (HC.Cfg.Local)
-                                   and then HC.Cfg.Random /= null
                                    and then Valid_ECDHE_Group (HC.Selected_Group),
                    Post => HC.Version = HC.Version'Old
-                           and then HC.Cfg.Local /= null
-                           and then HC.Cfg.Local.Has_Identity
                            and then SPARKTLS.Handshake.Server_Msgs
                                       .Local_Config_Valid (HC.Cfg.Local)
-                                   and then HC.Cfg.Random /= null
                                    and then HC.Selected_Group = HC.Selected_Group'Old
                                    and then Valid_ECDHE_Group (HC.Selected_Group)
                                            and then HC.Transcript_Len =
@@ -1474,18 +1411,12 @@ is
                  with Pre => Msg'Length > 0
                              and then Msg'Length <= HC.Transcript'Length
                                      and then Msg'Last < N32 (Natural'Last)
-                                             and then HC.Cfg.Local /= null
-                             and then HC.Cfg.Local.Has_Identity
                              and then SPARKTLS.Handshake.Server_Msgs
                        .Local_Config_Valid (HC.Cfg.Local)
-                     and then HC.Cfg.Random /= null
                      and then Valid_ECDHE_Group (HC.Selected_Group),
                               Post => HC.Version = HC.Version'Old
-                                      and then HC.Cfg.Local /= null
-                              and then HC.Cfg.Local.Has_Identity
                               and then SPARKTLS.Handshake.Server_Msgs
                                 .Local_Config_Valid (HC.Cfg.Local)
-                              and then HC.Cfg.Random /= null
                                               and then HC.Selected_Group = HC.Selected_Group'Old
                                               and then Valid_ECDHE_Group (HC.Selected_Group)
                  is
@@ -1569,19 +1500,13 @@ is
                         <= S.Input.Write_Pos
                       and then S.Input.Read_Pos + Rec.Record_Len
                         <= IO_Buffer_Capacity
-                      and then HC.Cfg.Local /= null
-                      and then HC.Cfg.Local.Has_Identity
                       and then SPARKTLS.Handshake.Server_Msgs
                         .Local_Config_Valid (HC.Cfg.Local)
-                      and then HC.Cfg.Random /= null
                       and then Valid_ECDHE_Group (HC.Selected_Group),
                               Post => True
                                       and then HC.Version = HC.Version'Old
-                              and then HC.Cfg.Local /= null
-                              and then HC.Cfg.Local.Has_Identity
                               and then SPARKTLS.Handshake.Server_Msgs
                                 .Local_Config_Valid (HC.Cfg.Local)
-                                              and then HC.Cfg.Random /= null
                                               and then S.Negotiated_Suite =
                                                 S.Negotiated_Suite'Old
                                                       and then HC.Selected_Group = HC.Selected_Group'Old
@@ -1768,7 +1693,18 @@ is
                                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
               pragma Assert (CKE_Transcript_Nonempty);
                       pragma Assert (HC.Transcript_Len > 0);
-              Derive_Keys_12 (S, HC);
+              if HC.Cfg not in Ready_Config then
+                 --  Fail closed (Init's gate makes this unreachable).
+                 S.Last_Error := Internal_Error;
+                 Set_State (S, Error_State);
+                 Result := Error_Alert;
+                 return;
+              end if;
+              declare
+                 Cfg : constant Ready_Config := HC.Cfg;
+              begin
+                 Derive_Keys_12 (S, HC, Cfg);
+              end;
       HC.CKE_Received_12 := True;
       Result := (if Input_Available (S) > 0 then OK else Need_Input);
       --  RFC 5246 §7.4.7: at this exit point, the single-CKE
@@ -1904,22 +1840,19 @@ is
                   return;
                end if;
                   pragma Assert
-                          (if HC.Peer_Cert_Valid
-                             then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
+                          (if HC.Peer_Leaf.Present
+                             then True
                                   and then X509.Spans_Valid
-                                            (HC.Peer_Cert,
-                                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                                            (HC.Peer_Leaf.Cert,
+                                             HC.Peer_Leaf.DER_Len - 1));
                             end;
 
             Append_Transcript (HC, Frag);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            if HC.Peer_Cert_Valid then
-               pragma Assert
-                 (HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                  and then X509.Spans_Valid
-                    (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+            if HC.Peer_Leaf.Present then
+               --  Bounds + Spans_Valid ride Pool_Entry's predicate.
                Set_State (S, Wait_Client_Cert_Verify);
-            elsif HC.Peer_Cert_DER_Len > 0 then
+            elsif HC.Peer_Leaf.DER_Len > 0 then
                Send_Alert_And_Error (S, Decode_Error, Result);
                return;
             elsif HC.Cfg.Require_Client_Cert then
@@ -2053,7 +1986,7 @@ is
                   Verified := Cert_Verify.Verify_Signature_TLS12
                     (Data       => HC.Transcript (0 .. HC.Transcript_Len - 1),
                      Sig        => Sig,
-                     Cert       => HC.Peer_Cert,
+                     Cert       => HC.Peer_Leaf.Cert,
                      Sig_Scheme => Sig_Scheme);
                end;
 
@@ -2066,35 +1999,20 @@ is
             end;
 
             declare
-               Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
-               Leaf_Last : constant X509.N32 :=
-                 X509.N32 (Cert_DER_Len_Const) - 1;
-               Cert_X : X509.Byte_Seq (0 .. Leaf_Last) := (others => 0);
+               Leaf_Last : constant X509.N32 := HC.Peer_Leaf.DER_Len - 1;
+               --  DER is X509.Byte_Seq now (#101): validators take it
+               --  directly -- the conversion copy loop is gone, and with
+               --  it the Leaf_DER bound obligations it generated.
+               Cert_X : X509.Byte_Seq renames
+                 HC.Peer_Leaf.DER (0 .. Leaf_Last);
                VR : Validation_Result;
             begin
-               for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
-                  pragma Loop_Invariant
-                    (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
-                  pragma Loop_Invariant
-                    (HC.Peer_Cert = HC.Peer_Cert'Loop_Entry);
-                  pragma Loop_Invariant
-                    (HC.Peer_Cert_DER_Len =
-                       HC.Peer_Cert_DER_Len'Loop_Entry);
-                  pragma Loop_Invariant
-                    (Leaf_Last = X509.N32 (HC.Peer_Cert_DER_Len) - 1);
-                  pragma Loop_Invariant (Leaf_Last < X509.N32'Last);
-                  pragma Loop_Invariant
-                    (X509.Spans_Valid
-                       (HC.Peer_Cert'Loop_Entry,
-                        X509.N32 (HC.Peer_Cert_DER_Len'Loop_Entry) - 1));
-                  Cert_X (X509.N32 (I)) :=
-                    X509.Byte (HC.Peer_Cert_DER (I));
-               end loop;
+               
 
                VR := Validate_Leaf_Policy
-                 (Leaf     => HC.Peer_Cert,
+                 (Leaf     => HC.Peer_Leaf.Cert,
                   Leaf_DER => Cert_X
-                    (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
+                    (0 .. HC.Peer_Leaf.DER_Len - 1),
                   Hostname => "",
                   Purpose  => Purpose_Client,
                   Mode     => HC.Cfg.Verify_Mode);
@@ -2114,8 +2032,8 @@ is
                   VR := Validate_Chain
                     (Leaf_DER   =>
                        Cert_X
-                         (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
-                     Leaf       => HC.Peer_Cert,
+                         (0 .. HC.Peer_Leaf.DER_Len - 1),
+                     Leaf       => HC.Peer_Leaf.Cert,
                      Ints       => HC.Peer_Ints,
                      Int_Count  => HC.Peer_Int_Count,
                      Roots      => HC.Cfg.Trust.Roots,
@@ -2453,7 +2371,6 @@ is
          --  abbreviated case) are emitted from a different code path.
          if HC.TLS12_Ticket_Offered
            and then HC.Cfg.Get_Active_TEK /= null
-           and then HC.Cfg.Random /= null
            --  Fail closed without a clock: Created_At would be 0 and the
            --  decrypt-side age check would pass forever, so the ticket
            --  would never expire. Issue none instead.

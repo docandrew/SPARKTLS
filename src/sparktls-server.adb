@@ -90,15 +90,13 @@ is
                          then True)
                       and then
                         (if S.State = Wait_Client_Cert_Verify then
-                   HC.Peer_Cert_Valid
-                   and then HC.Peer_Cert_DER_Len > 0
-                   and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
+                   HC.Peer_Leaf.Present
                    and then
-                     X509.N32 (HC.Peer_Cert_DER_Len) - 1 <
+                     HC.Peer_Leaf.DER_Len - 1 <
                        X509.N32'Last
                    and then X509.Spans_Valid
-                     (HC.Peer_Cert,
-                      X509.N32 (HC.Peer_Cert_DER_Len) - 1))
+                     (HC.Peer_Leaf.Cert,
+                      HC.Peer_Leaf.DER_Len - 1))
               and then Free_Space (S.Output) >=
                 Records.Record_Header_Size + 3 + Records.Tag_Size)
               and then
@@ -255,15 +253,13 @@ is
       HRR_Buf   :    out Byte_Seq;
               HRR_Len   :    out N32;
               Rec_Out   :    out N32)
-           with Pre  => Server_Active (S)
-                                and then True,
+           with Pre  => Server_Active (S),
                         Post => (if HRR_Len > 0
                                  then HRR_Buf'First = 0
                                    and then HRR_Len - 1 <= HRR_Buf'Last)
                                         and then S.State = S.State'Old
                                 and then (if HRR_Len > 0
-                                                  then HC.Transcript_Len > 0)
-                                and then True;
+                                                  then HC.Transcript_Len > 0);
 
    procedure Append_And_Encrypt_Server_HS
      (S         : in out Session;
@@ -561,22 +557,7 @@ is
                                         and HC.Hash_Len = HC.Hash_Len'Old
 
                                         and HC.Version = HC.Version'Old
-                                and HC.Peer_Cert = HC.Peer_Cert'Old
-                                and HC.Peer_Cert_Valid = HC.Peer_Cert_Valid'Old
-                                and HC.Peer_Cert_DER_Len = HC.Peer_Cert_DER_Len'Old
-                                and
-                                  (if HC.Peer_Cert_Valid'Old
-                                      and then HC.Peer_Cert_DER_Len'Old
-                                        in 1 .. Max_Cert_DER_Len
-                                      and then X509.Spans_Valid
-                                        (HC.Peer_Cert'Old,
-                                         X509.N32 (HC.Peer_Cert_DER_Len'Old) - 1)
-                                   then HC.Peer_Cert_Valid
-                                        and then HC.Peer_Cert_DER_Len
-                                          in 1 .. Max_Cert_DER_Len
-                                        and then X509.Spans_Valid
-                                          (HC.Peer_Cert,
-                                           X509.N32 (HC.Peer_Cert_DER_Len) - 1))
+                                and HC.Peer_Leaf = HC.Peer_Leaf'Old
                                         and HC.HRR_Sent = HC.HRR_Sent'Old
                                         and HC.Legacy_Session_ID_Len =
                                               HC.Legacy_Session_ID_Len'Old
@@ -872,7 +853,7 @@ is
          end;
 
          if S.State in Connected | Error_State | Closed then
-            S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+            S.Peer_Cert_Valid := S.HC_Ptr.Peer_Leaf.Present;
             S.Use_EMS := S.HC_Ptr.Use_EMS;
             --  Zero ALL key material before freeing HC.
             Scrub_Handshake_Context (S.HC_Ptr.all);
@@ -979,7 +960,7 @@ is
                if Want_12 and S.Negotiated_Suite_12 /= 0 then
                           HC.Version := TLS_1_2;
                           SPARKTLS.Server.TLS12.Build_Server_Flight_12
-                    (S, HC, Result);
+                    (S, HC, Cfg, Result);
                else
                   Send_Alert_And_Error (S, Handshake_Failure, Result);
                end if;
@@ -1001,7 +982,8 @@ is
                     HC.Version := TLS_1_2;
                     --  Old dead guard (= Unsigned_64'Last, unreachable by
                     --  type) deleted with the sealed-channel port.
-                                    SPARKTLS.Server.TLS12.Build_Server_Flight_12 (S, HC, Result);
+                                    SPARKTLS.Server.TLS12.Build_Server_Flight_12
+                                      (S, HC, Cfg, Result);
                     return;
          else
             if (HC.Version = TLS_1_2 and Policy = TLS_1_3_Only)
@@ -3489,8 +3471,8 @@ is
          return;
       end if;
 
-      if not HC.Peer_Cert_Valid then
-         if HC.Peer_Cert_DER_Len > 0 then
+      if not HC.Peer_Leaf.Present then
+         if HC.Peer_Leaf.DER_Len > 0 then
             Send_Encrypted_Alert (S, Decode_Error, Result);
             return;
          end if;
@@ -3528,10 +3510,8 @@ is
                    then HC.Hash_Len = 48
                    else HC.Hash_Len = 32)
                 and then HC.Transcript_Len > 0
-                and then HC.Peer_Cert_DER_Len > 0
-                and then HC.Peer_Cert_DER_Len <= Max_Cert_DER_Len
                 and then X509.Spans_Valid
-                  (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1);
+                  (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1);
 
    procedure Handle_Client_CertVerify_13
      (S       : in out Session;
@@ -3546,7 +3526,7 @@ is
    begin
       pragma Assert
         (X509.Spans_Valid
-           (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+           (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1));
       Result := OK;
       case S.Negotiated_Suite is
          when Suite_AES_256_GCM_SHA384 =>
@@ -3619,7 +3599,7 @@ is
                      Verified := Cert_Verify.Verify_Signature
                        (Data       => Content,
                         Sig        => Sig,
-                        Cert       => HC.Peer_Cert,
+                        Cert       => HC.Peer_Leaf.Cert,
                         Sig_Scheme => Sig_Scheme);
                   end;
                else
@@ -3637,47 +3617,24 @@ is
          end if;
       end;
 
-      if HC.Peer_Cert_Valid then
+      if HC.Peer_Leaf.Present then
          declare
-            Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
-            Leaf_Last : constant X509.N32 :=
-               X509.N32 (Cert_DER_Len_Const) - 1;
-            Cert_X : X509.Byte_Seq
-               (0 .. Leaf_Last) :=
-                 (others => 0);
+            Leaf_Last : constant X509.N32 := HC.Peer_Leaf.DER_Len - 1;
+            --  DER is X509.Byte_Seq (#101): validators take it directly.
+            Cert_X : X509.Byte_Seq renames
+              HC.Peer_Leaf.DER (0 .. Leaf_Last);
             VR : Validation_Result;
          begin
-            pragma Assert (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
-            pragma Assert
-              (Leaf_Last = X509.N32 (HC.Peer_Cert_DER_Len) - 1);
-            for I in N32 range 0 .. HC.Peer_Cert_DER_Len - 1 loop
-               pragma Loop_Invariant
-                 (Cert_DER_Len_Const = HC.Peer_Cert_DER_Len);
-               pragma Loop_Invariant
-                 (HC.Peer_Cert = HC.Peer_Cert'Loop_Entry);
-               pragma Loop_Invariant
-                 (HC.Peer_Cert_DER_Len =
-                    HC.Peer_Cert_DER_Len'Loop_Entry);
-               pragma Loop_Invariant
-                 (Leaf_Last =
-                    X509.N32 (HC.Peer_Cert_DER_Len) - 1);
-               pragma Loop_Invariant (Leaf_Last < X509.N32'Last);
-               pragma Loop_Invariant
-                 (X509.Spans_Valid
-                    (HC.Peer_Cert'Loop_Entry,
-                     X509.N32 (HC.Peer_Cert_DER_Len'Loop_Entry) - 1));
-               Cert_X (X509.N32 (I)) :=
-                  X509.Byte (HC.Peer_Cert_DER (I));
-            end loop;
+            
             pragma Assert (Leaf_Last < X509.N32'Last);
             pragma Assert
-              (X509.N32 (HC.Peer_Cert_DER_Len) - 1 < X509.N32'Last);
+              (HC.Peer_Leaf.DER_Len - 1 < X509.N32'Last);
 
             VR := Validate_Leaf_Policy
-              (Leaf     => HC.Peer_Cert,
+              (Leaf     => HC.Peer_Leaf.Cert,
                Leaf_DER =>
                   Cert_X
-                    (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
+                    (0 .. HC.Peer_Leaf.DER_Len - 1),
                Hostname => "",
                Purpose  => Purpose_Client,
                Mode     => Cfg.Verify_Mode);
@@ -3700,8 +3657,8 @@ is
                VR := Validate_Chain
                  (Leaf_DER   =>
                      Cert_X
-                       (0 .. X509.N32 (HC.Peer_Cert_DER_Len) - 1),
-                  Leaf       => HC.Peer_Cert,
+                       (0 .. HC.Peer_Leaf.DER_Len - 1),
+                  Leaf       => HC.Peer_Leaf.Cert,
                   Ints       => HC.Peer_Ints,
                   Int_Count  => HC.Peer_Int_Count,
                   Roots      => Cfg.Trust.Roots,
@@ -4687,12 +4644,11 @@ is
    ----------------------------------------------------------------------
 
    procedure Reset_Post_HS_Reasm (S : in out Session)
-   with Post => S.Post_HS_Len = 0 and then S.Post_HS_Need = 0;
+   with Post => Post_HS_Reasm.Used (S.Post_HS) = 0;
 
    procedure Reset_Post_HS_Reasm (S : in out Session) is
    begin
-      S.Post_HS_Len  := 0;
-      S.Post_HS_Need := 0;
+      Post_HS_Reasm.Reset (S.Post_HS);
    end Reset_Post_HS_Reasm;
 
    --  RFC 8446 §4.6.3. The peer's KeyUpdate rotates its WRITE key, which
@@ -4789,17 +4745,16 @@ is
       Result :    out Action)
    with Pre  => S.State in Connected | Closing
                 and then Nonce_Space_Available (S.Server_App)
-                and then S.Post_HS_Need in 4 .. Max_Record_Plaintext
-                and then S.Post_HS_Len = S.Post_HS_Need,
-        Post => S.Post_HS_Len = 0 and then S.Post_HS_Need = 0;
+                and then Post_HS_Reasm.Has_Message (S.Post_HS),
+        Post => Post_HS_Reasm.Used (S.Post_HS) = 0;
 
    procedure Dispatch_Post_HS_Message
      (S      : in out Session;
       Result :    out Action)
    is
-      Msg_Len : constant N32 := S.Post_HS_Need;
+      Msg_Len : constant N32 := Post_HS_Reasm.Message_Length (S.Post_HS);
       Msg     : constant Byte_Seq (0 .. Msg_Len - 1) :=
-        S.Post_HS_Buf (0 .. Msg_Len - 1);
+        Byte_Seq (Post_HS_Reasm.Message (S.Post_HS));
    begin
       if Msg (0) = Key_Update.HS_Key_Update then
          if S.App_Secret_Len in 32 | 48
@@ -4830,14 +4785,7 @@ is
    with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Server_App)
                and then Plaintext'First = 0
-               and then Plain_Len <= N32 (Plaintext'Length)
-               and then S.Post_HS_Len <= Max_Record_Plaintext
-               and then S.Post_HS_Need <= Max_Record_Plaintext
-               and then
-                 (if S.Post_HS_Need = 0
-                  then S.Post_HS_Len = 0
-                  else S.Post_HS_Need >= 4
-                    and then S.Post_HS_Len <= S.Post_HS_Need);
+               and then Plain_Len <= N32 (Plaintext'Length);
 
    procedure Process_Post_HS_Handshake_Bytes
      (S         : in out Session;
@@ -4852,61 +4800,38 @@ is
       while Pos < Plain_Len loop
          pragma Loop_Invariant (Pos <= Plain_Len);
          pragma Loop_Invariant (Nonce_Space_Available (S.Server_App));
-         pragma Loop_Invariant (S.Post_HS_Len <= Max_Record_Plaintext);
-         pragma Loop_Invariant (S.Post_HS_Need <= Max_Record_Plaintext);
-         pragma Loop_Invariant
-           (if S.Post_HS_Need = 0
-            then S.Post_HS_Len = 0
-            else S.Post_HS_Need >= 4
-              and then S.Post_HS_Len <= S.Post_HS_Need);
 
-         --  Start of a new message: take the 4-byte header first.
-         if S.Post_HS_Need = 0 then
-            S.Post_HS_Len  := 0;
-            S.Post_HS_Need := 4;
-         end if;
-
+         --  Same ADT idiom as the client twin: Wanted/Append derive all
+         --  the old Len/Need bookkeeping; the phase flip is structural.
          declare
-            Need : constant N32 := S.Post_HS_Need - S.Post_HS_Len;
-            Take : constant N32 := N32'Min (Need, Plain_Len - Pos);
+            use Post_HS_Reasm;
+            Take : constant N32 :=
+              N32'Min (N32'Min (Wanted (S.Post_HS),
+                                Free_Space (S.Post_HS)),
+                       Plain_Len - Pos);
          begin
             if Take > 0 then
-               pragma Assert (Pos + Take <= Plain_Len);
-               pragma Assert (S.Post_HS_Len + Take <= S.Post_HS_Need);
-               S.Post_HS_Buf (S.Post_HS_Len .. S.Post_HS_Len + Take - 1) :=
-                 Plaintext (Pos .. Pos + Take - 1);
-               S.Post_HS_Len := S.Post_HS_Len + Take;
+               Append (S.Post_HS,
+                       Plaintext (Plaintext'First + Pos ..
+                                  Plaintext'First + Pos + Take - 1));
                Pos := Pos + Take;
             end if;
-         end;
 
-         if S.Post_HS_Len = S.Post_HS_Need then
-            if S.Post_HS_Need = 4 then
-               --  Header complete: read the 24-bit body length.
-               declare
-                  Msg_Total : constant N32 :=
-                    N32 (S.Post_HS_Buf (1)) * 65536
-                    + N32 (S.Post_HS_Buf (2)) * 256
-                    + N32 (S.Post_HS_Buf (3)) + 4;
-               begin
-                  if Msg_Total < 4
-                    or else Msg_Total > Max_Record_Plaintext
-                  then
-                     Reset_Post_HS_Reasm (S);
-                     Send_Encrypted_Alert (S, Decode_Error, Result);
-                     return;
-                  end if;
-                  S.Post_HS_Need := Msg_Total;
-               end;
+            if Message_Too_Large (S.Post_HS)
+              or else (Take = 0 and then not Has_Message (S.Post_HS))
+            then
+               Reset (S.Post_HS);
+               Send_Encrypted_Alert (S, Decode_Error, Result);
+               return;
             end if;
 
-            if S.Post_HS_Len = S.Post_HS_Need then
+            if Has_Message (S.Post_HS) then
                Dispatch_Post_HS_Message (S, Result);
                if Result /= OK then
                   return;
                end if;
             end if;
-         end if;
+         end;
       end loop;
    end Process_Post_HS_Handshake_Bytes;
 
@@ -5078,7 +5003,7 @@ is
          case Inner_Type is
             when 16#17# =>
                --  Application data
-               if S.Post_HS_Need > 0 then
+               if Post_HS_Reasm.Used (S.Post_HS) > 0 then
                   --  RFC 8446 5.1: "Handshake messages MUST NOT be
                   --  interleaved with other record types." A
                   --  post-handshake handshake message is mid-reassembly

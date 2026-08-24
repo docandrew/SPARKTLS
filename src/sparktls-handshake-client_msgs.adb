@@ -2073,9 +2073,23 @@ is
                          and then Exts (I).Offset <= Data'Last - 1
                          and then Exts (I).E_Len = 2
                        then
-                  HC.HRR_Selected_Group :=
-                     Unsigned_16 (Data (Exts (I).Offset)) * 256
-                     + Unsigned_16 (Data (Exts (I).Offset + 1));
+                  declare
+                     G : constant Unsigned_16 :=
+                        Unsigned_16 (Data (Exts (I).Offset)) * 256
+                        + Unsigned_16 (Data (Exts (I).Offset + 1));
+                  begin
+                     --  RFC 8446 §4.1.4: the HRR's selected_group MUST be
+                     --  one the client offered -- and we only ever offer
+                     --  these three. Rejecting HERE (illegal_parameter)
+                     --  rather than at the CH2-rebuild step is both the
+                     --  earlier RFC-correct alert and what lets the
+                     --  Maybe_ECDHE_Group predicate hold at this store.
+                     if G in 16#001D# | 16#0017# | 16#0018# then
+                        HC.HRR_Selected_Group := G;
+                     else
+                        HC.Ext_Parse_Err := Illegal_Parameter;
+                     end if;
+                  end;
                end if;
                --  RFC 8446 §4.2.11: pre_shared_key in SH (not HRR)
                --  carries `selected_identity` (uint16). We offer

@@ -470,7 +470,7 @@ is
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
                                and then Plaintext'First = 0
-               and then Plaintext'Last < N32'Last / 2
+               and then Plaintext'Last < IO_Buffer_Capacity
                                        and then Plain_Len <= N32 (Plaintext'Length)
                                and then
                                  (if HC.Cert_Request_Received
@@ -562,7 +562,7 @@ is
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
                                and then Plaintext'First = 0
-                                       and then Plaintext'Last < N32'Last / 2
+                                       and then Plaintext'Last < IO_Buffer_Capacity
                                                and then Plain_Len <= N32 (Plaintext'Length)
                and then
                  (if HC.Cert_Request_Received
@@ -608,7 +608,7 @@ is
       Pos           :    out N32;
       Decode_Failed :    out Boolean)
    with Pre => Plaintext'First = 0
-               and then Plaintext'Last < N32'Last / 2
+               and then Plaintext'Last < IO_Buffer_Capacity
                and then Plain_Len <= N32 (Plaintext'Length)
                and then Nonce_Space_Available (HC.Client_HS)
                and then HC.Transcript_Len > 0
@@ -683,7 +683,7 @@ is
       From      : in     N32;
       Take      : in     N32)
    with Pre => Plaintext'First = 0
-               and then Plaintext'Last < N32'Last / 2
+               and then Plaintext'Last < IO_Buffer_Capacity
                and then Nonce_Space_Available (HC.Client_HS)
                and then HC.Transcript_Len > 0
                and then Take > 0
@@ -899,7 +899,7 @@ is
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
                                        and then Plaintext'First = 0
-                       and then Plaintext'Last < N32'Last / 2
+                       and then Plaintext'Last < IO_Buffer_Capacity
                        and then Plain_Len <= N32 (Plaintext'Length)
                                and then Pos <= Plain_Len,
                                                         Post => Pos <= Plain_Len
@@ -948,7 +948,7 @@ is
                                   then HC.Hash_Len = 48
                                   else HC.Hash_Len = 32)
                        and then Plaintext'First = 0
-               and then Plaintext'Last < N32'Last / 2
+               and then Plaintext'Last < IO_Buffer_Capacity
                                and then Plain_Len <= N32 (Plaintext'Length)
                                and then Pos <= N32'Last - 4
                                        and then Pos + 4 <= Plain_Len,
@@ -981,14 +981,7 @@ is
                and then Nonce_Space_Available (S.Server_App)
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
-               and then S.Empty_Records_Recvd <= Max_Empty_Records
-               and then S.Post_HS_Len <= Max_Record_Plaintext
-               and then S.Post_HS_Need <= Max_Record_Plaintext
-               and then
-                 (if S.Post_HS_Need = 0
-                  then S.Post_HS_Len = 0
-                  else S.Post_HS_Need >= 4
-                    and then S.Post_HS_Len <= S.Post_HS_Need);
+               and then S.Empty_Records_Recvd <= Max_Empty_Records;
    procedure Handle_Connected_App_Record
      (S      : in out Session;
       Rec    : in     Records.Parse_Result;
@@ -999,13 +992,6 @@ is
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
                and then S.Empty_Records_Recvd <= Max_Empty_Records
-               and then S.Post_HS_Len <= Max_Record_Plaintext
-               and then S.Post_HS_Need <= Max_Record_Plaintext
-               and then
-                 (if S.Post_HS_Need = 0
-                  then S.Post_HS_Len = 0
-                  else S.Post_HS_Need >= 4
-                    and then S.Post_HS_Len <= S.Post_HS_Need)
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
                and then Rec.Fragment_Len >= 1
@@ -2016,24 +2002,22 @@ is
 
       if HC.Cfg.Server_Name.Len > 0
         and then not HC.Cfg.Skip_Hostname_Verify
-        and then HC.Peer_Cert_Valid
+        and then HC.Peer_Leaf.Present
               then
                  pragma Assert
-                   (HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len);
-                 pragma Assert
                    (X509.Spans_Valid
-                      (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+                      (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1));
                  declare
-                    Cert_DER_Len_C : constant N32 := HC.Peer_Cert_DER_Len;
+                    Cert_DER_Len_C : constant N32 := N32 (HC.Peer_Leaf.DER_Len);
             Cert_X : X509.Byte_Seq
                (0 .. X509.N32 (Cert_DER_Len_C) - 1) := (others => 0);
          begin
             for I in N32 range 0 .. Cert_DER_Len_C - 1 loop
                Cert_X (X509.N32 (I)) :=
-                  X509.Byte (HC.Peer_Cert_DER (I));
+                  HC.Peer_Leaf.DER (X509.N32 (I));
             end loop;
             if not X509.Matches_Hostname
-                    (HC.Peer_Cert, Cert_X,
+                    (HC.Peer_Leaf.Cert, Cert_X,
                      HC.Cfg.Server_Name.Data
                        (1 .. HC.Cfg.Server_Name.Len))
             then
@@ -2043,7 +2027,7 @@ is
          end;
       end if;
 
-      if not HC.Cfg.Skip_Verify and then HC.Peer_Cert_Valid then
+      if not HC.Cfg.Skip_Verify and then HC.Peer_Leaf.Present then
          if HC.Cfg.Trust = null or else HC.Cfg.Get_Time = null then
             S.Last_Error := Bad_Certificate;
             Set_State (S, Error_State);
@@ -2051,23 +2035,21 @@ is
             return;
          end if;
          pragma Assert
-           (HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len);
-         pragma Assert
            (X509.Spans_Valid
-              (HC.Peer_Cert, X509.N32 (HC.Peer_Cert_DER_Len) - 1));
+              (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1));
          declare
-            Cert_DER_Len_Const : constant N32 := HC.Peer_Cert_DER_Len;
+            Cert_DER_Len_Const : constant N32 := N32 (HC.Peer_Leaf.DER_Len);
             Cert_X : X509.Byte_Seq
                (0 .. X509.N32 (Cert_DER_Len_Const) - 1) := (others => 0);
             VR : Validation_Result;
          begin
             for I in N32 range 0 .. Cert_DER_Len_Const - 1 loop
                Cert_X (X509.N32 (I)) :=
-                  X509.Byte (HC.Peer_Cert_DER (I));
+                  HC.Peer_Leaf.DER (X509.N32 (I));
             end loop;
             VR := Validate_Chain
               (Leaf_DER   => Cert_X,
-               Leaf       => HC.Peer_Cert,
+               Leaf       => HC.Peer_Leaf.Cert,
                Ints       => HC.Peer_Ints,
                Int_Count  => HC.Peer_Int_Count,
                Roots      => HC.Cfg.Trust.Roots,
@@ -2171,13 +2153,13 @@ is
 
          Append_Transcript_Bytes (HC.Transcript, HC.Transcript_Len, Data);
 
-         if not HC.Peer_Cert_Valid then
+         if not HC.Peer_Leaf.Present then
             Send_HS_Encrypted_Alert (S, HC, Decode_Error, Result);
             return;
          end if;
 
-         if X509.Has_Key_Usage (HC.Peer_Cert)
-           and then not X509.KU_Digital_Signature (HC.Peer_Cert)
+         if X509.Has_Key_Usage (HC.Peer_Leaf.Cert)
+           and then not X509.KU_Digital_Signature (HC.Peer_Leaf.Cert)
          then
             Send_HS_Encrypted_Alert (S, HC, Bad_Certificate, Result);
             return;
@@ -2241,7 +2223,7 @@ is
                         if not Cert_Verify.Verify_Signature
                           (Data       => Content,
                            Sig        => Sig,
-                           Cert       => HC.Peer_Cert,
+                           Cert       => HC.Peer_Leaf.Cert,
                            Sig_Scheme => Sig_Scheme)
                         then
                            S.Last_Error := Certificate_Verify_Failed;
@@ -3726,6 +3708,18 @@ is
       Result :    out Action)
    is
    begin
+      --  Fail closed: a null RNG or an empty transcript here means the
+      --  session was never initialised properly (Connect appends the
+      --  ClientHello and validates the config). The handler Pres below
+      --  all rely on these two facts; establish them by dominance
+      --  instead of threading them through every caller.
+      if HC.Cfg.Random = null or else HC.Transcript_Len = 0 then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
       case S.State is
          when Client_Hello_Sent =>
             if Output_Pending (S) > 0 then
@@ -3748,6 +3742,14 @@ is
          when Client_Finished_Sent =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
+            elsif HC.Transcript_Len = 0 or else HC.Cfg.Random = null then
+               --  Fail closed: both are OUR-logic invariants (the
+               --  transcript accumulated the whole handshake to get here;
+               --  Init's gate requires Random). Unreachable, and the one
+               --  guard discharges the four hash/ticket Pres below.
+               S.Last_Error := Internal_Error;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
             else
                --  Derive resumption master secret before HC is freed
                case S.Negotiated_Suite is
@@ -3823,14 +3825,7 @@ is
                        and then Nonce_Space_Available (S.Server_App)
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
-               and then Empty_Records_Bounded_RFC_8446_5_2 (S)
-               and then S.Post_HS_Len <= Max_Record_Plaintext
-                       and then S.Post_HS_Need <= Max_Record_Plaintext
-                       and then
-                         (if S.Post_HS_Need = 0
-                          then S.Post_HS_Len = 0
-                          else S.Post_HS_Need >= 4
-                            and then S.Post_HS_Len <= S.Post_HS_Need),
+               and then Empty_Records_Bounded_RFC_8446_5_2 (S),
                 --  Frame, scoped deliberately to the not-Handled path.
                 --
                 --  That is the only path Advance continues on, and it is the
@@ -3982,7 +3977,7 @@ is
          end;
 
          if S.State = Connected or S.State = Error_State then
-            S.Peer_Cert_Valid := S.HC_Ptr.Peer_Cert_Valid;
+            S.Peer_Cert_Valid := S.HC_Ptr.Peer_Leaf.Present;
             S.Use_EMS := S.HC_Ptr.Use_EMS;
             --  Persist resumption flags out of HC before free.
             S.Resumed_From_PSK := S.HC_Ptr.Using_PSK;
@@ -4490,7 +4485,7 @@ is
                     and then Result = OK
                     and then Plain_Len <= N32 (Plaintext'Length)
                     and then Plaintext'First = 0
-                    and then Plaintext'Last < N32'Last / 2
+                    and then Plaintext'Last < IO_Buffer_Capacity
             and then S.State in Wait_Encrypted_Extensions
                                 | Wait_Certificate_Request
                                 | Wait_Certificate
@@ -4887,14 +4882,13 @@ is
       Result    :    out Action)
    with Pre => Nonce_Space_Available (S.Client_App)
                and then Plaintext'First = 0
-               and then Plaintext'Last < N32'Last / 2
+               and then Plaintext'Last < IO_Buffer_Capacity
                and then Plain_Len <= Max_Record_Plaintext
                and then Plain_Len <= N32 (Plaintext'Length),
         Post => (if Result = OK
                  then S.State = S.State'Old
                    and then Nonce_Space_Available (S.Client_App)
-                   and then S.Post_HS_Len = S.Post_HS_Len'Old
-                   and then S.Post_HS_Need = S.Post_HS_Need'Old);
+                   and then Post_HS_Reasm."=" (S.Post_HS, S.Post_HS'Old));
 
    procedure Process_NST_Message
      (S         : in out Session;
@@ -5028,8 +5022,7 @@ is
    end Process_NST_Message;
 
    procedure Reset_Post_HS_Reasm (S : in out Session)
-   with Post => S.Post_HS_Len = 0
-                and then S.Post_HS_Need = 0
+   with Post => Post_HS_Reasm.Used (S.Post_HS) = 0
                 and then S.State = S.State'Old
                 and then S.Client_App = S.Client_App'Old
                 and then
@@ -5038,18 +5031,15 @@ is
 
    procedure Reset_Post_HS_Reasm (S : in out Session) is
    begin
-      S.Post_HS_Len := 0;
-      S.Post_HS_Need := 0;
+      Post_HS_Reasm.Reset (S.Post_HS);
    end Reset_Post_HS_Reasm;
 
    procedure Dispatch_Post_HS_Message
      (S      : in out Session;
       Result :    out Action)
    with Pre => Nonce_Space_Available (S.Client_App)
-               and then S.Post_HS_Need in 4 .. Max_Record_Plaintext
-               and then S.Post_HS_Len = S.Post_HS_Need,
-        Post => S.Post_HS_Len = 0
-                and then S.Post_HS_Need = 0
+               and then Post_HS_Reasm.Has_Message (S.Post_HS),
+        Post => Post_HS_Reasm.Used (S.Post_HS) = 0
                 and then
                   (if Result = OK
                    then Nonce_Space_Available (S.Client_App));
@@ -5068,10 +5058,7 @@ is
                 and then S.App_Secret_Len in 32 | 48
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
-                                            | Suite_CHACHA20_POLY1305_SHA256,
-        Post => (if Result = OK
-                 then S.State in Connected | Closing
-                   and then Nonce_Space_Available (S.Client_App));
+                                            | Suite_CHACHA20_POLY1305_SHA256;
 
    procedure Process_Key_Update_Message
      (S      : in out Session;
@@ -5148,9 +5135,9 @@ is
      (S      : in out Session;
       Result :    out Action)
    is
-      Msg_Len : constant N32 := S.Post_HS_Need;
+      Msg_Len : constant N32 := Post_HS_Reasm.Message_Length (S.Post_HS);
       Msg     : constant Byte_Seq (0 .. Msg_Len - 1) :=
-        S.Post_HS_Buf (0 .. Msg_Len - 1);
+        Byte_Seq (Post_HS_Reasm.Message (S.Post_HS));
    begin
       if Msg (0) = 16#04# then
          Process_NST_Message (S, Msg, Msg_Len, Result);
@@ -5195,16 +5182,11 @@ is
    with Pre => S.State in Connected | Closing
                and then Nonce_Space_Available (S.Client_App)
                and then Plaintext'First = 0
-               and then Plaintext'Last < N32'Last / 2
+               and then Plaintext'Last < IO_Buffer_Capacity
                and then Plain_Len <= Max_Record_Plaintext
-               and then Plain_Len <= N32 (Plaintext'Length)
-               and then S.Post_HS_Len <= Max_Record_Plaintext
-               and then S.Post_HS_Need <= Max_Record_Plaintext
-               and then
-                 (if S.Post_HS_Need = 0
-                  then S.Post_HS_Len = 0
-                  else S.Post_HS_Need >= 4
-                    and then S.Post_HS_Len <= S.Post_HS_Need);
+               and then Plain_Len <= N32 (Plaintext'Length);
+               --  No Post_HS conjuncts: the Len/Need relation is
+               --  STRUCTURAL inside Post_HS_Reasm.Buffer (#90 carve).
 
    procedure Process_Post_HS_Handshake_Bytes
      (S         : in out Session;
@@ -5220,59 +5202,40 @@ is
          pragma Loop_Invariant (Pos <= Plain_Len);
          pragma Loop_Invariant (Plain_Len <= Max_Record_Plaintext);
          pragma Loop_Invariant (Nonce_Space_Available (S.Client_App));
-         pragma Loop_Invariant (S.Post_HS_Len <= Max_Record_Plaintext);
-         pragma Loop_Invariant (S.Post_HS_Need <= Max_Record_Plaintext);
-         pragma Loop_Invariant
-           (if S.Post_HS_Need = 0
-            then S.Post_HS_Len = 0
-            else S.Post_HS_Need >= 4
-              and then S.Post_HS_Len <= S.Post_HS_Need);
 
-         if S.Post_HS_Need = 0 then
-            S.Post_HS_Len := 0;
-            S.Post_HS_Need := 4;
-         end if;
-
+         --  The ADT derives everything the old Len/Need bookkeeping
+         --  tracked: Wanted is header-remainder or body-remainder, and
+         --  the phase flip at 4 bytes is Declared_Size becoming readable.
          declare
-            Need : constant N32 := S.Post_HS_Need - S.Post_HS_Len;
-            Take : constant N32 := N32'Min (Need, Plain_Len - Pos);
+            use Post_HS_Reasm;
+            Take : constant N32 :=
+              N32'Min (N32'Min (Wanted (S.Post_HS),
+                                Free_Space (S.Post_HS)),
+                       Plain_Len - Pos);
          begin
             if Take > 0 then
-               pragma Assert (Pos + Take <= Plain_Len);
-               pragma Assert (S.Post_HS_Len + Take <= S.Post_HS_Need);
-               S.Post_HS_Buf (S.Post_HS_Len .. S.Post_HS_Len + Take - 1) :=
-                 Plaintext (Pos .. Pos + Take - 1);
-               S.Post_HS_Len := S.Post_HS_Len + Take;
+               Append (S.Post_HS, Plaintext (Pos .. Pos + Take - 1));
                Pos := Pos + Take;
             end if;
-         end;
 
-         if S.Post_HS_Len = S.Post_HS_Need then
-            if S.Post_HS_Need = 4 then
-               declare
-                  Msg_Total : constant N32 :=
-                    N32 (S.Post_HS_Buf (1)) * 65536
-                    + N32 (S.Post_HS_Buf (2)) * 256
-                    + N32 (S.Post_HS_Buf (3)) + 4;
-               begin
-                  if Msg_Total < 4
-                    or else Msg_Total > Max_Record_Plaintext
-                  then
-                     Reset_Post_HS_Reasm (S);
-                     Send_App_Encrypted_Alert (S, Decode_Error, Result);
-                     return;
-                  end if;
-                  S.Post_HS_Need := Msg_Total;
-               end;
+            if Message_Too_Large (S.Post_HS)
+              or else (Take = 0 and then not Has_Message (S.Post_HS))
+            then
+               --  Declared size exceeds a record plaintext: the old
+               --  Msg_Total > Max_Record_Plaintext decode_error, now
+               --  reported by the type (Capacity = 16_384).
+               Reset (S.Post_HS);
+               Send_App_Encrypted_Alert (S, Decode_Error, Result);
+               return;
             end if;
 
-            if S.Post_HS_Len = S.Post_HS_Need then
+            if Has_Message (S.Post_HS) then
                Dispatch_Post_HS_Message (S, Result);
                if Result /= OK then
                   return;
                end if;
             end if;
-         end if;
+         end;
       end loop;
    end Process_Post_HS_Handshake_Bytes;
 
@@ -5343,7 +5306,7 @@ is
          case Inner_Type is
             when 16#17# =>
                --  Application data
-               if S.Post_HS_Need > 0 then
+               if Post_HS_Reasm.Used (S.Post_HS) > 0 then
                   --  RFC 8446 5.1: "Handshake messages MUST NOT be
                   --  interleaved with other record types." A
                   --  post-handshake handshake message is mid-reassembly

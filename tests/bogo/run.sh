@@ -84,15 +84,21 @@ if ! command -v alr >/dev/null 2>&1; then
     echo "  SKIP: alire not found, can't build shim"
     exit 0
 fi
-if ! (cd "$REPO_ROOT" &&
+#  NOTE the build status is captured EXPLICITLY: the previous form piped
+#  the build through `tail`, so the `if !` tested tail's status and a
+#  FAILED build fell through to run the STALE cached shim while printing
+#  a normal-looking summary (measured 2026-08-24, task #100). A gate that
+#  can measure yesterday's binary is not a gate — fail LOUDLY instead.
+BUILD_OUT=$(cd "$REPO_ROOT" &&
       HOME="${HOME:-/home/doc}" \
       XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" \
       XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}" \
-      alr exec -- gprbuild -P "$REPO_ROOT/tests/bogo/bogo_shim.gpr") \
-      2>&1 | tail -3
-then
-    echo "  SKIP: shim build failed"
-    exit 0
+      alr exec -- gprbuild -P "$REPO_ROOT/tests/bogo/bogo_shim.gpr" 2>&1)
+BUILD_RC=$?
+echo "$BUILD_OUT" | tail -3
+if [ "$BUILD_RC" -ne 0 ]; then
+    echo "  FATAL: shim build FAILED — refusing to run against a stale binary."
+    exit 1
 fi
 
 # --- 2. Install Go locally if not on PATH and not cached -------------

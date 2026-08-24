@@ -43,7 +43,7 @@ is
 
       procedure Store
         (PSK     : Bytes_48;
-         PSK_Len : N32;
+         PSK_Len : PSK_Length;
          Suite   : Unsigned_16;
          Age_Add : Unsigned_32;
          ID_Out  : out Ticket_ID)
@@ -101,7 +101,7 @@ is
 
       procedure Store
         (PSK     : Bytes_48;
-         PSK_Len : N32;
+         PSK_Len : PSK_Length;
          Suite   : Unsigned_16;
          Age_Add : Unsigned_32;
          ID_Out  : out Ticket_ID) is
@@ -284,7 +284,7 @@ is
 
    procedure Store_Session
      (PSK     : Bytes_48;
-      PSK_Len : N32;
+      PSK_Len : PSK_Length;
       Suite   : Unsigned_16;
       Age_Add : Unsigned_32;
       ID_Out  : out Ticket_ID) is

@@ -697,11 +697,11 @@ is
                Sig_Bytes (I) := Byte (Sig_RFLX (RBT.Index (I + 1)));
             end loop;
 
-            if HC.Peer_Cert_Valid then
+            if HC.Peer_Leaf.Present then
                Sig_OK := Cert_Verify.Verify_Signature_TLS12
                  (Data       => Sig_Input,
                   Sig        => Sig_Bytes,
-                  Cert       => HC.Peer_Cert,
+                  Cert       => HC.Peer_Leaf.Cert,
                   Sig_Scheme => Sig_Scheme);
             else
                Sig_OK := False;

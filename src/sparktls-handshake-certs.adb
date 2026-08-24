@@ -647,7 +647,7 @@ is
       X509.Parse (Cert_X, Cert, OK);
    end Parse_X509_From_RFLX;
 
-   --  Same as Copy_Cert_To_X509 but into the HC.Peer_Cert_DER buffer
+   --  Same as Copy_Cert_To_X509 but into the HC.Peer_Leaf.DER buffer
    --  region (0-based, capacity Max_Cert_DER_Len).
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
@@ -675,7 +675,8 @@ is
                                   .Local_Config_Valid (HC.Cfg.Local))
                         and then (if HC.Cfg.Random'Old /= null
                                           then HC.Cfg.Random /= null)
-                                and then HC.Peer_Cert_DER_Len = C_Len;
+                                and then HC.Peer_Leaf.DER_Len = X509.N32 (C_Len)
+                                and then not HC.Peer_Leaf.Present;
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
@@ -683,12 +684,17 @@ is
       C_Len     : in     N32)
    is
    begin
-      HC.Peer_Cert_DER_Len := C_Len;
+      --  Ordering discipline: clear Present before touching any other
+      --  component. While Present is False the Pool_Entry predicate is
+      --  trivially true, so the writes below carry no proof burden; the
+      --  entry only becomes "valid" again at the caller's Present write.
+      HC.Peer_Leaf.Present := False;
+      HC.Peer_Leaf.DER_Len := X509.N32 (C_Len);
       for I in N32 range 0 .. C_Len - 1 loop
          pragma Loop_Invariant
            (I in 0 .. C_Len - 1
             and RBT.Index (I + 1) in Cert_RFLX'Range);
-         HC.Peer_Cert_DER (I) :=
+         HC.Peer_Leaf.DER (X509.N32 (I)) :=
             Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;
    end Copy_Cert_To_Peer_DER;
@@ -747,8 +753,8 @@ is
         HC.Client_HS.Counter
       with Ghost;
    begin
-      HC.Peer_Cert_Valid := False;
-      HC.Peer_Cert_DER_Len := 0;
+      HC.Peer_Leaf.Present := False;
+      HC.Peer_Leaf.DER_Len := 0;
       HC.Peer_Int_Count := 0;
       OK := False;
       Err := Decode_Error;
@@ -861,12 +867,6 @@ is
                   pragma Loop_Invariant
                     (if HC.Cfg.Random'Loop_Entry /= null
                      then HC.Cfg.Random /= null);
-                  pragma Loop_Invariant
-                    (if HC.Peer_Cert_Valid
-                     then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                          and then X509.Spans_Valid
-                            (HC.Peer_Cert,
-                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                   declare
                      E_Ctx : C13_Entry.Context;
                   begin
@@ -925,19 +925,23 @@ is
                                        begin
                                           Parse_X509_From_RFLX
                                             (Cert_RFLX, C_Len,
-                                             HC.Peer_Cert, P_OK);
-                                          HC.Peer_Cert_Valid := P_OK
-                                             and then
-                                               X509.Is_Valid (HC.Peer_Cert);
+                                             HC.Peer_Leaf.Cert, P_OK);
                                           pragma Assert
-                                            (if HC.Peer_Cert_Valid
-                                             then HC.Peer_Cert_DER_Len
-                                                  in 1 .. Max_Cert_DER_Len
-                                                  and then X509.Spans_Valid
-                                                    (HC.Peer_Cert,
-                                                     X509.N32
-                                                       (HC.Peer_Cert_DER_Len)
-                                                     - 1));
+                                            (HC.Peer_Leaf.DER_Len =
+                                               X509.N32 (C_Len));
+                                          pragma Assert
+                                            (HC.Peer_Leaf.DER_Len > 0);
+                                          pragma Assert
+                                            (if P_OK then X509.Spans_Valid
+                                               (HC.Peer_Leaf.Cert,
+                                                X509.N32 (C_Len) - 1));
+                                          pragma Assert
+                                            (if P_OK then X509.Spans_Valid
+                                               (HC.Peer_Leaf.Cert,
+                                                HC.Peer_Leaf.DER_Len - 1));
+                                          HC.Peer_Leaf.Present := P_OK
+                                             and then
+                                               X509.Is_Valid (HC.Peer_Leaf.Cert);
                                        end;
                                     elsif HC.Peer_Int_Count < Max_Pool_Size
                                     then
@@ -971,26 +975,12 @@ is
                              C13_Entries.Update (Entries_Ctx, E_Ctx);
                              if not C13_Entries.Has_Buffer (Entries_Ctx) then
                         pragma Assert
-                          (if HC.Peer_Cert_Valid
-                           then HC.Peer_Cert_DER_Len
-                                in 1 .. Max_Cert_DER_Len
-                                and then X509.Spans_Valid
-                                  (HC.Peer_Cert,
-                                   X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-                        pragma Assert
                           (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                         return;
                      end if;
                              if not C13_Entries.Valid (Entries_Ctx) then
                                 C13_Entries.Take_Buffer (Entries_Ctx, Buf);
                                 RFLX_Free (Buf);
-                        pragma Assert
-                          (if HC.Peer_Cert_Valid
-                           then HC.Peer_Cert_DER_Len
-                                in 1 .. Max_Cert_DER_Len
-                                and then X509.Spans_Valid
-                                  (HC.Peer_Cert,
-                                   X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                         pragma Assert
                           (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                         return;
@@ -1008,13 +998,6 @@ is
                           Err := No_Error;
                        end if;
                                pragma Assert
-                                 (if HC.Peer_Cert_Valid
-                                  then HC.Peer_Cert_DER_Len
-                                       in 1 .. Max_Cert_DER_Len
-                                       and then X509.Spans_Valid
-                                         (HC.Peer_Cert,
-                                          X509.N32 (HC.Peer_Cert_DER_Len) - 1));
-                               pragma Assert
                                  (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                                return;
                             end;
@@ -1031,13 +1014,6 @@ is
                  OK := True;
                  Err := No_Error;
               end if;
-                      pragma Assert
-                        (if HC.Peer_Cert_Valid
-                         then HC.Peer_Cert_DER_Len
-                              in 1 .. Max_Cert_DER_Len
-                              and then X509.Spans_Valid
-                                (HC.Peer_Cert,
-                                 X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                       pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
            end Parse_Certificate_Chain_13;
 
@@ -1057,8 +1033,8 @@ is
       Ctx      : C12.Context;
       Cert_Idx : Natural := 0;
    begin
-      HC.Peer_Cert_Valid := False;
-      HC.Peer_Cert_DER_Len := 0;
+      HC.Peer_Leaf.Present := False;
+      HC.Peer_Leaf.DER_Len := 0;
       HC.Peer_Int_Count := 0;
       OK := False;
       Err := Decode_Error;
@@ -1146,12 +1122,6 @@ is
                pragma Loop_Invariant
                  (if HC.Cfg.Random'Loop_Entry /= null
                   then HC.Cfg.Random /= null);
-               pragma Loop_Invariant
-                 (if HC.Peer_Cert_Valid
-                  then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                       and then X509.Spans_Valid
-                         (HC.Peer_Cert,
-                          X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                declare
                   E_Ctx : C12_Entry.Context;
                begin
@@ -1181,18 +1151,17 @@ is
                                     P_OK : Boolean;
                                  begin
                                     Parse_X509_From_RFLX
-                                      (Cert_RFLX, C_Len, HC.Peer_Cert, P_OK);
-                                    HC.Peer_Cert_Valid :=
+                                      (Cert_RFLX, C_Len, HC.Peer_Leaf.Cert, P_OK);
+                                    HC.Peer_Leaf.Present :=
                                       P_OK
-                                      and then X509.Is_Valid (HC.Peer_Cert);
+                                      and then X509.Is_Valid (HC.Peer_Leaf.Cert);
                                     pragma Assert
-                                      (if HC.Peer_Cert_Valid
-                                       then HC.Peer_Cert_DER_Len
-                                            in 1 .. Max_Cert_DER_Len
+                                      (if HC.Peer_Leaf.Present
+                                       then True
                                             and then X509.Spans_Valid
-                                              (HC.Peer_Cert,
+                                              (HC.Peer_Leaf.Cert,
                                                X509.N32
-                                                 (HC.Peer_Cert_DER_Len)
+                                                 (HC.Peer_Leaf.DER_Len)
                                                - 1));
                                  end;
                               elsif HC.Peer_Int_Count < Max_Pool_Size then
@@ -1232,36 +1201,15 @@ is
                   pragma Assert (C12_Entry.Has_Buffer (E_Ctx));
                   C12_Entries.Update (Entries_Ctx, E_Ctx);
                   if not C12_Entries.Has_Buffer (Entries_Ctx) then
-                     pragma Assert
-                       (if HC.Peer_Cert_Valid
-                        then HC.Peer_Cert_DER_Len
-                             in 1 .. Max_Cert_DER_Len
-                             and then X509.Spans_Valid
-                               (HC.Peer_Cert,
-                                X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                      return;
                   end if;
                   if not C12_Entries.Valid (Entries_Ctx) then
                      C12_Entries.Take_Buffer (Entries_Ctx, Buf);
                      RFLX_Free (Buf);
-                     pragma Assert
-                       (if HC.Peer_Cert_Valid
-                        then HC.Peer_Cert_DER_Len
-                             in 1 .. Max_Cert_DER_Len
-                             and then X509.Spans_Valid
-                               (HC.Peer_Cert,
-                                X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                      return;
                   end if;
                   pragma Assert (C12_Entries.Has_Buffer (Entries_Ctx));
                   pragma Assert (C12_Entries.Valid (Entries_Ctx));
-                  pragma Assert
-                    (if HC.Peer_Cert_Valid
-                     then HC.Peer_Cert_DER_Len
-                          in 1 .. Max_Cert_DER_Len
-                          and then X509.Spans_Valid
-                            (HC.Peer_Cert,
-                             X509.N32 (HC.Peer_Cert_DER_Len) - 1));
                end;
             end loop;
 
@@ -1269,12 +1217,6 @@ is
             RFLX_Free (Buf);
             OK := True;
             Err := No_Error;
-            pragma Assert
-              (if HC.Peer_Cert_Valid
-               then HC.Peer_Cert_DER_Len in 1 .. Max_Cert_DER_Len
-                    and then X509.Spans_Valid
-                      (HC.Peer_Cert,
-                       X509.N32 (HC.Peer_Cert_DER_Len) - 1));
             return;
          end;
       end if;

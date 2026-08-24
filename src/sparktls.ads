@@ -1,6 +1,7 @@
 with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
-with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
+with SPARKTLS_Reassembly;
+with SPARKTLS_Reassembly_G; use SPARKTLS_Reassembly;
 with RFLX.RFLX_Builtin_Types;
 with X509;
 
@@ -813,16 +814,21 @@ is
 
    subtype Cert_DER_Buf is X509.Byte_Seq (0 .. X509.N32 (Max_Cert_DER) - 1);
 
+   --  Bounded by construction: every write site holds the bound locally
+   --  (parse-length guards / slice assigns), and every read gets
+   --  DER_Len <= Max_Cert_DER for free -- the predicate no longer needs
+   --  to restate it, which is what drowned the Present-write VCs (r46).
+   subtype Pool_DER_Length is X509.N32 range 0 .. Max_Cert_DER;
+
    type Pool_Entry is record
       Cert    : X509.Certificate;
       DER     : Cert_DER_Buf      := (others => 0);
-      DER_Len : X509.N32          := 0;
+      DER_Len : Pool_DER_Length   := 0;
       Present : Boolean           := False;
    end record
      with Predicate =>
        (if Pool_Entry.Present then
           Pool_Entry.DER_Len > 0
-          and Pool_Entry.DER_Len <= X509.N32 (Max_Cert_DER)
           and X509.Spans_Valid (Pool_Entry.Cert, Pool_Entry.DER_Len - 1));
 
    type Cert_Pool is array (0 .. Max_Pool_Size - 1) of Pool_Entry;
@@ -983,10 +989,14 @@ is
    Ticket_ID_Len      : constant := 16;
    subtype Ticket_ID is Byte_Seq (0 .. Ticket_ID_Len - 1);
 
+   --  Length fields carry their own bounds (#84/#82): the check moves to
+   --  the assignment that produces the value and every read gets it free.
+   subtype PSK_Length is N32 range 0 .. 48;
+
    type Ticket_Entry is record
       ID      : Ticket_ID := (others => 0);
       PSK     : Bytes_48 := (others => 0);
-      PSK_Len : N32 := 0;
+      PSK_Len : PSK_Length := 0;
       Suite   : Unsigned_16 := 0;
       Age_Add : Unsigned_32 := 0;
       Valid   : Boolean := False;
@@ -1018,14 +1028,16 @@ is
 
    Max_Ticket_Len : constant := 256;
 
+   subtype Ticket_Length is N32 range 0 .. Max_Ticket_Len;
+
    type Session_Ticket is record
       Ticket       : Byte_Seq (0 .. Max_Ticket_Len - 1) := (others => 0);
-      Ticket_Len   : N32 := 0;
+      Ticket_Len   : Ticket_Length := 0;
       Lifetime     : Unsigned_32 := 0;       --  seconds
       Age_Add      : Unsigned_32 := 0;       --  obfuscation value
       Received_At  : Unsigned_64 := 0;       --  Unix seconds, 0 if unknown
       PSK          : Bytes_48 := (others => 0);  --  derived PSK
-      PSK_Len      : N32 := 0;              --  32 (SHA-256) or 48 (SHA-384)
+      PSK_Len      : PSK_Length := 0;       --  32 (SHA-256) or 48 (SHA-384)
       Suite        : Unsigned_16 := 0;       --  cipher suite
       Server_Name  : Hostname_Buf := (Len => 0, Data => (others => ' '));
       Resumption_Across_Names : Boolean := False;
@@ -1092,7 +1104,7 @@ is
    type Session_Ticket_12 is record
       Ticket        : Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1)
                          := (others => 0);
-      Ticket_Len    : N32 := 0;
+      Ticket_Len    : N32 range 0 .. Max_TLS12_Ticket_Len := 0;
       Master_Secret : Byte_Seq (0 .. 47) := (others => 0);
       Suite         : Unsigned_16 := 0;
       Lifetime_Hint : Unsigned_32 := 0;   --  seconds (from server)
@@ -1203,7 +1215,7 @@ is
    --  Persist a resumption PSK; return the identity to put on the wire.
    type Store_Session_Fn is access
       procedure (PSK     : Bytes_48;
-                 PSK_Len : N32;
+                 PSK_Len : PSK_Length;
                  Suite   : Unsigned_16;
                  Age_Add : Unsigned_32;
                  ID_Out  : out Ticket_ID)
@@ -1539,6 +1551,15 @@ is
    subtype Session_ID_Length   is N32 range 0 .. 32;
    subtype TLS12_Ticket_Buffer is Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1);
 
+   --  0 = not yet selected / absent. The predicate makes
+   --  Valid_ECDHE_Group free at every /= 0 use site (#82); the check
+   --  moves to the two guarded parse sites that produce the value.
+   --  Constants live in the Handshake.TLS12 child, hence literals
+   --  (16#001D# X25519, 16#0017# secp256r1, 16#0018# secp384r1).
+   subtype Maybe_ECDHE_Group is Unsigned_16
+     with Static_Predicate =>
+       Maybe_ECDHE_Group in 0 | 16#001D# | 16#0017# | 16#0018#;
+
    type Handshake_Context is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
@@ -1587,7 +1608,7 @@ is
       Client_Supports_X25519 : Boolean := False;
       Client_Supports_P256   : Boolean := False;
       Client_Supports_P384   : Boolean := False;
-      Selected_Group    : Unsigned_16 := 0;
+      Selected_Group    : Maybe_ECDHE_Group := 0;
       --  HelloRetryRequest state (server-side: we sent HRR)
       HRR_Sent          : Boolean := False;
       --  HelloRetryRequest state (client-side: we received HRR)
@@ -1601,8 +1622,8 @@ is
       --  (BoGo HelloRetryRequest-CipherChange-TLS13). Stash for
       --  comparison.
       HRR_Cipher_Suite     : Unsigned_16 := 0;
-      HRR_Selected_Group   : Unsigned_16 := 0;
-      HRR_Cookie_Len       : N32 := 0;
+      HRR_Selected_Group   : Maybe_ECDHE_Group := 0;
+      HRR_Cookie_Len       : N32 range 0 .. 1024 := 0;
       HRR_Cookie           : Byte_Seq (0 .. 1023) := (others => 0);
       --  RFC 8446 §D.4: the dummy CCS is emitted exactly once per
       --  connection. On the HRR retry path we emit it between HRR
@@ -1644,11 +1665,11 @@ is
       Transcript_Len : Transcript_Length := 0;
 
       --  Peer certificate (raw DER for verification)
-      Peer_Cert_DER     : Byte_Seq (0 .. Max_Cert_DER_Len - 1)
-                            := (others => 0);
-      Peer_Cert_DER_Len : Cert_DER_Length := 0;
-      Peer_Cert         : X509.Certificate;
-      Peer_Cert_Valid   : Boolean := False;
+      --  The peer's leaf certificate as ONE predicated record (#101):
+      --  Present implies DER_Len in 1 .. Max and Spans_Valid -- the
+      --  facts the old four loose fields threaded through contracts.
+      --  WHOLE-AGGREGATE ASSIGNMENT ONLY (multi-field predicate).
+      Peer_Leaf : Pool_Entry;
 
       --  Peer intermediate certificates
       Peer_Ints      : Cert_Pool;
@@ -2272,6 +2293,14 @@ is
    --  cannot be called with a client session, so ~50 "Role = Role_Server"
    --  preconditions become UNSTATEABLE rather than merely satisfied.
    --  Existing "S : SPARKTLS.Session;" keeps compiling via the default.
+   --  16 KB instance of the reassembly ADT (#90): post-handshake
+   --  messages (KeyUpdate, NewSessionTicket) are handshake-framed and
+   --  never exceed one record's plaintext in this design. Same proven
+   --  body as the 128 KB handshake instance; the Len/Need relation the
+   --  loose fields used to thread is structural here.
+   package Post_HS_Reasm is new SPARKTLS_Reassembly_G
+     (Capacity => 16_384);
+
    type Session (Role : TLS_Role := Role_Client) is private;
 
    subtype Client_Session is Session (Role_Client);
@@ -2670,7 +2699,7 @@ private
       --  Resumption master secret (copied from HC before free,
       --  needed to derive PSK when NewSessionTicket arrives post-handshake)
       Res_Master     : Bytes_48 := (others => 0);
-      Res_Master_Len : N32 := 0;  --  32 or 48
+      Res_Master_Len : N32 range 0 .. 48 := 0;  --  32 or 48
 
       --  Session-level wall clock mirror. Client TLS 1.3 tickets arrive
       --  post-handshake, after HC is freed, and later resumption attempts
@@ -2681,7 +2710,7 @@ private
       --  the handshake context is freed. TLS 1.2 stores master_secret
       --  plus randoms; TLS 1.3 stores exporter_master_secret.
       Exporter_Secret        : Bytes_48 := (others => 0);
-      Exporter_Secret_Len    : N32 := 0;  --  32 or 48; 0 means unavailable
+      Exporter_Secret_Len    : N32 range 0 .. 48 := 0;  --  32 or 48; 0 means unavailable
       Exporter_Client_Random : Bytes_32 := (others => 0);
       Exporter_Server_Random : Bytes_32 := (others => 0);
 
@@ -2701,7 +2730,7 @@ private
       --  that exhausts its sequence space must be closed.
       Client_App_Secret : Bytes_48 := (others => 0);
       Server_App_Secret : Bytes_48 := (others => 0);
-      App_Secret_Len    : N32 := 0;  --  0 = none, else 32 (SHA-256)/48 (384)
+      App_Secret_Len    : N32 range 0 .. 48 := 0;  --  0 = none, else 32 (SHA-256)/48 (384)
 
       --  RFC 8446 §4.6.3 does not bound how often a peer may request a
       --  rekey, and each one costs a KDF plus key re-derivation. Counted
@@ -2730,10 +2759,7 @@ private
 
       --  TLS 1.3 post-handshake handshake-message reassembly. Servers may
       --  fragment NewSessionTicket across encrypted application_data records.
-      Post_HS_Buf  : Byte_Seq (0 .. Max_Record_Plaintext - 1)
-                       := (others => 0);
-      Post_HS_Len  : Plaintext_Length := 0;
-      Post_HS_Need : Plaintext_Length := 0;
+      Post_HS : Post_HS_Reasm.Buffer;
 
       --  Counter for received warning-level user_canceled alerts.
       --  RFC 8446 §6.1: TLS 1.3 deprecates warning alerts but keeps

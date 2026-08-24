@@ -109,7 +109,7 @@ KEY="$CERT_DIR/rsa.key"
 
 # All TLS 1.3 test scripts
 ALL_TESTS=(
-    conversation ccs empty-alert finished record-padding
+    conversation ccs empty-alert finished record-padding keyupdate
     zero-content-type zero-length-data unencrypted-alert
     connection-abort invalid-ciphers nociphers record-layer-limits
     version-negotiation legacy-version count-tickets
