@@ -232,6 +232,13 @@ is
       Exp_Nonce  : Byte_Seq (0 .. 7);
       OK         : Boolean;
    begin
+      --  The channel defends itself: refuse an exhausted budget before
+      --  the AEAD below burns a nonce. Executes in every build.
+      if not Space_Left (Keys) then
+         Bytes_Out := 0;
+         return;
+      end if;
+
       Bytes_Out := 0;
 
       --  Construct the AEAD nonce per suite (see helpers above).

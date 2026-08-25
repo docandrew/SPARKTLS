@@ -51,7 +51,7 @@ procedure Test_Build_Server_Hello is
       HC.Cfg.Random       := Det_Random_Lib.Det_Random'Access;
       HC.Cfg.Suite        := TLS_AES_128_GCM_SHA256;
       HC.Client_Has_X25519 := True;
-      HC.Peer_PK := (others => 16#01#);  --  arbitrary peer pubkey
+      HC.KE.Peer_PK := (others => 16#01#);  --  arbitrary peer pubkey
    end Init_Context;
 
    --  Generate a valid P-256 peer pubkey by running Mulgen on a fixed
@@ -136,8 +136,8 @@ procedure Test_Build_Server_Hello is
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
         (S, HC, Result, Len);
 
-      Check ("X25519: HC.Selected_Group = 0x001D (x25519)",
-             HC.Selected_Group = 16#001D#);
+      Check ("X25519: negotiated curve is 0x001D (x25519)",
+             HC.KE.Negotiated and then HC.KE.Curve = 16#001D#);
    end Test_Selected_Group;
 
    procedure Test_Buffer_Too_Small is
@@ -162,7 +162,7 @@ procedure Test_Build_Server_Hello is
       Init_Context (S, HC);
       HC.Client_Has_X25519 := False;
       HC.Client_Has_P256   := True;
-      HC.P256_Peer_PK      := Make_P256_Peer_PK;
+      HC.KE.P256_PK      := Make_P256_Peer_PK;
 
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
         (S, HC, Result, Len);
@@ -171,10 +171,10 @@ procedure Test_Build_Server_Hello is
       if Len <= 4 then return; end if;
       Check ("P-256: type byte = 0x02 (server_hello)",
              Result (0) = 16#02#);
-      Check ("P-256: HC.Selected_Group = 0x0017 (secp256r1)",
-             HC.Selected_Group = 16#0017#);
+      Check ("P-256: negotiated curve is 0x0017 (secp256r1)",
+             HC.KE.Negotiated and then HC.KE.Curve = 16#0017#);
       Check ("P-256: shared secret is non-zero",
-             (for some I in 0 .. 31 => HC.Shared_Secret (N32 (I)) /= 0));
+             (for some I in 0 .. 31 => HC.KE.Shared (N32 (I)) /= 0));
    end Test_P256_Builds;
 
    procedure Test_P384_Builds is
@@ -186,7 +186,7 @@ procedure Test_Build_Server_Hello is
       Init_Context (S, HC);
       HC.Client_Has_X25519 := False;
       HC.Client_Has_P384   := True;
-      HC.P384_Peer_PK      := Make_P384_Peer_PK;
+      HC.KE.P384_PK      := Make_P384_Peer_PK;
 
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
         (S, HC, Result, Len);
@@ -195,10 +195,10 @@ procedure Test_Build_Server_Hello is
       if Len <= 4 then return; end if;
       Check ("P-384: type byte = 0x02 (server_hello)",
              Result (0) = 16#02#);
-      Check ("P-384: HC.Selected_Group = 0x0018 (secp384r1)",
-             HC.Selected_Group = 16#0018#);
+      Check ("P-384: negotiated curve is 0x0018 (secp384r1)",
+             HC.KE.Negotiated and then HC.KE.Curve = 16#0018#);
       Check ("P-384: shared secret is non-zero",
-             (for some I in 0 .. 47 => HC.Shared_Secret (N32 (I)) /= 0));
+             (for some I in 0 .. 47 => HC.KE.Shared (N32 (I)) /= 0));
    end Test_P384_Builds;
 
    procedure Test_P256_Invalid_Peer_PK_Rejected is
@@ -210,7 +210,7 @@ procedure Test_Build_Server_Hello is
       Init_Context (S, HC);
       HC.Client_Has_X25519 := False;
       HC.Client_Has_P256   := True;
-      HC.P256_Peer_PK      := (others => 0);  --  not a valid point
+      HC.KE.P256_PK      := (others => 0);  --  not a valid point
 
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
         (S, HC, Result, Len);
@@ -236,7 +236,7 @@ procedure Test_Build_Server_Hello is
    --  Eight specific 32-byte peer-pubkey values produce an all-zero
    --  shared secret. Generate_KS_X25519 must (a) detect via
    --  Shared_Secret_Is_Acceptable_X25519, (b) abort with KS_Raw_Len=0,
-   --  (c) zero HC.Shared_Secret, (d) plumb Illegal_Parameter via
+   --  (c) zero HC.KE.Shared, (d) plumb Illegal_Parameter via
    --  HC.Ext_Parse_Err so Build_Server_Flight emits the RFC-correct
    --  alert instead of generic handshake_failure.
    --

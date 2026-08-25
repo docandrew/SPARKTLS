@@ -58,7 +58,7 @@ is
    --  Sets Mode_WebPKI, Purpose_Server, and the default cipher suite.
    --  After Configure, the caller should drain and send the ClientHello.
    procedure Configure
-     (S                    : out Session;
+     (S                    : out Client_Session;
       Hostname             : String;
       Trust                : Trust_Store_Access;
       Random               : Random_Bytes_Fn;
@@ -74,8 +74,7 @@ is
    --  builds a Config and calls Init, so it can promise no more than Init
    --  does. Init fails closed to Error_State.
    with Pre  => Random /= null and Clock /= null,
-        Post => Role (S) = Role_Client and
-                (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
+        Post => (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
    --  Skip_Verify: skip full X.509 chain validation against Trust
    --  (development / self-signed certs). Without Skip_Verify, a trust
    --  store and clock must be configured before the handshake can
@@ -97,7 +96,7 @@ is
    --  Initialize a client session with full control over Config.
    --  After Init, the caller should drain and send the ClientHello.
    procedure Init
-     (S   :    out Session;
+     (S   :    out Client_Session;
       Cfg : in     Config)
    --  This postcondition is CHECKED by GNATprove: the body is in SPARK
    --  since the ticket-storage callbacks replaced Config's owning pointers
@@ -106,9 +105,11 @@ is
    --  rejection, HC allocation failure, and Initialize_Client_Handshake
    --  failure all leave State (S) = Error_State with nothing queued. Role is
    --  set in the initial aggregate and never changed (Set_State frames it).
+   --  The formal is the CONSTRAINED subtype (#39, 2026-08-24): the Role
+   --  Post is subsumed by the profile and the body's discriminant checks
+   --  become static.
    with Pre  => Cfg.Random /= null,
-        Post => Role (S) = Role_Client and
-                (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
+        Post => (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
 
    --  Step the client handshake / record processing state machine.
    --

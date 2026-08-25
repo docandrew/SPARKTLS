@@ -1281,8 +1281,10 @@ is
    --  3. Verify using RSA-PSS, ECDSA, or Ed25519
    ------------------------------------------------------------------
 
-   function Verify_Signature
-     (Data       : Byte_Seq;
+   function Verify_Signature_Hashed
+     (H256_In    : Bytes_32;
+      H384_In    : Bytes_48;
+      H512_In    : Bytes_64;
       Sig        : Byte_Seq;
       Cert       : X509.Certificate;
       Sig_Scheme : Unsigned_16) return Boolean
@@ -1315,7 +1317,7 @@ is
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
                Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
             begin
-               SPARKTLSCrypto.Hashing.SHA256.Hash (H, Data);
+               H := SPARKTLSCrypto.Hashing.SHA256.Digest (H256_In);
                for I in N32 range 0 .. N32 (PK_Len) - 1 loop
                   Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                end loop;
@@ -1351,7 +1353,7 @@ is
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
                Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
             begin
-               SPARKNaCl.Hashing.SHA384.Hash (H, Data);
+               H := SPARKNaCl.Hashing.SHA384.Digest (H384_In);
                for I in N32 range 0 .. N32 (PK_Len) - 1 loop
                   Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                end loop;
@@ -1387,7 +1389,7 @@ is
                Mod_Bytes : Byte_Seq (0 .. N32 (PK_Len) - 1) := (others => 0);
                Sig_Bytes : Byte_Seq (0 .. Sig_Len - 1);
             begin
-               SPARKNaCl.Hashing.SHA512.Hash (H, Data);
+               H := SPARKNaCl.Hashing.SHA512.Digest (H512_In);
                for I in N32 range 0 .. N32 (PK_Len) - 1 loop
                   Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                end loop;
@@ -1423,7 +1425,7 @@ is
                S_Val : P256.ECDSA.ECDSA_Sig_Half;
                DER_OK : Boolean;
             begin
-               SPARKTLSCrypto.Hashing.SHA256.Hash (H, Data);
+               H := SPARKTLSCrypto.Hashing.SHA256.Digest (H256_In);
                --  Extract public key (skip 0x04 uncompressed prefix)
                for I in 0 .. 31 loop
                   Qx (N32 (I)) := Byte (PK_Data (X509.N32 (I + 1)));
@@ -1461,7 +1463,7 @@ is
                S_Val : Byte_Seq (0 .. 47);
                DER_OK : Boolean;
             begin
-               SPARKNaCl.Hashing.SHA384.Hash (H, Data);
+               H := SPARKNaCl.Hashing.SHA384.Digest (H384_In);
                for I in 0 .. 47 loop
                   Qx (N32 (I)) := Byte (PK_Data (X509.N32 (I + 1)));
                   Qy (N32 (I)) := Byte (PK_Data (X509.N32 (I + 49)));
@@ -1483,6 +1485,41 @@ is
                   S    => S_Val);
             end;
 
+         --  Ed25519 (0x0807): PureEdDSA signs the raw message, which
+         --  no digest can stand in for.  Digest-based callers (TLS 1.2
+         --  CertificateVerify over the streamed transcript) therefore
+         --  cannot accept it; the raw-data entry points still do.
+         when 16#0807# =>
+            return False;
+
+         when others =>
+            return False;
+
+      end case;
+      end;
+   end Verify_Signature_Hashed;
+
+   function Verify_Signature
+     (Data       : Byte_Seq;
+      Sig        : Byte_Seq;
+      Cert       : X509.Certificate;
+      Sig_Scheme : Unsigned_16) return Boolean
+   is
+      PK_Algo : constant X509.Algorithm_ID := X509.PK_Algorithm (Cert);
+      PK_Len  : constant X509.N32 := X509.PK_Length (Cert);
+      Sig_Len : constant N32 := N32 (Sig'Length);
+   begin
+      if PK_Len = 0 or PK_Len > X509.N32 (X509.Max_PK_Bytes) then
+         return False;
+      end if;
+
+      --  Ed25519 verifies over the raw message and so cannot delegate
+      --  to the digest core.
+      if Sig_Scheme = 16#0807# then
+         declare
+            PK_Data : constant X509.Byte_Seq := X509.PK_Data (Cert);
+         begin
+            case Sig_Scheme is
          --  Ed25519 (0x0807)
          when 16#0807# =>
             if PK_Algo not in X509.Algo_Ed25519 | X509.Algo_EC_Ed25519 then
@@ -1506,11 +1543,27 @@ is
                  (Ignored_M, OK, Ignored_Len, SM, PK_Bytes);
                return OK;
             end;
+               when others =>
+                  return False;
+            end case;
+         end;
+      end if;
 
-         when others =>
-            return False;
-
-      end case;
+      declare
+         H2 : SPARKTLSCrypto.Hashing.SHA256.Digest;
+         H3 : SPARKNaCl.Hashing.SHA384.Digest;
+         H5 : SPARKNaCl.Hashing.SHA512.Digest;
+      begin
+         SPARKTLSCrypto.Hashing.SHA256.Hash (H2, Data);
+         SPARKNaCl.Hashing.SHA384.Hash (H3, Data);
+         SPARKNaCl.Hashing.SHA512.Hash (H5, Data);
+         return Verify_Signature_Hashed
+           (H256_In    => Bytes_32 (Byte_Seq (H2)),
+            H384_In    => Bytes_48 (Byte_Seq (H3)),
+            H512_In    => Bytes_64 (Byte_Seq (H5)),
+            Sig        => Sig,
+            Cert       => Cert,
+            Sig_Scheme => Sig_Scheme);
       end;
    end Verify_Signature;
 
@@ -1580,5 +1633,76 @@ is
          Cert       => Cert,
          Sig_Scheme => Sig_Scheme);
    end Verify_Signature_TLS12;
+
+   function Verify_Signature_TLS12_Hashed
+     (H256_In    : Bytes_32;
+      H384_In    : Bytes_48;
+      H512_In    : Bytes_64;
+      Sig        : Byte_Seq;
+      Cert       : X509.Certificate;
+      Sig_Scheme : Unsigned_16) return Boolean
+   is
+      PK_Algo : constant X509.Algorithm_ID := X509.PK_Algorithm (Cert);
+      PK_Len  : constant X509.N32 := X509.PK_Length (Cert);
+   begin
+      --  TLS 1.2 (sha384, ecdsa) with a P-256 key: the curve does not
+      --  bind the hash; verify over the truncated SHA-384 digest.
+      if Sig_Scheme = 16#0503#
+        and then PK_Algo = X509.Algo_EC_P256
+      then
+         if PK_Len /= 65 then
+            return False;
+         end if;
+
+         declare
+            H256    : Bytes_32;
+            PK_Data : constant X509.Byte_Seq := X509.PK_Data (Cert);
+            Qx      : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
+            Qy      : P256.ECDSA.ECDSA_Sig_Half := (others => 0);
+            R_Val   : P256.ECDSA.ECDSA_Sig_Half;
+            S_Val   : P256.ECDSA.ECDSA_Sig_Half;
+            DER_OK  : Boolean;
+         begin
+            for I in N32 range 0 .. 31 loop
+               H256 (I) := H384_In (I);
+            end loop;
+
+            for I in 0 .. 31 loop
+               Qx (N32 (I)) := Byte (PK_Data (X509.N32 (I + 1)));
+               Qy (N32 (I)) := Byte (PK_Data (X509.N32 (I + 33)));
+            end loop;
+
+            declare
+               X_Sig : X509.Byte_Seq
+                 (0 .. X509.N32 (Sig'Length) - 1) := (others => 0);
+            begin
+               for I in N32 range 0 .. N32 (Sig'Length) - 1 loop
+                  X_Sig (X509.N32 (I)) := X509.Byte (Sig (I));
+               end loop;
+               Parse_DER_ECDSA_Sig
+                 (X_Sig, Byte_Seq (R_Val), Byte_Seq (S_Val), DER_OK);
+            end;
+
+            if not DER_OK then
+               return False;
+            end if;
+
+            return P256.ECDSA.Verify
+              (Hash => H256,
+               Qx   => P256.ECDSA.ECDSA_Sig_Half (Qx),
+               Qy   => P256.ECDSA.ECDSA_Sig_Half (Qy),
+               R    => R_Val,
+               S    => S_Val);
+         end;
+      end if;
+
+      return Verify_Signature_Hashed
+        (H256_In    => H256_In,
+         H384_In    => H384_In,
+         H512_In    => H512_In,
+         Sig        => Sig,
+         Cert       => Cert,
+         Sig_Scheme => Sig_Scheme);
+   end Verify_Signature_TLS12_Hashed;
 
 end SPARKTLS.Cert_Verify;

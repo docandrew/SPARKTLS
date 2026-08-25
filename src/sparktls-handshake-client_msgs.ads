@@ -1,6 +1,8 @@
 with SPARKNaCl; use SPARKNaCl;
 with SPARKTLSCrypto.P384.Field;
 
+with SPARKTLS_Transcript;
+use type SPARKTLS_Transcript.Transcript_State;
 --  TLS 1.3 Client Handshake Messages
 --
 --  Build ClientHello and parse ServerHello.
@@ -59,8 +61,7 @@ is
                                                                                                            then
                                                                                                              (if HC.Cfg.Random'Old /= null
                                                                                                               then HC.Cfg.Random /= null)
-                                                                                                     and then HC.Transcript_Len =
-                                                                                                       HC.Transcript_Len'Old
+                                                                                                     and then HC.TS = HC.TS'Old
                                                                                                              and then HC.HRR_Cookie_Len <=
                                                                                                                N32 (HC.HRR_Cookie'Length))
                                                                                                         and then

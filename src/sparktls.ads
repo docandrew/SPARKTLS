@@ -1,7 +1,9 @@
 with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
 with SPARKTLS_Reassembly;
-with SPARKTLS_Reassembly_G; use SPARKTLS_Reassembly;
+with SPARKTLS_Reassembly_G;
+with SPARKTLS_Post_HS_Reasm; use SPARKTLS_Reassembly;
+with SPARKTLS_Transcript;
 with RFLX.RFLX_Builtin_Types;
 with X509;
 
@@ -718,14 +720,18 @@ is
    --  entirely silent in a release build where preconditions are not
    --  evaluated.
    --
-   --  Excluding 'Last from the subtype turns that silent wrap into a range
-   --  check the prover must discharge, which forces the increment sites to
-   --  refuse rather than wrap. The bound is arithmetic, not cryptographic:
-   --  RFC 8446 §5.5's AEAD limit (see Rekey_After_Records) is reached
-   --  ~2**40 times sooner, and KeyUpdate rotation is what keeps a healthy
-   --  connection far away from here. This is the backstop for when it does
-   --  not happen.
-   subtype Record_Counter is Unsigned_64 range 0 .. Unsigned_64'Last - 1;
+   --  The counter's TYPE bound IS the cryptographic budget (user call,
+   --  2026-08-24): a bound of 2**64 defending a 2**23 fact made every
+   --  counter VC reason over intervals ~2**40 too wide. The cap value
+   --  itself stays representable -- it is the legitimate "channel
+   --  exhausted" state after the final permitted record -- so Space_Left
+   --  remains a real two-state query, but every increment, comparison
+   --  and frame now works in 23-bit intervals. The old arithmetic-wrap
+   --  backstop is subsumed: a wrap is now ~2**40 range-check failures
+   --  away instead of one.
+   Rekey_After_Records : constant := 2 ** 23;
+
+   subtype Record_Counter is Unsigned_64 range 0 .. Rekey_After_Records;
 
    --  Lengths bounded by the record-plaintext limit. These were Session
    --  predicate conjuncts; as subtypes the bound travels with the field
@@ -758,16 +764,11 @@ is
    --  harmless.
    --
    --  NOTE the two bounds are different things and both are needed:
-   --    * this one is the CRYPTOGRAPHIC limit, and rotating keeps the
-   --      connection alive and within the AEAD margin;
-   --    * Unsigned_64'Last is the ARITHMETIC limit, ~584,000 years away,
-   --      and reaching it must fail closed rather than wrap (a modular
-   --      wrap would reuse nonces). See #46.
-   Rekey_After_Records : constant := 2 ** 23;
+   --    * this one is the CRYPTOGRAPHIC limit (now also the type bound
+   --      of Record_Counter), and rotating keeps the connection alive
+   --      and within the AEAD margin. See #46 for the old split.
 
-   --  RFC 8446 §5.3: Nonce space must not be exhausted.
-   function Nonce_Space_Available (K : Traffic_Keys) return Boolean is
-     (K.Counter < Unsigned_64'Last);
+
 
    --  The write-side AEAD confidentiality cap (RFC 8446 §5.5 for 1.3,
    --  the same 2**23 bound adopted for 1.2 where no rekey exists), as a
@@ -778,6 +779,21 @@ is
    --  lives apart from its counter does not travel).
    function Space_Left (K : Traffic_Keys) return Boolean is
      (K.Counter < Rekey_After_Records);
+
+   --  Control-record headroom (2026-08-24, exposed by the tight counter
+   --  bound): rotation/close must trigger BEFORE the cap so the records
+   --  that perform them -- KeyUpdate, close_notify, a final alert --
+   --  still fit inside the budget. The old wide type silently let those
+   --  ride PAST the stated RFC 8446 Section 5.5 budget; the tight type
+   --  turned that into a refusal deadlock, which this margin resolves
+   --  conformantly. 16 covers rotation plus a worst-case alert tail.
+   Rekey_Margin : constant := 16;
+
+   --  The app-data write budget: the trigger for KeyUpdate (1.3) or
+   --  connection close (1.2). Distinct from Space_Left, which is the
+   --  hard refusal line the channel enforces on itself.
+   function Write_Budget_Reached (K : Traffic_Keys) return Boolean is
+     (K.Counter >= Rekey_After_Records - Rekey_Margin);
 
    ----------------------------------------------------------------------------
    --  Random byte generation callback
@@ -1560,6 +1576,34 @@ is
      with Static_Predicate =>
        Maybe_ECDHE_Group in 0 | 16#001D# | 16#0017# | 16#0018#;
 
+   --  Carve 3a: negotiated-curve seed of the KE ADT. Validity is BY TYPE
+   --  (no zero member), so Valid_ECDHE_Group demands on this value are
+   --  tautologies; Negotiated carries only the phase — whether Curve is
+   --  the peer-agreed group or the meaningless default. No predicate:
+   --  there is no cross-field relation to state (user rule 2026-08-24 —
+   --  predicates only for what the base type system cannot express).
+   subtype ECDHE_Group is Unsigned_16
+     with Static_Predicate =>
+       ECDHE_Group in 16#001D# | 16#0017# | 16#0018#;
+
+   --  Carve 3b: the key material joins the seed. The 1.3 client
+   --  generates shares for several curves BEFORE negotiation, so
+   --  material-presence is NOT gated on Negotiated; Curve selects the
+   --  live pair once Negotiated. No predicate: there is no cross-field
+   --  relation the base type system cannot express (arrays are always
+   --  initialized; Curve is valid by type; Negotiated is pure phase).
+   type KE_State is record
+      Negotiated : Boolean       := False;
+      Curve      : ECDHE_Group   := 16#001D#;
+      Local_SK   : Bytes_32      := (others => 0);  --  X25519
+      Peer_PK    : Bytes_32      := (others => 0);  --  X25519
+      P256_SK    : Bytes_32      := (others => 0);
+      P256_PK    : P256_Peer_Key := (others => 0);
+      P384_SK    : Bytes_48      := (others => 0);
+      P384_PK    : P384_Peer_Key := (others => 0);
+      Shared     : Bytes_48      := (others => 0);
+   end record;
+
    type Handshake_Context is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
@@ -1576,21 +1620,12 @@ is
       Peer_SNI : Hostname_Buf := (Len => 0, Data => (others => ' '));
 
       --  Ephemeral key exchange (X25519, P-256, or P-384 ECDHE)
-      Local_SK      : Bytes_32 := (others => 0);
       Client_Random : Bytes_32 := (others => 0);
       Server_Random : Bytes_32 := (others => 0);
-      Peer_PK       : Bytes_32 := (others => 0);
-      Shared_Secret : Bytes_48 := (others => 0);
 
       --  P-256 ECDHE key exchange state
-      P256_Local_SK : Bytes_32 := (others => 0);
-      P256_Peer_PK  : P256_Peer_Key := (others => 0);
-      Use_P256_KE   : Boolean := False;
 
       --  P-384 ECDHE key exchange state
-      P384_Local_SK : Bytes_48 := (others => 0);
-      P384_Peer_PK  : P384_Peer_Key := (others => 0);
-      Use_P384_KE   : Boolean := False;
 
       --  Server-side: which groups did the client offer in key_share?
       --  (actual key exchange data present)
@@ -1608,7 +1643,7 @@ is
       Client_Supports_X25519 : Boolean := False;
       Client_Supports_P256   : Boolean := False;
       Client_Supports_P384   : Boolean := False;
-      Selected_Group    : Maybe_ECDHE_Group := 0;
+      KE                : KE_State;
       --  HelloRetryRequest state (server-side: we sent HRR)
       HRR_Sent          : Boolean := False;
       --  HelloRetryRequest state (client-side: we received HRR)
@@ -1659,10 +1694,10 @@ is
       --  Hash length for negotiated cipher suite (32 or 48)
       Hash_Len : Hash_Length := 32;
 
-      --  Transcript accumulator
-      Transcript     : Byte_Seq (0 .. Transcript_Capacity - 1)
-                         := (others => 0);
-      Transcript_Len : Transcript_Length := 0;
+      --  Streaming transcript (carve 2): dual SHA-256/384 contexts
+      --  replace the 32 KB buffer -- no capacity, no Len, no non-RFC
+      --  size restrictions. See sparktls_transcript.ads.
+      TS : SPARKTLS_Transcript.Transcript_State;
 
       --  Peer certificate (raw DER for verification)
       --  The peer's leaf certificate as ONE predicated record (#101):
@@ -1759,7 +1794,20 @@ is
       --  ClientKeyExchange, inclusive. Capture that transcript length
       --  immediately after CKE so later CertificateVerify / Finished
       --  appends cannot affect master_secret derivation.
-      TLS12_EMS_Transcript_Len : N32 range 0 .. Transcript_Capacity := 0;
+      --  EMS session hash (RFC 7627), DRAWN at its protocol point
+      --  (CKE) rather than remembered as a buffer offset. 48 bytes
+      --  covers both digests; Hash_Len says how many are live.
+      EMS_Session_Hash : Bytes_48 := (others => 0);
+      EMS_Hash_Taken   : Boolean  := False;
+
+      --  PSK binder transcript hash (RFC 8446 4.2.11.2), DRAWN at
+      --  ClientHello processing time over transcript-so-far plus the
+      --  CH truncated before its binders list -- the split the
+      --  streaming transcript cannot reconstruct after the append.
+      --  48 bytes covers both digests; the suite says how many live.
+      Binder_Hash_256 : Bytes_32 := (others => 0);
+      Binder_Hash_384 : Bytes_48 := (others => 0);
+      Binder_Hash_Taken : Boolean := False;
 
       --  TLS 1.2: client offered renegotiation_info extension (RFC 5746)
       --  or sent the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) in
@@ -2057,21 +2105,21 @@ is
    --  signals a serious negotiation bug — clients refuse to derive
    --  shared secrets with mismatched groups.
    --
-   --  This predicate cross-references HC.Selected_Group against the
+   --  This predicate cross-references HC.KE.Curve against the
    --  per-group `Client_Has_*` flags (key_share data present) and
    --  the `Client_Supports_*` flags (offered in supported_groups).
    --  Selected_Group = 0 means "not yet selected" and is allowed
    --  prior to ServerHello build.
    function Selected_Group_Was_Offered_RFC_8446_4_2_8
      (HC : Handshake_Context) return Boolean is
-     (HC.Selected_Group = 0
-        or else (HC.Selected_Group = 16#001D#
+     (not HC.KE.Negotiated
+        or else (HC.KE.Curve = 16#001D#
                    and then (HC.Client_Has_X25519
                                or else HC.Client_Supports_X25519))
-        or else (HC.Selected_Group = 16#0017#
+        or else (HC.KE.Curve = 16#0017#
                    and then (HC.Client_Has_P256
                                or else HC.Client_Supports_P256))
-        or else (HC.Selected_Group = 16#0018#
+        or else (HC.KE.Curve = 16#0018#
                    and then (HC.Client_Has_P384
                                or else HC.Client_Supports_P384)))
      with Ghost;
@@ -2298,8 +2346,7 @@ is
    --  never exceed one record's plaintext in this design. Same proven
    --  body as the 128 KB handshake instance; the Len/Need relation the
    --  loose fields used to thread is structural here.
-   package Post_HS_Reasm is new SPARKTLS_Reassembly_G
-     (Capacity => 16_384);
+   package Post_HS_Reasm renames SPARKTLS_Post_HS_Reasm;
 
    type Session (Role : TLS_Role := Role_Client) is private;
 
@@ -2844,13 +2891,10 @@ private
    --  shared with TLS 1.3, where sitting at 2**23 is the normal
    --  about-to-rotate state, not a terminal condition.
    function Write_Limit_Reached (S : Session) return Boolean is
-     (if S.Role = Role_Client
-      then not Nonce_Space_Available (S.Client_App)
-           or else (S.Negotiated_Version = TLS_1_2
-                    and then not Space_Left (S.Client_App))
-      else not Nonce_Space_Available (S.Server_App)
-           or else (S.Negotiated_Version = TLS_1_2
-                    and then not Space_Left (S.Server_App)));
+     (S.Negotiated_Version = TLS_1_2
+      and then (if S.Role = Role_Client
+                then Write_Budget_Reached (S.Client_App)
+                else Write_Budget_Reached (S.Server_App)));
    function Role (S : Session) return TLS_Role is (S.Role);
    function Last_Error (S : Session) return Error_Code is (S.Last_Error);
    function Peer_Closed_Cleanly (S : Session) return Boolean is

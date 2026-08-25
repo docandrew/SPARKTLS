@@ -6,6 +6,8 @@ with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
 
+with SPARKTLS_Transcript;
+use type SPARKTLS_Transcript.Transcript_State;
 --  TLS 1.3 Certificate Handshake Messages
 --
 --  Build Certificate, CertificateChain, and CertificateVerify messages.
@@ -116,7 +118,7 @@ is
                                                and then HS_Msg'Length <= Max_Cert_Msg,
                                 Post => HC.Client_HS.Counter =
                                           HC.Client_HS.Counter'Old
-                                        and then HC.Transcript_Len = HC.Transcript_Len'Old
+                                        and then HC.TS = HC.TS'Old
                         and then HC.Hash_Len = HC.Hash_Len'Old
                         and then (if HC.Cfg.Local'Old /= null
                                   then HC.Cfg.Local /= null)
@@ -148,7 +150,7 @@ is
    with Pre => HS_Msg'First = 0
                                and then HS_Msg'Length >= 7
                                and then HS_Msg'Length <= Max_Cert_Msg,
-        Post => HC.Transcript_Len = HC.Transcript_Len'Old
+        Post => HC.TS = HC.TS'Old
                 and then HC.Hash_Len = HC.Hash_Len'Old
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)

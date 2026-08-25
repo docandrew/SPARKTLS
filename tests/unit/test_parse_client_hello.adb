@@ -438,7 +438,7 @@ procedure Test_Parse_Client_Hello is
              HC.Client_Saw_Key_Share);
       Check ("X25519 Peer_PK matches",
              (for all I in N32 range 0 .. 31 =>
-                HC.Peer_PK (I) = Byte (16#80# + Natural (I) mod 16)));
+                HC.KE.Peer_PK (I) = Byte (16#80# + Natural (I) mod 16)));
    end Test_KS_X25519;
 
    procedure Test_KS_P256 is
@@ -464,7 +464,7 @@ procedure Test_Parse_Client_Hello is
       Check ("P-256 key_share marks extension present",
              HC.Client_Saw_Key_Share);
       Check ("P-256 Peer_PK first byte = 0x04",
-             HC.P256_Peer_PK (0) = 16#04#);
+             HC.KE.P256_PK (0) = 16#04#);
    end Test_KS_P256;
 
    procedure Test_KS_P384 is
@@ -490,7 +490,7 @@ procedure Test_Parse_Client_Hello is
       Check ("P-384 key_share marks extension present",
              HC.Client_Saw_Key_Share);
       Check ("P-384 Peer_PK first byte = 0x04",
-             HC.P384_Peer_PK (0) = 16#04#);
+             HC.KE.P384_PK (0) = 16#04#);
    end Test_KS_P384;
 
    procedure Test_Missing_Key_Share_State is
@@ -681,7 +681,7 @@ procedure Test_Parse_Client_Hello is
              HC1.Client_Has_X25519 = HC2.Client_Has_X25519);
       Check ("Idempotent: same Peer_PK",
              (for all I in N32 range 0 .. 31 =>
-                HC1.Peer_PK (I) = HC2.Peer_PK (I)));
+                HC1.KE.Peer_PK (I) = HC2.KE.Peer_PK (I)));
    end Test_Idempotent;
 
 begin

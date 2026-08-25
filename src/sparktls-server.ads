@@ -41,7 +41,7 @@ is
    --  Sets Mode_WebPKI and the default cipher suite.
    --  Optionally provide a Trust store and Request_Client_Cert for mTLS.
    procedure Configure
-     (S                     : out Session;
+     (S                     : out Server_Session;
       Local                 : Valid_Identity_Access;
       Random                : Random_Bytes_Fn;
       Trust                 : Trust_Store_Access := null;
@@ -94,7 +94,7 @@ is
    --  Initialize a server session with full control over Config.
    --  Cfg.Local must point to an Identity with a certificate and key.
    procedure Init
-     (S   :    out Session;
+     (S   :    out Server_Session;
       Cfg : in     Config)
    --  This postcondition is CHECKED by GNATprove: the body is in SPARK
    --  since the ticket-storage callbacks replaced Config's owning pointers
@@ -106,19 +106,12 @@ is
    with Pre  => Cfg.Random /= null
                 and then Cfg.Local /= null
                 and then Cfg.Local.Has_Identity
-                --  Init's body assigns a whole aggregate naming
-                --  Role => Role_Server, which CHANGES the discriminant.
-                --  That is only legal for an unconstrained actual, so
-                --  either pass an unconstrained Session (the discriminant
-                --  is then set here) or one already constrained to
-                --  Role_Server. Without this, gnatprove cannot discharge
-                --  the generated discriminant check at server.adb:998 and
-                --  a caller passing a Client_Session would get
-                --  Constraint_Error -- or, with checks suppressed, silent
-                --  corruption.
-                and then (not S'Constrained or else S.Role = Role_Server),
-        Post => Role (S) = Role_Server and
-                State (S) in Wait_Client_Hello | Error_State;
+                --  The formal is the CONSTRAINED subtype (#39, 2026-08-24):
+                --  inside the body S.Role = Role_Server by view, so the
+                --  aggregate's discriminant check is static, and the old
+                --  'Constrained Pre + Role Post are subsumed by the profile.
+                ,
+        Post => State (S) in Wait_Client_Hello | Error_State;
 
    --  RFC 8446 §4.1: Step the server handshake / record processing
    --  state machine.

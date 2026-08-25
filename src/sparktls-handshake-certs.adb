@@ -20,6 +20,8 @@ with RFLX.TLS_Handshake.Certificate_Verify;
 with RFLX.Tls_Parameters;
 with RFLX.RFLX_Types;
 
+with SPARKTLS_Transcript;
+use type SPARKTLS_Transcript.Transcript_State;
 package body SPARKTLS.Handshake.Certs with
    SPARK_Mode => On
 is
@@ -658,7 +660,7 @@ is
                                         and then C_Len > 0
                                                 and then C_Len <= N32 (Max_Cert_DER),
                 Post => HC.Client_HS = HC.Client_HS'Old
-                        and then HC.Transcript_Len = HC.Transcript_Len'Old
+                        and then HC.TS = HC.TS'Old
                         and then HC.Hash_Len = HC.Hash_Len'Old
                         and then (if HC.Cfg.Local'Old /= null
                                   then HC.Cfg.Local /= null)
@@ -847,7 +849,7 @@ is
                   pragma Loop_Invariant
                     (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                   pragma Loop_Invariant
-                    (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                    (HC.TS = HC.TS'Loop_Entry);
                   pragma Loop_Invariant (HC.Hash_Len = HC.Hash_Len'Loop_Entry);
                   pragma Loop_Invariant
                     (if HC.Cfg.Local'Loop_Entry /= null
@@ -1101,7 +1103,7 @@ is
                pragma Loop_Invariant
                  (C12_Entries.Valid (Entries_Ctx));
                pragma Loop_Invariant
-                 (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                 (HC.TS = HC.TS'Loop_Entry);
                pragma Loop_Invariant
                  (HC.Hash_Len = HC.Hash_Len'Loop_Entry);
                pragma Loop_Invariant

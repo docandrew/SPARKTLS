@@ -27,6 +27,10 @@ with SPARKTLS.Records.TLS12;
 with SPARKTLS.Server.TLS12;
 with SPARKTLS.Handshake.TLS12;
 
+with SPARKTLS_Transcript;
+use type SPARKTLS_Transcript.Transcript_State;
+with SPARKTLSCrypto.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA384;
 package body SPARKTLS.Server with
    SPARK_Mode => On
 is
@@ -54,37 +58,23 @@ is
                    function Server_State_Keys_Ready
      (S  : Session;
       HC : Handshake_Context) return Boolean is
-     ((if S.State in Wait_Client_Certificate
-                    | Wait_Client_Cert_Verify
-                    | Wait_Client_Finished
-       then Nonce_Space_Available (S.Server_App))
-              and then
-              (if S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
-                                         then Nonce_Space_Available (HC.Server_HS)
-                                              and then Nonce_Space_Available (S.Server_App))
-              and then
+     (
                 (if S.State = Wait_Client_Hello_Retry
                  then HC.Version = TLS_1_3
-                      and then HC.HRR_Sent
-                              and then Nonce_Space_Available (HC.Server_HS)
-                              and then Nonce_Space_Available (S.Server_App))
+                      and then HC.HRR_Sent)
               and then
                 (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_3
-                 then Nonce_Space_Available (HC.Client_HS)
-                      and then Nonce_Space_Available (S.Server_App)
-                      and then HC.Transcript_Len > 0
+                 then SPARKTLS_Transcript.Started (HC.TS)
               and then Free_Space (S.Output) >=
                 Records.Record_Header_Size + 3 + Records.Tag_Size)
       and then
         (if S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify
-         then Nonce_Space_Available (S.Server_App)
-              and then Nonce_Space_Available (HC.Client_HS)
-              and then HC.Hash_Len in 32 | 48
+         then HC.Hash_Len in 32 | 48
               and then
                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                  then HC.Hash_Len = 48
                  else HC.Hash_Len = 32)
-                      and then HC.Transcript_Len > 0
+                      and then SPARKTLS_Transcript.Started (HC.TS)
                       and then
                         (if S.State = Wait_Client_Certificate
                          then True)
@@ -103,8 +93,7 @@ is
                 (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_2
                  then SPARKTLS.Handshake.TLS12.Valid_TLS12_Suite
                         (S.Negotiated_Suite)
-                      and then SPARKTLS.Handshake.TLS12.Valid_ECDHE_Group
-                (HC.Selected_Group)
+                      and then HC.KE.Negotiated
               and then Free_Space (S.Output) >= 7))
    with Ghost;
 
@@ -156,13 +145,11 @@ is
                                    and then S.Role = Role_Server
                                    and then Result = OK
                                    and then HC.Legacy_Session_ID_Len in 0 .. 32
-                                                        and then HC.Transcript_Len > 0
+                                                        and then SPARKTLS_Transcript.Started (HC.TS)
                                                         and then S.Negotiated_Suite in
                                      Suite_AES_128_GCM_SHA256
                                    | Suite_AES_256_GCM_SHA384
-                                   | Suite_CHACHA20_POLY1305_SHA256
-                                   and then Nonce_Space_Available (HC.Server_HS)
-                                   and then Nonce_Space_Available (S.Server_App))
+                                   | Suite_CHACHA20_POLY1305_SHA256)
                                         and then
                                           (if S.State not in Error_State | Closed
                                            then True)
@@ -191,8 +178,6 @@ is
                                   S.Input.Write_Pos'Old
                                                 and then HC.Legacy_Session_ID_Len in 0 .. 32
                                                 and then HC.HRR_Sent = HC.HRR_Sent'Old
-                                                and then Nonce_Space_Available (HC.Server_HS)
-                        and then Nonce_Space_Available (S.Server_App)
                         and then
                                   (if Valid
                                    then HC.Version = TLS_1_3
@@ -210,13 +195,11 @@ is
                         and then S.State = Wait_Client_Hello_Retry
                         and then S.Role = Role_Server
                         and then HC.Legacy_Session_ID_Len in 0 .. 32
-                and then HC.Transcript_Len > 0
+                and then SPARKTLS_Transcript.Started (HC.TS)
                 and then S.Negotiated_Suite in
                   Suite_AES_128_GCM_SHA256
                         | Suite_AES_256_GCM_SHA384
-                        | Suite_CHACHA20_POLY1305_SHA256
-                        and then Nonce_Space_Available (HC.Server_HS)
-                        and then Nonce_Space_Available (S.Server_App);
+                        | Suite_CHACHA20_POLY1305_SHA256;
            procedure Handle_Client_Hello_Retry
              (S      : in out Server_Session;
               HC     : in out Handshake_Context;
@@ -238,13 +221,11 @@ is
                                 --  Identity bounds ride Cfg.Local's
                                 --  Valid_Identity_Access predicate; the
                                 --  Ready_Config formal carries the trio.
-                                                        and then HC.Transcript_Len > 0
+                                                        and then SPARKTLS_Transcript.Started (HC.TS)
                                                         and then S.Negotiated_Suite in
                                                   Suite_AES_128_GCM_SHA256
                                           | Suite_AES_256_GCM_SHA384
-                                          | Suite_CHACHA20_POLY1305_SHA256
-                                        and then Nonce_Space_Available (HC.Server_HS)
-                                        and then Nonce_Space_Available (S.Server_App);
+                                          | Suite_CHACHA20_POLY1305_SHA256;
 
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
@@ -259,7 +240,7 @@ is
                                    and then HRR_Len - 1 <= HRR_Buf'Last)
                                         and then S.State = S.State'Old
                                 and then (if HRR_Len > 0
-                                                  then HC.Transcript_Len > 0);
+                                                  then SPARKTLS_Transcript.Started (HC.TS));
 
    procedure Append_And_Encrypt_Server_HS
      (S         : in out Session;
@@ -269,14 +250,13 @@ is
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
-                        and then HC.Transcript_Len > 0
+                        and then SPARKTLS_Transcript.Started (HC.TS)
                         and then Plaintext'Length > 0
                 and then Plaintext'Length <= Max_Fragment
-                and then Plaintext'Length < Transcript_Capacity
-                and then Nonce_Space_Available (HC.Server_HS),
+                and then Plaintext'Length < Transcript_Capacity,
                 Post => (if Emitted
                                  then Server_Active (S)
-                                  and then HC.Transcript_Len > 0
+                                  and then SPARKTLS_Transcript.Started (HC.TS)
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
                       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -295,13 +275,13 @@ is
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
-                and then HC.Transcript_Len > 0
+                and then SPARKTLS_Transcript.Started (HC.TS)
                 and then Plaintext'First = 0
                 and then Plaintext'Last in 0 .. N32 (Transcript_Capacity) - 2
                 and then HC.Server_HS.Counter <= Unsigned_64'Last - 2,
                 Post => (if Emitted
                                  then Server_Active (S)
-                                              and then HC.Transcript_Len > 0
+                                              and then SPARKTLS_Transcript.Started (HC.TS)
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
                       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
@@ -337,9 +317,7 @@ is
                and then S.Role = Role_Server
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
-                       and then HC.Transcript_Len > 0
-                       and then Nonce_Space_Available (HC.Client_HS)
-                       and then Nonce_Space_Available (S.Server_App)
+                       and then SPARKTLS_Transcript.Started (HC.TS)
                        and then Free_Space (S.Output) >=
                                   Records.Record_Header_Size + 3 + Records.Tag_Size
                and then Rec.Fragment_Len >= 1
@@ -359,20 +337,17 @@ is
       Result    :    out Action)
    with Pre => S.State = Wait_Client_Finished
                        and then S.Role = Role_Server
-                               and then Nonce_Space_Available (S.Server_App)
                                and then Plaintext'First = 0
                                and then Plain_Len > 0
                                and then Plaintext'Last < N32'Last
                                and then Plain_Len - 1 <= Plaintext'Last
-                                                       and then HC.Transcript_Len > 0
+                                                       and then SPARKTLS_Transcript.Started (HC.TS)
 ;
 
 
 
    procedure Process_Connected (S : in out Session; Result : out Action)
    with Pre => S.Role = Role_Server
-               and then Nonce_Space_Available (S.Server_App)
-               and then Nonce_Space_Available (S.Client_App)
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
                and then S.Empty_Records_Recvd <= Max_Empty_Records;
@@ -380,36 +355,33 @@ is
    procedure Derive_Handshake_Keys
      (S  : in     Session;
       HC : in out Handshake_Context)
-   with Pre => HC.Transcript_Len > 0
-               and HC.Transcript_Len <= Transcript_Capacity
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
+               and True
                        and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                | Suite_AES_256_GCM_SHA384
                                                | Suite_CHACHA20_POLY1305_SHA256
                                        and True,
-                        Post => HC.Transcript_Len = HC.Transcript_Len'Old
+                        Post => HC.TS = HC.TS'Old
                                 and HC.Server_HS.Counter = 0
                                 and (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                                      then HC.Hash_Len = 48
                                      else HC.Hash_Len = 32)
-                                        and Nonce_Space_Available (HC.Server_HS)
                                                 and True;
 
    procedure Derive_App_Keys
      (S  : in out Session;
       HC : in out Handshake_Context)
-   with Pre => HC.Transcript_Len > 0
-               and HC.Transcript_Len <= Transcript_Capacity
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
+               and True
                        and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                | Suite_AES_256_GCM_SHA384
                                                | Suite_CHACHA20_POLY1305_SHA256
                        and True,
-                Post => HC.Transcript_Len = HC.Transcript_Len'Old
+                Post => HC.TS = HC.TS'Old
                         and S.State = S.State'Old
                 and S.Role = S.Role'Old
                         and S.Negotiated_Suite = S.Negotiated_Suite'Old
                         and S.Server_App.Counter = 0
-                        and Nonce_Space_Available (S.Server_App)
-                        and Nonce_Space_Available (S.Client_App)
                         and True;
 
    procedure Set_Traffic_Keys
@@ -420,8 +392,7 @@ is
                       | Suite_AES_256_GCM_SHA384
                       | Suite_CHACHA20_POLY1305_SHA256,
         Post => TK.Counter = 0
-                and TK.Suite = Suite
-                and Nonce_Space_Available (TK);
+                and TK.Suite = Suite;
 
    --  Alert_Desc / Error_Code mapping is in the parent SPARKTLS
    --  package — child-unit visibility resolves call sites here.
@@ -503,8 +474,7 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
-    with Pre  => Alert_Desc (Err) /= 0
-                and then Nonce_Space_Available (S.Server_App),
+    with Pre  => Alert_Desc (Err) /= 0,
         Post => S.State = Error_State
                 and then S.Last_Error = Err
                 and then Result in Has_Output | Error_Alert
@@ -545,66 +515,48 @@ is
    procedure Append_Transcript
      (HC   : in out Handshake_Context;
       Data : in     Byte_Seq)
-                   with Pre  => (if Data'First <= Data'Last then
-                                            Data'Last - Data'First < Transcript_Capacity)
-                                        and then HC.Transcript_Len <= Transcript_Capacity
-,
-                Post => HC.Transcript_Len >= HC.Transcript_Len'Old
-                        and HC.Transcript_Len <= Transcript_Capacity
-                and (if HC.Transcript_Len'Old > 0
-                       or else Data'First <= Data'Last
-                     then HC.Transcript_Len > 0)
-                                        and HC.Hash_Len = HC.Hash_Len'Old
-
-                                        and HC.Version = HC.Version'Old
-                                and HC.Peer_Leaf = HC.Peer_Leaf'Old
-                                        and HC.HRR_Sent = HC.HRR_Sent'Old
-                                        and HC.Legacy_Session_ID_Len =
-                                              HC.Legacy_Session_ID_Len'Old
-                                                                and Used (HC.Reasm) = Used (HC.Reasm)'Old
-                                                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
+   with Post => (if SPARKTLS_Transcript.Started (HC.TS)'Old
+                    or else Data'First <= Data'Last
+                 then SPARKTLS_Transcript.Started (HC.TS))
+                and HC.Hash_Len = HC.Hash_Len'Old
+                and HC.Version = HC.Version'Old
+                and HC.Peer_Leaf = HC.Peer_Leaf'Old
+                and HC.HRR_Sent = HC.HRR_Sent'Old
+                and HC.Legacy_Session_ID_Len =
+                      HC.Legacy_Session_ID_Len'Old
+                and Used (HC.Reasm) = Used (HC.Reasm)'Old
+                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
                 and HC.Client_HS.Counter = HC.Client_HS.Counter'Old
                 and HC.Server_HS.Suite = HC.Server_HS.Suite'Old
                 and HC.Client_HS.Suite = HC.Client_HS.Suite'Old
    is
    begin
-      if Data'First <= Data'Last then
-         declare
-            Len : constant N32 := Data'Last - Data'First + 1;
-         begin
-            if HC.Transcript_Len <= HC.Transcript'Length - Len then
-               HC.Transcript (HC.Transcript_Len ..
-                                HC.Transcript_Len + Len - 1) := Data;
-               HC.Transcript_Len := HC.Transcript_Len + Len;
-            end if;
-         end;
-      end if;
+      SPARKTLS_Transcript.Append (HC.TS, Data);
    end Append_Transcript;
 
    function Transcript_Hash_256 (HC : Handshake_Context) return Digest
-   with Pre => HC.Transcript_Len > 0
-               and HC.Transcript_Len <= Transcript_Capacity
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
+               and True
    is
       H : Digest;
    begin
-      Hash (H, HC.Transcript (0 .. HC.Transcript_Len - 1));
+      SPARKTLS_Transcript.Current_256 (HC.TS, H);
       return H;
    end Transcript_Hash_256;
 
    function Transcript_Hash_384 (HC : Handshake_Context)
       return SPARKNaCl.Hashing.SHA384.Digest
-   with Pre => HC.Transcript_Len > 0
-               and HC.Transcript_Len <= Transcript_Capacity
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
+               and True
    is
       H : SPARKNaCl.Hashing.SHA384.Digest;
    begin
-      SPARKNaCl.Hashing.SHA384.Hash
-        (H, HC.Transcript (0 .. HC.Transcript_Len - 1));
+      SPARKTLS_Transcript.Current_384 (HC.TS, H);
       return H;
    end Transcript_Hash_384;
 
    procedure Configure
-     (S                     : out Session;
+     (S                     : out Server_Session;
       Local                 : Valid_Identity_Access;
       Random                : Random_Bytes_Fn;
       Trust                 : Trust_Store_Access := null;
@@ -643,7 +595,7 @@ is
    end Configure;
 
    procedure Init
-     (S   :    out Session;
+     (S   :    out Server_Session;
       Cfg : in     Config)
    is
    begin
@@ -675,6 +627,11 @@ is
          pragma Assert (State (S) = Error_State);
          return;
       end if;
+      --  Fresh transcript for this handshake. The hash contexts also
+      --  carry correct defaults (see SHA256.Context), but the explicit
+      --  Start documents the lifecycle and resets Choice/Has_Data if
+      --  the allocator ever recycles contexts.
+      SPARKTLS_Transcript.Start (S.HC_Ptr.TS);
       S.HC_Ptr.Cfg := Cfg;
       pragma Assert (Role (S) = Role_Server);
       pragma Assert (State (S) = Wait_Client_Hello);
@@ -683,17 +640,16 @@ is
    procedure Scrub_Handshake_Context (HC : in out Handshake_Context)
    is
    begin
-      HC.Shared_Secret := (others => 0);
+      HC.KE.Shared := (others => 0);
       HC.Client_HS_Secret := (others => 0);
       HC.Server_HS_Secret := (others => 0);
       HC.Handshake_Secret := (others => 0);
       HC.Master_Secret := (others => 0);
       HC.Master_Secret_12 := (others => 0);
-      HC.Local_SK := (others => 0);
-      HC.P256_Local_SK := (others => 0);
-      HC.P384_Local_SK := (others => 0);
-      HC.Transcript := (others => 0);
-      HC.Transcript_Len := 0;
+      HC.KE.Local_SK := (others => 0);
+      HC.KE.P256_SK := (others => 0);
+      HC.KE.P384_SK := (others => 0);
+      SPARKTLS_Transcript.Start (HC.TS);
       HC.PSK_Value := (others => 0);
       HC.PSK_Binder := (others => 0);
       HC.PSK_Ticket_ID := (others => 0);
@@ -707,8 +663,6 @@ is
       Result  :    out Action;
       Handled :    out Boolean)
    with Pre => S.Role = Role_Server
-               and then Nonce_Space_Available (S.Server_App)
-               and then Nonce_Space_Available (S.Client_App)
                and then S.App_Data_Len <= Max_Record_Plaintext
                and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                and then Empty_Records_Bounded_RFC_8446_5_2 (S)
@@ -869,7 +823,7 @@ is
    with Pre => S.State = Wait_Client_Hello
                and then S.Role = Role_Server
                        and then HC.Legacy_Session_ID_Len in 0 .. 32
-                               and then HC.Transcript_Len > 0;
+                               and then SPARKTLS_Transcript.Started (HC.TS);
 
    procedure Complete_Client_Hello
      (S      : in out Session;
@@ -969,12 +923,6 @@ is
                  (S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                       | Suite_AES_256_GCM_SHA384
                                       | Suite_CHACHA20_POLY1305_SHA256);
-                       if not Nonce_Space_Available (HC.Server_HS)
-                         or else not Nonce_Space_Available (S.Server_App)
-                       then
-                                  Send_Alert_And_Error (S, Internal_Error, Result);
-                                  return;
-                               end if;
                        Build_Server_Flight (S, HC, Cfg, Result);
             end if;
                     return;
@@ -1140,8 +1088,7 @@ is
                                                                        and then S.Server_App.Counter =
                                                                          S.Server_App.Counter'Old
                                                                        and then HC.Version = HC.Version'Old
-                                                                       and then HC.Transcript_Len =
-                                                                         HC.Transcript_Len'Old
+                                                                       and then HC.TS = HC.TS'Old
                                                                        and then HC.HRR_Sent =
                                                                          HC.HRR_Sent'Old
                                                                        and then HC.Server_HS.Counter =
@@ -1353,8 +1300,27 @@ is
                                                 if Parse_OK then
                                                            pragma Assert
                                                              (HC.Legacy_Session_ID_Len in 0 .. 32);
+                                                           --  Capture the binder transcript hash BEFORE the CH
+                                                           --  enters the stream (RFC 8446 4.2.11.2): binders cover
+                                                           --  everything up to the binders list.
+                                                           if HC.PSK_Offered and then HC.PSK_Binder_Len > 0
+                                                             and then N32 (Full_Msg'Length) > 3 + HC.PSK_Binder_Len
+                                                           then
+                                                              declare
+                                                                 T : constant N32 :=
+                                                                   N32 (Full_Msg'Length) - (3 + HC.PSK_Binder_Len);
+                                                              begin
+                                                                 SPARKTLS_Transcript.Suffix_256
+                                                                   (HC.TS, Byte_Seq (Full_Msg) (0 .. T - 1),
+                                                                    SPARKTLSCrypto.Hashing.SHA256.Digest (HC.Binder_Hash_256));
+                                                                 SPARKTLS_Transcript.Suffix_384
+                                                                   (HC.TS, Byte_Seq (Full_Msg) (0 .. T - 1),
+                                                                    SPARKTLSCrypto.Hashing.SHA384.Digest (HC.Binder_Hash_384));
+                                                                 HC.Binder_Hash_Taken := True;
+                                                              end;
+                                                           end if;
                                                            Append_Transcript (HC, Byte_Seq (Full_Msg));
-                                                           pragma Assert (HC.Transcript_Len > 0);
+                                                           pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
                                                         end if;
                                                      end;
                                              Free_Reasm;
@@ -1364,7 +1330,7 @@ is
                                                 return;
                                      end if;
                                      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-                                             pragma Assert (HC.Transcript_Len > 0);
+                                             pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
                                      pragma Assert
                                        (if HC.Version = TLS_1_3
                                         then S.Negotiated_Suite in
@@ -1456,14 +1422,14 @@ is
                                                 pragma Assert
                                                   (Frag'Last - Frag'First = Frag_Len - 1);
                                                         Append_Transcript (HC, Frag);
-                                                        pragma Assert (HC.Transcript_Len > 0);
+                                                        pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
                                              end;
                                              S.Input.Read_Pos :=
                                                 S.Input.Read_Pos + Rec.Record_Len;
 
                                              Reset (HC.Reasm);
                                                                      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-                                                                             pragma Assert (HC.Transcript_Len > 0);
+                                                                             pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
                                                                      Complete_Client_Hello (S, HC, Result);
                                                   end Parse_Single_Record_Client_Hello;
 
@@ -1686,7 +1652,6 @@ is
       procedure Consume_Record
       with Pre  =>
         Server_Active (S)
-        and then Nonce_Space_Available (S.Server_App)
         and then
           (if Consume_Current_Record
            then S.Input.Read_Pos <= N32'Last - Record_Len
@@ -1698,7 +1663,6 @@ is
                 and then S.Server_App.Counter = S.Server_App.Counter'Old
                 and then S.Server_App.Suite = S.Server_App.Suite'Old
                 and then Server_Active (S)
-                and then Nonce_Space_Available (S.Server_App)
                 and then
                   (if Consume_Current_Record
                    then S.Input.Read_Pos = S.Input.Read_Pos'Old + Record_Len
@@ -1715,19 +1679,16 @@ is
               end Consume_Record;
 
       procedure Free_CH2_Reasm
-      with Pre  => Nonce_Space_Available (HC.Server_HS),
-           Post => Used (HC.Reasm) = 0
+      with Post => Used (HC.Reasm) = 0
                    and then HC.Version = HC.Version'Old
                    and then HC.HRR_Sent = HC.HRR_Sent'Old
                            and then HC.Legacy_Session_ID_Len =
                              HC.Legacy_Session_ID_Len'Old
-                           and then HC.Transcript_Len =
-                             HC.Transcript_Len'Old
+                           and then HC.TS = HC.TS'Old
                            and then HC.Server_HS.Counter =
                              HC.Server_HS.Counter'Old
                            and then HC.Server_HS.Suite =
                              HC.Server_HS.Suite'Old
-                           and then Nonce_Space_Available (HC.Server_HS)
            is
               begin
                  Reset (HC.Reasm);
@@ -1758,8 +1719,26 @@ is
 
                              --  Append CH2 to transcript
                              pragma Assert (Msg'First <= Msg'Last);
+                             --  CH2 binder hash: stream holds CH1+HRR;
+                             --  suffix is CH2 truncated before binders.
+                             if HC.PSK_Offered and then HC.PSK_Binder_Len > 0
+                               and then N32 (Msg'Length) > 3 + HC.PSK_Binder_Len
+                             then
+                                declare
+                                   T : constant N32 :=
+                                     N32 (Msg'Length) - (3 + HC.PSK_Binder_Len);
+                                begin
+                                   SPARKTLS_Transcript.Suffix_256
+                                     (HC.TS, Msg (Msg'First .. Msg'First + T - 1),
+                                      SPARKTLSCrypto.Hashing.SHA256.Digest (HC.Binder_Hash_256));
+                                   SPARKTLS_Transcript.Suffix_384
+                                     (HC.TS, Msg (Msg'First .. Msg'First + T - 1),
+                                      SPARKTLSCrypto.Hashing.SHA384.Digest (HC.Binder_Hash_384));
+                                   HC.Binder_Hash_Taken := True;
+                                end;
+                             end if;
                              Append_Transcript (HC, Msg);
-                             pragma Assert (HC.Transcript_Len > 0);
+                             pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
                              Consume_Record;
                      Free_CH2_Reasm;
                      if HC.Cfg.Local = null
@@ -1786,8 +1765,6 @@ is
                      end if;
                      pragma Assert (S.State = Wait_Client_Hello_Retry);
                      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-                     pragma Assert (Nonce_Space_Available (HC.Server_HS));
-                     pragma Assert (Nonce_Space_Available (S.Server_App));
                      pragma Assert
                        (S.Negotiated_Suite in
                           Suite_AES_128_GCM_SHA256
@@ -2308,42 +2285,15 @@ is
 
       pragma Assert (P = Msg_Len);
 
-      --  RFC 8446 §4.4.1: Replace transcript with synthetic message_hash.
-      --  The hash algorithm is selected by the negotiated cipher suite.
-      if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384 then
-         declare
-            CH1_Hash  : SPARKNaCl.Hashing.SHA384.Digest;
-            Synthetic : Byte_Seq (0 .. 51) := (others => 0);
-         begin
-            SPARKNaCl.Hashing.SHA384.Hash
-              (CH1_Hash, HC.Transcript (0 .. HC.Transcript_Len - 1));
-
-            Synthetic (0) := 254;  --  message_hash type
-            Synthetic (1) := 0;
-            Synthetic (2) := 0;
-            Synthetic (3) := 48;   --  SHA-384 hash length
-            Synthetic (4 .. 51) := Byte_Seq (CH1_Hash);
-
-            HC.Transcript (0 .. 51) := Synthetic;
-            HC.Transcript_Len := 52;
-         end;
-      else
-         declare
-            CH1_Hash  : Digest;
-            Synthetic : Byte_Seq (0 .. 35) := (others => 0);
-         begin
-            Hash (CH1_Hash, HC.Transcript (0 .. HC.Transcript_Len - 1));
-
-            Synthetic (0) := 254;  --  message_hash type
-            Synthetic (1) := 0;
-            Synthetic (2) := 0;
-            Synthetic (3) := 32;   --  SHA-256 hash length
-            Synthetic (4 .. 35) := Byte_Seq (CH1_Hash);
-
-            HC.Transcript (0 .. 35) := Synthetic;
-            HC.Transcript_Len := 36;
-         end;
-      end if;
+      --  RFC 8446 §4.4.1 via the streaming ADT: select the digest the
+      --  HRR names, then replace the transcript with the synthetic
+      --  message_hash of ClientHello1.
+      SPARKTLS_Transcript.Select_Hash
+        (HC.TS,
+         (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+          then SPARKTLS_Transcript.Only_384
+          else SPARKTLS_Transcript.Only_256));
+      SPARKTLS_Transcript.Reset_For_HRR (HC.TS);
 
       --  Append HRR to transcript
       Append_Transcript (HC, HRR_Buf (0 .. Msg_Len - 1));
@@ -2412,7 +2362,7 @@ is
                         Post => (if not Rejected
                                  then S.State = S.State'Old
                                       and S.Role = S.Role'Old
-                                              and HC.Transcript_Len = HC.Transcript_Len'Old
+                                              and HC.TS = HC.TS'Old
                                       and HC.HRR_Sent = HC.HRR_Sent'Old
                               and S.Negotiated_Suite = S.Negotiated_Suite'Old)
                                          and then (if Rejected then S.State = Error_State);
@@ -2475,8 +2425,11 @@ is
          Binders_Size : constant N32 := 2 + 1 + HC.PSK_Binder_Len;
          Trunc_Len    : N32;
       begin
-         if HC.Transcript_Len > Binders_Size then
-            Trunc_Len := HC.Transcript_Len - Binders_Size;
+         --  The binder transcript hash was drawn at CH time (before
+         --  the CH entered the stream); Binders_Size is retained only
+         --  for the wire-shape sanity it encodes.
+         if HC.Binder_Hash_Taken and then Binders_Size > 0 then
+            Trunc_Len := 0;  --  unused under streaming
             if PSK_Len = 48 then
                declare
                   use SPARKTLSCrypto.HKDF384;
@@ -2485,9 +2438,8 @@ is
                   Finished_Key : OKM384_Seq (0 .. 47);
                   Expected     : Bytes_48;
                begin
-                  SPARKNaCl.Hashing.SHA384.Hash
-                    (Trunc_Hash,
-                     HC.Transcript (0 .. Trunc_Len - 1));
+                  Trunc_Hash :=
+                    Key_Schedule.Digest_384 (HC.Binder_Hash_384);
                   Key_Schedule.Derive_Binder_Key_384
                     (Binder_Key, PSK);
                   Key_Schedule.Derive_Finished_Key_384
@@ -2506,9 +2458,7 @@ is
                   Finished_Key : OKM_Seq (0 .. 31);
                   Expected     : Digest;
                begin
-                  SPARKTLSCrypto.Hashing.SHA256.Hash
-                    (Trunc_Hash,
-                     HC.Transcript (0 .. Trunc_Len - 1));
+                  Trunc_Hash := Digest (HC.Binder_Hash_256);
                   Key_Schedule.Derive_Binder_Key
                     (Binder_Key,
                      Bytes_32 (PSK (0 .. 31)));
@@ -2579,7 +2529,7 @@ is
                                  then S.State = S.State'Old
                                       and S.Role = S.Role'Old
                                               and S.Negotiated_Suite = S.Negotiated_Suite'Old
-                                              and HC.Transcript_Len = HC.Transcript_Len'Old
+                                              and HC.TS = HC.TS'Old
                               and HC.HRR_Sent = HC.HRR_Sent'Old
                               and HC.Negotiated_Sig_Algo /= 0
                               and Handshake.Sig_Algo_Compatible_With_Cert
@@ -2604,7 +2554,7 @@ is
             pragma Loop_Invariant
               (S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry);
             pragma Loop_Invariant
-              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+              (HC.TS = HC.TS'Loop_Entry);
             pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
             pragma Loop_Invariant (HC.Legacy_Session_ID_Len in 0 .. 32);
             pragma Loop_Invariant
@@ -2633,7 +2583,7 @@ is
             pragma Loop_Invariant
               (S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry);
             pragma Loop_Invariant
-              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+              (HC.TS = HC.TS'Loop_Entry);
             pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
             pragma Loop_Invariant (HC.Legacy_Session_ID_Len in 0 .. 32);
             pragma Loop_Invariant
@@ -2732,7 +2682,6 @@ is
          end if;
 
          pragma Assert (HC.Server_HS.Counter <= Unsigned_64'Last - 1);
-         pragma Assert (Nonce_Space_Available (HC.Server_HS));
          Records.Build_Encrypted_Record
            (Plaintext  => Plaintext (N32 (Max_Fragment) .. Plaintext'Last),
             Inner_Type => 16#16#,
@@ -2916,7 +2865,6 @@ is
       --  commit fails we restore this so the next record's nonce stays
       --  in sync with whatever the peer last saw.
       pragma Assert (HC.Server_HS.Counter = 0);
-      pragma Assert (Nonce_Space_Available (HC.Server_HS));
 
       --  Send CCS for middlebox compatibility unless HRR already sent it.
       if not HC.Sent_HRR_CCS then
@@ -2939,7 +2887,6 @@ is
          pragma Assert (EE_Len in 6 .. N32 (EE_Buf'Length));
          pragma Assert (EE_Len <= Max_Fragment);
          pragma Assert (HC.Server_HS.Counter = 0);
-         pragma Assert (Nonce_Space_Available (HC.Server_HS));
                  pragma Assert (S.State not in Idle | Closing | Closed | Error_State);
          pragma Assert (Server_Active (S));
          Encryption_Started := True;
@@ -2954,7 +2901,6 @@ is
                          return;
                          end if;
                  pragma Assert (HC.Server_HS.Counter = 1);
-                 pragma Assert (Nonce_Space_Available (HC.Server_HS));
               end;
 
       --  Skip Certificate/CertificateVerify for PSK resumption
@@ -2970,7 +2916,6 @@ is
             Handshake.Server_Msgs.Build_Certificate_Request (CR_Buf, CR_Len);
             if CR_Len > 0 then
                pragma Assert (CR_Len <= Max_Fragment);
-               pragma Assert (Nonce_Space_Available (HC.Server_HS));
                Append_And_Encrypt_Server_HS
                  (S         => S,
                   HC        => HC,
@@ -2983,7 +2928,6 @@ is
                        end if;
             end if;
                     pragma Assert (HC.Server_HS.Counter in 1 .. 2);
-                    pragma Assert (Nonce_Space_Available (HC.Server_HS));
                  end;
               end if;
 
@@ -3034,12 +2978,6 @@ is
                          if not Emitted then
                             return;
                          end if;
-                 if not Nonce_Space_Available (HC.Server_HS) then
-                            S.Last_Error := Internal_Error;
-                            Set_State (S, Error_State);
-                            Result := Error_Alert;
-                                  return;
-                         end if;
                       end;
 
       --  Build CertificateVerify (encrypted)
@@ -3088,7 +3026,6 @@ is
          end if;
 
          pragma Assert (CV_Len <= Max_Fragment);
-         pragma Assert (Nonce_Space_Available (HC.Server_HS));
          Append_And_Encrypt_Server_HS
            (S         => S,
             HC        => HC,
@@ -3098,12 +3035,6 @@ is
             Emitted   => Emitted);
                          if not Emitted then
                             return;
-                         end if;
-                 if not Nonce_Space_Available (HC.Server_HS) then
-                            S.Last_Error := Internal_Error;
-                            Set_State (S, Error_State);
-                            Result := Error_Alert;
-                                    return;
                          end if;
                       end;
 
@@ -3140,8 +3071,6 @@ is
                   Big_Finished (2) := 16#00#;
                   Big_Finished (3) := 16#30#;  --  48
                   Big_Finished (4 .. 51) := Verify_48;
-
-                          pragma Assert (Nonce_Space_Available (HC.Server_HS));
                           Append_And_Encrypt_Server_HS
                     (S         => S,
                      HC        => HC,
@@ -3173,7 +3102,6 @@ is
 
                   Handshake.Build_Finished (Verify_32, Fin_Buf, Fin_Len);
                   pragma Assert (Fin_Len <= Max_Fragment);
-                  pragma Assert (Nonce_Space_Available (HC.Server_HS));
                   Append_And_Encrypt_Server_HS
                     (S         => S,
                      HC        => HC,
@@ -3233,12 +3161,12 @@ is
             Server_Sec : OKM384_Seq (0 .. 47);
          begin
             Key_Schedule.Derive_Early_Secret_384 (Early, HC.PSK_Value);
-            if HC.Selected_Group = 16#0018# then
+            if HC.KE.Curve = 16#0018# then
                Key_Schedule.Derive_Handshake_Secret_384
-                 (HS_Secret, Byte_Seq (HC.Shared_Secret), Early);
+                 (HS_Secret, Byte_Seq (HC.KE.Shared), Early);
             else
                Key_Schedule.Derive_Handshake_Secret_384
-                 (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
+                 (HS_Secret, HC.KE.Shared (0 .. 31), Early);
             end if;
 
             HC.Handshake_Secret := Bytes_48 (HS_Secret);
@@ -3265,12 +3193,12 @@ is
          begin
             Key_Schedule.Derive_Early_Secret
               (Early, Bytes_32 (HC.PSK_Value (0 .. 31)));
-            if HC.Selected_Group = 16#0018# then
+            if HC.KE.Curve = 16#0018# then
                Key_Schedule.Derive_Handshake_Secret
-                 (HS_Secret, Byte_Seq (HC.Shared_Secret), Early);
+                 (HS_Secret, Byte_Seq (HC.KE.Shared), Early);
             else
                Key_Schedule.Derive_Handshake_Secret
-                 (HS_Secret, HC.Shared_Secret (0 .. 31), Early);
+                 (HS_Secret, HC.KE.Shared (0 .. 31), Early);
             end if;
 
             HC.Handshake_Secret := (others => 0);
@@ -3445,8 +3373,7 @@ is
                 and then Data'Last < N32'Last - 4
                 and then Data'Last < Transcript_Capacity
                 and then S.State = Wait_Client_Certificate
-                and then Nonce_Space_Available (S.Server_App)
-                and then HC.Transcript_Len > 0;
+                and then SPARKTLS_Transcript.Started (HC.TS);
 
    procedure Handle_Client_Cert_13
      (S      : in out Session;
@@ -3504,12 +3431,11 @@ is
       Result  :    out Action)
    with Pre  => Data'First = 0
                 and then Data'Last < Transcript_Capacity
-                and then Nonce_Space_Available (S.Server_App)
                 and then
                   (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                    then HC.Hash_Len = 48
                    else HC.Hash_Len = 32)
-                and then HC.Transcript_Len > 0
+                and then SPARKTLS_Transcript.Started (HC.TS)
                 and then X509.Spans_Valid
                   (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1);
 
@@ -4243,8 +4169,7 @@ is
          Result :    out Action)
       with Pre => S.State = Wait_Client_Finished
                   and then S.Role = Role_Server
-                          and then Nonce_Space_Available (S.Server_App)
-                                          and then HC.Transcript_Len > 0
+                                          and then SPARKTLS_Transcript.Started (HC.TS)
                           and then Data'First = 0
                   and then Len > 0
                   and then Data'Last < N32'Last
@@ -4661,14 +4586,12 @@ is
       Result :    out Action)
    with Pre  => S.State in Connected | Closing
                 and then Msg'First = 0
-                and then Nonce_Space_Available (S.Server_App)
                 and then S.App_Secret_Len in 32 | 48
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256,
         Post => (if Result = OK
-                 then S.State in Connected | Closing
-                   and then Nonce_Space_Available (S.Server_App));
+                 then S.State in Connected | Closing);
 
    procedure Process_Key_Update_Message
      (S      : in out Session;
@@ -4744,7 +4667,6 @@ is
      (S      : in out Session;
       Result :    out Action)
    with Pre  => S.State in Connected | Closing
-                and then Nonce_Space_Available (S.Server_App)
                 and then Post_HS_Reasm.Has_Message (S.Post_HS),
         Post => Post_HS_Reasm.Used (S.Post_HS) = 0;
 
@@ -4783,7 +4705,6 @@ is
       Plain_Len : in     N32;
       Result    :    out Action)
    with Pre => S.State in Connected | Closing
-               and then Nonce_Space_Available (S.Server_App)
                and then Plaintext'First = 0
                and then Plaintext'Last < IO_Buffer_Capacity
                and then Plain_Len <= N32 (Plaintext'Length);
@@ -4800,7 +4721,6 @@ is
 
       while Pos < Plain_Len loop
          pragma Loop_Invariant (Pos <= Plain_Len);
-         pragma Loop_Invariant (Nonce_Space_Available (S.Server_App));
 
          --  Same ADT idiom as the client twin: Wanted/Append derive all
          --  the old Len/Need bookkeeping; the phase flip is structural.

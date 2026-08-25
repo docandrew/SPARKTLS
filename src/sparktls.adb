@@ -211,8 +211,8 @@ is
    --  AEAD usage limit and should be rotated before sending more.
    function Write_Key_Exhausted (S : Session) return Boolean is
      (if S.Role = Role_Client
-      then S.Client_App.Counter >= Rekey_After_Records
-      else S.Server_App.Counter >= Rekey_After_Records);
+      then S.Client_App.Counter >= Rekey_After_Records - Rekey_Margin
+      else S.Server_App.Counter >= Rekey_After_Records - Rekey_Margin);
 
    procedure Flush_Pending_Key_Update (S : in out Session)
    with Pre => S.App_Secret_Len in 32 | 48
@@ -341,24 +341,19 @@ is
          end if;
 
          if S.Role = Role_Client then
-            exit when not Nonce_Space_Available (S.Client_App);
-            --  TLS 1.2 cannot rekey, so the RFC 8446 s5.5 AEAD limit is a
-            --  hard stop rather than a rotation trigger. Was
-            --  `= Unsigned_64'Last` (the arithmetic limit), which
-            --  enforced no cryptographic margin.
+            --  TLS 1.2 cannot rekey, so the write budget is a hard stop
+            --  rather than a rotation trigger; stopping at the BUDGET
+            --  (cap minus margin) leaves headroom for close_notify.
             if S.Negotiated_Version = TLS_1_2
-               and then not Space_Left (S.Client_App)
+               and then Write_Budget_Reached (S.Client_App)
             then
                exit;
             end if;
          else
-            exit when not Nonce_Space_Available (S.Server_App);
-            --  TLS 1.2 cannot rekey, so the RFC 8446 s5.5 AEAD limit is a
-            --  hard stop rather than a rotation trigger. Was
-            --  `= Unsigned_64'Last` (the arithmetic limit), which
-            --  enforced no cryptographic margin.
+            --  Mirror of the client side: budget stop with close_notify
+            --  headroom.
             if S.Negotiated_Version = TLS_1_2
-               and then not Space_Left (S.Server_App)
+               and then Write_Budget_Reached (S.Server_App)
             then
                exit;
             end if;

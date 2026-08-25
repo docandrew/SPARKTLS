@@ -208,8 +208,12 @@ begin
       begin
          HC.Client_Random := Client_Random;
          HC.Server_Random := Server_Random;
-         HC.Peer_Cert := Cert;
-         HC.Peer_Cert_Valid := True;
+         HC.Peer_Leaf.Present := False;
+         HC.Peer_Leaf.DER (0 .. X509.N32 (Cert_DER'Length) - 1) :=
+           X509.Byte_Seq (Cert_DER);
+         HC.Peer_Leaf.DER_Len := X509.N32 (Cert_DER'Length);
+         HC.Peer_Leaf.Cert := Cert;
+         HC.Peer_Leaf.Present := True;
 
          SPARKTLS.Handshake.TLS12.Parse_Server_Key_Exchange
            (HC, SKE_Body, Parse_OK);
@@ -227,8 +231,12 @@ begin
       begin
          HC.Client_Random := Client_Random;
          HC.Server_Random := Server_Random;
-         HC.Peer_Cert := Cert;
-         HC.Peer_Cert_Valid := True;
+         HC.Peer_Leaf.Present := False;
+         HC.Peer_Leaf.DER (0 .. X509.N32 (Cert_DER'Length) - 1) :=
+           X509.Byte_Seq (Cert_DER);
+         HC.Peer_Leaf.DER_Len := X509.N32 (Cert_DER'Length);
+         HC.Peer_Leaf.Cert := Cert;
+         HC.Peer_Leaf.Present := True;
 
          SPARKTLS.Handshake.TLS12.Parse_Server_Key_Exchange
            (HC, Bad_SKE, Parse_OK);
@@ -244,7 +252,8 @@ begin
            ("2103c365b84dd207191b2c2d091dd08cd2f3578331125e86a"
             & "278aab2616153e63257");
       begin
-         HC.Selected_Group := SPARKTLS.Handshake.TLS12.Group_Secp256r1;
+         HC.KE.Curve      := SPARKTLS.Handshake.TLS12.Group_Secp256r1;
+         HC.KE.Negotiated := True;
          SPARKTLS.Handshake.TLS12.Parse_Client_Key_Exchange
            (HC, Bad_CKE, Parse_OK);
          Check

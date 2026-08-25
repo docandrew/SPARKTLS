@@ -97,16 +97,23 @@ is
       Implicit_IV  : in     Byte_Seq;
       Output       : in out IO_Buffer;
       Bytes_Out    :    out N32)
+   --  BEST-EFFORT (user decision 2026-08-24, unifying on the alert
+   --  builder's discipline): no Space_Left precondition. The body
+   --  refuses an exhausted channel itself -- Bytes_Out = 0, counter
+   --  untouched -- and that refusal EXECUTES in shipped -gnatp builds,
+   --  which a precondition never does. A caller that wants to prove it
+   --  is never refused still can: branch on Space_Left first and the
+   --  conditional Post below yields Bytes_Out's success shape.
    with Pre  => Plaintext'First = 0
                 and Plaintext'Last < Max_Record_Plaintext
                 and Content_Type in 16#15# | 16#16# | 16#17#
                 and Implicit_IV'First = 0
-                and Implicit_IV'Length = Implicit_IV_Len
-                and Space_Left (Keys),
-        Post => Keys = (Keys'Old with delta
-                          Counter => Keys'Old.Counter + 1)
-                --  Increment AND frame in one conjunct: everything but
-                --  the counter is untouched.
+                and Implicit_IV'Length = Implicit_IV_Len,
+        Post => (if Space_Left (Keys)'Old then
+                   Keys = (Keys'Old with delta
+                             Counter => Keys'Old.Counter + 1)
+                 else
+                   Keys = Keys'Old and Bytes_Out = 0)
                 and Bytes_Out <=
                        Record_Header_Size + Explicit_Nonce_Len +
                        N32 (Plaintext'Length) + GCM_Tag_Len;

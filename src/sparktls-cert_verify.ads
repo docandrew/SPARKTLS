@@ -243,6 +243,33 @@ is
                and Sig'Length > 0
                and Sig'Last < N32'Last;
 
+   --  Digest-based entry points for the streamed handshake transcript
+   --  (carve 2): the raw transcript no longer exists, so TLS 1.2
+   --  CertificateVerify passes the three transcript digests and the
+   --  scheme picks one.  Ed25519 (0x0807) is refused here -- PureEdDSA
+   --  signs the raw message, which no digest can stand in for.
+   function Verify_Signature_Hashed
+     (H256_In    : Bytes_32;
+      H384_In    : Bytes_48;
+      H512_In    : Bytes_64;
+      Sig        : Byte_Seq;
+      Cert       : X509.Certificate;
+      Sig_Scheme : Unsigned_16) return Boolean
+   with Pre => Sig'First = 0
+               and Sig'Length > 0
+               and Sig'Last < N32'Last;
+
+   function Verify_Signature_TLS12_Hashed
+     (H256_In    : Bytes_32;
+      H384_In    : Bytes_48;
+      H512_In    : Bytes_64;
+      Sig        : Byte_Seq;
+      Cert       : X509.Certificate;
+      Sig_Scheme : Unsigned_16) return Boolean
+   with Pre => Sig'First = 0
+               and Sig'Length > 0
+               and Sig'Last < N32'Last;
+
    ----------------------------------------------------------------------------
    --  Credential loading helpers
    --

@@ -130,8 +130,7 @@ is
                 --  RFC 8446 §5.4: only alert/handshake/application_data
                 --  may be emitted as inner content type. CCS (0x14)
                 --  only appears in unencrypted records.
-                and SPARKTLS.Inner_Type_Valid_RFC_8446_5_4 (Inner_Type)
-                and Nonce_Space_Available (Keys),             --  RFC 8446 §5.5
+                and SPARKTLS.Inner_Type_Valid_RFC_8446_5_4 (Inner_Type),             --  RFC 8446 §5.5
         Post => (if Bytes_Out > 0
                  then Keys.Counter = Keys.Counter'Old + 1   --  RFC 8446 §5.3
                  else Keys.Counter = Keys.Counter'Old)
@@ -200,8 +199,7 @@ is
       Output     : in out IO_Buffer;
       Bytes_Out  :    out N32)
    with Pre =>
-     SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc)
-     and Nonce_Space_Available (Keys),
+     SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
         Post => (if Free_Space (Output'Old) >=
                        Record_Header_Size + 3 + Tag_Size
                  then Output.Write_Pos =

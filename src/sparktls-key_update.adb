@@ -27,8 +27,7 @@ is
                        | Suite_AES_256_GCM_SHA384
                        | Suite_CHACHA20_POLY1305_SHA256,
         Post => TK.Counter = 0
-                and then TK.Suite = Suite
-                and then Nonce_Space_Available (TK);
+                and then TK.Suite = Suite;
 
    procedure Install_Keys
      (TK     :    out Traffic_Keys;

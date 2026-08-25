@@ -25,6 +25,8 @@ with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
+with SPARKTLS_Transcript;
+use type SPARKTLS_Transcript.Transcript_State;
 use SPARKTLSCrypto;
 
 package body SPARKTLS.Handshake.Client_Msgs with
@@ -355,7 +357,7 @@ is
                                 and then Len > 0
                                 and then Len <= N32 (Result'Length),
                         Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-                                        and then HC.Transcript_Len = HC.Transcript_Len'Old
+                                        and then HC.TS = HC.TS'Old
                                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
                                         and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
                                                 and then Len <= N32 (Result'Length);
@@ -391,13 +393,9 @@ is
       then
          return;
       end if;
-      if Retry_Mode then
-         if Len > Transcript_Capacity - 316
-           or else HC.Transcript_Len > Transcript_Capacity - 316 - Len
-         then
-            return;
-         end if;
-      end if;
+      --  (Old transcript-capacity guard deleted with the buffer: the
+      --  streaming transcript has no size limit to protect.)
+
       declare
          Tick_Len : constant N32 := S.Ticket.Ticket_Len;
          ID_Entry_Len : constant N32 := 2 + Tick_Len + 4;
@@ -556,15 +554,14 @@ is
                                  declare
                                     Trunc_Len : constant N32 :=
                                       Binder_Offset - 3;
-                                    Pre_Len   : constant N32 :=
-                                      (if Retry_Mode
-                                       then HC.Transcript_Len
-                                       else 0);
-                                    Trans_In  : constant Byte_Seq
-                                      (0 .. Pre_Len + Trunc_Len - 1) :=
-                                      HC.Transcript (0 .. Pre_Len - 1)
-                                      & Result (0 .. Trunc_Len - 1);
                                  begin
+                                    --  Binder transcript = running
+                                    --  transcript (empty for CH1;
+                                    --  CH1+HRR in retry mode -- the
+                                    --  stream holds exactly that) plus
+                                    --  the truncated CH under
+                                    --  construction: Suffix_* below.
+
                                     if S.Ticket.PSK_Len = 48 then
                                        declare
                                           Trunc_Hash384 :
@@ -577,8 +574,10 @@ is
                                               (0 .. 47);
                                           Binder_V48    : Bytes_48;
                                        begin
-                                          SPARKNaCl.Hashing.SHA384.Hash
-                                            (Trunc_Hash384, Trans_In);
+                                          SPARKTLS_Transcript.Suffix_384
+                                            (HC.TS,
+                                             Result (0 .. Trunc_Len - 1),
+                                             Trunc_Hash384);
                                           Key_Schedule.Derive_Binder_Key_384
                                             (Binder_Key48, S.Ticket.PSK);
                                           Key_Schedule.Derive_Finished_Key_384
@@ -601,7 +600,10 @@ is
                                           Finished_Key : OKM_Seq (0 .. 31);
                                           Binder_Val   : Digest;
                                        begin
-                                          Hash (Trunc_Hash, Trans_In);
+                                          SPARKTLS_Transcript.Suffix_256
+                                            (HC.TS,
+                                             Result (0 .. Trunc_Len - 1),
+                                             Trunc_Hash);
                                           Key_Schedule.Derive_Binder_Key
                                             (Binder_Key,
                                              Bytes_32
@@ -901,12 +903,12 @@ is
       begin
          if not Retry_Mode then
             Gen_Random (Byte_Seq (Tmp_X25519));
-            HC.Local_SK := Tmp_X25519;
+            HC.KE.Local_SK := Tmp_X25519;
          end if;
          declare
             Basepoint : constant Bytes_32 := (9, others => 0);
          begin
-            SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
+            SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Local_SK, Basepoint);
          end;
       end;
 
@@ -917,10 +919,10 @@ is
       begin
          if not Retry_Mode then
             Gen_Random (Byte_Seq (Tmp_P256));
-            HC.P256_Local_SK := Tmp_P256;
+            HC.KE.P256_SK := Tmp_P256;
          end if;
          SPARKTLSCrypto.P256.Point.P256_Mulgen
-           (P256_Pt, HC.P256_Local_SK, 32);
+           (P256_Pt, HC.KE.P256_SK, 32);
          SPARKTLSCrypto.P256.Point.P256_To_Affine (P256_Pt);
          SPARKTLSCrypto.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
       end;
@@ -931,9 +933,9 @@ is
       begin
          if not Retry_Mode then
             Gen_Random (Byte_Seq (Tmp_P384));
-            HC.P384_Local_SK := Tmp_P384;
+            HC.KE.P384_SK := Tmp_P384;
          end if;
-         SPARKTLSCrypto.P384.Point.P384_Mulgen (P384_PK_Enc, HC.P384_Local_SK);
+         SPARKTLSCrypto.P384.Point.P384_Mulgen (P384_PK_Enc, HC.KE.P384_SK);
       end;
 
       --  Generate client random (retain CH1's random across HRR).
@@ -1697,7 +1699,7 @@ is
                                           and then HC.HRR_Cookie_Len <=
                                             N32 (HC.HRR_Cookie'Length),
                 Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-                  and then HC.Transcript_Len = HC.Transcript_Len'Old
+                  and then HC.TS = HC.TS'Old
                   and then (if HC.Got_HRR'Old then HC.Got_HRR)
                                           and then HC.HRR_Cookie_Len <=
                                     N32 (HC.HRR_Cookie'Length);
@@ -1722,8 +1724,8 @@ is
               N_Ext : Natural := 0;
               Random_Was_Set : constant Boolean := HC.Cfg.Random /= null
                 with Ghost;
-              Saved_Transcript_Len : constant N32 := HC.Transcript_Len
-                with Ghost;
+              Saved_TS : constant SPARKTLS_Transcript.Transcript_State :=
+                HC.TS with Ghost;
               Saved_Got_HRR : constant Boolean := HC.Got_HRR with Ghost;
    begin
       OK := True;
@@ -1734,8 +1736,7 @@ is
               if N32 (Data'Length) - 4 < 35 then
                                         pragma Assert_And_Cut ((if Random_Was_Set
                                                 then HC.Cfg.Random /= null)
-                                              and then HC.Transcript_Len =
-                                                Saved_Transcript_Len
+                                              and then HC.TS = Saved_TS
                                               and then
                                                 (if Saved_Got_HRR then HC.Got_HRR)
                                               and then HC.HRR_Cookie_Len <=
@@ -1749,8 +1750,7 @@ is
                          OK := False;
                          pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                          return;
@@ -1761,8 +1761,7 @@ is
                       then
                          pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                          return;
@@ -1771,8 +1770,7 @@ is
                       if P > Data'Last - 2 then
                          pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                          return;
@@ -1793,8 +1791,7 @@ is
                  OK := False;
                  pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                  return;
@@ -1807,8 +1804,7 @@ is
                  OK := False;
                  pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                  return;
@@ -1824,8 +1820,7 @@ is
                     OK := False;
                     pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                     return;
@@ -1837,7 +1832,7 @@ is
                  while P <= Ext_End - 4 loop
                     pragma Loop_Invariant (N_Ext <= Exts'Last);
                             pragma Loop_Invariant
-                              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                              (HC.TS = HC.TS'Loop_Entry);
                             pragma Loop_Invariant
                               (if Saved_Got_HRR then HC.Got_HRR);
                             pragma Loop_Invariant
@@ -1864,8 +1859,7 @@ is
                           OK := False;
                           pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                           return;
@@ -1875,7 +1869,7 @@ is
                             (if HC.Cfg.Random'Loop_Entry /= null
                              then HC.Cfg.Random /= null);
                           pragma Loop_Invariant
-                            (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                            (HC.TS = HC.TS'Loop_Entry);
                           pragma Loop_Invariant
                             (if Saved_Got_HRR then HC.Got_HRR);
                           pragma Loop_Invariant
@@ -1892,8 +1886,7 @@ is
                              OK := False;
                              pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                              return;
@@ -1938,7 +1931,7 @@ is
                     pragma Loop_Invariant
                       (N_Ext <= Exts'Last);
                             pragma Loop_Invariant
-                              (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                              (HC.TS = HC.TS'Loop_Entry);
                             pragma Loop_Invariant
                               (if Saved_Got_HRR then HC.Got_HRR);
                             pragma Loop_Invariant
@@ -1968,8 +1961,7 @@ is
                           OK := False;
                           pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                           return;
@@ -1994,8 +1986,7 @@ is
                              OK := False;
                              pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                              return;
@@ -2016,8 +2007,7 @@ is
                      OK := False;
                      pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                              and then HC.Transcript_Len =
-                                Saved_Transcript_Len
+                              and then HC.TS = Saved_TS
                               and then
                                 (if Saved_Got_HRR then HC.Got_HRR));
                      return;
@@ -2034,8 +2024,7 @@ is
                         OK := False;
                         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                              and then HC.Transcript_Len =
-                                Saved_Transcript_Len
+                              and then HC.TS = Saved_TS
                               and then
                                 (if Saved_Got_HRR then HC.Got_HRR));
                         return;
@@ -2054,8 +2043,7 @@ is
                         OK := False;
                         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                              and then HC.Transcript_Len =
-                                Saved_Transcript_Len
+                              and then HC.TS = Saved_TS
                               and then
                                 (if Saved_Got_HRR then HC.Got_HRR));
                         return;
@@ -2113,8 +2101,7 @@ is
                                 OK := False;
                                 pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                                 return;
@@ -2144,8 +2131,7 @@ is
                                 OK := False;
                                 pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
-                                      and then HC.Transcript_Len =
-                                        Saved_Transcript_Len
+                                      and then HC.TS = Saved_TS
                                       and then
                                         (if Saved_Got_HRR then HC.Got_HRR));
                                 return;
@@ -2154,8 +2140,7 @@ is
                                 HC.HRR_Cookie_Len := C_Len;
                                 for K in 0 .. C_Len - 1 loop
                                    pragma Loop_Invariant
-                                             (HC.Transcript_Len =
-                                              HC.Transcript_Len'Loop_Entry);
+                                             (HC.TS = HC.TS'Loop_Entry);
                                            pragma Loop_Invariant
                                              (if Saved_Got_HRR then HC.Got_HRR);
                                            pragma Loop_Invariant
@@ -2190,7 +2175,7 @@ is
       --  either change alone puts that test back in the failing set.
       for I in 1 .. N_Ext loop
          pragma Loop_Invariant
-           (HC.Transcript_Len = Saved_Transcript_Len);
+           (HC.TS = Saved_TS);
          pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
          pragma Loop_Invariant
            (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
@@ -2203,8 +2188,7 @@ is
 
               pragma Assert_And_Cut ((if Random_Was_Set
                                                 then HC.Cfg.Random /= null)
-                                              and then HC.Transcript_Len =
-                                                Saved_Transcript_Len
+                                              and then HC.TS = Saved_TS
                                               and then
                                                 (if Saved_Got_HRR then HC.Got_HRR)
                                               and then HC.HRR_Cookie_Len <=
@@ -2215,7 +2199,7 @@ is
    --     group(2) + key_exchange_length(2) + key_exchange(key_exchange_length)
    --  Allocates a scratch buffer, copies the SH_Extension_TLS body,
    --  validates the wire-length, runs RFLX Verify_Message, dispatches
-   --  on group to populate HC.Peer_PK / HC.P256_Peer_PK / HC.P384_Peer_PK
+   --  on group to populate HC.KE.Peer_PK / HC.KE.P256_PK / HC.KE.P384_PK
    --  and the Use_*_KE flags. On length mismatch the routine sets
    --  HC.Ext_Parse_Err := Decode_Error.
    --
@@ -2232,7 +2216,7 @@ is
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid_Next
                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data),
         Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-                and then HC.Transcript_Len = HC.Transcript_Len'Old
+                and then HC.TS = HC.TS'Old
                 and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old;
 
    procedure Apply_SH_Key_Share
@@ -2291,8 +2275,9 @@ is
                   begin
                      RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange
                        (KS_Ctx, KB);
-                     HC.Peer_PK := To_NaCl (KB);
-                     HC.Use_P256_KE := False;
+                     HC.KE.Peer_PK := To_NaCl (KB);
+                     HC.KE.Curve      := 16#001D#;
+                     HC.KE.Negotiated := True;
                   end;
                elsif Grp.Known and then
                   Grp.Enum = RFLX.Tls_Parameters.Secp256r1
@@ -2307,11 +2292,11 @@ is
                      RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange
                        (KS_Ctx, KB);
                      for I in 0 .. 64 loop
-                        HC.P256_Peer_PK (N32 (I)) :=
+                        HC.KE.P256_PK (N32 (I)) :=
                            Byte (KB (RBT.Index (I + 1)));
                      end loop;
-                     HC.Use_P256_KE := True;
-                     HC.Use_P384_KE := False;
+                     HC.KE.Curve      := 16#0017#;
+                     HC.KE.Negotiated := True;
                   end;
                elsif Grp.Known and then
                   Grp.Enum = RFLX.Tls_Parameters.Secp384r1
@@ -2326,11 +2311,11 @@ is
                      RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange
                        (KS_Ctx, KB);
                      for I in 0 .. 96 loop
-                        HC.P384_Peer_PK (N32 (I)) :=
+                        HC.KE.P384_PK (N32 (I)) :=
                            Byte (KB (RBT.Index (I + 1)));
                      end loop;
-                     HC.Use_P384_KE := True;
-                     HC.Use_P256_KE := False;
+                     HC.KE.Curve      := 16#0018#;
+                     HC.KE.Negotiated := True;
                   end;
                end if;
             end;
@@ -2355,13 +2340,13 @@ is
       --  early return) so the same Parse_Server_Hello body handles
       --  both HRR and the post-HRR SH2 correctly.
       Curr_Is_HRR : Boolean := False;
-      Transcript_Len_At_Entry : constant N32 :=
-        HC.Transcript_Len with Ghost;
+      TS_At_Entry : constant SPARKTLS_Transcript.Transcript_State :=
+        HC.TS with Ghost;
               Random_Was_Set : constant Boolean :=
                 HC.Cfg.Random /= null with Ghost;
               Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
               function SH_Parse_Frame return Boolean is
-                (HC.Transcript_Len = Transcript_Len_At_Entry
+                (HC.TS = TS_At_Entry
                  and then (if Random_Was_Set then HC.Cfg.Random /= null)
                  and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
               with Ghost;
@@ -2544,7 +2529,7 @@ is
                               Suite_AES_128_GCM_SHA256
                             | Suite_AES_256_GCM_SHA384
                             | Suite_CHACHA20_POLY1305_SHA256
-                            and then HC.Transcript_Len = Transcript_Len_At_Entry
+                            and then HC.TS = TS_At_Entry
                             and then (if Random_Was_Set then HC.Cfg.Random /= null)
                             and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
                          return;
@@ -2676,7 +2661,7 @@ is
                     (if HC.Cfg.Random'Loop_Entry /= null
                      then HC.Cfg.Random /= null);
                   pragma Loop_Invariant
-                    (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry);
+                    (HC.TS = HC.TS'Loop_Entry);
                   pragma Loop_Invariant
                     (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
                   declare
@@ -2861,7 +2846,7 @@ is
       --  (it's computed after ServerKeyExchange)
       if HC.Version = TLS_1_2 then
          pragma Assert_And_Cut
-           (HC.Transcript_Len = Transcript_Len_At_Entry
+           (HC.TS = TS_At_Entry
             and then (if Random_Was_Set then HC.Cfg.Random /= null)
             and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
             and then
@@ -2876,7 +2861,7 @@ is
       end if;
 
       --  Compute shared secret (TLS 1.3 only — key_share in ServerHello)
-      if HC.Use_P384_KE then
+      if (HC.KE.Negotiated and then HC.KE.Curve = 16#0018#) then
          --  P-384 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
          declare
             Secret_384 : Bytes_48;
@@ -2886,17 +2871,17 @@ is
             Compute_P384_Shared_Secret
               (Secret  => Secret_384,
                OK      => P384_OK,
-               SK      => HC.P384_Local_SK,
-               Peer_PK => HC.P384_Peer_PK);
+               SK      => HC.KE.P384_SK,
+               Peer_PK => HC.KE.P384_PK);
             pragma Assert (SH_Parse_Frame);
             if not P384_OK then
                OK := False;
                pragma Assert_And_Cut (SH_Parse_Frame);
                goto Cleanup;
             end if;
-            HC.Shared_Secret := Secret_384;
+            HC.KE.Shared := Secret_384;
          end;
-      elsif HC.Use_P256_KE then
+      elsif (HC.KE.Negotiated and then HC.KE.Curve = 16#0017#) then
          --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
          declare
             Peer_Pt : SPARKTLSCrypto.P256.Point.P256_Jacobian;
@@ -2904,7 +2889,7 @@ is
             X_Bytes : Byte_Seq (0 .. 31);
          begin
             SPARKTLSCrypto.P256.Point.P256_Decode
-              (Peer_Pt, HC.P256_Peer_PK, Valid);
+              (Peer_Pt, HC.KE.P256_PK, Valid);
             if Valid = 0 then
                OK := False;
                pragma Assert_And_Cut (SH_Parse_Frame);
@@ -2912,7 +2897,7 @@ is
             end if;
             --  Multiply peer's public key by our private scalar
             SPARKTLSCrypto.P256.Point.P256_Mul
-              (Peer_Pt, HC.P256_Local_SK, 32);
+              (Peer_Pt, HC.KE.P256_SK, 32);
             SPARKTLSCrypto.P256.Point.P256_To_Affine (Peer_Pt);
             --  Encode to get x-coordinate (bytes 1..32 of uncompressed point)
             declare
@@ -2921,21 +2906,21 @@ is
                SPARKTLSCrypto.P256.Point.P256_Encode (Encoded, Peer_Pt);
                X_Bytes := Encoded (1 .. 32);
             end;
-            HC.Shared_Secret := (others => 0);
-            HC.Shared_Secret (0 .. 31) := X_Bytes;
+            HC.KE.Shared := (others => 0);
+            HC.KE.Shared (0 .. 31) := X_Bytes;
          end;
       else
          --  X25519 ECDHE
-         HC.Shared_Secret := (others => 0);
+         HC.KE.Shared := (others => 0);
          SPARKTLSCrypto.X25519.Scalar_Mult
-           (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
+           (HC.KE.Shared (0 .. 31), HC.KE.Local_SK, HC.KE.Peer_PK);
          --  RFC 7748 §6.1: small-subgroup defence. The helper has
          --  a SPARK-proven Post that ties its result to the byte-
          --  sequence existential. RFC 8446 §6.2: invalid peer share
          --  is illegal_parameter, not the generic handshake_failure
          --  the caller would otherwise pick.
          if not Shared_Secret_Is_Acceptable_X25519
-                  (HC.Shared_Secret (0 .. 31))
+                  (HC.KE.Shared (0 .. 31))
          then
             S.Last_Error := Illegal_Parameter;
             OK := False;
@@ -2953,7 +2938,7 @@ is
       end if;
 
       pragma Assert_And_Cut
-        (HC.Transcript_Len = Transcript_Len_At_Entry
+        (HC.TS = TS_At_Entry
          and then (if Random_Was_Set then HC.Cfg.Random /= null)
          and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
          and then

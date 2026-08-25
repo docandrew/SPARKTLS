@@ -146,19 +146,17 @@ begin
       Check ("traffic below the refill threshold does not refund", Refused);
    end;
 
-   --  4. The nonce-space backstop. Record_Counter must exclude
-   --     Unsigned_64'Last: Unsigned_64 is modular, so a counter that could
-   --     hold 'Last would wrap to 0 on the next increment and restart the
-   --     nonce sequence under an unchanged key.
-   Check ("Record_Counter'Last excludes Unsigned_64'Last",
-          Unsigned_64 (Record_Counter'Last) = Unsigned_64'Last - 1);
+   --  4. The nonce-space bound. Since 2026-08-24 the counter's TYPE
+   --     bound IS the cryptographic budget (RFC 8446 Section 5.5): the
+   --     cap value itself is representable -- the legitimate "channel
+   --     exhausted" state -- and a modular wrap to 0 under an unchanged
+   --     key now sits 2**40 range-check failures away instead of one.
+   Check ("Record_Counter'Last is the AEAD cap",
+          Unsigned_64 (Record_Counter'Last) = Unsigned_64 (Rekey_After_Records));
    Check ("Record_Counter'First is 0",
           Unsigned_64 (Record_Counter'First) = 0);
-
-   --  Rotation must happen long before the arithmetic bound, or the
-   --  backstop would be doing work the rekey should have done.
-   Check ("rekey threshold is far below the sequence bound",
-          Unsigned_64 (Rekey_After_Records) < Unsigned_64 (Record_Counter'Last) / 2**20);
+   Check ("the cap is far below the modular wrap point",
+          Unsigned_64 (Record_Counter'Last) < Unsigned_64'Last / 2**30);
 
    --  And the refill bar must sit below the rotation threshold, or a peer
    --  rekeying on our own schedule would never earn a refund.

@@ -152,11 +152,8 @@ is
       with Pre =>
         HC.Version = TLS_1_2
         --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
-        and then HC.Transcript_Len > 0
-        and then HC.Transcript_Len <= Transcript_Capacity
-        and then
-          (if HC.TLS12_EMS_Transcript_Len > 0
-           then HC.TLS12_EMS_Transcript_Len <= Transcript_Capacity)
+        and then SPARKTLS_Transcript.Started (HC.TS)
+
      --  Negotiated_Suite must be one of the six TLS 1.2 ECDHE suites
      --  we recognize, so the local mapping matches Internal_Suite_For.
      and then S.Negotiated_Suite in

@@ -433,7 +433,7 @@ is
                      end if;
                      pragma Assert (Pos + 35 <= Data'Last);
                      Copy_X25519_KS
-                       (Data, Pos, HC.Peer_PK,
+                       (Data, Pos, HC.KE.Peer_PK,
                         HC.Client_Has_X25519);
                      Pos := Pos + 4 + KL;
                   elsif Group = 16#0017# then
@@ -447,7 +447,7 @@ is
                      end if;
                      pragma Assert (Pos + 68 <= Data'Last);
                      Copy_P256_KS
-                       (Data, Pos, HC.P256_Peer_PK,
+                       (Data, Pos, HC.KE.P256_PK,
                         HC.Client_Has_P256);
                      Pos := Pos + 4 + KL;
                   elsif Group = 16#0018# then
@@ -461,7 +461,7 @@ is
                      end if;
                      pragma Assert (Pos + 100 <= Data'Last);
                      Copy_P384_KS
-                       (Data, Pos, HC.P384_Peer_PK,
+                       (Data, Pos, HC.KE.P384_PK,
                         HC.Client_Has_P384);
                      Pos := Pos + 4 + KL;
                   else
@@ -1539,8 +1539,7 @@ is
      (Val : in     Unsigned_16;
       S   : in out Session;
       HC  : in out Handshake_Context)
-   with Pre => True,
-        Post =>
+   with Post =>
             S.Role = S.Role'Old
             and then S.State = S.State'Old
             and then S.Input.Read_Pos = S.Input.Read_Pos'Old
@@ -3709,10 +3708,10 @@ is
       KS_Raw := (others => 0);
 
       Gen_Random (Byte_Seq (Tmp_SK));
-      HC.Local_SK := Tmp_SK;
-      SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.Local_SK, Basepoint);
+      HC.KE.Local_SK := Tmp_SK;
+      SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Local_SK, Basepoint);
       SPARKTLSCrypto.X25519.Scalar_Mult
-        (HC.Shared_Secret (0 .. 31), HC.Local_SK, HC.Peer_PK);
+        (HC.KE.Shared (0 .. 31), HC.KE.Local_SK, HC.KE.Peer_PK);
 
       --  RFC 7748 §6.1 / RFC 8422 §5.10: reject all-zero shared
       --  secret (small-subgroup attack defense). The X25519 spec
@@ -3724,9 +3723,9 @@ is
       --  Bubble up via HC.Ext_Parse_Err so Build_Server_Flight
       --  picks the specific alert instead of handshake_failure.
       if not Shared_Secret_Is_Acceptable_X25519
-               (HC.Shared_Secret (0 .. 31))
+               (HC.KE.Shared (0 .. 31))
       then
-         HC.Shared_Secret := (others => 0);
+         HC.KE.Shared := (others => 0);
          HC.Ext_Parse_Err := Illegal_Parameter;
          KS_Raw_Len := 0;
          OK := False;
@@ -3744,7 +3743,7 @@ is
    end Generate_KS_X25519;
 
    --  P-256 key share generation (RFC 8446 §4.2.8.2 + RFC 8422 §5).
-   --  OK = False if HC.P256_Peer_PK is not a valid point.
+   --  OK = False if HC.KE.P256_PK is not a valid point.
    procedure Generate_KS_P256
      (HC         : in out Handshake_Context;
       KS_Raw     :    out KS_Raw_Buffer;
@@ -3784,25 +3783,25 @@ is
       OK         := False;
 
       Gen_Random (Byte_Seq (Tmp_SK));
-      HC.P256_Local_SK := Tmp_SK;
+      HC.KE.P256_SK := Tmp_SK;
       --  Our public key
-      P256_Mulgen (PK_Jac, HC.P256_Local_SK, 32);
+      P256_Mulgen (PK_Jac, HC.KE.P256_SK, 32);
       P256_To_Affine (PK_Jac);
       P256_Encode (PK_Enc, PK_Jac);
       --  Shared secret: x-coord of [our_sk] * peer_pk
-      P256_Decode (Peer_Pt, HC.P256_Peer_PK, Valid);
+      P256_Decode (Peer_Pt, HC.KE.P256_PK, Valid);
       if Valid = 0 then
          HC.Ext_Parse_Err := Illegal_Parameter;
          return;  --  invalid peer pubkey
       end if;
-      P256_Mul (Peer_Pt, HC.P256_Local_SK, 32);
+      P256_Mul (Peer_Pt, HC.KE.P256_SK, 32);
       P256_To_Affine (Peer_Pt);
       declare
          Enc : Byte_Seq (0 .. 64);
       begin
          P256_Encode (Enc, Peer_Pt);
-         HC.Shared_Secret := (others => 0);
-         HC.Shared_Secret (0 .. 31) := Enc (1 .. 32);
+         HC.KE.Shared := (others => 0);
+         HC.KE.Shared (0 .. 31) := Enc (1 .. 32);
       end;
       --  group(2) + key_len(2) + key(65) = 69
       KS_Raw (0) := 0; KS_Raw (1) := 16#17#;
@@ -3815,7 +3814,7 @@ is
    end Generate_KS_P256;
 
    --  P-384 key share generation.
-   --  OK = False if P384_ECDHE rejects HC.P384_Peer_PK.
+   --  OK = False if P384_ECDHE rejects HC.KE.P384_PK.
    procedure Generate_KS_P384
      (HC         : in out Handshake_Context;
       KS_Raw     :    out KS_Raw_Buffer;
@@ -3849,18 +3848,18 @@ is
       OK         := False;
 
       Gen_Random (Byte_Seq (Tmp_SK));
-      HC.P384_Local_SK := Tmp_SK;
-      SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
+      HC.KE.P384_SK := Tmp_SK;
+      SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.KE.P384_SK);
       SPARKTLSCrypto.P384.Point.P384_ECDHE
         (Secret  => SS,
          OK      => SS_OK,
-         SK      => HC.P384_Local_SK,
-         Peer_PK => HC.P384_Peer_PK);
+         SK      => HC.KE.P384_SK,
+         Peer_PK => HC.KE.P384_PK);
       if not SS_OK then
          HC.Ext_Parse_Err := Illegal_Parameter;
          return;
       end if;
-      HC.Shared_Secret := SS;
+      HC.KE.Shared := SS;
       --  group(2) + key_len(2) + key(97) = 101
       KS_Raw (0) := 0; KS_Raw (1) := 16#18#;
       KS_Raw (2) := 0; KS_Raw (3) := 97;
@@ -4267,14 +4266,15 @@ is
       --  the client offered. Each branch below conditions on the
       --  matching Client_Has_* flag so the per-branch pragma Assert
       --  proves the cross-reference.
-      HC.Shared_Secret := (others => 0);
+      HC.KE.Shared := (others => 0);
       if HC.HRR_Sent and then HC.HRR_Selected_Group = 16#001D# then
          if not HC.Client_Has_X25519 then
             KS_Raw_Len := 0;
             OK := False;
             return;
          end if;
-         HC.Selected_Group := 16#001D#;
+         HC.KE.Curve      := 16#001D#;
+         HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len, OK);
          if not OK then
@@ -4287,7 +4287,8 @@ is
             OK := False;
             return;
          end if;
-         HC.Selected_Group := 16#0017#;
+         HC.KE.Curve      := 16#0017#;
+         HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_P256 (HC, KS_Raw, KS_Raw_Len, OK);
          if not OK then
@@ -4300,7 +4301,8 @@ is
             OK := False;
             return;
          end if;
-         HC.Selected_Group := 16#0018#;
+         HC.KE.Curve      := 16#0018#;
+         HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_P384 (HC, KS_Raw, KS_Raw_Len, OK);
          if not OK then
@@ -4311,7 +4313,8 @@ is
          KS_Raw_Len := 0;
          OK := False;
       elsif HC.Client_Has_X25519 then
-         HC.Selected_Group := 16#001D#;
+         HC.KE.Curve      := 16#001D#;
+         HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len, OK);
          if not OK then
@@ -4320,7 +4323,8 @@ is
             return;
          end if;
       elsif HC.Client_Has_P256 then
-         HC.Selected_Group := 16#0017#;
+         HC.KE.Curve      := 16#0017#;
+         HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_P256 (HC, KS_Raw, KS_Raw_Len, OK);
          if not OK then
@@ -4328,7 +4332,8 @@ is
             return;
          end if;
       elsif HC.Client_Has_P384 then
-         HC.Selected_Group := 16#0018#;
+         HC.KE.Curve      := 16#0018#;
+         HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_P384 (HC, KS_Raw, KS_Raw_Len, OK);
          if not OK then

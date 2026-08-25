@@ -7,6 +7,8 @@ with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
 with X509;
 
+with SPARKTLS_Transcript;
+use type SPARKTLS_Transcript.Transcript_State;
 --  TLS 1.2 Handshake Messages (RFC 5246 §7.4, RFC 8422)
 --
 --  TLS 1.2 ECDHE handshake flow (server-authenticated):
@@ -236,7 +238,7 @@ is
    --  RFC 5246 §7.4.3: "Sending handshake messages in an unexpected
    --  order results in a fatal error."
    --
-   --  Precondition: HC.Selected_Group must be set to a valid group,
+   --  Precondition: HC.KE.Curve must be set to a valid group,
    --  and the ephemeral keypair must already be generated in HC.
    procedure Build_Server_Key_Exchange
      (HC     : in     Handshake_Context;
@@ -248,7 +250,7 @@ is
                 and Result'Last >= Max_Server_Key_Exchange - 1
                 and Random /= null
                 and Id.Has_Identity
-                and Valid_ECDHE_Group (HC.Selected_Group),
+                and HC.KE.Negotiated,
         Post => Len <= Max_Server_Key_Exchange;
 
    --  RFC 5246 §7.4.5: Build ServerHelloDone.
@@ -288,7 +290,7 @@ is
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and Result'Last >= Max_Client_Key_Exchange - 1
-                and Valid_ECDHE_Group (HC.Selected_Group),
+                and HC.KE.Negotiated,
         Post => Len <= Max_Client_Key_Exchange;
 
    --  RFC 8422 §5.4: Parse ServerKeyExchange.
@@ -314,12 +316,12 @@ is
         Post => (if HC.Cfg.Random'Old /= null
                                           then HC.Cfg.Random /= null)
                         and then
-                          (if OK then Valid_ECDHE_Group (HC.Selected_Group));
+                          (if OK then HC.KE.Negotiated);
 
    --  RFC 8422 §5.7: Parse ClientKeyExchange.
    --
    --  Extracts the client's ephemeral ECDHE public key.
-   --  The curve MUST match HC.Selected_Group (set during ServerKeyExchange).
+   --  The curve MUST match HC.KE.Curve (set during ServerKeyExchange).
    --  Stores the peer's public key in HC for shared secret computation.
    procedure Parse_Client_Key_Exchange
      (HC   : in out Handshake_Context;
@@ -327,9 +329,9 @@ is
       OK   :    out Boolean)
       with Pre  => Data'First = 0
                    and then Data'Last in 3 .. Max_Client_Key_Exchange - 1
-                           and then Valid_ECDHE_Group (HC.Selected_Group),
+                           and then HC.KE.Negotiated,
            Post => HC.Version = HC.Version'Old
-                   and then HC.Selected_Group = HC.Selected_Group'Old
+                   and then HC.KE = HC.KE'Old
                 and then
                   (if HC.Cfg.Local'Old /= null
                      and then HC.Cfg.Local'Old.Has_Identity
@@ -461,7 +463,7 @@ is
                               (HC.Cfg.Local)
                         and HC.Cfg.Random /= null
                         and HC.Version = HC.Version'Old
-                                                and HC.Selected_Group = HC.Selected_Group'Old
+                                                and HC.KE = HC.KE'Old
                                                 and True;
 
    function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean;
@@ -492,7 +494,7 @@ is
                                    and HC.Version = TLS_1_2)
                         and then (if HC.Cfg.Random'Old /= null
                                   then HC.Cfg.Random /= null)
-                        and then HC.Transcript_Len = HC.Transcript_Len'Old
+                        and then HC.TS = HC.TS'Old
                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
                                         and then
                                           (if HC.HRR_Cookie_Len'Old <=

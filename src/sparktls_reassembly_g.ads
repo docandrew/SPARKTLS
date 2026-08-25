@@ -32,6 +32,8 @@ generic
    Capacity : N32;
 package SPARKTLS_Reassembly_G with SPARK_Mode => On is
 
+   pragma Unevaluated_Use_Of_Old (Allow);
+
    --  RFC 8446 4: largest message this instance will reassemble.
    --  Anything larger is a decode error. Kept under the historical name
    --  so the 128 KB instance's users are textually unchanged.
@@ -100,7 +102,8 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
    --  A whole message is present at offset 0. May STILL be true after
    --  Consume: that is the packed-flight case, and it needs no separate
    --  concept, no second phase and no second set of fields.
-   function Has_Message (B : Buffer) return Boolean;
+   function Has_Message (B : Buffer) return Boolean
+     with Post => (if Has_Message'Result then Header_Ready (B));
 
    --  Bytes still required to complete the message at offset 0: the rest of
    --  the 4-byte header if it is not yet readable, otherwise the rest of the
@@ -151,7 +154,8 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
           --  conjunct on the assumption that "the index type starts at 0
           --  implies it" left `Frag (0)` unprovable at every consumer.
           Post => Message'Result'First = 0
-                  and then Message'Result'Length = Message_Length (B);
+                  and then Message'Result'Length = Message_Length (B)
+                  and then Message'Result'Length = Declared_Size (B);
 
    procedure Reset (B : out Buffer)
      with Post => Used (B) = 0
@@ -179,7 +183,15 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
           --  there (RM 6.1.1(27)). Non-short-circuit keeps both always
           --  evaluated, which is what makes the 'Old prefixes legal.
           Post => Used (B) = Used (B)'Old + Data'Length
-                  and Free_Space (B) = Free_Space (B)'Old - Data'Length;
+                  and Free_Space (B) = Free_Space (B)'Old - Data'Length
+                  --  Header bytes are never rewritten, so a readable header
+                  --  and its declared size survive every Append. This is
+                  --  what lets a caller's size-cap check (taken at
+                  --  Header_Ready) still be in force when the completed
+                  --  message is finally read out.
+                  and (if Header_Ready (B)'Old then
+                         Header_Ready (B)
+                         and then Declared_Size (B) = Declared_Size (B)'Old);
 
    --  Drop the message at offset 0; shift any trailing bytes down.
    procedure Consume (B : in out Buffer)

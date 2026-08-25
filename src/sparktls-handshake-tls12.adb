@@ -29,6 +29,8 @@ with RFLX.TLS_Common;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
 
+with SPARKTLS_Transcript;
+use type SPARKTLS_Transcript.Transcript_State;
 package body SPARKTLS.Handshake.TLS12 with
    SPARK_Mode => On
 is
@@ -123,16 +125,16 @@ is
       Len := 0;
 
       --  Determine point length for selected group
-      Pt_Len := Point_Len_For_Group (HC.Selected_Group);
+      Pt_Len := Point_Len_For_Group (HC.KE.Curve);
       if Pt_Len = 0 then return; end if;
 
       --  Build EC params: curve_type(1) || named_curve(2) || point_len(1) || point(N)
       Params (0) := EC_Curve_Type_Named;  --  0x03
-      Put16 (Params, 1, HC.Selected_Group);
+      Put16 (Params, 1, HC.KE.Curve);
       Params (3) := Byte (Pt_Len);
 
       --  Copy the server's ephemeral public key into params
-      case HC.Selected_Group is
+      case HC.KE.Curve is
          when Group_X25519 =>
             declare
                PK   : SPARKNaCl.Cryptobox.Public_Key;
@@ -141,7 +143,7 @@ is
                declare
                   Dummy_SK : SPARKNaCl.Cryptobox.Secret_Key;
                begin
-                  SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK, Dummy_SK);
+                  SPARKNaCl.Cryptobox.Keypair (HC.KE.Local_SK, PK, Dummy_SK);
                end;
                PKB := SPARKNaCl.Cryptobox.Serialize (PK);
                Params (4 .. 4 + 31) := Byte_Seq (PKB);
@@ -155,7 +157,7 @@ is
                PK_Enc : Byte_Seq (0 .. 64);
             begin
                SPARKTLSCrypto.P256.Point.P256_Mulgen
-                 (PK_Jac, HC.P256_Local_SK, 32);
+                 (PK_Jac, HC.KE.P256_SK, 32);
                SPARKTLSCrypto.P256.Point.P256_To_Affine (PK_Jac);
                SPARKTLSCrypto.P256.Point.P256_Encode (PK_Enc, PK_Jac);
                Params (4 .. 4 + 64) := PK_Enc;
@@ -165,7 +167,7 @@ is
             declare
                PK_Enc : Byte_Seq (0 .. 96);
             begin
-               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
+               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.KE.P384_SK);
                Params (4 .. 4 + 96) := PK_Enc;
             end;
 
@@ -447,7 +449,7 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
-      Pt_Len : constant N32 := Point_Len_For_Group (HC.Selected_Group);
+      Pt_Len : constant N32 := Point_Len_For_Group (HC.KE.Curve);
    begin
       Result := (others => 0);
       Len := 0;
@@ -463,7 +465,7 @@ is
       Result (4) := Byte (Pt_Len);
 
       --  Copy our public key
-      case HC.Selected_Group is
+      case HC.KE.Curve is
          when Group_X25519 =>
             declare
                PK  : SPARKNaCl.Cryptobox.Public_Key;
@@ -472,7 +474,7 @@ is
                declare
                   Dummy_SK : SPARKNaCl.Cryptobox.Secret_Key;
                begin
-                  SPARKNaCl.Cryptobox.Keypair (HC.Local_SK, PK, Dummy_SK);
+                  SPARKNaCl.Cryptobox.Keypair (HC.KE.Local_SK, PK, Dummy_SK);
                end;
                PKB := SPARKNaCl.Cryptobox.Serialize (PK);
                Result (5 .. 5 + 31) := Byte_Seq (PKB);
@@ -484,7 +486,7 @@ is
                PK_Enc : Byte_Seq (0 .. 64);
             begin
                SPARKTLSCrypto.P256.Point.P256_Mulgen
-                 (PK_Jac, HC.P256_Local_SK, 32);
+                 (PK_Jac, HC.KE.P256_SK, 32);
                SPARKTLSCrypto.P256.Point.P256_To_Affine (PK_Jac);
                SPARKTLSCrypto.P256.Point.P256_Encode (PK_Enc, PK_Jac);
                Result (5 .. 5 + 64) := PK_Enc;
@@ -494,7 +496,7 @@ is
             declare
                PK_Enc : Byte_Seq (0 .. 96);
             begin
-               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.P384_Local_SK);
+               SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.KE.P384_SK);
                Result (5 .. 5 + 96) := PK_Enc;
             end;
 
@@ -596,7 +598,8 @@ is
          pragma Assert (Pt_Len = Point_Len_For_Group (Curve));
          pragma Assert (Pt_Len <= P384_Point_Len);
          pragma Assert (Sig_Len in 1 .. Max_Sig);
-         HC.Selected_Group := Curve;
+         HC.KE.Curve      := Curve;
+         HC.KE.Negotiated := True;
 
          --  Extract server's ephemeral public key.
          declare
@@ -607,7 +610,7 @@ is
                when Group_X25519 =>
                   pragma Assert (Pt_Len = X25519_Point_Len);
                   for I in N32 range 0 .. 31 loop
-                     HC.Peer_PK (I) :=
+                     HC.KE.Peer_PK (I) :=
                         Byte (Pt_RFLX (RBT.Index (I + 1)));
                   end loop;
 
@@ -620,10 +623,9 @@ is
                      return;
                   end if;
                   for I in N32 range 0 .. 64 loop
-                     HC.P256_Peer_PK (I) :=
+                     HC.KE.P256_PK (I) :=
                         Byte (Pt_RFLX (RBT.Index (I + 1)));
                   end loop;
-                  HC.Use_P256_KE := True;
 
                when Group_Secp384r1 =>
                   pragma Assert (Pt_Len = P384_Point_Len);
@@ -634,10 +636,9 @@ is
                      return;
                   end if;
                   for I in N32 range 0 .. 96 loop
-                     HC.P384_Peer_PK (I) :=
+                     HC.KE.P384_PK (I) :=
                         Byte (Pt_RFLX (RBT.Index (I + 1)));
                   end loop;
-                  HC.Use_P384_KE := True;
 
                when others =>
                   SKE.Take_Buffer (Ctx, Buf);
@@ -725,7 +726,7 @@ is
    --
    --  Extracts the client's ephemeral ECDHE public key.
    --  Data layout: point_len(1) || point(N)
-   --  The curve is already set in HC.Selected_Group.
+   --  The curve is already set in HC.KE.Curve.
    ------------------------------------------------------------------
 
    procedure Parse_Client_Key_Exchange
@@ -775,7 +776,7 @@ is
             return;
          end if;
 
-         if Pt_Len /= Point_Len_For_Group (HC.Selected_Group) then
+         if Pt_Len /= Point_Len_For_Group (HC.KE.Curve) then
             HC.Ext_Parse_Err := Illegal_Parameter;
             CKE.Take_Buffer (Ctx, Buf);
             RFLX_Free_Local (Buf);
@@ -783,10 +784,10 @@ is
          end if;
 
          CKE.Get_Point (Ctx, Pt_RFLX);
-         case HC.Selected_Group is
+         case HC.KE.Curve is
             when Group_X25519 =>
                for I in N32 range 0 .. 31 loop
-                  HC.Peer_PK (I) :=
+                  HC.KE.Peer_PK (I) :=
                      Byte (Pt_RFLX (RBT.Index (I + 1)));
                end loop;
 
@@ -798,10 +799,9 @@ is
                   return;
                end if;
                for I in N32 range 0 .. 64 loop
-                  HC.P256_Peer_PK (I) :=
+                  HC.KE.P256_PK (I) :=
                      Byte (Pt_RFLX (RBT.Index (I + 1)));
                end loop;
-               HC.Use_P256_KE := True;
 
             when Group_Secp384r1 =>
                if Byte (Pt_RFLX (1)) /= 16#04# then
@@ -811,10 +811,9 @@ is
                   return;
                end if;
                for I in N32 range 0 .. 96 loop
-                  HC.P384_Peer_PK (I) :=
+                  HC.KE.P384_PK (I) :=
                      Byte (Pt_RFLX (RBT.Index (I + 1)));
                end loop;
-               HC.Use_P384_KE := True;
 
             when others =>
                CKE.Take_Buffer (Ctx, Buf);
@@ -1486,7 +1485,7 @@ is
          begin
             for I in N32 range 0 .. 7 loop
                pragma Loop_Invariant
-                 (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
+                 (HC.TS = HC.TS'Loop_Entry
                   and then HC.HRR_Cookie_Len =
                     HC.HRR_Cookie_Len'Loop_Entry);
                if HC.Server_Random (24 + I) /= S13 (I) then
@@ -1518,7 +1517,7 @@ is
       HC.Legacy_Session_ID := (others => 0);
       for I in N32 range 0 .. SID_Len - 1 loop
          pragma Loop_Invariant
-           (HC.Transcript_Len = HC.Transcript_Len'Loop_Entry
+           (HC.TS = HC.TS'Loop_Entry
             and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
          HC.Legacy_Session_ID (I) := Data (Pos + I);
       end loop;
