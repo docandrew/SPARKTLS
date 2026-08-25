@@ -63,13 +63,6 @@ is
                                       Input (S).Read_Pos'Old
                                     and then Input (S).Write_Pos =
                                       Input (S).Write_Pos'Old
-                                                    and then Server_App (S).Counter =
-                                                      Server_App (S).Counter'Old
-                                                    and then HC.Server_HS.Counter =
-                                                      HC.Server_HS.Counter'Old
-                                                            and then Server_App (S).Suite =
-                                                              Server_App (S).Suite'Old
-                                                                                                                    and then HC.HRR_Sent = HC.HRR_Sent'Old
                                                             and then
                                       (if OK and then HC.Version = TLS_1_3
                                        then Negotiated_Suite (S) in

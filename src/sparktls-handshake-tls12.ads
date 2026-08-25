@@ -331,7 +331,8 @@ is
                    and then Data'Last in 3 .. Max_Client_Key_Exchange - 1
                            and then HC.KE.Negotiated,
            Post => HC.Version = HC.Version'Old
-                   and then HC.KE = HC.KE'Old
+                   and then HC.KE.Curve = HC.KE'Old.Curve
+                   and then HC.KE.Negotiated = HC.KE'Old.Negotiated
                 and then
                   (if HC.Cfg.Local'Old /= null
                      and then HC.Cfg.Local'Old.Has_Identity

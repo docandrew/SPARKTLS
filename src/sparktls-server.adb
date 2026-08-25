@@ -177,7 +177,6 @@ is
                                 and then S.Input.Write_Pos =
                                   S.Input.Write_Pos'Old
                                                 and then HC.Legacy_Session_ID_Len in 0 .. 32
-                                                and then HC.HRR_Sent = HC.HRR_Sent'Old
                         and then
                                   (if Valid
                                    then HC.Version = TLS_1_3
@@ -521,14 +520,9 @@ is
                 and HC.Hash_Len = HC.Hash_Len'Old
                 and HC.Version = HC.Version'Old
                 and HC.Peer_Leaf = HC.Peer_Leaf'Old
-                and HC.HRR_Sent = HC.HRR_Sent'Old
                 and HC.Legacy_Session_ID_Len =
                       HC.Legacy_Session_ID_Len'Old
                 and Used (HC.Reasm) = Used (HC.Reasm)'Old
-                and HC.Server_HS.Counter = HC.Server_HS.Counter'Old
-                and HC.Client_HS.Counter = HC.Client_HS.Counter'Old
-                and HC.Server_HS.Suite = HC.Server_HS.Suite'Old
-                and HC.Client_HS.Suite = HC.Client_HS.Suite'Old
    is
    begin
       SPARKTLS_Transcript.Append (HC.TS, Data);
@@ -1085,14 +1079,8 @@ is
                                                                        and then S.State = S.State'Old
                                                                        and then S.Negotiated_Suite =
                                                                          S.Negotiated_Suite'Old
-                                                                       and then S.Server_App.Counter =
-                                                                         S.Server_App.Counter'Old
                                                                        and then HC.Version = HC.Version'Old
                                                                        and then HC.TS = HC.TS'Old
-                                                                       and then HC.HRR_Sent =
-                                                                         HC.HRR_Sent'Old
-                                                                       and then HC.Server_HS.Counter =
-                                                                         HC.Server_HS.Counter'Old
                                                                        and then HC.Legacy_Session_ID_Len
                                                                          in 0 .. 32
            is
@@ -1660,8 +1648,6 @@ is
         S.State = S.State'Old
         and then S.Role = S.Role'Old
         and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                and then S.Server_App.Counter = S.Server_App.Counter'Old
-                and then S.Server_App.Suite = S.Server_App.Suite'Old
                 and then Server_Active (S)
                 and then
                   (if Consume_Current_Record
@@ -1681,14 +1667,9 @@ is
       procedure Free_CH2_Reasm
       with Post => Used (HC.Reasm) = 0
                    and then HC.Version = HC.Version'Old
-                   and then HC.HRR_Sent = HC.HRR_Sent'Old
                            and then HC.Legacy_Session_ID_Len =
                              HC.Legacy_Session_ID_Len'Old
                            and then HC.TS = HC.TS'Old
-                           and then HC.Server_HS.Counter =
-                             HC.Server_HS.Counter'Old
-                           and then HC.Server_HS.Suite =
-                             HC.Server_HS.Suite'Old
            is
               begin
                  Reset (HC.Reasm);
@@ -2363,7 +2344,6 @@ is
                                  then S.State = S.State'Old
                                       and S.Role = S.Role'Old
                                               and HC.TS = HC.TS'Old
-                                      and HC.HRR_Sent = HC.HRR_Sent'Old
                               and S.Negotiated_Suite = S.Negotiated_Suite'Old)
                                          and then (if Rejected then S.State = Error_State);
 
@@ -2530,7 +2510,6 @@ is
                                       and S.Role = S.Role'Old
                                               and S.Negotiated_Suite = S.Negotiated_Suite'Old
                                               and HC.TS = HC.TS'Old
-                              and HC.HRR_Sent = HC.HRR_Sent'Old
                               and HC.Negotiated_Sig_Algo /= 0
                               and Handshake.Sig_Algo_Compatible_With_Cert
                                 (HC.Negotiated_Sig_Algo,
@@ -2555,7 +2534,6 @@ is
               (S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry);
             pragma Loop_Invariant
               (HC.TS = HC.TS'Loop_Entry);
-            pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
             pragma Loop_Invariant (HC.Legacy_Session_ID_Len in 0 .. 32);
             pragma Loop_Invariant
               (if Algo_OK then
@@ -2584,7 +2562,6 @@ is
               (S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry);
             pragma Loop_Invariant
               (HC.TS = HC.TS'Loop_Entry);
-            pragma Loop_Invariant (HC.HRR_Sent = HC.HRR_Sent'Loop_Entry);
             pragma Loop_Invariant (HC.Legacy_Session_ID_Len in 0 .. 32);
             pragma Loop_Invariant
               (if Algo_OK then

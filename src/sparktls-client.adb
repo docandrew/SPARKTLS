@@ -4440,7 +4440,7 @@ is
                           Valid      => Dec_Valid);
 
                        if not Dec_Valid then
-                          HC.Server_HS.Counter := Server_HS_Copy.Counter;
+                          HC.Server_HS := Server_HS_Copy;
                           S.Input.Read_Pos := Next_Read;
                           --  RFC 8446 §5.2: AEAD decryption failure MUST emit
                           --  a fatal bad_record_mac alert. Encrypted under
@@ -4484,7 +4484,7 @@ is
                   Set_State (S, Error_State);
                   Result := Error_Alert;
                                end if;
-                               HC.Server_HS.Counter := Server_HS_Copy.Counter;
+                               HC.Server_HS := Server_HS_Copy;
                             end;
    end Handle_Encrypted_App_Data;
 
