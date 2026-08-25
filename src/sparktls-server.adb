@@ -644,9 +644,9 @@ is
       HC.KE.P256_SK := (others => 0);
       HC.KE.P384_SK := (others => 0);
       SPARKTLS_Transcript.Start (HC.TS);
-      HC.PSK_Value := (others => 0);
-      HC.PSK_Binder := (others => 0);
-      HC.PSK_Ticket_ID := (others => 0);
+      HC.PSK.Value := (others => 0);
+      HC.PSK.Binder := (others => 0);
+      HC.PSK.Offer_ID := (others => 0);
       HC.Client_Random := (others => 0);
       HC.Server_Random := (others => 0);
       Reset (HC.Reasm);
@@ -1291,20 +1291,20 @@ is
                                                            --  Capture the binder transcript hash BEFORE the CH
                                                            --  enters the stream (RFC 8446 4.2.11.2): binders cover
                                                            --  everything up to the binders list.
-                                                           if HC.PSK_Offered and then HC.PSK_Binder_Len > 0
-                                                             and then N32 (Full_Msg'Length) > 3 + HC.PSK_Binder_Len
+                                                           if HC.PSK.Offered and then HC.PSK.Binder_Len > 0
+                                                             and then N32 (Full_Msg'Length) > 3 + HC.PSK.Binder_Len
                                                            then
                                                               declare
                                                                  T : constant N32 :=
-                                                                   N32 (Full_Msg'Length) - (3 + HC.PSK_Binder_Len);
+                                                                   N32 (Full_Msg'Length) - (3 + HC.PSK.Binder_Len);
                                                               begin
                                                                  SPARKTLS_Transcript.Suffix_256
                                                                    (HC.TS, Byte_Seq (Full_Msg) (0 .. T - 1),
-                                                                    SPARKTLSCrypto.Hashing.SHA256.Digest (HC.Binder_Hash_256));
+                                                                    SPARKTLSCrypto.Hashing.SHA256.Digest (HC.PSK.Binder_Hash_256));
                                                                  SPARKTLS_Transcript.Suffix_384
                                                                    (HC.TS, Byte_Seq (Full_Msg) (0 .. T - 1),
-                                                                    SPARKTLSCrypto.Hashing.SHA384.Digest (HC.Binder_Hash_384));
-                                                                 HC.Binder_Hash_Taken := True;
+                                                                    SPARKTLSCrypto.Hashing.SHA384.Digest (HC.PSK.Binder_Hash_384));
+                                                                 HC.PSK.Binder_Hash_Taken := True;
                                                               end;
                                                            end if;
                                                            Append_Transcript (HC, Byte_Seq (Full_Msg));
@@ -1702,20 +1702,20 @@ is
                              pragma Assert (Msg'First <= Msg'Last);
                              --  CH2 binder hash: stream holds CH1+HRR;
                              --  suffix is CH2 truncated before binders.
-                             if HC.PSK_Offered and then HC.PSK_Binder_Len > 0
-                               and then N32 (Msg'Length) > 3 + HC.PSK_Binder_Len
+                             if HC.PSK.Offered and then HC.PSK.Binder_Len > 0
+                               and then N32 (Msg'Length) > 3 + HC.PSK.Binder_Len
                              then
                                 declare
                                    T : constant N32 :=
-                                     N32 (Msg'Length) - (3 + HC.PSK_Binder_Len);
+                                     N32 (Msg'Length) - (3 + HC.PSK.Binder_Len);
                                 begin
                                    SPARKTLS_Transcript.Suffix_256
                                      (HC.TS, Msg (Msg'First .. Msg'First + T - 1),
-                                      SPARKTLSCrypto.Hashing.SHA256.Digest (HC.Binder_Hash_256));
+                                      SPARKTLSCrypto.Hashing.SHA256.Digest (HC.PSK.Binder_Hash_256));
                                    SPARKTLS_Transcript.Suffix_384
                                      (HC.TS, Msg (Msg'First .. Msg'First + T - 1),
-                                      SPARKTLSCrypto.Hashing.SHA384.Digest (HC.Binder_Hash_384));
-                                   HC.Binder_Hash_Taken := True;
+                                      SPARKTLSCrypto.Hashing.SHA384.Digest (HC.PSK.Binder_Hash_384));
+                                   HC.PSK.Binder_Hash_Taken := True;
                                 end;
                              end if;
                              Append_Transcript (HC, Msg);
@@ -2324,7 +2324,7 @@ is
    --  RFC 8446 §4.2.11 server-side PSK binder verification. Looks up
    --  the cached PSK by ticket ID, recomputes the binder over the
    --  truncated ClientHello transcript, and either installs the PSK
-   --  (HC.Using_PSK := True + HC.PSK_Value/Len populated) on a hash
+   --  (HC.Using_PSK := True + HC.PSK.Value/Len populated) on a hash
    --  match or emits a fatal alert on mismatch (matching BoringSSL's
    --  decrypt_error convention per BoGo Resume-Server-InvalidPSKBinder).
    procedure Verify_PSK_Binder
@@ -2339,7 +2339,7 @@ is
                 --  HC.Cfg form was unprovable across the view copy.)
                 and then Cfg.Store_Session /= null
                 and then Cfg.Lookup_Session /= null
-                and then HC.PSK_Binder_Len <= Max_HS_Msg,
+                and then HC.PSK.Binder_Len <= Max_HS_Msg,
                         Post => (if not Rejected
                                  then S.State = S.State'Old
                                       and S.Role = S.Role'Old
@@ -2363,7 +2363,7 @@ is
       Result := OK;
       Cfg.Lookup_Session
         (
-         ID         => HC.PSK_Ticket_ID,
+         ID         => HC.PSK.Offer_ID,
          Want_Suite => S.Negotiated_Suite,
          PSK        => PSK,
          PSK_Len    => PSK_Len,
@@ -2386,7 +2386,7 @@ is
       --  decline any offered identity, and RFC 5077 3.4 says fall through
       --  to a full handshake -- so downgrading to "not found" is both
       --  safe and spec-legal. It also makes PSK_Len in 32 | 48 available
-      --  for the HC.PSK_Value_Len assignment below
+      --  for the HC.PSK.Value_Len assignment below
       --  (PSK_Value_Length is N32 range 0 .. 48).
       if Found
         and then (Suite /= S.Negotiated_Suite
@@ -2396,19 +2396,19 @@ is
       end if;
       pragma Assert (if Found then Suite = S.Negotiated_Suite);
       pragma Assert (if Found then PSK_Len in 32 | 48);
-      if not Found or HC.PSK_Binder_Len = 0 then
+      if not Found or HC.PSK.Binder_Len = 0 then
          return;
       end if;
 
       declare
          Binder_OK : Boolean := False;
-         Binders_Size : constant N32 := 2 + 1 + HC.PSK_Binder_Len;
+         Binders_Size : constant N32 := 2 + 1 + HC.PSK.Binder_Len;
          Trunc_Len    : N32;
       begin
          --  The binder transcript hash was drawn at CH time (before
          --  the CH entered the stream); Binders_Size is retained only
          --  for the wire-shape sanity it encodes.
-         if HC.Binder_Hash_Taken and then Binders_Size > 0 then
+         if HC.PSK.Binder_Hash_Taken and then Binders_Size > 0 then
             Trunc_Len := 0;  --  unused under streaming
             if PSK_Len = 48 then
                declare
@@ -2419,7 +2419,7 @@ is
                   Expected     : Bytes_48;
                begin
                   Trunc_Hash :=
-                    Key_Schedule.Digest_384 (HC.Binder_Hash_384);
+                    Key_Schedule.Digest_384 (HC.PSK.Binder_Hash_384);
                   Key_Schedule.Derive_Binder_Key_384
                     (Binder_Key, PSK);
                   Key_Schedule.Derive_Finished_Key_384
@@ -2429,7 +2429,7 @@ is
                      M      => Trunc_Hash,
                      K      => Byte_Seq (Finished_Key));
                   Binder_OK := Equal
-                    (Expected, Bytes_48 (HC.PSK_Binder));
+                    (Expected, Bytes_48 (HC.PSK.Binder));
                end;
             else
                declare
@@ -2438,7 +2438,7 @@ is
                   Finished_Key : OKM_Seq (0 .. 31);
                   Expected     : Digest;
                begin
-                  Trunc_Hash := Digest (HC.Binder_Hash_256);
+                  Trunc_Hash := Digest (HC.PSK.Binder_Hash_256);
                   Key_Schedule.Derive_Binder_Key
                     (Binder_Key,
                      Bytes_32 (PSK (0 .. 31)));
@@ -2450,7 +2450,7 @@ is
                      K      => Byte_Seq (Finished_Key));
                   Binder_OK := Equal
                     (Expected,
-                     Bytes_32 (HC.PSK_Binder (0 .. 31)));
+                     Bytes_32 (HC.PSK.Binder (0 .. 31)));
                end;
             end if;
          end if;
@@ -2459,8 +2459,8 @@ is
             pragma Assert
               (PSK_Binder_Validated_RFC_8446_4_2_11_2 (Binder_OK));
             HC.Using_PSK := True;
-            HC.PSK_Value := PSK;
-            HC.PSK_Value_Len := PSK_Len;
+            HC.PSK.Value := PSK;
+            HC.PSK.Value_Len := PSK_Len;
          else
             --  BoringSSL convention: emit decrypt_error (alert 51 =
             --  Certificate_Verify_Failed in our codes) on binder fail.
@@ -2703,7 +2703,7 @@ is
    begin
       --  PSK resumption: verify binder, install if valid, fatal-alert
       --  on mismatch. Sets HC.Using_PSK on success.
-      if HC.PSK_Offered and then Cfg.Store_Session /= null
+      if HC.PSK.Offered and then Cfg.Store_Session /= null
                     and then Cfg.Lookup_Session /= null then
          declare
             Rejected : Boolean;
@@ -3137,7 +3137,7 @@ is
             Client_Sec : OKM384_Seq (0 .. 47);
             Server_Sec : OKM384_Seq (0 .. 47);
          begin
-            Key_Schedule.Derive_Early_Secret_384 (Early, HC.PSK_Value);
+            Key_Schedule.Derive_Early_Secret_384 (Early, HC.PSK.Value);
             if HC.KE.Curve = 16#0018# then
                Key_Schedule.Derive_Handshake_Secret_384
                  (HS_Secret, Byte_Seq (HC.KE.Shared), Early);
@@ -3169,7 +3169,7 @@ is
             Server_Sec : OKM_Seq (0 .. 31);
          begin
             Key_Schedule.Derive_Early_Secret
-              (Early, Bytes_32 (HC.PSK_Value (0 .. 31)));
+              (Early, Bytes_32 (HC.PSK.Value (0 .. 31)));
             if HC.KE.Curve = 16#0018# then
                Key_Schedule.Derive_Handshake_Secret
                  (HS_Secret, Byte_Seq (HC.KE.Shared), Early);
@@ -4036,7 +4036,7 @@ is
                         --  when the client only offered psk_ke.
                         if HC.Cfg.Store_Session /= null
                     and then HC.Cfg.Lookup_Session /= null
-                          and then HC.Has_PSK_DHE_KE
+                          and then HC.PSK.Has_DHE_KE
                         then
                            declare
                               --  NST format: type(1) + len(3) + lifetime(4) +

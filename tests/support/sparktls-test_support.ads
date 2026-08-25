@@ -51,7 +51,7 @@ is
    function Exporter_Server_Random (S : Session) return Bytes_32;
 
    --  True iff a handshake context is still attached and it recorded a
-   --  PSK offer. Collapses the "S.HC_Ptr /= null and then S.HC_Ptr.PSK_Offered"
+   --  PSK offer. Collapses the "S.HC_Ptr /= null and then S.HC_Ptr.PSK.Offered"
    --  test-side dereference.
    function PSK_Offered (S : Session) return Boolean;
 

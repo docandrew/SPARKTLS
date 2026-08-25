@@ -134,10 +134,4 @@ is
       end case;
    end Reset_For_HRR;
 
-   function Started (TS : Transcript_State) return Boolean is
-     (TS.Has_Data);
-
-   function Selected (TS : Transcript_State) return Hash_Choice is
-     (TS.Choice);
-
 end SPARKTLS_Transcript;

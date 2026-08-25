@@ -15,7 +15,7 @@ is
      (Cert_DER : Byte_Seq;
       Cert     : X509.Certificate;
       Issuer   : X509.Certificate) return Boolean
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last;
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last - 256;
 
    --  Validation result
    type Validation_Result is
@@ -96,7 +96,7 @@ is
      (Cert_DER : X509.Byte_Seq;
       Cert     : X509.Certificate;
       Issuer   : X509.Certificate) return Boolean
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last;
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last - 256;
 
    --  Validate one link in the chain: Issuer signs Cert.
    --
@@ -222,7 +222,7 @@ is
       Cert       : X509.Certificate;
       Sig_Scheme : Unsigned_16) return Boolean
    with Pre => Data'First = 0
-               and Data'Last < N32'Last - 64  --  +64 prefix in Ed25519 path
+               and Data'Last < N32'Last - 256  --  +64 prefix in Ed25519 path
                and Sig'First = 0
                and Sig'Length > 0
                and Sig'Last < N32'Last;
@@ -238,7 +238,7 @@ is
       Cert       : X509.Certificate;
       Sig_Scheme : Unsigned_16) return Boolean
    with Pre => Data'First = 0
-               and Data'Last < N32'Last - 64
+               and Data'Last < N32'Last - 256
                and Sig'First = 0
                and Sig'Length > 0
                and Sig'Last < N32'Last;

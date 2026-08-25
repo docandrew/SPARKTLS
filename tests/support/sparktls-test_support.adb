@@ -58,7 +58,7 @@ is
      (S.Exporter_Server_Random);
 
    function PSK_Offered (S : Session) return Boolean is
-     (S.HC_Ptr /= null and then S.HC_Ptr.PSK_Offered);
+     (S.HC_Ptr /= null and then S.HC_Ptr.PSK.Offered);
 
    function Has_Handshake_Context (S : Session) return Boolean is
      (S.HC_Ptr /= null);

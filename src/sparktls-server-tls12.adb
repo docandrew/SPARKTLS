@@ -193,7 +193,7 @@ is
                                                                    then True);
 
    --  Resumed-handshake server flight (RFC 5077 §3.3 abbreviated).
-   --  Caller has set HC.TLS12_Resuming + HC.Master_Secret_12 +
+   --  Caller has set HC.T12.Resuming + HC.Master_Secret_12 +
    --  S.Negotiated_Suite from the decrypted ticket. Emits
    --  SH → NST → CCS → encrypted Finished as one atomic flight,
    --  then transitions to Wait_Client_Finished to receive the
@@ -236,13 +236,13 @@ is
       --  mismatch, etc.) we silently fall through to the full handshake
       --  — RFC 5077 §3.4 requires this: "If the server refuses to use
       --  the ticket, it SHOULD proceed with a full handshake."
-      if HC.TLS12_Ticket_Offered
+      if HC.T12.Ticket_Offered
         --  >= Key_ID width, not merely > 0: Ticket_Key_ID reads a 4-byte
         --  prefix, and the peer chooses this length. A 1..3 byte ticket is
         --  malformed -- fall through to a full handshake per RFC 5077 3.4.
-        and then HC.TLS12_Peer_Ticket_Len
+        and then HC.T12.Peer_Ticket_Len
                    >= SPARKTLS.Tickets_12.Ticket_Key_ID_Size
-        and then HC.TLS12_Peer_Ticket_Len <= Max_TLS12_Ticket_Len
+        and then HC.T12.Peer_Ticket_Len <= Max_TLS12_Ticket_Len
         and then HC.Cfg.Get_Active_TEK /= null
         and then HC.Cfg.Get_TEK_By_Id /= null
         --  No clock => we cannot enforce the RFC 5077 5.6 age window, so
@@ -272,7 +272,7 @@ is
             --  RFC 5077 3.4 says fall through to a full handshake.
             Wanted_ID : constant Byte_Seq :=
               SPARKTLS.Tickets_12.Ticket_Key_ID
-                (HC.TLS12_Peer_Ticket (0 .. HC.TLS12_Peer_Ticket_Len - 1));
+                (HC.T12.Peer_Ticket (0 .. HC.T12.Peer_Ticket_Len - 1));
             TEK       : Byte_Seq (0 .. 31) := (others => 0);
             TEK_Found : Boolean := False;
          begin
@@ -281,8 +281,8 @@ is
                OK := False;
             else
                SPARKTLS.Tickets_12.Decrypt_Ticket
-                 (Ticket  => HC.TLS12_Peer_Ticket
-                               (0 .. HC.TLS12_Peer_Ticket_Len - 1),
+                 (Ticket  => HC.T12.Peer_Ticket
+                               (0 .. HC.T12.Peer_Ticket_Len - 1),
                   TEK     => TEK,
                   Now     => Now,
                   Max_Age => Max_Age,
@@ -303,7 +303,7 @@ is
                --  Resume: install ticket's master_secret + force suite.
                HC.Master_Secret_12 := Plain.Master_Secret;
                S.Negotiated_Suite := Plain.Suite;
-               HC.TLS12_Resuming := True;
+               HC.T12.Resuming := True;
                Build_Abbreviated_Server_Flight_12 (S, HC, Cfg, Result);
                return;
             end if;
@@ -2246,7 +2246,7 @@ is
                --  write epoch. In the full flow, the server has not sent
                --  CCS yet, so the alert remains plaintext.
                if PL /= 4 + Finished_Verify_Len then
-                  if HC.TLS12_Resuming then
+                  if HC.T12.Resuming then
                      Send_Encrypted_Alert_12 (S, HC, Unexpected_Message, Result);
                   else
                      Send_Alert_And_Error (S, Unexpected_Message, Result);
@@ -2345,7 +2345,7 @@ is
       --  already sent SH+NST+CCS+Finished before the client's
       --  Finished. RFC 5077 §3.3 — the abbreviated flight inverts
       --  the order so this code path must NOT re-emit.
-      if not HC.TLS12_Resuming then
+      if not HC.T12.Resuming then
       declare
          Scratch       : IO_Buffer;
          CCS_Out       : N32;
@@ -2357,7 +2357,7 @@ is
          --  the client offered the session_ticket extension AND we have
          --  configured ticket-encryption keys. Resumed-flight NSTs (the
          --  abbreviated case) are emitted from a different code path.
-         if HC.TLS12_Ticket_Offered
+         if HC.T12.Ticket_Offered
            and then HC.Cfg.Get_Active_TEK /= null
            --  Fail closed without a clock: Created_At would be 0 and the
            --  decrypt-side age check would pass forever, so the ticket
@@ -2526,7 +2526,7 @@ is
             Scratch.Data (0 .. Scratch.Write_Pos - 1);
          S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
       end;
-      end if;  --  end "if not HC.TLS12_Resuming"
+      end if;  --  end "if not HC.T12.Resuming"
 
       --  Copy TLS 1.2 state to Session
       S.Negotiated_Version := TLS_1_2;

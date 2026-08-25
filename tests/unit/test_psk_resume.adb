@@ -7,7 +7,7 @@
 --       extension (tag 0x0029) and a psk_key_exchange_modes
 --       extension (tag 0x002D).
 --    3. The handshake context records that PSK was offered
---       (HC.PSK_Offered = True), which is the gate Tag_Is_Offered
+--       (HC.PSK.Offered = True), which is the gate Tag_Is_Offered
 --       uses to permit a server pre_shared_key echo.
 --
 --  Does NOT exercise the full PSK round-trip — that's an integration
@@ -211,9 +211,9 @@ begin
       end if;
    end;
 
-   --  Verify HC.PSK_Offered flag is set (so the matrix lets server
+   --  Verify HC.PSK.Offered flag is set (so the matrix lets server
    --  echo pre_shared_key).
-   Check ("HC.PSK_Offered = True after Init with valid ticket",
+   Check ("HC.PSK.Offered = True after Init with valid ticket",
           SPARKTLS.Test_Support.PSK_Offered (S));
 
    declare

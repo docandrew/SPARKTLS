@@ -387,7 +387,7 @@ is
             end if;
          end;
       end if;
-      HC.PSK_Offered := True;
+      HC.PSK.Offered := True;
       if S.Ticket.Ticket_Len > Max_Ticket_Len
         or else Len > N32 (Result'Length) - 319
       then
@@ -892,7 +892,7 @@ is
    begin
       Result := (others => 0);
       Len    := 0;
-      HC.PSK_Offered := False;
+      HC.PSK.Offered := False;
       HC.Using_PSK := False;
 
       --  Generate ephemeral X25519 keypair (Fiat X25519).
@@ -1554,7 +1554,7 @@ is
                           (Exts_Ctx) = Remaining_Ext_Bits);
                                end;
                             end if;
-            HC.TLS12_Sent_Ticket_Ext := True;
+            HC.T12.Sent_Ticket_Ext := True;
          end if;
 
          --  extended_master_secret (RFC 7627, tag 0x0017). Empty body.

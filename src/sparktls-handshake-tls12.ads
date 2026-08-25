@@ -248,7 +248,6 @@ is
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and Result'Last >= Max_Server_Key_Exchange - 1
-                and Random /= null
                 and Id.Has_Identity
                 and HC.KE.Negotiated,
         Post => Len <= Max_Server_Key_Exchange;
@@ -328,8 +327,7 @@ is
       Data : in     Byte_Seq;
       OK   :    out Boolean)
       with Pre  => Data'First = 0
-                   and then Data'Last in 3 .. Max_Client_Key_Exchange - 1
-                           and then HC.KE.Negotiated,
+                   and then Data'Last in 3 .. Max_Client_Key_Exchange - 1,
            Post => HC.Version = HC.Version'Old
                    and then HC.KE.Curve = HC.KE'Old.Curve
                    and then HC.KE.Negotiated = HC.KE'Old.Negotiated
@@ -344,10 +342,7 @@ is
                      and then SPARKTLS.Handshake.Server_Msgs
                                 .Local_Config_Valid (HC.Cfg.Local'Old)
                    then SPARKTLS.Handshake.Server_Msgs
-                          .Local_Config_Valid (HC.Cfg.Local))
-                and then
-                  (if HC.Cfg.Random'Old /= null
-                   then HC.Cfg.Random /= null);
+                          .Local_Config_Valid (HC.Cfg.Local));
 
    --  RFC 5246 §7.4.9: Build TLS 1.2 Finished message.
    --
@@ -414,7 +409,6 @@ is
                      Transcript_Hash'Length = 48
                    else
                      Transcript_Hash'Length = 32)
-                and Random /= null
                 and Id.Has_Identity,
         Post => Len <= 520;
 
@@ -493,8 +487,6 @@ is
                         Post => (if OK then
                                    Valid_TLS12_Suite (Negotiated_Suite (S))
                                    and HC.Version = TLS_1_2)
-                        and then (if HC.Cfg.Random'Old /= null
-                                  then HC.Cfg.Random /= null)
                         and then HC.TS = HC.TS'Old
                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
                                         and then

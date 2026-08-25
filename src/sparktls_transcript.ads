@@ -27,7 +27,9 @@
 --  No predicate: Started and Selected are pure phase; there is no
 --  cross-field relation the base type system cannot express.
 
+with Interfaces;
 with SPARKNaCl; use SPARKNaCl;
+use type Interfaces.Integer_32;
 with SPARKTLSCrypto.Hashing.SHA256;
 with SPARKTLSCrypto.Hashing.SHA384;
 with SPARKTLSCrypto.Hashing.SHA512;
@@ -35,23 +37,30 @@ with SPARKTLSCrypto.Hashing.SHA512;
 package SPARKTLS_Transcript with
    SPARK_Mode => On
 is
+   pragma Unevaluated_Use_Of_Old (Allow);
+
    type Hash_Choice is (Both, Only_256, Only_384);
 
    type Transcript_State is private;
 
    --  Fresh transcript: both digests initialised, nothing appended.
    procedure Start (TS : out Transcript_State)
-   with Global => null;
+   with Global => null,
+        Post => not Started (TS) and then Selected (TS) = Both;
 
    --  Append handshake-message bytes. Feeds whichever contexts are
    --  still live; O(len), no storage.
    procedure Append (TS : in out Transcript_State; Data : Byte_Seq)
-   with Global => null;
+   with Global => null,
+        Pre  => Data'Last < N32'Last - 256,
+        Post => Started (TS) = (Started (TS)'Old or else Data'Length > 0)
+                and then Selected (TS) = Selected (TS)'Old;
 
    --  Suite negotiated: drop the losing digest. Idempotent for the
    --  same choice; never call with a DIFFERENT choice after selecting.
    procedure Select_Hash (TS : in out Transcript_State; C : Hash_Choice)
-   with Global => null, Pre => C /= Both;
+   with Global => null, Pre => C /= Both,
+        Post => Started (TS) = Started (TS)'Old and then Selected (TS) = C;
 
    --  Transcript hash at this instant (clone-and-finalize; the running
    --  context is untouched, so appends may continue afterwards).
@@ -83,19 +92,23 @@ is
      (TS     : in Transcript_State;
       Suffix : in Byte_Seq;
       H      : out SPARKTLSCrypto.Hashing.SHA256.Digest)
-   with Global => null;
+   with Global => null,
+        Pre => Suffix'Last < N32'Last - 256;
 
    procedure Suffix_384
      (TS     : in Transcript_State;
       Suffix : in Byte_Seq;
       H      : out SPARKTLSCrypto.Hashing.SHA384.Digest)
-   with Global => null;
+   with Global => null,
+        Pre => Suffix'Last < N32'Last - 256;
 
    --  RFC 8446 Section 4.4.1: on HelloRetryRequest the transcript is
    --  replaced by message_hash(04 00 00 Hash.length || Hash(CH1)).
    --  Requires the hash already selected (HRR names the suite).
    procedure Reset_For_HRR (TS : in out Transcript_State)
-   with Global => null;
+   with Global => null,
+        Post => Started (TS) = Started (TS)'Old
+                and then Selected (TS) = Selected (TS)'Old;
 
    --  True once any bytes have been appended (the old Len > 0 trio).
    function Started (TS : Transcript_State) return Boolean
@@ -112,5 +125,11 @@ private
       Choice   : Hash_Choice := Both;
       Has_Data : Boolean     := False;
    end record;
+
+   function Started (TS : Transcript_State) return Boolean is
+     (TS.Has_Data);
+
+   function Selected (TS : Transcript_State) return Hash_Choice is
+     (TS.Choice);
 
 end SPARKTLS_Transcript;

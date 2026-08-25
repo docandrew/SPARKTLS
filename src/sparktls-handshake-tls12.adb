@@ -1251,7 +1251,7 @@ is
       --  answer at issue time (Found => False just means no ticket), so we
       --  no longer inspect key slots here.
       Emit_ST_Ext : constant Boolean :=
-         HC.TLS12_Ticket_Offered
+         HC.T12.Ticket_Offered
          and then HC.Cfg.Get_Active_TEK /= null;
       ST_Ext_Len : constant N32 := (if Emit_ST_Ext then 4 else 0);
 
@@ -1265,7 +1265,7 @@ is
       --  version(2) + random(32) + sid_len(1) + sid(N) + suite(2)
       --  + comp(1) + optional ext_len(2) + extensions.
       SID_Out_Len : constant TLS12_SID_Len :=
-         (if HC.TLS12_Resuming then HC.Legacy_Session_ID_Len else 32);
+         (if HC.T12.Resuming then HC.Legacy_Session_ID_Len else 32);
       SH_Body_Len : constant TLS12_SH_Body_Len :=
          38 + SID_Out_Len + Ext_Block_Len;
       SH_Msg_Len  : constant TLS12_SH_Msg_Len := 4 + SH_Body_Len;
@@ -1299,7 +1299,7 @@ is
          --  HC.Legacy_Session_ID was populated from the client's CH; do
          --  NOT overwrite it on the resume path. For a fresh handshake
          --  generate a new SID as before.
-         if not HC.TLS12_Resuming then
+         if not HC.T12.Resuming then
             Gen_Random (Byte_Seq (Tmp_SID));
             HC.Legacy_Session_ID := Tmp_SID;
             HC.Legacy_Session_ID_Len := 32;
@@ -1588,7 +1588,7 @@ is
                   --  record the flag; the actual receive happens
                   --  in the post-Finished / abbreviated flow.
                   if Ext_Type = 16#0023# and Ext_DLen = 0 then
-                     HC.TLS12_Server_Will_Issue := True;
+                     HC.T12.Server_Will_Issue := True;
                   end if;
                   Ext_Pos := Ext_Pos + 4 + Ext_DLen;
                end;

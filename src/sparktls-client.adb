@@ -3166,13 +3166,13 @@ is
                            --  TLS 1.2 flight machinery to skip Cert/
                            --  SKE/Done waiting and route NST → server
                            --  CCS+Finished → our CCS+Finished.
-                           if HC.TLS12_Sent_Ticket_Ext
-                             and then HC.TLS12_Server_Will_Issue
+                           if HC.T12.Sent_Ticket_Ext
+                             and then HC.T12.Server_Will_Issue
                              and then HC.Cfg.TLS12_Resume_Ticket.Valid
                              and then HC.Cfg.TLS12_Resume_Ticket.Suite
                                         = S.Negotiated_Suite_12
                            then
-                              HC.TLS12_Resuming := True;
+                              HC.T12.Resuming := True;
                                       HC.Master_Secret_12 :=
                                          HC.Cfg.TLS12_Resume_Ticket.Master_Secret;
                                    end if;
@@ -3658,9 +3658,9 @@ is
       HC.KE.P256_SK := (others => 0);
       HC.KE.P384_SK := (others => 0);
       SPARKTLS_Transcript.Start (HC.TS);
-      HC.PSK_Value := (others => 0);
-      HC.PSK_Binder := (others => 0);
-      HC.PSK_Ticket_ID := (others => 0);
+      HC.PSK.Value := (others => 0);
+      HC.PSK.Binder := (others => 0);
+      HC.PSK.Offer_ID := (others => 0);
       HC.Client_Random := (others => 0);
       HC.Server_Random := (others => 0);
       Reset (HC.Reasm);

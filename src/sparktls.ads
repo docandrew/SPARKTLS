@@ -1604,6 +1604,52 @@ is
       Shared     : Bytes_48      := (others => 0);
    end record;
 
+   --  TLS 1.2 session-ticket / resumption state machine (RFC 5077),
+   --  folded from Handshake_Context (carve 5, 2026-08-25). Server side:
+   --    * Sent_Ticket_Ext  -- we offered the session_ticket extension
+   --    * Server_Will_Issue -- server echoed the empty extension
+   --    * Resuming -- server elected to resume; skip Cert/SKE
+   --  Client side:
+   --    * Ticket_Offered -- client sent session_ticket ext
+   --    * Ticket_Resume_OK -- client-provided ticket validated
+   --    * Ticket_Will_Issue -- we'll emit a NewSessionTicket
+   --    * Resumed_Master_Secret -- restored MS from a valid ticket
+   --    * Resumed_Suite -- cipher suite we MUST use in SH
+   --  NOTE: Resumed_Master_Secret is KEY MATERIAL. Never construct a
+   --  whole-record aggregate of this type over a live value (the KE
+   --  wipe lesson, carve 3b); write components individually.
+   --  TLS 1.3 PSK / resumption offer state (RFC 8446 4.2.11), folded
+   --  from Handshake_Context (carve 6, 2026-08-25). Binder hashes are
+   --  the server-side draw-before-append snapshots from carve 2.
+   --  NOTE: Value is KEY MATERIAL -- no whole-record aggregates over a
+   --  live value; write components individually (carve 3b lesson).
+   type PSK_State is record
+      Offered    : Boolean := False;
+      Offer_ID   : Ticket_ID := (others => 0);
+      Value      : Bytes_48 := (others => 0);   --  zeros if no PSK
+      Value_Len  : PSK_Value_Length := 0;       --  0 = no PSK
+      Binder     : Bytes_48 := (others => 0);   --  received binder
+      Binder_Len : PSK_Binder_Length := 0;
+      Has_DHE_KE : Boolean := False;
+      Binder_Hash_256 : Bytes_32 := (others => 0);
+      Binder_Hash_384 : Bytes_48 := (others => 0);
+      Binder_Hash_Taken : Boolean := False;
+   end record;
+
+   type TLS12_State is record
+      Client_Cert_Allowed : Boolean := False;
+      Sent_Ticket_Ext     : Boolean := False;
+      Server_Will_Issue   : Boolean := False;
+      Resuming            : Boolean := False;
+      Ticket_Offered      : Boolean := False;
+      Ticket_Resume_OK    : Boolean := False;
+      Ticket_Will_Issue   : Boolean := False;
+      Resumed_Master_Secret : Byte_Seq (0 .. 47) := (others => 0);
+      Resumed_Suite       : Unsigned_16 := 0;
+      Peer_Ticket_Len     : TLS12_Ticket_Length := 0;
+      Peer_Ticket         : TLS12_Ticket_Buffer := (others => 0);
+   end record;
+
    type Handshake_Context is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
@@ -1731,10 +1777,9 @@ is
 
       --  Handshake tracking
       CCS_Received          : Boolean := False;
+      T12 : TLS12_State;
+      PSK : PSK_State;
       Cert_Request_Received : Boolean := False;
-      --  TLS 1.2 client side: the configured local identity matches both
-      --  CertificateRequest.certificate_types and signature_algorithms.
-      TLS12_Client_Cert_Allowed : Boolean := False;
 
       --  Version negotiation (set during Parse_Client_Hello)
       --  True if the client's supported_versions extension contains 0x0304.
@@ -1752,41 +1797,6 @@ is
       --  TLS 1.2: ClientKeyExchange already received
       CKE_Received_12 : Boolean := False;
 
-      --  TLS 1.2 session-ticket (RFC 5077) state.
-      --
-      --  Client side:
-      --    * TLS12_Sent_Ticket_Ext  — we offered session_ticket ext
-      --      in CH (so we accept a server-issued NST).
-      --    * TLS12_Server_Will_Issue — server echoed the empty
-      --      session_ticket ext in SH; expect a NewSessionTicket
-      --      message after server CCS+Finished (full HS) or before
-      --      server CCS+Finished (abbreviated HS — and we use the
-      --      cached master_secret).
-      --    * TLS12_Resuming — server elected to resume; skip Cert/
-      --      SKE/CKE/CertVerify, jump straight to CCS+Finished.
-      --
-      --  Server side:
-      --    * TLS12_Ticket_Offered — client sent session_ticket ext
-      --      (empty or with ticket bytes).
-      --    * TLS12_Ticket_Resume_OK — client-provided ticket
-      --      decrypted + validated; we'll abbreviate.
-      --    * TLS12_Ticket_Will_Issue — we'll emit a NewSessionTicket
-      --      after first client Finished (full handshake) or before
-      --      our own CCS+Finished (abbreviated).
-      --    * TLS12_Resumed_Master_Secret — restored MS from a valid
-      --      peer ticket (overrides the freshly-derived MS path).
-      --    * TLS12_Resumed_Suite — cipher suite we MUST use in SH
-      --      when resuming (peer's original).
-      TLS12_Sent_Ticket_Ext     : Boolean := False;
-      TLS12_Server_Will_Issue   : Boolean := False;
-      TLS12_Resuming            : Boolean := False;
-      TLS12_Ticket_Offered      : Boolean := False;
-      TLS12_Ticket_Resume_OK    : Boolean := False;
-      TLS12_Ticket_Will_Issue   : Boolean := False;
-      TLS12_Resumed_Master_Secret : Byte_Seq (0 .. 47) := (others => 0);
-      TLS12_Resumed_Suite       : Unsigned_16 := 0;
-      TLS12_Peer_Ticket_Len     : TLS12_Ticket_Length := 0;
-      TLS12_Peer_Ticket         : TLS12_Ticket_Buffer := (others => 0);
 
       --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
       Use_EMS : Boolean := False;
@@ -1800,15 +1810,6 @@ is
       EMS_Session_Hash : Bytes_48 := (others => 0);
       EMS_Hash_Taken   : Boolean  := False;
 
-      --  PSK binder transcript hash (RFC 8446 4.2.11.2), DRAWN at
-      --  ClientHello processing time over transcript-so-far plus the
-      --  CH truncated before its binders list -- the split the
-      --  streaming transcript cannot reconstruct after the append.
-      --  48 bytes covers both digests; the suite says how many live.
-      Binder_Hash_256 : Bytes_32 := (others => 0);
-      Binder_Hash_384 : Bytes_48 := (others => 0);
-      Binder_Hash_Taken : Boolean := False;
-
       --  TLS 1.2: client offered renegotiation_info extension (RFC 5746)
       --  or sent the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) in
       --  cipher_suites. Servers echo the extension only when one of
@@ -1819,7 +1820,6 @@ is
       --  the psk_dhe_ke (0x01) mode. Required before the server may
       --  issue a NewSessionTicket on this connection (RFC 8446 §4.6.1
       --  / BoGo TLS13-ExpectNoSessionTicketOnBadKEMode-Server).
-      Has_PSK_DHE_KE : Boolean := False;
 
       --  Per-extension parse error surface. Apply_CH_Extension only
       --  has access to HC, not S — so when an extension's contents
@@ -1862,12 +1862,6 @@ is
 
       --  Resumption
       Using_PSK     : Boolean := False;
-      PSK_Offered   : Boolean := False;
-      PSK_Ticket_ID : Ticket_ID := (others => 0);
-      PSK_Value     : Bytes_48 := (others => 0);  --  zeros if no PSK
-      PSK_Value_Len : PSK_Value_Length := 0;                   --  0 = no PSK
-      PSK_Binder    : Bytes_48 := (others => 0);  --  received binder
-      PSK_Binder_Len : PSK_Binder_Length := 0;
       PSK_Binders_Offset : N32 := 0;              --  offset of binders in ClientHello
 
       --  RFC 8446 §2.3 / §4.2.10 0-RTT (early data).
@@ -2268,8 +2262,8 @@ is
      (Tag_Is_Offered_Static (Tag)
       or else (Tag = 16#0000# and then HC.Cfg.Server_Name.Len > 0)
       or else (Tag = 16#0010# and then HC.Cfg.ALPN.Len > 0)
-      or else (Tag = 16#0023# and then HC.TLS12_Sent_Ticket_Ext)
-      or else (Tag = 16#0029# and then HC.PSK_Offered)
+      or else (Tag = 16#0023# and then HC.T12.Sent_Ticket_Ext)
+      or else (Tag = 16#0029# and then HC.PSK.Offered)
       or else (Tag = 16#002A# and then HC.Early_Data_Offered)
       --  RFC 7627 EMS is a CONDITIONAL offering: the CH builder emits it
       --  iff Cfg.Versions /= TLS_1_3_Only (see Offer_EMS in

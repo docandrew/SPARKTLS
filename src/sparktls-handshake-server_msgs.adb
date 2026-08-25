@@ -1103,7 +1103,7 @@ is
                        and then Binders_Start in 2 .. Ext_Data'Last + 1,
                         Post => (if OK then
                                    Binder_Count > 0
-                                   and then HC.PSK_Binder_Len in 32 | 48)
+                                   and then HC.PSK.Binder_Len in 32 | 48)
                                         and then HC.Legacy_Session_ID_Len =
                                           HC.Legacy_Session_ID_Len'Old
                                         and then
@@ -1254,8 +1254,8 @@ is
         (Ext_Data, Binders_Start, Binder_Count, First_BP, First_BL, Status);
       case Status is
          when PSK_Binders_OK =>
-            Store_PSK_Binder (Ext_Data, First_BP, First_BL, HC.PSK_Binder);
-            HC.PSK_Binder_Len := First_BL;
+            Store_PSK_Binder (Ext_Data, First_BP, First_BL, HC.PSK.Binder);
+            HC.PSK.Binder_Len := First_BL;
             HC.PSK_Binders_Offset := Binders_Start;
             OK := True;
          when PSK_Binders_Decode_Error =>
@@ -1323,8 +1323,8 @@ is
       case Status is
          when PSK_Identity_OK =>
             pragma Assert (IDs_End in 2 .. Ext_Data'Last + 1);
-            HC.PSK_Ticket_ID := Ticket;
-            HC.PSK_Offered := True;
+            HC.PSK.Offer_ID := Ticket;
+            HC.PSK.Offered := True;
             Continue_Parse := True;
          when PSK_Identity_Decode_Error =>
             HC.Ext_Parse_Err := Decode_Error;
@@ -1370,7 +1370,7 @@ is
 
               if Ident_Count /= Binder_Count then
                  HC.Ext_Parse_Err := Illegal_Parameter;
-                 HC.PSK_Binder_Len := 0;
+                 HC.PSK.Binder_Len := 0;
                  pragma Assert (HC.Legacy_Session_ID_Len = Saved_Legacy);
                  return;
               end if;
@@ -2397,8 +2397,8 @@ is
             --      ticket and offering resumption.
             --  Stash the bytes for the post-CH resume-decision logic
             --  in Build_Server_Flight_12 (server) to evaluate.
-            HC.TLS12_Ticket_Offered := True;
-            HC.TLS12_Peer_Ticket_Len := 0;
+            HC.T12.Ticket_Offered := True;
+            HC.T12.Peer_Ticket_Len := 0;
             if DLen > 0 and then DLen <= Max_TLS12_Ticket_Len then
                declare
                   ED       : RBT.Bytes (1 .. RBT.Index (DLen));
@@ -2408,8 +2408,8 @@ is
                     (Ext_Ctx, ED);
                   Ext_Data := To_NaCl (ED);
                   Store_TLS12_Ticket_Data
-                    (Ext_Data, HC.TLS12_Peer_Ticket,
-                     HC.TLS12_Peer_Ticket_Len);
+                    (Ext_Data, HC.T12.Peer_Ticket,
+                     HC.T12.Peer_Ticket_Len);
                end;
             end if;
 
@@ -2428,7 +2428,7 @@ is
                     (Ext_Ctx, ED);
                   Ext_Data := To_NaCl (ED);
                   Parse_PSK_Key_Exchange_Modes_Data
-                    (Ext_Data, HC.Has_PSK_DHE_KE);
+                    (Ext_Data, HC.PSK.Has_DHE_KE);
                end;
             end if;
 
@@ -3416,11 +3416,11 @@ is
               --  RFC 8446 §4.2.9: a TLS 1.3 ClientHello with pre_shared_key
       --  MUST also include psk_key_exchange_modes with at least one
       --  mode the server recognises. We support only psk_dhe_ke
-      --  (0x01), so require HC.Has_PSK_DHE_KE whenever a PSK binder
+      --  (0x01), so require HC.PSK.Has_DHE_KE whenever a PSK binder
       --  is present. BoGo TLS13-SendNoKEMModesWithPSK-Server.
       if HC.Version = TLS_1_3
-        and then HC.PSK_Binder_Len > 0
-        and then not HC.Has_PSK_DHE_KE
+        and then HC.PSK.Binder_Len > 0
+        and then not HC.PSK.Has_DHE_KE
       then
             S.Last_Error := Missing_Extension;
             OK := False;
