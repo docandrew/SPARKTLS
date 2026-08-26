@@ -28,7 +28,8 @@ is
    with Pre => Label'Length > 0 and Label'Length <= 245  --  RFC 8446 §7.1
                and Context'Length <= 255                  --  RFC 8446 §7.1
                and OKM'First = 0 and OKM'Length > 0
-               and (if Context'Length > 0 then Context'First = 0);
+               and (if Context'Length > 0 then Context'First = 0)
+               and Context'Last < N32'Last - 256;
 
    --  RFC 8446 §7.1: Early Secret = HKDF-Extract(0, PSK).
    --  PSK is all zeros for initial handshake (no resumption).
@@ -136,7 +137,8 @@ is
                and Label'Length > 0
                and Label'Length <= 245
                and Context'Length <= 255
-               and (if Context'Length > 0 then Context'First = 0);
+               and (if Context'Length > 0 then Context'First = 0)
+               and Context'Last < N32'Last - 256;
 
    --  Derive PSK from resumption master secret + ticket nonce
    --  PSK = HKDF-Expand-Label(res_master, "resumption", nonce, 32)
@@ -170,7 +172,8 @@ is
    with Pre => Label'Length > 0 and Label'Length <= 245
                and Context'Length <= 255
                and OKM'First = 0 and OKM'Length > 0
-               and (if Context'Length > 0 then Context'First = 0);
+               and (if Context'Length > 0 then Context'First = 0)
+               and Context'Last < N32'Last - 256;
 
    procedure Derive_Early_Secret_384
      (Early : out Digest_384;
@@ -245,7 +248,8 @@ is
                and Label'Length > 0
                and Label'Length <= 245
                and Context'Length <= 255
-               and (if Context'Length > 0 then Context'First = 0);
+               and (if Context'Length > 0 then Context'First = 0)
+               and Context'Last < N32'Last - 256;
 
    procedure Derive_PSK_384
      (PSK         :    out HKDF384.OKM384_Seq;

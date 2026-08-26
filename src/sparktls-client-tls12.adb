@@ -542,8 +542,6 @@ is
               Cert_Idx : Natural := 0;
                  Saved_Selected_Group : constant Unsigned_16 :=
                    HC.KE.Curve with Ghost;
-                 Random_Was_Set : constant Boolean :=
-                   HC.Cfg.Random /= null with Ghost;
            begin
                       Reset_Peer_Cert_Chain_12 (HC);
       OK := False;
@@ -707,8 +705,6 @@ is
                                         HC.Peer_Leaf.DER_Len - 1));
                                   end;
                                        end loop;
-                               pragma Assert
-                                 (if Random_Was_Set then HC.Cfg.Random /= null);
                                C12_Entries.Take_Buffer (Entries_Ctx, Buf);
                                RFLX_Free_Local (Buf);
                        OK := True;
@@ -1641,6 +1637,7 @@ is
                 and then CV_Buf'Last >= 523
                 and then HC.Cfg.Local /= null
                 and then HC.Cfg.Local.Has_Identity
+                and then HC.Cfg.Random /= null
                ,
         Post => CV_Len <= 520;
 
@@ -1737,6 +1734,17 @@ is
               CV_Len : N32;
            begin
               Result := OK;
+
+              --  Semantically unreachable (Random is validated at
+              --  Configure), but the Cfg frame is not carried through
+              --  the handshake web; fail closed as in Server.TLS12's
+              --  Ready_Config membership guards.
+              if HC.Cfg.Random = null then
+                 Send_Cleartext_Handshake_Error_12
+                   (S, HC, Internal_Error, Result);
+                 return;
+              end if;
+
               Build_Client_Certificate_Verify_12_Message (HC, CV_Buf, CV_Len);
       pragma Assert_And_Cut
         (Result = OK

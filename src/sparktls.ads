@@ -2626,7 +2626,8 @@ is
                and Output'Length <= 1024
                and Label'Length <= 64
                and Context'Length <= 62
-               and (if Context'Length > 0 then Context'First = 0),
+               and (if Context'Length > 0 then Context'First = 0)
+               and Context'Last < N32'Last - 256,
         Relaxed_Initialization => Output,
         Post => (for all I in Output'Range => Output (I)'Initialized);
 

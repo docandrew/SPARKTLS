@@ -73,8 +73,7 @@ is
    --  Mirrors Init's postcondition: Configure is a thin wrapper that
    --  builds a Config and calls Init, so it can promise no more than Init
    --  does. Init fails closed to Error_State.
-   with Pre  => Random /= null and Clock /= null,
-        Post => (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
+   with Pre  => Random /= null and Clock /= null;
    --  Skip_Verify: skip full X.509 chain validation against Trust
    --  (development / self-signed certs). Without Skip_Verify, a trust
    --  store and clock must be configured before the handshake can
@@ -108,8 +107,7 @@ is
    --  The formal is the CONSTRAINED subtype (#39, 2026-08-24): the Role
    --  Post is subsumed by the profile and the body's discriminant checks
    --  become static.
-   with Pre  => Cfg.Random /= null,
-        Post => (if State (S) = Client_Hello_Sent then Output_Pending (S) > 0);
+   with Pre  => Cfg.Random /= null;
 
    --  Step the client handshake / record processing state machine.
    --

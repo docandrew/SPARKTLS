@@ -96,7 +96,7 @@ is
      (Cert_DER : X509.Byte_Seq;
       Cert     : X509.Certificate;
       Issuer   : X509.Certificate) return Boolean
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last - 256;
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < 2**31 - 257;
 
    --  Validate one link in the chain: Issuer signs Cert.
    --
@@ -125,8 +125,8 @@ is
       Must_Be_CA       : Boolean;
       CAs_Below_Issuer : Natural;
       Mode             : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre  => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
-                and Issuer_DER'First = 0 and Issuer_DER'Last < X509.N32'Last
+   with Pre  => Cert_DER'First = 0 and Cert_DER'Last < 2**31 - 257
+                and Issuer_DER'First = 0 and Issuer_DER'Last < 2**31 - 257
                 and X509.Spans_Valid (Cert, Cert_DER'Last)
                 and X509.Spans_Valid (Issuer, Issuer_DER'Last),
         Post =>
@@ -354,7 +354,7 @@ is
       Hostname   : String;
       Purpose    : Validation_Purpose := Purpose_Server;
       Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last
+   with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32 (Max_Cert_DER)
                and Int_Count <= Max_Pool_Size
                and Root_Count <= Max_Root_Pool_Size
                and X509.Spans_Valid (Leaf, Leaf_DER'Last);

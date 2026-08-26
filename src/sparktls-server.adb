@@ -2682,6 +2682,16 @@ is
       --  know whether a counter rollback is needed on commit failure).
       Encryption_Started : Boolean := False;
    begin
+      --  Started is established when the handshake begins, but the fact
+      --  is not carried through the in out handshake web. Semantically
+      --  unreachable; fail closed (Ready_Config guard pattern).
+      if not SPARKTLS_Transcript.Started (HC.TS) then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
       --  PSK resumption: verify binder, install if valid, fatal-alert
       --  on mismatch. Sets HC.Using_PSK on success.
       if HC.PSK.Offered and then Cfg.Store_Session /= null
@@ -3406,6 +3416,16 @@ is
       H_Len : constant N32 := HC.Hash_Len;
       CV_Hash : Byte_Seq (0 .. H_Len - 1);
    begin
+      --  Started is established when the handshake begins, but the fact
+      --  is not carried through the in out handshake web. Semantically
+      --  unreachable; fail closed (Ready_Config guard pattern).
+      if not SPARKTLS_Transcript.Started (HC.TS) then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
       pragma Assert
         (X509.Spans_Valid
            (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1));
@@ -3796,6 +3816,16 @@ is
       Result    :    out Action)
    is
    begin
+      --  Started is established when the handshake begins, but the fact
+      --  is not carried through the in out handshake web. Semantically
+      --  unreachable; fail closed (Ready_Config guard pattern).
+      if not SPARKTLS_Transcript.Started (HC.TS) then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
       Result := OK;
                   --  Verify client Finished
                   declare

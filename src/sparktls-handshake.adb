@@ -202,11 +202,12 @@ is
       Cert               : Signing_Algorithm;
       Allow_PKCS1_v1_5   : Boolean := False) return Unsigned_16
    is
-      Pos : N32 := Sig_Algs'First;
+      Pos : N32;
    begin
       if Cert = Sign_None or Sig_Algs'Length < 2 then
          return 0;
       end if;
+      Pos := Sig_Algs'First;
       while Pos < Sig_Algs'Last loop
          pragma Loop_Invariant
            (Pos >= Sig_Algs'First and Pos < Sig_Algs'Last);
@@ -255,6 +256,9 @@ is
    begin
       if Count = 0 then
          return Pick_Sig_Algo (Sig_Algs, Cert, Allow_PKCS1_v1_5);
+      end if;
+      if Sig_Algs'Length < 2 then
+         return 0;
       end if;
 
       for J in Sig_Algo_Index loop

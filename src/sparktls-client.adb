@@ -142,7 +142,7 @@ is
       HC     : in out Handshake_Context;
       Err    : Error_Code;
       Result :    out Action)
-           with Pre  => S.State not in Idle | Closing | Closed | Error_State,
+           with
                 Post => S.State = Error_State
                         and then S.Last_Error = Err
                                 and then Result in Has_Output | Error_Alert
@@ -201,10 +201,7 @@ is
    procedure Derive_Handshake_Keys
      (S  : in     Session;
       HC : in out Handshake_Context)
-   with Pre => SPARKTLS_Transcript.Started (HC.TS)
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                             | Suite_AES_256_GCM_SHA384
-                                             | Suite_CHACHA20_POLY1305_SHA256;
+   with Pre => SPARKTLS_Transcript.Started (HC.TS);
 
    --  RFC 8446 §4.3.1 / RFC 7301: scan a TLS 1.3 EncryptedExtensions
    --  message for an application_layer_protocol_negotiation entry.
@@ -318,8 +315,7 @@ is
       HC     : in out Handshake_Context;
       Data   : in     Byte_Seq;
       Result :    out Action)
-                   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                                and then Data'First = 0
+                   with Pre  => Data'First = 0
                                 and then Data'Length >= 4
                                 and then Data'Last < N32'Last - 4
                                 and then Data'Last < Transcript_Capacity
@@ -3379,6 +3375,17 @@ is
       Parse_SH_From_Reasm_13 (S, HC, Result);
       if Result /= OK then return; end if;
       if S.State /= Wait_Server_Hello then return; end if;
+
+      --  Pre guarantees HC.Cfg.Random /= null at entry, but the fact is
+      --  not carried through the in out reassembly calls above.
+      --  Semantically unreachable; fail closed (same pattern as
+      --  Server.TLS12's Ready_Config membership guards).
+      if HC.Cfg.Random = null then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
 
       Finalize_SH_Processing (S, HC, Result);
    end Handle_WSH_HS_Frame;
