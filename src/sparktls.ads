@@ -805,6 +805,12 @@ is
    type Random_Bytes_Fn is access
       procedure (Output : out Byte_Seq);
 
+   --  The null-excluding view: subprograms that WILL call the generator
+   --  take this subtype, so "is there a generator?" is answered by the
+   --  type at the boundary instead of a threaded null-check Pre. The
+   --  fact originates at Ready_Config's predicate and flows down.
+   subtype Live_Random_Fn is not null Random_Bytes_Fn;
+
    --  Time callback for certificate validation.
    --  Called at validation time, not at configuration time.
    type Get_Time_Fn is access

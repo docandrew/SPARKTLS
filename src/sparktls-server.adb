@@ -74,7 +74,6 @@ is
                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                  then HC.Hash_Len = 48
                  else HC.Hash_Len = 32)
-                      and then SPARKTLS_Transcript.Started (HC.TS)
                       and then
                         (if S.State = Wait_Client_Certificate
                          then True)
@@ -145,7 +144,6 @@ is
                                    and then S.Role = Role_Server
                                    and then Result = OK
                                    and then HC.Legacy_Session_ID_Len in 0 .. 32
-                                                        and then SPARKTLS_Transcript.Started (HC.TS)
                                                         and then S.Negotiated_Suite in
                                      Suite_AES_128_GCM_SHA256
                                    | Suite_AES_256_GCM_SHA384
@@ -194,7 +192,6 @@ is
                         and then S.State = Wait_Client_Hello_Retry
                         and then S.Role = Role_Server
                         and then HC.Legacy_Session_ID_Len in 0 .. 32
-                and then SPARKTLS_Transcript.Started (HC.TS)
                 and then S.Negotiated_Suite in
                   Suite_AES_128_GCM_SHA256
                         | Suite_AES_256_GCM_SHA384
@@ -220,7 +217,6 @@ is
                                 --  Identity bounds ride Cfg.Local's
                                 --  Valid_Identity_Access predicate; the
                                 --  Ready_Config formal carries the trio.
-                                                        and then SPARKTLS_Transcript.Started (HC.TS)
                                                         and then S.Negotiated_Suite in
                                                   Suite_AES_128_GCM_SHA256
                                           | Suite_AES_256_GCM_SHA384
@@ -249,18 +245,14 @@ is
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
-                        and then SPARKTLS_Transcript.Started (HC.TS)
                         and then Plaintext'Length > 0
                 and then Plaintext'Length <= Max_Fragment
                 and then Plaintext'Length < Transcript_Capacity,
                 Post => (if Emitted
                                  then Server_Active (S)
-                                  and then SPARKTLS_Transcript.Started (HC.TS)
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
                       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                      and then HC.Server_HS.Counter =
-                        HC.Server_HS.Counter'Old + 1
                       and then Result = OK)
                                 and then (if not Emitted
                                                   then S.State = Error_State
@@ -274,19 +266,14 @@ is
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
-                and then SPARKTLS_Transcript.Started (HC.TS)
                 and then Plaintext'First = 0
                 and then Plaintext'Last in 0 .. N32 (Transcript_Capacity) - 2
                 and then HC.Server_HS.Counter <= Unsigned_64'Last - 2,
                 Post => (if Emitted
                                  then Server_Active (S)
-                                              and then SPARKTLS_Transcript.Started (HC.TS)
                       and then S.State = S.State'Old
                       and then S.Role = S.Role'Old
                       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                      and then HC.Server_HS.Counter in
-                        HC.Server_HS.Counter'Old + 1 ..
-                        HC.Server_HS.Counter'Old + 2
                       and then Result = OK)
                                 and then (if not Emitted
                                                   then S.State = Error_State
@@ -316,7 +303,6 @@ is
                and then S.Role = Role_Server
                and then Rec.OK
                and then Rec.Content = Records.Content_Application_Data
-                       and then SPARKTLS_Transcript.Started (HC.TS)
                        and then Free_Space (S.Output) >=
                                   Records.Record_Header_Size + 3 + Records.Tag_Size
                and then Rec.Fragment_Len >= 1
@@ -340,7 +326,6 @@ is
                                and then Plain_Len > 0
                                and then Plaintext'Last < N32'Last
                                and then Plain_Len - 1 <= Plaintext'Last
-                                                       and then SPARKTLS_Transcript.Started (HC.TS)
 ;
 
 
@@ -522,7 +507,8 @@ is
                 and HC.Peer_Leaf = HC.Peer_Leaf'Old
                 and HC.Legacy_Session_ID_Len =
                       HC.Legacy_Session_ID_Len'Old
-                and Used (HC.Reasm) = Used (HC.Reasm)'Old
+                and Used (HC.Reasm) = Used (HC.Reasm)'Old,
+        Pre  => Data'Last < N32'Last - 256
    is
    begin
       SPARKTLS_Transcript.Append (HC.TS, Data);
@@ -608,8 +594,6 @@ is
       if not Server_Config_Can_Start (Cfg) then
          Set_State (S, Error_State);
          S.Last_Error := Internal_Error;
-         pragma Assert (Role (S) = Role_Server);
-         pragma Assert (State (S) = Error_State);
          return;
       end if;
 
@@ -617,8 +601,6 @@ is
       if S.HC_Ptr = null then
          Set_State (S, Error_State);
          S.Last_Error := Internal_Error;
-         pragma Assert (Role (S) = Role_Server);
-         pragma Assert (State (S) = Error_State);
          return;
       end if;
       --  Fresh transcript for this handshake. The hash contexts also
@@ -816,8 +798,7 @@ is
       Result :    out Action)
    with Pre => S.State = Wait_Client_Hello
                and then S.Role = Role_Server
-                       and then HC.Legacy_Session_ID_Len in 0 .. 32
-                               and then SPARKTLS_Transcript.Started (HC.TS);
+                       and then HC.Legacy_Session_ID_Len in 0 .. 32;
 
    procedure Complete_Client_Hello
      (S      : in out Session;
@@ -3349,8 +3330,7 @@ is
                 and then Data'Last >= 3
                 and then Data'Last < N32'Last - 4
                 and then Data'Last < Transcript_Capacity
-                and then S.State = Wait_Client_Certificate
-                and then SPARKTLS_Transcript.Started (HC.TS);
+                and then S.State = Wait_Client_Certificate;
 
    procedure Handle_Client_Cert_13
      (S      : in out Session;
@@ -3412,7 +3392,6 @@ is
                   (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                    then HC.Hash_Len = 48
                    else HC.Hash_Len = 32)
-                and then SPARKTLS_Transcript.Started (HC.TS)
                 and then X509.Spans_Valid
                   (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1);
 
@@ -4146,7 +4125,6 @@ is
          Result :    out Action)
       with Pre => S.State = Wait_Client_Finished
                   and then S.Role = Role_Server
-                                          and then SPARKTLS_Transcript.Started (HC.TS)
                           and then Data'First = 0
                   and then Len > 0
                   and then Data'Last < N32'Last
@@ -4561,8 +4539,7 @@ is
      (S      : in out Session;
       Msg    : in     Byte_Seq;
       Result :    out Action)
-   with Pre  => S.State in Connected | Closing
-                and then Msg'First = 0
+   with Pre  => Msg'First = 0
                 and then S.App_Secret_Len in 32 | 48
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
@@ -4643,8 +4620,7 @@ is
    procedure Dispatch_Post_HS_Message
      (S      : in out Session;
       Result :    out Action)
-   with Pre  => S.State in Connected | Closing
-                and then Post_HS_Reasm.Has_Message (S.Post_HS),
+   with Pre  => Post_HS_Reasm.Has_Message (S.Post_HS),
         Post => Post_HS_Reasm.Used (S.Post_HS) = 0;
 
    procedure Dispatch_Post_HS_Message

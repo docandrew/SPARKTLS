@@ -225,7 +225,7 @@ is
                and Data'Last < N32'Last - 256  --  +64 prefix in Ed25519 path
                and Sig'First = 0
                and Sig'Length > 0
-               and Sig'Last < N32'Last;
+               and Sig'Last < N32'Last - 256;
 
    --  TLS 1.2 signs ServerKeyExchange with hash_algorithm ||
    --  signature_algorithm.  The ECDSA signature algorithm does not bind
@@ -241,7 +241,7 @@ is
                and Data'Last < N32'Last - 256
                and Sig'First = 0
                and Sig'Length > 0
-               and Sig'Last < N32'Last;
+               and Sig'Last < N32'Last - 256;
 
    --  Digest-based entry points for the streamed handshake transcript
    --  (carve 2): the raw transcript no longer exists, so TLS 1.2
@@ -257,7 +257,7 @@ is
       Sig_Scheme : Unsigned_16) return Boolean
    with Pre => Sig'First = 0
                and Sig'Length > 0
-               and Sig'Last < N32'Last;
+               and Sig'Last < N32'Last - 256;
 
    function Verify_Signature_TLS12_Hashed
      (H256_In    : Bytes_32;
@@ -268,7 +268,7 @@ is
       Sig_Scheme : Unsigned_16) return Boolean
    with Pre => Sig'First = 0
                and Sig'Length > 0
-               and Sig'Last < N32'Last;
+               and Sig'Last < N32'Last - 256;
 
    ----------------------------------------------------------------------------
    --  Credential loading helpers

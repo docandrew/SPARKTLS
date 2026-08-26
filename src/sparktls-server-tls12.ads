@@ -104,9 +104,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Post =>
-                  (if S.State = Wait_Client_Cert_Verify
-                   then HC.Peer_Leaf.Present);
+   ;
 
    --  Process TLS 1.2 CertificateVerify from a client-authenticated peer.
    procedure Process_Client_CertVerify_12

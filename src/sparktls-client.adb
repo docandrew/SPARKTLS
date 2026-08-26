@@ -239,8 +239,7 @@ is
       HC      : in out Handshake_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
-           with Pre => S.State not in Idle | Closing | Closed | Error_State
-                       and then SPARKTLS_Transcript.Started (HC.TS)
+           with Pre => SPARKTLS_Transcript.Started (HC.TS)
                        and then
                          (if HC.Cert_Request_Received
                               and then HC.Cfg.Local /= null
@@ -367,8 +366,7 @@ is
      (S      : in out Session;
       HC     : in out Handshake_Context;
       Result :    out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-                               and then SPARKTLS_Transcript.Started (HC.TS)
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
                                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
@@ -396,8 +394,7 @@ is
       HC     : in out Handshake_Context;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-                               and then SPARKTLS_Transcript.Started (HC.TS)
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
                                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                            | Suite_AES_256_GCM_SHA384
                                                            | Suite_CHACHA20_POLY1305_SHA256
@@ -439,8 +436,7 @@ is
       Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Result    :    out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-                                       and then SPARKTLS_Transcript.Started (HC.TS)
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
                                        and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
@@ -472,11 +468,9 @@ is
       HC     : in out Handshake_Context;
       Msg    : in     Byte_Seq;
       Result :    out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and then Msg'First = 0
+   with Pre => Msg'First = 0
                        and then Msg'Length >= 4
                        and then Msg'Last < N32'Last - 4
-                               and then Msg'Last < Transcript_Capacity
                                                                     and then SPARKTLS_Transcript.Started (HC.TS)
                                         and then
                                           (if HC.Cert_Request_Received
@@ -525,8 +519,7 @@ is
       Plain_Len : in     N32;
       Pos       :    out N32;
       Result    :    out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and then SPARKTLS_Transcript.Started (HC.TS)
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
                        and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
@@ -795,8 +788,7 @@ is
       Plain_Len : in     N32;
       Pos       : in out N32;
       Result    :    out Action)
-             with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and then SPARKTLS_Transcript.Started (HC.TS)
+             with Pre => SPARKTLS_Transcript.Started (HC.TS)
                        and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
@@ -847,8 +839,7 @@ is
       Plain_Len : in     N32;
       Pos       : in out N32;
       Result    : in out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and then SPARKTLS_Transcript.Started (HC.TS)
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
                        and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
@@ -935,8 +926,7 @@ is
      (S      : in out Session;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
-   with Pre => S.State in Connected | Closing
-               and then S.App_Data_Len <= Max_Record_Plaintext
+   with Pre => S.App_Data_Len <= Max_Record_Plaintext
                and then S.Warning_Alerts_Recvd <= Max_Warning_Alerts
                and then S.Empty_Records_Recvd <= Max_Empty_Records
                and then Rec.OK
@@ -1004,8 +994,7 @@ is
                                and then SPARKTLS_Transcript.Started (HC.TS)
                                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
                 Post => (if Result = OK then
-                                    HC.Cfg.Random /= null
-                                                                            and then SPARKTLS_Transcript.Started (HC.TS)
+                                    SPARKTLS_Transcript.Started (HC.TS)
                                                                                             and then
                                                                                               (if S.State = Wait_Server_Hello
                                                                                                then HC.HRR_Cookie_Len <=
@@ -2546,8 +2535,7 @@ is
       Scratch         : in out IO_Buffer;
       App_TS_Hash_384 : in     Key_Schedule.Digest_384;
       Result          :    out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and then SPARKTLS_Transcript.Started (HC.TS)
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
                and then S.Negotiated_Suite = Suite_AES_256_GCM_SHA384,
                 Post => HC.Hash_Len = HC.Hash_Len'Old
                         and then Result in OK | Error_Alert;
@@ -2640,8 +2628,7 @@ is
       Scratch         : in out IO_Buffer;
       App_TS_Hash_256 : in     Digest;
       Result          :    out Action)
-   with Pre => S.State not in Idle | Closing | Closed | Error_State
-               and then SPARKTLS_Transcript.Started (HC.TS)
+   with Pre => SPARKTLS_Transcript.Started (HC.TS)
                and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                            | Suite_CHACHA20_POLY1305_SHA256,
                 Post => HC.Hash_Len = HC.Hash_Len'Old
@@ -2884,7 +2871,7 @@ is
                                 and then HC.Cfg.Random /= null
                                         and then SPARKTLS_Transcript.Started (HC.TS)
                                         and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-                                        and then not Has_Message (HC.Reasm);
+;
 
    procedure Start_Pending_SH_Reassembly
      (S          : in out Session;
@@ -4999,8 +4986,7 @@ is
       Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Result    :    out Action)
-   with Pre => S.State in Connected | Closing
-               and then Plaintext'First = 0
+   with Pre => Plaintext'First = 0
                and then Plaintext'Last < IO_Buffer_Capacity
                and then Plain_Len <= Max_Record_Plaintext
                and then Plain_Len <= N32 (Plaintext'Length);

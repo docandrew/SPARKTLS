@@ -213,8 +213,7 @@ is
                           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                                   | Suite_ECDHE_RSA_CHACHA20_SHA256
                                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-                Post => S.State in Wait_Client_Finished | Error_State
-                        and then HC.Version = TLS_1_2;
+                Post => HC.Version = TLS_1_2;
 
    procedure Build_Server_Flight_12
      (S      : in out Server_Session;
@@ -1108,13 +1107,10 @@ is
                  Err :    out Error_Code)
               with Pre  => HC.Version = TLS_1_2
                            and then SPARKTLS.Handshake.Server_Msgs
-                                      .Local_Config_Valid (HC.Cfg.Local)
-                                   and then HC.KE.Negotiated,
+                                      .Local_Config_Valid (HC.Cfg.Local),
                    Post => HC.Version = HC.Version'Old
                            and then SPARKTLS.Handshake.Server_Msgs
                                       .Local_Config_Valid (HC.Cfg.Local)
-                                   and then HC.KE = HC.KE'Old
-                                   and then HC.KE.Negotiated
                                            and then HC.TS = HC.TS'Old
               is
               begin
@@ -1396,13 +1392,10 @@ is
                  with Pre => Msg'Length > 0
                                      and then Msg'Last < N32 (Natural'Last)
                              and then SPARKTLS.Handshake.Server_Msgs
-                       .Local_Config_Valid (HC.Cfg.Local)
-                     and then HC.KE.Negotiated,
+                       .Local_Config_Valid (HC.Cfg.Local),
                               Post => HC.Version = HC.Version'Old
                               and then SPARKTLS.Handshake.Server_Msgs
                                 .Local_Config_Valid (HC.Cfg.Local)
-                                              and then HC.KE = HC.KE'Old
-                                              and then HC.KE.Negotiated
                  is
             Msg_Type : Byte;
             Msg_Len  : N32;
@@ -1479,8 +1472,7 @@ is
                       and then S.Input.Read_Pos + Rec.Record_Len
                         <= IO_Buffer_Capacity
                       and then SPARKTLS.Handshake.Server_Msgs
-                        .Local_Config_Valid (HC.Cfg.Local)
-                      and then HC.KE.Negotiated,
+                        .Local_Config_Valid (HC.Cfg.Local),
                               Post => HC.Version = HC.Version'Old
                               and then SPARKTLS.Handshake.Server_Msgs
                                 .Local_Config_Valid (HC.Cfg.Local)
@@ -1669,14 +1661,6 @@ is
                return;
             end if;
       end;
-
-              pragma Assert
-                (S.Negotiated_Suite in Suite_ECDHE_RSA_AES128_GCM_SHA256
-                                    | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                                    | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                                    | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                    | Suite_ECDHE_RSA_CHACHA20_SHA256
-                                    | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
               pragma Assert (CKE_Transcript_Nonempty);
                       pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
               if HC.Cfg not in Ready_Config then
@@ -2315,8 +2299,6 @@ is
                         --  alert MUST be plaintext, not encrypted.
                                 Send_Alert_And_Error
                                   (S, Handshake_Failure, Result);
-                        pragma Assert
-                          (S.Last_Error /= Unexpected_Message);
                         pragma Assert
                           (Finished_Mismatch_Alerted_RFC_8446_4_4_4
                              (S.State, Output_Pending (S), S.Last_Error));

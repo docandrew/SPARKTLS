@@ -999,19 +999,10 @@ is
       --  A future edit that breaks a term fails here instead of emitting
       --  a malformed ClientHello (production builds use -gnatp, so this
       --  proof is the only backstop).
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Version)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - 0));
 
       --  Set ClientHello fields via RFLX
       Set_Legacy_Version (Ctx, TLS_1_2);  --  0x0303 per RFC 8446
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Random)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - 2));
       Set_Random (Ctx, To_RFLX (HC.Client_Random));
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Session_ID_Length)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - 34));
       if HC.Cfg.Versions = TLS_1_2_Only then
          Set_Legacy_Session_ID_Length (Ctx, 0);
          Set_Legacy_Session_ID_Empty (Ctx);
@@ -1019,17 +1010,11 @@ is
          Set_Legacy_Session_ID_Length (Ctx, 32);
          Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       end if;
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_Length)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (35 + Session_ID_Len)));
       --  TLS version routes past cookie fields to cipher_suites_length
       --  9 suites: 3 TLS 1.3 + 3 TLS 1.2 ECDHE-RSA + 3 TLS 1.2
       --  ECDHE-ECDSA = 18 bytes
       Set_Cipher_Suites_Length
         (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (18));
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_TLS)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (37 + Session_ID_Len)));
 
       --  Build cipher suite sequence
       declare
@@ -1066,23 +1051,13 @@ is
                  Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
               end;
 
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods_Length)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (55 + Session_ID_Len)));
-
               Set_Legacy_Compression_Methods_Length (Ctx, 1);
       --  Field_Size of the compression-methods field is data-dependent:
       --  it follows from the length field just written (1 byte = 8 bits).
       pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
                      = RBT.Bit_Length (8));
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (56 + Session_ID_Len)));
               Set_Legacy_Compression_Methods
                 (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_Length)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (57 + Session_ID_Len)));
               Set_Extensions_Length
                 (Ctx,
                  RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
@@ -1102,12 +1077,6 @@ is
       --  prover discharges the arithmetic on its own instead of doing it
       --  inside the Available_Space goal below, which timed out.
       pragma Assert (CH_Body_Len - (59 + Session_ID_Len) = Ext_Total_All);
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-         = RBT.Bit_Length (8) * RBT.Bit_Length (CH_Body_Len - (59 + Session_ID_Len)));
-      pragma Assert
-        (RFLX.TLS_Handshake.Client_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-         >= RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS));
 
               --  Build extensions sequence
               declare

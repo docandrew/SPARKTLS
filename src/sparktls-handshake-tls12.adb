@@ -101,7 +101,7 @@ is
    procedure Build_Server_Key_Exchange
      (HC     : in     Handshake_Context;
       Id     : in     Identity;
-      Random : in     Random_Bytes_Fn;
+      Random : in     Live_Random_Fn;
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
@@ -868,7 +868,7 @@ is
      (Transcript_Hash : in     Byte_Seq;
       Id              : in     Identity;
       Sig_Algo_Wire   : in     Unsigned_16;
-      Random          : in     Random_Bytes_Fn;
+      Random          : in     Live_Random_Fn;
       Result          :    out Byte_Seq;
       Len             :    out N32)
    is
