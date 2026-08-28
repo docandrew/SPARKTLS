@@ -1,3 +1,4 @@
+with SPARKTLS.HS_Pool;
 with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
 with SPARKTLS.Key_Schedule_12;
@@ -307,6 +308,7 @@ is
    --  hash algorithm MUST be a pair listed in that extension."
    procedure Parse_Server_Key_Exchange
      (HC   : in out Engaged_Context;
+      D    : in     SPARKTLS.HS_Pool.HS_Data;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre  => Data'First = 0

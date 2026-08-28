@@ -1,3 +1,4 @@
+with SPARKTLS.HS_Pool;
 with SPARKNaCl; use SPARKNaCl;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
@@ -80,6 +81,7 @@ is
    procedure Process_Client_Key_Exchange_12
      (S      : in out Session;
       HC     : in out Engaged_Context;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
    --  Version is what the nested helpers (Compute_Shared_Secret_12,
    --  Finish_CKE's flight builders) require. All three dispatcher call
@@ -103,6 +105,7 @@ is
    procedure Process_Client_Certificate_12
      (S      : in out Session;
       HC     : in out Engaged_Context;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
    ;
 
@@ -110,6 +113,7 @@ is
    procedure Process_Client_CertVerify_12
      (S      : in out Session;
       HC     : in out Engaged_Context;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
    ;
 
@@ -135,6 +139,7 @@ is
    procedure Process_Client_Finished_12
      (S      : in out Session;
       HC     : in out Engaged_Context;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
    ;
 

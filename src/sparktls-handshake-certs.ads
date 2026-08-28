@@ -1,6 +1,7 @@
 with SPARKNaCl; use SPARKNaCl;
 with Interfaces; use Interfaces;
 with X509;
+with SPARKTLS.HS_Pool;
 with SPARKTLS.Records;
 with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLSCrypto.P384.Field;
@@ -86,19 +87,19 @@ is
    --  DER bytes are then passed to X509.Parse — the wire-parsing and
    --  cert-content-parsing layers stay distinct.
    --
-   --  On success: HC.Peer_Leaf.Cert holds the leaf cert (if parseable),
-   --  HC.Peer_Leaf.DER + HC.Peer_Leaf.DER_Len hold its DER bytes,
+   --  On success: D.Peer_Leaf.Cert holds the leaf cert (if parseable),
+   --  D.Peer_Leaf.DER + D.Peer_Leaf.DER_Len hold its DER bytes,
    --  HC.Peer_Ints (0 .. HC.Peer_Int_Count - 1) hold parseable
-   --  intermediates, HC.Peer_Leaf.Present reflects whether the leaf
+   --  intermediates, D.Peer_Leaf.Present reflects whether the leaf
    --  parsed AND `X509.Is_Valid` is true. OK := True.
    --
    --  On any wire-format error (malformed RFLX message, length-field
-   --  mismatch): OK := False. HC.Peer_Leaf.Present := False.
+   --  mismatch): OK := False. D.Peer_Leaf.Present := False.
    --
    --  Per-cert X509.Parse failures and intermediate-pool-overflow
    --  do NOT set OK := False — that matches the prior hand-rolled
    --  behavior (let the caller decide what to do with an unparseable
-   --  leaf based on HC.Peer_Leaf.Present + chain-validation policy).
+   --  leaf based on D.Peer_Leaf.Present + chain-validation policy).
    --  Reject_Cert_Extensions: TLS 1.3 §4.4.2 / BoGo
    --  SendUnknownExtensionOnCertificate-TLS13. Set True on the client
    --  side: the server MAY echo only per-cert extensions the client
@@ -114,6 +115,7 @@ is
    --                             extensions.
    procedure Parse_Certificate_Chain_13
      (HC                     : in out Engaged_Context;
+      D                      : in out SPARKTLS.HS_Pool.HS_Data;
       HS_Msg                 : in     Byte_Seq;
       Reject_Cert_Extensions : in     Boolean;
       OK                     :    out Boolean;
@@ -143,11 +145,12 @@ is
    --  RFC 5246 §7.4.2 TLS 1.2 Certificate parser. Takes the complete
    --  handshake message bytes (4-byte header + cert_list_len(3) +
    --  entries). On wire-format errors, OK := False and Err := Decode_Error.
-   --  X.509 parse failures leave OK = True but HC.Peer_Leaf.Present = False,
+   --  X.509 parse failures leave OK = True but D.Peer_Leaf.Present = False,
    --  matching the TLS 1.3 parser's split between wire syntax and cert
    --  semantic validity.
    procedure Parse_Certificate_Chain_12
      (HC     : in out Engaged_Context;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
       HS_Msg : in     Byte_Seq;
       OK     :    out Boolean;
       Err    :    out Error_Code)
@@ -198,31 +201,16 @@ is
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RFLX.RFLX_Builtin_Types.Bytes;
-      HC        : in out Handshake_Context;
+      D         : in out SPARKTLS.HS_Pool.HS_Data;
       C_Len     : in     N32)
            with Pre  => Cert_RFLX'First = 1
                                         and then Cert_RFLX'Length = RFLX.RFLX_Builtin_Types.Length (C_Len)
                                         and then C_Len > 0
                                                 and then C_Len <= N32 (Max_Cert_DER),
-                Post => HC.Client_HS = HC.Client_HS'Old
-                        and then Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
-                        and then (if HC.Cfg.Local'Old /= null
-                                  then HC.Cfg.Local /= null)
-                        and then (if HC.Cfg.Local'Old /= null
-                                      and then HC.Cfg.Local'Old.Has_Identity
-                                          then HC.Cfg.Local /= null
-                                               and then HC.Cfg.Local.Has_Identity)
-                        and then
-                          (if HC.Cfg.Local'Old /= null
-                              and then SPARKTLS.Handshake.Server_Msgs
-                                .Local_Config_Valid (HC.Cfg.Local'Old)
-                           then HC.Cfg.Local /= null
-                                and then SPARKTLS.Handshake.Server_Msgs
-                                  .Local_Config_Valid (HC.Cfg.Local))
-                        and then (if HC.Cfg.Random'Old /= null
-                                          then HC.Cfg.Random /= null)
-                                and then HC.Peer_Leaf.DER_Len = X509.N32 (C_Len)
-                                and then not HC.Peer_Leaf.Present;
+                --  Control-plane framing is AUTOMATIC now: this subprogram
+                --  only receives the data-plane record (#106).
+                Post => D.Peer_Leaf.DER_Len = X509.N32 (C_Len)
+                        and then not D.Peer_Leaf.Present;
 
    procedure Store_Intermediate
      (Cert_RFLX : in     RFLX.RFLX_Builtin_Types.Bytes;

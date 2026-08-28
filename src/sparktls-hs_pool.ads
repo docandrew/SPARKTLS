@@ -26,18 +26,16 @@ package SPARKTLS.HS_Pool with
    SPARK_Mode => On
 is
 
-   Max_Inflight : constant := 16;
-
-   type Slot_Count is range 0 .. Max_Inflight;
-   subtype Slot_Index is Slot_Count range 1 .. Max_Inflight;
-   No_Slot : constant Slot_Count := 0;
+   --  Slot types live in the parent (SPARKTLS.Slot_Count etc.):
+   --  Session must name them, and a parent spec cannot with its child.
 
    --  The data-plane: everything a handshake needs that is too big to
    --  carry per-session for the session's whole lifetime.
    type HS_Data is record
-      Reasm      : SPARKTLS_Reassembly.Buffer;
-      Peer_Leaf  : Pool_Entry;
-      Peer_Ints  : Cert_Pool;
+      Reasm          : SPARKTLS_Reassembly.Buffer;
+      Peer_Leaf      : Pool_Entry;
+      Peer_Ints      : Cert_Pool;
+      Peer_Int_Count : Cert_Pool_Count := 0;
    end record;
 
    type Slot_Array is array (Slot_Index) of HS_Data;
@@ -56,10 +54,11 @@ is
    procedure Acquire (Slot : out Slot_Count)
    with Post => (if Slot /= No_Slot then In_Use (Slot));
 
-   --  Wipe and free. Idempotence is not offered: releasing a free slot
-   --  is a caller bug the Pre makes unrepresentable in proved code.
+   --  Wipe and free. Total and idempotent: a Pre demanding In_Use
+   --  would tie Session.Slot to pool state -- exactly the cross-object
+   --  obligation this carve exists to eliminate. Wiping a free slot is
+   --  harmless; the wipe is unconditional either way.
    procedure Release (Slot : Slot_Index)
-   with Pre  => In_Use (Slot),
-        Post => not In_Use (Slot);
+   with Post => not In_Use (Slot);
 
 end SPARKTLS.HS_Pool;

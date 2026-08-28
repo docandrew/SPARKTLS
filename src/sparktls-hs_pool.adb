@@ -26,6 +26,7 @@ is
          Slots (Slot).Peer_Ints (I).DER := (others => 0);
          Slots (Slot).Peer_Ints (I).DER_Len := 0;
       end loop;
+      Slots (Slot).Peer_Int_Count := 0;
       In_Use (Slot) := False;
    end Release;
 

@@ -1,3 +1,4 @@
+with SPARKTLS.HS_Pool;
 with Ada.Unchecked_Deallocation;
 with Interfaces; use Interfaces;
 with SPARKTLSCrypto.Hashing.SHA256;
@@ -631,12 +632,12 @@ is
       X509.Parse (Cert_X, Cert, OK);
    end Parse_X509_From_RFLX;
 
-   --  Same as Copy_Cert_To_X509 but into the HC.Peer_Leaf.DER buffer
+   --  Same as Copy_Cert_To_X509 but into the D.Peer_Leaf.DER buffer
    --  region (0-based, capacity Max_Cert_DER_Len).
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
-      HC        : in out Handshake_Context;
+      D         : in out SPARKTLS.HS_Pool.HS_Data;
       C_Len     : in     N32)
    is
    begin
@@ -644,13 +645,13 @@ is
       --  component. While Present is False the Pool_Entry predicate is
       --  trivially true, so the writes below carry no proof burden; the
       --  entry only becomes "valid" again at the caller's Present write.
-      HC.Peer_Leaf.Present := False;
-      HC.Peer_Leaf.DER_Len := X509.N32 (C_Len);
+      D.Peer_Leaf.Present := False;
+      D.Peer_Leaf.DER_Len := X509.N32 (C_Len);
       for I in N32 range 0 .. C_Len - 1 loop
          pragma Loop_Invariant
            (I in 0 .. C_Len - 1
             and RBT.Index (I + 1) in Cert_RFLX'Range);
-         HC.Peer_Leaf.DER (X509.N32 (I)) :=
+         D.Peer_Leaf.DER (X509.N32 (I)) :=
             Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;
    end Copy_Cert_To_Peer_DER;
@@ -681,6 +682,7 @@ is
 
    procedure Parse_Certificate_Chain_13
      (HC                     : in out Engaged_Context;
+      D                      : in out SPARKTLS.HS_Pool.HS_Data;
       HS_Msg                 : in     Byte_Seq;
       Reject_Cert_Extensions : in     Boolean;
       OK                     :    out Boolean;
@@ -698,9 +700,9 @@ is
         HC.Client_HS.Counter
       with Ghost;
    begin
-      HC.Peer_Leaf.Present := False;
-      HC.Peer_Leaf.DER_Len := 0;
-      HC.Peer_Int_Count := 0;
+      D.Peer_Leaf.Present := False;
+      D.Peer_Leaf.DER_Len := 0;
+      D.Peer_Int_Count := 0;
       OK := False;
       Err := Decode_Error;
       pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
@@ -862,36 +864,36 @@ is
                                     if Cert_Idx = 0 then
                                        --  Leaf cert
                                        Copy_Cert_To_Peer_DER
-                                         (Cert_RFLX, HC, C_Len);
+                                         (Cert_RFLX, D, C_Len);
                                        declare
                                           P_OK : Boolean;
                                        begin
                                           Parse_X509_From_RFLX
                                             (Cert_RFLX, C_Len,
-                                             HC.Peer_Leaf.Cert, P_OK);
+                                             D.Peer_Leaf.Cert, P_OK);
                                           pragma Assert
-                                            (HC.Peer_Leaf.DER_Len =
+                                            (D.Peer_Leaf.DER_Len =
                                                X509.N32 (C_Len));
                                           pragma Assert
-                                            (HC.Peer_Leaf.DER_Len > 0);
+                                            (D.Peer_Leaf.DER_Len > 0);
                                           pragma Assert
                                             (if P_OK then X509.Spans_Valid
-                                               (HC.Peer_Leaf.Cert,
+                                               (D.Peer_Leaf.Cert,
                                                 X509.N32 (C_Len) - 1));
                                           pragma Assert
                                             (if P_OK then X509.Spans_Valid
-                                               (HC.Peer_Leaf.Cert,
-                                                HC.Peer_Leaf.DER_Len - 1));
-                                          HC.Peer_Leaf.Present := P_OK
+                                               (D.Peer_Leaf.Cert,
+                                                D.Peer_Leaf.DER_Len - 1));
+                                          D.Peer_Leaf.Present := P_OK
                                              and then
-                                               X509.Is_Valid (HC.Peer_Leaf.Cert);
+                                               X509.Is_Valid (D.Peer_Leaf.Cert);
                                        end;
-                                    elsif HC.Peer_Int_Count < Max_Pool_Size
+                                    elsif D.Peer_Int_Count < Max_Pool_Size
                                     then
                                        --  Intermediate cert
                                        declare
                                           Idx : constant Natural :=
-                                            HC.Peer_Int_Count;
+                                            D.Peer_Int_Count;
                                           C    : X509.Certificate;
                                           P_OK : Boolean;
                                        begin
@@ -902,9 +904,9 @@ is
                                           then
                                              Store_Intermediate
                                                (Cert_RFLX, C, C_Len,
-                                                HC.Peer_Ints (Idx));
-                                             HC.Peer_Int_Count :=
-                                               HC.Peer_Int_Count + 1;
+                                                D.Peer_Ints (Idx));
+                                             D.Peer_Int_Count :=
+                                               D.Peer_Int_Count + 1;
                                           end if;
                                        end;
                                     end if;
@@ -962,6 +964,7 @@ is
 
    procedure Parse_Certificate_Chain_12
      (HC     : in out Engaged_Context;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
       HS_Msg : in     Byte_Seq;
       OK     :    out Boolean;
       Err    :    out Error_Code)
@@ -976,9 +979,9 @@ is
       Ctx      : C12.Context;
       Cert_Idx : Natural := 0;
    begin
-      HC.Peer_Leaf.Present := False;
-      HC.Peer_Leaf.DER_Len := 0;
-      HC.Peer_Int_Count := 0;
+      D.Peer_Leaf.Present := False;
+      D.Peer_Leaf.DER_Len := 0;
+      D.Peer_Int_Count := 0;
       OK := False;
       Err := Decode_Error;
 
@@ -1087,28 +1090,28 @@ is
                               C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
                               if Cert_Idx = 0 then
                                  Copy_Cert_To_Peer_DER
-                                   (Cert_RFLX, HC, C_Len);
+                                   (Cert_RFLX, D, C_Len);
                                  declare
                                     P_OK : Boolean;
                                  begin
                                     Parse_X509_From_RFLX
-                                      (Cert_RFLX, C_Len, HC.Peer_Leaf.Cert, P_OK);
-                                    HC.Peer_Leaf.Present :=
+                                      (Cert_RFLX, C_Len, D.Peer_Leaf.Cert, P_OK);
+                                    D.Peer_Leaf.Present :=
                                       P_OK
-                                      and then X509.Is_Valid (HC.Peer_Leaf.Cert);
+                                      and then X509.Is_Valid (D.Peer_Leaf.Cert);
                                     pragma Assert
-                                      (if HC.Peer_Leaf.Present
+                                      (if D.Peer_Leaf.Present
                                        then True
                                             and then X509.Spans_Valid
-                                              (HC.Peer_Leaf.Cert,
+                                              (D.Peer_Leaf.Cert,
                                                X509.N32
-                                                 (HC.Peer_Leaf.DER_Len)
+                                                 (D.Peer_Leaf.DER_Len)
                                                - 1));
                                  end;
-                              elsif HC.Peer_Int_Count < Max_Pool_Size then
+                              elsif D.Peer_Int_Count < Max_Pool_Size then
                                  declare
                                     Idx  : constant Natural :=
-                                      HC.Peer_Int_Count;
+                                      D.Peer_Int_Count;
                                     C    : X509.Certificate;
                                     P_OK : Boolean;
                                  begin
@@ -1117,9 +1120,9 @@ is
                                     if P_OK and then X509.Is_Valid (C) then
                                        Store_Intermediate
                                          (Cert_RFLX, C, C_Len,
-                                          HC.Peer_Ints (Idx));
-                                       HC.Peer_Int_Count :=
-                                         HC.Peer_Int_Count + 1;
+                                          D.Peer_Ints (Idx));
+                                       D.Peer_Int_Count :=
+                                         D.Peer_Int_Count + 1;
                                     end if;
                                  end;
                               end if;

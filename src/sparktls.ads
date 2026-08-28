@@ -886,6 +886,13 @@ is
    --  Session size) and made it impractical to hold many sessions in BSS
    --  or on the stack. The trust store uses a separate larger pool
    --  (Max_Root_Pool_Size = 200) since OS CA bundles have 130+ roots.
+   --  Handshake data-plane pool sizing (#106). Slot types live here so
+   --  Session can hold its slot; the pool itself is SPARKTLS.HS_Pool.
+   Max_Inflight : constant := 16;
+   type Slot_Count is range 0 .. Max_Inflight;
+   subtype Slot_Index is Slot_Count range 1 .. Max_Inflight;
+   No_Slot : constant Slot_Count := 0;
+
    Max_Pool_Size : constant := 8;
    Max_Cert_DER  : constant := 8192;   --  max DER bytes per cert
 
@@ -1830,11 +1837,8 @@ is
       --  Present implies DER_Len in 1 .. Max and Spans_Valid -- the
       --  facts the old four loose fields threaded through contracts.
       --  WHOLE-AGGREGATE ASSIGNMENT ONLY (multi-field predicate).
-      Peer_Leaf : Pool_Entry;
 
       --  Peer intermediate certificates
-      Peer_Ints      : Cert_Pool;
-      Peer_Int_Count : Cert_Pool_Count := 0;
 
       --  Legacy session ID (middlebox compatibility)
       Legacy_Session_ID : Bytes_32 := (others => 0);
@@ -1971,11 +1975,9 @@ is
       --  itself heap-allocated once per session via HC_Alloc, so this costs
       --  no extra allocation. Being unconditionally present retires every
       --  '/= null' obligation and the whole Free/double-free proof surface.
-      Reasm      : SPARKTLS_Reassembly.Buffer;
 
       --  Heap budget: total bytes allocated for extensions/reassembly.
       --  Prevents DoS via large extensions in ClientHello/ServerHello.
-      Heap_Used : N32 := 0;
 
       --  NOTE: a 17 KB scratch buffer field and its size constant used to
       --  live here, declared for a stack-allocation design that was never
@@ -2004,12 +2006,8 @@ is
    --  own predicate and is updated by a single aggregate assignment. That
    --  removes Handshake_Context from the task #60 class entirely.
 
-   Max_Handshake_Heap : constant := 262_144;  --  256 KB per handshake
-
-   function Heap_Budget_OK
-     (HC : Handshake_Context; Size : N32) return Boolean
-   is (Size <= Max_Handshake_Heap
-       and then HC.Heap_Used <= Max_Handshake_Heap - Size);
+   --  Heap budget accounting deleted with the heap itself (#106):
+   --  handshake memory is now bounded by the HS_Pool slot count.
 
    --  ----- RFC 5246 §7.4.7 single-ClientKeyExchange invariant ------
    --  TLS 1.2 §7.4.7: the client sends exactly one ClientKeyExchange
@@ -2343,10 +2341,11 @@ is
    --  (RM 4.8(6)), so a bare heap Handshake_Context could never change
    --  Phase. A record component without a constraint is mutable
    --  (RM 3.7), so the box's C can. Allocation is max-variant-size.
-   type HC_Box is record
-      C : Handshake_Context;
-   end record;
-   type Handshake_Context_Access is access HC_Box;
+   --  #106: the handshake context is now INLINE in Session (control
+   --  plane) with jumbo data in SPARKTLS.HS_Pool. The heap box and its
+   --  access type are gone -- with them the borrow dance, the leak
+   --  obligations, and the cross-object seam that kept the state<->phase
+   --  and version<->suite couplings unprovable.
 
    ----------------------------------------------------------------------------
    --  TLS extension policy: HC-aware Tag_Is_Offered + Validate_Server_Ext
@@ -2938,9 +2937,23 @@ private
       --  had to be re-proved at every component assignment anywhere in
       --  the record, and at every call boundary.
 
-      --  Handshake context (heap-allocated, freed after handshake)
-      HC_Ptr : Handshake_Context_Access := null;
-   end record;
+      --  Handshake control-plane, inline (#106). Data-plane lives in
+      --  SPARKTLS.HS_Pool at index Slot (No_Slot when no handshake is
+      --  in flight -- admission control refuses when the pool is full).
+      HC   : Handshake_Context;
+      Slot : Slot_Count := No_Slot;
+   end record
+     --  #106 PAYOFF: the state<->phase coupling, finally single-object.
+     --  Type_Invariant (not Dynamic_Predicate) deliberately: checked at
+     --  public boundaries only (~30 VCs), not at every component
+     --  assignment -- the cost that killed the old Session predicate.
+     --  Exempt states: Idle/WCH have no transcript yet; Error/Closing/
+     --  Closed are reachable from pre-Engage failures. WCH_Retry is NOT
+     --  exempt: HRR Engages on the first ClientHello.
+     with Type_Invariant =>
+       (if Session.State not in
+             Idle | Wait_Client_Hello | Error_State | Closing | Closed
+        then Session.HC.Phase = Engaged);
 
    --  NO Dynamic_Predicate on Session. Deliberately.
    --
@@ -3014,7 +3027,7 @@ private
    function Res_Master (S : Session) return Bytes_48 is (S.Res_Master);
    function Exporter_Secret (S : Session) return Bytes_48 is (S.Exporter_Secret);
    function App_Data_Len (S : Session) return N32 is (S.App_Data_Len);
-   function Has_Context (S : Session) return Boolean is (S.HC_Ptr /= null);
+   function Has_Context (S : Session) return Boolean is (S.Slot /= No_Slot);
 
    function Output_Pending (S : Session) return N32 is
       (Available (S.Output));

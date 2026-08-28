@@ -58,10 +58,10 @@ is
      (S.Exporter_Server_Random);
 
    function PSK_Offered (S : Session) return Boolean is
-     (S.HC_Ptr /= null and then S.HC_Ptr.C.PSK.Offered);
+     (S.Slot /= No_Slot and then S.HC.PSK.Offered);
 
    function Has_Handshake_Context (S : Session) return Boolean is
-     (S.HC_Ptr /= null);
+     (S.Slot /= No_Slot);
 
    function Client_App_Counter (S : Session) return Unsigned_64 is
      (S.Client_App.Counter);

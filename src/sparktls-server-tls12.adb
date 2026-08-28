@@ -1,3 +1,4 @@
+with SPARKTLS.HS_Pool;
 with Interfaces;                 use Interfaces;
 with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS_Reassembly;        use SPARKTLS_Reassembly;
@@ -153,10 +154,8 @@ is
    with Pre  => Data'Length > 0
                 --  transcript-append bound
                 and then Data'Last < N32'Last - 256,
-        Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
-                and then HC.Version = HC.Version'Old
+        Post => HC.Version = HC.Version'Old
                 and then HC.KE = HC.KE'Old
-                and then HC.Peer_Leaf = HC.Peer_Leaf'Old
    is
    begin
       SPARKTLS_Transcript.Append (HC.TS, Data);
@@ -1095,7 +1094,8 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_Key_Exchange_12
-             (S : in out Session; HC : in out Engaged_Context; Result : out Action)
+             (S : in out Session; HC : in out Engaged_Context;
+              D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
            is
               Rec : Records.Parse_Result;
                       CKE_Transcript_Nonempty : Boolean := False
@@ -1523,7 +1523,7 @@ is
          --                  = Read_Pos + Record_Len <= Write_Pos.
          pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
 
-         if Used (HC.Reasm) > 0 then
+         if Used (D.Reasm) > 0 then
 
             declare
                --  Was "(if Len <= Need then Need - Len else 0)" -- a guard
@@ -1534,11 +1534,11 @@ is
                --  Free_Space discharges Append's precondition, so the
                --  buffer-overflow branch is gone too.
                Take : constant HS_Msg_Len :=
-                 N32'Min (N32'Min (Wanted (HC.Reasm), Frag_Len),
-                          Free_Space (HC.Reasm));
+                 N32'Min (N32'Min (Wanted (D.Reasm), Frag_Len),
+                          Free_Space (D.Reasm));
             begin
                if Take > 0 then
-                  Append (HC.Reasm, S.Input.Data (FS .. FS + Take - 1));
+                  Append (D.Reasm, S.Input.Data (FS .. FS + Take - 1));
                end if;
 
                if Take /= Frag_Len then
@@ -1549,28 +1549,28 @@ is
                end if;
             end;
 
-            if Header_Ready (HC.Reasm) then
-               if Declared_Type (HC.Reasm) /= HT_Client_Key_Exchange then
+            if Header_Ready (D.Reasm) then
+               if Declared_Type (D.Reasm) /= HT_Client_Key_Exchange then
                   Fail_Unexpected;
                   return;
                end if;
-               if Declared_Size (HC.Reasm) - 4 > Max_Client_Key_Exchange then
+               if Declared_Size (D.Reasm) - 4 > Max_Client_Key_Exchange then
                   Fail_Decode;
                   return;
                end if;
             end if;
 
-            if not Has_Message (HC.Reasm) then
+            if not Has_Message (D.Reasm) then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Result := OK;
                return;
             end if;
 
                     declare
-                       Full : constant Message_Bytes := Message (HC.Reasm);
+                       Full : constant Message_Bytes := Message (D.Reasm);
                     begin
                        begin
-                          Reset (HC.Reasm);
+                          Reset (D.Reasm);
                           Result := OK;
                                   Finish_CKE (Byte_Seq (Full));
                                           if Result /= OK then
@@ -1587,8 +1587,8 @@ is
                        return;
                     end if;
 
-                    Reset (HC.Reasm);
-                    Append (HC.Reasm, S.Input.Data (FS .. FS + Frag_Len - 1));
+                    Reset (D.Reasm);
+                    Append (D.Reasm, S.Input.Data (FS .. FS + Frag_Len - 1));
                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                     Result := OK;
             return;
@@ -1610,9 +1610,9 @@ is
                        end if;
 
                        if HS_Total > Frag_Len then
-                          Reset (HC.Reasm);
+                          Reset (D.Reasm);
                           Append
-                            (HC.Reasm,
+                            (D.Reasm,
                              S.Input.Data (FS .. FS + Frag_Len - 1));
                           S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                           Result := OK;
@@ -1670,7 +1670,8 @@ is
               end Process_Client_Key_Exchange_12;
 
            procedure Process_Client_Certificate_12
-             (S : in out Session; HC : in out Engaged_Context; Result : out Action)
+             (S : in out Session; HC : in out Engaged_Context;
+              D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
            is
       Rec : Records.Parse_Result;
    begin
@@ -1785,6 +1786,7 @@ is
                        end loop;
                        SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
                                  (HC     => HC,
+                                  D      => D,
                                           HS_Msg => HS_Msg,
                                   OK     => Chain_OK,
                                   Err    => Chain_Err);
@@ -1798,11 +1800,11 @@ is
 
             Append_Transcript (HC, Frag);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            if HC.Peer_Leaf.Present then
+            if D.Peer_Leaf.Present then
                --  Bounds + Spans_Valid ride Pool_Entry's predicate.
-               pragma Assert (HC.Peer_Leaf.Present);
+               pragma Assert (D.Peer_Leaf.Present);
                Set_State (S, Wait_Client_Cert_Verify);
-            elsif HC.Peer_Leaf.DER_Len > 0 then
+            elsif D.Peer_Leaf.DER_Len > 0 then
                Send_Alert_And_Error (S, Decode_Error, Result);
                return;
             elsif HC.Cfg.Require_Client_Cert then
@@ -1818,7 +1820,8 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_CertVerify_12
-     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context;
+      D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
       Rec : Records.Parse_Result;
    begin
@@ -1946,7 +1949,7 @@ is
                         H384_In    => Bytes_48 (TH3),
                         H512_In    => Bytes_64 (TH5),
                         Sig        => Sig,
-                     Cert       => HC.Peer_Leaf.Cert,
+                     Cert       => D.Peer_Leaf.Cert,
                      Sig_Scheme => Sig_Scheme);
                   end;
                end;
@@ -1960,18 +1963,18 @@ is
             end;
 
             declare
-               Leaf_Last : constant X509.N32 := HC.Peer_Leaf.DER_Len - 1;
+               Leaf_Last : constant X509.N32 := D.Peer_Leaf.DER_Len - 1;
                --  DER is X509.Byte_Seq now (#101): validators take it
                --  directly -- the conversion copy loop is gone, and with
                --  it the Leaf_DER bound obligations it generated.
                Cert_X : X509.Byte_Seq renames
-                 HC.Peer_Leaf.DER (0 .. Leaf_Last);
+                 D.Peer_Leaf.DER (0 .. Leaf_Last);
                VR : Validation_Result;
             begin
                
 
                VR := Validate_Leaf_Policy
-                 (Leaf     => HC.Peer_Leaf.Cert,
+                 (Leaf     => D.Peer_Leaf.Cert,
                   Leaf_DER => Cert_X,
                   Hostname => "",
                   Purpose  => Purpose_Client,
@@ -1991,9 +1994,9 @@ is
 
                   VR := Validate_Chain
                     (Leaf_DER   => Cert_X,
-                     Leaf       => HC.Peer_Leaf.Cert,
-                     Ints       => HC.Peer_Ints,
-                     Int_Count  => HC.Peer_Int_Count,
+                     Leaf       => D.Peer_Leaf.Cert,
+                     Ints       => D.Peer_Ints,
+                     Int_Count  => D.Peer_Int_Count,
                      Roots      => HC.Cfg.Trust.Roots,
                      Root_Count => HC.Cfg.Trust.Root_Count,
                      Now        => HC.Cfg.Get_Time.all,
@@ -2030,7 +2033,8 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_Finished_12
-     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context;
+      D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
       use SPARKTLS.Records.TLS12;
       use Key_Schedule_12;
@@ -2116,19 +2120,19 @@ is
                        return;
                     end if;
 
-            if Used (HC.Reasm) > 0 or else PL < 4 then
-               if Used (HC.Reasm) = 0 and then PL = 0 then
+            if Used (D.Reasm) > 0 or else PL < 4 then
+               if Used (D.Reasm) = 0 and then PL = 0 then
                   Send_Alert_And_Error (S, Decode_Error, Result);
                   return;
                end if;
 
                declare
                   Take : constant HS_Msg_Len :=
-                    N32'Min (N32'Min (Wanted (HC.Reasm), PL),
-                             Free_Space (HC.Reasm));
+                    N32'Min (N32'Min (Wanted (D.Reasm), PL),
+                             Free_Space (D.Reasm));
                begin
                   if Take > 0 then
-                     Append (HC.Reasm, Plaintext (0 .. Take - 1));
+                     Append (D.Reasm, Plaintext (0 .. Take - 1));
                   end if;
 
                   --  Finished is the last message of the client's flight;
@@ -2139,25 +2143,25 @@ is
                   end if;
                end;
 
-               if Header_Ready (HC.Reasm) then
-                  if Declared_Type (HC.Reasm) /= HT_Finished then
+               if Header_Ready (D.Reasm) then
+                  if Declared_Type (D.Reasm) /= HT_Finished then
                      Send_Alert_And_Error (S, Unexpected_Message, Result);
                      return;
                   end if;
-                  if Declared_Size (HC.Reasm) /= Finished_12_Total_Len then
+                  if Declared_Size (D.Reasm) /= Finished_12_Total_Len then
                      Send_Alert_And_Error
                        (S, Certificate_Verify_Failed, Result);
                      return;
                   end if;
                end if;
 
-               if not Has_Message (HC.Reasm) then
+               if not Has_Message (D.Reasm) then
                   Result := (if Input_Available (S) > 0 then OK else Need_Input);
                   return;
                end if;
 
                declare
-                  Full : constant Message_Bytes := Message (HC.Reasm);
+                  Full : constant Message_Bytes := Message (D.Reasm);
                begin
                   if Full'Length > N32 (Plaintext'Length) then
                      Send_Alert_And_Error (S, Decode_Error, Result);
@@ -2166,7 +2170,7 @@ is
 
                   Plaintext (0 .. Full'Length - 1) := Byte_Seq (Full);
                   PL := Full'Length;
-                  Reset (HC.Reasm);
+                  Reset (D.Reasm);
                end;
             elsif PL >= 4 then
                if Plaintext (0) = HT_Finished
@@ -2175,8 +2179,8 @@ is
                  and then Plaintext (3) = Byte (Finished_Verify_Len)
                  and then Finished_12_Total_Len > PL
                then
-                  Reset (HC.Reasm);
-                  Append (HC.Reasm, Plaintext (0 .. PL - 1));
+                  Reset (D.Reasm);
+                  Append (D.Reasm, Plaintext (0 .. PL - 1));
                   Result := (if Input_Available (S) > 0 then OK else Need_Input);
                   return;
                end if;

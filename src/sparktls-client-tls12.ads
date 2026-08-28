@@ -1,3 +1,4 @@
+with SPARKTLS.HS_Pool;
 with SPARKNaCl; use SPARKNaCl;
 with SPARKTLS.Handshake.TLS12; use SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Handshake.Server_Msgs;
@@ -37,7 +38,7 @@ is
    --    CKE_Received_12, CCS_Received  → waiting for server Finished
    procedure Advance_Handshake_12
      (S      : in out Session;
-      HC     : in out Engaged_Context;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action);
 
    --  Process records in Connected state for TLS 1.2.

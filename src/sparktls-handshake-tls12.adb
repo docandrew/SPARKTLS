@@ -1,3 +1,4 @@
+with SPARKTLS.HS_Pool;
 with Interfaces;                 use Interfaces;
 with Ada.Unchecked_Deallocation;
 with SPARKNaCl.Cryptobox;
@@ -530,6 +531,7 @@ is
 
    procedure Parse_Server_Key_Exchange
      (HC   : in out Engaged_Context;
+      D    : in     SPARKTLS.HS_Pool.HS_Data;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
@@ -700,11 +702,11 @@ is
                Sig_Bytes (I) := Byte (Sig_RFLX (RBT.Index (I + 1)));
             end loop;
 
-            if HC.Peer_Leaf.Present then
+            if D.Peer_Leaf.Present then
                Sig_OK := Cert_Verify.Verify_Signature_TLS12
                  (Data       => Sig_Input,
                   Sig        => Sig_Bytes,
-                  Cert       => HC.Peer_Leaf.Cert,
+                  Cert       => D.Peer_Leaf.Cert,
                   Sig_Scheme => Sig_Scheme);
             else
                Sig_OK := False;

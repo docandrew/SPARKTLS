@@ -1,3 +1,4 @@
+with SPARKTLS.HS_Pool;
 with Ada.Command_Line;
 with Ada.Text_IO; use Ada.Text_IO;
 
@@ -204,19 +205,20 @@ begin
 
       declare
          HC       : Handshake_Context;
+         D        : SPARKTLS.HS_Pool.HS_Data;
          Parse_OK : Boolean;
       begin
          HC.Client_Random := Client_Random;
          HC.Server_Random := Server_Random;
-         HC.Peer_Leaf.Present := False;
-         HC.Peer_Leaf.DER (0 .. X509.N32 (Cert_DER'Length) - 1) :=
+         D.Peer_Leaf.Present := False;
+         D.Peer_Leaf.DER (0 .. X509.N32 (Cert_DER'Length) - 1) :=
            X509.Byte_Seq (Cert_DER);
-         HC.Peer_Leaf.DER_Len := X509.N32 (Cert_DER'Length);
-         HC.Peer_Leaf.Cert := Cert;
-         HC.Peer_Leaf.Present := True;
+         D.Peer_Leaf.DER_Len := X509.N32 (Cert_DER'Length);
+         D.Peer_Leaf.Cert := Cert;
+         D.Peer_Leaf.Present := True;
 
          SPARKTLS.Handshake.TLS12.Parse_Server_Key_Exchange
-           (HC, SKE_Body, Parse_OK);
+           (HC, D, SKE_Body, Parse_OK);
          Check
            ("TLS 1.2 parser accepts BoGo P-256/SHA-384 SKE",
             Parse_OK);
@@ -224,6 +226,7 @@ begin
 
       declare
          HC       : Handshake_Context;
+         D        : SPARKTLS.HS_Pool.HS_Data;
          Parse_OK : Boolean;
          Bad_SKE  : constant Byte_Seq := From_Hex
            ("0300172103c365b84dd207191b2c2d091dd08cd2f3578331125e"
@@ -231,15 +234,15 @@ begin
       begin
          HC.Client_Random := Client_Random;
          HC.Server_Random := Server_Random;
-         HC.Peer_Leaf.Present := False;
-         HC.Peer_Leaf.DER (0 .. X509.N32 (Cert_DER'Length) - 1) :=
+         D.Peer_Leaf.Present := False;
+         D.Peer_Leaf.DER (0 .. X509.N32 (Cert_DER'Length) - 1) :=
            X509.Byte_Seq (Cert_DER);
-         HC.Peer_Leaf.DER_Len := X509.N32 (Cert_DER'Length);
-         HC.Peer_Leaf.Cert := Cert;
-         HC.Peer_Leaf.Present := True;
+         D.Peer_Leaf.DER_Len := X509.N32 (Cert_DER'Length);
+         D.Peer_Leaf.Cert := Cert;
+         D.Peer_Leaf.Present := True;
 
          SPARKTLS.Handshake.TLS12.Parse_Server_Key_Exchange
-           (HC, Bad_SKE, Parse_OK);
+           (HC, D, Bad_SKE, Parse_OK);
          Check
            ("TLS 1.2 SKE compressed EC point is illegal_parameter",
             (not Parse_OK) and HC.Ext_Parse_Err = Illegal_Parameter);
@@ -247,6 +250,7 @@ begin
 
       declare
          HC       : Handshake_Context;
+         D        : SPARKTLS.HS_Pool.HS_Data;
          Parse_OK : Boolean;
          Bad_CKE  : constant Byte_Seq := From_Hex
            ("2103c365b84dd207191b2c2d091dd08cd2f3578331125e86a"
