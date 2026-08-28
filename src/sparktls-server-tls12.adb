@@ -150,7 +150,9 @@ is
 
    procedure Append_Transcript
      (HC : in out Engaged_Context; Data : Byte_Seq)
-   with Pre  => Data'Length > 0,
+   with Pre  => Data'Length > 0
+                --  transcript-append bound
+                and then Data'Last < N32'Last - 256,
         Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
                 and then HC.Version = HC.Version'Old
                 and then HC.KE = HC.KE'Old

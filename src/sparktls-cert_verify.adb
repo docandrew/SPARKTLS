@@ -1177,6 +1177,13 @@ is
                         Now, Mode);
                begin
                   if VR = Valid then
+                     pragma Assert  --  PROBE-T8-R2
+                       (Cert_DER'First = 0
+                        and then Cert_DER'Last < 2**31 - 257);
+                     pragma Assert  --  PROBE-T8
+                       (X509.Spans_Valid (Cert, Cert_DER'Last)
+                        and then X509.Spans_Valid
+                          (Roots (Ri).Cert, Roots (Ri).DER_Len - 1));
                      R := Validate_Link
                        (Cert_DER         => Cert_DER,
                         Cert             => Cert,
@@ -1205,6 +1212,13 @@ is
                and then Ints (Ii).DER_Len > 0
                and then Ints (Ii).DER_Len <= X509.N32 (Max_Cert_DER)
             then
+               pragma Assert  --  PROBE-T8-R2
+                 (Cert_DER'First = 0
+                  and then Cert_DER'Last < 2**31 - 257);
+               pragma Assert  --  PROBE-T8
+                 (X509.Spans_Valid (Cert, Cert_DER'Last)
+                  and then X509.Spans_Valid
+                    (Ints (Ii).Cert, Ints (Ii).DER_Len - 1));
                R := Validate_Link
                  (Cert_DER         => Cert_DER,
                   Cert             => Cert,

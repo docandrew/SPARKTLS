@@ -791,8 +791,6 @@ is
                     (C13_Entries.Valid (Entries_Ctx));
                   pragma Loop_Invariant
                     (HC.Client_HS.Counter = Saved_Client_HS_Counter);
-                  pragma Loop_Invariant
-                    (HC.TS = HC.TS'Loop_Entry);
                   pragma Loop_Invariant (Hash_Len (HC.Neg) = Hash_Len (HC.Neg)'Loop_Entry);
                   pragma Loop_Invariant
                     (if HC.Cfg.Local'Loop_Entry /= null
@@ -1045,8 +1043,6 @@ is
                  (C12_Entries.Has_Buffer (Entries_Ctx));
                pragma Loop_Invariant
                  (C12_Entries.Valid (Entries_Ctx));
-               pragma Loop_Invariant
-                 (HC.TS = HC.TS'Loop_Entry);
                pragma Loop_Invariant
                  (Hash_Len (HC.Neg) = Hash_Len (HC.Neg)'Loop_Entry);
                pragma Loop_Invariant

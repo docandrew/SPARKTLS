@@ -888,6 +888,7 @@ is
       HC     : in out Engaged_Context;
       Result :    out Action)
    with Pre => S.State = Wait_Server_Hello
+                       and then Has_Message (HC.Reasm)
                        and then HC.Cfg.Random /= null
                                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
                 Post => (if Result = OK then
@@ -3089,6 +3090,7 @@ is
                         --  Full ServerHello reassembled.
                         declare
                            Frag : constant Message_Bytes := Message (HC.Reasm);
+         pragma Assert (Has_Message (HC.Reasm));  --  PROBE-T8
                            Parse_OK : Boolean;
                         begin
                            --  RFC 8446 §4 / RFC 5246 §7.4: the first
@@ -3153,6 +3155,7 @@ is
                            --  receive the real SH.
                            if HC.Got_HRR and then not HC.Sent_HRR_CCS then
                               if Used (HC.Reasm) > Message_Length (HC.Reasm) then
+      pragma Assert (Has_Message (HC.Reasm));  --  PROBE-T8
                                  declare
                                     Ignored_A : N32;
                                  begin

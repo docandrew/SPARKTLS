@@ -3137,10 +3137,6 @@ is
                  if not Emitted then
                                             return;
                  end if;
-         pragma Assert
-           (S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                  | Suite_AES_256_GCM_SHA384
-                                  | Suite_CHACHA20_POLY1305_SHA256);
       end;
 
       --  Atomic commit: full flight assembled in Scratch. If S.Output

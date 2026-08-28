@@ -1902,6 +1902,7 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Msg_Len <= Max_HS_Msg - 4
+                and then HC.Cfg.Random /= null
                 --  256: transcript-append bound (see Handle_CertReq_12).
                 and then Frag'Last < N32'Last - 256
                 and then Frag'First <= N32'Last - 4
@@ -1965,6 +1966,7 @@ is
               --  Compute ECDHE shared secret per Selected_Group.
               declare
                  SS_OK  : Boolean;
+      pragma Assert (HC.Cfg.Random /= null);  --  PROBE-T8
                  SS_Err : Error_Code;
               begin
                  Derive_Client_Shared_Secret_12 (HC, SS_OK, SS_Err);
@@ -2447,6 +2449,7 @@ is
             end if;
          end;
 
+         pragma Assert (Has_Message (HC.Reasm));  --  PROBE-T8
          Consume (HC.Reasm);
 
          --  A handler that queued our flight (ServerHelloDone) stops the
@@ -2624,6 +2627,7 @@ is
       Ready    :    out Boolean;
       Result   :    out Action)
            with Pre  => SPARKTLS_Transcript.Started (HC.TS)
+                        and then Has_Message (HC.Reasm)
                             ,
                                         Post => (if Ready then
                              Result = OK
@@ -2652,6 +2656,7 @@ is
       Msg_Type := 0;
       Msg_Len := 0;
       Ready := False;
+         pragma Assert (Has_Message (HC.Reasm));  --  PROBE-T8
       Result := OK;
 
       Handshake.Parse_Handshake_Header
@@ -2674,6 +2679,7 @@ is
             else
                Send_Alert_And_Error (S, Err, Result);
             end if;
+                                      pragma Assert (Has_Message (HC.Reasm));  --  PROBE-T8
          end;
          return;
       end if;
@@ -3198,12 +3204,14 @@ is
       procedure Consume_Reassembled_NST
         (Msg_Len : in N32;
          Result  : out Action)
-      with Pre  => Msg_Len <= Max_HS_Msg - 4;
+      with Pre  => Msg_Len <= Max_HS_Msg - 4
+                   and then Has_Message (HC.Reasm);
 
       procedure Consume_Reassembled_NST
         (Msg_Len : in N32;
          Result  : out Action)
       is
+         pragma Assert (Has_Message (HC.Reasm));  --  PROBE-T8
          NST_Msg : constant Message_Bytes := Message (HC.Reasm);
       begin
          if NST_Msg (0) /= 16#04# or else Msg_Len < 6 then
