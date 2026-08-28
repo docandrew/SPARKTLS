@@ -731,7 +731,15 @@ is
    --  away instead of one.
    Rekey_After_Records : constant := 2 ** 23;
 
-   subtype Record_Counter is Unsigned_64 range 0 .. Rekey_After_Records;
+   --  The TYPE bound is the RECEIVE-side / arithmetic limit: a conforming
+   --  peer (TLS 1.3 ChaCha with no rekey obligation, or any TLS 1.2 peer)
+   --  may legitimately send far more than the 2**23 WRITE budget, which is
+   --  enforced separately by Write_Budget_Reached/Write_Limit_Reached
+   --  against Rekey_After_Records. 2**62 cannot be reached in practice
+   --  (58,000 years at 2M records/s) and keeps increment arithmetic
+   --  provably in range. See task #115.
+   Max_Record_Counter : constant := 2**62;
+   subtype Record_Counter is Unsigned_64 range 0 .. Max_Record_Counter;
 
    --  Lengths bounded by the record-plaintext limit. These were Session
    --  predicate conjuncts; as subtypes the bound travels with the field
@@ -1656,7 +1664,16 @@ is
       Peer_Ticket         : TLS12_Ticket_Buffer := (others => 0);
    end record;
 
-   type Handshake_Context is record
+   --  Handshake phase (phase carve 2026-08-26). Setup: from allocation
+   --  until the local/peer ClientHello has been ingested; there is NO
+   --  transcript in this phase — it cannot be hashed, appended to, or
+   --  forgotten, because it does not exist. Engaged: the ClientHello is
+   --  in the transcript, which is Started by construction; every
+   --  post-CH handler takes Engaged_Context and gets that fact
+   --  structurally (flow-level, no contracts).
+   type HS_Phase is (Setup, Engaged);
+
+   type Handshake_Context (Phase : HS_Phase := Setup) is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
 
@@ -1749,7 +1766,6 @@ is
       --  Streaming transcript (carve 2): dual SHA-256/384 contexts
       --  replace the 32 KB buffer -- no capacity, no Len, no non-RFC
       --  size restrictions. See sparktls_transcript.ads.
-      TS : SPARKTLS_Transcript.Transcript_State;
 
       --  Peer certificate (raw DER for verification)
       --  The peer's leaf certificate as ONE predicated record (#101):
@@ -1867,8 +1883,7 @@ is
       MS_Derivation : Master_Secret_Derivation_Mode := Not_Derived;
 
       --  Resumption
-      Using_PSK     : Boolean := False;
-      PSK_Binders_Offset : N32 := 0;              --  offset of binders in ClientHello
+      Using_PSK     : Boolean := False;              --  offset of binders in ClientHello
 
       --  RFC 8446 §2.3 / §4.2.10 0-RTT (early data).
       --
@@ -1911,7 +1926,20 @@ is
       --  RecordFlux's Initialize/Take_Buffer at non-heap storage), note that
       --  server_msgs.adb holds a message buffer and an extension buffer live
       --  simultaneously, so a single shared block is not sufficient.
+
+      case Phase is
+         when Setup =>
+            null;
+         when Engaged =>
+            --  Started by construction: the only assignment that flips
+            --  Phase to Engaged supplies a transcript that has absorbed
+            --  the ClientHello (see the Engage aggregates).
+            TS : SPARKTLS_Transcript.Started_Transcript;
+      end case;
    end record;
+
+   subtype Setup_Context   is Handshake_Context (Phase => Setup);
+   subtype Engaged_Context is Handshake_Context (Phase => Engaged);
    --  No Predicate on this record any more. Every field bound lives on a
    --  FIELD SUBTYPE, and the one genuine MULTI-field relationship -- the
    --  reassembly state machine -- moved into Reasm_Info, which carries its
@@ -2252,7 +2280,15 @@ is
      (HC.Legacy_Session_ID_Len in 0 .. 32)
      with Ghost;
 
-   type Handshake_Context_Access is access Handshake_Context;
+   --  Heap wrapper (phase carve, 2026-08-26): objects created by an
+   --  allocator are CONSTRAINED to their initial discriminants
+   --  (RM 4.8(6)), so a bare heap Handshake_Context could never change
+   --  Phase. A record component without a constraint is mutable
+   --  (RM 3.7), so the box's C can. Allocation is max-variant-size.
+   type HC_Box is record
+      C : Handshake_Context;
+   end record;
+   type Handshake_Context_Access is access HC_Box;
 
    ----------------------------------------------------------------------------
    --  TLS extension policy: HC-aware Tag_Is_Offered + Validate_Server_Ext

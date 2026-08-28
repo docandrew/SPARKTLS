@@ -34,6 +34,8 @@ use type SPARKTLS_Transcript.Transcript_State;
 package body SPARKTLS.Handshake.TLS12 with
    SPARK_Mode => On
 is
+
+   pragma Unevaluated_Use_Of_Old (Allow);
    package RBT renames RFLX.RFLX_Builtin_Types;
    use type RBT.Bytes_Ptr;
    use type RFLX.RFLX_Types.Base_Integer;
@@ -527,7 +529,7 @@ is
    ------------------------------------------------------------------
 
    procedure Parse_Server_Key_Exchange
-     (HC   : in out Handshake_Context;
+     (HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
@@ -730,7 +732,7 @@ is
    ------------------------------------------------------------------
 
    procedure Parse_Client_Key_Exchange
-     (HC   : in out Handshake_Context;
+     (HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is
@@ -1138,58 +1140,9 @@ is
    --  No key_share extension (ECDHE is in ServerKeyExchange).
    ------------------------------------------------------------------
 
-   function Same_ALPN_12 (A, B : Hostname_Buf) return Boolean is
-   begin
-      if A.Len = 0 or else A.Len /= B.Len then
-         return False;
-      end if;
-      for I in 1 .. A.Len loop
-         if A.Data (I) /= B.Data (I) then
-            return False;
-         end if;
-      end loop;
-      return True;
-   end Same_ALPN_12;
-
-   function Select_ALPN_12 (HC : Handshake_Context) return Hostname_Buf is
-      Empty : constant Hostname_Buf := (Len => 0, Data => (others => ' '));
-   begin
-      if HC.Client_ALPN_Count = 0 then
-         return Empty;
-      end if;
-
-      if HC.Cfg.ALPN_Count > 0 then
-         for C in ALPN_Index loop
-            exit when C > HC.Cfg.ALPN_Count;
-            for P in ALPN_Index loop
-               exit when P > HC.Client_ALPN_Count;
-               if Same_ALPN_12
-                    (HC.Cfg.ALPN_List (C), HC.Client_ALPN_List (P))
-               then
-                  return HC.Cfg.ALPN_List (C);
-               end if;
-            end loop;
-         end loop;
-      elsif HC.Cfg.ALPN.Len > 0 then
-         for P in ALPN_Index loop
-            exit when P > HC.Client_ALPN_Count;
-            if Same_ALPN_12 (HC.Cfg.ALPN, HC.Client_ALPN_List (P)) then
-               return HC.Cfg.ALPN;
-            end if;
-         end loop;
-      end if;
-
-      return Empty;
-   end Select_ALPN_12;
-
-   function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean is
-   begin
-      return Select_ALPN_12 (HC).Len > 0;
-   end Has_ALPN_Match_12;
-
    procedure Build_Server_Hello_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
@@ -1229,7 +1182,7 @@ is
 
       --  ALPN (0x0010): if client offered and server configured
       --  Data: list_len(2) + proto_len(1) + proto(N)
-      Selected_ALPN : constant Hostname_Buf := Select_ALPN_12 (HC);
+      Selected_ALPN : constant Hostname_Buf := SPARKTLS.Handshake.Server_Msgs.Select_ALPN (HC);
       ALPN_Match : constant Boolean := Selected_ALPN.Len > 0;
       ALPN_Data_Len : constant TLS12_ALPN_Data_Len :=
          (if ALPN_Match then N32 (3 + Selected_ALPN.Len) else 0);
@@ -1434,7 +1387,7 @@ is
 
    procedure Parse_Server_Hello_12
      (S    : in out Session;
-      HC   : in out Handshake_Context;
+      HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is

@@ -9,6 +9,8 @@ use type SPARKTLS_Transcript.Transcript_State;
 package SPARKTLS.Handshake.Client_Msgs with
    SPARK_Mode => On
 is
+
+   pragma Unevaluated_Use_Of_Old (Allow);
    --  Maximum ClientHello size
    Max_Client_Hello : constant := 4096;
 
@@ -49,7 +51,7 @@ is
    --  Extracts: server random, cipher suite, key share (server public key).
            procedure Parse_Server_Hello
              (S    : in out Session;
-              HC   : in out Handshake_Context;
+              HC   : in out Engaged_Context;
               Data : in     Byte_Seq;
               OK   :    out Boolean)
                                    with Pre => Data'Length > 0
@@ -61,7 +63,6 @@ is
                                                                                                            then
                                                                                                              (if HC.Cfg.Random'Old /= null
                                                                                                               then HC.Cfg.Random /= null)
-                                                                                                     and then HC.TS = HC.TS'Old
                                                                                                              and then HC.HRR_Cookie_Len <=
                                                                                                                N32 (HC.HRR_Cookie'Length))
                                                                                                         and then

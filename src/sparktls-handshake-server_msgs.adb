@@ -1256,7 +1256,6 @@ is
          when PSK_Binders_OK =>
             Store_PSK_Binder (Ext_Data, First_BP, First_BL, HC.PSK.Binder);
             HC.PSK.Binder_Len := First_BL;
-            HC.PSK_Binders_Offset := Binders_Start;
             OK := True;
          when PSK_Binders_Decode_Error =>
             HC.Ext_Parse_Err := Decode_Error;
@@ -2708,8 +2707,7 @@ is
                           and HC.Legacy_Session_ID_Len =
                                  HC.Legacy_Session_ID_Len'Old
                           and (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-                                          and (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-                                          and True;
+                                          and (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
 
    procedure Parse_CH_Cipher_Suites
      (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
@@ -4133,7 +4131,7 @@ is
 
    procedure Build_Server_Hello
      (S      : in     Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
@@ -4279,7 +4277,7 @@ is
    end Has_ALPN_Match;
 
    procedure Build_Encrypted_Extensions
-     (HC     : in     Handshake_Context;
+     (HC     : in     Engaged_Context;
       S      : in out Session;
       Result :    out Byte_Seq;
       Len    :    out N32)

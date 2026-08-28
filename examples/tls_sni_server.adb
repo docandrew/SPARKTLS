@@ -67,7 +67,7 @@ procedure TLS_SNI_Server is
    Server_Sock : Socket_Type;
 
    procedure Handle_Connection (Client_Sock : Socket_Type) is
-      S         : SPARKTLS.Session;
+      S         : SPARKTLS.Server_Session;
       Res       : SPARKTLS.Action;
       Read_Dead : Boolean := False;
 

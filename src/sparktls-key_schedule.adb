@@ -141,23 +141,6 @@ is
                     Context => Empty);
    end Derive_Traffic_Key_IV;
 
-   procedure Derive_Traffic_Key_IV_128
-     (Key    :    out OKM_Seq;
-      IV     :    out OKM_Seq;
-      Secret : in     Byte_Seq)
-   is
-      Empty : Byte_Seq (1 .. 0) := (others => 0);
-   begin
-      Expand_Label (OKM     => Key,
-                    PRK     => Digest (Secret),
-                    Label   => "key",
-                    Context => Empty);
-      Expand_Label (OKM     => IV,
-                    PRK     => Digest (Secret),
-                    Label   => "iv",
-                    Context => Empty);
-   end Derive_Traffic_Key_IV_128;
-
    procedure Derive_Master_Secret
      (Master    :    out Digest;
       HS_Secret : in     Digest)

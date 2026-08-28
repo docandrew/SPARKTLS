@@ -31,6 +31,7 @@ with RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
 
 with SPARKTLS_Transcript;
 use type SPARKTLS_Transcript.Transcript_State;
+with SPARKTLS.Handshake.Certs;
 package body SPARKTLS.Client.TLS12 with
    SPARK_Mode => On
 is
@@ -61,8 +62,7 @@ is
      (S      : in out Session;
       Err    : Error_Code;
       Result : out Action)
-   with Pre => S.State not in Idle | Closed | Error_State
-               and Alert_Desc (Err) /= 0
+   with Pre => Alert_Desc (Err) /= 0
                and Alert_Desc (Err) /= 90
    is
       Dummy : N32;
@@ -80,7 +80,7 @@ is
    end Send_Encrypted_Alert_Connected_12;
 
    procedure Append_Transcript
-     (HC : in out Handshake_Context; Data : Byte_Seq)
+     (HC : in out Engaged_Context; Data : Byte_Seq)
    with Post => (if SPARKTLS_Transcript.Started (HC.TS)'Old
                     or else Data'First <= Data'Last
                  then SPARKTLS_Transcript.Started (HC.TS)),
@@ -91,7 +91,7 @@ is
    end Append_Transcript;
 
    procedure Append_Transcript_Building
-     (HC : in out Handshake_Context; Data : Byte_Seq)
+     (HC : in out Engaged_Context; Data : Byte_Seq)
    with Post => (if SPARKTLS_Transcript.Started (HC.TS)'Old
                     or else Data'First <= Data'Last
                  then SPARKTLS_Transcript.Started (HC.TS)),
@@ -108,7 +108,7 @@ is
    --  the SH-parse resume-detection branch; we just need to expand
    --  it into traffic keys + IVs for this connection's randoms.
    procedure Derive_Keys_Resumed_12
-     (S : in out Session; HC : in out Handshake_Context)
+     (S : in out Session; HC : in out Engaged_Context)
            with Post => S.State = S.State'Old
                                         and then S.Negotiated_Suite =
                                           S.Negotiated_Suite'Old
@@ -165,7 +165,7 @@ is
       S.Exporter_Server_Random := HC.Server_Random;
    end Derive_Keys_Resumed_12;
 
-   procedure Derive_Keys_12 (S : in out Session; HC : in out Handshake_Context)
+   procedure Derive_Keys_12 (S : in out Session; HC : in out Engaged_Context)
    with Pre => S.Negotiated_Suite in
                                           Suite_ECDHE_RSA_AES128_GCM_SHA256
                                         | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -291,7 +291,7 @@ is
    ------------------------------------------------------------------
 
    procedure Process_Server_Flight
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
            with Pre  => Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                             and then
                               (if HC.Cfg.Local /= null
@@ -304,130 +304,9 @@ is
                                    then SPARKTLS.Handshake.Server_Msgs
                                           .Local_Config_Valid (HC.Cfg.Local));
 
-   procedure Copy_Cert_To_X509
-     (Cert_RFLX : in     RBT.Bytes;
-      Cert_X    :    out X509.Byte_Seq)
-   with Pre => Cert_RFLX'First = 1
-               and then Cert_X'First = 0
-               and then Cert_X'Length > 0
-               and then Cert_X'Length <= Max_Cert_DER
-               and then Cert_RFLX'Length = RBT.Length (Cert_X'Length);
 
-   procedure Copy_Cert_To_X509
-     (Cert_RFLX : in     RBT.Bytes;
-      Cert_X    :    out X509.Byte_Seq)
-   is
-   begin
-      Cert_X := (others => 0);
-      for J in 0 .. Cert_X'Length - 1 loop
-         pragma Loop_Invariant
-           (J in 0 .. Cert_X'Length - 1
-            and J <= Max_Cert_DER - 1
-            and X509.N32 (J) in Cert_X'Range
-            and RBT.Index (J + 1) in Cert_RFLX'Range);
-         Cert_X (X509.N32 (J)) :=
-            X509.Byte (Cert_RFLX (RBT.Index (J + 1)));
-      end loop;
-   end Copy_Cert_To_X509;
 
-   procedure Parse_X509_From_RFLX
-     (Cert_RFLX : in     RBT.Bytes;
-      C_Len     : in     N32;
-      Cert      :    out X509.Certificate;
-      OK        :    out Boolean)
-   with Pre => C_Len > 0
-               and then C_Len <= N32 (Max_Cert_DER)
-               and then Cert_RFLX'First = 1
-               and then Cert_RFLX'Length = RBT.Length (C_Len),
-        Post => (if OK then X509.Is_Valid (Cert)
-                            and X509.Spans_Valid
-                                  (Cert, X509.N32 (C_Len) - 1));
 
-   procedure Parse_X509_From_RFLX
-     (Cert_RFLX : in     RBT.Bytes;
-      C_Len     : in     N32;
-      Cert      :    out X509.Certificate;
-      OK        :    out Boolean)
-   is
-      Cert_X : X509.Byte_Seq (0 .. X509.N32 (C_Len) - 1);
-   begin
-      pragma Assert (X509.N32 (C_Len) <= X509.N32 (Max_Cert_DER));
-      pragma Assert (Cert_X'Last < X509.N32'Last);
-      Copy_Cert_To_X509 (Cert_RFLX, Cert_X);
-      X509.Parse (Cert_X, Cert, OK);
-   end Parse_X509_From_RFLX;
-
-   procedure Copy_Cert_To_Peer_DER
-     (Cert_RFLX : in     RBT.Bytes;
-      HC        : in out Handshake_Context;
-      C_Len     : in     N32)
-                   with Pre  => Cert_RFLX'First = 1
-                                        and then Cert_RFLX'Length = RBT.Length (C_Len)
-                                        and then C_Len > 0
-                                        and then C_Len <= N32 (Max_Cert_DER),
-                Post => HC.Client_HS = HC.Client_HS'Old
-                        and then HC.TS = HC.TS'Old
-                                and then HC.Hash_Len = HC.Hash_Len'Old
-                        and then HC.Peer_Leaf.DER_Len = X509.N32 (C_Len);
-
-   procedure Copy_Cert_To_Peer_DER
-     (Cert_RFLX : in     RBT.Bytes;
-      HC        : in out Handshake_Context;
-      C_Len     : in     N32)
-   is
-   begin
-      --  Ordering discipline: clear Present before touching any other
-      --  component (see the certs.adb twin).
-      HC.Peer_Leaf.Present := False;
-      HC.Peer_Leaf.DER_Len := X509.N32 (C_Len);
-      for I in N32 range 0 .. C_Len - 1 loop
-                 pragma Loop_Invariant
-                   (I in 0 .. C_Len - 1
-                    and RBT.Index (I + 1) in Cert_RFLX'Range);
-         HC.Peer_Leaf.DER (X509.N32 (I)) :=
-            Byte (Cert_RFLX (RBT.Index (I + 1)));
-      end loop;
-   end Copy_Cert_To_Peer_DER;
-
-   procedure Store_Intermediate
-     (Cert_RFLX : in     RBT.Bytes;
-      Cert      : in     X509.Certificate;
-      C_Len     : in     N32;
-      Target    :    out Pool_Entry)
-   with Pre  => Cert_RFLX'First = 1
-                and Cert_RFLX'Length = RBT.Length (C_Len)
-                and C_Len > 0
-                and C_Len <= N32 (Max_Cert_DER)
-                and X509.Is_Valid (Cert)
-                and X509.Spans_Valid (Cert, X509.N32 (C_Len) - 1),
-        Post => Target.Present
-                and then Target.DER_Len = X509.N32 (C_Len)
-                and then X509.Is_Valid (Target.Cert)
-                and then X509.Spans_Valid
-                  (Target.Cert, Target.DER_Len - 1);
-
-   procedure Store_Intermediate
-     (Cert_RFLX : in     RBT.Bytes;
-      Cert      : in     X509.Certificate;
-      C_Len     : in     N32;
-      Target    :    out Pool_Entry)
-   is
-      DER_Copy : Cert_DER_Buf := (others => 0);
-   begin
-      for I in N32 range 0 .. C_Len - 1 loop
-         pragma Loop_Invariant
-           (I in 0 .. C_Len - 1
-            and I <= N32 (Max_Cert_DER) - 1
-            and RBT.Index (I + 1) in Cert_RFLX'Range);
-         DER_Copy (X509.N32 (I)) :=
-            X509.Byte (Cert_RFLX (RBT.Index (I + 1)));
-      end loop;
-      Target :=
-        (Cert    => Cert,
-         DER     => DER_Copy,
-         DER_Len => X509.N32 (C_Len),
-         Present => True);
-   end Store_Intermediate;
 
            procedure Append_Intermediate_12
              (HC  : in out Handshake_Context;
@@ -503,7 +382,7 @@ is
    --  Mirrors Parse_Certificate_Chain_13 (TLS 1.3), but operates on
    --  the TLS 1.2 RFLX package which lacks per-cert extensions.
    procedure Parse_Cert_Chain_12
-     (HC      : in out Handshake_Context;
+     (HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       OK      :    out Boolean)
@@ -524,7 +403,7 @@ is
                          and then Frag'First + 3 + Msg_Len <= Frag'Last;
 
    procedure Parse_Cert_Chain_12
-     (HC      : in out Handshake_Context;
+     (HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       OK      :    out Boolean)
@@ -639,12 +518,12 @@ is
                            if C_Len > 0 and C_Len <= N32 (Max_Cert_DER) then
                               C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
                                       if Cert_Idx = 0 then
-                                         Copy_Cert_To_Peer_DER (Cert_RFLX, HC, C_Len);
+                                         SPARKTLS.Handshake.Certs.Copy_Cert_To_Peer_DER (Cert_RFLX, HC, C_Len);
                                          declare
                                             C    : X509.Certificate;
                                             P_OK : Boolean;
                                          begin
-                                                    Parse_X509_From_RFLX
+                                                    SPARKTLS.Handshake.Certs.Parse_X509_From_RFLX
                                                       (Cert_RFLX, C_Len, C, P_OK);
                                                     if P_OK then
                                                        pragma Assert
@@ -679,10 +558,10 @@ is
                                             Tmp  : Pool_Entry;
                                             P_OK : Boolean;
                                          begin
-                                            Parse_X509_From_RFLX
+                                            SPARKTLS.Handshake.Certs.Parse_X509_From_RFLX
                                               (Cert_RFLX, C_Len, C, P_OK);
                                             if P_OK then
-                                               Store_Intermediate
+                                               SPARKTLS.Handshake.Certs.Store_Intermediate
                                                  (Cert_RFLX, C, C_Len, Tmp);
                                                Append_Intermediate_12 (HC, Idx, Tmp);
                                             end if;
@@ -725,7 +604,7 @@ is
    --  success Result is left untouched by the caller.
    procedure Validate_Server_Cert_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
                            with Pre  => S.Negotiated_Suite in
                           Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -740,7 +619,7 @@ is
 
    procedure Validate_Server_Cert_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    is
    begin
@@ -862,7 +741,7 @@ is
    --  when the server's offer is unusable.
    procedure Handle_CertReq_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
@@ -896,9 +775,6 @@ is
                                                 Post => (if Result = OK then
                                                                                      S.State not in Idle | Closing
                                                                                        | Closed | Error_State
-                                     and then
-                                       (if SPARKTLS_Transcript.Started (HC.TS)'Old
-                                        then SPARKTLS_Transcript.Started (HC.TS))
                                                      and then S.Negotiated_Suite in
                                                Suite_ECDHE_RSA_AES128_GCM_SHA256
                                                                                      | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -918,7 +794,7 @@ is
 
    procedure Handle_CertReq_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
@@ -1096,9 +972,7 @@ is
       end;
               Append_Transcript (HC, Frag);
                               pragma Assert_And_Cut
-                                (S.State not in Idle | Closing | Closed | Error_State
-                                         and then
-                                           (if Transcript_Was_Nonempty then SPARKTLS_Transcript.Started (HC.TS))
+                                ((if Transcript_Was_Nonempty then SPARKTLS_Transcript.Started (HC.TS))
                                                  and then S.Negotiated_Suite in
                                            Suite_ECDHE_RSA_AES128_GCM_SHA256
                                          | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -1120,7 +994,7 @@ is
    --  the signature.
    procedure Handle_SKE_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
@@ -1146,9 +1020,6 @@ is
                                   .Local_Config_Valid (HC.Cfg.Local)),
                         Post => (if Result = OK then
                                      S.State = S.State'Old
-                                             and then
-                                               (if SPARKTLS_Transcript.Started (HC.TS)'Old
-                                                then SPARKTLS_Transcript.Started (HC.TS))
                                              and then S.Negotiated_Suite in
                                                Suite_ECDHE_RSA_AES128_GCM_SHA256
                                              | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -1159,7 +1030,7 @@ is
 
    procedure Handle_SKE_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
@@ -1235,7 +1106,7 @@ is
                    end Handle_SKE_12;
 
    procedure Derive_Client_Shared_Secret_12
-     (HC    : in out Handshake_Context;
+     (HC    : in out Engaged_Context;
       OK    :    out Boolean;
       Err   :    out Error_Code)
    with Pre  => HC.Cfg.Random /= null,
@@ -1257,7 +1128,7 @@ is
                 and then (if OK then Err = No_Error);
 
    procedure Derive_Client_Shared_Secret_12
-     (HC    : in out Handshake_Context;
+     (HC    : in out Engaged_Context;
       OK    :    out Boolean;
       Err   :    out Error_Code)
    is
@@ -1329,7 +1200,7 @@ is
 
    procedure Append_Client_Certificate_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    with Pre  => S.Negotiated_Suite in
@@ -1393,7 +1264,7 @@ is
 
    procedure Append_TLS12_Client_Handshake_Record
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Msg     : in     Byte_Seq;
       Err     : in     Error_Code;
@@ -1427,7 +1298,7 @@ is
 
    procedure Append_TLS12_Client_Handshake_Record
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Msg     : in     Byte_Seq;
       Err     : in     Error_Code;
@@ -1471,7 +1342,7 @@ is
 
    procedure Append_Client_Certificate_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    is
@@ -1537,7 +1408,7 @@ is
 
    procedure Append_Client_Key_Exchange_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    with Pre  => S.Negotiated_Suite in
@@ -1560,7 +1431,7 @@ is
 
    procedure Append_Client_Key_Exchange_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    is
@@ -1630,7 +1501,7 @@ is
            end Append_Client_Key_Exchange_12;
 
    procedure Build_Client_Certificate_Verify_12_Message
-     (HC     : in     Handshake_Context;
+     (HC     : in     Engaged_Context;
       CV_Buf :    out Byte_Seq;
       CV_Len :    out N32)
    with Pre  => CV_Buf'First = 0
@@ -1642,7 +1513,7 @@ is
         Post => CV_Len <= 520;
 
    procedure Build_Client_Certificate_Verify_12_Message
-     (HC     : in     Handshake_Context;
+     (HC     : in     Engaged_Context;
       CV_Buf :    out Byte_Seq;
       CV_Len :    out N32)
    is
@@ -1699,7 +1570,7 @@ is
 
    procedure Append_Client_Certificate_Verify_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    with Pre  => HC.Cfg.Local /= null
@@ -1726,7 +1597,7 @@ is
 
    procedure Append_Client_Certificate_Verify_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
            is
@@ -1777,7 +1648,7 @@ is
 
    procedure Build_Client_Finished_12_Message
      (S  : in     Session;
-      HC : in     Handshake_Context;
+      HC : in     Engaged_Context;
       FB :    out Byte_Seq;
       FL :    out N32)
    with Pre  => FB'First = 0
@@ -1799,7 +1670,7 @@ is
 
    procedure Build_Client_Finished_12_Message
      (S  : in     Session;
-      HC : in     Handshake_Context;
+      HC : in     Engaged_Context;
       FB :    out Byte_Seq;
       FL :    out N32)
    is
@@ -1825,7 +1696,7 @@ is
 
    procedure Encrypt_Client_Finished_Record_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       FB      : in     Byte_Seq;
       FL      : in     N32;
@@ -1833,14 +1704,11 @@ is
    with Pre  => FB'First = 0
                 and then Valid_Finished_12_Len (FL)
                 and then FL - 1 <= FB'Last,
-        Post => Result in OK | Has_Output | Error_Alert
-                and then
-                  (if Result = OK then
-                     SPARKTLS_Transcript.Started (HC.TS));
+        Post => Result in OK | Has_Output | Error_Alert;
 
    procedure Encrypt_Client_Finished_Record_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       FB      : in     Byte_Seq;
       FL      : in     N32;
@@ -1870,19 +1738,14 @@ is
 
    procedure Commit_Client_Flight_Scratch_12
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Scratch   : in     IO_Buffer;
       Result    :    out Action)
-   with Pre  => SPARKTLS_Transcript.Started (HC.TS)
-               ,
-        Post => Result in OK | Has_Output | Error_Alert
-                and then
-                  (if Result = OK then
-                     SPARKTLS_Transcript.Started (HC.TS));
+   with Post => Result in OK | Has_Output | Error_Alert;
 
    procedure Commit_Client_Flight_Scratch_12
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Scratch   : in     IO_Buffer;
       Result    :    out Action)
    is
@@ -1909,7 +1772,7 @@ is
 
    procedure Encrypt_And_Commit_Client_Finished_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       FB      : in     Byte_Seq;
       FL      : in     N32;
@@ -1924,7 +1787,7 @@ is
 
    procedure Encrypt_And_Commit_Client_Finished_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       FB      : in     Byte_Seq;
       FL      : in     N32;
@@ -1942,7 +1805,7 @@ is
 
    procedure Append_Client_CCS_And_Finished_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    with Pre  => S.Negotiated_Suite in
@@ -1959,7 +1822,7 @@ is
 
    procedure Append_Client_CCS_And_Finished_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Scratch : in out IO_Buffer;
       Result  :    out Action)
    is
@@ -1989,7 +1852,7 @@ is
 
    procedure Build_Client_Flight_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    with Pre  => S.Negotiated_Suite in
                   Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -2012,7 +1875,7 @@ is
 
    procedure Build_Client_Flight_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    is
       Scratch : IO_Buffer;
@@ -2054,7 +1917,7 @@ is
    --  commit failure to keep AEAD nonces in sync with the peer.
    procedure Handle_SHD_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
@@ -2095,7 +1958,7 @@ is
 
    procedure Handle_SHD_12
              (S       : in out Session;
-              HC      : in out Handshake_Context;
+              HC      : in out Engaged_Context;
               Frag    : in     Byte_Seq;
               Msg_Len : in     N32;
               Result  :    out Action)
@@ -2179,8 +2042,7 @@ is
       Desc_Code : in     Byte;
       Err       : in     Error_Code;
       Result    :    out Action)
-           with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                        and Desc_Code /= 0,
+           with Pre  => Desc_Code /= 0,
                 Post => S.State = Error_State
                         and Used (HC.Reasm) = 0
                         and S.Last_Error = Err
@@ -2188,15 +2050,14 @@ is
 
    procedure Reject_New_Session_Ticket_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State,
-        Post => S.State = Error_State
+   with Post => S.State = Error_State
                 and then Result in Has_Output | Error_Alert;
 
    procedure Reject_New_Session_Ticket_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    is
    begin
@@ -2213,7 +2074,7 @@ is
 
    procedure Cache_New_Session_Ticket_12
      (S          : in out Session;
-      HC         : in     Handshake_Context;
+      HC         : in     Engaged_Context;
       NST_Body   : in     Byte_Seq;
       Ticket_Len : in     N32;
       Lifetime   : in     Unsigned_32)
@@ -2227,7 +2088,7 @@ is
 
    procedure Cache_New_Session_Ticket_12
      (S          : in out Session;
-      HC         : in     Handshake_Context;
+      HC         : in     Engaged_Context;
       NST_Body   : in     Byte_Seq;
       Ticket_Len : in     N32;
       Lifetime   : in     Unsigned_32)
@@ -2251,7 +2112,7 @@ is
 
    procedure Handle_NST_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
@@ -2283,7 +2144,7 @@ is
 
    procedure Handle_NST_12
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Frag    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
@@ -2319,7 +2180,7 @@ is
 
    procedure Dispatch_Server_Flight_Message
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Msg_Type : in     Byte;
       Frag     : in     Byte_Seq;
       Msg_Len  : in     N32;
@@ -2333,11 +2194,6 @@ is
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
                 and then Frag'Last - Frag'First < Transcript_Capacity,
                         Post => (if Result = OK then
-                                                     S.State not in Idle | Closing | Closed | Error_State
-                                             and then
-                                               (if SPARKTLS_Transcript.Started (HC.TS)'Old
-                                                then SPARKTLS_Transcript.Started (HC.TS))
-                                                             and then
                                                 (if Msg_Type = HT_Server_Hello_Done
                                                  then Result /= OK)
                                               and then
@@ -2349,7 +2205,7 @@ is
 
    procedure Dispatch_Server_Flight_Message
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Msg_Type : in     Byte;
       Frag     : in     Byte_Seq;
      Msg_Len  : in     N32;
@@ -2476,8 +2332,6 @@ is
               end case;
                       pragma Assert_And_Cut
                         ((if Result = OK then
-                                              SPARKTLS_Transcript.Started (HC.TS)
-                              and then
                                 (if Msg_Type = HT_Server_Hello_Done
                                  then Result /= OK)
                               and then
@@ -2489,7 +2343,7 @@ is
 
    procedure Drain_Packed_Server_Flight
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Msg_Type : in out Byte;
       Msg_Len  : in out N32;
       Result   :    out Action)
@@ -2508,13 +2362,11 @@ is
                        and then HC.Cfg.Local.Has_Identity
                        and then HC.T12.Client_Cert_Allowed
                    then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
-                          (HC.Cfg.Local)),
-                Post => (if Result = OK then
-                             SPARKTLS_Transcript.Started (HC.TS));
+                          (HC.Cfg.Local));
 
    procedure Drain_Packed_Server_Flight
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Msg_Type : in out Byte;
       Msg_Len  : in out N32;
       Result   :    out Action)
@@ -2628,15 +2480,13 @@ is
 
    procedure Read_Server_Flight_Record
      (S           : in out Session;
-      HC          : in out Handshake_Context;
+      HC          : in out Engaged_Context;
       Rec         :    out Records.Parse_Result;
       Have_Record :    out Boolean;
       Result      :    out Action)
                    with Pre  => Warning_Alerts_Bounded_RFC_8446_6_1 (S)
                                ,
-                              Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
-                    and then
-                      (if SPARKTLS.Handshake.Server_Msgs
+                              Post => (if SPARKTLS.Handshake.Server_Msgs
                              .Local_Config_Valid (HC.Cfg.Local'Old)
                        then SPARKTLS.Handshake.Server_Msgs
                               .Local_Config_Valid (HC.Cfg.Local))
@@ -2656,7 +2506,7 @@ is
 
    procedure Read_Server_Flight_Record
      (S           : in out Session;
-      HC          : in out Handshake_Context;
+      HC          : in out Engaged_Context;
       Rec         :    out Records.Parse_Result;
       Have_Record :    out Boolean;
       Result      :    out Action)
@@ -2783,7 +2633,7 @@ is
 
    procedure Prepare_Leftover_Server_Flight_Message
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Msg_Type :    out Byte;
       Msg_Len  :    out N32;
       Ready    :    out Boolean;
@@ -2806,7 +2656,7 @@ is
 
    procedure Prepare_Leftover_Server_Flight_Message
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Msg_Type :    out Byte;
       Msg_Len  :    out N32;
       Ready    :    out Boolean;
@@ -2874,7 +2724,7 @@ is
 
    procedure Continue_Server_Flight_Reassembly
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Rec      : in     Records.Parse_Result;
       Msg_Type :    out Byte;
       Msg_Len  :    out N32;
@@ -2896,7 +2746,7 @@ is
 
    procedure Continue_Server_Flight_Reassembly
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Rec      : in     Records.Parse_Result;
       Msg_Type :    out Byte;
       Msg_Len  :    out N32;
@@ -2954,7 +2804,7 @@ is
 
    procedure Prepare_Fresh_Server_Flight_Message
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Rec      : in     Records.Parse_Result;
       Msg_Type :    out Byte;
       Msg_Len  :    out N32;
@@ -3099,7 +2949,7 @@ is
 
    procedure Prepare_Fresh_Server_Flight_Message
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Rec      : in     Records.Parse_Result;
       Msg_Type :    out Byte;
       Msg_Len  :    out N32;
@@ -3209,7 +3059,7 @@ is
 
                    procedure Prepare_Server_Flight_Message
                      (S        : in out Session;
-                      HC       : in out Handshake_Context;
+                      HC       : in out Engaged_Context;
                       Msg_Type :    out Byte;
                       Msg_Len  :    out N32;
                       Ready    :    out Boolean;
@@ -3231,7 +3081,7 @@ is
 
    procedure Prepare_Server_Flight_Message
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Msg_Type :    out Byte;
       Msg_Len  :    out N32;
       Ready    :    out Boolean;
@@ -3313,7 +3163,7 @@ is
    end Prepare_Server_Flight_Message;
 
    procedure Process_Server_Flight
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
    is
       Msg_Type : Byte;
       Msg_Len  : N32;
@@ -3349,15 +3199,8 @@ is
    ------------------------------------------------------------------
 
            procedure Process_Server_CCS
-             (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+             (S : in out Session; HC : in out Engaged_Context; Result : out Action)
            with Pre  => Warning_Alerts_Bounded_RFC_8446_6_1 (S)
-                and then S.Negotiated_Suite in
-                  Suite_ECDHE_RSA_AES128_GCM_SHA256
-                | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                        | Suite_ECDHE_RSA_CHACHA20_SHA256
-                        | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                                 and then
                                   (if HC.Cfg.Local /= null
                                        and then HC.Cfg.Local.Has_Identity
@@ -3370,9 +3213,7 @@ is
       procedure Consume_Reassembled_NST
         (Msg_Len : in N32;
          Result  : out Action)
-      with Pre  => S.State not in
-                     Idle | Closing | Closed | Error_State
-                                   and then Msg_Len <= Max_HS_Msg - 4;
+      with Pre  => Msg_Len <= Max_HS_Msg - 4;
 
       procedure Consume_Reassembled_NST
         (Msg_Len : in N32;
@@ -3676,19 +3517,16 @@ is
    --  into Scratch first; commit-fail paths are fatal (no rollback).
    procedure Send_Abbreviated_Client_Flight_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
-   with Pre  => S.State not in Idle | Closing | Closed | Error_State
-                and SPARKTLS_Transcript.Started (HC.TS),
-        Post => True
-                and (if Result = OK then
+   with Post => (if Result = OK then
                        S.State = S.State'Old
                        and then S.State not in Idle | Closing | Closed
                                              | Error_State);
 
    procedure Send_Abbreviated_Client_Flight_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    is
       use Records.TLS12;
@@ -3743,14 +3581,12 @@ is
    end Send_Abbreviated_Client_Flight_12;
 
    procedure Process_Server_Finished
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
-   with Pre  => S.State in Wait_Server_Finished | Client_Finished_Sent,
-        Post => True
-                and (if Result = OK then
+     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
+   with Post => (if Result = OK then
                        S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Process_Server_Finished
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
    is
       use Records.TLS12;
       use Key_Schedule_12;
@@ -3958,7 +3794,7 @@ is
    ------------------------------------------------------------------
 
    procedure Advance_Handshake_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
    is
    begin
       --  Fail closed: Advance is public API and may be called in any

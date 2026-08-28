@@ -6,12 +6,15 @@ is
    package H512 renames SPARKTLSCrypto.Hashing.SHA512;
 
    procedure Start (TS : out Transcript_State) is
+      C2 : H256.Context;
+      C3 : H384.Context;
+      C5 : H512.Context;
    begin
-      H256.Init (TS.C256);
-      H384.Init (TS.C384);
-      H512.Init (TS.C512);
-      TS.Choice   := Both;
-      TS.Has_Data := False;
+      H256.Init (C2);
+      H384.Init (C3);
+      H512.Init (C5);
+      TS := (C256 => C2, C384 => C3, C512 => C5,
+             Choice => Both, Has_Data => False);
    end Start;
 
    procedure Append (TS : in out Transcript_State; Data : Byte_Seq) is
@@ -133,5 +136,20 @@ is
             end;
       end case;
    end Reset_For_HRR;
+
+   function Fresh return Transcript_State is
+      TS : Transcript_State;
+   begin
+      Start (TS);
+      return TS;
+   end Fresh;
+
+   procedure Wipe (TS : in out Transcript_State) is
+   begin
+      H256.Init (TS.C256);
+      H384.Init (TS.C384);
+      H512.Init (TS.C512);
+      TS.Choice := Both;
+   end Wipe;
 
 end SPARKTLS_Transcript;

@@ -305,6 +305,15 @@ is
 
       --  Build record header: content_type || 0x0303 || fragment_length.
       --  RFC 5246 §6.2.1: version = negotiated (0x0303 for TLS 1.2).
+      --  Atomic record emission (review fix, 2026-08-27): refuse up
+      --  front if the WHOLE record does not fit, mirroring the TLS 1.3
+      --  builder. Without this, a partial header could reach Output
+      --  while the ciphertext write is refused -- 5 stray bytes
+      --  corrupting the stream with Bytes_Out = 0.
+      if Free_Space (Output) < Total then
+         return;
+      end if;
+
       Hdr (0) := Content_Type;
       Hdr (1) := TLS12_Version_Major;
       Hdr (2) := TLS12_Version_Minor;
@@ -358,7 +367,8 @@ is
       Plain_Len := 0;
       Valid := False;
 
-      --  The arithmetic limit, ~584,000 years of records. Fail closed
+      --  The arithmetic limit (2**62; ~73,000 years at 2M records/s;
+      --  see Max_Record_Counter and task #115). Fail closed
       --  rather than wrap: a wrapped counter would reuse a nonce. The ONE
       --  place this is checked, for every caller.
       if Keys.Counter = Record_Counter'Last then

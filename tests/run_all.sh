@@ -100,9 +100,9 @@ fi
 #  whatever binaries happened to be in bin/. That is how the 2026-08-19 run
 #  scored the protocol suite against an 08-18 tls_blocking_server. Capture the
 #  status explicitly instead of relying on the pipeline.
-build_or_die() {   #  $1 = human-readable stage name
+build_or_die() {   #  $1 = stage name, $2 = optional crate dir
     local out rc
-    out=$(alr -n --no-tty build 2>&1); rc=$?
+    out=$(cd "${2:-.}" && alr -n --no-tty build 2>&1); rc=$?
     printf '%s\n' "$out" | tail -3
     if [ $rc -ne 0 ]; then
         echo "FATAL: $1 build failed (exit $rc)"
@@ -122,15 +122,22 @@ cd "$REPO_ROOT"
 if [ -f tests/x509/x509_validate.gpr ]; then
     eval $(alr -n --no-tty printenv --unix)
     cd tests/x509
-    gprbuild -q -P x509_validate.gpr 2>&1 | tail -3
+    if ! gprbuild -q -P x509_validate.gpr 2>&1 | tail -3; then :; fi
+    rc=${PIPESTATUS[0]}
+    if [ "$rc" -ne 0 ]; then
+        echo "FATAL: x509 validator build failed (exit $rc)"
+        exit 1
+    fi
     cd "$REPO_ROOT"
 fi
 
-# Build crypto unit tests
+# Build crypto unit tests. MUST go through build_or_die: on 2026-08-26 a
+# failed unit build ("no selector PSK for HC_Box") scrolled past the old
+# ungated "alr build | tail -3" and the suite scored 4187 passes against
+# stale binaries. Release tests run -gnatp, so staleness never crashes --
+# a hard build gate is the only tell.
 if [ -f tests/unit/alire.toml ]; then
-    cd tests/unit
-    alr -n --no-tty build 2>&1 | tail -3
-    cd "$REPO_ROOT"
+    build_or_die "Unit tests" tests/unit
 fi
 
 # --- Generate test certificates ---

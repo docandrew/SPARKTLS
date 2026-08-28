@@ -47,8 +47,7 @@ is
       Data : in     Byte_Seq;
               OK   :    out Boolean)
                                                               with Pre => Data'Length > 0
-                                                                                 and then Data'Last <= N32 (Max_HS_Msg) - 1
-                                                                                 and then HC.Legacy_Session_ID_Len in 0 .. 32,
+                                                                                 and then Data'Last <= N32 (Max_HS_Msg) - 1,
                     Post => (if HC.Cfg.Local'Old /= null
                               then HC.Cfg.Local /= null
                                    and then
@@ -68,21 +67,19 @@ is
                                        then Negotiated_Suite (S) in
                                          Suite_AES_128_GCM_SHA256
                                        | Suite_AES_256_GCM_SHA384
-                                       | Suite_CHACHA20_POLY1305_SHA256)
-                                                    and then HC.Legacy_Session_ID_Len in 0 .. 32;
+                                       | Suite_CHACHA20_POLY1305_SHA256);
 
    --  Build a ServerHello handshake message.
    --  Includes key_share and supported_versions extensions.
    --  Returns the complete handshake message ready for record wrapping.
    procedure Build_Server_Hello
      (S      : in     Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
                 and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
                 and then HC.Cfg.Random /= null
-                                and then HC.Legacy_Session_ID_Len in 0 .. 32
                                 and then Negotiated_Suite (S) in Suite_AES_128_GCM_SHA256
                                                        | Suite_AES_256_GCM_SHA384
                                                        | Suite_CHACHA20_POLY1305_SHA256,
@@ -101,6 +98,10 @@ is
 
    function Has_ALPN_Match (HC : Handshake_Context) return Boolean;
 
+   --  Exported for the TLS 1.2 ServerHello builder (was a byte-identical
+   --  _12 clone in Handshake.TLS12; deleted 2026-08-27).
+   function Select_ALPN (HC : Handshake_Context) return Hostname_Buf;
+
    --  RFC 8446 Section 4.3.1: Build EncryptedExtensions.
    --  Sent immediately after ServerHello (encrypted with HS keys).
    --  May include ALPN extension if client offered and server matches.
@@ -111,7 +112,7 @@ is
    --  builder can keep proving its Set_State / Send_Alert_And_Error
    --  preconditions.
    procedure Build_Encrypted_Extensions
-     (HC     : in     Handshake_Context;
+     (HC     : in     Engaged_Context;
       S      : in out Session;
       Result :    out Byte_Seq;
       Len    :    out N32)

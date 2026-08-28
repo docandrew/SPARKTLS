@@ -28,6 +28,8 @@ use type X509.Certificate;
 package body SPARKTLS.Server.TLS12 with
    SPARK_Mode => On
 is
+
+   pragma Unevaluated_Use_Of_Old (Allow);
    use Handshake.TLS12;
 
    procedure Send_Alert_And_Error
@@ -89,8 +91,7 @@ is
       HC     : in out Handshake_Context;
       Err    : Error_Code;
       Result : out Action)
-   with Pre  => S.State not in Idle | Closed | Closing | Error_State
-                and then Alert_Desc (Err) /= 0
+   with Pre  => Alert_Desc (Err) /= 0
                 and then Alert_Desc (Err) /= 90,
         Post => S.State = Error_State
                 and S.Role = S.Role'Old
@@ -148,13 +149,12 @@ is
    end Send_Encrypted_Alert_Connected_12;
 
    procedure Append_Transcript
-     (HC : in out Handshake_Context; Data : Byte_Seq)
+     (HC : in out Engaged_Context; Data : Byte_Seq)
    with Pre  => Data'Length > 0,
         Post => Used (HC.Reasm) = Used (HC.Reasm)'Old
                 and then HC.Version = HC.Version'Old
                 and then HC.KE = HC.KE'Old
                 and then HC.Peer_Leaf = HC.Peer_Leaf'Old
-                and then SPARKTLS_Transcript.Started (HC.TS)
    is
    begin
       SPARKTLS_Transcript.Append (HC.TS, Data);
@@ -178,7 +178,7 @@ is
    --  attempt may fall through to.
    procedure Build_Server_Flight_12_Full
      (S      : in out Server_Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
    with Pre  => HC.Version = TLS_1_2
@@ -199,7 +199,7 @@ is
    --  then transitions to Wait_Client_Finished to receive the
    --  client's CCS + Finished.
    procedure Build_Abbreviated_Server_Flight_12
-     (S : in out Server_Session; HC : in out Handshake_Context;
+     (S : in out Server_Session; HC : in out Engaged_Context;
       Cfg : in Ready_Config; Result : out Action)
    with Pre  => HC.Version = TLS_1_2
                 and then HC.Cfg.Get_Active_TEK /= null
@@ -217,7 +217,7 @@ is
 
    procedure Build_Server_Flight_12
      (S      : in out Server_Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
    is
@@ -314,7 +314,7 @@ is
 
    procedure Build_Server_Flight_12_Full
      (S      : in out Server_Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
    is
@@ -526,7 +526,7 @@ is
       end case;
 
       if Cfg.Require_ALPN
-        and then not Has_ALPN_Match_12 (HC)
+        and then not SPARKTLS.Handshake.Server_Msgs.Has_ALPN_Match (HC)
       then
          Send_Alert_And_Error (S, No_Application_Protocol, Result);
          return;
@@ -701,7 +701,7 @@ is
    --  the back half of Derive_Keys_12 (the Expand_Keys + S.Server_App
    --  assignments) without the master-secret PRF step.
    procedure Derive_Keys_Resumed_12
-     (S : in out Session; HC : in out Handshake_Context; Cfg : in Ready_Config)
+     (S : in out Session; HC : in out Engaged_Context; Cfg : in Ready_Config)
            with Pre  => HC.Version = TLS_1_2
                    and then S.Negotiated_Suite in
                           Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -768,7 +768,7 @@ is
    --  HC.Master_Secret_12 + forced S.Negotiated_Suite from the ticket.
    ------------------------------------------------------------------
    procedure Build_Abbreviated_Server_Flight_12
-     (S : in out Server_Session; HC : in out Handshake_Context;
+     (S : in out Server_Session; HC : in out Engaged_Context;
       Cfg : in Ready_Config; Result : out Action)
    is
       use Key_Schedule_12;
@@ -811,7 +811,7 @@ is
               end;
 
       if Cfg.Require_ALPN
-        and then not Has_ALPN_Match_12 (HC)
+        and then not SPARKTLS.Handshake.Server_Msgs.Has_ALPN_Match (HC)
       then
          Send_Alert_And_Error (S, No_Application_Protocol, Result);
          return;
@@ -972,7 +972,7 @@ is
    end Build_Abbreviated_Server_Flight_12;
 
    procedure Derive_Keys_12
-     (S : in out Session; HC : in out Handshake_Context; Cfg : in Ready_Config)
+     (S : in out Session; HC : in out Engaged_Context; Cfg : in Ready_Config)
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
@@ -1096,7 +1096,7 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_Key_Exchange_12
-             (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+             (S : in out Session; HC : in out Engaged_Context; Result : out Action)
            is
               Rec : Records.Parse_Result;
                       CKE_Transcript_Nonempty : Boolean := False
@@ -1212,9 +1212,6 @@ is
          else
             Result := Need_Input;
          end if;
-         pragma Assert
-           (if S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-            then True);
          return;
       end if;
 
@@ -1241,9 +1238,6 @@ is
                Send_Alert_And_Error (S, Unexpected_Message, Result);
             end if;
          end;
-         pragma Assert
-           (if S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-            then True);
          return;
       end if;
 
@@ -1293,9 +1287,6 @@ is
                Result := Error_Alert;
             end if;
             pragma Unreferenced (Alert_Level);
-            pragma Assert
-              (if S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-               then True);
             return;
          end;
       end if;
@@ -1303,9 +1294,6 @@ is
       if Rec.Content /= Records.Content_Handshake then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          Send_Alert_And_Error (S, Unexpected_Message, Result);
-         pragma Assert
-           (if S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
-            then True);
          return;
       end if;
 
@@ -1482,7 +1470,6 @@ is
                                                       and then
                                                 (if Result = OK
                                          then S.State = S.State'Old
-                                      and then SPARKTLS_Transcript.Started (HC.TS)
                                          else S.State = Error_State)
                  is
                     CKE_OK : Boolean;
@@ -1685,7 +1672,7 @@ is
               end Process_Client_Key_Exchange_12;
 
            procedure Process_Client_Certificate_12
-             (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+             (S : in out Session; HC : in out Engaged_Context; Result : out Action)
            is
       Rec : Records.Parse_Result;
    begin
@@ -1833,7 +1820,7 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_CertVerify_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
    is
       Rec : Records.Parse_Result;
    begin
@@ -2033,7 +2020,7 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_CCS_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
    is
       pragma Unreferenced (S, HC);
    begin
@@ -2045,7 +2032,7 @@ is
 
    ------------------------------------------------------------------
    procedure Process_Client_Finished_12
-     (S : in out Session; HC : in out Handshake_Context; Result : out Action)
+     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
    is
       use SPARKTLS.Records.TLS12;
       use Key_Schedule_12;

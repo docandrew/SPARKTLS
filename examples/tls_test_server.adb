@@ -30,7 +30,7 @@ procedure TLS_Test_Server is
    Id_OK : Boolean;
 
    --  Session
-   S   : SPARKTLS.Session;
+   S   : SPARKTLS.Server_Session;
    Res : SPARKTLS.Action;
 
    --  Network I/O buffers

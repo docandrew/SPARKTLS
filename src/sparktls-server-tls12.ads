@@ -55,7 +55,7 @@ is
    --  After this, state transitions to Server_Hello_Done_Sent_12.
    procedure Build_Server_Flight_12
      (S      : in out Server_Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
    with Pre  => HC.Version = TLS_1_2
@@ -79,7 +79,7 @@ is
    --  arrived.
    procedure Process_Client_Key_Exchange_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    --  Version is what the nested helpers (Compute_Shared_Secret_12,
    --  Finish_CKE's flight builders) require. All three dispatcher call
@@ -102,14 +102,14 @@ is
    --  key possession before Finished.
    procedure Process_Client_Certificate_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    ;
 
    --  Process TLS 1.2 CertificateVerify from a client-authenticated peer.
    procedure Process_Client_CertVerify_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    ;
 
@@ -119,7 +119,7 @@ is
    --  dispatch has already gone off the expected path.
    procedure Process_Client_CCS_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    with Pre => HC.Version = TLS_1_2
                and then S.State = Wait_Client_Finished;
@@ -134,7 +134,7 @@ is
    --  decrypt and verify the Finished record.
    procedure Process_Client_Finished_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    ;
 
@@ -145,22 +145,13 @@ is
    --  Sets up Traffic_Keys for both directions.
    procedure Derive_Keys_12
      (S  : in out Session;
-      HC : in out Handshake_Context;
+      HC : in out Engaged_Context;
       Cfg : in Ready_Config)
       with Pre =>
         HC.Version = TLS_1_2
         --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
-        and then SPARKTLS_Transcript.Started (HC.TS)
 
-     --  Negotiated_Suite must be one of the six TLS 1.2 ECDHE suites
-     --  we recognize, so the local mapping matches Internal_Suite_For.
-     and then S.Negotiated_Suite in
-                Suite_ECDHE_RSA_AES128_GCM_SHA256
-              | Suite_ECDHE_RSA_AES256_GCM_SHA384
-              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-              | Suite_ECDHE_RSA_CHACHA20_SHA256
-              | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+        ,
         --  RFC 7627 §4: master_secret PRF binding. After Derive_Keys_12
         --  returns, HC.MS_Derivation matches HC.Use_EMS via the
         --  EMS_PRF_Binding_RFC_7627_4 predicate. This is the v9→v12

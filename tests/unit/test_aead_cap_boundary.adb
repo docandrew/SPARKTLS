@@ -36,14 +36,16 @@ procedure Test_AEAD_Cap_Boundary is
 begin
    --  1. The type/design agreement: the counter's bound IS the budget,
    --     and Space_Left flips exactly at it.
-   Check ("Record_Counter'Last is the AEAD cap",
-          Unsigned_64 (Record_Counter'Last) = Cap);
+   Check ("Rekey_After_Records is the TX budget cap",
+          Unsigned_64 (Rekey_After_Records) = Cap);
+   Check ("Record_Counter'Last is the RX arithmetic bound (#115)",
+          Unsigned_64 (Record_Counter'Last) = 2**62);
    declare
       K : Traffic_Keys;
    begin
-      K.Counter := Record_Counter'Last - 1;
+      K.Counter := Rekey_After_Records - 1;
       Check ("Space_Left at cap - 1", Space_Left (K));
-      K.Counter := Record_Counter'Last;
+      K.Counter := Rekey_After_Records;
       Check ("no Space_Left at the cap", not Space_Left (K));
    end;
 
@@ -59,7 +61,7 @@ begin
       Bytes_Out : N32;
    begin
       Keys.Suite   := Suite_AES_128_GCM_SHA256;
-      Keys.Counter := Record_Counter'Last - 1;
+      Keys.Counter := Rekey_After_Records - 1;
       SPARKTLS.Records.TLS12.Build_Encrypted_Record_12
         (Plaintext    => Plain,
          Content_Type => 16#17#,
@@ -110,7 +112,7 @@ begin
       declare
          K : Traffic_Keys;
       begin
-         K.Counter := Record_Counter'Last - Rekey_Margin;
+         K.Counter := Rekey_After_Records - Rekey_Margin;
          Check ("budget reached exactly at cap - margin",
                 Write_Budget_Reached (K));
          K.Counter := K.Counter - 1;
@@ -118,7 +120,7 @@ begin
                 not Write_Budget_Reached (K));
          Check ("headroom inside the margin still has Space_Left",
                 Space_Left ((K with delta
-                              Counter => Record_Counter'Last - 1)));
+                              Counter => Rekey_After_Records - 1)));
       end;
 
       --  Rekey as the only exit is covered elsewhere: Update_Secret's

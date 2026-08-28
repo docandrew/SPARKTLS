@@ -94,7 +94,7 @@ procedure TLS_Blocking_Server is
    TEK_Rotate_Secs : constant Unsigned_32 := Get_TEK_Rotate_Secs;
 
    procedure Handle_Connection (Client_Sock : Socket_Type) is
-      S         : SPARKTLS.Session;
+      S         : SPARKTLS.Server_Session;
       Res       : SPARKTLS.Action;
       Read_Dead : Boolean := False;
       Write_Dead : Boolean := False;

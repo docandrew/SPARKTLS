@@ -66,19 +66,12 @@ is
      (Key    :    out OKM_Seq;
       IV     :    out OKM_Seq;
       Secret : in     Byte_Seq)
-   with Pre => Key'First = 0 and Key'Last = 31      --  256-bit key
+   with Pre => Key'First = 0
+               and (Key'Last = 31 or Key'Last = 15)  --  256- or 128-bit key
                and IV'First = 0 and IV'Last = 11     --  96-bit IV
                and Secret'First = 0 and Secret'Last = 31;
 
    --  RFC 8446 §7.3: Derive AES-128 traffic key (16 bytes) and IV.
-   procedure Derive_Traffic_Key_IV_128
-     (Key    :    out OKM_Seq;
-      IV     :    out OKM_Seq;
-      Secret : in     Byte_Seq)
-   with Pre => Key'First = 0 and Key'Last = 15       --  128-bit key
-               and IV'First = 0 and IV'Last = 11      --  96-bit IV
-               and Secret'First = 0 and Secret'Last = 31;
-
    --  RFC 8446 §7.1: Master Secret = HKDF-Extract(derived, 0).
    --  Derived from handshake secret via Derive-Secret.
    procedure Derive_Master_Secret

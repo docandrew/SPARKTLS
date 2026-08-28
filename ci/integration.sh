@@ -7,6 +7,12 @@ cd "$ROOT"
 OUT="${TMPDIR:-/tmp}/sparktls-integration.$$.log"
 trap 'rm -f "$OUT"' EXIT
 
+#  Integration executes bin/examples/* -- rebuild them first so we can
+#  never score protocol behavior against stale binaries (2026-08-26).
+if ! (cd examples && alr -n --no-tty build > /dev/null 2>&1); then
+  echo "FATAL: examples build failed" ; exit 1
+fi
+
 set +e
 tests/integration/run.sh 2>&1 | tee "$OUT"
 rc=${PIPESTATUS[0]}

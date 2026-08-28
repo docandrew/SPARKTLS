@@ -25,6 +25,8 @@ use type SPARKTLS_Transcript.Transcript_State;
 package body SPARKTLS.Handshake.Certs with
    SPARK_Mode => On
 is
+
+   pragma Unevaluated_Use_Of_Old (Allow);
    use type RBT.Length;
    use type RBT.Index;
    use type RBT.Bytes_Ptr;
@@ -596,14 +598,6 @@ is
    --  conversion + loop-invariant arithmetic from the parent
    --  Parse_Certificate_Chain_13 body so the prover sees a tight
    --  obligation rather than a deeply-nested cascade.
-   procedure Copy_Cert_To_X509
-     (Cert_RFLX : in     RBT.Bytes;
-      Cert_X    :    out X509.Byte_Seq)
-   with Pre  => Cert_RFLX'First = 1
-                and then Cert_X'First = 0
-                and then Cert_X'Length > 0
-                and then Cert_X'Length <= Max_Cert_DER
-                and then Natural (Cert_RFLX'Length) = Cert_X'Length;
 
    procedure Copy_Cert_To_X509
      (Cert_RFLX : in     RBT.Bytes;
@@ -622,18 +616,6 @@ is
       end loop;
    end Copy_Cert_To_X509;
 
-   procedure Parse_X509_From_RFLX
-     (Cert_RFLX : in     RBT.Bytes;
-      C_Len     : in     N32;
-      Cert      :    out X509.Certificate;
-      OK        :    out Boolean)
-   with Pre => C_Len > 0
-               and then C_Len <= N32 (Max_Cert_DER)
-               and then Cert_RFLX'First = 1
-               and then Cert_RFLX'Length = RBT.Length (C_Len),
-        Post => (if OK then X509.Is_Valid (Cert)
-                            and X509.Spans_Valid
-                                  (Cert, X509.N32 (C_Len) - 1));
 
    procedure Parse_X509_From_RFLX
      (Cert_RFLX : in     RBT.Bytes;
@@ -651,34 +633,6 @@ is
 
    --  Same as Copy_Cert_To_X509 but into the HC.Peer_Leaf.DER buffer
    --  region (0-based, capacity Max_Cert_DER_Len).
-   procedure Copy_Cert_To_Peer_DER
-     (Cert_RFLX : in     RBT.Bytes;
-      HC        : in out Handshake_Context;
-      C_Len     : in     N32)
-           with Pre  => Cert_RFLX'First = 1
-                                        and then Cert_RFLX'Length = RBT.Length (C_Len)
-                                        and then C_Len > 0
-                                                and then C_Len <= N32 (Max_Cert_DER),
-                Post => HC.Client_HS = HC.Client_HS'Old
-                        and then HC.TS = HC.TS'Old
-                        and then HC.Hash_Len = HC.Hash_Len'Old
-                        and then (if HC.Cfg.Local'Old /= null
-                                  then HC.Cfg.Local /= null)
-                        and then (if HC.Cfg.Local'Old /= null
-                                      and then HC.Cfg.Local'Old.Has_Identity
-                                          then HC.Cfg.Local /= null
-                                               and then HC.Cfg.Local.Has_Identity)
-                        and then
-                          (if HC.Cfg.Local'Old /= null
-                              and then SPARKTLS.Handshake.Server_Msgs
-                                .Local_Config_Valid (HC.Cfg.Local'Old)
-                           then HC.Cfg.Local /= null
-                                and then SPARKTLS.Handshake.Server_Msgs
-                                  .Local_Config_Valid (HC.Cfg.Local))
-                        and then (if HC.Cfg.Random'Old /= null
-                                          then HC.Cfg.Random /= null)
-                                and then HC.Peer_Leaf.DER_Len = X509.N32 (C_Len)
-                                and then not HC.Peer_Leaf.Present;
 
    procedure Copy_Cert_To_Peer_DER
      (Cert_RFLX : in     RBT.Bytes;
@@ -701,17 +655,6 @@ is
       end loop;
    end Copy_Cert_To_Peer_DER;
 
-   procedure Store_Intermediate
-     (Cert_RFLX : in     RBT.Bytes;
-      Cert      : in     X509.Certificate;
-      C_Len     : in     N32;
-      Target    :    out Pool_Entry)
-   with Pre => Cert_RFLX'First = 1
-               and Cert_RFLX'Length = RBT.Length (C_Len)
-               and C_Len > 0
-               and C_Len <= N32 (Max_Cert_DER)
-               and X509.Is_Valid (Cert)
-               and X509.Spans_Valid (Cert, X509.N32 (C_Len) - 1);
 
    procedure Store_Intermediate
      (Cert_RFLX : in     RBT.Bytes;
@@ -737,7 +680,7 @@ is
    end Store_Intermediate;
 
    procedure Parse_Certificate_Chain_13
-     (HC                     : in out Handshake_Context;
+     (HC                     : in out Engaged_Context;
       HS_Msg                 : in     Byte_Seq;
       Reject_Cert_Extensions : in     Boolean;
       OK                     :    out Boolean;
@@ -1020,7 +963,7 @@ is
            end Parse_Certificate_Chain_13;
 
    procedure Parse_Certificate_Chain_12
-     (HC     : in out Handshake_Context;
+     (HC     : in out Engaged_Context;
       HS_Msg : in     Byte_Seq;
       OK     :    out Boolean;
       Err    :    out Error_Code)

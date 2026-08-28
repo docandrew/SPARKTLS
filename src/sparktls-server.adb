@@ -34,6 +34,8 @@ with SPARKTLSCrypto.Hashing.SHA384;
 package body SPARKTLS.Server with
    SPARK_Mode => On
 is
+
+   pragma Unevaluated_Use_Of_Old (Allow);
    --  Server_Config_Can_Start moved to the spec's private part alongside
    --  Ready_Config, whose membership test it anchors.
 
@@ -100,7 +102,19 @@ is
    procedure Advance_Handshake
      (S      : in out Server_Session;
       HC     : in out Handshake_Context;
-      Result :    out Action);
+      Result :    out Action)
+   with Pre => not HC'Constrained
+               --  State-phase coupling: every state past Wait_Client_Hello
+               --  has the CH in the transcript, so the context is Engaged.
+               --  Provable everywhere except the top-level borrow from the
+               --  heap box, where no invariant ties S.State to heap
+               --  contents; that single residual VC dies with #106
+               --  (co-locate HC with the session, then this becomes a
+               --  session predicate).
+               --  (Wait_Client_Hello_Retry is NOT exempt: the HRR path
+               --  Engages on the first ClientHello before entering it.)
+               and then (if S.State /= Wait_Client_Hello
+                         then HC.Phase = Engaged);
            --  NO POSTCONDITION HERE, DELIBERATELY. It used to carry
            --  "Post => S.State in Connection_State", a TAUTOLOGY (S.State IS a
            --  Connection_State) that looked like a contract and told callers
@@ -122,7 +136,7 @@ is
 
            procedure Complete_Client_Hello_Retry
              (S                      : in out Session;
-              HC                     : in out Handshake_Context;
+              HC                     : in out Engaged_Context;
               Msg                    : in     Byte_Seq;
               Consume_Current_Record : in     Boolean;
               Record_Len             : in     N32;
@@ -131,7 +145,6 @@ is
            with Pre  => Server_Active (S)
                         and then S.State = Wait_Client_Hello_Retry
                                 and then S.Role = Role_Server
-                                and then HC.Legacy_Session_ID_Len in 0 .. 32
                         and then Msg'First = 0
                         and then Msg'Last <= N32 (Max_HS_Msg) - 1
                         and then
@@ -143,7 +156,6 @@ is
                                    and then S.State = Wait_Client_Hello_Retry
                                    and then S.Role = Role_Server
                                    and then Result = OK
-                                   and then HC.Legacy_Session_ID_Len in 0 .. 32
                                                         and then S.Negotiated_Suite in
                                      Suite_AES_128_GCM_SHA256
                                    | Suite_AES_256_GCM_SHA384
@@ -163,7 +175,6 @@ is
            with Pre  => Server_Active (S)
                         and then S.State = Wait_Client_Hello_Retry
                         and then S.Role = Role_Server
-                        and then HC.Legacy_Session_ID_Len in 0 .. 32
                         and then Msg'First = 0
                         and then Msg'Length > 0
                         and then Msg'Last <= N32 (Max_HS_Msg) - 1,
@@ -174,7 +185,6 @@ is
                                   S.Input.Read_Pos'Old
                                 and then S.Input.Write_Pos =
                                   S.Input.Write_Pos'Old
-                                                and then HC.Legacy_Session_ID_Len in 0 .. 32
                         and then
                                   (if Valid
                                    then HC.Version = TLS_1_3
@@ -185,20 +195,19 @@ is
 
    procedure Build_Server_Flight_After_Client_Hello_Retry
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
    with Pre  => Server_Active (S)
                         and then S.State = Wait_Client_Hello_Retry
                         and then S.Role = Role_Server
-                        and then HC.Legacy_Session_ID_Len in 0 .. 32
                 and then S.Negotiated_Suite in
                   Suite_AES_128_GCM_SHA256
                         | Suite_AES_256_GCM_SHA384
                         | Suite_CHACHA20_POLY1305_SHA256;
            procedure Handle_Client_Hello_Retry
              (S      : in out Server_Session;
-              HC     : in out Handshake_Context;
+              HC     : in out Engaged_Context;
               Result :    out Action)
            --  Same shape as Handle_Wait_Client_Hello: without a state Pre the
            --  prover knows nothing about S.State on entry, so the eight
@@ -209,7 +218,7 @@ is
 
    procedure Build_Server_Flight
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
            with Pre  => Server_Active (S)
@@ -224,7 +233,7 @@ is
 
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Group     : in     Unsigned_16;
       HRR_Buf   :    out Byte_Seq;
               HRR_Len   :    out N32;
@@ -239,7 +248,7 @@ is
 
    procedure Append_And_Encrypt_Server_HS
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
       Result    :    out Action;
@@ -260,7 +269,7 @@ is
 
    procedure Append_And_Encrypt_Server_HS_Fragmented
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
       Result    :    out Action;
@@ -286,17 +295,17 @@ is
    --  anywhere in this chain.
    procedure Process_Client_Auth
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action);
 
    procedure Process_Client_Finished
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action);
    procedure Handle_PCF_App_Data
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
    with Pre => S.State = Wait_Client_Finished
@@ -315,7 +324,7 @@ is
                        ;
    procedure Verify_Client_Finished
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Msg_Len   : in     N32;
@@ -338,35 +347,27 @@ is
 
    procedure Derive_Handshake_Keys
      (S  : in     Session;
-      HC : in out Handshake_Context)
-   with Pre => SPARKTLS_Transcript.Started (HC.TS)
-               and True
-                       and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+      HC : in out Engaged_Context)
+   with Pre => S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                | Suite_AES_256_GCM_SHA384
-                                               | Suite_CHACHA20_POLY1305_SHA256
-                                       and True,
+                                               | Suite_CHACHA20_POLY1305_SHA256,
                         Post => HC.TS = HC.TS'Old
                                 and HC.Server_HS.Counter = 0
                                 and (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
                                      then HC.Hash_Len = 48
-                                     else HC.Hash_Len = 32)
-                                                and True;
+                                     else HC.Hash_Len = 32);
 
    procedure Derive_App_Keys
      (S  : in out Session;
-      HC : in out Handshake_Context)
-   with Pre => SPARKTLS_Transcript.Started (HC.TS)
-               and True
-                       and S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+      HC : in out Engaged_Context)
+   with Pre => S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                | Suite_AES_256_GCM_SHA384
-                                               | Suite_CHACHA20_POLY1305_SHA256
-                       and True,
+                                               | Suite_CHACHA20_POLY1305_SHA256,
                 Post => HC.TS = HC.TS'Old
                         and S.State = S.State'Old
                 and S.Role = S.Role'Old
                         and S.Negotiated_Suite = S.Negotiated_Suite'Old
-                        and S.Server_App.Counter = 0
-                        and True;
+                        and S.Server_App.Counter = 0;
 
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
@@ -497,7 +498,7 @@ is
    --  RFC 5246 §7.4.9 / RFC 8446 §4.4.1: append-only invariant
    --  (transcript drives Finished verify_data).
    procedure Append_Transcript
-     (HC   : in out Handshake_Context;
+     (HC   : in out Engaged_Context;
       Data : in     Byte_Seq)
    with Post => (if SPARKTLS_Transcript.Started (HC.TS)'Old
                     or else Data'First <= Data'Last
@@ -514,9 +515,7 @@ is
       SPARKTLS_Transcript.Append (HC.TS, Data);
    end Append_Transcript;
 
-   function Transcript_Hash_256 (HC : Handshake_Context) return Digest
-   with Pre => SPARKTLS_Transcript.Started (HC.TS)
-               and True
+   function Transcript_Hash_256 (HC : Engaged_Context) return Digest
    is
       H : Digest;
    begin
@@ -524,10 +523,8 @@ is
       return H;
    end Transcript_Hash_256;
 
-   function Transcript_Hash_384 (HC : Handshake_Context)
+   function Transcript_Hash_384 (HC : Engaged_Context)
       return SPARKNaCl.Hashing.SHA384.Digest
-   with Pre => SPARKTLS_Transcript.Started (HC.TS)
-               and True
    is
       H : SPARKNaCl.Hashing.SHA384.Digest;
    begin
@@ -607,8 +604,7 @@ is
       --  carry correct defaults (see SHA256.Context), but the explicit
       --  Start documents the lifecycle and resets Choice/Has_Data if
       --  the allocator ever recycles contexts.
-      SPARKTLS_Transcript.Start (S.HC_Ptr.TS);
-      S.HC_Ptr.Cfg := Cfg;
+      S.HC_Ptr.C.Cfg := Cfg;
       pragma Assert (Role (S) = Role_Server);
       pragma Assert (State (S) = Wait_Client_Hello);
    end Init;
@@ -625,7 +621,11 @@ is
       HC.KE.Local_SK := (others => 0);
       HC.KE.P256_SK := (others => 0);
       HC.KE.P384_SK := (others => 0);
-      SPARKTLS_Transcript.Start (HC.TS);
+      if HC.Phase = Engaged then
+         SPARKTLS_Transcript.Wipe (HC.TS);
+      end if;
+      HC.T12.Resumed_Master_Secret := (others => 0);
+      HC.EMS_Session_Hash := (others => 0);
       HC.PSK.Value := (others => 0);
       HC.PSK.Binder := (others => 0);
       HC.PSK.Offer_ID := (others => 0);
@@ -768,7 +768,7 @@ is
          end if;
 
          --  BORROW: Advance_Handshake takes both S and the context.
-         --  Passing S and S.HC_Ptr.all together is aliasing (SPARK RM
+         --  Passing S and S.HC_Ptr.C together is aliasing (SPARK RM
          --  6.4.2) -- flow analysis reports it as "high", and note that
          --  --mode=check_all does NOT catch it, since aliasing is a flow
          --  check rather than a legality one. Move the pointer out of S
@@ -778,15 +778,15 @@ is
             HC : Handshake_Context_Access := S.HC_Ptr;
          begin
             S.HC_Ptr := null;
-            Advance_Handshake (S, HC.all, Result);
+            Advance_Handshake (S, HC.C, Result);
             S.HC_Ptr := HC;
          end;
 
          if S.State in Connected | Error_State | Closed then
-            S.Peer_Cert_Valid := S.HC_Ptr.Peer_Leaf.Present;
-            S.Use_EMS := S.HC_Ptr.Use_EMS;
+            S.Peer_Cert_Valid := S.HC_Ptr.C.Peer_Leaf.Present;
+            S.Use_EMS := S.HC_Ptr.C.Use_EMS;
             --  Zero ALL key material before freeing HC.
-            Scrub_Handshake_Context (S.HC_Ptr.all);
+            Scrub_Handshake_Context (S.HC_Ptr.C);
             HC_Alloc.Free (S.HC_Ptr);
          end if;
       end if;
@@ -794,15 +794,14 @@ is
 
    procedure Complete_Client_Hello
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    with Pre => S.State = Wait_Client_Hello
-               and then S.Role = Role_Server
-                       and then HC.Legacy_Session_ID_Len in 0 .. 32;
+               and then S.Role = Role_Server;
 
    procedure Complete_Client_Hello
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    is
    begin
@@ -948,7 +947,8 @@ is
            --  "precondition might fail" findings in this unit (round 30).
            --  Discharged trivially: the sole caller is the
            --  "when Wait_Client_Hello =>" arm of Advance_Handshake's case.
-           with Pre  => S.State = Wait_Client_Hello;
+           with Pre  => S.State = Wait_Client_Hello
+                        and then not HC'Constrained;
 
    procedure Handle_Wait_Client_Hello
              (S      : in out Server_Session;
@@ -1035,7 +1035,6 @@ is
                           procedure Process_Handshake_Record
                           with Pre => S.State = Wait_Client_Hello
                                       and then S.Role = Role_Server
-                                      and then HC.Legacy_Session_ID_Len in 0 .. 32
                                       and then Server_State_Keys_Ready (S, HC)
                                               and then Handshake_Record_Fragment_Ready
                                                 (Rec)
@@ -1052,27 +1051,22 @@ is
                   --  Larger messages are rejected.
 
                                   procedure Free_Reasm
-                                  with Pre  => Server_Active (S)
-                                                                       and then HC.Legacy_Session_ID_Len
-                                                                         in 0 .. 32,
+                                  with Pre  => Server_Active (S),
                                                                Post => Server_Active (S)
                                                                        and then S.Role = S.Role'Old
                                                                        and then S.State = S.State'Old
                                                                        and then S.Negotiated_Suite =
                                                                          S.Negotiated_Suite'Old
                                                                        and then HC.Version = HC.Version'Old
-                                                                       and then HC.TS = HC.TS'Old
-                                                                       and then HC.Legacy_Session_ID_Len
-                                                                         in 0 .. 32
            is
                   begin
                      Reset (HC.Reasm);
                   end Free_Reasm;
 
                                           procedure Continue_Reassembly
-                                  with Pre => S.State = Wait_Client_Hello
+                                  with Pre => not HC'Constrained
+                                              and then S.State = Wait_Client_Hello
                                               and then S.Role = Role_Server
-                                              and then HC.Legacy_Session_ID_Len in 0 .. 32
                                               and then Server_State_Keys_Ready (S, HC)
                                       and then Handshake_Record_Fragment_Ready
                                         (Rec)
@@ -1090,8 +1084,6 @@ is
                                              procedure Decode_Pending_Reassembly_Header
                                                              with Pre => S.State = Wait_Client_Hello
                                                                          and then S.Role = Role_Server
-                                                                         and then HC.Legacy_Session_ID_Len
-                                                                           in 0 .. 32
                                                                                          and then Header_Ready (HC.Reasm),
                                                                                                                                   Post =>
                                                                                                                       S.State in Wait_Client_Hello | Error_State
@@ -1124,8 +1116,6 @@ is
                                                                       and then
                                                                         (if S.State /= Wait_Client_Hello
                                                                          then S.State = Error_State)
-                                                              and then HC.Legacy_Session_ID_Len
-                                                                in 0 .. 32
                                                               );
                                                            return;
                                                 end if;
@@ -1136,9 +1126,7 @@ is
                                                                                      Wait_Client_Hello
                                                                                    and then S.State in
                                                                                      Wait_Client_Hello
-                                                                                   | Error_State
-                                                                           and then HC.Legacy_Session_ID_Len
-                                                                             in 0 .. 32);
+                                                                                   | Error_State);
                                                                                         pragma Assert_And_Cut
                                                                                                   (S.Role = Role_Server
                                                                                            and then
@@ -1153,8 +1141,6 @@ is
                              procedure Append_Reassembly_Fragment
            with Pre => S.State = Wait_Client_Hello
                                          and then S.Role = Role_Server
-                                                              and then HC.Legacy_Session_ID_Len
-                                                                in 0 .. 32
                                                  and then Handshake_Record_Fragment_Ready
                                            (Rec)
                                                  and then Rec.Record_Len <=
@@ -1172,9 +1158,7 @@ is
                                                                        then
                                                               (if More_Input_Needed
                                                                then not Has_Message (HC.Reasm)
-                                                               else Has_Message (HC.Reasm)
-                                                                    and then HC.Legacy_Session_ID_Len
-                                                                                        in 0 .. 32));
+                                                               else Has_Message (HC.Reasm)));
 
                              procedure Append_Reassembly_Fragment
                              is
@@ -1233,11 +1217,10 @@ is
                                           --  it here is the same Defect A as the two handlers in #95 --
                                           --  a Pre that leaves out a fact the body needs and the caller
                                           --  holds.
-                                          with Pre => Has_Message (HC.Reasm)
+                                          with Pre => not HC'Constrained
+                                                              and then Has_Message (HC.Reasm)
                                                               and then S.State = Wait_Client_Hello
-                                                              and then S.Role = Role_Server
-                                                      and then HC.Legacy_Session_ID_Len
-                                                        in 0 .. 32;
+                                                              and then S.Role = Role_Server;
 
                                   procedure Parse_Completed_Reassembly
                                   is
@@ -1272,6 +1255,10 @@ is
                                                            --  Capture the binder transcript hash BEFORE the CH
                                                            --  enters the stream (RFC 8446 4.2.11.2): binders cover
                                                            --  everything up to the binders list.
+                                                           declare
+                                                              L : SPARKTLS_Transcript.Transcript_State;
+                                                           begin
+                                                           SPARKTLS_Transcript.Start (L);
                                                            if HC.PSK.Offered and then HC.PSK.Binder_Len > 0
                                                              and then N32 (Full_Msg'Length) > 3 + HC.PSK.Binder_Len
                                                            then
@@ -1280,16 +1267,85 @@ is
                                                                    N32 (Full_Msg'Length) - (3 + HC.PSK.Binder_Len);
                                                               begin
                                                                  SPARKTLS_Transcript.Suffix_256
-                                                                   (HC.TS, Byte_Seq (Full_Msg) (0 .. T - 1),
+                                                                   (L, Byte_Seq (Full_Msg) (0 .. T - 1),
                                                                     SPARKTLSCrypto.Hashing.SHA256.Digest (HC.PSK.Binder_Hash_256));
                                                                  SPARKTLS_Transcript.Suffix_384
-                                                                   (HC.TS, Byte_Seq (Full_Msg) (0 .. T - 1),
+                                                                   (L, Byte_Seq (Full_Msg) (0 .. T - 1),
                                                                     SPARKTLSCrypto.Hashing.SHA384.Digest (HC.PSK.Binder_Hash_384));
                                                                  HC.PSK.Binder_Hash_Taken := True;
                                                               end;
                                                            end if;
-                                                           Append_Transcript (HC, Byte_Seq (Full_Msg));
-                                                           pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
+                                                           SPARKTLS_Transcript.Append (L, Byte_Seq (Full_Msg));
+                                                           --  ENGAGE (phase carve): single constructor site,
+                                                           --  full-message path. L has absorbed the ClientHello.
+                                                           HC := (Phase => Engaged,
+                                                  TS => L,
+                                                  Version => HC.Version,
+                                                  Cfg => HC.Cfg,
+                                                  Peer_SNI => HC.Peer_SNI,
+                                                  Client_Random => HC.Client_Random,
+                                                  Server_Random => HC.Server_Random,
+                                                  Client_Has_X25519 => HC.Client_Has_X25519,
+                                                  Client_Has_P256 => HC.Client_Has_P256,
+                                                  Client_Has_P384 => HC.Client_Has_P384,
+                                                  Client_Saw_Key_Share => HC.Client_Saw_Key_Share,
+                                                  Client_Saw_Supported_Groups => HC.Client_Saw_Supported_Groups,
+                                                  Client_Supports_X25519 => HC.Client_Supports_X25519,
+                                                  Client_Supports_P256 => HC.Client_Supports_P256,
+                                                  Client_Supports_P384 => HC.Client_Supports_P384,
+                                                  KE => HC.KE,
+                                                  HRR_Sent => HC.HRR_Sent,
+                                                  Got_HRR => HC.Got_HRR,
+                                                  HRR_Cipher_Suite => HC.HRR_Cipher_Suite,
+                                                  HRR_Selected_Group => HC.HRR_Selected_Group,
+                                                  HRR_Cookie_Len => HC.HRR_Cookie_Len,
+                                                  HRR_Cookie => HC.HRR_Cookie,
+                                                  Sent_HRR_CCS => HC.Sent_HRR_CCS,
+                                                  CH_Ext_Hash => HC.CH_Ext_Hash,
+                                                  CH_Ext_Count => HC.CH_Ext_Count,
+                                                  Seen_Ext_Tags => HC.Seen_Ext_Tags,
+                                                  Seen_Ext_Count => HC.Seen_Ext_Count,
+                                                  Client_HS => HC.Client_HS,
+                                                  Server_HS => HC.Server_HS,
+                                                  Client_HS_Secret => HC.Client_HS_Secret,
+                                                  Server_HS_Secret => HC.Server_HS_Secret,
+                                                  Handshake_Secret => HC.Handshake_Secret,
+                                                  Master_Secret => HC.Master_Secret,
+                                                  Hash_Len => HC.Hash_Len,
+                                                  Peer_Leaf => HC.Peer_Leaf,
+                                                  Peer_Ints => HC.Peer_Ints,
+                                                  Peer_Int_Count => HC.Peer_Int_Count,
+                                                  Legacy_Session_ID => HC.Legacy_Session_ID,
+                                                  Legacy_Session_ID_Len => HC.Legacy_Session_ID_Len,
+                                                  Peer_Sig_Algos => HC.Peer_Sig_Algos,
+                                                  Peer_Sig_Algo_Count => HC.Peer_Sig_Algo_Count,
+                                                  Negotiated_Sig_Algo => HC.Negotiated_Sig_Algo,
+                                                  CCS_Received => HC.CCS_Received,
+                                                  T12 => HC.T12,
+                                                  PSK => HC.PSK,
+                                                  Cert_Request_Received => HC.Cert_Request_Received,
+                                                  Has_TLS_1_3 => HC.Has_TLS_1_3,
+                                                  Saw_Supported_Versions => HC.Saw_Supported_Versions,
+                                                  SV_Has_Acceptable => HC.SV_Has_Acceptable,
+                                                  CKE_Received_12 => HC.CKE_Received_12,
+                                                  Use_EMS => HC.Use_EMS,
+                                                  EMS_Session_Hash => HC.EMS_Session_Hash,
+                                                  EMS_Hash_Taken => HC.EMS_Hash_Taken,
+                                                  Saw_Reneg_Info => HC.Saw_Reneg_Info,
+                                                  Ext_Parse_Err => HC.Ext_Parse_Err,
+                                                  Client_ALPN => HC.Client_ALPN,
+                                                  Client_ALPN_List => HC.Client_ALPN_List,
+                                                  Client_ALPN_Count => HC.Client_ALPN_Count,
+                                                  Master_Secret_12 => HC.Master_Secret_12,
+                                                  Client_Write_IV_12 => HC.Client_Write_IV_12,
+                                                  Server_Write_IV_12 => HC.Server_Write_IV_12,
+                                                  MS_Derivation => HC.MS_Derivation,
+                                                  Using_PSK => HC.Using_PSK,
+                                                  Early_Data_Offered => HC.Early_Data_Offered,
+                                                  Skipped_Early_Data_Records => HC.Skipped_Early_Data_Records,
+                                                  Reasm => HC.Reasm,
+                                                  Heap_Used => HC.Heap_Used);
+                                                           end;
                                                         end if;
                                                      end;
                                              Free_Reasm;
@@ -1299,7 +1355,6 @@ is
                                                 return;
                                      end if;
                                      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-                                             pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
                                      pragma Assert
                                        (if HC.Version = TLS_1_3
                                         then S.Negotiated_Suite in
@@ -1313,9 +1368,6 @@ is
                                              if S.State /= Wait_Client_Hello
                                                or else More_Input_Needed
                                      then
-                                        pragma Assert
-                                          (if S.State = Wait_Client_Hello
-                                           then True);
                                         return;
                                              end if;
 
@@ -1328,7 +1380,6 @@ is
                                   procedure Process_Fresh_Handshake_Record
                                   with Pre => S.State = Wait_Client_Hello
                                               and then S.Role = Role_Server
-                                                      and then HC.Legacy_Session_ID_Len in 0 .. 32
                                               and then Server_State_Keys_Ready (S, HC)
                                               and then Handshake_Record_Fragment_Ready
                                                 (Rec)
@@ -1343,9 +1394,9 @@ is
                                               and then Frag_Len < Transcript_Capacity;
 
                                   procedure Parse_Single_Record_Client_Hello
-                                  with Pre => S.State = Wait_Client_Hello
+                                  with Pre => not HC'Constrained
+                                              and then S.State = Wait_Client_Hello
                                               and then S.Role = Role_Server
-                                        and then HC.Legacy_Session_ID_Len in 0 .. 32
                                               and then Server_State_Keys_Ready (S, HC)
                                               and then Handshake_Record_Fragment_Ready
                                                 (Rec)
@@ -1390,15 +1441,86 @@ is
                                                           (Frag_Len < Transcript_Capacity);
                                                 pragma Assert
                                                   (Frag'Last - Frag'First = Frag_Len - 1);
-                                                        Append_Transcript (HC, Frag);
-                                                        pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
+                                                        declare
+                                                           L : SPARKTLS_Transcript.Transcript_State;
+                                                        begin
+                                                        SPARKTLS_Transcript.Start (L);
+                                                        SPARKTLS_Transcript.Append (L, Frag);
+                                                        --  ENGAGE (phase carve): single-record path.
+                                                        HC := (Phase => Engaged,
+                                                  TS => L,
+                                                  Version => HC.Version,
+                                                  Cfg => HC.Cfg,
+                                                  Peer_SNI => HC.Peer_SNI,
+                                                  Client_Random => HC.Client_Random,
+                                                  Server_Random => HC.Server_Random,
+                                                  Client_Has_X25519 => HC.Client_Has_X25519,
+                                                  Client_Has_P256 => HC.Client_Has_P256,
+                                                  Client_Has_P384 => HC.Client_Has_P384,
+                                                  Client_Saw_Key_Share => HC.Client_Saw_Key_Share,
+                                                  Client_Saw_Supported_Groups => HC.Client_Saw_Supported_Groups,
+                                                  Client_Supports_X25519 => HC.Client_Supports_X25519,
+                                                  Client_Supports_P256 => HC.Client_Supports_P256,
+                                                  Client_Supports_P384 => HC.Client_Supports_P384,
+                                                  KE => HC.KE,
+                                                  HRR_Sent => HC.HRR_Sent,
+                                                  Got_HRR => HC.Got_HRR,
+                                                  HRR_Cipher_Suite => HC.HRR_Cipher_Suite,
+                                                  HRR_Selected_Group => HC.HRR_Selected_Group,
+                                                  HRR_Cookie_Len => HC.HRR_Cookie_Len,
+                                                  HRR_Cookie => HC.HRR_Cookie,
+                                                  Sent_HRR_CCS => HC.Sent_HRR_CCS,
+                                                  CH_Ext_Hash => HC.CH_Ext_Hash,
+                                                  CH_Ext_Count => HC.CH_Ext_Count,
+                                                  Seen_Ext_Tags => HC.Seen_Ext_Tags,
+                                                  Seen_Ext_Count => HC.Seen_Ext_Count,
+                                                  Client_HS => HC.Client_HS,
+                                                  Server_HS => HC.Server_HS,
+                                                  Client_HS_Secret => HC.Client_HS_Secret,
+                                                  Server_HS_Secret => HC.Server_HS_Secret,
+                                                  Handshake_Secret => HC.Handshake_Secret,
+                                                  Master_Secret => HC.Master_Secret,
+                                                  Hash_Len => HC.Hash_Len,
+                                                  Peer_Leaf => HC.Peer_Leaf,
+                                                  Peer_Ints => HC.Peer_Ints,
+                                                  Peer_Int_Count => HC.Peer_Int_Count,
+                                                  Legacy_Session_ID => HC.Legacy_Session_ID,
+                                                  Legacy_Session_ID_Len => HC.Legacy_Session_ID_Len,
+                                                  Peer_Sig_Algos => HC.Peer_Sig_Algos,
+                                                  Peer_Sig_Algo_Count => HC.Peer_Sig_Algo_Count,
+                                                  Negotiated_Sig_Algo => HC.Negotiated_Sig_Algo,
+                                                  CCS_Received => HC.CCS_Received,
+                                                  T12 => HC.T12,
+                                                  PSK => HC.PSK,
+                                                  Cert_Request_Received => HC.Cert_Request_Received,
+                                                  Has_TLS_1_3 => HC.Has_TLS_1_3,
+                                                  Saw_Supported_Versions => HC.Saw_Supported_Versions,
+                                                  SV_Has_Acceptable => HC.SV_Has_Acceptable,
+                                                  CKE_Received_12 => HC.CKE_Received_12,
+                                                  Use_EMS => HC.Use_EMS,
+                                                  EMS_Session_Hash => HC.EMS_Session_Hash,
+                                                  EMS_Hash_Taken => HC.EMS_Hash_Taken,
+                                                  Saw_Reneg_Info => HC.Saw_Reneg_Info,
+                                                  Ext_Parse_Err => HC.Ext_Parse_Err,
+                                                  Client_ALPN => HC.Client_ALPN,
+                                                  Client_ALPN_List => HC.Client_ALPN_List,
+                                                  Client_ALPN_Count => HC.Client_ALPN_Count,
+                                                  Master_Secret_12 => HC.Master_Secret_12,
+                                                  Client_Write_IV_12 => HC.Client_Write_IV_12,
+                                                  Server_Write_IV_12 => HC.Server_Write_IV_12,
+                                                  MS_Derivation => HC.MS_Derivation,
+                                                  Using_PSK => HC.Using_PSK,
+                                                  Early_Data_Offered => HC.Early_Data_Offered,
+                                                  Skipped_Early_Data_Records => HC.Skipped_Early_Data_Records,
+                                                  Reasm => HC.Reasm,
+                                                  Heap_Used => HC.Heap_Used);
+                                                        end;
                                              end;
                                              S.Input.Read_Pos :=
                                                 S.Input.Read_Pos + Rec.Record_Len;
 
                                              Reset (HC.Reasm);
                                                                      pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-                                                                             pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
                                                                      Complete_Client_Hello (S, HC, Result);
                                                   end Parse_Single_Record_Client_Hello;
 
@@ -1545,9 +1667,6 @@ is
                                           Process_Handshake_Record;
                                             end;
                                             end;
-                                            pragma Assert
-                                              (if S.State = Wait_Client_Hello
-                                               then True);
                     return;
            end Handle_Wait_Client_Hello;
 
@@ -1609,7 +1728,7 @@ is
 
            procedure Complete_Client_Hello_Retry
              (S                      : in out Session;
-              HC                     : in out Handshake_Context;
+              HC                     : in out Engaged_Context;
               Msg                    : in     Byte_Seq;
               Consume_Current_Record : in     Boolean;
               Record_Len             : in     N32;
@@ -1650,7 +1769,6 @@ is
                    and then HC.Version = HC.Version'Old
                            and then HC.Legacy_Session_ID_Len =
                              HC.Legacy_Session_ID_Len'Old
-                           and then HC.TS = HC.TS'Old
            is
               begin
                  Reset (HC.Reasm);
@@ -1700,7 +1818,6 @@ is
                                 end;
                              end if;
                              Append_Transcript (HC, Msg);
-                             pragma Assert (SPARKTLS_Transcript.Started (HC.TS));
                              Consume_Record;
                      Free_CH2_Reasm;
                      if HC.Cfg.Local = null
@@ -1720,9 +1837,6 @@ is
                      then
                         Send_Alert_And_Error
                           (S, Handshake_Failure, Result);
-                                    pragma Assert
-                              (if S.State = Wait_Client_Hello_Retry
-                               then True);
                                 return;
                      end if;
                      pragma Assert (S.State = Wait_Client_Hello_Retry);
@@ -1740,7 +1854,7 @@ is
 
            procedure Build_Server_Flight_After_Client_Hello_Retry
              (S      : in out Session;
-              HC     : in out Handshake_Context;
+              HC     : in out Engaged_Context;
               Cfg    : in     Ready_Config;
               Result :    out Action)
            is
@@ -1751,7 +1865,7 @@ is
 
            procedure Handle_Client_Hello_Retry
              (S      : in out Server_Session;
-              HC     : in out Handshake_Context;
+              HC     : in out Engaged_Context;
               Result :    out Action)
            is
            begin
@@ -1775,12 +1889,6 @@ is
 
                                if Rec.Overflow then
                                   Send_Alert_And_Error (S, Record_Overflow, Result);
-                                                  pragma Assert
-                                            (if S.State not in Error_State | Closed
-                                             then True);
-                                          pragma Assert
-                                            (if S.State = Wait_Client_Hello_Retry
-                                             then True);
                                           return;
                                end if;
 
@@ -1788,12 +1896,6 @@ is
                           --  RFC 8446 §5.1: legacy_record_version must lie
                           --  in {3,1}..{3,4}. Out-of-band → protocol_version.
                           Send_Alert_And_Error (S, Protocol_Version, Result);
-                                                  pragma Assert
-                                            (if S.State not in Error_State | Closed
-                                             then True);
-                                                  pragma Assert
-                                                    (if S.State = Wait_Client_Hello_Retry
-                                                     then True);
                                           return;
                                end if;
 
@@ -1801,12 +1903,6 @@ is
                   if Rec.Record_Len > 0 then
                              S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                              Send_Alert_And_Error (S, Unexpected_Message, Result);
-                                                     pragma Assert
-                                               (if S.State not in Error_State | Closed
-                                                then True);
-                                                     pragma Assert
-                                                       (if S.State = Wait_Client_Hello_Retry
-                                                        then True);
                                           else
                                      Result := Need_Input;
                                      pragma Assert (S.State = Wait_Client_Hello_Retry);
@@ -1832,12 +1928,6 @@ is
                                 Send_Alert_And_Error
                                   (S, Unexpected_Message, Result);
                              end if;
-                                                     pragma Assert
-                                               (if S.State not in Error_State | Closed
-                                                then True);
-                                                     pragma Assert
-                                                       (if S.State = Wait_Client_Hello_Retry
-                                                        then True);
                                        end;
                           return;
                        end if;
@@ -1845,12 +1935,6 @@ is
                        if Rec.Content /= Records.Content_Handshake then
                                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                                   Send_Alert_And_Error (S, Unexpected_Message, Result);
-                                                                  pragma Assert
-                                                            (if S.State not in Error_State | Closed
-                                                             then True);
-                                                                  pragma Assert
-                                                                    (if S.State = Wait_Client_Hello_Retry
-                                                                     then True);
                                                   return;
                                end if;
 
@@ -2000,9 +2084,6 @@ is
                                           end if;
                                        end;
                                     end;
-                                    pragma Assert
-                                              (if S.State = Wait_Client_Hello_Retry
-                                               then True);
                                    end Handle_Client_Hello_Retry;
 
    --  Dispatch handshake states to the appropriate handler
@@ -2035,9 +2116,6 @@ is
                  when Wait_Client_Hello =>
                     pragma Assert (Old_State = Wait_Client_Hello);
                     Handle_Wait_Client_Hello (S, HC, Result);
-                                    pragma Assert
-                                      (if S.State = Wait_Client_Hello
-                                       then True);
 
                  when Server_Hello_Sent =>
                     pragma Assert (Old_State = Server_Hello_Sent);
@@ -2057,9 +2135,6 @@ is
                           Result := Need_Input;
                        end if;
                     end if;
-                            pragma Assert
-                              (if S.State = Wait_Client_Hello
-                               then True);
 
 
                  when Wait_Client_Hello_Retry =>
@@ -2121,9 +2196,6 @@ is
                     S.Last_Error := Internal_Error;
                     Set_State (S, Error_State);
                     Result := Error_Alert;
-                                                        pragma Assert
-                                                          (if S.State = Wait_Client_Hello
-                                                           then True);
               end case;
               case Old_State is
                  when Wait_Client_Hello
@@ -2147,7 +2219,7 @@ is
    --    Hash(message_hash(254) || length(Hash.length) || Hash(CH1))
    procedure Build_Hello_Retry_Request
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Group     : in     Unsigned_16;
       HRR_Buf   :    out Byte_Seq;
       HRR_Len   :    out N32;
@@ -2324,7 +2396,6 @@ is
                         Post => (if not Rejected
                                  then S.State = S.State'Old
                                       and S.Role = S.Role'Old
-                                              and HC.TS = HC.TS'Old
                               and S.Negotiated_Suite = S.Negotiated_Suite'Old)
                                          and then (if Rejected then S.State = Error_State);
 
@@ -2477,7 +2548,7 @@ is
 
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Cfg      : in     Ready_Config;
       Algo_OK  :    out Boolean;
       Result   :    out Action)
@@ -2490,7 +2561,6 @@ is
                                  then S.State = S.State'Old
                                       and S.Role = S.Role'Old
                                               and S.Negotiated_Suite = S.Negotiated_Suite'Old
-                                              and HC.TS = HC.TS'Old
                               and HC.Negotiated_Sig_Algo /= 0
                               and Handshake.Sig_Algo_Compatible_With_Cert
                                 (HC.Negotiated_Sig_Algo,
@@ -2499,7 +2569,7 @@ is
 
    procedure Negotiate_Sig_Algo
      (S        : in out Session;
-      HC       : in out Handshake_Context;
+      HC       : in out Engaged_Context;
       Cfg      : in     Ready_Config;
       Algo_OK  :    out Boolean;
       Result   :    out Action)
@@ -2566,7 +2636,7 @@ is
 
    procedure Append_And_Encrypt_Server_HS
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
       Result    :    out Action;
@@ -2595,7 +2665,7 @@ is
 
    procedure Append_And_Encrypt_Server_HS_Fragmented
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Plaintext : in     Byte_Seq;
       Scratch   : in out IO_Buffer;
       Result    :    out Action;
@@ -2661,7 +2731,7 @@ is
 
    procedure Build_Server_Flight
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
    is
@@ -2682,16 +2752,6 @@ is
       --  know whether a counter rollback is needed on commit failure).
       Encryption_Started : Boolean := False;
    begin
-      --  Started is established when the handshake begins, but the fact
-      --  is not carried through the in out handshake web. Semantically
-      --  unreachable; fail closed (Ready_Config guard pattern).
-      if not SPARKTLS_Transcript.Started (HC.TS) then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
-
       --  PSK resumption: verify binder, install if valid, fatal-alert
       --  on mismatch. Sets HC.Using_PSK on success.
       if HC.PSK.Offered and then Cfg.Store_Session /= null
@@ -3114,7 +3174,7 @@ is
    --  Derive handshake traffic keys from shared secret
    procedure Derive_Handshake_Keys
      (S  : in     Session;
-      HC : in out Handshake_Context)
+      HC : in out Engaged_Context)
    is
    begin
       case S.Negotiated_Suite is
@@ -3194,7 +3254,7 @@ is
    --  Derive application keys from master secret + transcript
    procedure Derive_App_Keys
      (S  : in out Session;
-      HC : in out Handshake_Context)
+      HC : in out Engaged_Context)
    is
    begin
       case S.Negotiated_Suite is
@@ -3302,7 +3362,7 @@ is
                K128 : OKM_Seq (0 .. 15);
                IV12 : OKM_Seq (0 .. 11);
             begin
-               Key_Schedule.Derive_Traffic_Key_IV_128
+               Key_Schedule.Derive_Traffic_Key_IV
                  (K128, IV12, Secret (0 .. 31));
                TK.Key := (others => 0);
                TK.Key (0 .. 15) := Bytes_16 (Byte_Seq (K128));
@@ -3332,7 +3392,7 @@ is
    --  alert and sets Result to an Error_* action.
    procedure Handle_Client_Cert_13
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Data   : in     Byte_Seq;
       Result :    out Action)
@@ -3344,7 +3404,7 @@ is
 
    procedure Handle_Client_Cert_13
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Data   : in     Byte_Seq;
       Result :    out Action)
@@ -3391,23 +3451,19 @@ is
    --  success.
    procedure Handle_Client_CertVerify_13
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Cfg     : in     Ready_Config;
       Data    : in     Byte_Seq;
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Data'First = 0
                 and then Data'Last < Transcript_Capacity
-                and then
-                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                   then HC.Hash_Len = 48
-                   else HC.Hash_Len = 32)
                 and then X509.Spans_Valid
                   (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1);
 
    procedure Handle_Client_CertVerify_13
      (S       : in out Session;
-      HC      : in out Handshake_Context;
+      HC      : in out Engaged_Context;
       Cfg     : in     Ready_Config;
       Data    : in     Byte_Seq;
       Msg_Len : in     N32;
@@ -3416,16 +3472,6 @@ is
       H_Len : constant N32 := HC.Hash_Len;
       CV_Hash : Byte_Seq (0 .. H_Len - 1);
    begin
-      --  Started is established when the handshake begins, but the fact
-      --  is not carried through the in out handshake web. Semantically
-      --  unreachable; fail closed (Ready_Config guard pattern).
-      if not SPARKTLS_Transcript.Started (HC.TS) then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
-
       pragma Assert
         (X509.Spans_Valid
            (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1));
@@ -3589,7 +3635,7 @@ is
    ----------------------------------------------------------------------------
    procedure Process_Client_Auth
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
    is
@@ -3809,23 +3855,13 @@ is
 
    procedure Verify_Client_Finished
      (S         : in out Session;
-      HC        : in out Handshake_Context;
+      HC        : in out Engaged_Context;
       Plaintext : in     Byte_Seq;
       Plain_Len : in     N32;
       Msg_Len   : in     N32;
       Result    :    out Action)
    is
    begin
-      --  Started is established when the handshake begins, but the fact
-      --  is not carried through the in out handshake web. Semantically
-      --  unreachable; fail closed (Ready_Config guard pattern).
-      if not SPARKTLS_Transcript.Started (HC.TS) then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
-
       Result := OK;
                   --  Verify client Finished
                   declare
@@ -4145,7 +4181,7 @@ is
 
    procedure Handle_PCF_App_Data
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
    is
@@ -4245,9 +4281,6 @@ is
                if Frag_Len < Records.Tag_Size + 1 then
                           S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                           Send_Encrypted_Alert (S, Unexpected_Message, Result);
-                                                                     pragma Assert
-                                                                       (if S.State = Wait_Client_Hello
-                                                                        then True);
                           return;
                end if;
 
@@ -4258,9 +4291,6 @@ is
                then
                           S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                           Send_Encrypted_Alert (S, Record_Overflow, Result);
-                            pragma Assert
-                              (if S.State = Wait_Client_Hello
-                               then True);
                           return;
                end if;
 
@@ -4311,9 +4341,6 @@ is
                           else
                              Result := Error_Alert;
                           end if;
-                            pragma Assert
-                              (if S.State = Wait_Client_Hello
-                               then True);
                           return;
                end if;
 
@@ -4324,9 +4351,6 @@ is
                                   Error_Code'Pos (Error_Code'Last)));
                           Set_State (S, Error_State);
                           Result := Error_Alert;
-                          pragma Assert
-                            (if S.State not in Error_State | Closed
-                             then True);
                           return;
                elsif Inner_Type /= 16#16# then
                   --  Unexpected inner type during handshake
@@ -4343,18 +4367,12 @@ is
                           else
                              Result := Error_Alert;
                           end if;
-                          pragma Assert
-                            (if S.State not in Error_State | Closed
-                             then True);
                           return;
                end if;
 
                --  Parse handshake header
                        if Plain_Len = 0 then
                           Send_Encrypted_Alert (S, Decode_Error, Result);
-                          pragma Assert
-                            (if S.State not in Error_State | Closed
-                             then True);
                           return;
                end if;
 
@@ -4444,18 +4462,12 @@ is
                pragma Assert (Plaintext'Last < N32'Last);
                pragma Assert (Plain_Len - 1 <= Plaintext'Last);
                        Dispatch_Finished_Message (Plaintext, Plain_Len, Result);
-                       pragma Assert
-                         (if S.State not in Error_State | Closed
-                          then True);
-                               pragma Assert
-                                 (if S.State not in Error_State | Closed
-                                  then True);
                             end;
    end Handle_PCF_App_Data;
 
    procedure Process_Client_Finished
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action)
    is
       Rec : Records.Parse_Result;
@@ -4531,9 +4543,6 @@ is
                        --  Send encrypted alert for other unexpected record types.
                        Send_Encrypted_Alert (S, Unexpected_Message, Result);
                     end if;
-                    pragma Assert
-                      (if S.State not in Error_State | Closed
-                       then True);
               end case;
            end Process_Client_Finished;
 

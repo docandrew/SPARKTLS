@@ -51,7 +51,7 @@ is
                K128 : OKM_Seq (0 .. 15);
                IV12 : OKM_Seq (0 .. 11);
             begin
-               Key_Schedule.Derive_Traffic_Key_IV_128
+               Key_Schedule.Derive_Traffic_Key_IV
                  (K128, IV12, Secret (0 .. 31));
                TK.Key := (others => 0);
                TK.Key (0 .. 15) := Bytes_16 (Byte_Seq (K128));

@@ -288,8 +288,7 @@ is
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
-                and Result'Last >= Max_Client_Key_Exchange - 1
-                and HC.KE.Negotiated,
+                and Result'Last >= Max_Client_Key_Exchange - 1,
         Post => Len <= Max_Client_Key_Exchange;
 
    --  RFC 8422 §5.4: Parse ServerKeyExchange.
@@ -307,7 +306,7 @@ is
    --  'signature_algorithms' extension, the signature algorithm and
    --  hash algorithm MUST be a pair listed in that extension."
    procedure Parse_Server_Key_Exchange
-     (HC   : in out Handshake_Context;
+     (HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre  => Data'First = 0
@@ -323,7 +322,7 @@ is
    --  The curve MUST match HC.KE.Curve (set during ServerKeyExchange).
    --  Stores the peer's public key in HC for shared secret computation.
    procedure Parse_Client_Key_Exchange
-     (HC   : in out Handshake_Context;
+     (HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
       with Pre  => Data'First = 0
@@ -429,7 +428,7 @@ is
    --  than the client's minimum version."
    procedure Build_Server_Hello_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0
@@ -458,10 +457,8 @@ is
                               (HC.Cfg.Local)
                         and HC.Cfg.Random /= null
                         and HC.Version = HC.Version'Old
-                                                and HC.KE = HC.KE'Old
-                                                and True;
+                                                and HC.KE = HC.KE'Old;
 
-   function Has_ALPN_Match_12 (HC : Handshake_Context) return Boolean;
 
    --  RFC 5246 §7.4.1.2: Parse TLS 1.2 ServerHello.
    --
@@ -477,7 +474,7 @@ is
    --  The server MUST select a suite from the client's list.
    procedure Parse_Server_Hello_12
      (S    : in out Session;
-      HC   : in out Handshake_Context;
+      HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre  => Data'First = 0

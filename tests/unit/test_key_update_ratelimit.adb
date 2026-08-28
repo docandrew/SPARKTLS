@@ -151,12 +151,12 @@ begin
    --     cap value itself is representable -- the legitimate "channel
    --     exhausted" state -- and a modular wrap to 0 under an unchanged
    --     key now sits 2**40 range-check failures away instead of one.
-   Check ("Record_Counter'Last is the AEAD cap",
-          Unsigned_64 (Record_Counter'Last) = Unsigned_64 (Rekey_After_Records));
+   Check ("Rekey_After_Records is the TX budget cap (type widened for RX, #115)",
+          Unsigned_64 (Rekey_After_Records) = 2**23);
    Check ("Record_Counter'First is 0",
           Unsigned_64 (Record_Counter'First) = 0);
    Check ("the cap is far below the modular wrap point",
-          Unsigned_64 (Record_Counter'Last) < Unsigned_64'Last / 2**30);
+          Unsigned_64 (Record_Counter'Last) <= Unsigned_64'Last / 2);
 
    --  And the refill bar must sit below the rotation threshold, or a peer
    --  rekeying on our own schedule would never earn a refund.

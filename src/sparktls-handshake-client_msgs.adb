@@ -554,6 +554,18 @@ is
                                  declare
                                     Trunc_Len : constant N32 :=
                                       Binder_Offset - 3;
+                                    --  Binder basis (phase carve): the
+                                    --  initial CH has no transcript yet
+                                    --  (Setup) -- the binder covers only
+                                    --  the truncated CH, i.e. a fresh
+                                    --  stream. The post-HRR CH2 (Engaged)
+                                    --  covers CH1+HRR as before.
+                                    Basis : constant
+                                      SPARKTLS_Transcript.Transcript_State :=
+                                        (if HC.Phase = Engaged
+                                         then SPARKTLS_Transcript
+                                                .Transcript_State (HC.TS)
+                                         else SPARKTLS_Transcript.Fresh);
                                  begin
                                     --  Binder transcript = running
                                     --  transcript (empty for CH1;
@@ -575,7 +587,7 @@ is
                                           Binder_V48    : Bytes_48;
                                        begin
                                           SPARKTLS_Transcript.Suffix_384
-                                            (HC.TS,
+                                            (Basis,
                                              Result (0 .. Trunc_Len - 1),
                                              Trunc_Hash384);
                                           Key_Schedule.Derive_Binder_Key_384
@@ -601,7 +613,7 @@ is
                                           Binder_Val   : Digest;
                                        begin
                                           SPARKTLS_Transcript.Suffix_256
-                                            (HC.TS,
+                                            (Basis,
                                              Result (0 .. Trunc_Len - 1),
                                              Trunc_Hash);
                                           Key_Schedule.Derive_Binder_Key
@@ -1659,7 +1671,7 @@ is
    --  HRR-specific body extraction (selected_group / cookie).
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
-      HC         : in out Handshake_Context;
+      HC         : in out Engaged_Context;
       S          : in out Session;
       Is_HRR_Msg : in     Boolean;
               OK         :    out Boolean)
@@ -1675,7 +1687,7 @@ is
 
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
-      HC         : in out Handshake_Context;
+      HC         : in out Engaged_Context;
       S          : in out Session;
       Is_HRR_Msg : in     Boolean;
       OK         :    out Boolean)
@@ -2176,7 +2188,7 @@ is
    --  through this path.
    procedure Apply_SH_Key_Share
      (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-      HC      : in out Handshake_Context)
+      HC      : in out Engaged_Context)
    with Pre => RFLX.TLS_Handshake.SH_Extension_TLS.Has_Buffer (Ext_Ctx)
                and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid
                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data_Length)
@@ -2190,7 +2202,7 @@ is
 
    procedure Apply_SH_Key_Share
      (Ext_Ctx : in     RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-      HC      : in out Handshake_Context)
+      HC      : in out Engaged_Context)
    is
       DLen : constant N32 := N32
         (RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data_Length (Ext_Ctx));
@@ -2297,7 +2309,7 @@ is
 
    procedure Parse_Server_Hello
      (S    : in out Session;
-      HC   : in out Handshake_Context;
+      HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    is

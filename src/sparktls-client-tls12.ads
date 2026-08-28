@@ -37,7 +37,7 @@ is
    --    CKE_Received_12, CCS_Received  → waiting for server Finished
    procedure Advance_Handshake_12
      (S      : in out Session;
-      HC     : in out Handshake_Context;
+      HC     : in out Engaged_Context;
       Result :    out Action);
 
    --  Process records in Connected state for TLS 1.2.

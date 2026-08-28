@@ -41,7 +41,34 @@ is
 
    type Hash_Choice is (Both, Only_256, Only_384);
 
-   type Transcript_State is private;
+   --  Startedness is a DISCRIMINANT (phase-carve 2026-08-26): the fact
+   --  that bytes have been appended rides the type structurally, so the
+   --  hash draw points need no precondition and callers holding a
+   --  Started_Transcript carry the fact through any call chain and
+   --  across Advance re-entries for free (flow-level, not prover-level).
+   --  Full view PUBLIC deliberately (2026-08-26): both gnatprove 15.1
+   --  and 16.1 crash in full-project mode on the private view of this
+   --  discriminated type (unbound __main_of_wrapper in Why3 translation;
+   --  minimal reproducer in the AdaCore report). Nothing here needs
+   --  hiding: the invariant is the discriminant itself.
+   --  EXPERIMENT 1 (2026-08-27): discriminant temporarily replaced by a
+   --  plain component to isolate the gnat2why __main_of_wrapper crash.
+   --  Started_Transcript degrades to an alias so the phase carve's
+   --  formal retypes keep compiling unchanged.
+   type Transcript_State is record
+      C256     : SPARKTLSCrypto.Hashing.SHA256.Context;
+      C384     : SPARKTLSCrypto.Hashing.SHA384.Context;
+      C512     : SPARKTLSCrypto.Hashing.SHA512.Context;
+      Choice   : Hash_Choice := Both;
+      Has_Data : Boolean     := False;
+   end record;
+
+   --  Predicate subtype (workaround shape, see tasks #113/#114): carries
+   --  the started guarantee the discriminant used to. Checked only at
+   --  writes to transcript objects; preservation provable from Append's
+   --  postcondition.
+   subtype Started_Transcript is Transcript_State
+     with Dynamic_Predicate => Started (Started_Transcript);
 
    --  Fresh transcript: both digests initialised, nothing appended.
    procedure Start (TS : out Transcript_State)
@@ -60,7 +87,7 @@ is
    --  same choice; never call with a DIFFERENT choice after selecting.
    procedure Select_Hash (TS : in out Transcript_State; C : Hash_Choice)
    with Global => null, Pre => C /= Both,
-        Post => Started (TS) = Started (TS)'Old and then Selected (TS) = C;
+        Post => Selected (TS) = C;
 
    --  Transcript hash at this instant (clone-and-finalize; the running
    --  context is untouched, so appends may continue afterwards).
@@ -107,24 +134,28 @@ is
    --  Requires the hash already selected (HRR names the suite).
    procedure Reset_For_HRR (TS : in out Transcript_State)
    with Global => null,
-        Post => Started (TS) = Started (TS)'Old
-                and then Selected (TS) = Selected (TS)'Old;
+        Post => Selected (TS) = Selected (TS)'Old;
 
-   --  True once any bytes have been appended (the old Len > 0 trio).
+   --  Fresh, empty transcript as a value (binder Basis for the initial
+   --  ClientHello, where the binder covers only the truncated CH).
+   function Fresh return Transcript_State
+   with Global => null,
+        Post => not Started (Fresh'Result)
+                and then Selected (Fresh'Result) = Both;
+
+   --  Zeroize hash state (pre-free scrub). Reinitializes every context
+   --  in place; the discriminant is untouched, so this is legal on both
+   --  constrained and unconstrained objects.
+   procedure Wipe (TS : in out Transcript_State)
+   with Global => null;
+
+   --  True once any bytes have been appended. Retained for existing
+   --  callers; new code reads the discriminant directly.
    function Started (TS : Transcript_State) return Boolean
    with Global => null;
 
    function Selected (TS : Transcript_State) return Hash_Choice
    with Global => null;
-
-private
-   type Transcript_State is record
-      C256     : SPARKTLSCrypto.Hashing.SHA256.Context;
-      C384     : SPARKTLSCrypto.Hashing.SHA384.Context;
-      C512     : SPARKTLSCrypto.Hashing.SHA512.Context;
-      Choice   : Hash_Choice := Both;
-      Has_Data : Boolean     := False;
-   end record;
 
    function Started (TS : Transcript_State) return Boolean is
      (TS.Has_Data);

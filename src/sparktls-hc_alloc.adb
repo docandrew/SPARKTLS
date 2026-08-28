@@ -4,12 +4,12 @@ package body SPARKTLS.HC_Alloc with
    SPARK_Mode => Off
 is
    procedure Dealloc is new Ada.Unchecked_Deallocation
-     (Object => Handshake_Context,
+     (Object => HC_Box,
       Name   => Handshake_Context_Access);
 
    function Allocate return Handshake_Context_Access is
    begin
-      return new Handshake_Context;
+      return new HC_Box;
    end Allocate;
 
    procedure Free (Ptr : in out Handshake_Context_Access) is
