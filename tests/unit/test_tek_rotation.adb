@@ -111,7 +111,7 @@ begin
       Have       : Boolean;
    begin
       Plain.Master_Secret := (others => 16#5A#);
-      Plain.Suite         := Suite_ECDHE_RSA_AES128_GCM_SHA256;
+      Plain.Suite         := Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256;
       Plain.Created_At    := 5000;
       Plain.SID_Len       := 0;
       Plain.SID           := (others => 0);

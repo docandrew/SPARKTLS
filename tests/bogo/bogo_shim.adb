@@ -375,17 +375,17 @@ procedure Bogo_Shim is
          Suite : Unsigned_16 := 0;
       begin
          if Token = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" then
-            Suite := Suite_ECDHE_RSA_AES128_GCM_SHA256;
+            Suite := Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256;
          elsif Token = "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384" then
-            Suite := Suite_ECDHE_RSA_AES256_GCM_SHA384;
+            Suite := Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384;
          elsif Token = "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256" then
-            Suite := Suite_ECDHE_RSA_CHACHA20_SHA256;
+            Suite := Wire_Suite_ECDHE_RSA_CHACHA20_SHA256;
          elsif Token = "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256" then
-            Suite := Suite_ECDHE_ECDSA_AES128_GCM_SHA256;
+            Suite := Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256;
          elsif Token = "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384" then
-            Suite := Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+            Suite := Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
          elsif Token = "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256" then
-            Suite := Suite_ECDHE_ECDSA_CHACHA20_SHA256;
+            Suite := Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256;
          end if;
 
          if Suite /= 0

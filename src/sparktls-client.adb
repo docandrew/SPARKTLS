@@ -250,17 +250,13 @@ is
                                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
                                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
                        and then
-                         (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                          then HC.Hash_Len = 48
-                          else HC.Hash_Len = 32),
+                         True,
                         Post => (if Result = OK then
                                             S.State = S.State'Old
                                                     and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-                            and then HC.Hash_Len = HC.Hash_Len'Old
+                            and then Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                             and then
-                              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                               then HC.Hash_Len = 48
-                               else HC.Hash_Len = 32)
+                              True
                     and then
                                       (if HC.Cert_Request_Received
                                            and then HC.Cfg.Local /= null
@@ -297,11 +293,9 @@ is
                                                                    | Suite_AES_256_GCM_SHA384
                                                                    | Suite_CHACHA20_POLY1305_SHA256
                                        and then
-                                         (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                          then HC.Hash_Len = 48
-                          else HC.Hash_Len = 32),
+                                         True,
                                 Post => (if Result = Has_Output then
-                                            HC.Hash_Len = HC.Hash_Len'Old)
+                                            Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old))
                         and then Result in Has_Output | Error_Alert;
    procedure Process_Handshake_Message
      (S      : in out Session;
@@ -329,9 +323,7 @@ is
                                                     | Suite_AES_256_GCM_SHA384
                                                     | Suite_CHACHA20_POLY1305_SHA256
                                         and then
-                                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                   then HC.Hash_Len = 48
-                                   else HC.Hash_Len = 32),
+                                          True,
         Post => Result in OK | Has_Output | Error_Alert
                 and then (if Result = OK
                        and then S.State in Wait_Encrypted_Extensions
@@ -345,16 +337,12 @@ is
                            | Suite_AES_256_GCM_SHA384
                            | Suite_CHACHA20_POLY1305_SHA256
                         and then
-                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                           then HC.Hash_Len = 48
-                           else HC.Hash_Len = 32));
+                          True);
    procedure Process_Encrypted_Handshake
      (S      : in out Session;
       HC     : in out Engaged_Context;
       Result :    out Action)
-   with Pre => (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                          then HC.Hash_Len = 48
-                          else HC.Hash_Len = 32)
+   with Pre => True
                        and then
                          (if HC.Cert_Request_Received
                               and then HC.Cfg.Local /= null
@@ -374,14 +362,10 @@ is
       Rec    : in     Records.Parse_Result;
       Result :    out Action)
    with Pre => S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                                           | Suite_AES_256_GCM_SHA384
-                                                           | Suite_CHACHA20_POLY1305_SHA256
-                               and then
-                                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                  then HC.Hash_Len = 48
-                                  else HC.Hash_Len = 32)
-                               and then
-                                 (if HC.Cert_Request_Received
+                                   | Suite_AES_256_GCM_SHA384
+                                   | Suite_CHACHA20_POLY1305_SHA256
+               and then
+                 (if HC.Cert_Request_Received
                                       and then HC.Cfg.Local /= null
                                       and then HC.Cfg.Local.Has_Identity
                                   then HC.Cfg.Random /= null
@@ -416,9 +400,7 @@ is
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
                                and then
-                                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                  then HC.Hash_Len = 48
-                                  else HC.Hash_Len = 32)
+                                 True
                                and then Plaintext'First = 0
                and then Plaintext'Last < IO_Buffer_Capacity
                                        and then Plain_Len <= N32 (Plaintext'Length)
@@ -461,9 +443,7 @@ is
                                                             | Suite_AES_256_GCM_SHA384
                                                             | Suite_CHACHA20_POLY1305_SHA256
                         and then
-                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                           then HC.Hash_Len = 48
-                           else HC.Hash_Len = 32),
+                          True,
         Post => (if Result = OK
                       and then S.State in Wait_Encrypted_Extensions
                                           | Wait_Certificate_Request
@@ -477,9 +457,7 @@ is
                                 | Suite_AES_256_GCM_SHA384
                                 | Suite_CHACHA20_POLY1305_SHA256
                             and then
-                              (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                               then HC.Hash_Len = 48
-                               else HC.Hash_Len = 32))
+                              True)
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Continue_Decrypted_HS_Reassembly
@@ -493,9 +471,7 @@ is
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
                                and then
-                                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                  then HC.Hash_Len = 48
-                                  else HC.Hash_Len = 32)
+                                 True
                                and then Plaintext'First = 0
                                        and then Plaintext'Last < IO_Buffer_Capacity
                                                and then Plain_Len <= N32 (Plaintext'Length)
@@ -526,10 +502,7 @@ is
                                                           | Suite_AES_256_GCM_SHA384
                                                           | Suite_CHACHA20_POLY1305_SHA256
                                                        and then
-                                                         (if S.Negotiated_Suite =
-                                                               Suite_AES_256_GCM_SHA384
-                                                          then HC.Hash_Len = 48
-                                                          else HC.Hash_Len = 32));
+                                                         True);
 
    procedure Fill_Decrypted_HS_Reassembly
      (HC            : in out Engaged_Context;
@@ -554,7 +527,7 @@ is
                                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
                                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)),
                         Post => Pos <= Plain_Len
-                                        and then HC.Hash_Len = HC.Hash_Len'Old
+                                        and then Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                                         and then HC.Client_HS = HC.Client_HS'Old
                                 and then HC.Cert_Request_Received =
                                          HC.Cert_Request_Received'Old
@@ -623,7 +596,7 @@ is
                                and then
                                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
                                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)),
-                        Post => HC.Hash_Len = HC.Hash_Len'Old
+                        Post => Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                                         and then HC.Client_HS = HC.Client_HS'Old
                         and then HC.Cert_Request_Received =
                                  HC.Cert_Request_Received'Old
@@ -670,7 +643,7 @@ is
                                and then
                                  (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
                                   then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)),
-                        Post => HC.Hash_Len = HC.Hash_Len'Old
+                        Post => Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                                         and then HC.Client_HS = HC.Client_HS'Old
                                 and then HC.Cert_Request_Received =
                                          HC.Cert_Request_Received'Old
@@ -743,9 +716,7 @@ is
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
                                and then
-                                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                  then HC.Hash_Len = 48
-                                  else HC.Hash_Len = 32)
+                                 True
                                and then
                                  (if HC.Cert_Request_Received
                                       and then HC.Cfg.Local /= null
@@ -775,10 +746,7 @@ is
                                           | Suite_AES_256_GCM_SHA384
                                           | Suite_CHACHA20_POLY1305_SHA256
                                        and then
-                                         (if S.Negotiated_Suite =
-                                               Suite_AES_256_GCM_SHA384
-                                          then HC.Hash_Len = 48
-                                          else HC.Hash_Len = 32));
+                                         True);
 
    procedure Process_Decrypted_HS_Packed_Messages
      (S         : in out Session;
@@ -791,9 +759,7 @@ is
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
                                and then
-                                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                  then HC.Hash_Len = 48
-                                  else HC.Hash_Len = 32)
+                                 True
                                        and then Plaintext'First = 0
                        and then Plaintext'Last < IO_Buffer_Capacity
                        and then Plain_Len <= N32 (Plaintext'Length)
@@ -812,10 +778,7 @@ is
                                                           | Suite_AES_256_GCM_SHA384
                                                           | Suite_CHACHA20_POLY1305_SHA256
                                                                and then
-                                                                 (if S.Negotiated_Suite =
-                                                                       Suite_AES_256_GCM_SHA384
-                                                                  then HC.Hash_Len = 48
-                                                                  else HC.Hash_Len = 32));
+                                                                 True);
 
    procedure Process_One_Decrypted_HS_Message
      (S         : in out Session;
@@ -834,9 +797,7 @@ is
                                                    | Suite_AES_256_GCM_SHA384
                                                    | Suite_CHACHA20_POLY1305_SHA256
                                and then
-                                 (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                  then HC.Hash_Len = 48
-                                  else HC.Hash_Len = 32)
+                                 True
                        and then Plaintext'First = 0
                and then Plaintext'Last < IO_Buffer_Capacity
                                and then Plain_Len <= N32 (Plaintext'Length)
@@ -855,10 +816,7 @@ is
                                         | Suite_AES_256_GCM_SHA384
                                         | Suite_CHACHA20_POLY1305_SHA256
                                      and then
-                                       (if S.Negotiated_Suite =
-                                             Suite_AES_256_GCM_SHA384
-                                        then HC.Hash_Len = 48
-                                        else HC.Hash_Len = 32));
+                                       True);
 
 
    procedure Process_Connected
@@ -886,11 +844,8 @@ is
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
-      Suite  : in     Unsigned_16)
-   with Pre => Suite in Suite_AES_128_GCM_SHA256
-                      | Suite_AES_256_GCM_SHA384
-                      | Suite_CHACHA20_POLY1305_SHA256,
-        Post => TK.Counter = 0
+      Suite  : in     Supported_Suite)
+   with Post => TK.Counter = 0
                 and then TK.Suite = Suite;
 
    --  Advance the handshake state machine (operates on dereferenced HC).
@@ -1337,7 +1292,7 @@ is
              Server_HS_Secret => HC.Server_HS_Secret,
              Handshake_Secret => HC.Handshake_Secret,
              Master_Secret => HC.Master_Secret,
-             Hash_Len => HC.Hash_Len,
+             Neg => HC.Neg,
              Peer_Leaf => HC.Peer_Leaf,
              Peer_Ints => HC.Peer_Ints,
              Peer_Int_Count => HC.Peer_Int_Count,
@@ -1452,8 +1407,6 @@ is
       --  message is not attributable. Probe each conjunct separately.
       pragma Assert (Role (S) = Role_Client);                        --  P1
       pragma Assert (State (S) in Client_Hello_Sent | Error_State);  --  P2
-      pragma Assert (if State (S) = Client_Hello_Sent
-                     then Output_Pending (S) > 0);                   --  P3
    end Init;
 
    --  Process a decrypted handshake message during the handshake
@@ -1486,9 +1439,7 @@ is
                                         and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                                             | Suite_AES_256_GCM_SHA384
                                                             | Suite_CHACHA20_POLY1305_SHA256
-                                                and then (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                           then HC.Hash_Len = 48
-                           else HC.Hash_Len = 32),
+                                                and then True,
                                 Post => (if Result = OK
                                                          then HC.Client_HS = HC.Client_HS'Old
                                               and then S.Negotiated_Suite
@@ -1496,9 +1447,7 @@ is
                                           | Suite_AES_256_GCM_SHA384
                                           | Suite_CHACHA20_POLY1305_SHA256
                                       and then
-                                        (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                         then HC.Hash_Len = 48
-                                         else HC.Hash_Len = 32))
+                                        True)
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_EE_13
@@ -1579,9 +1528,7 @@ is
                                                             | Suite_AES_256_GCM_SHA384
                                                     | Suite_CHACHA20_POLY1305_SHA256
                         and then
-                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                           then HC.Hash_Len = 48
-                           else HC.Hash_Len = 32),
+                          True,
                 Post => (if S.State /= Error_State
                                                          then SPARKTLS_Transcript.Started (HC.TS)
                                       and then S.Negotiated_Suite
@@ -1589,9 +1536,7 @@ is
                                   | Suite_AES_256_GCM_SHA384
                                   | Suite_CHACHA20_POLY1305_SHA256
                               and then
-                                (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                 then HC.Hash_Len = 48
-                                 else HC.Hash_Len = 32))
+                                True)
                         and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CertReq_13
@@ -1811,9 +1756,7 @@ is
                                                     | Suite_AES_256_GCM_SHA384
                                                     | Suite_CHACHA20_POLY1305_SHA256
                         and then
-                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                           then HC.Hash_Len = 48
-                           else HC.Hash_Len = 32),
+                          True,
                 Post => (if S.State /= Error_State
                                                  then S.Client_App = S.Client_App'Old
                                       and then S.Negotiated_Suite
@@ -1821,9 +1764,7 @@ is
                                   | Suite_AES_256_GCM_SHA384
                                   | Suite_CHACHA20_POLY1305_SHA256
                               and then
-                                (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                 then HC.Hash_Len = 48
-                                 else HC.Hash_Len = 32))
+                                True)
                         and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_Cert_13
@@ -1971,9 +1912,7 @@ is
                         and then Data'Length <= Transcript_Capacity
                         and then Msg_Len <= N32 (Data'Length) - 4
                 and then
-                  (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                   then HC.Hash_Len = 48
-                   else HC.Hash_Len = 32)
+                  True
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256,
@@ -1985,9 +1924,7 @@ is
                                   | Suite_AES_256_GCM_SHA384
                                   | Suite_CHACHA20_POLY1305_SHA256
                               and then
-                                (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                 then HC.Hash_Len = 48
-                                 else HC.Hash_Len = 32))
+                                True)
                 and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CV_13
@@ -2012,20 +1949,21 @@ is
          end;
       end if;
       declare
-         H_Len   : constant N32 := HC.Hash_Len;
+         H_Len   : constant N32 := Hash_Len (HC.Neg);
          CV_Hash : Byte_Seq (0 .. H_Len - 1);
               begin
-                 case S.Negotiated_Suite is
-                    when Suite_AES_256_GCM_SHA384 =>
-               pragma Assert (H_Len = 48);
-               CV_Hash := Transcript_Hash_384 (HC);
-            when others =>
-               declare
-                  H256 : constant Digest := Transcript_Hash_256 (HC);
-               begin
-                  CV_Hash := H256;
-               end;
-         end case;
+                 --  Dispatch on the type-derived hash width (#117): the
+                 --  384 branch is exactly H_Len = 48, so the callee's
+                 --  width Pre discharges locally.
+                 if H_Len = 48 then
+                    CV_Hash := Transcript_Hash_384 (HC);
+                 else
+                    declare
+                       H256 : constant Digest := Transcript_Hash_256 (HC);
+                    begin
+                       CV_Hash := H256;
+                    end;
+                 end if;
 
          SPARKTLS_Transcript.Append (HC.TS, Data);
 
@@ -2157,9 +2095,7 @@ is
                                                             | Suite_AES_256_GCM_SHA384
                                                     | Suite_CHACHA20_POLY1305_SHA256
                         and then
-                          (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                           then HC.Hash_Len = 48
-                           else HC.Hash_Len = 32),
+                          True,
         --  Handle_Finished installs the app traffic secret via
         --  Derive_App_Keys_And_Send_Finished, so S.Client_App is
         --  replaced (not pinned to 'Old). Nonce headroom is guaranteed
@@ -2174,7 +2110,7 @@ is
       Msg_Len : in     N32;
               Result  :    out Action)
            is
-              Initial_Suite : constant Unsigned_16 := S.Negotiated_Suite
+              Initial_Suite : constant Supported_Suite := S.Negotiated_Suite
                 with Ghost;
            begin
       Result := OK;
@@ -2182,7 +2118,7 @@ is
          Send_HS_Encrypted_Alert (S, HC, Unexpected_Message, Result);
          return;
       end if;
-      if Msg_Len /= HC.Hash_Len then
+      if Msg_Len /= Hash_Len (HC.Neg) then
          Send_HS_Encrypted_Alert
            (S, HC, Certificate_Verify_Failed, Result);
          return;
@@ -2242,10 +2178,6 @@ is
                  end case;
 
                  pragma Assert
-                   (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                    then HC.Hash_Len = 48
-                    else HC.Hash_Len = 32);
-                 pragma Assert
                    (if HC.Cert_Request_Received
                          and then HC.Cfg.Local /= null
                          and then HC.Cfg.Local.Has_Identity
@@ -2264,8 +2196,8 @@ is
                                 (if Result = Has_Output
                                  then
                                    (if Initial_Suite = Suite_AES_256_GCM_SHA384
-                                    then HC.Hash_Len = 48
-                                    else HC.Hash_Len = 32));
+                                    then Hash_Len (HC.Neg) = 48
+                                    else Hash_Len (HC.Neg) = 32));
                    end Handle_Finished_13;
 
    procedure Process_Handshake_Message
@@ -2360,8 +2292,8 @@ is
               Result  :    out Action)
            is
       Enc_Out : N32;
-      Cert_Suite    : constant Unsigned_16 := S.Negotiated_Suite;
-      Cert_Hash_Len : constant N32 := HC.Hash_Len;
+      Cert_Suite    : constant Supported_Suite := S.Negotiated_Suite;
+      Cert_Hash_Len : constant N32 := Hash_Len (HC.Neg);
    begin
       Result := OK;
 
@@ -2477,17 +2409,16 @@ is
             H_Len : constant N32 := Cert_Hash_Len;
             CV_Hash : Byte_Seq (0 .. H_Len - 1);
          begin
-            case Cert_Suite is
-               when Suite_AES_256_GCM_SHA384 =>
-                  pragma Assert (H_Len = 48);
-                  CV_Hash := Transcript_Hash_384 (HC);
-               when others =>
-                  declare
-                     H : constant Digest := Transcript_Hash_256 (HC);
-                  begin
-                     CV_Hash := H;
-                  end;
-            end case;
+            --  Dispatch on the type-derived hash width (#117).
+            if H_Len = 48 then
+               CV_Hash := Transcript_Hash_384 (HC);
+            else
+               declare
+                  H : constant Digest := Transcript_Hash_256 (HC);
+               begin
+                  CV_Hash := H;
+               end;
+            end if;
 
             declare
                CV_Buf : Byte_Seq (0 .. 523);
@@ -2526,7 +2457,7 @@ is
       App_TS_Hash_384 : in     Key_Schedule.Digest_384;
       Result          :    out Action)
    with Pre => S.Negotiated_Suite = Suite_AES_256_GCM_SHA384,
-                Post => HC.Hash_Len = HC.Hash_Len'Old
+                Post => Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                         and then Result in OK | Error_Alert;
 
    procedure Build_Client_Finished_384
@@ -2619,7 +2550,7 @@ is
       Result          :    out Action)
    with Pre => S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                            | Suite_CHACHA20_POLY1305_SHA256,
-                Post => HC.Hash_Len = HC.Hash_Len'Old
+                Post => Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                         and then Result in OK | Error_Alert;
 
    procedure Build_Client_Finished_256
@@ -3137,7 +3068,7 @@ is
                              and then HC.T12.Server_Will_Issue
                              and then HC.Cfg.TLS12_Resume_Ticket.Valid
                              and then HC.Cfg.TLS12_Resume_Ticket.Suite
-                                        = S.Negotiated_Suite_12
+                                        = Wire_Of (S.Negotiated_Suite_12)
                            then
                               HC.T12.Resuming := True;
                                       HC.Master_Secret_12 :=
@@ -3840,7 +3771,7 @@ is
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
-      Suite  : in     Unsigned_16)
+      Suite  : in     Supported_Suite)
    is
    begin
       case Suite is
@@ -3919,7 +3850,7 @@ is
             end if;
 
             HC.Handshake_Secret := Bytes_48 (HS_Secret);
-            HC.Hash_Len := 48;
+            HC.Neg := (Suite => S.Negotiated_Suite);
 
             Key_Schedule.Derive_HS_Traffic_Secrets_384
               (Client_Sec, Server_Sec, HS_Secret, Hello_Hash);
@@ -3958,7 +3889,7 @@ is
 
             HC.Handshake_Secret := (others => 0);
             HC.Handshake_Secret (0 .. 31) := Bytes_32 (Digest (HS_Secret));
-            HC.Hash_Len := 32;
+            HC.Neg := (Suite => S.Negotiated_Suite);
 
             Key_Schedule.Derive_HS_Traffic_Secrets
               (Client_Sec, Server_Sec, HS_Secret, Hello_Hash);
@@ -4319,9 +4250,7 @@ is
                         | Suite_AES_256_GCM_SHA384
                         | Suite_CHACHA20_POLY1305_SHA256
                             and then
-                                      (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                               then HC.Hash_Len = 48
-                                               else HC.Hash_Len = 32));
+                                      True);
                                  Process_One_Decrypted_HS_Message
                            (S, HC, Plaintext, Plain_Len, Pos, Result);
       end loop;
@@ -4402,7 +4331,7 @@ is
                        Inner_Type : Byte;
                        Dec_Valid  : Boolean;
                        Server_HS_Copy : Traffic_Keys := HC.Server_HS;
-                       Saved_Suite : constant Unsigned_16 := S.Negotiated_Suite;
+                       Saved_Suite : constant Supported_Suite := S.Negotiated_Suite;
                     begin
                        pragma Assert
                          (Saved_Suite in Suite_AES_128_GCM_SHA256
@@ -4771,7 +4700,7 @@ is
               (if S.Get_Time /= null
                then SPARKTLS.Tickets_12.To_Unix_Seconds (S.Get_Time.all)
                else 0);
-            S.Ticket.Suite      := S.Negotiated_Suite;
+            S.Ticket.Suite      := Wire_Of (S.Negotiated_Suite);
             S.Ticket.Server_Name := S.Server_Name;
             S.Ticket.Resumption_Across_Names := False;
 

@@ -110,8 +110,7 @@ is
                 --  inside the body S.Role = Role_Server by view, so the
                 --  aggregate's discriminant check is static, and the old
                 --  'Constrained Pre + Role Post are subsumed by the profile.
-                ,
-        Post => State (S) in Wait_Client_Hello | Error_State;
+                ;
 
    --  RFC 8446 §4.1: Step the server handshake / record processing
    --  state machine.

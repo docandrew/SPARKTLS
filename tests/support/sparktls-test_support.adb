@@ -24,12 +24,12 @@ is
 
    procedure Set_Negotiated_Suite (S : in out Session; V : Unsigned_16) is
    begin
-      S.Negotiated_Suite := V;
+      S.Negotiated_Suite := To_Suite (V);
    end Set_Negotiated_Suite;
 
    procedure Set_Negotiated_Suite_12 (S : in out Session; V : Unsigned_16) is
    begin
-      S.Negotiated_Suite_12 := V;
+      S.Negotiated_Suite_12 := To_Suite (V);
    end Set_Negotiated_Suite_12;
 
    procedure Set_Exporter_State

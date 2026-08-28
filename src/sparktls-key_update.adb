@@ -22,17 +22,14 @@ is
    procedure Install_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
-      Suite  : in     Unsigned_16)
-   with Pre  => Suite in Suite_AES_128_GCM_SHA256
-                       | Suite_AES_256_GCM_SHA384
-                       | Suite_CHACHA20_POLY1305_SHA256,
-        Post => TK.Counter = 0
+      Suite  : in     Supported_Suite)
+   with         Post => TK.Counter = 0
                 and then TK.Suite = Suite;
 
    procedure Install_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
-      Suite  : in     Unsigned_16)
+      Suite  : in     Supported_Suite)
    is
    begin
       case Suite is
@@ -86,7 +83,7 @@ is
      (Secret : in out Bytes_48;
       Len    : in     N32;
       TK     : in out Traffic_Keys;
-      Suite  : in     Unsigned_16)
+      Suite  : in     Supported_Suite)
    is
       New_Secret : Bytes_48 := (others => 0);
       Empty      : constant Byte_Seq (0 .. -1) := (others => 0);

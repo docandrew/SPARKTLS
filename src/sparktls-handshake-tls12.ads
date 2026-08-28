@@ -151,7 +151,7 @@ is
    with Ghost;
 
    --  RFC 5246 §7.4.1.2: Valid TLS 1.2 cipher suite (ECDHE+AEAD only).
-   function Valid_TLS12_Suite (S : Unsigned_16) return Boolean is
+   function Valid_TLS12_Suite (S : Supported_Suite) return Boolean is
      (S in Suite_ECDHE_RSA_AES128_GCM_SHA256
         | Suite_ECDHE_RSA_AES256_GCM_SHA384
         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
@@ -162,14 +162,14 @@ is
 
    --  RFC 5246 §7.4.1.2: Is this an ECDHE_RSA suite (vs ECDHE_ECDSA)?
    --  Determines whether the ServerKeyExchange signature uses RSA or ECDSA.
-   function Is_ECDHE_RSA_Suite (S : Unsigned_16) return Boolean is
+   function Is_ECDHE_RSA_Suite (S : Supported_Suite) return Boolean is
      (S in Suite_ECDHE_RSA_AES128_GCM_SHA256
         | Suite_ECDHE_RSA_AES256_GCM_SHA384
         | Suite_ECDHE_RSA_CHACHA20_SHA256)
    with Ghost;
 
    --  RFC 5246: Does this suite use SHA-384 for PRF?
-   function Suite_Uses_SHA384 (S : Unsigned_16) return Boolean is
+   function Suite_Uses_SHA384 (S : Supported_Suite) return Boolean is
      (S in Suite_ECDHE_RSA_AES256_GCM_SHA384
         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384)
    with Ghost;
@@ -188,7 +188,7 @@ is
    --  TLS 1.2 wire suite → internal AEAD suite mapping.
    --  This is the normative mapping; using the wrong internal suite
    --  causes silent key derivation failure (Bug 1 pattern).
-   function Internal_Suite_For (S : Unsigned_16) return Unsigned_16 is
+   function Internal_Suite_For (S : Supported_Suite) return Supported_Suite is
      (case S is
          when Suite_ECDHE_RSA_AES128_GCM_SHA256
             | Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
@@ -199,7 +199,7 @@ is
          when Suite_ECDHE_RSA_CHACHA20_SHA256
             | Suite_ECDHE_ECDSA_CHACHA20_SHA256 =>
                Suite_CHACHA20_POLY1305_SHA256,
-         when others => 0)
+         when others => Suite_None)
    with Ghost;
 
    --  ClientHello cipher suite list covers the version policy.
@@ -482,7 +482,7 @@ is
                         and then Data'Last < N32'Last
                         and then HC.Version = TLS_1_2,
                         Post => (if OK then
-                                   Valid_TLS12_Suite (Negotiated_Suite (S))
+                                   Valid_TLS12_Suite (Suite (S))
                                    and HC.Version = TLS_1_2)
                         and then HC.TS = HC.TS'Old
                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old

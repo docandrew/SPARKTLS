@@ -116,18 +116,67 @@ is
       TLS_CHACHA20_POLY1305_SHA256,
       TLS_AES_256_GCM_SHA384);
 
-   --  TLS 1.3 cipher suite code values
-   Suite_AES_128_GCM_SHA256        : constant Unsigned_16 := 16#1301#;
-   Suite_CHACHA20_POLY1305_SHA256  : constant Unsigned_16 := 16#1303#;
-   Suite_AES_256_GCM_SHA384        : constant Unsigned_16 := 16#1302#;
+   --  The cipher suites we implement, as a CLOSED ENUMERATION (#118).
+   --  Negotiated_Suite is peer-influenced but WE assign it, from this
+   --  menu, at the negotiation boundary: the hostile wire Unsigned_16
+   --  is filtered exactly once through To_Suite (unsupported -> the
+   --  sanity checks reject, so interior code never sees a value outside
+   --  this type). Every "Suite in ..." membership precondition this
+   --  replaces is now true by construction.
+   type Supported_Suite is
+     (Suite_None,
+      --  TLS 1.3 (RFC 8446)
+      Suite_AES_128_GCM_SHA256,
+      Suite_CHACHA20_POLY1305_SHA256,
+      Suite_AES_256_GCM_SHA384,
+      --  TLS 1.2 ECDHE + AEAD only (RFC 5289 / RFC 7905)
+      Suite_ECDHE_RSA_AES128_GCM_SHA256,
+      Suite_ECDHE_RSA_AES256_GCM_SHA384,
+      Suite_ECDHE_ECDSA_AES128_GCM_SHA256,
+      Suite_ECDHE_ECDSA_AES256_GCM_SHA384,
+      Suite_ECDHE_RSA_CHACHA20_SHA256,
+      Suite_ECDHE_ECDSA_CHACHA20_SHA256);
 
-   --  TLS 1.2 cipher suite code values (ECDHE + AEAD only)
-   Suite_ECDHE_RSA_AES128_GCM_SHA256   : constant Unsigned_16 := 16#C02F#;
-   Suite_ECDHE_RSA_AES256_GCM_SHA384   : constant Unsigned_16 := 16#C030#;
-   Suite_ECDHE_ECDSA_AES128_GCM_SHA256 : constant Unsigned_16 := 16#C02B#;
-   Suite_ECDHE_ECDSA_AES256_GCM_SHA384 : constant Unsigned_16 := 16#C02C#;
-   Suite_ECDHE_RSA_CHACHA20_SHA256     : constant Unsigned_16 := 16#CCA8#;
-   Suite_ECDHE_ECDSA_CHACHA20_SHA256   : constant Unsigned_16 := 16#CCA9#;
+   --  Wire code points. Only the negotiation boundary and serializers
+   --  touch these; interior code speaks Supported_Suite.
+   Wire_Suite_AES_128_GCM_SHA256        : constant Unsigned_16 := 16#1301#;
+   Wire_Suite_CHACHA20_POLY1305_SHA256  : constant Unsigned_16 := 16#1303#;
+   Wire_Suite_AES_256_GCM_SHA384        : constant Unsigned_16 := 16#1302#;
+   Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256   : constant Unsigned_16 := 16#C02F#;
+   Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384   : constant Unsigned_16 := 16#C030#;
+   Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256 : constant Unsigned_16 := 16#C02B#;
+   Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384 : constant Unsigned_16 := 16#C02C#;
+   Wire_Suite_ECDHE_RSA_CHACHA20_SHA256     : constant Unsigned_16 := 16#CCA8#;
+   Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256   : constant Unsigned_16 := 16#CCA9#;
+
+   --  The single filter for the hostile wire value. Total: anything we
+   --  do not implement maps to Suite_None, which the negotiation sanity
+   --  checks already reject.
+   function To_Suite (Wire : Unsigned_16) return Supported_Suite is
+     (case Wire is
+        when 16#1301# => Suite_AES_128_GCM_SHA256,
+        when 16#1303# => Suite_CHACHA20_POLY1305_SHA256,
+        when 16#1302# => Suite_AES_256_GCM_SHA384,
+        when 16#C02F# => Suite_ECDHE_RSA_AES128_GCM_SHA256,
+        when 16#C030# => Suite_ECDHE_RSA_AES256_GCM_SHA384,
+        when 16#C02B# => Suite_ECDHE_ECDSA_AES128_GCM_SHA256,
+        when 16#C02C# => Suite_ECDHE_ECDSA_AES256_GCM_SHA384,
+        when 16#CCA8# => Suite_ECDHE_RSA_CHACHA20_SHA256,
+        when 16#CCA9# => Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+        when others   => Suite_None);
+
+   function Wire_Of (S : Supported_Suite) return Unsigned_16 is
+     (case S is
+        when Suite_None                          => 0,
+        when Suite_AES_128_GCM_SHA256            => 16#1301#,
+        when Suite_CHACHA20_POLY1305_SHA256      => 16#1303#,
+        when Suite_AES_256_GCM_SHA384            => 16#1302#,
+        when Suite_ECDHE_RSA_AES128_GCM_SHA256   => 16#C02F#,
+        when Suite_ECDHE_RSA_AES256_GCM_SHA384   => 16#C030#,
+        when Suite_ECDHE_ECDSA_AES128_GCM_SHA256 => 16#C02B#,
+        when Suite_ECDHE_ECDSA_AES256_GCM_SHA384 => 16#C02C#,
+        when Suite_ECDHE_RSA_CHACHA20_SHA256     => 16#CCA8#,
+        when Suite_ECDHE_ECDSA_CHACHA20_SHA256   => 16#CCA9#);
 
    Max_Config_Cipher_Suites : constant := 16;
    subtype Cipher_Pref_Index is Natural range 1 .. Max_Config_Cipher_Suites;
@@ -752,12 +801,10 @@ is
       Key     : Bytes_32          := (others => 0);
       IV      : Bytes_12          := (others => 0);
       Counter : Record_Counter    := 0;
-      Suite   : Unsigned_16       := Suite_CHACHA20_POLY1305_SHA256;
-   end record
-     with Predicate =>
-       Traffic_Keys.Suite in Suite_AES_128_GCM_SHA256 |
-                             Suite_AES_256_GCM_SHA384 |
-                             Suite_CHACHA20_POLY1305_SHA256;
+      --  Closed enum (#118): the membership predicate this used to carry
+      --  is now true by construction.
+      Suite   : Supported_Suite   := Suite_CHACHA20_POLY1305_SHA256;
+   end record;
 
    --  RFC 8446 §5.5 "Limits on Key Usage". For AES-GCM the guidance is at
    --  most 2**24.5 (~23.7 million) full-size records under one key, to keep
@@ -1673,6 +1720,16 @@ is
    --  structurally (flow-level, no contracts).
    type HS_Phase is (Setup, Engaged);
 
+   --  Negotiated cipher-suite parameters (#117). The hash length is
+   --  DERIVED from the discriminant, so the suite<->hash correlation
+   --  holds by construction -- no predicate, no contract threading.
+   --  Suite 0 = not yet negotiated (hash defaults to 32, matching the
+   --  old Hash_Len field default). Assigned whole at negotiation.
+   type Negotiated_Params (Suite : Supported_Suite := Suite_None) is null record;
+
+   function Hash_Len (N : Negotiated_Params) return Hash_Length is
+     (if N.Suite = Suite_AES_256_GCM_SHA384 then 48 else 32);
+
    type Handshake_Context (Phase : HS_Phase := Setup) is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
@@ -1760,8 +1817,9 @@ is
       Handshake_Secret : Bytes_48 := (others => 0);
       Master_Secret    : Bytes_48 := (others => 0);
 
-      --  Hash length for negotiated cipher suite (32 or 48)
-      Hash_Len : Hash_Length := 32;
+      --  Negotiated suite parameters; hash length derives from the
+      --  discriminant via function Hash_Len (#117).
+      Neg : Negotiated_Params;
 
       --  Streaming transcript (carve 2): dual SHA-256/384 contexts
       --  replace the 32 KB buffer -- no capacity, no Len, no non-RFC
@@ -2470,6 +2528,9 @@ is
    --  Server.Close_Notify, which SEND our own close_notify.
    function Peer_Closed_Cleanly (S : Session) return Boolean;
    function Negotiated_Suite (S : Session) return Unsigned_16;
+   --  Enum view for contracts (#118); the Unsigned_16 forms above stay
+   --  for API compatibility and return the wire code point.
+   function Suite (S : Session) return Supported_Suite;
    function Negotiated_Suite_12 (S : Session) return Unsigned_16;
 
    function Client_App (S : Session) return Traffic_Keys with Ghost;
@@ -2744,8 +2805,8 @@ private
       App_Data_Len : Plaintext_Length := 0;
 
       --  Negotiated cipher suite (wire value from ServerHello)
-      Negotiated_Suite    : Unsigned_16 := 0;  --  TLS 1.3 suite (0x13xx)
-      Negotiated_Suite_12 : Unsigned_16 := 0;  --  TLS 1.2 suite (0xC0xx/0xCCxx)
+      Negotiated_Suite    : Supported_Suite := Suite_None;  --  TLS 1.3
+      Negotiated_Suite_12 : Supported_Suite := Suite_None;  --  TLS 1.2
 
       --  Peer certificate valid (copied from HC before free)
       Peer_Cert_Valid : Boolean := False;
@@ -2936,8 +2997,12 @@ private
    function Last_Error (S : Session) return Error_Code is (S.Last_Error);
    function Peer_Closed_Cleanly (S : Session) return Boolean is
      (S.Peer_Closed_Cleanly);
-   function Negotiated_Suite (S : Session) return Unsigned_16 is (S.Negotiated_Suite);
-   function Negotiated_Suite_12 (S : Session) return Unsigned_16 is (S.Negotiated_Suite_12);
+   function Negotiated_Suite (S : Session) return Unsigned_16 is
+     (Wire_Of (S.Negotiated_Suite));
+   function Suite (S : Session) return Supported_Suite is
+     (S.Negotiated_Suite);
+   function Negotiated_Suite_12 (S : Session) return Unsigned_16 is
+     (Wire_Of (S.Negotiated_Suite_12));
    function Client_App (S : Session) return Traffic_Keys is (S.Client_App);
    function Server_App (S : Session) return Traffic_Keys is (S.Server_App);
    function Input (S : Session) return IO_Buffer is (S.Input);
@@ -2980,7 +3045,7 @@ private
       (S.Negotiated_Version);
 
    function Get_Cipher_Suite (S : Session) return Unsigned_16 is
-      (S.Negotiated_Suite);
+      (Wire_Of (S.Negotiated_Suite));
 
    function Get_ALPN (S : Session) return String is
       (S.Negotiated_ALPN.Data (1 .. S.Negotiated_ALPN.Len));

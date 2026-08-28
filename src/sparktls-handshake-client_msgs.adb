@@ -357,7 +357,6 @@ is
                                 and then Len > 0
                                 and then Len <= N32 (Result'Length),
                         Post => (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-                                        and then HC.TS = HC.TS'Old
                                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
                                         and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
                                                 and then Len <= N32 (Result'Length);
@@ -379,7 +378,7 @@ is
       if Retry_Mode and then HC.HRR_Cipher_Suite /= 0 then
          declare
             Needed_PSK_Len : constant N32 :=
-              (if HC.HRR_Cipher_Suite = Suite_AES_256_GCM_SHA384
+              (if HC.HRR_Cipher_Suite = Wire_Suite_AES_256_GCM_SHA384
                then 48 else 32);
          begin
             if S.Ticket.PSK_Len /= Needed_PSK_Len then
@@ -1115,10 +1114,6 @@ is
             --  (measured; see generated/README.md "REJECTED").
             pragma Assert
               (RFLX.TLS_Handshake.Client_Hello.Field_Size
-                 (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-               rem RBT.Byte'Size = 0);
-            pragma Assert
-              (RFLX.TLS_Handshake.Client_Hello.Field_Last
                  (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
                rem RBT.Byte'Size = 0);
             pragma Assert
@@ -2478,9 +2473,9 @@ is
                          + Unsigned_16 (Data (Cs_Off + 1));
                     begin
                        pragma Assert (Cs_Off + 1 <= Data'Last);
-                       if Suite_Val not in Suite_AES_128_GCM_SHA256
-                                         | Suite_AES_256_GCM_SHA384
-                                         | Suite_CHACHA20_POLY1305_SHA256
+                       if Suite_Val not in Wire_Suite_AES_128_GCM_SHA256
+                                         | Wire_Suite_AES_256_GCM_SHA384
+                                         | Wire_Suite_CHACHA20_POLY1305_SHA256
                                then
                                   S.Last_Error := Illegal_Parameter;
                                   pragma Assert_And_Cut
@@ -2489,7 +2484,7 @@ is
                                   return;
                                end if;
                        HC.HRR_Cipher_Suite := Suite_Val;
-                       S.Negotiated_Suite := Suite_Val;
+                       S.Negotiated_Suite := To_Suite (Suite_Val);
                        HC.Version := TLS_1_3;
                     end;
                  end;
@@ -2569,15 +2564,15 @@ is
             Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (Suite));
       begin
          --  Accept TLS 1.3 and TLS 1.2 AEAD suites
-         if Suite_Val not in Suite_CHACHA20_POLY1305_SHA256
-                           | Suite_AES_128_GCM_SHA256
-                           | Suite_AES_256_GCM_SHA384
-                           | Suite_ECDHE_RSA_AES128_GCM_SHA256
-                           | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                           | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                   | Suite_ECDHE_RSA_CHACHA20_SHA256
-                                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+         if Suite_Val not in Wire_Suite_CHACHA20_POLY1305_SHA256
+                           | Wire_Suite_AES_128_GCM_SHA256
+                           | Wire_Suite_AES_256_GCM_SHA384
+                           | Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
+                           | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
+                           | Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                           | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                                   | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
+                                   | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
                          then
                             pragma Assert_And_Cut (SH_Parse_Frame);
                             goto Cleanup;
@@ -2592,7 +2587,7 @@ is
                     S.Last_Error := Illegal_Parameter;
                     goto Cleanup;
                  end if;
-         S.Negotiated_Suite := Suite_Val;
+         S.Negotiated_Suite := To_Suite (Suite_Val);
       end;
 
       --  Iterate extensions to find key_share

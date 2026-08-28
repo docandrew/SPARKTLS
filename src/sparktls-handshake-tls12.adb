@@ -1292,7 +1292,7 @@ is
       end if;
       Pos := Pos + SID_Out_Len;
 
-      Put16 (Result, Pos, S.Negotiated_Suite);
+      Put16 (Result, Pos, Wire_Of (S.Negotiated_Suite));
       Pos := Pos + 2;
 
       --  RFC 5246 §6.2.2 / §7.4.1.4: compression_method MUST be 0
@@ -1481,16 +1481,16 @@ is
          Suite_Val : constant Unsigned_16 :=
             Unsigned_16 (Data (Pos)) * 256 + Unsigned_16 (Data (Pos + 1));
       begin
-         if Suite_Val not in Suite_ECDHE_RSA_AES128_GCM_SHA256
-                           | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                           | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                           | Suite_ECDHE_RSA_CHACHA20_SHA256
-                           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+         if Suite_Val not in Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
+                           | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
+                           | Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                           | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                           | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
+                           | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
          then
             return;
          end if;
-         S.Negotiated_Suite := Suite_Val;
+         S.Negotiated_Suite := To_Suite (Suite_Val);
       end;
       Pos := Pos + 2;
 

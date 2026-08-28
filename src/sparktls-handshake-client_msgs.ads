@@ -68,7 +68,7 @@ is
                                                                                                         and then
                                                                                                           (if OK
                                                                                                            and then HC.Version = TLS_1_3
-                                                                                                   then Negotiated_Suite (S) in
+                                                                                                   then Suite (S) in
                                                                                                      Suite_AES_128_GCM_SHA256
                                                                                            | Suite_AES_256_GCM_SHA384
                                                                                            | Suite_CHACHA20_POLY1305_SHA256)

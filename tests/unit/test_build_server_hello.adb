@@ -41,7 +41,7 @@ procedure Test_Build_Server_Hello is
    procedure Init_Context
      (S      : out Session;
       HC     : out Handshake_Context;
-      Suite  : in  Unsigned_16 := Suite_AES_128_GCM_SHA256)
+      Suite  : in  Unsigned_16 := Wire_Suite_AES_128_GCM_SHA256)
    is
       pragma Unreferenced (Suite);
    begin

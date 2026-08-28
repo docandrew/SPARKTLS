@@ -69,7 +69,7 @@ procedure Test_PSK_Resume is
       for I in N32 range 0 .. 31 loop
          T.PSK (I) := Byte (16#A0# + (Natural (I) mod 16));
       end loop;
-      T.Suite := Suite_AES_128_GCM_SHA256;
+      T.Suite := Wire_Suite_AES_128_GCM_SHA256;
       declare
          H : constant String := "localhost";
       begin

@@ -64,7 +64,7 @@ is
                                       Input (S).Write_Pos'Old
                                                             and then
                                       (if OK and then HC.Version = TLS_1_3
-                                       then Negotiated_Suite (S) in
+                                       then Suite (S) in
                                          Suite_AES_128_GCM_SHA256
                                        | Suite_AES_256_GCM_SHA384
                                        | Suite_CHACHA20_POLY1305_SHA256);
@@ -80,7 +80,7 @@ is
    with Pre  => Result'First = 0
                 and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
                 and then HC.Cfg.Random /= null
-                                and then Negotiated_Suite (S) in Suite_AES_128_GCM_SHA256
+                                and then Suite (S) in Suite_AES_128_GCM_SHA256
                                                        | Suite_AES_256_GCM_SHA384
                                                        | Suite_CHACHA20_POLY1305_SHA256,
            Post => Len <= N32 (Result'Length)

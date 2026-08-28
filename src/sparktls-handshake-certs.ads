@@ -123,7 +123,7 @@ is
                                                and then HS_Msg'Length <= Max_Cert_Msg,
                                 Post => HC.Client_HS.Counter =
                                           HC.Client_HS.Counter'Old
-                        and then HC.Hash_Len = HC.Hash_Len'Old
+                        and then Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                         and then (if HC.Cfg.Local'Old /= null
                                   then HC.Cfg.Local /= null)
                         and then (if HC.Cfg.Local'Old /= null
@@ -154,7 +154,7 @@ is
    with Pre => HS_Msg'First = 0
                                and then HS_Msg'Length >= 7
                                and then HS_Msg'Length <= Max_Cert_Msg,
-        Post => HC.Hash_Len = HC.Hash_Len'Old
+        Post => Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                 and then (if HC.Cfg.Local'Old /= null
                           then HC.Cfg.Local /= null)
                         and then (if HC.Cfg.Local'Old /= null
@@ -205,7 +205,7 @@ is
                                         and then C_Len > 0
                                                 and then C_Len <= N32 (Max_Cert_DER),
                 Post => HC.Client_HS = HC.Client_HS'Old
-                        and then HC.Hash_Len = HC.Hash_Len'Old
+                        and then Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                         and then (if HC.Cfg.Local'Old /= null
                                   then HC.Cfg.Local /= null)
                         and then (if HC.Cfg.Local'Old /= null

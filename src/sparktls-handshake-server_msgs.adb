@@ -1495,48 +1495,48 @@ is
          return;
       end if;
 
-      if Val in Suite_AES_256_GCM_SHA384
-              | Suite_AES_128_GCM_SHA256
-              | Suite_CHACHA20_POLY1305_SHA256
+      if Val in Wire_Suite_AES_256_GCM_SHA384
+              | Wire_Suite_AES_128_GCM_SHA256
+              | Wire_Suite_CHACHA20_POLY1305_SHA256
       then
-         if S.Negotiated_Suite = 0 then
-            S.Negotiated_Suite := Val;
-         elsif Val = Suite_CHACHA20_POLY1305_SHA256 then
-            S.Negotiated_Suite := Val;
+         if S.Negotiated_Suite = Suite_None then
+            S.Negotiated_Suite := To_Suite (Val);
+         elsif Val = Wire_Suite_CHACHA20_POLY1305_SHA256 then
+            S.Negotiated_Suite := To_Suite (Val);
          end if;
       end if;
 
       if HC.Cfg.Local = null then
-         if Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
-                          | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                          | Suite_ECDHE_RSA_CHACHA20_SHA256
-                          | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+         if Val in Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
+                          | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
+                          | Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                          | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                          | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
+                          | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
            and then Prefer_TLS12_Candidate
-                      (HC.Cfg, S.Negotiated_Suite_12, Val)
+                      (HC.Cfg, Wire_Of (S.Negotiated_Suite_12), Val)
          then
-            S.Negotiated_Suite_12 := Val;
+            S.Negotiated_Suite_12 := To_Suite (Val);
          end if;
          return;
       end if;
 
       if Cert_Is_ECDSA
-        and then Val in Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                       | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                       | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-        and then Prefer_TLS12_Candidate (HC.Cfg, S.Negotiated_Suite_12, Val)
+        and then Val in Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                       | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                       | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (S.Negotiated_Suite_12), Val)
       then
-         S.Negotiated_Suite_12 := Val;
+         S.Negotiated_Suite_12 := To_Suite (Val);
       end if;
 
       if Cert_Is_RSA
-        and then Val in Suite_ECDHE_RSA_AES128_GCM_SHA256
-                       | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                       | Suite_ECDHE_RSA_CHACHA20_SHA256
-        and then Prefer_TLS12_Candidate (HC.Cfg, S.Negotiated_Suite_12, Val)
+        and then Val in Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
+                       | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
+                       | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (S.Negotiated_Suite_12), Val)
       then
-         S.Negotiated_Suite_12 := Val;
+         S.Negotiated_Suite_12 := To_Suite (Val);
       end if;
    end Apply_Raw_Cipher_Suite;
 
@@ -2876,8 +2876,8 @@ is
       HC     : in out Handshake_Context)
    is
    begin
-      S.Negotiated_Suite := 0;
-      S.Negotiated_Suite_12 := 0;
+      S.Negotiated_Suite := Suite_None;
+      S.Negotiated_Suite_12 := Suite_None;
 
       for J in N32 range 0 .. (Cs_Len / 2) - 1 loop
          pragma Loop_Invariant (J < Cs_Len / 2);
@@ -3029,7 +3029,7 @@ is
          return;
       end if;
 
-      if S.Negotiated_Suite_12 = 0 then
+      if S.Negotiated_Suite_12 = Suite_None then
          return;
       end if;
 
@@ -3285,8 +3285,8 @@ is
       --  Iterate cipher suites to find one we support
       --  Store best TLS 1.3 suite and best TLS 1.2 suite separately.
       --  Version negotiation later picks the right one.
-      S.Negotiated_Suite := 0;
-      S.Negotiated_Suite_12 := 0;
+      S.Negotiated_Suite := Suite_None;
+      S.Negotiated_Suite_12 := Suite_None;
 
       if Well_Formed (Ctx, F_Cipher_Suites_TLS) then
             Parse_CH_Cipher_Suites (Ctx, S, HC);
@@ -3303,7 +3303,7 @@ is
               pragma Assert (Saved_Config_Frame);
 
               --  Need at least one matching suite (either TLS 1.3 or 1.2)
-         if S.Negotiated_Suite = 0 and S.Negotiated_Suite_12 = 0 then
+         if S.Negotiated_Suite = Suite_None and S.Negotiated_Suite_12 = Suite_None then
             Take_Buffer (Ctx, Buf);
                     RFLX_Free (Buf);
                             pragma Assert (Saved_Config_Frame);
@@ -3869,7 +3869,7 @@ is
       Pos := Pos + SID_Echo;
 
       pragma Assert (Pos + 1 <= Result'Last);
-      SH_Put16 (Result, Pos, S.Negotiated_Suite);
+      SH_Put16 (Result, Pos, Wire_Of (S.Negotiated_Suite));
       Pos := Pos + 2;
 
       pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));

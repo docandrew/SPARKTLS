@@ -155,11 +155,11 @@ begin
             Put_Line ("State: " & State (S)'Image);
 
             case Negotiated_Suite (S) is
-               when SPARKTLS.Suite_AES_128_GCM_SHA256 =>
+               when SPARKTLS.Wire_Suite_AES_128_GCM_SHA256 =>
                   Put_Line ("Cipher: TLS_AES_128_GCM_SHA256");
-               when SPARKTLS.Suite_CHACHA20_POLY1305_SHA256 =>
+               when SPARKTLS.Wire_Suite_CHACHA20_POLY1305_SHA256 =>
                   Put_Line ("Cipher: TLS_CHACHA20_POLY1305_SHA256");
-               when SPARKTLS.Suite_AES_256_GCM_SHA384 =>
+               when SPARKTLS.Wire_Suite_AES_256_GCM_SHA384 =>
                   Put_Line ("Cipher: TLS_AES_256_GCM_SHA384");
                when others =>
                   Put_Line ("Cipher: 0x" & Negotiated_Suite (S)'Image);

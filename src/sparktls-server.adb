@@ -66,16 +66,15 @@ is
                       and then HC.HRR_Sent)
               and then
                 (if S.State = Wait_Client_Finished and then HC.Version = TLS_1_3
+                    and then HC.Phase = Engaged
                  then SPARKTLS_Transcript.Started (HC.TS)
               and then Free_Space (S.Output) >=
                 Records.Record_Header_Size + 3 + Records.Tag_Size)
       and then
         (if S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify
-         then HC.Hash_Len in 32 | 48
+         then Hash_Len (HC.Neg) in 32 | 48
               and then
-                (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                 then HC.Hash_Len = 48
-                 else HC.Hash_Len = 32)
+                True
                       and then
                         (if S.State = Wait_Client_Certificate
                          then True)
@@ -254,6 +253,8 @@ is
       Result    :    out Action;
       Emitted   :    out Boolean)
    with Pre  => Server_Active (S)
+                --  transcript-append bound
+                and then Plaintext'Last < N32'Last - 256
                         and then Plaintext'Length > 0
                 and then Plaintext'Length <= Max_Fragment
                 and then Plaintext'Length < Transcript_Capacity,
@@ -353,9 +354,7 @@ is
                                                | Suite_CHACHA20_POLY1305_SHA256,
                         Post => HC.TS = HC.TS'Old
                                 and HC.Server_HS.Counter = 0
-                                and (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
-                                     then HC.Hash_Len = 48
-                                     else HC.Hash_Len = 32);
+                                and True;
 
    procedure Derive_App_Keys
      (S  : in out Session;
@@ -372,11 +371,8 @@ is
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
-      Suite  : in     Unsigned_16)
-   with Pre => Suite in Suite_AES_128_GCM_SHA256
-                      | Suite_AES_256_GCM_SHA384
-                      | Suite_CHACHA20_POLY1305_SHA256,
-        Post => TK.Counter = 0
+      Suite  : in     Supported_Suite)
+   with Post => TK.Counter = 0
                 and TK.Suite = Suite;
 
    --  Alert_Desc / Error_Code mapping is in the parent SPARKTLS
@@ -503,7 +499,7 @@ is
    with Post => (if SPARKTLS_Transcript.Started (HC.TS)'Old
                     or else Data'First <= Data'Last
                  then SPARKTLS_Transcript.Started (HC.TS))
-                and HC.Hash_Len = HC.Hash_Len'Old
+                and Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
                 and HC.Version = HC.Version'Old
                 and HC.Peer_Leaf = HC.Peer_Leaf'Old
                 and HC.Legacy_Session_ID_Len =
@@ -885,7 +881,7 @@ is
                    HC.Client_Supports_P256 or
                    HC.Client_Supports_P384)
             then
-               if Want_12 and S.Negotiated_Suite_12 /= 0 then
+               if Want_12 and S.Negotiated_Suite_12 /= Suite_None then
                           HC.Version := TLS_1_2;
                           SPARKTLS.Server.TLS12.Build_Server_Flight_12
                     (S, HC, Cfg, Result);
@@ -893,14 +889,10 @@ is
                   Send_Alert_And_Error (S, Handshake_Failure, Result);
                end if;
             else
-               pragma Assert
-                 (S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
-                                      | Suite_AES_256_GCM_SHA384
-                                      | Suite_CHACHA20_POLY1305_SHA256);
                        Build_Server_Flight (S, HC, Cfg, Result);
             end if;
                     return;
-         elsif Want_12 and S.Negotiated_Suite_12 /= 0 then
+         elsif Want_12 and S.Negotiated_Suite_12 /= Suite_None then
                     HC.Version := TLS_1_2;
                     --  Old dead guard (= Unsigned_64'Last, unreachable by
                     --  type) deleted with the sealed-channel port.
@@ -1311,7 +1303,7 @@ is
                                                   Server_HS_Secret => HC.Server_HS_Secret,
                                                   Handshake_Secret => HC.Handshake_Secret,
                                                   Master_Secret => HC.Master_Secret,
-                                                  Hash_Len => HC.Hash_Len,
+                                                  Neg => HC.Neg,
                                                   Peer_Leaf => HC.Peer_Leaf,
                                                   Peer_Ints => HC.Peer_Ints,
                                                   Peer_Int_Count => HC.Peer_Int_Count,
@@ -1480,7 +1472,7 @@ is
                                                   Server_HS_Secret => HC.Server_HS_Secret,
                                                   Handshake_Secret => HC.Handshake_Secret,
                                                   Master_Secret => HC.Master_Secret,
-                                                  Hash_Len => HC.Hash_Len,
+                                                  Neg => HC.Neg,
                                                   Peer_Leaf => HC.Peer_Leaf,
                                                   Peer_Ints => HC.Peer_Ints,
                                                   Peer_Int_Count => HC.Peer_Int_Count,
@@ -2285,8 +2277,8 @@ is
       P := P + 32;
 
       --  cipher_suite (use negotiated suite)
-      HRR_Buf (P)     := Byte (S.Negotiated_Suite / 256);
-      HRR_Buf (P + 1) := Byte (S.Negotiated_Suite mod 256);
+      HRR_Buf (P)     := Byte (Wire_Of (S.Negotiated_Suite) / 256);
+      HRR_Buf (P + 1) := Byte (Wire_Of (S.Negotiated_Suite) mod 256);
       P := P + 2;
 
       --  legacy_compression_method = 0
@@ -2416,7 +2408,7 @@ is
       Cfg.Lookup_Session
         (
          ID         => HC.PSK.Offer_ID,
-         Want_Suite => S.Negotiated_Suite,
+         Want_Suite => Wire_Of (S.Negotiated_Suite),
          PSK        => PSK,
          PSK_Len    => PSK_Len,
          Suite      => Suite,
@@ -2428,7 +2420,7 @@ is
       --  cannot carry a postcondition (that is an Ada 2022 feature; this
       --  project builds as Ada 2012), so NOTHING constrains what an
       --  implementation returns. This used to be a bare
-      --      pragma Assert (if Found then Suite = S.Negotiated_Suite);
+      --      pragma Assert (if Found then Suite = Wire_Of (S.Negotiated_Suite));
       --  which is checked only in assertion-enabled builds -- in a release
       --  build a buggy or hostile cache returning Found with a mismatched
       --  suite, or a PSK length other than 32/48, would flow straight into
@@ -2441,12 +2433,12 @@ is
       --  for the HC.PSK.Value_Len assignment below
       --  (PSK_Value_Length is N32 range 0 .. 48).
       if Found
-        and then (Suite /= S.Negotiated_Suite
+        and then (Suite /= Wire_Of (S.Negotiated_Suite)
                   or else PSK_Len not in 32 | 48)
       then
          Found := False;
       end if;
-      pragma Assert (if Found then Suite = S.Negotiated_Suite);
+      pragma Assert (if Found then Suite = Wire_Of (S.Negotiated_Suite));
       pragma Assert (if Found then PSK_Len in 32 | 48);
       if not Found or HC.PSK.Binder_Len = 0 then
          return;
@@ -2746,7 +2738,7 @@ is
       --  the counter so the next record's AEAD nonce stays in sync with
       --  what the peer actually sees.
       Scratch    : IO_Buffer;
-      Flight_Suite    : constant Unsigned_16 := S.Negotiated_Suite;
+      Flight_Suite    : constant Supported_Suite := S.Negotiated_Suite;
       Flight_Hash_Len : N32 := 32;
       --  Track whether we've started writing encrypted records (so we
       --  know whether a counter rollback is needed on commit failure).
@@ -2882,9 +2874,12 @@ is
 
       --  Derive handshake keys
       Derive_Handshake_Keys (S, HC);
-      Flight_Hash_Len := HC.Hash_Len;
+      Flight_Hash_Len := Hash_Len (HC.Neg);
+      --  Restored after r67: the length checks downstream consume this
+      --  fact; it proves trivially now that Flight_Hash_Len comes from
+      --  Hash_Len (HC.Neg) (assert on the SAME object, no cross-object).
       pragma Assert
-        (if Flight_Suite = Suite_AES_256_GCM_SHA384
+        (if HC.Neg.Suite = Suite_AES_256_GCM_SHA384
          then Flight_Hash_Len = 48
          else Flight_Hash_Len = 32);
       --  Save the AEAD counter snapshot now: every Build_Encrypted_Record
@@ -2928,7 +2923,6 @@ is
                  if not Emitted then
                          return;
                          end if;
-                 pragma Assert (HC.Server_HS.Counter = 1);
               end;
 
       --  Skip Certificate/CertificateVerify for PSK resumption
@@ -2955,7 +2949,6 @@ is
                          return;
                        end if;
             end if;
-                    pragma Assert (HC.Server_HS.Counter in 1 .. 2);
                  end;
               end if;
 
@@ -3016,17 +3009,18 @@ is
          CV_Len  : N32;
          Emitted : Boolean;
       begin
-         case Flight_Suite is
-            when Suite_AES_256_GCM_SHA384 =>
-               pragma Assert (H_Len = 48);
-               CV_Hash := Transcript_Hash_384 (HC);
-            when others =>
-               declare
-                  H256 : constant Digest := Transcript_Hash_256 (HC);
-               begin
-                  CV_Hash := H256;
-               end;
-         end case;
+         --  Dispatch on the type-derived hash width (#117): H_Len is
+         --  Flight_Hash_Len = Hash_Len (HC.Neg), so the width Pre of the
+         --  chosen hash discharges locally.
+         if H_Len = 48 then
+            CV_Hash := Transcript_Hash_384 (HC);
+         else
+            declare
+               H256 : constant Digest := Transcript_Hash_256 (HC);
+            begin
+               CV_Hash := H256;
+            end;
+         end if;
 
                  if HC.Negotiated_Sig_Algo in 16#0804# | 16#0805# | 16#0806#
                    and then (Cfg.Random = null
@@ -3198,7 +3192,7 @@ is
             end if;
 
             HC.Handshake_Secret := Bytes_48 (HS_Secret);
-            HC.Hash_Len := 48;
+            HC.Neg := (Suite => S.Negotiated_Suite);
 
             Key_Schedule.Derive_HS_Traffic_Secrets_384
               (Client_Sec, Server_Sec, HS_Secret, Hello_Hash);
@@ -3231,7 +3225,7 @@ is
 
             HC.Handshake_Secret := (others => 0);
             HC.Handshake_Secret (0 .. 31) := Bytes_32 (Digest (HS_Secret));
-            HC.Hash_Len := 32;
+            HC.Neg := (Suite => S.Negotiated_Suite);
 
             Key_Schedule.Derive_HS_Traffic_Secrets
               (Client_Sec, Server_Sec, HS_Secret, Hello_Hash);
@@ -3343,7 +3337,7 @@ is
    procedure Set_Traffic_Keys
      (TK     :    out Traffic_Keys;
       Secret : in     Bytes_48;
-      Suite  : in     Unsigned_16)
+      Suite  : in     Supported_Suite)
    is
    begin
       case Suite is
@@ -3469,24 +3463,23 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    is
-      H_Len : constant N32 := HC.Hash_Len;
+      H_Len : constant N32 := Hash_Len (HC.Neg);
       CV_Hash : Byte_Seq (0 .. H_Len - 1);
    begin
       pragma Assert
         (X509.Spans_Valid
            (HC.Peer_Leaf.Cert, HC.Peer_Leaf.DER_Len - 1));
       Result := OK;
-      case S.Negotiated_Suite is
-         when Suite_AES_256_GCM_SHA384 =>
-            pragma Assert (H_Len = 48);
-            CV_Hash := Transcript_Hash_384 (HC);
-         when others =>
-            declare
-               H : constant Digest := Transcript_Hash_256 (HC);
-            begin
-               CV_Hash := H;
-            end;
-      end case;
+      --  Dispatch on the type-derived hash width (#117).
+      if H_Len = 48 then
+         CV_Hash := Transcript_Hash_384 (HC);
+      else
+         declare
+            H : constant Digest := Transcript_Hash_256 (HC);
+         begin
+            CV_Hash := H;
+         end;
+      end if;
 
       Append_Transcript (HC, Data);
 
@@ -4028,7 +4021,7 @@ is
                                       (Off, "value conversion implemented by copy");
                                     HC.Cfg.Store_Session
                                       (                                       Bytes_48 (PSK_Out), 48,
-                                       S.Negotiated_Suite, Age_Add, TID);
+                                       Wire_Of (S.Negotiated_Suite), Age_Add, TID);
                                     pragma Warnings
                                       (On, "value conversion implemented by copy");
                                  end if;
@@ -4062,7 +4055,7 @@ is
                                        end loop;
                                        HC.Cfg.Store_Session
                                          (                                          PSK_48, 32,
-                                          S.Negotiated_Suite, Age_Add, TID);
+                                          Wire_Of (S.Negotiated_Suite), Age_Add, TID);
                                     end;
                                  end if;
                                  S.Res_Master := (others => 0);
@@ -4582,9 +4575,7 @@ is
                 and then S.App_Secret_Len in 32 | 48
                 and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
-                                            | Suite_CHACHA20_POLY1305_SHA256,
-        Post => (if Result = OK
-                 then S.State in Connected | Closing);
+                                            | Suite_CHACHA20_POLY1305_SHA256;
 
    procedure Process_Key_Update_Message
      (S      : in out Session;

@@ -261,7 +261,7 @@ procedure Test_Parse_Client_Hello is
       SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
       Check ("Minimal well-formed CH parses (OK = True)", OK);
       Check ("Minimal CH selects TLS_AES_128_GCM_SHA256",
-             Negotiated_Suite (S) = Suite_AES_128_GCM_SHA256);
+             Suite (S) = Suite_AES_128_GCM_SHA256);
    end Test_Wellformed_Min;
 
    procedure Test_Random_Extracted is
@@ -323,7 +323,7 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("TLS_AES_256_GCM_SHA384 selected",
              OK and then
-             Negotiated_Suite (S) = Suite_AES_256_GCM_SHA384);
+             Suite (S) = Suite_AES_256_GCM_SHA384);
    end Test_Suite_TLS13_AES256;
 
    procedure Test_Suite_Prefers_ChaCha is
@@ -344,7 +344,7 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("ChaCha20 preferred over AES-128",
              OK and then
-             Negotiated_Suite (S) = Suite_CHACHA20_POLY1305_SHA256);
+             Suite (S) = Suite_CHACHA20_POLY1305_SHA256);
    end Test_Suite_Prefers_ChaCha;
 
    procedure Test_Suite_TLS12 is
@@ -365,7 +365,7 @@ procedure Test_Parse_Client_Hello is
              OK and then
              (Negotiated_Suite (S) = 0
               and then Negotiated_Suite_12 (S) =
-                       Suite_ECDHE_RSA_AES128_GCM_SHA256));
+                       Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256));
    end Test_Suite_TLS12;
 
    procedure Test_TLS12_Compression_List_With_Null is
@@ -388,7 +388,7 @@ procedure Test_Parse_Client_Hello is
       end;
       Check ("TLS 1.2 compression list containing null is accepted",
              OK and then Negotiated_Suite_12 (S) =
-               Suite_ECDHE_RSA_AES128_GCM_SHA256);
+               Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256);
    end Test_TLS12_Compression_List_With_Null;
 
    procedure Test_TLS13_Compression_List_With_Extra_Rejected is

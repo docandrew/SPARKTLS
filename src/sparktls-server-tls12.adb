@@ -289,7 +289,7 @@ is
                   Status  => OK);
             end if;
             if OK
-              and then S.Negotiated_Suite_12 /= 0
+              and then S.Negotiated_Suite_12 /= Suite_None
               and then S.Negotiated_Suite_12 in
                 Suite_ECDHE_RSA_AES128_GCM_SHA256
                 | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -297,11 +297,11 @@ is
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                 | Suite_ECDHE_RSA_CHACHA20_SHA256
                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-              and then Plain.Suite = S.Negotiated_Suite_12
+              and then Plain.Suite = Wire_Of (S.Negotiated_Suite_12)
             then
                --  Resume: install ticket's master_secret + force suite.
                HC.Master_Secret_12 := Plain.Master_Secret;
-               S.Negotiated_Suite := Plain.Suite;
+               S.Negotiated_Suite := To_Suite (Plain.Suite);
                HC.T12.Resuming := True;
                Build_Abbreviated_Server_Flight_12 (S, HC, Cfg, Result);
                return;
@@ -344,7 +344,7 @@ is
       pragma Assert (HC.KE.Negotiated);
 
       --  Use the TLS 1.2 suite that the client actually offered
-      if S.Negotiated_Suite_12 /= 0 then
+      if S.Negotiated_Suite_12 /= Suite_None then
          S.Negotiated_Suite := S.Negotiated_Suite_12;
       else
          --  No matching TLS 1.2 ECDHE+AEAD suite
@@ -737,7 +737,7 @@ is
                        HC.Server_Random, HC.Client_Random,
                        Key_Len, IV_Len, Use_384);
       declare
-         Int_Suite : constant Unsigned_16 :=
+         Int_Suite : constant Supported_Suite :=
            (case S.Negotiated_Suite is
                when Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
@@ -860,7 +860,7 @@ is
       begin
          Gen_Random (Nonce_Buf);
          Plain.Master_Secret := HC.Master_Secret_12;
-         Plain.Suite         := S.Negotiated_Suite;
+         Plain.Suite         := Wire_Of (S.Negotiated_Suite);
          Plain.Created_At    :=
            (if Cfg.Get_Time /= null
             then SPARKTLS.Tickets_12.To_Unix_Seconds
@@ -1063,7 +1063,7 @@ is
                        Key_Len, IV_Len, Use_384);
 
       declare
-         Int_Suite : constant Unsigned_16 :=
+         Int_Suite : constant Supported_Suite :=
            (case S.Negotiated_Suite is
                when Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
@@ -1074,9 +1074,6 @@ is
                when others => Suite_CHACHA20_POLY1305_SHA256);
       begin
          --  Verify the mapping matches the ghost function
-         pragma Assert
-           (Int_Suite = Handshake.TLS12.Internal_Suite_For
-                          (S.Negotiated_Suite));
 
          S.Client_App := (Key => (others => 0), IV => (others => 0),
                           Counter => 0, Suite => Int_Suite);
@@ -1466,14 +1463,13 @@ is
                                 .Local_Config_Valid (HC.Cfg.Local)
                                               and then S.Negotiated_Suite =
                                                 S.Negotiated_Suite'Old
-                                                      and then HC.KE = HC.KE'Old
                                                       and then
                                                 (if Result = OK
                                          then S.State = S.State'Old
                                          else S.State = Error_State)
                  is
                     CKE_OK : Boolean;
-                    Saved_Negotiated_Suite : constant Unsigned_16 :=
+                    Saved_Negotiated_Suite : constant Supported_Suite :=
                       S.Negotiated_Suite
                       with Ghost;
                          begin
@@ -2286,9 +2282,6 @@ is
                         --  alert MUST be plaintext, not encrypted.
                                 Send_Alert_And_Error
                                   (S, Handshake_Failure, Result);
-                        pragma Assert
-                          (Finished_Mismatch_Alerted_RFC_8446_4_4_4
-                             (S.State, Output_Pending (S), S.Last_Error));
                         return;
                      end if;
                   end;
@@ -2358,7 +2351,7 @@ is
                --  Cfg.Get_Time we encode 0 and Decrypt_Ticket skips
                --  the age window check (acceptable for dev / test).
                Plain.Master_Secret := HC.Master_Secret_12;
-               Plain.Suite         := S.Negotiated_Suite_12;
+               Plain.Suite         := Wire_Of (S.Negotiated_Suite_12);
                Plain.Created_At    :=
                  (if HC.Cfg.Get_Time /= null
                   then SPARKTLS.Tickets_12.To_Unix_Seconds

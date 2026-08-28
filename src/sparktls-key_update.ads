@@ -57,11 +57,8 @@ is
      (Secret : in out Bytes_48;
       Len    : in     N32;
       TK     : in out Traffic_Keys;
-      Suite  : in     Unsigned_16)
-   with Pre  => Len in 32 | 48
-                and then Suite in Suite_AES_128_GCM_SHA256
-                               | Suite_AES_256_GCM_SHA384
-                               | Suite_CHACHA20_POLY1305_SHA256,
+      Suite  : in     Supported_Suite)
+   with Pre  => Len in 32 | 48,
         Post => TK.Counter = 0
                 and then TK.Suite = Suite;
 

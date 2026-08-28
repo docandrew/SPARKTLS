@@ -68,7 +68,7 @@ procedure Test_Exporter is
    begin
       SPARKTLS.Test_Support.Set_State (S, Connected);
       SPARKTLS.Test_Support.Set_Negotiated_Version (S, TLS_1_2);
-      SPARKTLS.Test_Support.Set_Negotiated_Suite_12 (S, Suite_ECDHE_RSA_AES128_GCM_SHA256);
+      SPARKTLS.Test_Support.Set_Negotiated_Suite_12 (S, Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256);
       SPARKTLS.Test_Support.Set_Exporter_State
         (S, Seq (16#10#), 48, Seq32 (16#40#), Seq32 (16#80#));
 
@@ -125,7 +125,7 @@ procedure Test_Exporter is
    begin
       SPARKTLS.Test_Support.Set_State (S, Connected);
       SPARKTLS.Test_Support.Set_Negotiated_Version (S, TLS_1_3);
-      SPARKTLS.Test_Support.Set_Negotiated_Suite (S, Suite_AES_128_GCM_SHA256);
+      SPARKTLS.Test_Support.Set_Negotiated_Suite (S, Wire_Suite_AES_128_GCM_SHA256);
       declare
          Sec : Bytes_48 := (others => 0);
       begin

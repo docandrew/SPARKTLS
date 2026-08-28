@@ -140,7 +140,7 @@ is
                        HC.Server_Random, HC.Client_Random,
                        Key_Len, IV_Len, Use_384);
       declare
-         Int_Suite : constant Unsigned_16 :=
+         Int_Suite : constant Supported_Suite :=
            (case S.Negotiated_Suite is
                when Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
@@ -257,7 +257,7 @@ is
                        Key_Len, IV_Len, Use_384);
 
       declare
-         Int_Suite : constant Unsigned_16 :=
+         Int_Suite : constant Supported_Suite :=
            (case S.Negotiated_Suite is
                when Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256 =>
@@ -387,7 +387,8 @@ is
       Msg_Len : in     N32;
       OK      :    out Boolean)
                          with Pre  => Msg_Len in 3 .. Max_HS_Msg - 4
-                         and then Frag'Last < N32'Last - 4
+                         --  256: transcript-append bound (see Handle_CertReq_12).
+                and then Frag'Last < N32'Last - 256
                          and then Frag'First <= N32'Last - 4
                          --  LOOKS redundant -- it IS implied by the next conjunct together
                          --  with Frag'Last < N32'Last - 4 -- but DO NOT REMOVE. With
@@ -747,7 +748,10 @@ is
       Result  :    out Action)
    with Pre  => Msg_Len <= Max_HS_Msg - 4
                 and then Frag'First <= Frag'Last
-                and then Frag'Last < N32'Last - 4
+                --  256, not 4: the transcript-append bound. Callers pass
+                --  Message() slices ('Last <= Max_HS_Msg - 1), so this is
+                --  free to prove there and feeds Append_Transcript here.
+                and then Frag'Last < N32'Last - 256
                 and then Frag'First <= N32'Last - 4
                 and then Msg_Len <= N32'Last - Frag'First - 4
                 and then Msg_Len <= N32 (Frag'Length) - 4
@@ -773,16 +777,6 @@ is
                    then SPARKTLS.Handshake.Server_Msgs
                           .Local_Config_Valid (HC.Cfg.Local)),
                                                 Post => (if Result = OK then
-                                                                                     S.State not in Idle | Closing
-                                                                                       | Closed | Error_State
-                                                     and then S.Negotiated_Suite in
-                                               Suite_ECDHE_RSA_AES128_GCM_SHA256
-                                                                                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                                                                                     | Suite_ECDHE_RSA_CHACHA20_SHA256
-                                                                                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                                                                                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                                                                                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-                                                                                     and then
                                                                                        (if HC.Cfg.Local /= null
                                                                                             and then
                                                                                               HC.Cfg.Local
@@ -1000,7 +994,10 @@ is
       Result  :    out Action)
    with Pre  => Msg_Len <= Max_HS_Msg - 4
                 and then Frag'First <= Frag'Last
-                and then Frag'Last < N32'Last - 4
+                --  256, not 4: the transcript-append bound. Callers pass
+                --  Message() slices ('Last <= Max_HS_Msg - 1), so this is
+                --  free to prove there and feeds Append_Transcript here.
+                and then Frag'Last < N32'Last - 256
                 and then Frag'First <= N32'Last - 4
                 and then Msg_Len <= N32'Last - Frag'First - 4
                 and then Msg_Len <= N32 (Frag'Length) - 4
@@ -1305,7 +1302,7 @@ is
       Result  :    out Action)
            is
                       Rec_Out : N32;
-                      Saved_Suite : constant Unsigned_16 := S.Negotiated_Suite
+                      Saved_Suite : constant Supported_Suite := S.Negotiated_Suite
                         with Ghost;
                               Saved_Group : constant Unsigned_16 := HC.KE.Curve
                                 with Ghost;
@@ -1584,16 +1581,7 @@ is
                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                ,
-                Post => Result in OK | Has_Output | Error_Alert
-                and then
-                  (if Result = OK then
-                     S.Negotiated_Suite in
-                       Suite_ECDHE_RSA_AES128_GCM_SHA256
-                     | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                     | Suite_ECDHE_RSA_CHACHA20_SHA256
-                     | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                     | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                     | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
+                Post => Result in OK | Has_Output | Error_Alert;
 
    procedure Append_Client_Certificate_Verify_12
      (S       : in out Session;
@@ -1635,15 +1623,7 @@ is
          return;
       end if;
 
-      pragma Assert_And_Cut
-        (Result = OK
-                 and then S.Negotiated_Suite in
-                   Suite_ECDHE_RSA_AES128_GCM_SHA256
-                 | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                 | Suite_ECDHE_RSA_CHACHA20_SHA256
-                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256);
+      pragma Assert_And_Cut (Result = OK);
    end Append_Client_Certificate_Verify_12;
 
    procedure Build_Client_Finished_12_Message
@@ -1922,7 +1902,8 @@ is
       Msg_Len : in     N32;
       Result  :    out Action)
    with Pre  => Msg_Len <= Max_HS_Msg - 4
-                and then Frag'Last < N32'Last - 4
+                --  256: transcript-append bound (see Handle_CertReq_12).
+                and then Frag'Last < N32'Last - 256
                 and then Frag'First <= N32'Last - 4
                 and then Msg_Len <= N32'Last - Frag'First - 4
                 and then Frag'First + 3 + Msg_Len <= Frag'Last
@@ -2099,7 +2080,7 @@ is
             NST_Body (6 .. 6 + Ticket_Len - 1);
       end if;
       S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
-      S.TLS12_New_Ticket.Suite := S.Negotiated_Suite_12;
+      S.TLS12_New_Ticket.Suite := Wire_Of (S.Negotiated_Suite_12);
       S.TLS12_New_Ticket.Master_Secret := HC.Master_Secret_12;
       S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
       S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
@@ -2118,7 +2099,8 @@ is
       Result  :    out Action)
    with Pre  => Msg_Len in 6 .. Max_HS_Msg - 4
                 and then Frag'First <= Frag'Last
-                and then Frag'Last < N32'Last - 4
+                --  256: transcript-append bound (see Handle_CertReq_12).
+                and then Frag'Last < N32'Last - 256
                 and then Frag'First <= N32'Last - 4
                 and then Msg_Len <= N32'Last - Frag'First - 4
                 and then Msg_Len <= N32 (Frag'Length) - 4
@@ -2187,7 +2169,10 @@ is
       Result   :    out Action)
    with Pre  => Msg_Len <= Max_HS_Msg - 4
                 and then Frag'First <= Frag'Last
-                and then Frag'Last < N32'Last - 4
+                --  256, not 4: the transcript-append bound. Callers pass
+                --  Message() slices ('Last <= Max_HS_Msg - 1), so this is
+                --  free to prove there and feeds Append_Transcript here.
+                and then Frag'Last < N32'Last - 256
                 and then Frag'First <= N32'Last - 4
                 and then Msg_Len <= N32'Last - Frag'First - 4
                 and then Msg_Len <= N32 (Frag'Length) - 4
@@ -2583,7 +2568,7 @@ is
         and then not HC.T12.Resuming
         and then HC.T12.Sent_Ticket_Ext
         and then HC.Cfg.TLS12_Resume_Ticket.Valid
-        and then HC.Cfg.TLS12_Resume_Ticket.Suite = S.Negotiated_Suite_12
+        and then HC.Cfg.TLS12_Resume_Ticket.Suite = Wire_Of (S.Negotiated_Suite_12)
       then
          declare
             CCS_Pos     : constant N32 :=
@@ -3253,7 +3238,7 @@ is
                   NST_Body (6 .. 6 + Ticket_Len - 1);
             end if;
             S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
-            S.TLS12_New_Ticket.Suite := S.Negotiated_Suite_12;
+            S.TLS12_New_Ticket.Suite := Wire_Of (S.Negotiated_Suite_12);
             S.TLS12_New_Ticket.Master_Secret := HC.Master_Secret_12;
             S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
             S.TLS12_New_Ticket.Server_Name := HC.Cfg.Server_Name;
@@ -3520,9 +3505,7 @@ is
       HC     : in out Engaged_Context;
       Result :    out Action)
    with Post => (if Result = OK then
-                       S.State = S.State'Old
-                       and then S.State not in Idle | Closing | Closed
-                                             | Error_State);
+                       S.State = S.State'Old);
 
    procedure Send_Abbreviated_Client_Flight_12
      (S      : in out Session;
@@ -3579,11 +3562,6 @@ is
          Scratch.Data (0 .. Scratch.Write_Pos - 1);
       S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
    end Send_Abbreviated_Client_Flight_12;
-
-   procedure Process_Server_Finished
-     (S : in out Session; HC : in out Engaged_Context; Result : out Action)
-   with Post => (if Result = OK then
-                       S.State not in Idle | Closing | Closed | Error_State);
 
    procedure Process_Server_Finished
      (S : in out Session; HC : in out Engaged_Context; Result : out Action)
