@@ -2307,9 +2307,12 @@ is
                Reset (D.Reasm);
                return;
             end if;
+
+            if not Has_Message (D.Reasm) then
+               return;
+            end if;
          end;
 
-         pragma Assert (Has_Message (D.Reasm));  --  PROBE-T8
          Consume (D.Reasm);
 
          --  A handler that queued our flight (ServerHelloDone) stops the

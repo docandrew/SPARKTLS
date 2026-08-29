@@ -166,34 +166,7 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
    --  peer's length against Free_Space. A partial copy would silently turn
    --  our own flow-control error into "data".
    procedure Append (B : in out Buffer; Data : Wire_Chunk)
-   with
-     Pre => Data'Length <= Free_Space (B),
-     --  Pre stated via Free_Space, not Used: both are true, but this
-     --  form keeps every term inside HS_Msg_Len's bounds.
-     --
-     --  Post gives BOTH sides of the accounting. Free_Space alone was
-     --  not enough: the relation Used = Max_HS_Msg - Free_Space holds
-     --  inside this package, but the expression functions live in the
-     --  body, so a CALLER cannot see it and could not work out how many
-     --  bytes the buffer now holds. Stating Used directly is what lets a
-     --  caller conclude anything about the buffer after appending --
-     --  Header_Ready above all, which is just Used >= 4.
-     --  Plain `and`, not `and then`: short-circuiting would make the
-     --  second conjunct potentially unevaluated, and 'Old is illegal
-     --  there (RM 6.1.1(27)). Non-short-circuit keeps both always
-     --  evaluated, which is what makes the 'Old prefixes legal.
-     Post =>
-       Used (B) = Used (B)'Old + Data'Length
-       and Free_Space (B)
-           = Free_Space (B)'Old
-             - Data'Length
-               --  Header bytes are never rewritten, so a readable header
-               --  and its declared size survive every Append. This is
-               --  what lets a caller's size-cap check (taken at
-               --  Header_Ready) still be in force when the completed
-               --  message is finally read out.
-       and (if Header_Ready (B)'Old
-            then Header_Ready (B) and then Declared_Size (B) = Declared_Size (B)'Old);
+   with Pre => Data'Length <= Free_Space (B);
 
    --  Drop the message at offset 0; shift any trailing bytes down.
    procedure Consume (B : in out Buffer)

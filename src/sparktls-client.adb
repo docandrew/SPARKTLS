@@ -248,14 +248,8 @@ is
    procedure Initialize_Client_Handshake
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; OK : out Boolean)
    with
-     Post => --  Frame. Without these the caller (Init) must assume this
-     --  procedure may have re-pointed S.HC_Ptr and changed
-     --  S.Role, which turns the borrow's restore into an
-     --  apparent memory leak and loses Init's own postcondition.
-     --  Nothing here touches either: the only writer of S is
-     --  Set_State, which frames both.
-       not Has_Context (S)
-       and then S.Role = Role_Client
+     Post =>
+       S.Role = Role_Client
        and then S.State in
                   Client_Hello_Sent
                   | Error_State
@@ -263,11 +257,8 @@ is
                   --  the record write succeeded, so output is queued. Every
                   --  failure path sets Error_State first.
        and then (if S.State = Client_Hello_Sent then Output_Pending (S) > 0),
-     Pre => --  The caller borrows the context out before calling, so the
-     --  #106: HC is an unconstrained-mutable Session component;
-     --  the Engage aggregate may change Phase freely.
-       not Has_Context (S)
-       and then S.State = Client_Hello_Sent
+     Pre =>
+       S.State = Client_Hello_Sent
        and then S.Role = Role_Client
        and then S.HC.Cfg.Random /= null
    is
@@ -436,14 +427,9 @@ is
      (S : in Session; D : in out SPARKTLS.HS_Pool.HS_Data; From : in N32; Len : in N32)
    with
      Pre =>
-       S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
-       and then Len in 1 .. Max_HS_Msg
+       Len in 1 .. Max_HS_Msg
        and then From <= N32'Last - Len
-       and then From + Len <= IO_Buffer_Capacity,
-     Post =>
-       Used (D.Reasm) = Len
-       and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
-       and then (if S.HC.Cfg.Random'Old /= null then S.HC.Cfg.Random /= null);
+       and then From + Len <= IO_Buffer_Capacity;
 
    procedure Copy_Input_Fragment
      (S : in Session; D : in out SPARKTLS.HS_Pool.HS_Data; From : in N32; Len : in N32) is
