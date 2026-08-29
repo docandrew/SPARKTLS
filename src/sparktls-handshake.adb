@@ -146,7 +146,7 @@ is
    ----------------------------------------------------------------------------
    --  Pick_Sig_Algo
    --
-   --  RFC 8446 Â§4.2.3 sig algos we support per cert key type:
+   --  RFC 8446 4.2.3 sig algos we support per cert key type:
    --    Sign_Ed25519     -> ed25519 (0x0807)
    --    Sign_ECDSA_P256  -> ecdsa_secp256r1_sha256 (0x0403)
    --    Sign_ECDSA_P384  -> ecdsa_secp384r1_sha384 (0x0503)

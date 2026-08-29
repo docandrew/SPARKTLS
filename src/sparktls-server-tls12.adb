@@ -2,6 +2,7 @@ with SPARKTLS.HS_Pool;
 with Interfaces;                    use Interfaces;
 with SPARKNaCl;                     use SPARKNaCl;
 with SPARKTLS_Reassembly;           use SPARKTLS_Reassembly;
+with SPARKTLS_Reassembly_G;
 with SPARKTLSCrypto.Hashing.SHA256; use SPARKTLSCrypto.Hashing.SHA256;
 with SPARKTLSCrypto.Hashing.SHA384;
 with SPARKTLSCrypto.Hashing.SHA512;
@@ -54,7 +55,7 @@ is
       Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
       --  When the output buffer is full, no alert byte hit the wire;
       --  collapse the recorded error to Unexpected_Message so the
-      --  Error_Has_Alert ghost remains satisfied (RFC 8446 Â§6 lets
+      --  Error_Has_Alert ghost remains satisfied (RFC 8446 6 lets
       --  Unexpected_Message close silently).
       if Output_Pending (S) = 0 then
          S.Last_Error := Unexpected_Message;
@@ -62,8 +63,8 @@ is
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
 
-   --  ----- RFC 5246 Â§7.2.1 post-CCS encrypted alert helper ---------
-   --  After the client has sent ChangeCipherSpec, RFC 5246 Â§7.2.1
+   --  ----- RFC 5246 7.2.1 post-CCS encrypted alert helper ---------
+   --  After the client has sent ChangeCipherSpec, RFC 5246 7.2.1
    --  requires further alerts to be sent encrypted under the
    --  established traffic keys. Sending a plaintext alert at this
    --  point is a protocol violation; strict TLS 1.2 clients reject
@@ -76,7 +77,7 @@ is
    with
      Pre => Alert_Desc (Err) /= 0 and then Alert_Desc (Err) /= 90,
      Post => S.State = Error_State and S.Role = S.Role'Old and S.Last_Error = Err;
-   --  Error_Has_Alert is NOT in this Post â see
+   --  Error_Has_Alert is NOT in this Post  see
    --  matching note on Send_Encrypted_Alert in
    --  sparktls-server.adb. Call sites bridge to
    --  Pending > 0 via local pragma Assert.
@@ -100,7 +101,7 @@ is
    --  Send_Encrypted_Alert_12 but reads IV/seq from S-level state
    --  (HC has been freed once we entered Connected). For use in
    --  Process_Connected_12. Same "alerts after CCS MUST be
-   --  encrypted" RFC 5246 Â§7.2.1 / Â§7.2.2 constraint that the Â§2.8
+   --  encrypted" RFC 5246 7.2.1 / 7.2.2 constraint that the 2.8
    --  TLS 1.3 mTLS bypass exposed: a plaintext alert here lands as
    --  a bad record type on the peer and is silently dropped.
    procedure Send_Encrypted_Alert_Connected_12
@@ -153,7 +154,7 @@ is
      --  S.Role = Role_Server is the discriminant -- stating it
      --  would be a tautology carried in every VC of this body.
 
-   --  Resumed-handshake server flight (RFC 5077 Â§3.3 abbreviated).
+   --  Resumed-handshake server flight (RFC 5077 3.3 abbreviated).
    --  Caller has set HC.T12.Resuming + HC.Master_Secret_12 +
    --  S.Negotiated_Suite from the decrypted ticket. Emits
    --  SH â NST â CCS â encrypted Finished as one atomic flight,
@@ -185,12 +186,12 @@ is
       --  callback implementation, which is also the only party that knows
       --  whether keys are shared across threads, processes or nodes.
 
-      --  RFC 5077 Â§3.4: if the client offered a non-empty session_ticket
+      --  RFC 5077 3.4: if the client offered a non-empty session_ticket
       --  extension AND we have configured ticket-encryption keys, try
       --  to decrypt + resume. On success we run the abbreviated flight;
       --  on any failure (unknown Key_ID, tag mismatch, expiry, suite
       --  mismatch, etc.) we silently fall through to the full handshake
-      --  â RFC 5077 Â§3.4 requires this: "If the server refuses to use
+      --   RFC 5077 3.4 requires this: "If the server refuses to use
       --  the ticket, it SHOULD proceed with a full handshake."
       if S
            .HC
@@ -212,7 +213,7 @@ is
          declare
             Plain     : SPARKTLS.Tickets_12.Ticket_Plain;
             OK        : Boolean;
-            --  RFC 5077 Â§5.6 expiry: with a clock callback we enforce
+            --  RFC 5077 5.6 expiry: with a clock callback we enforce
             --  Cfg.TLS12_Ticket_Lifetime as the hard maximum age. No
             --  clock â degrade to "no expiry check" (still safe
             --  because the encrypted ticket integrity is unaffected,
@@ -314,7 +315,7 @@ is
       --  scheme that is compatible with our local key's signing
       --  algorithm. RSA-PKCS#1 v1.5 schemes (0x0401/0x0501/0x0601)
       --  would be valid in TLS 1.2 but we don't yet implement
-      --  v1.5 *signing* in SPARKTLSCrypto.RSA â only verify â so
+      --  v1.5 *signing* in SPARKTLSCrypto.RSA  only verify  so
       --  we offer PSS only for RSA keys. Verify is supported, so
       --  client cert sigs in v1.5 are still accepted via the
       --  cert_verify path.
@@ -350,7 +351,7 @@ is
          end Compatible_Local_Sig;
       begin
          if S.HC.Peer_Sig_Algo_Count = 0 then
-            --  RFC 5246 Â§7.4.1.4.1: when client omits the
+            --  RFC 5246 7.4.1.4.1: when client omits the
             --  signature_algorithms extension, the server uses a
             --  default. RFC 5246 specifies SHA-1, but SHA-1 is
             --  deprecated and we don't support it. Modern practice
@@ -378,7 +379,7 @@ is
                when Sign_None =>
                   null;
             end case;
-            --  RFC 5246 Â§7.4.1.4.1 strong-hash invariant: every value
+            --  RFC 5246 7.4.1.4.1 strong-hash invariant: every value
             --  the case selects above is a SHA-256-or-stronger scheme.
             --  This pragma Assert pins the property; a future edit
             --  that introduces a SHA-1 default (e.g. 0x0201, 0x0202)
@@ -417,13 +418,13 @@ is
                   case Cfg.Local.Sign_Algo is
                      when Sign_RSA_PSS =>
                         --  An RSA key can sign with either PSS or
-                        --  PKCS#1 v1.5 padding. RFC 5246 Â§7.4.1.4.1 +
-                        --  RFC 8446 Â§4.2.3 â accept any RSA scheme the
+                        --  PKCS#1 v1.5 padding. RFC 5246 7.4.1.4.1 +
+                        --  RFC 8446 4.2.3  accept any RSA scheme the
                         --  client offered. PSS preferred where both
                         --  are offered (the picking loop selects the
                         --  first match, so client ordering wins).
                         --  PKCS#1-SHA1 (0x0201) intentionally not
-                        --  accepted â SHA-1 is deprecated.
+                        --  accepted  SHA-1 is deprecated.
                         if Scheme = 16#0804#
                           or Scheme = 16#0805#
                           or Scheme = 16#0806#
@@ -464,7 +465,7 @@ is
                   end case;
                end;
             end loop;
-            --  RFC 5246 Â§7.4.1.4.1 / RFC 8446 Â§4.2.3: post-loop the
+            --  RFC 5246 7.4.1.4.1 / RFC 8446 4.2.3: post-loop the
             --  Negotiated scheme (if non-zero) is one the client
             --  offered. The loop invariant builds this incrementally:
             --  every iteration either exits with Negotiated set to
@@ -812,12 +813,12 @@ is
          end if;
       end;
 
-      --  2. Derive AEAD keys (no master-secret PRF â restored from
+      --  2. Derive AEAD keys (no master-secret PRF  restored from
       --     ticket; just expand to traffic keys + IVs).
       Derive_Keys_Resumed_12 (S, Cfg);
 
       --  3. NewSessionTicket (re-issued under our active TEK with a
-      --     fresh nonce). RFC 5077 Â§3.3: the server MUST send NST in
+      --     fresh nonce). RFC 5077 3.3: the server MUST send NST in
       --     the resumed flight if it advertised session_ticket in SH.
       declare
          Nonce_Buf   : Byte_Seq (0 .. 11) := (others => 0);
@@ -947,8 +948,8 @@ is
               | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
          then 16
          else 32);
-      --  RFC 5288 Â§3: AES-GCM IV salt is 4 bytes.
-      --  RFC 7905 Â§2: ChaCha20-Poly1305 IV is 12 bytes.
+      --  RFC 5288 3: AES-GCM IV salt is 4 bytes.
+      --  RFC 7905 2: ChaCha20-Poly1305 IV is 12 bytes.
       IV_Len     : constant N32 :=
         (if S.Negotiated_Suite in
               Suite_ECDHE_RSA_CHACHA20_SHA256
@@ -961,13 +962,13 @@ is
       SI         : Byte_Seq (0 .. 11) := (others => 0);
       Shared_Len : constant N32 := (if S.HC.KE.Curve = Group_Secp384r1 then 48 else 32);
    begin
-      --  RFC 7627 Â§4: master_secret derivation. If the client
+      --  RFC 7627 4: master_secret derivation. If the client
       --  offered the extended_master_secret extension we use the
       --  EMS PRF (label "extended master secret", seed = transcript
-      --  hash). Otherwise we MUST use the original RFC 5246 Â§8.1
+      --  hash). Otherwise we MUST use the original RFC 5246 8.1
       --  PRF (label "master secret", seed = client_random ||
       --  server_random). Mismatch here breaks Finished verification
-      --  for any client that didn't request EMS â caught by
+      --  for any client that didn't request EMS  caught by
       --  TLS-Anvil's HappyFlow battery (12/12 fail without this).
       pragma
         Assert
@@ -1003,7 +1004,7 @@ is
                   Byte_Seq (TH));
             end if;
          end;
-         --  RFC 7627 Â§4: ghost-record the PRF branch taken so
+         --  RFC 7627 4: ghost-record the PRF branch taken so
          --  EMS_PRF_Binding_RFC_7627_4 can prove on exit.
          S.HC.MS_Derivation := Extended;
       else
@@ -1091,7 +1092,7 @@ is
       is
       begin
          OK := False;
-         --  RFC 5246 Â§7.2.2 / RFC 8446 Â§6.2: invalid peer share is
+         --  RFC 5246 7.2.2 / RFC 8446 6.2: invalid peer share is
          --  illegal_parameter; an unselectable group is the generic
          --  handshake_failure.
 
@@ -1099,7 +1100,7 @@ is
             when Group_X25519 =>
                S.HC.KE.Shared (0 .. 31) :=
                  SPARKNaCl.Scalar.Mult (S.HC.KE.Local_SK, S.HC.KE.Peer_PK);
-               --  RFC 7748 Â§6.1 / RFC 8422 Â§5.10: reject all-zeros
+               --  RFC 7748 6.1 / RFC 8422 5.10: reject all-zeros
                --  shared secret (small-subgroup defence). The
                --  helper's Post is formally proven by SPARK.
                OK := Shared_Secret_Is_Acceptable_X25519 (S.HC.KE.Shared (0 .. 31));
@@ -1200,14 +1201,14 @@ is
             if CCS_OK then
                S.HC.CCS_Received := True;
                Result := OK;
-               --  RFC 5246 Â§7.1 single-CCS invariant: after this
+               --  RFC 5246 7.1 single-CCS invariant: after this
                --  assignment the server's view records that the client
                --  has signaled switch-to-encrypted exactly once. Future
                --  CCS records on this connection MUST be rejected via
                --  the `not S.HC.CCS_Received` guard above.
                pragma Assert (Single_CCS_RFC_5246_7_1 (S.HC));
             else
-               --  RFC 5246 Â§7.1: CCS payload MUST be the single byte
+               --  RFC 5246 7.1: CCS payload MUST be the single byte
                --  0x01 (BoGo BadChangeCipherSpec-*).
                Send_Alert_And_Error (S, Unexpected_Message, Result);
             end if;
@@ -1216,11 +1217,11 @@ is
       end if;
 
       if Rec.Content = Records.Content_Alert then
-         --  RFC 5246 Â§7.2.1: close_notify can arrive at any time
+         --  RFC 5246 7.2.1: close_notify can arrive at any time
          --  (including mid-handshake before keys are established).
          --  We must reply with close_notify (warning level) and
          --  close. Other plaintext alerts during handshake are
-         --  protocol violations â fatal.
+         --  protocol violations  fatal.
          declare
             FS          : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
             Alert_Level : Byte := 0;
@@ -1232,7 +1233,7 @@ is
             end if;
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             if Alert_Desc = 0 then
-               --  close_notify â reply in kind (plaintext warning).
+               --  close_notify  reply in kind (plaintext warning).
                declare
                   A : N32;
                begin
@@ -1242,7 +1243,7 @@ is
                end;
                Set_State (S, Closing);
                if Output_Pending (S) > 0 then
-                  --  RFC 5246 Â§7.2.1: invariant after queued reply.
+                  --  RFC 5246 7.2.1: invariant after queued reply.
                   pragma
                     Assert (Close_Notify_Reply_State_RFC_5246_7_2_1 (S.State, Output_Pending (S)));
                   Result := Has_Output;
@@ -1250,7 +1251,7 @@ is
                   Result := Shutdown;
                end if;
             else
-               --  Other alert mid-handshake â peer is closing on us
+               --  Other alert mid-handshake  peer is closing on us
                --  with a fatal condition; just close (no reply).
                S.Last_Error := Unexpected_Message;
                Set_State (S, Error_State);
@@ -1267,9 +1268,9 @@ is
          return;
       end if;
 
-      --  RFC 5246 Â§7.4.7: only one ClientKeyExchange permitted. A
+      --  RFC 5246 7.4.7: only one ClientKeyExchange permitted. A
       --  second handshake-content record after we've already seen
-      --  CKE is a state-machine violation â fatal alert.
+      --  CKE is a state-machine violation  fatal alert.
       --  TLS-Anvil's secondClientKeyExchange test (XSM-zmpmr7nVki).
       if S.HC.CKE_Received_12 then
          if Rec.Content = Records.Content_Handshake and then Rec.Fragment_Len >= 4 then
@@ -1611,10 +1612,10 @@ is
       end;
       S.HC.CKE_Received_12 := True;
       Result := (if Input_Available (S) > 0 then OK else Need_Input);
-      --  RFC 5246 Â§7.4.7: at this exit point, the single-CKE
+      --  RFC 5246 7.4.7: at this exit point, the single-CKE
       --  invariant MUST hold. A future edit that drops the
       --  S.HC.CKE_Received_12 := True assignment above would fail
-      --  this pragma â that's the point.
+      --  this pragma  that's the point.
       pragma Assert (Single_CKE_RFC_5246_7_4_7 (S.HC));
    end Process_Client_Key_Exchange_12;
 
@@ -1983,7 +1984,7 @@ is
       Records.Parse_Record_Header
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
       if not Rec.OK then
-         --  RFC 5246 Â§7.2.1: alerts are under the current write
+         --  RFC 5246 7.2.1: alerts are under the current write
          --  state. We're past the client's CCS (READ side encrypted)
          --  but before our own CCS (WRITE side still plaintext), so
          --  the alert MUST be plaintext.
@@ -2130,14 +2131,14 @@ is
                  or else Plaintext (2) /= 0
                  or else Plaintext (3) /= Byte (Finished_Verify_Len)
                then
-                  --  Finished length mismatch â RFC 8446 Â§6.2:
+                  --  Finished length mismatch RFC 8446 6.2:
                   --  decrypt_error (alert 51). BoGo
                   --  TrailingMessageData-ClientFinished expects this
                   --  rather than decode_error.
                   Send_Alert_And_Error (S, Certificate_Verify_Failed, Result);
                   return;
                end if;
-               --  RFC 5246 Â§7.4.9: Finished is the last handshake
+               --  RFC 5246 7.4.9: Finished is the last handshake
                --  message in the client's flight. Any bytes in the same
                --  record beyond `4 + Finished_Verify_Len` are excess
                --  data and therefore fatal unexpected_message. In the
@@ -2193,14 +2194,14 @@ is
 
                   --  Constant-time comparison (prevents timing attacks
                   --  on the verify_data). SPARKNaCl.Equal uses XOR
-                  --  accumulation â no early exit on mismatch.
+                  --  accumulation  no early exit on mismatch.
                   declare
                      Received : constant Key_Schedule_12.Verify_Data_12 :=
                        Key_Schedule_12.Verify_Data_12
                          (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
                   begin
                      if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
-                        --  RFC 5246 Â§7.4.9 / Â§7.2.1: Finished verify
+                        --  RFC 5246 7.4.9 / 7.2.1: Finished verify
                         --  mismatch â fatal alert. Server WRITE state
                         --  is still plaintext (no CCS sent yet) so the
                         --  alert MUST be plaintext, not encrypted.
@@ -2221,14 +2222,14 @@ is
       --  we save it and roll back on commit failure to keep AEAD nonces
       --  in sync with what the peer actually sees.
       --
-      --  NST goes BEFORE CCS (RFC 5077 Â§3.3): server's WRITE state is
+      --  NST goes BEFORE CCS (RFC 5077 3.3): server's WRITE state is
       --  still plaintext until CCS, so NST is a plaintext handshake
       --  record (content type 22). NST is appended to the transcript
-      --  before the server's Finished hash is computed (RFC 5077 Â§3.5).
+      --  before the server's Finished hash is computed (RFC 5077 3.5).
       --
       --  SKIPPED in the resumed (abbreviated) handshake: the server
       --  already sent SH+NST+CCS+Finished before the client's
-      --  Finished. RFC 5077 Â§3.3 â the abbreviated flight inverts
+      --  Finished. RFC 5077 3.3  the abbreviated flight inverts
       --  the order so this code path must NOT re-emit.
       if not S.HC.T12.Resuming then
          declare
@@ -2239,8 +2240,11 @@ is
             FL      : N32;
             TH      : Digest;
             TH4     : SPARKNaCl.Hashing.SHA384.Digest;
+
+            subtype Commit_Length is Buffer_Size range 1 .. IO_Buffer_Capacity;
+            Len : constant Commit_Length := Scratch.Write_Pos;
          begin
-            --  RFC 5077 Â§3.3 NewSessionTicket (full handshake): issued iff
+            --  RFC 5077 3.3 NewSessionTicket (full handshake): issued iff
             --  the client offered the session_ticket extension AND we have
             --  configured ticket-encryption keys. Resumed-flight NSTs (the
             --  abbreviated case) are emitted from a different code path.
@@ -2376,8 +2380,10 @@ is
             pragma Assert (S.HC.Server_Write_IV_12'First = 0);
             pragma Assert (S.HC.Server_Write_IV_12'Last = 11);
             pragma Assert (S.HC.Server_Write_IV_12'Length = Records.TLS12.Implicit_IV_Len);
+
             Build_Encrypted_Record_12
               (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO);
+
             if EO = 0 then
                --  Fatal path: no rewind, the burned nonce stays
                --  burned and the connection dies here.
@@ -2394,9 +2400,14 @@ is
                Result := Error_Alert;
                return;
             end if;
-            S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-              Scratch.Data (0 .. Scratch.Write_Pos - 1);
-            S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+
+            declare
+               New_Write_Pos : constant Buffer_Size := S.Output.Write_Pos + Len;
+            begin
+               S.Output.Data (S.Output.Write_Pos .. New_Write_Pos - 1) :=
+                  Scratch.Data (0 .. Len - 1);
+               S.Output.Write_Pos := New_Write_Pos;
+            end;
          end;
       end if;  --  end "if not S.HC.T12.Resuming"
 
@@ -2472,9 +2483,9 @@ is
       Records.Parse_Record_Header
         (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
 
-      --  RFC 5246 Â§7.2.1 / Â§7.2.2: post-Finished alerts MUST be
+      --  RFC 5246 7.2.1 / 7.2.2: post-Finished alerts MUST be
       --  encrypted under the app keys; a plaintext alert lands as a
-      --  bad record type on the peer (same root cause as the Â§2.8
+      --  bad record type on the peer (same root cause as the 2.8
       --  TLS 1.3 mTLS bypass).
       if Rec.Overflow then
          Send_Encrypted_Alert_Connected_12 (S, Record_Overflow, Result);
@@ -2503,9 +2514,9 @@ is
          return;
       end if;
 
-      --  RFC 5246 Â§7.4.1.2 / RFC 5746: a TLS 1.2 server MAY refuse
+      --  RFC 5246 7.4.1.2 / RFC 5746: a TLS 1.2 server MAY refuse
       --  client-initiated renegotiation. A Handshake record in the
-      --  Connected state is a renegotiation attempt â reply with a
+      --  Connected state is a renegotiation attempt  reply with a
       --  no_renegotiation warning alert (level 1, desc 100) and
       --  continue. BoGo Renegotiate-Server-Forbidden expects
       --  "remote error: no renegotiation" specifically.
@@ -2613,7 +2624,6 @@ is
                         S.Empty_Records_Recvd := S.Empty_Records_Recvd + 1;
                         Result := OK;
                      end if;
-                     pragma Assert (Empty_Records_Bounded_RFC_8446_5_2 (S));
                   end if;
 
                when Records.Content_Alert =>
@@ -2623,8 +2633,8 @@ is
                      --  from a truncated one, and so the Closing branch
                      --  knows both directions are shut.
                      S.Peer_Closed_Cleanly := True;
-                     --  close_notify received â RFC 5246 Â§7.2.1 (and
-                     --  RFC 8446 Â§6.1) require a close_notify reply at
+                     --  close_notify received  RFC 5246 7.2.1 (and
+                     --  RFC 8446 6.1) require a close_notify reply at
                      --  warning level (1) before tearing the
                      --  connection down. Without this TLS-Anvil's
                      --  closeNotify test sees a level-2 alert from us.
@@ -2655,7 +2665,7 @@ is
                   end if;
 
                when others =>
-                  --  RFC 5246 s6 / RFC 8446 s5.1: an unrecognised record
+                  --  RFC 5246 6 / RFC 8446 5.1: an unrecognised record
                   --  content type is unexpected_message, not something to
                   --  skip. Silently returning OK let a peer feed us
                   --  records we neither processed nor rejected.

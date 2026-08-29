@@ -44,7 +44,7 @@ is
    use type RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values_Enum;
    use type RFLX.Tls_Parameters.TLS_Supported_Groups_Enum;
 
-   --  RFC 8446 Â§4.1.4: SHA-256("HelloRetryRequest") â the magic
+   --  RFC 8446 4.1.4: SHA-256("HelloRetryRequest")  the magic
    --  ServerHello.random value that marks a record as a
    --  HelloRetryRequest rather than a real ServerHello.
    HRR_Sentinel : constant Byte_Seq (0 .. 31) :=
@@ -295,7 +295,7 @@ is
       Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
    begin
       --  RFLX CH_Extension data fields require a buffer at least
-      --  (4 + Data'Length) bytes â header + opaque payload.
+      --  (4 + Data'Length) bytes  header + opaque payload.
       Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + N32 (Data'Length)) => 0);
       RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
       RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag (Ext_Ctx, Tag);
@@ -311,7 +311,7 @@ is
       RFLX_Free (Ext_Buf);
    end Append_CH_Extension;
 
-   --  RFC 8446 Â§4.2.11 / Â§4.2.11.2 post-RFLX pre_shared_key extension
+   --  RFC 8446 4.2.11 / 4.2.11.2 post-RFLX pre_shared_key extension
    --  append. The PSK extension MUST be the last extension on the
    --  wire, and its binder must be computed over the truncated
    --  ClientHello (everything up to but not including the binders
@@ -380,7 +380,7 @@ is
          PSK_Ext_Len      : constant N32 := 4 + IDs_Len + Binders_Len;
          New_Len          : constant N32 := Len + PSK_Ext_Len;
 
-         --  CH body layout â see comments in Build_Client_Hello.
+         --  CH body layout  see comments in Build_Client_Hello.
          Sid_Len_Off  : constant N32 := 4 + 2 + 32;
          Sid_Len_Read : constant N32 := N32 (Result (Sid_Len_Off));
       begin
@@ -499,7 +499,7 @@ is
                                  Result (Ext_Len_Offset) := Byte (New_Ext_Len / 256);
                                  Result (Ext_Len_Offset + 1) := Byte (New_Ext_Len mod 256);
 
-                                 --  Compute binder per RFC 8446 Â§4.2.11.2.
+                                 --  Compute binder per RFC 8446 4.2.11.2.
                                  declare
                                     Trunc_Len : constant N32 := Binder_Offset - 3;
                                     --  Binder basis (phase carve): the
@@ -591,10 +591,10 @@ is
    --  Remaining_Ext_Bits, and a ghost entity cannot be passed to a
    --  non-ghost subprogram.
 
-   --  RFC 6066 Â§3: list_len(2) + type(1) + name_len(2) + name.
+   --  RFC 6066 3: list_len(2) + type(1) + name_len(2) + name.
    --  Name.Len may be 0: the caller emits server_name unconditionally,
    --  so this must handle the no-SNI case. (That the extension is sent at
-   --  all with an empty host_name is questionable under RFC 6066 Â§3, but
+   --  all with an empty host_name is questionable under RFC 6066 3, but
    --  it is the caller's existing behaviour and not changed here.)
    function Build_SNI_Raw (Name : Hostname_Buf) return Byte_Seq
    with
@@ -616,7 +616,7 @@ is
       return R;
    end Build_SNI_Raw;
 
-   --  RFC 8422 Â§5.1.1 supported_groups. Either the single group the server
+   --  RFC 8422 5.1.1 supported_groups. Either the single group the server
    --  selected in an HRR, or the full offered set.
    function Build_SG_Raw (Restrict : Boolean; Group : Unsigned_16) return Byte_Seq
    with
@@ -693,7 +693,7 @@ is
       SA_Data_Len  : constant N32 := 2 + 2 * N32 (SA_Count);
       --  key_share data: shares_len(2) + entries.
       --
-      --  CH1 strategy (RFC 8446 Â§9.1 + standard browser practice):
+      --  CH1 strategy (RFC 8446 9.1 + standard browser practice):
       --  send key_share only for X25519. supported_groups still
       --  advertises all three (X25519, secp256r1, secp384r1) so the
       --  server can request HRR to switch to another curve. This
@@ -710,7 +710,7 @@ is
       --  psk_key_exchange_modes data: list_len(1) + mode(1)
       PSK_Data_Len : constant N32 := 2;
       --  supported_versions data: list_len(1) + version(2) * N.
-      --  RFC 8446 Â§4.2.1 / RFC 5246: branch on Cfg.Versions so we
+      --  RFC 8446 4.2.1 / RFC 5246: branch on Cfg.Versions so we
       --  only offer the versions our policy permits. Otherwise
       --  servers honoring our offer can negotiate a version we
       --  refuse later.
@@ -718,7 +718,7 @@ is
         (case HC.Cfg.Versions is
            when Allow_Both => 5,   --  list_len + 2 versions
            when TLS_1_3_Only | TLS_1_2_Only => 3);  --  list_len + 1 version
-      --  ec_point_formats data (RFC 8422 Â§5.1.2): list_len(1) +
+      --  ec_point_formats data (RFC 8422 5.1.2): list_len(1) +
       --  format(1)=uncompressed. Required by BoGo for any TLS 1.2
       --  ECDHE suite (server's `ellipticOk` is false without it).
       EPF_Data_Len : constant N32 := 2;
@@ -729,14 +729,14 @@ is
       ALPN_Data_Len : constant N32 := Effective_ALPN_Data_Len (HC.Cfg);
       ALPN_Ext_Len  : constant N32 := (if ALPN_Count > 0 then 4 + ALPN_Data_Len else 0);
 
-      --  Cookie extension (RFC 8446 Â§4.2.2) â only in CH2 when the
+      --  Cookie extension (RFC 8446 4.2.2)  only in CH2 when the
       --  HRR carried one. Body: cookie_len(2) + cookie<cookie_len>.
       Cookie_Bytes_Len : constant N32 :=
         (if Retry_Mode and then HC.HRR_Cookie_Len > 0 then HC.HRR_Cookie_Len else 0);
       Cookie_Data_Len  : constant N32 := (if Cookie_Bytes_Len > 0 then 2 + Cookie_Bytes_Len else 0);
       Cookie_Ext_Len   : constant N32 := (if Cookie_Bytes_Len > 0 then 4 + Cookie_Data_Len else 0);
 
-      --  RFC 5077 session_ticket (TLS 1.2) â emit on the wire.
+      --  RFC 5077 session_ticket (TLS 1.2)  emit on the wire.
       --  CH_Extension_TLS is unconstrained on tag (see specs/
       --  CHANGES_FROM_UPSTREAM.md), so Append_Element with tag 0x0023
       --  produces the correct bytes. Empty data on initial CH
@@ -783,7 +783,7 @@ is
       --  ClientHello body: version(2) + random(32) + sid_len(1) +
       --  sid(0 | 32) + suites_len(2) + suites(18) + comp_len(1) +
       --  comp(1) + ext_len(2) + extensions. TLS_1_2_Only sends an
-      --  empty session_id (RFC 8446 Â§D.4 middlebox-compat trick is
+      --  empty session_id (RFC 8446 D.4 middlebox-compat trick is
       --  TLS 1.3-specific; sending the random 32 bytes from a TLS
       --  1.2-only client leaks "speaks TLS 1.3"). BoGo
       --  TLS12NoSessionID-TLS13.
@@ -798,7 +798,7 @@ is
       --  Inside the danger zone, pad to exactly 512 when possible
       --  (Pre_Pad_Msg_Len <= 508 leaves >= 4 bytes for the ext
       --  header). For 509..511 the minimum-size 4-byte ext header
-      --  alone pushes us past 512 â acceptable.
+      --  alone pushes us past 512  acceptable.
       Pad_Ext_Total   : constant N32 :=
         (if Need_Pad then (if Pre_Pad_Msg_Len <= 508 then 512 - Pre_Pad_Msg_Len else 4) else 0);
       Pad_Data_Len    : constant N32 := (if Pad_Ext_Total >= 4 then Pad_Ext_Total - 4 else 0);
@@ -871,7 +871,7 @@ is
       end;
 
       --  Generate 32-byte legacy session ID for middlebox compatibility
-      --  (RFC 8446 Â§D.4 / Â§4.1.2). TLS-1.2-only clients have no
+      --  (RFC 8446 D.4 / 4.1.2). TLS-1.2-only clients have no
       --  middlebox concern, so they SHOULD send an empty session_id;
       --  doing otherwise leaks "client speaks TLS 1.3" to a real
       --  TLS 1.2 server. BoGo TLS12NoSessionID-TLS13 exercises this.
@@ -1241,8 +1241,8 @@ is
                    = Remaining_Ext_Bits);
          end;
 
-         --  Extension 4.5 (retry only): cookie (0x002C) â echo back
-         --  the cookie the server sent in HRR. RFC 8446 Â§4.2.2.
+         --  Extension 4.5 (retry only): cookie (0x002C)  echo back
+         --  the cookie the server sent in HRR. RFC 8446 4.2.2.
          if Cookie_Bytes_Len > 0 then
             declare
                Cookie_Raw : Byte_Seq (0 .. Cookie_Data_Len - 1) := (others => 0);
@@ -1311,7 +1311,7 @@ is
                    = Remaining_Ext_Bits);
          end;
 
-         --  Extension 7: ec_point_formats (0x000B) â RFC 8422 Â§5.1.2.
+         --  Extension 7: ec_point_formats (0x000B)  RFC 8422 5.1.2.
          declare
             EPF_Raw : constant Byte_Seq (0 .. EPF_Data_Len - 1) := (16#01#, 16#00#);
          begin
@@ -1329,7 +1329,7 @@ is
                    = Remaining_Ext_Bits);
          end;
 
-         --  Extension 9: ALPN (0x0010) â if configured
+         --  Extension 9: ALPN (0x0010)  if configured
          if ALPN_Count > 0 then
             declare
                ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1) := (others => 0);
@@ -1413,7 +1413,7 @@ is
 
          --  extended_master_secret (RFC 7627, tag 0x0017). Empty body.
          --
-         --  RFC 7627 Â§5.1: the client offers it; a 1.2 server that also
+         --  RFC 7627 5.1: the client offers it; a 1.2 server that also
          --  supports it echoes the extension, and BOTH sides then derive
          --  master_secret = PRF(pms, "extended master secret",
          --  session_hash) instead of using the two randoms as the seed.
@@ -1487,14 +1487,14 @@ is
       RFLX_Free (Buf);
       Len := CH_Msg_Len;
 
-      --  0-RTT (RFC 8446 Â§4.2.10) intentionally not offered â see
+      --  0-RTT (RFC 8446 4.2.10) intentionally not offered  see
       --  the Cfg.Resume_Ticket comment in sparktls.ads for the
       --  rationale. We never write the early_data extension into
       --  CH; HC.Early_Data_Offered on the client side stays False.
 
       --  If we have a cached session ticket, append pre_shared_key
       --  extension. This MUST be the last extension per RFC 8446
-      --  Â§4.2.11. We patch the extensions list length and
+      --  4.2.11. We patch the extensions list length and
       --  handshake length after.
       --
       --  Binder hash matches the ticket's hash: PSK_Len=32 â SHA-256;
@@ -1524,11 +1524,11 @@ is
    --  means the caller may continue with the RFLX parse.
    --
    --  RFC anchors:
-   --    RFC 8446 Â§4.2    duplicate extensions â decode_error
-   --    RFC 5246 Â§7.4.1.4 / RFC 8446 Â§4.2 SH may only echo offered
-   --    RFC 6066 Â§3      SNI ack body MUST be empty
-   --    RFC 8446 Â§4.2.11 pre_shared_key in SH iff client offered PSK
-   --    RFC 7301 Â§3.1    ALPN body = list_len(2)+proto_len(1)+proto
+   --    RFC 8446 4.2    duplicate extensions â decode_error
+   --    RFC 5246 7.4.1.4 / RFC 8446 4.2 SH may only echo offered
+   --    RFC 6066 3      SNI ack body MUST be empty
+   --    RFC 8446 4.2.11 pre_shared_key in SH iff client offered PSK
+   --    RFC 7301 3.1    ALPN body = list_len(2)+proto_len(1)+proto
    --  Is_HRR_Msg: True when the SH currently being parsed is itself
    --  an HelloRetryRequest (sentinel matches). Distinct from
    --  HC.Got_HRR which latches across the SH1+SH2 pair (used only for
@@ -1624,7 +1624,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.1.4 / Â§4.1.3: in TLS 1.3 ServerHello + HRR,
+      --  RFC 8446 4.1.4 / 4.1.3: in TLS 1.3 ServerHello + HRR,
       --  legacy_compression_method MUST be 0. The TLS 1.2 parser
       --  enforces this for SH12 with `illegal_parameter`. For HRR we
       --  need decode_error per BoGo
@@ -1659,7 +1659,7 @@ is
       declare
          Ext_End : constant N32 := P + Ext_Total;
       begin
-         --  RFC 8446 Â§4: HS message MUST end exactly at its declared
+         --  RFC 8446 4: HS message MUST end exactly at its declared
          --  length. BoGo TrailingMessageData-ServerHello.
          if Ext_End /= Data'Last + 1 then
             Last_Err := Decode_Error;
@@ -1712,7 +1712,7 @@ is
                   pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
                   pragma Loop_Invariant (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
                   if Exts (I).Tag = Tag_U16 then
-                     --  RFC 8446 Â§4.2: duplicate ext in SH/EE â
+                     --  RFC 8446 4.2: duplicate ext in SH/EE â
                      --  decode_error. In HRR specifically BoringSSL
                      --  expects illegal_parameter
                      --  (HelloRetryRequest-DuplicateCookie /
@@ -1732,7 +1732,7 @@ is
                   Exts (N_Ext) := (Tag_U16, E_Len, P + 4);
                end if;
                if Tag_U16 = 16#002B# then
-                  --  RFC 8446 Â§4.2.1: in SH/HRR, body is exactly the
+                  --  RFC 8446 4.2.1: in SH/HRR, body is exactly the
                   --  selected_version (2 bytes), MUST be 0x0304 for
                   --  TLS 1.3. Accept only that exact value as the
                   --  TLS 1.3 marker so a corrupted body (BoGo
@@ -1794,7 +1794,7 @@ is
                   return;
                end if;
 
-               --  Per-tag body validation (RFC 7301 ALPN â shared
+               --  Per-tag body validation (RFC 7301 ALPN  shared
                --  helper, same wire shape used in TLS 1.3 EE).
                if Exts (I).Tag = 16#0010# and then Exts (I).Offset + Exts (I).E_Len <= Data'Last + 1
                then
@@ -1818,7 +1818,7 @@ is
                   end if;
                end if;
 
-               --  RFC 8422 Â§5.1.2: if a TLS 1.2 server sends
+               --  RFC 8422 5.1.2: if a TLS 1.2 server sends
                --  ec_point_formats, the vector must be well-formed and
                --  include uncompressed(0), the only point format this
                --  implementation accepts.
@@ -1868,10 +1868,10 @@ is
                   end;
                end if;
 
-               --  RFC 8446 Â§4.1.4 HRR-specific body extraction.
+               --  RFC 8446 4.1.4 HRR-specific body extraction.
                --  In HRR, key_share body is just `selected_group(2)`
                --  (no key_exchange); cookie body is `cookie_len(2) +
-               --  cookie<cookie_len>` (RFC 8446 Â§4.2.2). Stash both
+               --  cookie<cookie_len>` (RFC 8446 4.2.2). Stash both
                --  in HC for the caller's CH2-rebuild step.
                if Is_HRR_Msg
                  and then Exts (I).Tag = 16#0033#  --  key_share
@@ -1883,7 +1883,7 @@ is
                        Unsigned_16 (Data (Exts (I).Offset)) * 256
                        + Unsigned_16 (Data (Exts (I).Offset + 1));
                   begin
-                     --  RFC 8446 Â§4.1.4: the HRR's selected_group MUST be
+                     --  RFC 8446 4.1.4: the HRR's selected_group MUST be
                      --  one the client offered -- and we only ever offer
                      --  these three. Rejecting HERE (illegal_parameter)
                      --  rather than at the CH2-rebuild step is both the
@@ -1896,7 +1896,7 @@ is
                      end if;
                   end;
                end if;
-               --  RFC 8446 Â§4.2.11: pre_shared_key in SH (not HRR)
+               --  RFC 8446 4.2.11: pre_shared_key in SH (not HRR)
                --  carries `selected_identity` (uint16). We offer
                --  exactly one PSK identity (Ticket), so the only
                --  valid selected_identity value is 0; anything else
@@ -1935,7 +1935,7 @@ is
                      C_Len : constant N32 :=
                        N32 (Data (Exts (I).Offset)) * 256 + N32 (Data (Exts (I).Offset + 1));
                   begin
-                     --  RFC 8446 Â§4.2.2: cookie is the wire shape
+                     --  RFC 8446 4.2.2: cookie is the wire shape
                      --  cookie<1..2^16-1>, so empty cookie body is
                      --  illegal_parameter. BoGo
                      --  HelloRetryRequest-EmptyCookie-TLS13.
@@ -1999,7 +1999,7 @@ is
              and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
    end Pre_Scan_SH_Extensions;
 
-   --  RFC 8446 Â§4.2.8 ServerHello key_share: a single KeyShareEntry
+   --  RFC 8446 4.2.8 ServerHello key_share: a single KeyShareEntry
    --     group(2) + key_exchange_length(2) + key_exchange(key_exchange_length)
    --  Allocates a scratch buffer, copies the SH_Extension_TLS body,
    --  validates the wire-length, runs RFLX Verify_Message, dispatches
@@ -2044,7 +2044,7 @@ is
          RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data (Ext_Ctx, KS_Buf.all);
 
          --  Reject trailing bytes after the key_exchange field. RFC
-         --  8446 Â§4.2.8: extension_data == 4 + key_exchange_length.
+         --  8446 4.2.8: extension_data == 4 + key_exchange_length.
          if VLen >= 4 then
             declare
                KL : constant N32 := N32 (KS_Buf (3)) * 256 + N32 (KS_Buf (4));
@@ -2177,10 +2177,10 @@ is
          return;
       end if;
 
-      --  RFC 5246 Â§7.4.1.2 / RFC 8446 Â§4.1.3: legacy_session_id
+      --  RFC 5246 7.4.1.2 / RFC 8446 4.1.3: legacy_session_id
       --  length field is 0..32. The full ServerHello body is
       --  version(2) + random(32) + sid_len(1) + sid(0..32) + ...
-      --  Catch over-long sid early â RFLX rejects the message but
+      --  Catch over-long sid early  RFLX rejects the message but
       --  we'd otherwise fall through to the TLS 1.2 parser and emit
       --  Handshake_Failure instead of the correct Decode_Error
       --  (BoGo's Client-TooLongSessionID test).
@@ -2190,7 +2190,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.1.4: HelloRetryRequest is on-wire a ServerHello
+      --  RFC 8446 4.1.4: HelloRetryRequest is on-wire a ServerHello
       --  with a magic random value. Compare here so the SH parser
       --  can apply HRR-specific extension policy
       --  (Where_Allowed = E_HRR, dup â illegal_parameter not
@@ -2208,7 +2208,7 @@ is
                end if;
             end loop;
             if Sentinel_Match then
-               --  RFC 8446 Â§4.1.4: a server MUST send at most one
+               --  RFC 8446 4.1.4: a server MUST send at most one
                --  HRR. A second HRR is unexpected_message.
                if HC.Got_HRR then
                   Last_Err := Unexpected_Message;
@@ -2232,7 +2232,7 @@ is
          end if;
       end;
 
-      --  RFC 8446 Â§4.1.4: a valid HRR must contain at least one of
+      --  RFC 8446 4.1.4: a valid HRR must contain at least one of
       --  key_share or cookie. An HRR with neither is empty â
       --  illegal_parameter. BoGo HelloRetryRequest-Empty-TLS13.
       if Curr_Is_HRR and then HC.HRR_Selected_Group = 0 and then HC.HRR_Cookie_Len = 0 then
@@ -2241,7 +2241,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.1.4: "Clients MUST abort the handshake with an
+      --  RFC 8446 4.1.4: "Clients MUST abort the handshake with an
       --  'illegal_parameter' alert if the HelloRetryRequest would
       --  not result in any change in the ClientHello." Concretely,
       --  if HRR.selected_group names a group we already offered in
@@ -2267,7 +2267,7 @@ is
       if Curr_Is_HRR then
          --  Stash HRR cipher suite for the CH2 build's transcript
          --  + the cipher-mismatch check on the second SH (RFC
-         --  8446 Â§4.1.4: cipher_suite from HRR and SH MUST match).
+         --  8446 4.1.4: cipher_suite from HRR and SH MUST match).
          declare
             Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
          begin
@@ -2373,7 +2373,7 @@ is
                pragma Assert_And_Cut (SH_Parse_Frame);
                goto Cleanup;
             end if;
-            --  RFC 8446 Â§4.1.4: after HRR, the cipher_suite in SH2 MUST
+            --  RFC 8446 4.1.4: after HRR, the cipher_suite in SH2 MUST
             --  match the cipher_suite the server chose in HRR. BoGo
             --  HelloRetryRequest-CipherChange-TLS13.
             if HC.Got_HRR
@@ -2477,7 +2477,7 @@ is
             goto Cleanup;
          end if;
 
-         --  RFC 8446 Â§4.1.3: TLS 1.3 server's legacy_session_id_echo
+         --  RFC 8446 4.1.3: TLS 1.3 server's legacy_session_id_echo
          --  MUST be byte-for-byte equal to the client's
          --  legacy_session_id. We always send a 32-byte SID (unless
          --  TLS_1_2_Only), so when the server picked TLS 1.3 the echo
@@ -2510,7 +2510,7 @@ is
             end;
          end if;
 
-         --  RFC 8446 Â§4.1.4: after a HelloRetryRequest, the second SH
+         --  RFC 8446 4.1.4: after a HelloRetryRequest, the second SH
          --  MUST select the same version as the HRR (TLS 1.3, indicated
          --  by supported_versions). A 2nd SH without TLS 1.3 in supported
          --  _versions is a SECOND_SERVERHELLO_VERSION_MISMATCH and MUST
@@ -2522,7 +2522,7 @@ is
             goto Cleanup;
          end if;
 
-         --  RFC 8446 Â§4.2.1: enforce our Cfg.Versions policy on the
+         --  RFC 8446 4.2.1: enforce our Cfg.Versions policy on the
          --  server's choice. -min-version / -max-version / -no-tlsN may
          --  have constrained the policy below what's in the supported_
          --  versions extension we sent; if the server still picks a
@@ -2537,7 +2537,7 @@ is
             goto Cleanup;
          end if;
 
-         --  RFC 8446 Â§4.1.3: Downgrade-sentinel check, independent of
+         --  RFC 8446 4.1.3: Downgrade-sentinel check, independent of
          --  the negotiated version. The server MUST NOT set these
          --  markers when negotiating TLS 1.3, so a marker on a TLS 1.3
          --  SH is itself a signal to abort (BoringSSL convention; BoGo
@@ -2545,9 +2545,9 @@ is
          --  marker is the canonical RFC 8446 downgrade indicator.
          --
          --  Three sentinels:
-         --   * "DOWNGRD" + 0x01 â TLS 1.3 â TLS 1.2 (RFC 8446 Â§4.1.3)
-         --   * "DOWNGRD" + 0x00 â TLS 1.3 â TLS 1.0/1.1 (same RFC)
-         --   * 0xED 0xBF 0xB4 0xA8 0xC2 0x47 0x10 0xFF â JDK 11 marker.
+         --   * "DOWNGRD" + 0x01  TLS 1.3 â TLS 1.2 (RFC 8446 4.1.3)
+         --   * "DOWNGRD" + 0x00  TLS 1.3 â TLS 1.0/1.1 (same RFC)
+         --   * 0xED 0xBF 0xB4 0xA8 0xC2 0x47 0x10 0xFF  JDK 11 marker.
          declare
             R            : Byte_Seq renames HC.Server_Random;
             type Sentinel_T is array (N32 range 0 .. 7) of Byte;
@@ -2588,7 +2588,7 @@ is
             goto Cleanup;
          end if;
 
-         --  Compute shared secret (TLS 1.3 only â key_share in ServerHello)
+         --  Compute shared secret (TLS 1.3 only  key_share in ServerHello)
          if (HC.KE.Negotiated and then HC.KE.Curve = 16#0018#) then
             --  P-384 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
             declare
@@ -2640,9 +2640,9 @@ is
             HC.KE.Shared := (others => 0);
             SPARKTLSCrypto.X25519.Scalar_Mult
               (HC.KE.Shared (0 .. 31), HC.KE.Local_SK, HC.KE.Peer_PK);
-            --  RFC 7748 Â§6.1: small-subgroup defence. The helper has
+            --  RFC 7748 6.1: small-subgroup defence. The helper has
             --  a SPARK-proven Post that ties its result to the byte-
-            --  sequence existential. RFC 8446 Â§6.2: invalid peer share
+            --  sequence existential. RFC 8446 6.2: invalid peer share
             --  is illegal_parameter, not the generic handshake_failure
             --  the caller would otherwise pick.
             if not Shared_Secret_Is_Acceptable_X25519 (HC.KE.Shared (0 .. 31)) then

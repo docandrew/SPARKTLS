@@ -198,8 +198,8 @@ is
               | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
          then 16
          else 32);
-      --  RFC 5288 Â§3: AES-GCM IV salt is 4 bytes.
-      --  RFC 7905 Â§2: ChaCha20-Poly1305 IV is 12 bytes.
+      --  RFC 5288 3: AES-GCM IV salt is 4 bytes.
+      --  RFC 7905 2: ChaCha20-Poly1305 IV is 12 bytes.
       IV_Len     : constant N32 :=
         (if S.Negotiated_Suite in
               Suite_ECDHE_RSA_CHACHA20_SHA256
@@ -254,7 +254,7 @@ is
          end;
          S.HC.MS_Derivation := Extended;
       else
-         --  RFC 5246 Â§8.1: Standard master secret
+         --  RFC 5246 8.1: Standard master secret
          --  master_secret = PRF(pms, "master secret", CR || SR)
          Key_Schedule_12.Derive_Master_Secret_12
            (S.HC.Master_Secret_12,
@@ -366,10 +366,10 @@ is
       end if;
    end Set_Peer_Cert_12;
 
-   --  RFC 5246 Â§7.4.2 Certificate (HS type 0x0B). Parses the on-wire
+   --  RFC 5246 7.4.2 Certificate (HS type 0x0B). Parses the on-wire
    --  cert_list_len(3) || {cert_len(3) || cert_data[cert_len]}* via
    --  RFLX TLS_1_2_Certificate, then runs the leaf through X509.Parse.
-   --  Intermediates beyond Max_Pool_Size are silently dropped â chain
+   --  Intermediates beyond Max_Pool_Size are silently dropped  chain
    --  validation will fail if the omitted entries were needed.
    --
    --  Mirrors Parse_Certificate_Chain_13 (TLS 1.3), but operates on
@@ -570,7 +570,7 @@ is
       OK := True;
    end Parse_Cert_Chain_12;
 
-   --  RFC 5246 Â§7.4.2 leaf-cert validation (TLS 1.2): keyUsage,
+   --  RFC 5246 7.4.2 leaf-cert validation (TLS 1.2): keyUsage,
    --  cipher-suite â cert-algorithm match, hostname binding, chain
    --  validation. Each gate emits its own alert and returns; on full
    --  success Result is left untouched by the caller.
@@ -626,7 +626,7 @@ is
             return;
          end if;
 
-         --  RFC 8422 Â§5.1.1: in TLS 1.2 the supported_groups extension
+         --  RFC 8422 5.1.1: in TLS 1.2 the supported_groups extension
          --  also constrains the EC parameters accepted in an ECDSA server
          --  certificate. The default client advertises every supported
          --  group; a configured single-group offer must not accept a leaf
@@ -695,7 +695,7 @@ is
       end if;
    end Validate_Server_Cert_12;
 
-   --  RFC 5246 Â§7.4.4 CertificateRequest (HS type 0x0D). Parses the
+   --  RFC 5246 7.4.4 CertificateRequest (HS type 0x0D). Parses the
    --  three length-prefixed lists (cert_types, sig_algs, ca_dns), picks
    --  a sig_algs entry compatible with our local identity if mTLS is
    --  configured, and falls back to a canonical default per algorithm
@@ -802,7 +802,7 @@ is
       S.HC.T12.Client_Cert_Allowed := False;
 
       --  Sig-algs selection. Empty sig_algs list is malformed per
-      --  RFC 5246 Â§7.4.1.4.1.
+      --  RFC 5246 7.4.1.4.1.
       declare
          Picked   : Unsigned_16 := 0;
          SA_Empty : Boolean := True;
@@ -920,7 +920,7 @@ is
                        then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)));
    end Handle_CertReq_12;
 
-   --  RFC 5246 Â§7.4.3 ServerKeyExchange (HS type 0x0C). Length-validates
+   --  RFC 5246 7.4.3 ServerKeyExchange (HS type 0x0C). Length-validates
    --  the body shape first (curve_type/curve/pt_len/pt + sig_hash/alg/
    --  len/sig must sum to Msg_Len), then dispatches to
    --  Parse_Server_Key_Exchange which extracts ECDHE params + verifies
@@ -1755,7 +1755,7 @@ is
 
    end Build_Client_Flight_12;
 
-   --  RFC 5246 Â§7.4.5 ServerHelloDone (HS type 0x0E). End of the
+   --  RFC 5246 7.4.5 ServerHelloDone (HS type 0x0E). End of the
    --  server's pre-CCS flight. Computes the ECDHE shared secret,
    --  derives the AEAD keys, then builds and commits the entire
    --  client flight atomically: (optional Certificate + CKE +
@@ -1873,14 +1873,14 @@ is
       pragma Assert_And_Cut (Result /= OK);
    end Handle_SHD_12;
 
-   --  RFC 5077 Â§3.3 NewSessionTicket (HS type 0x04). Two arrival times:
+   --  RFC 5077 3.3 NewSessionTicket (HS type 0x04). Two arrival times:
    --    * Abbreviated handshake (S.HC.T12.Resuming): right after SH,
    --      before server CCS+Finished. Cache, append transcript, derive
    --      AEAD keys from cached master_secret + this connection's
    --      randoms, flip CKE_Received_12 so the dispatcher advances.
    --    * Full handshake: after client CKE+CCS+Finished, before
    --      server CCS+Finished. The dispatcher routes to
-   --      Process_Server_CCS at that point â handled there.
+   --      Process_Server_CCS at that point  handled there.
    --
    --  Frag is the reassembled HS message bytes (header + body), Msg_Len
    --  the declared body length from the HS header.
@@ -2075,7 +2075,7 @@ is
 
       case Msg_Type is
          when 16#0B# =>
-            --  Certificate (RFC 5246 Â§7.4.2). Parsing happens in
+            --  Certificate (RFC 5246 7.4.2). Parsing happens in
             --  Parse_Cert_Chain_12; subsequent validation gates
             --  (keyUsage, suite<->cert algorithm match, hostname,
             --  chain) live in Validate_Server_Cert_12.
@@ -2104,7 +2104,7 @@ is
             Result := OK;
 
          when 16#0D# =>
-            --  RFC 5246 Â§7.4: in an ECDHE flight ServerKeyExchange is
+            --  RFC 5246 7.4: in an ECDHE flight ServerKeyExchange is
             --  mandatory and precedes CertificateRequest. Selected_Group
             --  is only set (to a valid group) by a successfully processed
             --  SKE, so a zero group here means the peer sent this message
@@ -2120,7 +2120,7 @@ is
             Handle_SKE_12 (S, D, Frag, Msg_Len, Result);
 
          when HT_Server_Hello_Done =>
-            --  RFC 5246 Â§7.4: ServerHelloDone before a valid
+            --  RFC 5246 7.4: ServerHelloDone before a valid
             --  ServerKeyExchange is an out-of-order flight (SKE is
             --  mandatory for ECDHE).
             if not S.HC.KE.Negotiated then
@@ -2138,7 +2138,7 @@ is
             Handle_SHD_12 (S, D, Frag, Msg_Len, Result);
 
          when 16#04# =>
-            --  RFC 5077 Â§3.3: NewSessionTicket belongs after the key
+            --  RFC 5077 3.3: NewSessionTicket belongs after the key
             --  exchange; SKE is mandatory for ECDHE, so a zero group
             --  here means the flight is out of order.
             if not S.HC.KE.Negotiated then
@@ -2158,7 +2158,7 @@ is
             Handle_NST_12 (S, D, Frag, Msg_Len, Result);
 
          when others =>
-            --  RFC 5246 Â§7.4: unknown handshake type during the
+            --  RFC 5246 7.4: unknown handshake type during the
             --  flight is unexpected_message (BoGo WrongMessageType-*
             --  injects type+42). After the client CCS+Finished flight,
             --  the peer expects encrypted alerts.
@@ -2259,7 +2259,7 @@ is
             Msg_Type := Frag (0);
             Msg_Len := Frag'Length - 4;
 
-            --  RFC 5246 Â§7.4.6: ServerHelloDone is the last message of the
+            --  RFC 5246 7.4.6: ServerHelloDone is the last message of the
             --  server's flight, so nothing may trail it. Residue here is
             --  excess handshake data, NOT the head of a later message that
             --  a further record will complete -- which is what Consume
@@ -3108,7 +3108,7 @@ is
               and then not S.HC.T12.Resuming
               and then not S.TLS12_New_Ticket.Valid
             then
-               --  RFC 5077 Â§3.3: if the server echoed the empty
+               --  RFC 5077 3.3: if the server echoed the empty
                --  session_ticket extension in ServerHello, it MUST send
                --  NewSessionTicket before its ChangeCipherSpec.
                Send_Alert_And_Error (S, Unexpected_Message, Result);
@@ -3118,14 +3118,14 @@ is
                S.HC.CCS_Received := True;
                Result := OK;
             else
-               --  RFC 5246 Â§7.1: ChangeCipherSpec payload MUST be the
+               --  RFC 5246 7.1: ChangeCipherSpec payload MUST be the
                --  single byte 0x01. BoGo BadChangeCipherSpec-* sends
                --  other bytes / lengths â unexpected_message.
                Send_Alert_And_Error (S, Unexpected_Message, Result);
             end if;
          end;
       elsif Rec.Content = Records.Content_Handshake then
-         --  RFC 5077 Â§3.3 full-handshake NewSessionTicket arrives
+         --  RFC 5077 3.3 full-handshake NewSessionTicket arrives
          --  AFTER client CCS+Finished but BEFORE server CCS. The
          --  dispatcher routes here (post-client-CKE-flight, waiting
          --  for server CCS) so we need to consume the NST here. BoGo
@@ -3264,7 +3264,7 @@ is
       Copy_Finished_Reasm_Bytes_12 (D, Plaintext, PL, P_Pos);
       Complete := Has_Message (D.Reasm);
 
-      --  RFC 5246 Â§7.4.9: server Finished is the last server
+      --  RFC 5246 7.4.9: server Finished is the last server
       --  handshake message and must be the last thing in its
       --  TLS record. Any leftover plaintext after the Finished
       --  body is fatal unexpected_message (BoGo
@@ -3283,7 +3283,7 @@ is
       end if;
    end Accumulate_Finished_Plaintext_12;
 
-   --  RFC 5077 Â§3.3 abbreviated handshake client flight: CCS plus
+   --  RFC 5077 3.3 abbreviated handshake client flight: CCS plus
    --  encrypted Finished. In the resumed flow the CLIENT sends these
    --  AFTER the server's Finished (inverse of the full handshake order
    --  where they were already sent). Atomic flight assembly: build
@@ -3458,7 +3458,7 @@ is
             if Msg_Type /= HT_Finished or RN < 4 + Finished_Verify_Len then
                --  Wrong type or short body. We're post-CCS so the
                --  alert MUST be encrypted (server expects encrypted
-               --  records after CCS â sending plaintext yields
+               --  records after CCS  sending plaintext yields
                --  bad_record_mac on the peer). BoGo
                --  WrongMessageType-ServerFinished expects
                --  unexpected_message; we treat short body as
@@ -3476,8 +3476,8 @@ is
                return;
             end if;
             if Msg_Len /= Finished_Verify_Len then
-               --  Length mismatch on Finished â RFC 5246 Â§7.4.9 +
-               --  RFC 8446 Â§6.2: decrypt_error (alert 51). We're
+               --  Length mismatch on Finished  RFC 5246 7.4.9 +
+               --  RFC 8446 6.2: decrypt_error (alert 51). We're
                --  post-CCS so the alert must be encrypted with our
                --  client_write_key, not plaintext.
                Send_Encrypted_Finished_Error_12 (S, D, 51, Certificate_Verify_Failed, Result);
@@ -3514,7 +3514,7 @@ is
 
          --  Append server Finished plaintext to transcript so the
          --  client's own Finished verify_data (computed below in the
-         --  abbreviated path) covers it. Copy into a local first â
+         --  abbreviated path) covers it. Copy into a local first
          --  passing a slice of the reassembly buffer alongside `in out HC`
          --  is a SPARK 6.4.2 aliasing violation.
          declare
@@ -3527,7 +3527,7 @@ is
          Reset (D.Reasm);
       end;
 
-      --  RFC 5077 Â§3.3 abbreviated handshake: in the resumed flow the
+      --  RFC 5077 3.3 abbreviated handshake: in the resumed flow the
       --  CLIENT sends CCS+Finished AFTER the server's. In the full-HS
       --  case both records were sent before the server's Finished
       --  arrived, so this is a no-op.
@@ -3639,7 +3639,7 @@ is
          --  Reject records exceeding the TLS 1.2 max ciphertext size.
          --  A 16384-byte plaintext encrypts to exactly 16408 bytes
          --  (16384 + 8 explicit nonce + 16 tag), so the bound is
-         --  strict-greater-than, not greater-or-equal â and matches
+         --  strict-greater-than, not greater-or-equal  and matches
          --  Decrypt_Record_12's Pre (`Encrypted'Last <
          --  Max_Record_Plaintext + TLS12_Record_Overhead`).
          if Frag_Len > Max_Record_Plaintext + TLS12_Record_Overhead then
@@ -3680,7 +3680,7 @@ is
                end if;
             end;
 
-            --  RFC 5246 Â§6.1: "If a TLS implementation would need to
+            --  RFC 5246 6.1: "If a TLS implementation would need to
             --  wrap a sequence number, it must renegotiate instead."
             --  We don't support renegotiation. Counter exhaustion now
             --  fails closed INSIDE Decrypt_Record_12 (Valid = False ->
@@ -3723,9 +3723,9 @@ is
                   end if;
 
                when Records.Content_Alert =>
-                  --  RFC 5246 Â§7.2: alerts have (level, description).
-                  --  - close_notify (desc=0): peer is closing â initiate
-                  --    Closing. Required regardless of level by Â§7.2.1.
+                  --  RFC 5246 7.2: alerts have (level, description).
+                  --  - close_notify (desc=0): peer is closing  initiate
+                  --    Closing. Required regardless of level by 7.2.1.
                   --  - level=warning (1): MAY ignore. We ignore so BoGo
                   --    SendWarningAlerts-Pass /
                   --    AlternateEmptyRecordsAndWarningAlerts complete.
@@ -3744,8 +3744,8 @@ is
                      end if;
                      Result := Shutdown;
                   elsif PL >= 1 and then Plaintext (0) = 1 then
-                     --  warning (non-close_notify) â count + cap.
-                     --  RFC 8446 Â§6.1 / BoGo SendWarningAlerts-TooMany:
+                     --  warning (non-close_notify)  count + cap.
+                     --  RFC 8446 6.1 / BoGo SendWarningAlerts-TooMany:
                      --  more than 4 in a connection â fatal
                      --  decode_error.
                      --  Check BEFORE incrementing: the counter then never exceeds the
@@ -3762,7 +3762,7 @@ is
                         Result := OK;
                      end if;
                   else
-                     --  fatal alert from peer â record + close.
+                     --  fatal alert from peer  record + close.
                      S.Last_Error := Unexpected_Message;
                      if S.State = Connected then
                         Set_State (S, Closing);

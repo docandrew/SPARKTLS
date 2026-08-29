@@ -7,7 +7,7 @@ with SPARKNaCl.Stream;
 with SPARKTLSCrypto.AES_GCM;
 use SPARKTLSCrypto;
 
---  TLS 1.2 Record Layer â AEAD (GCM + ChaCha20-Poly1305)
+--  TLS 1.2 Record Layer  AEAD (GCM + ChaCha20-Poly1305)
 --
 --  Key differences from TLS 1.3 (sparktls-records.adb):
 --
@@ -62,7 +62,7 @@ is
       end;
    end Write_To_Output;
 
-   --  RFC 5288 Â§3: Construct 12-byte GCM nonce from 4-byte implicit IV
+   --  RFC 5288 3: Construct 12-byte GCM nonce from 4-byte implicit IV
    --  and 8-byte sequence number (big-endian).
    --  nonce = implicit_IV[4] || seq_num[8]
    function Make_Nonce_12 (Implicit_IV : Byte_Seq; Seq_Num : Record_Counter) return Bytes_12 is
@@ -82,7 +82,7 @@ is
       return Nonce;
    end Make_Nonce_12;
 
-   --  RFC 7905 Â§2 (ChaCha20-Poly1305 in TLS 1.2):
+   --  RFC 7905 2 (ChaCha20-Poly1305 in TLS 1.2):
    --    pad seq_num to 96 bits on the left, XOR with the 12-byte
    --    implicit IV. No on-wire `explicit_nonce` field.
    function Make_Nonce_ChaCha20 (Implicit_IV : Byte_Seq; Seq_Num : Record_Counter) return Bytes_12
@@ -100,7 +100,7 @@ is
       return Nonce;
    end Make_Nonce_ChaCha20;
 
-   --  RFC 5246 Â§6.2.3.3: Build the 13-byte AAD for AEAD.
+   --  RFC 5246 6.2.3.3: Build the 13-byte AAD for AEAD.
    --  additional_data = seq_num[8] || type[1] || version[2] || length[2]
    --  where length = PLAINTEXT length (not ciphertext)
    function Build_AAD
@@ -192,8 +192,8 @@ is
       --  2**23, so the increment is trivially inside Record_Counter.
       Seq_Num : constant Record_Counter := Keys.Counter;
 
-      --  RFC 7905 Â§2: ChaCha20-Poly1305 omits the on-wire explicit
-      --  nonce. AES-GCM (RFC 5288 Â§3) includes it.
+      --  RFC 7905 2: ChaCha20-Poly1305 omits the on-wire explicit
+      --  nonce. AES-GCM (RFC 5288 3) includes it.
       Is_ChaCha20        : constant Boolean := Keys.Suite = Suite_CHACHA20_POLY1305_SHA256;
       Wire_Exp_Nonce_Len : constant N32 := (if Is_ChaCha20 then 0 else Explicit_Nonce_Len);
 
@@ -283,7 +283,7 @@ is
       Keys.Counter := Keys.Counter + 1;
 
       --  Build record header: content_type || 0x0303 || fragment_length.
-      --  RFC 5246 Â§6.2.1: version = negotiated (0x0303 for TLS 1.2).
+      --  RFC 5246 6.2.1: version = negotiated (0x0303 for TLS 1.2).
       --  Atomic record emission (review fix, 2026-08-27): refuse up
       --  front if the WHOLE record does not fit, mirroring the TLS 1.3
       --  builder. Without this, a partial header could reach Output
@@ -339,8 +339,8 @@ is
       Plain_Len   : out N32;
       Valid       : out Boolean)
    is
-      --  RFC 5288 Â§3 (AES-GCM): record body = explicit_nonce[8] +
-      --  ciphertext + tag[16]. RFC 7905 Â§2 (ChaCha20-Poly1305): no
+      --  RFC 5288 3 (AES-GCM): record body = explicit_nonce[8] +
+      --  ciphertext + tag[16]. RFC 7905 2 (ChaCha20-Poly1305): no
       --  explicit nonce, record body = ciphertext + tag[16].
       Is_ChaCha20        : constant Boolean := Keys.Suite = Suite_CHACHA20_POLY1305_SHA256;
       Wire_Exp_Nonce_Len : constant N32 := (if Is_ChaCha20 then 0 else Explicit_Nonce_Len);
@@ -359,13 +359,13 @@ is
          return;
       end if;
 
-      --  RFC 5246 Â§6.1: the counter MUST advance even on failure. Do this
+      --  RFC 5246 6.1: the counter MUST advance even on failure. Do this
       --  up front so every early-return path satisfies the Post and the
       --  runtime invariant.
       Keys.Counter := Original_Seq + 1;
 
       --  Defense-in-depth: verify input is large enough for [nonce] + tag,
-      --  and (for ChaCha20-Poly1305 per RFC 7905 Â§2, body = ct + tag[16])
+      --  and (for ChaCha20-Poly1305 per RFC 7905 2, body = ct + tag[16])
       --  reject records whose ciphertext would exceed Max_Record_Plaintext.
       if N32 (Encrypted'Length) < Wire_Exp_Nonce_Len + GCM_Tag_Len
         or else N32 (Encrypted'Length) > Max_Record_Plaintext + Wire_Exp_Nonce_Len + GCM_Tag_Len

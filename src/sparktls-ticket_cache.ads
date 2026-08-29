@@ -6,7 +6,7 @@ with SPARKNaCl; use SPARKNaCl;
 package SPARKTLS.Ticket_Cache
   with SPARK_Mode => On
 is
-   --  RFC 8446 Â§4.6.1: Store a NewSessionTicket's PSK.
+   --  RFC 8446 4.6.1: Store a NewSessionTicket's PSK.
    --  Round-robin: if cache is full, overwrites the oldest entry.
    --  Cache.Next always points to a valid index.
    procedure Store
@@ -22,11 +22,11 @@ is
        and Cache.Next in 0 .. Max_Cached_Tickets - 1,
      Post => Cache.Next in 0 .. Max_Cached_Tickets - 1;   --  index stays valid
 
-   --  RFC 8446 Â§4.2.11: Look up a pre_shared_key identity.
-   --  Lookup is read-only â does not modify the cache.
+   --  RFC 8446 4.2.11: Look up a pre_shared_key identity.
+   --  Lookup is read-only  does not modify the cache.
    --
    --  Want_Suite is the cipher suite the server has already negotiated
-   --  for this connection. RFC 8446 Â§4.2.11 forbids resuming a PSK
+   --  for this connection. RFC 8446 4.2.11 forbids resuming a PSK
    --  under a different cipher suite (would allow downgrade and breaks
    --  the key schedule's hash binding). Lookup enforces this by only
    --  reporting Found => True when the cached suite matches Want_Suite;

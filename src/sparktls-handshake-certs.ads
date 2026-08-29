@@ -20,7 +20,7 @@ is
    --  with N up to Max_Pool_Size + 1 leaf, each cert <= Max_Cert_DER.
    Max_Cert_Msg : constant := 16#100000#;  --  1 MB safety cap
 
-   --  RFC 5246 Â§7.4.2 TLS 1.2 Certificate parser. Takes the complete
+   --  RFC 5246 7.4.2 TLS 1.2 Certificate parser. Takes the complete
    --  handshake message bytes (4-byte header + cert_list_len(3) +
    --  entries). On wire-format errors, OK := False and Err := Decode_Error.
    --  X.509 parse failures leave OK = True but D.Peer_Leaf.Present = False,

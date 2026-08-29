@@ -42,7 +42,7 @@ is
    --  Checks: structural validity, CA flag, known algorithms, date validity.
    --  Does NOT verify the root's self-signature (trust anchors are trusted
    --  by definition, and self-signature verification is not required by
-   --  RFC 5280 Â§6.1).
+   --  RFC 5280 6.1).
    function Validate_Root
      (Root     : X509.Certificate;
       Root_DER : X509.Byte_Seq;
@@ -56,24 +56,24 @@ is
      Post =>
        (if Validate_Root'Result = Valid
         then
-          --  RFC 5280 Â§6.1.1(d): trust anchor must parse
+          --  RFC 5280 6.1.1(d): trust anchor must parse
           X509.Is_Valid
             (Root)
-            --  RFC 5280 Â§4.2: no unrecognized critical extensions
+            --  RFC 5280 4.2: no unrecognized critical extensions
           and not X509.Has_Unknown_Critical_Extension
                     (Root)
-                    --  RFC 5280 Â§4.1.2.5: must be within validity period
+                    --  RFC 5280 4.1.2.5: must be within validity period
           and X509.Is_Date_Valid
                 (Root, Now)
-                --  RFC 5280 Â§4.2.1.9: trust anchor must be CA
+                --  RFC 5280 4.2.1.9: trust anchor must be CA
           and X509.Is_CA
                 (Root)
-                --  RFC 5280 Â§4.2.1.9: BC must be critical on CA certs
+                --  RFC 5280 4.2.1.9: BC must be critical on CA certs
           and X509.Is_Basic_Constraints_Critical
                 (Root)
                 --  Full structural validity, OR every individual structural
                 --  check passes (legacy-root tolerance: Bad_Serial-only certs
-                --  like Starfield G2 violate RFC 5280 Â§4.1.2.2 but ship in
+                --  like Starfield G2 violate RFC 5280 4.1.2.2 but ship in
                 --  every major trust store).
           and (X509.Is_Structurally_Valid (Root, Now)
                or else (X509.TBS (Root).Present
@@ -88,9 +88,9 @@ is
    --  Chain validation building blocks
    --
    --  The caller walks the chain and calls these for each level:
-   --    1. Validate_Root       â trust anchor
-   --    2. Validate_Link       â each issuer->subject pair
-   --    3. Validate_Leaf_Policy â leaf-specific policy checks
+   --    1. Validate_Root        trust anchor
+   --    2. Validate_Link        each issuer->subject pair
+   --    3. Validate_Leaf_Policy  leaf-specific policy checks
    --
    --  All SPARK_Mode On.  DER buffers use X509.Byte_Seq so that
    --  X509 functions (Issuer_Matches, Satisfies_Name_Constraints,
@@ -139,17 +139,17 @@ is
        and X509.Spans_Valid (Cert, Cert_DER'Last)
        and X509.Spans_Valid (Issuer, Issuer_DER'Last),
      Post =>
-     --  RFC 5280 Â§6.1.3: issuer must match
+     --  RFC 5280 6.1.3: issuer must match
        (if Validate_Link'Result = Valid
         then X509.Issuer_Matches (Cert, Cert_DER, Issuer, Issuer_DER))
        and
-       --  RFC 5280 Â§6.1.3: cert must be within validity period
+       --  RFC 5280 6.1.3: cert must be within validity period
                                                                  (if Validate_Link'Result = Valid
                                                                   then
                                                                     X509.Is_Date_Valid (Cert, Now))
        and
-       --  RFC 5280 Â§4.2.1.10: name constraints must be satisfied
-       --  (self-issued intermediates are exempt per Â§4.2.1.10)
+       --  RFC 5280 4.2.1.10: name constraints must be satisfied
+       --  (self-issued intermediates are exempt per 4.2.1.10)
                                                                  (if Validate_Link'Result = Valid
                                                                     and then not (Must_Be_CA
                                                                                   and then X509
@@ -192,7 +192,7 @@ is
        and Leaf_DER'Last < X509.N32'Last
        and X509.Spans_Valid (Leaf, Leaf_DER'Last),
      Post =>
-     --  RFC 5280 Â§4.2.1.12: if EKU present but wrong, reject
+     --  RFC 5280 4.2.1.12: if EKU present but wrong, reject
        (if X509.Has_EKU (Leaf)
           and then Purpose = Purpose_Server
           and then not X509.Has_EKU_Server_Auth (Leaf)

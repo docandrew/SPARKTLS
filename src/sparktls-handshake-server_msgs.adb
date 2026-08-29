@@ -648,7 +648,7 @@ is
 
    --  Parse the ALPN extension data: 2-byte list_len followed by
    --  pascal-style protocol strings (1-byte length + bytes). Stores
-   --  the FIRST protocol in HC.Client_ALPN. RFC 7301 Â§3.1: each
+   --  the FIRST protocol in HC.Client_ALPN. RFC 7301 3.1: each
    --  protocol_name MUST have length >= 1; an empty entry anywhere
    --  in the list is a fatal protocol violation. Sets OK=False and
    --  HC.Last_ALPN_Error so the caller can surface illegal_parameter.
@@ -1349,16 +1349,16 @@ is
       Suite      : constant RFLX.Tls_Parameters.TLS_Cipher_Suites :=
         RFLX.TLS_Handshake.Cipher_Suite_TLS.Get_Suite (Suite_Ctx);
       --  TLS_Cipher_Suites_Enum has Size=>16; Raw is 16-bit wire value.
-      --  Both branches fit in Unsigned_16 â guard with Valid predicate
+      --  Both branches fit in Unsigned_16  guard with Valid predicate
       --  to make it explicit for the prover.
       Suite_Code : constant RFLX.RFLX_Types.Base_Integer :=
         RFLX.Tls_Parameters.To_Base_Integer (Suite);
       Val        : Unsigned_16;
    begin
-      --  RFC 5746 Â§3.6: TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF)
+      --  RFC 5746 3.6: TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF)
       --  is a *signaling* cipher suite value, not a real suite, so
       --  RFLX's TLS_Cipher_Suites enum (which only models negotiable
-      --  suites) rejects it via Valid_TLS_Cipher_Suites â we detect
+      --  suites) rejects it via Valid_TLS_Cipher_Suites  we detect
       --  it ourselves before falling through.
       --  Suite_Code is RFLX Base_Integer; guard the Unsigned_16
       --  conversion so SPARK can discharge the range check below.
@@ -1544,7 +1544,7 @@ is
      (Code : in Unsigned_32; HC : in out Handshake_Context; OK : out Boolean) is
    begin
       OK := True;
-      --  RFC 8446 Â§4.2: duplicate extension types in CH MUST be
+      --  RFC 8446 4.2: duplicate extension types in CH MUST be
       --  rejected. BoGo's DuplicateExtension test exercises this.
       pragma Assert (No_Duplicate_Extensions_RFC_8446_4_2 (HC));
       for I in 1 .. HC.Seen_Ext_Count loop
@@ -1567,7 +1567,7 @@ is
       pragma Assert (No_Duplicate_Extensions_RFC_8446_4_2 (HC));
 
       --  Record extension order fingerprint (rolling polynomial hash).
-      --  Skip cookie (0x002C) â it's added after HRR.
+      --  Skip cookie (0x002C)  it's added after HRR.
       if Code /= 16#002C# then
          HC.CH_Ext_Hash := HC.CH_Ext_Hash * 31 xor Code;
          --  Saturating increment: the loop bound (max ~16K extensions
@@ -1651,7 +1651,7 @@ is
                return;
             end if;
 
-            --  RFC 6066 Â§3: HostName = 0. Record only the first one.
+            --  RFC 6066 3: HostName = 0. Record only the first one.
             if Name_Type = 0
               and then HC.Peer_SNI.Len = 0
               and then Name_Len > 0
@@ -1876,7 +1876,7 @@ is
                Parse_KS_Extension (Ext_Ctx, DLen, HC);
                --  Parse_KS_Extension â Apply_KS_Entry stashes
                --  Illegal_Parameter in HC.Ext_Parse_Err on duplicate-
-               --  group violations (RFC 8446 Â§4.2.8). Surface to the
+               --  group violations (RFC 8446 4.2.8). Surface to the
                --  Parse_Client_Hello caller as a parse failure.
                if HC.Ext_Parse_Err /= No_Error then
                   OK := False;
@@ -1911,7 +1911,7 @@ is
          when RFLX.Tls_Extensiontype_Values.Pre_Shared_Key =>
             if DLen in Wire_PSK_Ext_Len then
                Parse_PSK_Extension (Ext_Ctx, DLen, HC);
-               --  RFC 8446 Â§4.2.11: PSK shape errors (missing
+               --  RFC 8446 4.2.11: PSK shape errors (missing
                --  binders, identity/binder count mismatch,
                --  wrong-length binder) are surfaced via
                --  HC.Ext_Parse_Err so the CH parser aborts with
@@ -1935,7 +1935,7 @@ is
                begin
                   Parse_ALPN_Extension (Ext_Ctx, DLen, HC, ALPN_OK);
                   if not ALPN_OK then
-                     --  RFC 7301 Â§3.1: malformed protocol_name_list
+                     --  RFC 7301 3.1: malformed protocol_name_list
                      --  (empty entry, truncated, list_len mismatch).
                      --  Stash for Parse_Client_Hello to surface.
                      HC.Ext_Parse_Err := Illegal_Parameter;
@@ -2018,7 +2018,7 @@ is
             HC.Saw_Reneg_Info := True;
 
          when RFLX.Tls_Extensiontype_Values.Early_Data =>
-            --  RFC 8446 Â§4.2.10: presence (empty body) in CH means
+            --  RFC 8446 4.2.10: presence (empty body) in CH means
             --  the client wants to send 0-RTT data. Server decides
             --  acceptance later (Build_Server_Flight) when the PSK
             --  resume + DHE_KE + ticket-most-recent conditions are
@@ -2056,7 +2056,7 @@ is
       OK := True;
       case Tag.Enum is
          when RFLX.Tls_Extensiontype_Values.Session_Ticket =>
-            --  RFC 5077 Â§3.2: session_ticket extension (TLS 1.2 only;
+            --  RFC 5077 3.2: session_ticket extension (TLS 1.2 only;
             --  obsoleted by TLS 1.3's PSK mechanism). Two shapes:
             --    * Empty (DLen=0): client supports tickets, wants the
             --      server to issue one in a later NewSessionTicket.
@@ -2078,7 +2078,7 @@ is
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes =>
-            --  RFC 8446 Â§4.2.9: body is list_len(1) + N modes(1 each).
+            --  RFC 8446 4.2.9: body is list_len(1) + N modes(1 each).
             --  psk_dhe_ke = 0x01 is the only mode we support; presence
             --  is required before we may issue a NewSessionTicket on
             --  this connection (BoGo TLS13-ExpectNoSessionTicketOn
@@ -2109,7 +2109,7 @@ is
       OK := True;
       case Tag.Enum is
          when RFLX.Tls_Extensiontype_Values.Server_Name =>
-            --  RFC 6066 Â§3: server_name body shape =
+            --  RFC 6066 3: server_name body shape =
             --    server_name_list_length(2) +
             --    {name_type(1) + host_name<2..2^16-1>}*
             --  Validate the wire-level length sum so trailing bytes
@@ -2133,8 +2133,8 @@ is
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Ec_Point_Formats =>
-            --  RFC 8422 Â§5.1.2: only point format 0 (uncompressed)
-            --  may appear in this list â formats 1 and 2 are
+            --  RFC 8422 5.1.2: only point format 0 (uncompressed)
+            --  may appear in this list  formats 1 and 2 are
             --  deprecated and MUST NOT be supported. We delegate to
             --  EC_Point_Formats_Acceptable, whose Post is formally
             --  proven by SPARK to match the RFC exactly.
@@ -2150,7 +2150,7 @@ is
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Compress_Certificate =>
-            --  RFC 8879 Â§3 CertificateCompressionAlgorithms body:
+            --  RFC 8879 3 CertificateCompressionAlgorithms body:
             --    algorithms_len(1) + algorithms<algorithms_len>
             --    each algorithm = u16, so algorithms_len must be even
             --    and 2..254. Validate the length AND reject duplicate
@@ -2171,7 +2171,7 @@ is
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Certificate_Authorities =>
-            --  RFC 8446 Â§4.2.4 CertificateAuthoritiesExtension body:
+            --  RFC 8446 4.2.4 CertificateAuthoritiesExtension body:
             --    authorities_length(2) + DistinguishedName[]
             --    each DN = name_length(2) + DER bytes
             --  Validate that the outer length tiles the body exactly,
@@ -2281,7 +2281,7 @@ is
    is
       use RFLX.TLS_Handshake.Client_Hello;
       Aborting : Boolean := False;
-      --  RFC 8446 Â§4.2.11: pre_shared_key MUST be the last
+      --  RFC 8446 4.2.11: pre_shared_key MUST be the last
       --  extension in the ClientHello. Track whether we saw it on
       --  a previous iteration; any subsequent extension is an
       --  illegal_parameter.  BoGo Resume-Server-PSKBinderFirst-
@@ -2682,7 +2682,7 @@ is
       end if;
 
       if Data (Data'First) /= HT_Client_Hello then
-         --  RFC 8446 Â§6: a handshake message of an inappropriate
+         --  RFC 8446 6: a handshake message of an inappropriate
          --  type for the current state must be rejected with
          --  unexpected_message, not decode_error. The message is
          --  structurally well-formed (we read its 4-byte header to
@@ -2698,7 +2698,7 @@ is
       --  the same record". The HS header (bytes 1..3 of Data, after
       --  the type byte at 0) declares this message's body length. If
       --  the record fragment carries more than (4 + declared), the
-      --  extra bytes are the start of another HS message â and since
+      --  extra bytes are the start of another HS message  and since
       --  the caller invoked us expecting exactly one CH in this
       --  state, that's unexpected_message, not decode_error. BoGo
       --  PartialSecondClientHelloAfterFirst, PartialClientKey
@@ -2738,10 +2738,10 @@ is
          Raw_Legacy_Version := N32 (Buf.all (1)) * 256 + N32 (Buf.all (2));
       end if;
 
-      --  RFC 8446 Â§4.1.2: TLS 1.3 clients MUST set CH.legacy_version
+      --  RFC 8446 4.1.2: TLS 1.3 clients MUST set CH.legacy_version
       --  to 0x0303, but TLS 1.3 servers MUST tolerate other values
       --  (the real version comes from supported_versions). Our RFLX
-      --  TLS_Version enum only accepts 0x0301..0x0304 + DTLS â any
+      --  TLS_Version enum only accepts 0x0301..0x0304 + DTLS  any
       --  TLS 1.3-tolerant high value (e.g. 0x0304 from buggy clients
       --  or 0x0400 from forward-version probes) makes Verify_Message
       --  fail. Pre-normalise to 0x0303 before parse for any value
@@ -2752,7 +2752,7 @@ is
       --  ClientHelloVersionTooHigh, VersionTolerance-TLS13,
       --  ConflictingVersionNegotiation-2.
       --
-      --  ##  WARNING â buffer mutation
+      --  ##  WARNING  buffer mutation
       --
       --  This rewrites the local RFLX parse buffer. Anyone later
       --  reading the field via Get_Legacy_Version (Ctx) will see
@@ -2774,7 +2774,7 @@ is
       Verify_Message (Ctx);
 
       --  Strict trailing-data check: the parsed CH structure must
-      --  consume the entire body. RFC 8446 Â§4.1.2 / RFC 5246 Â§7.4.1.2
+      --  consume the entire body. RFC 8446 4.1.2 / RFC 5246 7.4.1.2
       --  do not permit trailing data after the extensions block.
       --  BoGo's `SendTrailingMessageData` test appends a stray byte
       --  inside the handshake length; if RFLX's structural fields
@@ -2800,7 +2800,7 @@ is
          --       != single 0x00 byte
          --    other                         â decode_error
          --
-         --  ClientHello body layout (RFC 8446 Â§4.1.2):
+         --  ClientHello body layout (RFC 8446 4.1.2):
          --    legacy_version(2) | random(32) | session_id_len(1) |
          --    session_id(0..32) | cipher_suites_len(2) |
          --    cipher_suites    | compression_methods_len(1) |
@@ -2811,8 +2811,8 @@ is
             Last_Err := Protocol_Version;
          else
             --  Walk to legacy_compression_methods to check it's
-            --  exactly the single byte 0x00. RFC 8446 Â§4.1.2 +
-            --  Â§6.2.1: any other compression list is illegal_parameter.
+            --  exactly the single byte 0x00. RFC 8446 4.1.2 +
+            --  6.2.1: any other compression list is illegal_parameter.
             declare
                BS                      : constant N32 := Data'First + 4;  --  past HS hdr
                P                       : N32;
@@ -2855,7 +2855,7 @@ is
          HC.Client_Random := To_NaCl (Random_Bytes);
       end;
 
-      --  Extract legacy session ID. RFC 8446 Â§4.1.3: server MUST
+      --  Extract legacy session ID. RFC 8446 4.1.3: server MUST
       --  echo the exact bytes (and length) the client sent. Track
       --  both so Build_Server_Hello can echo accurately.
       declare
@@ -2959,7 +2959,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.2.1: if the client sent supported_versions but
+      --  RFC 8446 4.2.1: if the client sent supported_versions but
       --  did not list any version we can negotiate, reject with
       --  protocol_version (instead of silently falling back to the
       --  legacy_version path). BoGo NoSupportedVersions.
@@ -3007,7 +3007,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.2.9: a TLS 1.3 ClientHello with pre_shared_key
+      --  RFC 8446 4.2.9: a TLS 1.3 ClientHello with pre_shared_key
       --  MUST also include psk_key_exchange_modes with at least one
       --  mode the server recognises. We support only psk_dhe_ke
       --  (0x01), so require HC.PSK.Has_DHE_KE whenever a PSK binder

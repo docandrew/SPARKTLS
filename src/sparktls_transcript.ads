@@ -1,4 +1,4 @@
---  SPARKTLS handshake transcript â streaming, bufferless (carve 2).
+--  SPARKTLS handshake transcript  streaming, bufferless (carve 2).
 --
 --  The transcript is the concatenation of every handshake message,
 --  hashed at several protocol points. The digest algorithm is not

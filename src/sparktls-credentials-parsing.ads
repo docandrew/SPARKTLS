@@ -1,7 +1,7 @@
---  SPARKTLS.Credentials.Parsing â SPARK-verified credential parsing
+--  SPARKTLS.Credentials.Parsing  SPARK-verified credential parsing
 --
 --  Pure parsing of PKCS#8 keys and PEM-encoded identities.
---  No file I/O â operates on in-memory byte/string buffers.
+--  No file I/O  operates on in-memory byte/string buffers.
 --  SPARK_Mode On: formally verified for memory safety.
 
 with X509;

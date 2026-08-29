@@ -47,7 +47,7 @@ is
                  then Random /= null and then Id.RSA_Mod_Len in 64 .. 512),
      Post => Len <= N32 (Result'Length);
 
-   --  RFC 8446 Â§4.4.2 TLS 1.3 Certificate parser. Replaces the
+   --  RFC 8446 4.4.2 TLS 1.3 Certificate parser. Replaces the
    --  hand-rolled cert chain walker that previously lived (in
    --  near-identical form) at the TLS 1.3 server's Wait_Client_Certificate
    --  arm and at the TLS 1.3 client's HT_Certificate dispatch.
@@ -57,7 +57,7 @@ is
    --  RFLX.TLS_Handshake.Certificate (cert_request_context length-prefixed
    --  + cert_list_length + sequence of CertificateEntry, each
    --  cert_data_length + cert_data + per-cert extensions). Each cert's
-   --  DER bytes are then passed to X509.Parse â the wire-parsing and
+   --  DER bytes are then passed to X509.Parse  the wire-parsing and
    --  cert-content-parsing layers stay distinct.
    --
    --  On success: D.Peer_Leaf.Cert holds the leaf cert (if parseable),
@@ -70,10 +70,10 @@ is
    --  mismatch): OK := False. D.Peer_Leaf.Present := False.
    --
    --  Per-cert X509.Parse failures and intermediate-pool-overflow
-   --  do NOT set OK := False â that matches the prior hand-rolled
+   --  do NOT set OK := False  that matches the prior hand-rolled
    --  behavior (let the caller decide what to do with an unparseable
    --  leaf based on D.Peer_Leaf.Present + chain-validation policy).
-   --  Reject_Cert_Extensions: TLS 1.3 Â§4.4.2 / BoGo
+   --  Reject_Cert_Extensions: TLS 1.3 4.4.2 / BoGo
    --  SendUnknownExtensionOnCertificate-TLS13. Set True on the client
    --  side: the server MAY echo only per-cert extensions the client
    --  requested via the matching CH extension (status_request,
@@ -83,8 +83,8 @@ is
    --  bundled (the server doesn't currently policy them).
    --
    --  Err is meaningful only when OK = False:
-   --    Decode_Error           â wire format malformed
-   --    Unsupported_Extension  â Reject_Cert_Extensions was --                             a cert entry carried non-empty
+   --    Decode_Error            wire format malformed
+   --    Unsupported_Extension   Reject_Cert_Extensions was --                             a cert entry carried non-empty
    --                             extensions.
    procedure Parse_Certificate_Chain_13
      (HC                     : in out Engaged_Context;

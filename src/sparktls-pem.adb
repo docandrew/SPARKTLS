@@ -102,7 +102,7 @@ is
                            B64_Len := B64_Len + 1;
                            B64_Buf (B64_Len) := Input (Pos);
                         else
-                           --  SPARKTLSCrypto.Base64 content exceeds buffer â cert is oversize
+                           --  SPARKTLSCrypto.Base64 content exceeds buffer  cert is oversize
                            Result.Oversize := True;
                         end if;
                      end if;

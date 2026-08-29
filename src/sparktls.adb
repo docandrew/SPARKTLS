@@ -10,7 +10,7 @@ with SPARKTLS.Key_Update;
 package body SPARKTLS
   with SPARK_Mode => On
 is
-   --  RFC 7748 Â§6.1 / RFC 8422 Â§5.10: see the contract in the spec.
+   --  RFC 7748 6.1 / RFC 8422 5.10: see the contract in the spec.
    --  The body accumulates a byte-wise OR; the loop invariant ties
    --  the accumulator to the existence of a non-zero byte seen so
    --  far, allowing gnatprove to discharge the function-level Post.
@@ -26,7 +26,7 @@ is
       return Acc /= 0;
    end Shared_Secret_Is_Acceptable_X25519;
 
-   --  RFC 8422 Â§5.1.2: see contract in spec.
+   --  RFC 8422 5.1.2: see contract in spec.
    --  Returns True iff the list is non-empty AND contains at least
    --  one occurrence of 0 (uncompressed). Deprecated formats {1, 2}
    --  are silently tolerated alongside 0.
@@ -172,7 +172,7 @@ is
    ----------------------------------------------------------------------------
    --  Write_Plaintext
    ----------------------------------------------------------------------------
-   --  RFC 8446 Â§4.6.3: emit the deferred KeyUpdate reply and rotate our
+   --  RFC 8446 4.6.3: emit the deferred KeyUpdate reply and rotate our
    --  write key. Direction depends on role -- a client writes under
    --  Client_App, a server under Server_App.
    --
@@ -182,8 +182,8 @@ is
    --  never be readable.
    --
    --  Never sets request_update -- replying with a request would be an
-   --  unbounded ping-pong (RFC 8446 Â§4.6.3).
-   --  True when our own write direction is approaching the RFC 8446 Â§5.5
+   --  unbounded ping-pong (RFC 8446 4.6.3).
+   --  True when our own write direction is approaching the RFC 8446 5.5
    --  AEAD usage limit and should be rotated before sending more.
    function Write_Key_Exhausted (S : Session) return Boolean
    is (if S.Role = Role_Client then S.Client_App.Counter >= Rekey_After_Records - Rekey_Margin
@@ -255,7 +255,7 @@ is
 
    procedure Write_Plaintext (S : in out Session; Plaintext : in Byte_Seq; Bytes_Written : out N32)
    is
-      --  RFC 8446 Â§5.1 caps a single TLS record at 2^14 bytes of
+      --  RFC 8446 5.1 caps a single TLS record at 2^14 bytes of
       --  plaintext. Larger writes are queued as multiple records.
       --
       --  Check output capacity before encryption. The record builders
@@ -275,7 +275,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.6.3: if the peer asked us to rekey, we MUST send our
+      --  RFC 8446 4.6.3: if the peer asked us to rekey, we MUST send our
       --  KeyUpdate before the next Application Data record. Flushing it
       --  here -- rather than inline when the request arrived -- is what
       --  collapses a burst of requests into a single reply, and is also
@@ -285,9 +285,9 @@ is
       --  Two reasons to rotate our write key before sending, both
       --  discharged by the same mechanism:
       --
-      --   1. The peer asked (RFC 8446 Â§4.6.3 request_update). We owe them a
+      --   1. The peer asked (RFC 8446 4.6.3 request_update). We owe them a
       --      KeyUpdate before the next Application Data record.
-      --   2. We are approaching the RFC 8446 Â§5.5 AEAD usage limit on our
+      --   2. We are approaching the RFC 8446 5.5 AEAD usage limit on our
       --      OWN write direction. Nobody will ask us to do this -- a
       --      KeyUpdate rotates only the sender's key, so protecting our
       --      write direction is ours alone to do. Without it a long-lived
@@ -407,15 +407,15 @@ is
    end Sanitize_Keys;
 
    ----------------------------------------------------------------------------
-   --  RFC 8446 Â§4.2 extension policy table
+   --  RFC 8446 4.2 extension policy table
    --
    --  One row per known IANA extension type. Where_Allowed is the
    --  set of message types the extension MAY appear in (server-side;
    --  CH coverage is via Tag_Is_Offered_Static). Requires_Offer is
-   --  True for everything that's a server "echo / reply" â i.e. the
+   --  True for everything that's a server "echo / reply"  i.e. the
    --  server may only include it if the client offered it. Empty_Echo
    --  is True for extensions whose echoed body must be zero bytes
-   --  (RFC 6066 Â§3 SNI ack, RFC 7627 EMS, etc.).
+   --  (RFC 6066 3 SNI ack, RFC 7627 EMS, etc.).
    ----------------------------------------------------------------------------
    function Ext_Policy_For (Tag : Interfaces.Unsigned_16) return Ext_Policy is
    begin
@@ -431,9 +431,9 @@ is
 
          when 16#000A# =>
             --  supported_groups (RFC 7919, RFC 8446)
-            --  Strictly RFC 8446 Â§4.2 only lists CH/EE, but in
+            --  Strictly RFC 8446 4.2 only lists CH/EE, but in
             --  practice some TLS 1.2 servers echo supported_groups
-            --  in SH for client-preference signaling â clients must
+            --  in SH for client-preference signaling  clients must
             --  tolerate. BoGo SupportedCurves-ServerHello-TLS12.
             return
               (Known          => True,
@@ -452,7 +452,7 @@ is
                Always_In_CH   => True);
 
          when 16#000D# =>
-            --  signature_algorithms (RFC 8446 Â§4.2.3)
+            --  signature_algorithms (RFC 8446 4.2.3)
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_CR => True, others => False),
@@ -524,7 +524,7 @@ is
                Always_In_CH   => False);
 
          when 16#0029# =>
-            --  pre_shared_key (RFC 8446 Â§4.2.11)
+            --  pre_shared_key (RFC 8446 4.2.11)
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_SH13 => True, others => False),
@@ -533,7 +533,7 @@ is
                Always_In_CH   => False);
 
          when 16#002A# =>
-            --  early_data (RFC 8446 Â§4.2.10)
+            --  early_data (RFC 8446 4.2.10)
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_EE | E_NST => True, others => False),
@@ -542,7 +542,7 @@ is
                Always_In_CH   => False);
 
          when 16#002B# =>
-            --  supported_versions (RFC 8446 Â§4.2.1)
+            --  supported_versions (RFC 8446 4.2.1)
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_SH13 | E_HRR => True, others => False),
@@ -551,7 +551,7 @@ is
                Always_In_CH   => True);
 
          when 16#002C# =>
-            --  cookie (RFC 8446 Â§4.2.2)
+            --  cookie (RFC 8446 4.2.2)
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_HRR => True, others => False),
@@ -560,7 +560,7 @@ is
                Always_In_CH   => False);
 
          when 16#002D# =>
-            --  psk_key_exchange_modes (RFC 8446 Â§4.2.9)
+            --  psk_key_exchange_modes (RFC 8446 4.2.9)
             return
               (Known          => True,
                Where_Allowed  => (E_CH => True, others => False),
@@ -569,7 +569,7 @@ is
                Always_In_CH   => False);
 
          when 16#002F# =>
-            --  certificate_authorities (RFC 8446 Â§4.2.4)
+            --  certificate_authorities (RFC 8446 4.2.4)
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_CR => True, others => False),
@@ -578,7 +578,7 @@ is
                Always_In_CH   => False);
 
          when 16#0032# =>
-            --  signature_algorithms_cert (RFC 8446 Â§4.2.3)
+            --  signature_algorithms_cert (RFC 8446 4.2.3)
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_CR => True, others => False),
@@ -587,7 +587,7 @@ is
                Always_In_CH   => False);
 
          when 16#0033# =>
-            --  key_share (RFC 8446 Â§4.2.8)
+            --  key_share (RFC 8446 4.2.8)
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_SH13 | E_HRR => True, others => False),
@@ -631,10 +631,10 @@ is
       OK := True;
       Err := No_Error;
 
-      --  Unknown extension tag. RFC 8446 Â§4.3.2 / Â§4.4: clients MUST
+      --  Unknown extension tag. RFC 8446 4.3.2 / 4.4: clients MUST
       --  ignore unrecognised extensions in CR / CT / NST (extension
-      --  points designed for forward extensibility). Elsewhere â SH,
-      --  EE, HRR â unknown tags are forbidden because the server can
+      --  points designed for forward extensibility). Elsewhere  SH,
+      --  EE, HRR  unknown tags are forbidden because the server can
       --  only echo extensions the client offered, and we don't offer
       --  unknown tags. BoGo
       --  UnknownExtensionInCertificateRequest-TLS13 confirms the CR
@@ -696,7 +696,7 @@ is
             return;
          end if;
 
-         --  RFC 7301 Â§3.2: chosen proto MUST be one we offered.
+         --  RFC 7301 3.2: chosen proto MUST be one we offered.
          if Proto_Len > N32 (Max_Hostname_Len) then
             OK := False;
             Err := Illegal_Parameter;
@@ -739,7 +739,7 @@ is
             end if;
          end;
 
-         --  Match â copy into Negotiated_ALPN.
+         --  Match  copy into Negotiated_ALPN.
          ALPN.Len := Natural (Proto_Len);
          for I in 1 .. Natural (Proto_Len) loop
             pragma

@@ -1,9 +1,9 @@
 with SPARKNaCl;
 use SPARKNaCl;
 
---  TLS 1.2 Record Layer â AEAD ciphers only (RFC 5246 Â§6.2.3.3, RFC 5288)
+--  TLS 1.2 Record Layer  AEAD ciphers only (RFC 5246 6.2.3.3, RFC 5288)
 --
---  GCM nonce construction (RFC 5288 Â§3):
+--  GCM nonce construction (RFC 5288 3):
 --    nonce[12] = salt[4] || nonce_explicit[8]
 --    salt = client_write_IV or server_write_IV (from key expansion)
 --    nonce_explicit = 64-bit sequence number (big-endian)
@@ -11,17 +11,17 @@ use SPARKNaCl;
 --  Record format:
 --    TLS record header[5] || nonce_explicit[8] || ciphertext[N] || tag[16]
 --
---  AAD (RFC 5246 Â§6.2.3.3):
+--  AAD (RFC 5246 6.2.3.3):
 --    additional_data[13] = seq_num[8] || content_type[1] || version[2] || length[2]
 --    where length = plaintext length BEFORE encryption (not ciphertext length)
 --
---  Key differences from TLS 1.3 (RFC 8446 Â§5):
+--  Key differences from TLS 1.3 (RFC 8446 5):
 --    - Explicit 8-byte nonce in record (vs implicit XOR counter)
 --    - No inner content type byte (outer header has real type)
 --    - No zero-byte padding
 --    - AAD includes seq_num explicitly and uses plaintext length
 --    - Content type in outer header is the actual type (not always 0x17)
---    - Sequence numbers reset to 0 after CCS (RFC 5246 Â§6.1)
+--    - Sequence numbers reset to 0 after CCS (RFC 5246 6.1)
 
 package SPARKTLS.Records.TLS12
   with SPARK_Mode => On
@@ -30,13 +30,13 @@ is
    --  Constants from RFC 5288 and RFC 5246
    ----------------------------------------------------------------------------
 
-   Explicit_Nonce_Len : constant := 8;   --  RFC 5288 Â§3 (AES-GCM only)
+   Explicit_Nonce_Len : constant := 8;   --  RFC 5288 3 (AES-GCM only)
    --  Implicit_IV storage is sized for ChaCha20-Poly1305's 12-byte IV
-   --  (RFC 7905 Â§2). AES-GCM uses only the first 4 bytes as the salt
-   --  (RFC 5288 Â§3); the remaining bytes are zero-padded.
+   --  (RFC 7905 2). AES-GCM uses only the first 4 bytes as the salt
+   --  (RFC 5288 3); the remaining bytes are zero-padded.
    Implicit_IV_Len : constant := 12;
    GCM_Tag_Len : constant := 16;  --  NIST SP 800-38D
-   AAD_Len : constant := 13;  --  RFC 5246 Â§6.2.3.3
+   AAD_Len : constant := 13;  --  RFC 5246 6.2.3.3
 
    --  Maximum record overhead for TLS 1.2 AEAD:
    --  explicit_nonce(8 for GCM, 0 for ChaCha20) + tag(16) â¤ 24 bytes.
@@ -50,10 +50,10 @@ is
    --  Ghost functions: RFC behavioral invariants
    ----------------------------------------------------------------------------
 
-   --  RFC 5288 Â§3: GCM nonce = implicit_IV[0..3] || explicit_nonce[8].
+   --  RFC 5288 3: GCM nonce = implicit_IV[0..3] || explicit_nonce[8].
    --  The nonce MUST be unique for each record under the same key.
    --  Using the sequence number as the explicit nonce guarantees
-   --  uniqueness since sequence numbers never repeat (RFC 5246 Â§6.1).
+   --  uniqueness since sequence numbers never repeat (RFC 5246 6.1).
    --  Implicit_IV storage is sized for the larger ChaCha20-Poly1305
    --  IV (RFC 7905); AES-GCM uses only the first 4 bytes (the salt).
    function Valid_GCM_Nonce (Implicit_IV : Byte_Seq; Seq_Num : Record_Counter) return Boolean
@@ -65,7 +65,7 @@ is
    --  Procedures
    ----------------------------------------------------------------------------
 
-   --  RFC 5246 Â§6.2.3.3 + RFC 5288: Build an encrypted TLS 1.2 record.
+   --  RFC 5246 6.2.3.3 + RFC 5288: Build an encrypted TLS 1.2 record.
    --
    --  The explicit nonce is the 64-bit sequence number (big-endian),
    --  prepended to the ciphertext in the record.
@@ -82,7 +82,7 @@ is
    --    ciphertext[plaintext_len]
    --    tag[16]
    --
-   --  RFC 5246 Â§6.1: the sequence number increments by 1 per record. It
+   --  RFC 5246 6.1: the sequence number increments by 1 per record. It
    --  lives INSIDE Keys (the sealed-channel move, HC_REFACTOR.md carve
    --  5a): the nonce derives from a counter only this operation advances,
    --  so a nonce cannot be reused under a key and the counter cannot be
@@ -117,10 +117,10 @@ is
        and Bytes_Out
            <= Record_Header_Size + Explicit_Nonce_Len + N32 (Plaintext'Length) + GCM_Tag_Len;
    --  Exact size depends on suite: AES-GCM includes an
-   --  on-wire explicit_nonce[8], ChaCha20 (RFC 7905 Â§2)
+   --  on-wire explicit_nonce[8], ChaCha20 (RFC 7905 2)
    --  does not. Either is bounded above by the GCM size.
 
-   --  RFC 5246 Â§6.2.3.3 + RFC 5288: Decrypt a TLS 1.2 AEAD record.
+   --  RFC 5246 6.2.3.3 + RFC 5288: Decrypt a TLS 1.2 AEAD record.
    --
    --  Encrypted layout: nonce_explicit[8] || ciphertext[N] || tag[16]
    --
@@ -131,10 +131,10 @@ is
    --     version (0x0303), and plaintext length
    --  4. Decrypt ciphertext and verify tag
    --
-   --  RFC 5246 Â§6.2.3.3: "If the decryption fails, a fatal
+   --  RFC 5246 6.2.3.3: "If the decryption fails, a fatal
    --  bad_record_mac alert MUST be generated."
    --
-   --  RFC 5246 Â§6.1: the counter increments even on decrypt FAILURE
+   --  RFC 5246 6.1: the counter increments even on decrypt FAILURE
    --  (prevents nonce confusion on retry). It lives inside Keys; see
    --  Build_Encrypted_Record_12 for the sealed-channel rationale.
    --

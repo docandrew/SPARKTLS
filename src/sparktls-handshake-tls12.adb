@@ -68,7 +68,7 @@ is
    end Put16;
 
    ------------------------------------------------------------------
-   --  Build_Server_Hello_Done (RFC 5246 Â§7.4.5)
+   --  Build_Server_Hello_Done (RFC 5246 7.4.5)
    --  Empty message: type(1)=0x0E || length(3)=0x000000
    ------------------------------------------------------------------
 
@@ -83,7 +83,7 @@ is
    end Build_Server_Hello_Done;
 
    ------------------------------------------------------------------
-   --  Build_Server_Key_Exchange (RFC 8422 Â§5.4, RFC 5246 Â§7.4.3)
+   --  Build_Server_Key_Exchange (RFC 8422 5.4, RFC 5246 7.4.3)
    --
    --  Wire format:
    --    handshake_header: type(1)=0x0C || length(3)
@@ -94,7 +94,7 @@ is
    --    signature:
    --      hash_alg(1) || sig_alg(1) || sig_len(2) || sig(M)
    --
-   --  Signature input (RFC 5246 Â§7.4.3):
+   --  Signature input (RFC 5246 7.4.3):
    --    client_random[32] || server_random[32] ||
    --    curve_type[1] || named_curve[2] || point_len[1] || point[N]
    ------------------------------------------------------------------
@@ -179,7 +179,7 @@ is
 
       Params_Len := 4 + Pt_Len;
 
-      --  RFC 5246 Â§7.4.3: Build signature input.
+      --  RFC 5246 7.4.3: Build signature input.
       --  MUST be: client_random[32] || server_random[32] || params
       --  Getting this wrong enables MITM attacks.
       Sig_Input (0 .. 31) := Byte_Seq (HC.Client_Random);
@@ -194,7 +194,7 @@ is
          Hash_Algo : Byte;
          Sig_Algo  : Byte;
       begin
-         --  RFC 5246 Â§7.4.1.4.1 / RFC 8446 Â§4.2.3:
+         --  RFC 5246 7.4.1.4.1 / RFC 8446 4.2.3:
          --  SignatureAndHashAlgorithm wire form is just the high and
          --  low bytes of the SignatureScheme code. For modern schemes
          --  (rsa_pss_*, ed25519, rsa_pkcs1_*, ecdsa_*) this gives the
@@ -456,7 +456,7 @@ is
    end Build_Server_Key_Exchange;
 
    ------------------------------------------------------------------
-   --  Build_Client_Key_Exchange (RFC 8422 Â§5.7)
+   --  Build_Client_Key_Exchange (RFC 8422 5.7)
    --
    --  Wire format:
    --    handshake_header: type(1)=0x10 || length(3)
@@ -526,11 +526,11 @@ is
    end Build_Client_Key_Exchange;
 
    ------------------------------------------------------------------
-   --  Parse_Server_Key_Exchange (RFC 8422 Â§5.4)
+   --  Parse_Server_Key_Exchange (RFC 8422 5.4)
    ------------------------------------------------------------------
 
    ------------------------------------------------------------------
-   --  Parse_Server_Key_Exchange (RFC 8422 Â§5.4)
+   --  Parse_Server_Key_Exchange (RFC 8422 5.4)
    --
    --  Data is the handshake body (after 4-byte HS header).
    --  Wire format:
@@ -568,7 +568,7 @@ is
 
       --  RFLX parse. The TLS_1_2_Server_Key_Exchange_ECDHE message
       --  enforces curve_type = Named_Curve (rejects explicit-prime /
-      --  explicit-char2 â those were never legal for modern TLS 1.2).
+      --  explicit-char2  those were never legal for modern TLS 1.2).
       declare
          Data_Len : constant N32 := Data'Last + 1;
       begin
@@ -666,7 +666,7 @@ is
          end if;
          pragma Assert (4 + Pt_Len <= Data'Length);
 
-         --  RFC 5246 Â§7.4.3: verify signature over
+         --  RFC 5246 7.4.3: verify signature over
          --  client_random || server_random || params
          --  (params = curve_type(1) + named_curve(2) + point_len(1) + point).
          --  Not verifying allows MITM to substitute the ECDHE pubkey.
@@ -698,7 +698,7 @@ is
             Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
             --  params is the first Params_Len bytes of the input
             --  (RFLX field order is curve_type then named_curve then
-            --  point_length then point â matches RFC 8422 Â§5.4 wire).
+            --  point_length then point  matches RFC 8422 5.4 wire).
             Sig_Input (64 .. 64 + Params_Len - 1) := Data (0 .. Params_Len - 1);
 
             SKE.Get_Signature (Ctx, Sig_RFLX);
@@ -731,7 +731,7 @@ is
    end Parse_Server_Key_Exchange;
 
    ------------------------------------------------------------------
-   --  Parse_Client_Key_Exchange (RFC 8422 Â§5.7)
+   --  Parse_Client_Key_Exchange (RFC 8422 5.7)
    --
    --  Extracts the client's ephemeral ECDHE public key.
    --  Data layout: point_len(1) || point(N)
@@ -772,7 +772,7 @@ is
          Pt_Len  : constant N32 := N32 (CKE.Get_Point_Length (Ctx));
          Pt_RFLX : RBT.Bytes (1 .. RBT.Index (Pt_Len));
       begin
-         --  RFC 5246 Â§7.4.7: body ends exactly at 1 + Pt_Len bytes.
+         --  RFC 5246 7.4.7: body ends exactly at 1 + Pt_Len bytes.
          --  Trailing bytes (BoGo TrailingMessageData-ClientKeyExchange)
          --  are a protocol error.
          if Data'Length /= 1 + Pt_Len then
@@ -830,7 +830,7 @@ is
    end Parse_Client_Key_Exchange;
 
    ------------------------------------------------------------------
-   --  Build_Finished_12 (RFC 5246 Â§7.4.9)
+   --  Build_Finished_12 (RFC 5246 7.4.9)
    ------------------------------------------------------------------
 
    procedure Build_Finished_12
@@ -859,7 +859,7 @@ is
    end Build_Finished_12;
 
    ------------------------------------------------------------------
-   --  Build_Certificate_Verify_12 (RFC 5246 Â§7.4.8)
+   --  Build_Certificate_Verify_12 (RFC 5246 7.4.8)
    --
    --  TLS 1.2: signs Hash(handshake_messages) directly.
    --  No "TLS 1.3, server CertificateVerify\x00" context prefix.
@@ -1147,7 +1147,7 @@ is
    ------------------------------------------------------------------
 
    ------------------------------------------------------------------
-   --  Build_Server_Hello_12 (RFC 5246 Â§7.4.1.2)
+   --  Build_Server_Hello_12 (RFC 5246 7.4.1.2)
    --
    --  Uses direct serialization. The TLS 1.2 ServerHello layout is
    --  fixed-size apart from a small extension list, and handwritten
@@ -1160,7 +1160,7 @@ is
    --    cipher_suite[2] (TLS 1.2 ECDHE+AEAD suite)
    --    compression_method[1] = 0x00
    --    extensions:
-   --      renegotiation_info (0xFF01) â empty for initial handshake
+   --      renegotiation_info (0xFF01)  empty for initial handshake
    --
    --  No supported_versions extension (that's TLS 1.3).
    --  No key_share extension (ECDHE is in ServerKeyExchange).
@@ -1184,14 +1184,14 @@ is
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Renegotiation info (0xFF01): data = 1 byte (length=0).
-      --  Always emit. RFC 5746 Â§3.6 says only emit if the client
+      --  Always emit. RFC 5746 3.6 says only emit if the client
       --  offered (extension or SCSV); but most real clients always
       --  send the extension, and a few TLS-Anvil tests rely on us
-      --  echoing it. Pragmatic: ALWAYS emit (no security risk â
+      --  echoing it. Pragmatic: ALWAYS emit (no security risk
       --  the empty initial-handshake form binds the connection).
       RI_Data_Len : constant := 1;
-      --  RFC 5746 Â§3.6: server emits renegotiation_info only when
-      --  the client signalled support â either by sending the
+      --  RFC 5746 3.6: server emits renegotiation_info only when
+      --  the client signalled support  either by sending the
       --  extension itself or by including the TLS_EMPTY_RENEGOTIATION_
       --  INFO_SCSV (0x00FF) signaling cipher suite. BoGo
       --  Renegotiate-Server-NoExt verifies we DON'T echo it when
@@ -1216,10 +1216,10 @@ is
       ALPN_Ext_Len  : constant TLS12_ALPN_Ext_Len := (if ALPN_Match then 4 + ALPN_Data_Len else 0);
 
       --  EMS extension is only echoed in ServerHello when the
-      --  client's ClientHello included it (RFC 7627 Â§5.1).
+      --  client's ClientHello included it (RFC 7627 5.1).
       EMS_Ext_Len : constant N32 := (if HC.Use_EMS then 4 + EMS_Data_Len else 0);
 
-      --  RFC 5077 Â§3.3: empty session_ticket ext in SH signals to the
+      --  RFC 5077 3.3: empty session_ticket ext in SH signals to the
       --  client that a NewSessionTicket message will follow. Echoed
       --  iff (a) client offered the extension and (b) we have ticket-
       --  encryption keys configured. The actual NST message is built
@@ -1258,7 +1258,7 @@ is
       begin
          Gen_Random (Byte_Seq (Tmp_SR));
          if HC.Cfg.Versions /= TLS_1_2_Only then
-            --  RFC 8446 Â§4.1.3: a TLS 1.3-capable server negotiating
+            --  RFC 8446 4.1.3: a TLS 1.3-capable server negotiating
             --  TLS 1.2 MUST mark ServerHello.random with DOWNGRD\x01.
             Tmp_SR (24) := 16#44#;
             Tmp_SR (25) := 16#4F#;
@@ -1270,7 +1270,7 @@ is
             Tmp_SR (31) := 16#01#;
          end if;
          HC.Server_Random := Tmp_SR;
-         --  RFC 5246 Â§7.4.1.3 / RFC 5077 Â§3.4: when resuming a session
+         --  RFC 5246 7.4.1.3 / RFC 5077 3.4: when resuming a session
          --  the server MUST echo the client's offered session_id in SH.
          --  HC.Legacy_Session_ID was populated from the client's CH; do
          --  NOT overwrite it on the resume path. For a fresh handshake
@@ -1296,7 +1296,7 @@ is
 
       Pos := 4;
 
-      --  RFC 5246 Â§7.4.1.3: version = 0x0303 (actual TLS 1.2).
+      --  RFC 5246 7.4.1.3: version = 0x0303 (actual TLS 1.2).
       pragma Assert (ServerHello_Legacy_Version_RFC_8446_4_1_3 (TLS_1_2));
       Result (Pos) := 16#03#;
       Result (Pos + 1) := 16#03#;
@@ -1318,7 +1318,7 @@ is
       Put16 (Result, Pos, Wire_Of (Negotiated));
       Pos := Pos + 2;
 
-      --  RFC 5246 Â§6.2.2 / Â§7.4.1.4: compression_method MUST be 0
+      --  RFC 5246 6.2.2 / 7.4.1.4: compression_method MUST be 0
       --  (null compression). CRIME-class attacks come from anything
       --  else; we never accept or emit non-zero here.
       pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));
@@ -1330,8 +1330,8 @@ is
          Pos := Pos + 2;
       end if;
 
-      --  renegotiation_info (0xFF01). RFC 5746 Â§3.6: emit only when
-      --  the client signalled support â via the extension itself or
+      --  renegotiation_info (0xFF01). RFC 5746 3.6: emit only when
+      --  the client signalled support  via the extension itself or
       --  the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) cipher
       --  suite. Both signals land in HC.Saw_Reneg_Info during CH
       --  parsing. BoGo Renegotiate-Server-NoExt verifies we DON'T
@@ -1348,7 +1348,7 @@ is
          end;
       end if;
 
-      --  extended_master_secret (0x0017, RFC 7627). RFC 7627 Â§5.1:
+      --  extended_master_secret (0x0017, RFC 7627). RFC 7627 5.1:
       --  echo the extension only if the client offered it.
       if HC.Use_EMS then
          pragma Assert (EMS_Extension_Empty_Body_RFC_7627_5_1 (0));
@@ -1357,21 +1357,21 @@ is
          Pos := Pos + EMS_Ext_Len;
       end if;
 
-      --  RFC 6066 Â§3 server_name acknowledgement: empty body.
+      --  RFC 6066 3 server_name acknowledgement: empty body.
       if HC.Peer_SNI.Len > 0 then
          Put16 (Result, Pos, 16#0000#);
          Put16 (Result, Pos + 2, 0);
          Pos := Pos + SNI_Ext_Len;
       end if;
 
-      --  RFC 5077 Â§3.3 session_ticket (0x0023) â empty body.
+      --  RFC 5077 3.3 session_ticket (0x0023)  empty body.
       if Emit_ST_Ext then
          Put16 (Result, Pos, 16#0023#);
          Put16 (Result, Pos + 2, 0);
          Pos := Pos + ST_Ext_Len;
       end if;
 
-      --  ALPN (0x0010) â if client offered and server matches.
+      --  ALPN (0x0010)  if client offered and server matches.
       if ALPN_Match then
          declare
             Proto_Len : constant Natural := Selected_ALPN.Len;
@@ -1446,7 +1446,7 @@ is
       end loop;
       Pos := Pos + 32;
 
-      --  RFC 8446 Â§4.1.3 downgrade protection. If this client offered
+      --  RFC 8446 4.1.3 downgrade protection. If this client offered
       --  TLS 1.3 but the server negotiated TLS 1.2 and set either the
       --  standard downgrade marker or the JDK 11 compatibility marker,
       --  abort. A TLS_1_2_Only client accepts the JDK 11 marker because
@@ -1521,7 +1521,7 @@ is
       end;
       Pos := Pos + 2;
 
-      --  RFC 5246 Â§6.2.2 / Â§7.4.1.4: server's chosen compression
+      --  RFC 5246 6.2.2 / 7.4.1.4: server's chosen compression
       --  method MUST be null (0x00). BoGo InvalidCompressionMethod
       --  expects illegal_parameter (not handshake_failure).
       if Data (Pos) /= 0 then
@@ -1532,8 +1532,8 @@ is
 
       --  Extension parsing (policy + ALPN extraction) was already
       --  done by Pre_Scan_SH_Extensions in the caller's
-      --  Parse_Server_Hello pass. Walk only to extract HC.Use_EMS â
-      --  the one piece of state this fallback owns. RFC 7627 Â§5.1:
+      --  Parse_Server_Hello pass. Walk only to extract HC.Use_EMS
+      --  the one piece of state this fallback owns. RFC 7627 5.1:
       --  EMS in SH means the server agreed to derive the master
       --  secret via the EMS PRF.
       HC.Use_EMS := False;
@@ -1556,7 +1556,7 @@ is
                   if Ext_Type = 16#0017# then
                      HC.Use_EMS := True;
                   end if;
-                  --  RFC 5077 Â§3.3 session_ticket (0x0023): empty
+                  --  RFC 5077 3.3 session_ticket (0x0023): empty
                   --  body in SH signals the server will send a
                   --  NewSessionTicket later in the flight. We
                   --  record the flag; the actual receive happens
@@ -1573,7 +1573,7 @@ is
       --  No supported_versions â TLS 1.2
       HC.Has_TLS_1_3 := False;
 
-      --  RFC 8446 Â§4.2.1: enforce our Cfg.Versions policy. If the
+      --  RFC 8446 4.2.1: enforce our Cfg.Versions policy. If the
       --  user constrained us to TLS_1_3_Only via `-min-version 0x0304`
       --  or `-no-tls12`, refuse to negotiate TLS 1.2 here. BoGo's
       --  MinimumVersion-{Client,Client2}-TLS13-TLS12 + the runner's
@@ -1589,7 +1589,7 @@ is
    end Parse_Server_Hello_12;
 
    ------------------------------------------------------------------
-   --  Build_Certificate_Chain_12 (RFC 5246 Â§7.4.2)
+   --  Build_Certificate_Chain_12 (RFC 5246 7.4.2)
    --
    --  TLS 1.2 Certificate:
    --    type(1)=0x0B || msg_length(3) ||
@@ -1687,7 +1687,7 @@ is
    end Build_Certificate_Chain_12;
 
    ------------------------------------------------------------------
-   --  RFC 5077 Â§3.3 TLS 1.2 NewSessionTicket build/parse via RFLX
+   --  RFC 5077 3.3 TLS 1.2 NewSessionTicket build/parse via RFLX
    ------------------------------------------------------------------
 
    procedure Build_New_Session_Ticket_12

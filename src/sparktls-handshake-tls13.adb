@@ -131,7 +131,7 @@ is
    subtype KS_Raw_Buffer is Byte_Seq (0 .. 103);  --  max P-384: 4 + 97
    --  Wire representation of a single TLS 1.3 KeyShareEntry.
 
-   --  X25519 key share generation (RFC 8446 Â§4.2.8.2).
+   --  X25519 key share generation (RFC 8446 4.2.8.2).
    --  Always succeeds.
    procedure Generate_KS_X25519
      (HC         : in out Handshake_Context;
@@ -164,13 +164,13 @@ is
       SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Local_SK, Basepoint);
       SPARKTLSCrypto.X25519.Scalar_Mult (HC.KE.Shared (0 .. 31), HC.KE.Local_SK, HC.KE.Peer_PK);
 
-      --  RFC 7748 Â§6.1 / RFC 8422 Â§5.10: reject all-zero shared
+      --  RFC 7748 6.1 / RFC 8422 5.10: reject all-zero shared
       --  secret (small-subgroup attack defense). The X25519 spec
       --  permits this output for points of small order (orders 1,
-      --  2, 4, 8 â eight specific 32-byte strings). Without this
+      --  2, 4, 8  eight specific 32-byte strings). Without this
       --  check, an attacker who feeds such a point can predict
       --  the master secret. The helper's Post is formally proven.
-      --  RFC 8446 Â§6.2: invalid peer share is illegal_parameter.
+      --  RFC 8446 6.2: invalid peer share is illegal_parameter.
       --  Bubble up via HC.Ext_Parse_Err so Build_Server_Flight
       --  picks the specific alert instead of handshake_failure.
       if not Shared_Secret_Is_Acceptable_X25519 (HC.KE.Shared (0 .. 31)) then
@@ -193,7 +193,7 @@ is
       OK := True;
    end Generate_KS_X25519;
 
-   --  P-256 key share generation (RFC 8446 Â§4.2.8.2 + RFC 8422 Â§5).
+   --  P-256 key share generation (RFC 8446 4.2.8.2 + RFC 8422 5).
    --  OK = False if HC.KE.P256_PK is not a valid point.
    procedure Generate_KS_P256
      (HC         : in out Handshake_Context;
@@ -387,7 +387,7 @@ is
       Result (3) := Byte (SH_Body_Len mod 256);
       Pos := 4;
 
-      --  RFC 8446 Â§4.1.3: legacy_version = 0x0303 even for TLS 1.3.
+      --  RFC 8446 4.1.3: legacy_version = 0x0303 even for TLS 1.3.
       pragma Assert (ServerHello_Legacy_Version_RFC_8446_4_1_3 (TLS_1_2));
       pragma Assert (Pos + 1 <= Result'Last);
       Result (Pos) := 16#03#;
@@ -425,7 +425,7 @@ is
       Result     : in out Byte_Seq;
       Pos        : in out N32) is
    begin
-      --  RFC 8446 Â§4.1.3: echo the client's exact session_id.
+      --  RFC 8446 4.1.3: echo the client's exact session_id.
       pragma Assert (Session_ID_Echo_RFC_8446_4_1_3 (HC));
       pragma Assert (Pos <= Result'Last);
       Result (Pos) := Byte (SID_Echo);
@@ -601,7 +601,7 @@ is
       KS_Raw := (others => 0);
 
       --  Select key exchange group (prefer x25519 > P-256 > P-384).
-      --  RFC 8446 Â§4.2.8: the selected_group MUST come from a group
+      --  RFC 8446 4.2.8: the selected_group MUST come from a group
       --  the client offered. Each branch below conditions on the
       --  matching Client_Has_* flag so the per-branch pragma Assert
       --  proves the cross-reference.
@@ -657,7 +657,7 @@ is
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len, OK);
          if not OK then
-            --  RFC 7748 Â§6.1: peer sent a small-order point.
+            --  RFC 7748 6.1: peer sent a small-order point.
             HC.Ext_Parse_Err := Illegal_Parameter;
             return;
          end if;
@@ -712,7 +712,7 @@ is
       Len := 0;
 
       --  Generate server random (use temp to avoid SPARK aliasing).
-      --  RFC 8446 Â§4.1.3: regenerate on the astronomical collision with
+      --  RFC 8446 4.1.3: regenerate on the astronomical collision with
       --  the HRR sentinel; RFLX's Field_Condition for F_Extensions_TLS
       --  requires Random /= HRR_Sentinel.
       declare
@@ -798,8 +798,8 @@ is
       ALPN_PL      : constant EE_ALPN_Protocol_Len := (if ALPN_Match then Selected_ALPN.Len else 0);
       --  ALPN ext: tag(2) + len(2) + list_len(2) + proto_len(1) + proto(N)
       ALPN_Ext_Len : constant EE_ALPN_Ext_Len := (if ALPN_Match then N32 (7 + ALPN_PL) else 0);
-      --  RFC 6066 Â§3 / RFC 8446 Â§4.2: server_name acknowledgement
-      --  has an empty extension_data body.  RFC 8446 Â§4.6.1 omits it
+      --  RFC 6066 3 / RFC 8446 4.2: server_name acknowledgement
+      --  has an empty extension_data body.  RFC 8446 4.6.1 omits it
       --  on resumption unless the server accepts early data, which this
       --  implementation does not.
       SNI_Ext_Len  : constant EE_SNI_Ext_Len :=
@@ -1119,7 +1119,7 @@ is
       end;
    end Build_Certificate_Chain;
 
-   --  RFC 8446 Â§4.4.3 CertificateVerify signed-content layout:
+   --  RFC 8446 4.4.3 CertificateVerify signed-content layout:
    --    64 bytes 0x20 || context_str (32 or 33) || 0x00 || transcript_hash
    --  Total: 129 (32-byte hash) or 130 (32-byte hash, client) or 145/146
    --  (48-byte hash). Sized at 146 so all four shapes fit.
@@ -1378,7 +1378,7 @@ is
    end Build_Certificate_Verify;
 
    ------------------------------------------------------------------
-   --  RFC 8446 Â§4.4.2 TLS 1.3 Certificate parser (via RFLX)
+   --  RFC 8446 4.4.2 TLS 1.3 Certificate parser (via RFLX)
    ------------------------------------------------------------------
 
    procedure Parse_Certificate_Chain_13
@@ -1511,7 +1511,7 @@ is
                            declare
                               C_Len : constant N32 := N32 (C13_Entry.Get_Cert_Data_Length (E_Ctx));
                            begin
-                              --  RFC 8446 Â§4.4.2 per-cert extensions
+                              --  RFC 8446 4.4.2 per-cert extensions
                               --  policy check (client only).
                               if Reject_Cert_Extensions
                                 and then N32 (C13_Entry.Get_Extensions_Length (E_Ctx)) > 0

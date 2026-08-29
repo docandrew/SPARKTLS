@@ -18,7 +18,7 @@ use SPARKTLSCrypto;
 package SPARKTLS.Key_Schedule
   with SPARK_Mode => On
 is
-   --  RFC 8446 Â§7.1: HKDF-Expand-Label.
+   --  RFC 8446 7.1: HKDF-Expand-Label.
    --  label is prefixed with "tls13 " automatically.
    --  Label must be non-empty and fit in the HkdfLabel structure.
    procedure Expand_Label
@@ -26,25 +26,25 @@ is
    with
      Pre =>
        Label'Length > 0
-       and Label'Length <= 245  --  RFC 8446 Â§7.1
-       and Context'Length <= 255                  --  RFC 8446 Â§7.1
+       and Label'Length <= 245  --  RFC 8446 7.1
+       and Context'Length <= 255                  --  RFC 8446 7.1
        and OKM'First = 0
        and OKM'Length > 0
        and (if Context'Length > 0 then Context'First = 0)
        and Context'Last < N32'Last - 256;
 
-   --  RFC 8446 Â§7.1: Early Secret = HKDF-Extract(0, PSK).
+   --  RFC 8446 7.1: Early Secret = HKDF-Extract(0, PSK).
    --  PSK is all zeros for initial handshake (no resumption).
    procedure Derive_Early_Secret (Early : out Digest; PSK : in Bytes_32);
 
-   --  RFC 8446 Â§7.1: Handshake Secret from ECDHE shared secret.
+   --  RFC 8446 7.1: Handshake Secret from ECDHE shared secret.
    --  Shared secret length depends on key exchange group:
    --    X25519: 32 bytes, P-256: 32 bytes, P-384: 48 bytes.
    procedure Derive_Handshake_Secret
      (HS_Secret : out Digest; Shared : in Byte_Seq; Early_Secret : in Digest)
    with Pre => Shared'First = 0 and Shared'Length > 0 and Shared'Length <= 48;  --  Max: P-384
 
-   --  RFC 8446 Â§7.1: Derive client and server handshake traffic secrets.
+   --  RFC 8446 7.1: Derive client and server handshake traffic secrets.
    --  These are used to encrypt handshake messages after ServerHello.
    procedure Derive_HS_Traffic_Secrets
      (Client_HS_Secret : out OKM_Seq;
@@ -58,7 +58,7 @@ is
        and Server_HS_Secret'First = 0
        and Server_HS_Secret'Last = 31;
 
-   --  RFC 8446 Â§7.3: Derive traffic key and IV from a traffic secret.
+   --  RFC 8446 7.3: Derive traffic key and IV from a traffic secret.
    --  Key = 32 bytes for ChaCha20-Poly1305.
    --  IV = 12 bytes (nonce base).
    procedure Derive_Traffic_Key_IV (Key : out OKM_Seq; IV : out OKM_Seq; Secret : in Byte_Seq)
@@ -71,12 +71,12 @@ is
        and Secret'First = 0
        and Secret'Last = 31;
 
-   --  RFC 8446 Â§7.3: Derive AES-128 traffic key (16 bytes) and IV.
-   --  RFC 8446 Â§7.1: Master Secret = HKDF-Extract(derived, 0).
+   --  RFC 8446 7.3: Derive AES-128 traffic key (16 bytes) and IV.
+   --  RFC 8446 7.1: Master Secret = HKDF-Extract(derived, 0).
    --  Derived from handshake secret via Derive-Secret.
    procedure Derive_Master_Secret (Master : out Digest; HS_Secret : in Digest);
 
-   --  RFC 8446 Â§7.1: Application traffic secrets from master secret.
+   --  RFC 8446 7.1: Application traffic secrets from master secret.
    --  These protect all post-handshake application data.
    procedure Derive_App_Traffic_Secrets
      (Client_App_Secret : out OKM_Seq;
@@ -90,7 +90,7 @@ is
        and Server_App_Secret'First = 0
        and Server_App_Secret'Last = 31;
 
-   --  RFC 8446 Â§4.4.4: Finished key for verify_data HMAC.
+   --  RFC 8446 4.4.4: Finished key for verify_data HMAC.
    procedure Derive_Finished_Key (Finished_Key : out OKM_Seq; Base_Secret : in Byte_Seq)
    with
      Pre =>
@@ -99,20 +99,20 @@ is
        and Base_Secret'First = 0
        and Base_Secret'Last = 31;
 
-   --  RFC 8446 Â§7.5: Resumption master secret.
+   --  RFC 8446 7.5: Resumption master secret.
    --  Derived AFTER client Finished (transcript includes client Finished).
    procedure Derive_Resumption_Master_Secret
      (Res_Master : out OKM_Seq; Master : in Digest; Transcript_Hash : in Digest)
    with Pre => Res_Master'First = 0 and Res_Master'Last = 31;
 
-   --  RFC 8446 Â§7.5: exporter master secret.
+   --  RFC 8446 7.5: exporter master secret.
    --  exporter_master_secret = Derive-Secret(master, "exp master",
    --                                         Transcript-Hash(...))
    procedure Derive_Exporter_Master_Secret
      (Exporter_Master : out OKM_Seq; Master : in Digest; Transcript_Hash : in Digest)
    with Pre => Exporter_Master'First = 0 and Exporter_Master'Last = 31;
 
-   --  RFC 8446 Â§7.5: TLS 1.3 exporter.
+   --  RFC 8446 7.5: TLS 1.3 exporter.
    --  TLS-Exporter(label, context, L) =
    --    HKDF-Expand-Label(Derive-Secret(exporter_master_secret, label, ""),
    --                      "exporter", Hash(context), L)

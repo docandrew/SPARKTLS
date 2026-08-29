@@ -94,7 +94,7 @@ is
    end Parse_ASN1_Integer;
 
    --  Extract RSA key from PKCS#8 DER starting at OID match position.
-   --  Separated to avoid goto â returns on any parse failure.
+   --  Separated to avoid goto  returns on any parse failure.
    procedure Extract_RSA_Key
      (DER     : X509.Byte_Seq;
       Start   : X509.N32;
@@ -356,7 +356,7 @@ is
       --    1. Decode private key from Key_PEM
       --    2. Extract raw key bytes
       --    3. Decode the leaf cert (first PEM block) from Cert_PEM
-      --    4. Set_Identity (Id, leaf_DER, key) â Id now Initialized
+      --    4. Set_Identity (Id, leaf_DER, key)  Id now Initialized
       --    5. Walk Cert_PEM picking up additional cert blocks and
       --       passing each to Add_Intermediate.
       OK := False;

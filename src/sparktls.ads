@@ -50,15 +50,15 @@ is
    --  Small extensions (ALPN, supported_groups, supported_versions)
 
    subtype Wire_Key_Share_Len is N32 range 1 .. 16384;
-   --  Total key_share extension body. RFC 8446 Â§4.2.8 allows the
+   --  Total key_share extension body. RFC 8446 4.2.8 allows the
    --  client to offer multiple `KeyShareEntry` values, and modern
-   --  clients (Go default, Chrome) include PQ hybrids â each
+   --  clients (Go default, Chrome) include PQ hybrids  each
    --  X25519MLKEM768 entry alone is 1220 bytes, X25519Kyber768 is
    --  1188 bytes, ML-KEM-1024 is 1572 bytes. With ~7 default
    --  entries the body easily reaches several KB. The upper bound
    --  is set to 16 KB: large enough to accept legitimate multi-PQ
    --  key_share extensions while still bounding heap allocation
-   --  in Parse_KS_Extension. Was 256 â matched a single P-384
+   --  in Parse_KS_Extension. Was 256  matched a single P-384
    --  entry only and silently dropped real-world TLS 1.3 clients.
 
    --  Handshake message length (3 bytes on wire, max 2^24 - 1).
@@ -192,7 +192,7 @@ is
    --  Protocol version
    type TLS_Version is (TLS_Undetermined, TLS_1_3, TLS_1_2);
 
-   --  Version policy â controls which protocol versions are offered/accepted.
+   --  Version policy  controls which protocol versions are offered/accepted.
    --  Default: offer both, prefer 1.3.
    type Version_Policy is
      (Allow_Both,     --  Offer TLS 1.3 and 1.2; prefer 1.3 (default)
@@ -232,22 +232,22 @@ is
    ----------------------------------------------------------------------------
    --  Protocol requirements as ghost functions (RFC 8446)
    --
-   --  These are formally verified by SPARK â the prover checks that
+   --  These are formally verified by SPARK  the prover checks that
    --  the implementation never violates these properties.
    ----------------------------------------------------------------------------
 
-   --  RFC 8446 Â§5: CCS is only valid during the handshake.
+   --  RFC 8446 5: CCS is only valid during the handshake.
    --  CCS after server Finished MUST be rejected.
    function CCS_Allowed (State : Connection_State) return Boolean
    is (State not in Connected | Closing | Closed | Error_State | Idle)
    with Ghost;
 
-   --  RFC 8446 Â§5.1: Handshake is complete.
+   --  RFC 8446 5.1: Handshake is complete.
    function Handshake_Complete (State : Connection_State) return Boolean
    is (State in Connected | Closing | Closed)
    with Ghost;
 
-   --  RFC 8446 Â§7.3, Â§7.5: Key phase.
+   --  RFC 8446 7.3, 7.5: Key phase.
    --  Before server Finished is sent, handshake traffic keys are used.
    --  After server Finished, application traffic keys are used.
    function In_Handshake_Key_Phase (State : Connection_State) return Boolean
@@ -274,7 +274,7 @@ is
    is (State in Connected | Closing | Client_Finished_Sent)
    with Ghost;
 
-   --  RFC 8446 Â§6: Valid alert constraints.
+   --  RFC 8446 6: Valid alert constraints.
    --  Post-handshake: only close_notify may use Warning level.
    --  All other alerts MUST be Fatal.
    function Valid_Alert (State : Connection_State; Level : Byte; Desc : Byte) return Boolean
@@ -282,7 +282,7 @@ is
        and then (if Handshake_Complete (State) and Desc /= 0 then Level = 2 else True))
    with Ghost;
 
-   --  RFC 8446 Â§4: Expected handshake message type per state.
+   --  RFC 8446 4: Expected handshake message type per state.
    --  Server expects these message types from the client:
    --    Wait_Client_Hello    â ClientHello (type 0x01)
    --    Wait_Client_Finished â Finished (type 0x14)
@@ -301,7 +301,7 @@ is
          when others => 0)
    with Ghost;
 
-   --  RFC 8446 Â§4: Is this state expecting encrypted records?
+   --  RFC 8446 4: Is this state expecting encrypted records?
    --  Before ServerHello, records are plaintext.
    --  After ServerHello, records are encrypted with traffic keys.
    function Expects_Encrypted (State : Connection_State) return Boolean
@@ -313,15 +313,15 @@ is
          | Wait_Server_Hello)
    with Ghost;
 
-   --  RFC 8446 Â§4.2.9: Key share group MUST match what the client offered.
+   --  RFC 8446 4.2.9: Key share group MUST match what the client offered.
    --  Server MUST NOT select a group the client didn't offer a key share for.
    --  (Ghost predicate for documentation; enforcement is in Parse_Client_Hello)
 
-   --  RFC 8446 Â§4.4.4: Finished verify_data MUST be verified.
+   --  RFC 8446 4.4.4: Finished verify_data MUST be verified.
    --  If verification fails, a "decrypt_error" alert MUST be sent.
    --  (Enforced in Process_Client_Finished via HC.Server_HS_Secret)
 
-   --  RFC 8446 Â§5.1: Record fragment size limits.
+   --  RFC 8446 5.1: Record fragment size limits.
    --  Plaintext: max 2^14 = 16384 bytes.
    --  Ciphertext: max 2^14 + 256 = 16640 bytes.
    function Valid_Fragment_Len (Len : N32) return Boolean
@@ -332,17 +332,17 @@ is
    is (Len <= Max_Record_Size)
    with Ghost;
 
-   --  RFC 8446 Â§5.1: Content type MUST be valid.
+   --  RFC 8446 5.1: Content type MUST be valid.
    function Valid_Content_Type (CT : Byte) return Boolean
    is (CT in 16#14# | 16#15# | 16#16# | 16#17#)  --  CCS/alert/hs/appdata
    with Ghost;
 
-   --  RFC 8446 Â§4.6.1: Session ticket constraints.
+   --  RFC 8446 4.6.1: Session ticket constraints.
    function Valid_Ticket_Lifetime (Secs : Unsigned_32) return Boolean
-   is (Secs <= 604800)  --  max 7 days per RFC 8446 Â§4.6.1
+   is (Secs <= 604800)  --  max 7 days per RFC 8446 4.6.1
    with Ghost;
 
-   --  RFC 8446 Â§7.1: Key derivation chain ordering.
+   --  RFC 8446 7.1: Key derivation chain ordering.
    --  The key schedule proceeds: Early â Handshake â Master â App.
    --  Each secret depends on the previous one.
    type Key_Phase is (Phase_None, Phase_Early, Phase_Handshake, Phase_Master, Phase_Application)
@@ -378,34 +378,34 @@ is
       Bad_Certificate,
       Certificate_Expired,
       Certificate_Verify_Failed,
-      Certificate_Required,        --  RFC 8446 Â§6 alert 116
+      Certificate_Required,        --  RFC 8446 6 alert 116
       Decode_Error,
       Illegal_Parameter,
       Protocol_Version,
-      Unsupported_Extension,       --  RFC 8446 Â§6 alert 110
-      Missing_Extension,           --  RFC 8446 Â§6 alert 109
-      No_Application_Protocol,     --  RFC 7301 Â§3.2 alert 120
+      Unsupported_Extension,       --  RFC 8446 6 alert 110
+      Missing_Extension,           --  RFC 8446 6 alert 109
+      No_Application_Protocol,     --  RFC 7301 3.2 alert 120
       Internal_Error,
       Insufficient_Buffer,
       Unsupported_Cipher_Suite);
 
    ----------------------------------------------------------------------------
-   --  TLS extension policy table (RFC 8446 Â§4.2)
+   --  TLS extension policy table (RFC 8446 4.2)
    --
    --  Single source of truth for every TLS extension we recognise.
    --  Each entry says (a) which message types the extension may
    --  appear in, (b) whether a server may include it only after the
    --  client offered it in CH, and (c) whether the server's echo
-   --  body must be empty (RFC 6066 Â§3 server_name ack, etc.).
+   --  body must be empty (RFC 6066 3 server_name ack, etc.).
    --
    --  All client-side server-extension validation goes through
-   --  Validate_Server_Ext below â adding a new extension means
+   --  Validate_Server_Ext below  adding a new extension means
    --  adding one row to Ext_Policy_For, not peppering checks at
    --  every parse site.
    ----------------------------------------------------------------------------
 
    --  TLS messages that can carry extensions. The split SH13/SH12 is
-   --  necessary because RFC 8446 Â§4.2 says key_share, pre_shared_key,
+   --  necessary because RFC 8446 4.2 says key_share, pre_shared_key,
    --  supported_versions are SH-only-in-TLS-1.3 while RFC 6066 / 7301
    --  / 5746 / etc. let TLS 1.2 SH echo server_name, ALPN,
    --  ec_point_formats, renegotiation_info, EMS, status_request, etc.
@@ -423,22 +423,22 @@ is
 
    type Ext_Policy is record
       --  False for tags not in the IANA registry / not modelled
-      --  here. Per RFC 8446 Â§4.2: "If an implementation receives
+      --  here. Per RFC 8446 4.2: "If an implementation receives
       --  an extension which it recognizes and which is not
       --  specified for the message in which it appears, it MUST
-      --  abort..." â recognition matters. Unknown extensions are
-      --  ignored where the RFC says to (e.g. RFC 8446 Â§4.3.2 CR);
+      --  abort..."  recognition matters. Unknown extensions are
+      --  ignored where the RFC says to (e.g. RFC 8446 4.3.2 CR);
       --  rejected where the RFC forbids unsolicited extensions
-      --  (RFC 8446 Â§4.2 SH/EE).
+      --  (RFC 8446 4.2 SH/EE).
       Known          : Boolean := False;
       --  Set of message types where this extension MAY appear.
       Where_Allowed  : Ext_Where_Set := (others => False);
       --  When True, the extension MAY only appear in a server-
       --  generated message if the client offered the same tag in
-      --  CH. RFC 8446 Â§4.2.
+      --  CH. RFC 8446 4.2.
       Requires_Offer : Boolean := True;
       --  When True, the server's echo body MUST be exactly zero
-      --  bytes (RFC 6066 Â§3 server_name ack, RFC 7627 EMS, etc.).
+      --  bytes (RFC 6066 3 server_name ack, RFC 7627 EMS, etc.).
       Empty_Echo     : Boolean := False;
       --  When True, our CH builder always emits this extension
       --  regardless of Cfg state. Used by Tag_Is_Offered to answer
@@ -455,7 +455,7 @@ is
    --  else needs to change.
    function Ext_Policy_For (Tag : Interfaces.Unsigned_16) return Ext_Policy;
 
-   --  "Did our CH builder always emit this extension?" â derived
+   --  "Did our CH builder always emit this extension?"  derived
    --  from `Ext_Policy_For (Tag).Always_In_CH`. Update by setting
    --  Always_In_CH on the matrix row, not by editing this function.
    --  Conditional offerings (SNI, ALPN, mTLS) are answered by the
@@ -463,7 +463,7 @@ is
    function Tag_Is_Offered_Static (Tag : Interfaces.Unsigned_16) return Boolean
    is (Ext_Policy_For (Tag).Always_In_CH);
 
-   --  RFC 5246 Â§8.1 / RFC 7627: Master secret derivation invariant.
+   --  RFC 5246 8.1 / RFC 7627: Master secret derivation invariant.
    --  The derivation label MUST match the EMS negotiation.
    --  Using "extended master secret" without EMS extension, or
    --  "master secret" when EMS was negotiated, produces a
@@ -473,12 +473,12 @@ is
    is (if Use_EMS then Label = "extended master secret" else Label = "master secret")
    with Ghost;
 
-   --  ----- RFC 7748 Â§6.1 / RFC 8422 Â§5.10 small-subgroup defence ---
+   --  ----- RFC 7748 6.1 / RFC 8422 5.10 small-subgroup defence ---
    --  An X25519 shared secret of all zeros indicates the peer used a
-   --  point of small order (orders 1, 2, 4, 8 â eight specific 32-byte
+   --  point of small order (orders 1, 2, 4, 8  eight specific 32-byte
    --  strings). Without rejecting these, an attacker who feeds such a
-   --  point can predict the master secret. RFC 7748 Â§6.1 mandates the
-   --  rejection; RFC 8422 Â§5.10 mirrors it for TLS-1.2 ECDHE-X25519.
+   --  point can predict the master secret. RFC 7748 6.1 mandates the
+   --  rejection; RFC 8422 5.10 mirrors it for TLS-1.2 ECDHE-X25519.
    --
    --  The Post-condition is the formal RFC criterion: the function
    --  returns True iff at least one byte of the shared secret is
@@ -497,7 +497,7 @@ is
    --  emission site via pragma Assert so a future edit that
    --  introduces a non-conforming value fails SPARK proof.
 
-   --  RFC 5246 Â§7.4.1.3 / RFC 8446 Â§4.1.3: ServerHello.legacy_version
+   --  RFC 5246 7.4.1.3 / RFC 8446 4.1.3: ServerHello.legacy_version
    --  MUST be 0x0303 (the wire encoding of TLS_1_2). For TLS 1.3 the
    --  real version is signalled in the supported_versions extension;
    --  legacy_version stays 0x0303 for middlebox compatibility.
@@ -505,7 +505,7 @@ is
    is (V = TLS_1_2)
    with Ghost;
 
-   --  RFC 5246 Â§7.4.1.2 / Â§7.4.1.3 / RFC 8446 Â§4.1.2/Â§4.1.3: the
+   --  RFC 5246 7.4.1.2 / 7.4.1.3 / RFC 8446 4.1.2/4.1.3: the
    --  Random fields are exactly 32 bytes. Already type-enforced via
    --  Bytes_32; this ghost lifts the constraint to a named clause for
    --  RFC traceability.
@@ -513,7 +513,7 @@ is
    is (Ignored_R'Length = 32)
    with Ghost;
 
-   --  RFC 5246 Â§6.2.2 / Â§7.4.1.4 / RFC 8446 Â§4.1.2: the only
+   --  RFC 5246 6.2.2 / 7.4.1.4 / RFC 8446 4.1.2: the only
    --  compression method TLS 1.2 servers MAY negotiate is
    --  null (0x00); compression is removed from TLS 1.3 entirely.
    --  Anything else is a CRIME-class attack vector.
@@ -521,53 +521,53 @@ is
    is (M = 0)
    with Ghost;
 
-   --  RFC 8446 Â§4.2.1: server's supported_versions ServerHello
+   --  RFC 8446 4.2.1: server's supported_versions ServerHello
    --  extension carries exactly one selected_version. For a server
    --  that selected TLS 1.3, the wire bytes are exactly (0x03, 0x04).
    function Supported_Versions_Server_TLS13_RFC_8446_4_2_1 (Data : Byte_Seq) return Boolean
    is (Data'Length = 2 and then Data (Data'First) = 16#03# and then Data (Data'First + 1) = 16#04#)
    with Ghost;
 
-   --  RFC 5746 Â§3.5 / Â§3.6: on initial handshake, the
+   --  RFC 5746 3.5 / 3.6: on initial handshake, the
    --  renegotiation_info extension's renegotiated_connection field
    --  MUST be empty. On the wire that's a single 0x00 byte (the
-   --  length prefix) â total ext data = 1 byte.
+   --  length prefix)  total ext data = 1 byte.
    function RI_Empty_Initial_RFC_5746_3_5 (Data : Byte_Seq) return Boolean
    is (Data'Length = 1 and then Data (Data'First) = 0)
    with Ghost;
 
-   --  RFC 7627 Â§5.1: the extended_master_secret extension carries
+   --  RFC 7627 5.1: the extended_master_secret extension carries
    --  no data. Extension data length MUST be 0; presence alone
    --  signals EMS support.
    function EMS_Extension_Empty_Body_RFC_7627_5_1 (Data_Len : N32) return Boolean
    is (Data_Len = 0)
    with Ghost;
 
-   --  RFC 5246 Â§7.4.9: TLS 1.2 Finished.verify_data is exactly
+   --  RFC 5246 7.4.9: TLS 1.2 Finished.verify_data is exactly
    --  12 bytes regardless of cipher suite. Already type-enforced
    --  via SPARKTLS.Key_Schedule_12.Verify_Data_12 (constant 12).
    function Verify_Data_Length_TLS12_RFC_5246_7_4_9 (VD : Byte_Seq) return Boolean
    is (VD'Length = 12)
    with Ghost;
 
-   --  RFC 8446 Â§4.4.4: TLS 1.3 Finished.verify_data is Hash.length
-   --  bytes â 32 for SHA-256, 48 for SHA-384.
+   --  RFC 8446 4.4.4: TLS 1.3 Finished.verify_data is Hash.length
+   --  bytes  32 for SHA-256, 48 for SHA-384.
    function Verify_Data_Length_TLS13_RFC_8446_4_4_4 (VD : Byte_Seq) return Boolean
    is (VD'Length = 32 or else VD'Length = 48)
    with Ghost;
 
-   --  ----- RFC 8422 Â§5.1.2 ec_point_formats compliance -------------
-   --  RFC 8422 Â§5.1.2 deprecates point formats 1
+   --  ----- RFC 8422 5.1.2 ec_point_formats compliance -------------
+   --  RFC 8422 5.1.2 deprecates point formats 1
    --  (ansiX962_compressed_prime) and 2 (ansiX962_compressed_char2);
    --  only 0 (uncompressed) is recommended. **However**, a server
-   --  MUST NOT reject a ClientHello that lists deprecated formats â
-   --  RFC 8446 Â§4.2.6 says TLS 1.3 ignores this extension entirely,
+   --  MUST NOT reject a ClientHello that lists deprecated formats
+   --  RFC 8446 4.2.6 says TLS 1.3 ignores this extension entirely,
    --  and OpenSSL / Go / NSS clients all include {0, 1, 2} by
    --  default for backward-compat. The acceptable check here is
    --  therefore "does the list include format 0", not "is the list
    --  exactly {0}".
    --
-   --  An empty list is still rejected because RFC 8422 Â§5.1.1
+   --  An empty list is still rejected because RFC 8422 5.1.1
    --  requires the field be non-empty when the extension is sent.
    function EC_Point_Formats_Acceptable (List : Byte_Seq) return Boolean
    with
@@ -575,8 +575,8 @@ is
        EC_Point_Formats_Acceptable'Result
        = (List'Length > 0 and then (for some I in List'Range => List (I) = 0));
 
-   --  ----- RFC 5246 Â§7.4.1.4.1 sig_algs negotiated-from-offered ----
-   --  RFC 5246 Â§7.4.1.4.1 / RFC 8446 Â§4.2.3: if the client sent the
+   --  ----- RFC 5246 7.4.1.4.1 sig_algs negotiated-from-offered ----
+   --  RFC 5246 7.4.1.4.1 / RFC 8446 4.2.3: if the client sent the
    --  signature_algorithms extension, the server MUST select a
    --  scheme present in that list. Selecting an unoffered scheme
    --  breaks downgrade resistance and may signal a misnegotiation
@@ -592,7 +592,7 @@ is
    is (Negotiated = 0 or else (for some I in 0 .. Count - 1 => Offered (I) = Negotiated))
    with Ghost, Pre => Count <= Max_Sig_Algos;
 
-   --  ----- RFC 5246 Â§7.4.1.4.1 sig_algs default fallback -----------
+   --  ----- RFC 5246 7.4.1.4.1 sig_algs default fallback -----------
    --  When the client omits the signature_algorithms extension, the
    --  RFC's literal text says the server "MUST act as if [...]
    --  {sha1, *}" was sent. We deliberately deviate: SHA-1 is broken
@@ -617,21 +617,21 @@ is
        or else Scheme = 16#0807#)
    with Ghost;
 
-   --  RFC 8446 Â§6: Error handling invariant.
+   --  RFC 8446 6: Error handling invariant.
    --  When entering Error_State, the implementation MUST have queued
    --  an alert record in the output buffer (unless the error is from
    --  a plaintext record where the peer can't decrypt our response).
    --
    --  This property would have caught the missing-alert bugs found by
    --  tlsfuzzer (Finished verify failure, decryption failure, wrong
-   --  handshake type, record overflow â all silently closed without alert).
+   --  handshake type, record overflow  all silently closed without alert).
    function Error_Has_Alert
      (S_State : Connection_State; Pending : N32; Err : Error_Code) return Boolean
    is (if S_State = Error_State then Pending > 0 or else Err = Unexpected_Message)
    with Ghost;
 
-   --  RFC 8446 Â§6.2 / RFC 5246 Â§7.2: map an Error_Code to its on-wire
-   --  AlertDescription byte. Single source of truth â used both at
+   --  RFC 8446 6.2 / RFC 5246 7.2: map an Error_Code to its on-wire
+   --  AlertDescription byte. Single source of truth used both at
    --  runtime (by Send_*_Alert helpers across client / server, TLS 1.2
    --  and TLS 1.3 paths) and as a Ghost in proof contracts via the
    --  Expected_Alert_Desc rename below.
@@ -655,7 +655,6 @@ is
          when Unsupported_Cipher_Suite => 40);
 
    function Expected_Alert_Desc (E : Error_Code) return Byte renames Alert_Desc;
-   --  Ghost-callable alias â proof contracts use this name.
 
    ----------------------------------------------------------------------------
    --  I/O Buffer
@@ -677,35 +676,6 @@ is
       Write_Pos : Buffer_Size := 0;  --  next byte to write
    end record
    with Predicate => IO_Buffer.Write_Pos >= IO_Buffer.Read_Pos;
-
-   --  REMOVED 2026-08-18, and why -- do not reinstate without reading this.
-   --
-   --  This predicate used to also assert the compaction invariant:
-   --      (if IO_Buffer.Write_Pos = IO_Buffer.Read_Pos
-   --       then IO_Buffer.Write_Pos = 0)
-   --  on the reasoning that Drain_Ciphertext and Compact reset the pair
-   --  once Available reaches 0, so "nothing pending" implies the whole
-   --  capacity is free.
-   --
-   --  That reasoning describes where the code SETTLES, not what is true at
-   --  every point, and a predicate is checked on every component
-   --  assignment. The consuming paths advance Read_Pos and only compact
-   --  afterwards:
-   --      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-   --      ... return;                    <-- Read_Pos = Write_Pos /= 0 here
-   --  so the invariant is transiently FALSE, not merely unproven. A
-   --  checked build would raise Assertion_Error at exactly those points.
-   --
-   --  It accounted for 159 of the 204 owned proof findings in the
-   --  2026-08-18 full run (78%), spread across every line range of the
-   --  four largest units -- the signature of a predicate that is false in
-   --  ordinary operation rather than one that is hard to discharge.
-   --
-   --  This is the same mistake, and the same fix, as the RFC 8446 6.1/5.2
-   --  flood caps reverted on 2026-08-17: an invariant that holds between
-   --  operations is not an invariant of the TYPE. If a specific caller
-   --  needs "drained implies compacted", it belongs in that subprogram's
-   --  precondition where it can actually be established, not here.
 
    function Available (Buf : IO_Buffer) return N32
    is (Buf.Write_Pos - Buf.Read_Pos);
@@ -736,8 +706,8 @@ is
    --  Traffic keys for one direction (key + IV + nonce counter)
    ----------------------------------------------------------------------------
 
-   --  RFC 8446 Â§7.3: Traffic keys with suite constraint.
-   --  RFC 8446 Â§5.3: the per-record nonce is the static write IV XORed
+   --  RFC 8446 7.3: Traffic keys with suite constraint.
+   --  RFC 8446 5.3: the per-record nonce is the static write IV XORed
    --  with this sequence number, so the nonce is DERIVED, not chosen.
    --
    --  Unsigned_64 is a MODULAR type: Counter + 1 at 'Last wraps silently to
@@ -784,7 +754,7 @@ is
       Suite   : Supported_Suite := Suite_CHACHA20_POLY1305_SHA256;
    end record;
 
-   --  RFC 8446 Â§5.5 "Limits on Key Usage". For AES-GCM the guidance is at
+   --  RFC 8446 5.5 "Limits on Key Usage". For AES-GCM the guidance is at
    --  most 2**24.5 (~23.7 million) full-size records under one key, to keep
    --  the AEAD security margin at roughly 2**-57. ChaCha20-Poly1305 has no
    --  comparable confidentiality limit, so this conservative bound is
@@ -803,7 +773,7 @@ is
 
 
 
-   --  The write-side AEAD confidentiality cap (RFC 8446 Â§5.5 for 1.3,
+   --  The write-side AEAD confidentiality cap (RFC 8446 5.5 for 1.3,
    --  the same 2**23 bound adopted for 1.2 where no rekey exists), as a
    --  query on the channel that owns the counter. This is BOTH the
    --  runtime branch callers take and the precondition Encrypt-side ops
@@ -903,7 +873,7 @@ is
    --
    --  Uses a larger pool than Cert_Pool (200 vs 40) because OS
    --  certificate bundles typically contain 130+ root CAs.
-   --  Not embedded in Session â referenced by pointer, so the
+   --  Not embedded in Session  referenced by pointer, so the
    --  larger size doesn't affect per-connection memory.
    ----------------------------------------------------------------------------
 
@@ -1005,12 +975,12 @@ is
                           then Selected_Identity_Access.RSA_Mod_Len in 64 .. 512));
 
    ----------------------------------------------------------------------------
-   --  SNI-based certificate selection (RFC 6066 Â§3, RFC 8446 Â§4.4.2.4)
+   --  SNI-based certificate selection (RFC 6066 3, RFC 8446 4.4.2.4)
    --
    --  Servers that host multiple virtual hosts on one listener install
    --  a Select_Identity callback in Config. The callback receives the
    --  hostname from the client's server_name extension and returns the
-   --  matching Identity_Access. Returning null means "no match" â
+   --  matching Identity_Access. Returning null means "no match"
    --  per RFC 6066, the server MAY proceed with the default identity
    --  (the more permissive choice, matches openssl). Strict-SNI mode
    --  (alert on no-match) is not supported today but can be added by
@@ -1018,7 +988,7 @@ is
    --
    --  The callback runs after CH-extension parsing and BEFORE the
    --  cert chain / SKE / Finished are built. The hostname passed in
-   --  is the raw bytes the client sent (RFC 6066 Â§3 says ASCII; the
+   --  is the raw bytes the client sent (RFC 6066 3 says ASCII; the
    --  caller is responsible for any case-folding / Punycode
    --  normalization).
    --
@@ -1055,7 +1025,7 @@ is
    end record
    with
      Predicate =>
-     --  RFC 8446 Â§4.6.1: PSK is SHA-256 (32 byte) or SHA-384 (48
+     --  RFC 8446 4.6.1: PSK is SHA-256 (32 byte) or SHA-384 (48
      --  byte) only when Valid; zero-length on invalid slots is OK
      --  because they're never read.
        (if Ticket_Entry.Valid then Ticket_Entry.PSK_Len in 32 | 48 else Ticket_Entry.PSK_Len = 0);
@@ -1069,7 +1039,7 @@ is
 
 
    ----------------------------------------------------------------------------
-   --  Session Ticket (RFC 8446 Â§4.6.1)
+   --  Session Ticket (RFC 8446 4.6.1)
    --
    --  Stand-alone, copyable record so the caller can persist it
    --  across connections. Defined here (before Config) because
@@ -1095,7 +1065,7 @@ is
    end record;
 
    ----------------------------------------------------------------------------
-   --  TLS 1.2 ticket encryption key (RFC 5077 Â§4)
+   --  TLS 1.2 ticket encryption key (RFC 5077 4)
    --
    --  Caller-supplied 32-byte AES-256 key plus a 4-byte Key_ID for
    --  rotation. Up to TLS12_Max_Keys keys can be active at once; the
@@ -1123,7 +1093,7 @@ is
 
 
    ----------------------------------------------------------------------------
-   --  TLS 1.2 cached session ticket (client side, RFC 5077 Â§3.4)
+   --  TLS 1.2 cached session ticket (client side, RFC 5077 3.4)
    --
    --  Stand-alone copyable record so the caller can persist it
    --  across processes. The ticket bytes are opaque blobs; the
@@ -1136,13 +1106,13 @@ is
    --  state + GCM tag); BoringSSL ~256 bytes. 2048 covers all
    --  observed implementations with margin.
 
-   --  RFC 7627 Â§5.3: whether the session a ticket represents negotiated
+   --  RFC 7627 5.3: whether the session a ticket represents negotiated
    --  Extended Master Secret. Persisted with the ticket so a resumption
    --  attempt can be compared against the ORIGINAL session's state --
-   --  Â§5.3 requires aborting when a non-EMS session is resumed as EMS or
+   --  5.3 requires aborting when a non-EMS session is resumed as EMS or
    --  vice versa, and that comparison is the triple-handshake defence
    --  itself. Distinct from HC.MS_Derivation, which records which PRF
-   --  path ran within a single handshake (RFC 7627 Â§4).
+   --  path ran within a single handshake (RFC 7627 4).
    --
    --  A two-value enum rather than a Boolean so the wire/stored states
    --  are named at the point of use and a future third state (e.g.
@@ -1157,7 +1127,7 @@ is
       Suite         : Unsigned_16 := 0;
       Lifetime_Hint : Unsigned_32 := 0;   --  seconds (from server)
       Server_Name   : Hostname_Buf := (Len => 0, Data => (others => ' '));
-      --  RFC 7627 Â§5.3 resumption consistency; see EMS_Status above.
+      --  RFC 7627 5.3 resumption consistency; see EMS_Status above.
       EMS           : EMS_Status := EMS_Absent;
       Valid         : Boolean := False;
    end record;
@@ -1174,7 +1144,7 @@ is
    type Validation_Purpose is (Purpose_Server, Purpose_Client, Purpose_Any);
 
    ----------------------------------------------------------------------------
-   --  DoS resource limits (Â§2.13 in ROADMAP)
+   --  DoS resource limits (2.13 in ROADMAP)
    --
    --  Policy caps on per-handshake parser work, defending against
    --  malicious peers that send valid-looking but pathologically
@@ -1189,7 +1159,7 @@ is
    --
    --  These caps are PER-CONNECTION; cross-connection budgets
    --  (accept rate, concurrent half-open) are the caller's
-   --  responsibility (see ROADMAP Â§2.13).
+   --  responsibility (see ROADMAP 2.13).
    ----------------------------------------------------------------------------
 
    type DoS_Caps is record
@@ -1325,14 +1295,14 @@ is
       Server_Name : Hostname_Buf;
       Skip_Verify : Boolean := False;  --  accept any cert
 
-      --  Client-side hostname verification opt-out (RFC 6125 Â§6.4).
+      --  Client-side hostname verification opt-out (RFC 6125 6.4).
       --  When Server_Name is non-empty AND this is False (default),
       --  the client checks that the server's leaf cert contains a
       --  matching SAN dNSName or iPAddress (or Subject CN as a
       --  fallback per the prevailing CN-in-SAN rules). On mismatch
       --  the handshake is aborted with `bad_certificate`. This check
       --  runs INDEPENDENTLY of `Skip_Verify` / `Trust` / `Get_Time`
-      --  â those gate full chain validation; hostname binding stays
+      --   those gate full chain validation; hostname binding stays
       --  on so dev mode (Skip_Verify=True) doesn't silently accept a
       --  cert for the wrong host. Set this to True only when you
       --  explicitly do not want hostname binding (rare; usually
@@ -1443,7 +1413,7 @@ is
       --  must prove possession with CertificateVerify, but chain
       --  validation is skipped.
       --  When False (default) the server falls back to anonymous
-      --  authentication if the client doesn't present a cert â the
+      --  authentication if the client doesn't present a cert  the
       --  classic OpenSSL SSL_VERIFY_PEER vs
       --  SSL_VERIFY_FAIL_IF_NO_PEER_CERT distinction.
       Require_Client_Cert : Boolean := False;
@@ -1475,8 +1445,8 @@ is
 
       --  Server: lifetime hint (seconds) sent in NewSessionTicket.
       --  The server itself also enforces this as a hard expiry on
-      --  decrypted tickets (RFC 5077 Â§5.6 advises â¤7 days). Default
-      --  3600 seconds (1 hour) â refreshes ticket-derived forward
+      --  decrypted tickets (RFC 5077 5.6 advises â¤7 days). Default
+      --  3600 seconds (1 hour)  refreshes ticket-derived forward
       --  secrecy hourly. Set 0 to disable issuing tickets entirely.
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
 
@@ -1508,11 +1478,11 @@ is
       TLS12_Resume_Ticket : Session_Ticket_12;
 
       --  Client: previously-saved resumption ticket (RFC 8446
-      --  Â§4.6.1). When Valid, Init copies this into S.Ticket before
+      --  4.6.1). When Valid, Init copies this into S.Ticket before
       --  building CH so the pre_shared_key extension is offered.
       --  Default-init (Valid=False) means a fresh full handshake.
       --
-      --  Note: 0-RTT (RFC 8446 Â§2.3 / Â§4.2.10) is intentionally not
+      --  Note: 0-RTT (RFC 8446 2.3 / 4.2.10) is intentionally not
       --  supported. The replay + forward-secrecy trade-off is
       --  incompatible with a high-integrity stack; resumption (this
       --  field) is forward-secret + replay-safe because we require
@@ -1540,18 +1510,18 @@ is
    --
    --  Contains all state needed only during the TLS handshake.
    --  Heap-allocated at Init, freed when handshake completes.
-   --  Handshake procedures receive this as `in out` â they never
+   --  Handshake procedures receive this as `in out`  they never
    --  see the pointer, only the record.
    ----------------------------------------------------------------------------
 
-   --  RFC 7627 Â§4 ghost type: tracks which TLS 1.2 master_secret PRF
+   --  RFC 7627 4 ghost type: tracks which TLS 1.2 master_secret PRF
    --  was used. Set inside Derive_Keys_12 along the matching code
    --  path. The companion predicate EMS_PRF_Binding_RFC_7627_4 ties
-   --  the choice of PRF to HC.Use_EMS â the property whose absence
+   --  the choice of PRF to HC.Use_EMS  the property whose absence
    --  caused the v9âv12 TLS-Anvil regression.
    type Master_Secret_Derivation_Mode is (Not_Derived, Legacy, Extended);
 
-   --  Bounded array of seen CH extension type codes (RFC 8446 Â§4.2
+   --  Bounded array of seen CH extension type codes (RFC 8446 4.2
    --  duplicate-extension check). Modern CHs carry ~10-20 extensions;
    --  64 is comfortably above realistic peers and bounds the linear
    --  scan cost in Apply_CH_Extension.
@@ -1581,7 +1551,7 @@ is
    subtype TLS12_Ticket_Length is N32 range 0 .. Max_TLS12_Ticket_Len;
 
    --  Uncompressed EC point buffers for the peer's key_share (RFC 8446
-   --  Â§4.2.8.2): 0x04 || X || Y, so 65 bytes for P-256 and 97 for P-384.
+   --  4.2.8.2): 0x04 || X || Y, so 65 bytes for P-256 and 97 for P-384.
    --  Named so Copy_P256_KS / Copy_P384_KS can take the buffer alone as an
    --  out parameter instead of the whole Handshake_Context -- a parameter
    --  cannot carry an inline constraint, and sharing one subtype between
@@ -1604,9 +1574,9 @@ is
 
    --  Carve 3a: negotiated-curve seed of the KE ADT. Validity is BY TYPE
    --  (no zero member), so Valid_ECDHE_Group demands on this value are
-   --  tautologies; Negotiated carries only the phase â whether Curve is
+   --  tautologies; Negotiated carries only the phase  whether Curve is
    --  the peer-agreed group or the meaningless default. No predicate:
-   --  there is no cross-field relation to state (user rule 2026-08-24 â
+   --  there is no cross-field relation to state (user rule 2026-08-24
    --  predicates only for what the base type system cannot express).
    subtype ECDHE_Group is Unsigned_16
    with Static_Predicate => ECDHE_Group in 16#001D# | 16#0017# | 16#0018#;
@@ -1677,7 +1647,7 @@ is
 
    --  Handshake phase (phase carve 2026-08-26). Setup: from allocation
    --  until the local/peer ClientHello has been ingested; there is NO
-   --  transcript in this phase â it cannot be hashed, appended to, or
+   --  transcript in this phase  it cannot be hashed, appended to, or
    --  forgotten, because it does not exist. Engaged: the ClientHello is
    --  in the transcript, which is Started by construction; every
    --  post-CH handler takes Engaged_Context and gets that fact
@@ -1705,7 +1675,7 @@ is
       Cfg : Config;
 
       --  Server-side: SNI hostname received in the client's
-      --  server_name extension (RFC 6066 Â§3). Captured during
+      --  server_name extension (RFC 6066 3). Captured during
       --  CH-extension parsing in `Apply_CH_Extension` and consumed
       --  by the SNI cert-selection step. Empty (Len = 0) if the
       --  client didn't send a server_name extension or sent one with
@@ -1731,7 +1701,7 @@ is
       --  missing_extension error.
       Client_Saw_Key_Share        : Boolean := False;
       --  Which groups did the client offer in supported_groups?
-      --  (may not have key_share data â triggers HRR if preferred)
+      --  (may not have key_share data  triggers HRR if preferred)
       Client_Saw_Supported_Groups : Boolean := False;
       Client_Supports_X25519      : Boolean := False;
       Client_Supports_P256        : Boolean := False;
@@ -1740,11 +1710,11 @@ is
       --  HelloRetryRequest state (server-side: we sent HRR)
       HRR_Sent                    : Boolean := False;
       --  HelloRetryRequest state (client-side: we received HRR)
-      --  RFC 8446 Â§4.1.4: at most one HRR per connection; a second
+      --  RFC 8446 4.1.4: at most one HRR per connection; a second
       --  HRR is an unexpected_message. Got_HRR latches the first
       --  reception so the SH handler rejects subsequent HRRs.
       Got_HRR                     : Boolean := False;
-      --  RFC 8446 Â§4.1.4: HRR carries (cipher_suite + supported_versions)
+      --  RFC 8446 4.1.4: HRR carries (cipher_suite + supported_versions)
       --  and (key_share with selected_group OR cookie OR both). When
       --  the second SH arrives, its cipher_suite MUST match the HRR's
       --  (BoGo HelloRetryRequest-CipherChange-TLS13). Stash for
@@ -1753,20 +1723,20 @@ is
       HRR_Selected_Group          : Maybe_ECDHE_Group := 0;
       HRR_Cookie_Len              : N32 range 0 .. 1024 := 0;
       HRR_Cookie                  : Byte_Seq (0 .. 1023) := (others => 0);
-      --  RFC 8446 Â§D.4: the dummy CCS is emitted exactly once per
+      --  RFC 8446 D.4: the dummy CCS is emitted exactly once per
       --  connection. On the HRR retry path we emit it between HRR
       --  and CH2 (server's `expectChangeCipherSpec` then fires on
       --  the CCS, not on CH2). If we then emitted another CCS in
       --  the post-SH client flight, the server would reject it as
       --  `received unexpected ChangeCipherSpec`. Track to gate.
       Sent_HRR_CCS                : Boolean := False;
-      --  RFC 8446 Â§4.1.2: CH extension order fingerprint.
+      --  RFC 8446 4.1.2: CH extension order fingerprint.
       --  Rolling polynomial hash of extension type codes in order.
       --  CH2 must produce the same hash as CH1 (modulo cookie).
       CH_Ext_Hash                 : Unsigned_32 := 0;
       CH_Ext_Count                : Natural := 0;
 
-      --  RFC 8446 Â§4.2: "the same extension type MUST NOT appear in
+      --  RFC 8446 4.2: "the same extension type MUST NOT appear in
       --  a given extension list more than once". Track seen tag codes
       --  to enforce. Modern CHs use ~10-20 extensions; cap at 64.
       Seen_Ext_Tags  : Ext_Tag_Array := (others => 0);
@@ -1802,7 +1772,7 @@ is
 
       --  Legacy session ID (middlebox compatibility)
       Legacy_Session_ID     : Bytes_32 := (others => 0);
-      --  RFC 8446 Â§4.1.3: server's ServerHello MUST echo the client's
+      --  RFC 8446 4.1.3: server's ServerHello MUST echo the client's
       --  legacy_session_id (whatever its length, 0..32). We store
       --  both the bytes and the length so we can echo accurately
       --  rather than always padding to 32.
@@ -1829,9 +1799,9 @@ is
       --  True if the client's supported_versions extension contains 0x0304.
       --  If False, we negotiate TLS 1.2 (if legacy_version = 0x0303).
       Has_TLS_1_3            : Boolean := False;
-      --  RFC 8446 Â§4.2.1: client sent supported_versions extension.
+      --  RFC 8446 4.2.1: client sent supported_versions extension.
       Saw_Supported_Versions : Boolean := False;
-      --  RFC 8446 Â§4.2.1: supported_versions listed at least one
+      --  RFC 8446 4.2.1: supported_versions listed at least one
       --  version we can negotiate (TLS 1.2 or TLS 1.3). When the
       --  client sent the extension but none of the listed versions
       --  match our policy, the server MUST reply with
@@ -1844,7 +1814,7 @@ is
 
       --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
       Use_EMS          : Boolean := False;
-      --  RFC 7627 Â§3: EMS session_hash covers ClientHello through
+      --  RFC 7627 3: EMS session_hash covers ClientHello through
       --  ClientKeyExchange, inclusive. Capture that transcript length
       --  immediately after CKE so later CertificateVerify / Finished
       --  appends cannot affect master_secret derivation.
@@ -1857,17 +1827,17 @@ is
       --  TLS 1.2: client offered renegotiation_info extension (RFC 5746)
       --  or sent the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) in
       --  cipher_suites. Servers echo the extension only when one of
-      --  these signals is present (RFC 5746 Â§3.6).
+      --  these signals is present (RFC 5746 3.6).
       Saw_Reneg_Info : Boolean := False;
 
-      --  RFC 8446 Â§4.2.9: client offered psk_key_exchange_modes with
+      --  RFC 8446 4.2.9: client offered psk_key_exchange_modes with
       --  the psk_dhe_ke (0x01) mode. Required before the server may
-      --  issue a NewSessionTicket on this connection (RFC 8446 Â§4.6.1
+      --  issue a NewSessionTicket on this connection (RFC 8446 4.6.1
       --  / BoGo TLS13-ExpectNoSessionTicketOnBadKEMode-Server).
 
       --  Per-extension parse error surface. Apply_CH_Extension only
-      --  has access to HC, not S â so when an extension's contents
-      --  violate its RFC (e.g. RFC 7301 Â§3.1 empty ALPN protocol_name),
+      --  has access to HC, not S  so when an extension's contents
+      --  violate its RFC (e.g. RFC 7301 3.1 empty ALPN protocol_name),
       --  the parser stores the alert code here and the caller of
       --  Parse_Client_Hello propagates it to Last_Error (S).
       Ext_Parse_Err : Error_Code := No_Error;
@@ -1879,8 +1849,8 @@ is
 
       --  TLS 1.2 key material (set during Derive_Keys_12)
       Master_Secret_12   : Bytes_48 := (others => 0);
-      --  TLS 1.2 implicit IV. AES-GCM (RFC 5288 Â§3) uses the first
-      --  4 bytes as `salt`; ChaCha20-Poly1305 (RFC 7905 Â§2) uses the
+      --  TLS 1.2 implicit IV. AES-GCM (RFC 5288 3) uses the first
+      --  4 bytes as `salt`; ChaCha20-Poly1305 (RFC 7905 2) uses the
       --  full 12 bytes XOR'd with the padded sequence number. Sized
       --  for the larger usage and zero-padded on the AES-GCM side.
       Client_Write_IV_12 : Byte_Seq (0 .. 11) := (others => 0);
@@ -1893,7 +1863,7 @@ is
       --  completion and rewind bookkeeping on error paths -- all gone by
       --  construction.
 
-      --  RFC 7627 Â§4: tracks which PRF path produced Master_Secret_12.
+      --  RFC 7627 4: tracks which PRF path produced Master_Secret_12.
       --  Use_EMS â extended PRF; (not Use_EMS) â legacy PRF. The
       --  v9âv12 bug we hit during the TLS-Anvil drive-down was a
       --  violation of this binding (we always emitted EMS in SH but
@@ -1906,15 +1876,15 @@ is
       --  Resumption
       Using_PSK : Boolean := False;              --  offset of binders in ClientHello
 
-      --  RFC 8446 Â§2.3 / Â§4.2.10 0-RTT (early data).
+      --  RFC 8446 2.3 / 4.2.10 0-RTT (early data).
       --
-      --  We do NOT support 0-RTT â replay + lack of forward secrecy
+      --  We do NOT support 0-RTT  replay + lack of forward secrecy
       --  is incompatible with the project's high-integrity posture.
       --  The two fields below are the minimal residual defense:
       --
       --  Early_Data_Offered : set when the client's CH carried an
       --                       early_data extension. We never echo it
-      --                       in EE (= rejection per Â§4.2.10), but
+      --                       in EE (= rejection per 4.2.10), but
       --                       the client may still send 0-RTT records
       --                       on the wire encrypted with a key we
       --                       never derived; the flag gates the
@@ -1922,7 +1892,7 @@ is
       --  Skipped_Early_Data_Records : counts dropped records when
       --                       Early_Data_Offered. Capped to defend
       --                       against a peer pinning us in skip mode
-      --                       indefinitely. RFC 8446 Â§4.6.1.
+      --                       indefinitely. RFC 8446 4.6.1.
       Early_Data_Offered         : Boolean := False;
       Skipped_Early_Data_Records : Natural := 0;
 
@@ -1967,11 +1937,11 @@ is
    --  Heap budget accounting deleted with the heap itself (#106):
    --  handshake memory is now bounded by the HS_Pool slot count.
 
-   --  ----- RFC 5246 Â§7.4.7 single-ClientKeyExchange invariant ------
-   --  TLS 1.2 Â§7.4.7: the client sends exactly one ClientKeyExchange
+   --  ----- RFC 5246 7.4.7 single-ClientKeyExchange invariant ------
+   --  TLS 1.2 7.4.7: the client sends exactly one ClientKeyExchange
    --  per handshake, immediately after the (optional) Certificate.
    --  A second CKE in the same handshake is a state-machine violation
-   --  and MUST be rejected with an unexpected_message alert (Â§7.2.2).
+   --  and MUST be rejected with an unexpected_message alert (7.2.2).
    --
    --  HC.CKE_Received_12 starts False and transitions monotonically
    --  to True on the first successful CKE. After that, the flag is
@@ -1981,11 +1951,11 @@ is
    is (HC.CKE_Received_12)
    with Ghost;
 
-   --  ----- RFC 7627 Â§4 EMS PRF binding ------------------------------
-   --  RFC 7627 Â§4: when the extended_master_secret extension is
+   --  ----- RFC 7627 4 EMS PRF binding ------------------------------
+   --  RFC 7627 4: when the extended_master_secret extension is
    --  negotiated (HC.Use_EMS = True), the master_secret MUST be
    --  derived using the extended PRF (label "extended master secret",
-   --  seed = transcript hash). Otherwise the legacy RFC 5246 Â§8.1
+   --  seed = transcript hash). Otherwise the legacy RFC 5246 8.1
    --  PRF (label "master secret", seed = client_random ||
    --  server_random) MUST be used.
    --
@@ -2004,8 +1974,8 @@ is
          when Legacy => not HC.Use_EMS)
    with Ghost;
 
-   --  ----- RFC 8446 Â§5.1 outer record content_type recognition -----
-   --  RFC 8446 Â§5.1 (and RFC 5246 Â§6.2.1): the outer record header's
+   --  ----- RFC 8446 5.1 outer record content_type recognition -----
+   --  RFC 8446 5.1 (and RFC 5246 6.2.1): the outer record header's
    --  type field MUST be one of:
    --    0x14 = change_cipher_spec
    --    0x15 = alert
@@ -2013,31 +1983,31 @@ is
    --    0x17 = application_data
    --  Any other value MUST cause the record to be rejected
    --  (unexpected_message). This is the OUTER counterpart to
-   --  Inner_Type_Valid_RFC_8446_5_4 â outer accepts CCS, inner
+   --  Inner_Type_Valid_RFC_8446_5_4  outer accepts CCS, inner
    --  does not.
    function Outer_Content_Type_Valid_RFC_8446_5_1 (T : Byte) return Boolean
    is (T = 16#14# or else T = 16#15# or else T = 16#16# or else T = 16#17#)
    with Ghost;
 
-   --  ----- RFC 8446 Â§5.1 record-layer legacy_record_version --------
-   --  RFC 8446 Â§5.1: the TLSPlaintext.legacy_record_version field
+   --  ----- RFC 8446 5.1 record-layer legacy_record_version --------
+   --  RFC 8446 5.1: the TLSPlaintext.legacy_record_version field
    --  MUST be 0x0303 ("TLS 1.2") for all records other than the
    --  initial ClientHello (which MAY use 0x0301 for old-server
    --  middlebox compatibility). Servers MUST reject any other value.
-   --  RFC 5246 Â§6.2.1: same â the wire version stays at the
+   --  RFC 5246 6.2.1: same  the wire version stays at the
    --  negotiated TLS 1.2 record-layer version.
    function Record_Version_RFC_8446_5_1 (Major, Minor : Byte) return Boolean
    is (Major = 16#03# and then Minor = 16#03#)
    with Ghost;
 
-   --  ----- RFC 8446 Â§6.1 / Â§6.2 alert level/description binding ----
-   --  RFC 8446 Â§6.1: warning (level 1) is ONLY valid with
+   --  ----- RFC 8446 6.1 / 6.2 alert level/description binding ----
+   --  RFC 8446 6.1: warning (level 1) is ONLY valid with
    --  close_notify (description 0) or user_canceled (90).
-   --  RFC 8446 Â§6.2: fatal (level 2) is for everything else; in
+   --  RFC 8446 6.2: fatal (level 2) is for everything else; in
    --  particular close_notify and user_canceled MUST NOT be sent
    --  at fatal level.
    --
-   --  TLS 1.3 Â§6: implementations SHOULD emit any non-zero alert
+   --  TLS 1.3 6: implementations SHOULD emit any non-zero alert
    --  at fatal level even when TLS 1.2 would have used warning.
    --  We follow the strict RFC binding via the predicate below;
    --  the matching Pre on Build_Plaintext_Alert / Build_Alert_Record
@@ -2048,13 +2018,13 @@ is
        and then (if Level = 2 then Desc /= 0 and then Desc /= 90))
    with Ghost;
 
-   --  ----- RFC 5246 Â§7.4.9 / RFC 8446 Â§4.4.4 Finished-mismatch ----
-   --  RFC 5246 Â§7.4.9: "It is a fatal error if a Finished message is
+   --  ----- RFC 5246 7.4.9 / RFC 8446 4.4.4 Finished-mismatch ----
+   --  RFC 5246 7.4.9: "It is a fatal error if a Finished message is
    --  not preceded by a ChangeCipherSpec message at the appropriate
    --  point in the handshake." (Sequencing covered by
    --  CCS_Precedes_Finished_RFC_5246_7_1 above.)
    --
-   --  RFC 8446 Â§4.4.4: "Recipients of Finished messages MUST verify
+   --  RFC 8446 4.4.4: "Recipients of Finished messages MUST verify
    --  that the contents are correct and if incorrect MUST terminate
    --  the connection with a 'decrypt_error' alert."
    --
@@ -2067,8 +2037,8 @@ is
    is (State = Error_State and then Pending > 0 and then Err in Handshake_Failure | Bad_Record_MAC)
    with Ghost;
 
-   --  ----- RFC 8446 Â§5.4 inner content type after AEAD decrypt ----
-   --  RFC 8446 Â§5.4: after stripping padding zeros from a decrypted
+   --  ----- RFC 8446 5.4 inner content type after AEAD decrypt ----
+   --  RFC 8446 5.4: after stripping padding zeros from a decrypted
    --  TLSInnerPlaintext, the last byte is the type field. It MUST
    --  be one of:
    --    0x15 = alert
@@ -2083,11 +2053,11 @@ is
    is (T = 16#15# or else T = 16#16# or else T = 16#17#)
    with Ghost;
 
-   --  ----- RFC 8446 Â§5.1 / Â§5.2 record-fragment length bound -------
-   --  RFC 8446 Â§5.1: plaintext fragment â¤ 2^14 = 16384 bytes.
-   --  RFC 8446 Â§5.2: encrypted (application_data) fragment â¤
+   --  ----- RFC 8446 5.1 / 5.2 record-fragment length bound -------
+   --  RFC 8446 5.1: plaintext fragment â¤ 2^14 = 16384 bytes.
+   --  RFC 8446 5.2: encrypted (application_data) fragment â¤
    --  2^14 + 256 = 16640 bytes (the +256 allows for AEAD overhead).
-   --  RFC 5246 Â§6.2.1 (TLS 1.2): same limits apply.
+   --  RFC 5246 6.2.1 (TLS 1.2): same limits apply.
    --
    --  A receiver MUST send record_overflow alert (22) on any
    --  record exceeding these bounds. Without this, an attacker can
@@ -2096,8 +2066,8 @@ is
    is (if Content_Type = 16#17# then Frag_Len <= 16384 + 256 else Frag_Len <= 16384)
    with Ghost;
 
-   --  ----- RFC 8446 Â§4.2.11.2 PSK binder validated before use ------
-   --  RFC 8446 Â§4.2.11.2: on receipt of a ClientHello PSK extension,
+   --  ----- RFC 8446 4.2.11.2 PSK binder validated before use ------
+   --  RFC 8446 4.2.11.2: on receipt of a ClientHello PSK extension,
    --  the server MUST validate the PSK binder (HMAC of the truncated
    --  transcript with a binder_key derived from the PSK) BEFORE
    --  installing the PSK or deriving any session keys from it. A
@@ -2113,26 +2083,26 @@ is
    is (Binder_Verified)
    with Ghost;
 
-   --  ----- RFC 5246 Â§7.2.1 / RFC 8446 Â§6.1 close_notify reply ------
-   --  RFC 5246 Â§7.2.1 (and RFC 8446 Â§6.1): on receipt of a close_notify
+   --  ----- RFC 5246 7.2.1 / RFC 8446 6.1 close_notify reply ------
+   --  RFC 5246 7.2.1 (and RFC 8446 6.1): on receipt of a close_notify
    --  alert, the receiver MUST send its own close_notify in reply
    --  before closing the write side. After the reply is queued the
    --  connection enters the Closing state. This predicate captures
    --  the post-receipt invariant: State (S) = Closing AND the output
    --  buffer holds the queued close_notify (or the reply attempt
    --  filled the buffer beyond capacity, in which case the caller
-   --  drains then retries â Output_Pending > 0 still holds).
+   --  drains then retries  Output_Pending > 0 still holds).
    function Close_Notify_Reply_State_RFC_5246_7_2_1
      (State : Connection_State; Pending : N32) return Boolean
    is (State = Closing and then Pending > 0)
    with Ghost;
 
-   --  ----- RFC 8446 Â§4.2.8 key_share group bounded by client offer
-   --  RFC 8446 Â§4.2.8: the server's selected_group in its KeyShareEntry
+   --  ----- RFC 8446 4.2.8 key_share group bounded by client offer
+   --  RFC 8446 4.2.8: the server's selected_group in its KeyShareEntry
    --  MUST be one that the client offered in either its key_share or
    --  supported_groups extensions. A server that selects an
    --  unoffered group breaks key agreement and (more importantly)
-   --  signals a serious negotiation bug â clients refuse to derive
+   --  signals a serious negotiation bug  clients refuse to derive
    --  shared secrets with mismatched groups.
    --
    --  This predicate cross-references HC.KE.Curve against the
@@ -2150,8 +2120,8 @@ is
                 and then (HC.Client_Has_P384 or else HC.Client_Supports_P384)))
    with Ghost;
 
-   --  ----- RFC 8446 Â§4.1.4 HelloRetryRequest at most once -----------
-   --  TLS 1.3 Â§4.1.4: a server MUST send at most one HRR per
+   --  ----- RFC 8446 4.1.4 HelloRetryRequest at most once -----------
+   --  TLS 1.3 4.1.4: a server MUST send at most one HRR per
    --  connection. HRR is a one-shot mechanism to coax the client
    --  into a recoverable ClientHello (different group, missing
    --  cookie, etc.); a second HRR signals an infinite-loop server
@@ -2164,8 +2134,8 @@ is
    is (HC.HRR_Sent)
    with Ghost;
 
-   --  ----- RFC 5246 Â§7.1 single-ChangeCipherSpec invariant ----------
-   --  TLS 1.2 Â§7.1: each direction sends exactly one CCS per
+   --  ----- RFC 5246 7.1 single-ChangeCipherSpec invariant ----------
+   --  TLS 1.2 7.1: each direction sends exactly one CCS per
    --  handshake, immediately before the encrypted Finished. A second
    --  CCS in the same handshake is a state-machine violation
    --  (CVE-2014-0224 "ChangeCipherSpec injection" was a class of
@@ -2178,9 +2148,9 @@ is
    is (HC.CCS_Received)
    with Ghost;
 
-   --  ----- RFC 5246 Â§7.1 CCS-precedes-Finished sequence ------------
-   --  RFC 5246 Â§7.1 (and Â§7.4.9): the ChangeCipherSpec record MUST
-   --  arrive between ClientKeyExchange and Finished â never standalone,
+   --  ----- RFC 5246 7.1 CCS-precedes-Finished sequence ------------
+   --  RFC 5246 7.1 (and 7.4.9): the ChangeCipherSpec record MUST
+   --  arrive between ClientKeyExchange and Finished  never standalone,
    --  never before CKE, never twice. The Finished message that follows
    --  is encrypted with the freshly-installed keys; receiving Finished
    --  without a prior CCS means we either skipped key activation
@@ -2202,7 +2172,7 @@ is
    --  proof time, not runtime.
    ----------------------------------------------------------------------------
 
-   --  RFC 8446 Â§6.1 / Â§6: TLS 1.3 deprecates warning alerts but
+   --  RFC 8446 6.1 / 6: TLS 1.3 deprecates warning alerts but
    --  keeps user_canceled (90) for back-compat. To bound DoS via
    --  alert flooding, BoringSSL/NSS/OpenSSL tolerate â¤ 4 in a row;
    --  the 5th triggers fatal too_many_warning_alerts.
@@ -2213,11 +2183,11 @@ is
    --  count so rekeying cannot be used as a cheap asymmetric DoS. The
    --  legitimate need is one rotation per AEAD usage limit (RFC 8446 5.5),
    --  so a healthy peer sends single digits over a connection's life.
-   --  Leaky bucket for inbound KeyUpdate (RFC 8446 Â§4.6.3 sets no bound on
+   --  Leaky bucket for inbound KeyUpdate (RFC 8446 4.6.3 sets no bound on
    --  how often a peer may rekey, and each one costs a KDF).
    --
    --  Max_Key_Updates is the BUCKET DEPTH, not a lifetime cap. An absolute
-   --  cap is wrong here: a well-behaved peer rotating at its own Â§5.5 AEAD
+   --  cap is wrong here: a well-behaved peer rotating at its own 5.5 AEAD
    --  limit would exhaust a lifetime cap on a long-lived connection and we
    --  would drop it with unexpected_message -- a self-inflicted interop
    --  bug. The bucket must therefore drain.
@@ -2244,28 +2214,28 @@ is
    --  Rekey_After_Records moved up beside Traffic_Keys / Space_Left,
    --  which need it in their declarations.
 
-   --  RFC 8446 Â§5.2 / RFC 5246 Â§6.2.1: zero-length-plaintext
+   --  RFC 8446 5.2 / RFC 5246 6.2.1: zero-length-plaintext
    --  records waste decrypt CPU without delivering progress.
    --  BoringSSL caps consecutive empty records at 32; the 33rd
    --  triggers fatal too_many_empty_fragments.
    Max_Empty_Records : constant := 32;
 
-   --  RFC 8446 Â§5.1 / RFC 5246 Â§6.2.1: record-layer version is
+   --  RFC 8446 5.1 / RFC 5246 6.2.1: record-layer version is
    --  always 0x03xx with minor in 1..4. Anything else is a
-   --  framing violation â Parse_Record_Header rejects with
+   --  framing violation  Parse_Record_Header rejects with
    --  Bad_Version.
    function Record_Version_Valid_RFC_8446_5_1 (Major, Minor : Byte) return Boolean
    is (Major = 16#03# and Minor in 16#01# .. 16#04#)
    with Ghost;
 
-   --  RFC 8446 Â§4.2: each extension type MUST appear at most once
+   --  RFC 8446 4.2: each extension type MUST appear at most once
    --  in a given extensions list. Tracked per-CH via HC.Seen_Ext_Tags;
    --  Apply_CH_Extension scans the list before recording a new tag.
    function No_Duplicate_Extensions_RFC_8446_4_2 (HC : Handshake_Context) return Boolean
    is (HC.Seen_Ext_Count <= HC.Seen_Ext_Tags'Last)
    with Ghost;
 
-   --  RFC 8446 Â§4.1.3: the server's ServerHello legacy_session_id
+   --  RFC 8446 4.1.3: the server's ServerHello legacy_session_id
    --  MUST be a byte-for-byte copy of the client's. Captured at
    --  parse time and replayed at build time.
    function Session_ID_Echo_RFC_8446_4_1_3 (HC : Handshake_Context) return Boolean
@@ -2309,16 +2279,16 @@ is
                --  must the other.
        or else (Tag = 16#0017# and then HC.Cfg.Versions /= TLS_1_3_Only));
 
-   --  RFC 8446 Â§4.2 single-call validator for any server-generated
+   --  RFC 8446 4.2 single-call validator for any server-generated
    --  extension. Returns OK = True on success; otherwise sets
    --  Err to the alert that should be raised:
-   --   * Unsupported_Extension â extension type not allowed in this
+   --   * Unsupported_Extension  extension type not allowed in this
    --     message, or not offered when Requires_Offer is True
-   --   * Decode_Error          â body present where it must be empty
+   --   * Decode_Error           body present where it must be empty
    --
    --  Caller is responsible for body-shape / content validation
-   --  beyond the empty-or-not boundary (RFC 7301 Â§3.2 ALPN proto
-   --  match, RFC 8446 Â§4.2.8 key_share single-entry tile, etc.) â
+   --  beyond the empty-or-not boundary (RFC 7301 3.2 ALPN proto
+   --  match, RFC 8446 4.2.8 key_share single-entry tile, etc.)
    --  those need per-tag knowledge.
    procedure Validate_Server_Ext
      (Where    : in Ext_Where;
@@ -2436,7 +2406,7 @@ is
    function Role (S : Session) return TLS_Role;
    function Last_Error (S : Session) return Error_Code;
 
-   --  RFC 8446 Â§6.1: True only if the peer sent close_notify.
+   --  RFC 8446 6.1: True only if the peer sent close_notify.
    --
    --  Check this when YOUR transport reports EOF. The library performs no
    --  I/O, so it cannot see the connection close; you can, and only the
@@ -2498,7 +2468,7 @@ is
    with Ghost;
 
 
-   --  RFC 7301 Â§3.1/Â§3.2: validate the server's ALPN-echo body in a
+   --  RFC 7301 3.1/3.2: validate the server's ALPN-echo body in a
    --  SH or EE extension and (on success) copy the chosen protocol
    --  name into S.Negotiated_ALPN. Body shape:
    --     list_len(2) + proto_len(1) + proto_name(proto_len)
@@ -2508,10 +2478,10 @@ is
    --  Body_Start + E_Len <= Data'Last + 1.
    --
    --  On failure:
-   --    Decode_Error      â body too short, empty proto, list/body
+   --    Decode_Error       body too short, empty proto, list/body
    --                        length mismatch
-   --    Illegal_Parameter â chosen proto doesn't match the one we
-   --                        offered in CH (RFC 7301 Â§3.2)
+   --    Illegal_Parameter  chosen proto doesn't match the one we
+   --                        offered in CH (RFC 7301 3.2)
    procedure Validate_ALPN_Echo_Body
      (Data       : in Byte_Seq;
       Body_Start : in N32;
@@ -2556,7 +2526,7 @@ is
        and Negotiated_Suite_12 (S) = Negotiated_Suite_12 (S)'Old;
 
    --  Push received ciphertext bytes into the session's input buffer.
-   --  RFC 8446 Â§5.1: the record layer accepts bytes from the transport.
+   --  RFC 8446 5.1: the record layer accepts bytes from the transport.
    --  State is not modified by feeding data.
    procedure Feed_Ciphertext (S : in out Session; Data : in Byte_Seq; Bytes_Fed : out N32)
    with
@@ -2578,32 +2548,6 @@ is
 
    --  How many bytes are waiting to be sent?
    function Output_Pending (S : Session) return N32;
-
-   ----------------------------------------------------------------------------
-   --  Session-scoped ghost predicates (added 2026-05-09 alongside
-   --  the alert-handling / DoS-bound fixes). Each pins an RFC
-   --  clause so a regression that re-introduces the unbounded
-   --  behavior is caught at proof time.
-   ----------------------------------------------------------------------------
-
-   --  RFC 8446 Â§6.1 / Â§6: warning-alert flood cap. Holds whenever
-   --  the receiver is still in a non-error state â once we exceed
-   --  Max_Warning_Alerts (4) we MUST transition to Error_State.
-   function Warning_Alerts_Bounded_RFC_8446_6_1 (S : Session) return Boolean
-   with Ghost;
-
-   --  RFC 8446 Â§5.2 / RFC 5246 Â§6.2.1: empty-record flood cap.
-   --  Same shape: â¤ 32 in the live state, > 32 only if we've
-   --  already transitioned to Error_State with the alert queued.
-   function Empty_Records_Bounded_RFC_8446_5_2 (S : Session) return Boolean
-   with Ghost;
-
-   --  RFC 8446 Â§5.2 / RFC 5246 Â§7.2: AEAD verification failure
-   --  MUST queue a fatal bad_record_mac alert and enter Error_State.
-   --  The previous behaviour returned Error_Alert without queuing,
-   --  so peers saw TCP RST and couldn't tell what went wrong.
-   function AEAD_Failure_Alert_Queued_RFC_8446_5_2 (S : Session) return Boolean
-   with Ghost;
 
    --  How many input bytes are buffered?
    function Input_Available (S : Session) return N32;
@@ -2637,7 +2581,7 @@ is
        and Res_Master (S) = Bytes_48'(others => 0)
        and Exporter_Secret (S) = Bytes_48'(others => 0);
 
-   --  RFC 5705 / RFC 8446 Â§7.5: derive application-specific exporter
+   --  RFC 5705 / RFC 8446 7.5: derive application-specific exporter
    --  bytes from a completed TLS session. Label is an ASCII exporter label.
    --  TLS 1.2 permits an empty label; TLS 1.3 requires a non-empty label
    --  because it is embedded in an HKDF label. For TLS 1.2,
@@ -2672,8 +2616,8 @@ is
        Bytes_Read <= N32 (Dest'Length)
        and (for all I in 0 .. Bytes_Read - 1 => Dest (I)'Initialized);
 
-   --  RFC 8446 Â§7.5: Encrypt and queue application data.
-   --  RFC 8446 Â§4.6.3: rotate our own write key now.
+   --  RFC 8446 7.5: Encrypt and queue application data.
+   --  RFC 8446 4.6.3: rotate our own write key now.
    --
    --  Queues a KeyUpdate (request_update = update_not_requested -- we are
    --  not asking the peer to rotate, only telling them we have), then
@@ -2681,7 +2625,7 @@ is
    --  zero. Drain the output afterwards as usual.
    --
    --  The library already rotates automatically as it approaches the RFC
-   --  8446 Â§5.5 AEAD usage limit (see Rekey_After_Records), so calling this
+   --  8446 5.5 AEAD usage limit (see Rekey_After_Records), so calling this
    --  is never required for safety. It exists because an application may
    --  have its own policy -- rekey hourly, or per N bytes, or on a
    --  privilege change -- and because rekeying more often narrows the
@@ -2779,7 +2723,7 @@ private
       --  need the same configured clock to serialize obfuscated_ticket_age.
       Get_Time : Get_Time_Fn := null;
 
-      --  RFC 5705 / RFC 8446 Â§7.5 exporter material retained after
+      --  RFC 5705 / RFC 8446 7.5 exporter material retained after
       --  the handshake context is freed. TLS 1.2 stores master_secret
       --  plus randoms; TLS 1.3 stores exporter_master_secret.
       Exporter_Secret        : Bytes_48 := (others => 0);
@@ -2787,7 +2731,7 @@ private
       Exporter_Client_Random : Bytes_32 := (others => 0);
       Exporter_Server_Random : Bytes_32 := (others => 0);
 
-      --  RFC 8446 Â§4.6.3 KeyUpdate: the application traffic SECRETS are
+      --  RFC 8446 4.6.3 KeyUpdate: the application traffic SECRETS are
       --  retained, not just the derived key/IV, because the next generation
       --  is derived from the current secret:
       --
@@ -2805,13 +2749,13 @@ private
       Server_App_Secret : Bytes_48 := (others => 0);
       App_Secret_Len    : N32 range 0 .. 48 := 0;  --  0 = none, else 32 (SHA-256)/48 (384)
 
-      --  RFC 8446 Â§4.6.3 does not bound how often a peer may request a
+      --  RFC 8446 4.6.3 does not bound how often a peer may request a
       --  rekey, and each one costs a KDF plus key re-derivation. Counted
       --  so a peer cannot use KeyUpdate as a cheap asymmetric DoS, in the
       --  same shape as the warning-alert and empty-record flood caps.
       Key_Updates_Recvd : Natural := 0;
 
-      --  RFC 8446 Â§4.6.3: a peer's request_update obliges us to send a
+      --  RFC 8446 4.6.3: a peer's request_update obliges us to send a
       --  KeyUpdate "prior to sending its next Application Data record" --
       --  the obligation is tied to the next application WRITE, not to each
       --  message received. Five requests arriving back-to-back therefore
@@ -2821,7 +2765,7 @@ private
       --  So the reply is deferred: set here, flushed by Write_Plaintext.
       Key_Update_Pending : Boolean := False;
 
-      --  RFC 8446 Â§6.1: set when the peer's close_notify has been
+      --  RFC 8446 6.1: set when the peer's close_notify has been
       --  received. Exposed via Peer_Closed_Cleanly so an application can
       --  tell an orderly close from a truncated stream -- see there for
       --  why that distinction is a security property.
@@ -2835,7 +2779,7 @@ private
       Post_HS : Post_HS_Reasm.Buffer;
 
       --  Counter for received warning-level user_canceled alerts.
-      --  RFC 8446 Â§6.1: TLS 1.3 deprecates warning alerts but keeps
+      --  RFC 8446 6.1: TLS 1.3 deprecates warning alerts but keeps
       --  user_canceled (90) for compatibility with TLS 1.2 stacks
       --  (notably JDK11). BoringSSL/NSS/OpenSSL convention is to
       --  tolerate up to 4 in a row; 5+ â fatal "too_many_warning_alerts"
@@ -2847,7 +2791,7 @@ private
       Warning_Alerts_Recvd : Natural range 0 .. Max_Warning_Alerts := 0;
 
       --  Counter for received empty (zero-length plaintext) records.
-      --  RFC 8446 Â§5.2 / RFC 5246 Â§6.2.1: zero-length-plaintext
+      --  RFC 8446 5.2 / RFC 5246 6.2.1: zero-length-plaintext
       --  records waste decrypt CPU without delivering progress.
       --  BoringSSL caps at 32; 33+ â fatal too_many_empty_fragments.
       --  Resets on any non-empty record.

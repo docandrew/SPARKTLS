@@ -7,7 +7,7 @@ use SPARKTLSCrypto;
 package body SPARKTLS.Key_Schedule_12
   with SPARK_Mode => On
 is
-   --  RFC 5246 Â§5: P_hash iteration.
+   --  RFC 5246 5: P_hash iteration.
    --
    --  P_hash(secret, seed) = HMAC(secret, A(1) || seed) ||
    --                         HMAC(secret, A(2) || seed) || ...
@@ -79,7 +79,7 @@ is
             Pos := Pos + Remain;
          end if;
 
-         --  A(i+1) = HMAC(secret, A(i)) â temp avoids out/in aliasing
+         --  A(i+1) = HMAC(secret, A(i))  temp avoids out/in aliasing
          declare
             A_In : constant SPARKTLSCrypto.Hashing.SHA256.Digest := A_Val;
          begin
@@ -145,7 +145,7 @@ is
       Server_Random : in Bytes_32;
       Use_SHA384    : in Boolean)
    is
-      --  RFC 5246 Â§8.1: seed = client_random || server_random
+      --  RFC 5246 8.1: seed = client_random || server_random
       Seed : Seed_64 := (others => 0);
    begin
       Seed (0 .. 31) := Client_Random;
@@ -170,7 +170,7 @@ is
       IV_Len        : in N32;
       Use_SHA384    : in Boolean)
    is
-      --  RFC 5246 Â§6.3: seed = server_random || client_random
+      --  RFC 5246 6.3: seed = server_random || client_random
       --  (OPPOSITE order from master secret derivation!)
       Seed      : Seed_64 := (others => 0);
       Block_Len : constant N32 := 2 * Key_Len + 2 * IV_Len;
@@ -189,7 +189,7 @@ is
          PRF_SHA256 (Key_Block, Byte_Seq (Master), Label_Key_Expansion, Byte_Seq (Seed));
       end if;
 
-      --  Partition key_block (RFC 5246 Â§6.3 + RFC 5288 Â§3 / RFC 7905 Â§2):
+      --  Partition key_block (RFC 5246 6.3 + RFC 5288 3 / RFC 7905 2):
       --    client_write_key [Key_Len]
       --    server_write_key [Key_Len]
       --    client_write_IV  [IV_Len]   â 4 (AES-GCM) or 12 (ChaCha20)
@@ -211,7 +211,7 @@ is
       TH         : in Byte_Seq;
       Use_SHA384 : in Boolean) is
    begin
-      --  RFC 5246 Â§7.4.9:
+      --  RFC 5246 7.4.9:
       --  verify_data = PRF(master_secret, finished_label,
       --                    Hash(handshake_messages))[0..11]
       if Use_SHA384 then

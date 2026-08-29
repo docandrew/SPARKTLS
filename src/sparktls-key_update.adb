@@ -1,4 +1,4 @@
---  RFC 8446 Â§4.6.3 post-handshake KeyUpdate. See the spec for why this
+--  RFC 8446 4.6.3 post-handshake KeyUpdate. See the spec for why this
 --  exists and why receive-only support is insufficient.
 
 with SPARKTLS.Key_Schedule;
@@ -11,7 +11,7 @@ package body SPARKTLS.Key_Update
   with SPARK_Mode => On
 is
 
-   --  RFC 8446 Â§7.1 label for the traffic-secret ratchet. The full wire
+   --  RFC 8446 7.1 label for the traffic-secret ratchet. The full wire
    --  label is "tls13 traffic upd"; Expand_Label prepends the "tls13 "
    --  prefix, so only the suffix is given here.
    Traffic_Update_Label : constant String := "traffic upd";
@@ -59,7 +59,7 @@ is
             end;
       end case;
 
-      --  RFC 8446 Â§5.3: the sequence number resets to zero whenever the
+      --  RFC 8446 5.3: the sequence number resets to zero whenever the
       --  key changes. This is the whole point of the rekey -- it is what
       --  restores nonce space.
       TK.Counter := 0;
@@ -141,7 +141,7 @@ is
       Status := Parse_Malformed;
 
       --  Must be exactly type + 3-byte length + 1-byte body, and the
-      --  declared length must be 1. RFC 8446 Â§4.6.3 gives the body a fixed
+      --  declared length must be 1. RFC 8446 4.6.3 gives the body a fixed
       --  size, so anything else is malformed rather than an extension
       --  point.
       if Msg'Length /= Key_Update_Msg_Len then
@@ -156,7 +156,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.6.3: "Implementations which receive any other value
+      --  RFC 8446 4.6.3: "Implementations which receive any other value
       --  MUST terminate the connection with an illegal_parameter alert."
       --  So an unknown request_update is rejected, not ignored.
       case Msg (4) is

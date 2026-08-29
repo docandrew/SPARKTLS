@@ -78,10 +78,10 @@ is
    --  (development / self-signed certs). Without Skip_Verify, a trust
    --  store and clock must be configured before the handshake can
    --  start, except for valid TLS 1.3 ticket resumption. Hostname
-   --  binding (Â§6.4) is NOT affected by this flag â set
+   --  binding (6.4) is NOT affected by this flag  set
    --  Skip_Hostname_Verify to opt out of hostname binding as well.
    --
-   --  Skip_Hostname_Verify: skip RFC 6125 Â§6.4 SAN/CN matching even
+   --  Skip_Hostname_Verify: skip RFC 6125 6.4 SAN/CN matching even
    --  when Hostname is non-empty. The usual opt-out is to pass
    --  Hostname => ""; this flag is for callers that need SNI on the
    --  wire (Hostname-derived) but explicitly don't want the cert
@@ -89,7 +89,7 @@ is
    --  ALPN (RFC 7301): the protocol name to offer in the
    --  application_layer_protocol_negotiation extension. Empty
    --  string means no ALPN extension is sent. Single protocol
-   --  only â for multi-protocol advertisement use Init with a
+   --  only  for multi-protocol advertisement use Init with a
    --  manually-built Config.
 
    --  Initialize a client session with full control over Config.
@@ -109,12 +109,12 @@ is
    --    Plaintext_Ready => call Read_Plaintext
    --    Handshake_Done => connection is ready for app data
    --    Error_Alert    => check Last_Error (S)
-   --  RFC 8446 Â§4.1: Step the client handshake / record processing
+   --  RFC 8446 4.1: Step the client handshake / record processing
    --  state machine.
    procedure Advance (S : in out Session; Result : out Action)
    with Pre => State (S) /= Idle and Role (S) = Role_Client;
 
-   --  RFC 8446 Â§6.1: Send a close_notify alert.
+   --  RFC 8446 6.1: Send a close_notify alert.
    procedure Close_Notify
      (S : in out Session)
       --  Deliberately callable on an already-closed session: Advance reports
@@ -152,7 +152,7 @@ is
    function Has_Peer_Certificate (S : Session) return Boolean;
 
    ----------------------------------------------------------------------------
-   --  Session resumption (RFC 8446 Â§4.6.1 / Â§2.2)
+   --  Session resumption (RFC 8446 4.6.1 / 2.2)
    --
    --  Workflow:
    --    1. Connect normally. After Handshake_Done (or after any
@@ -164,7 +164,7 @@ is
    --       carries the pre_shared_key extension.
    --
    --  The Cfg-driven path is required because Init constructs and
-   --  queues CH atomically â there is no post-Init injection point
+   --  queues CH atomically  there is no post-Init injection point
    --  for the ticket.
    ----------------------------------------------------------------------------
 
@@ -177,13 +177,13 @@ is
    --  True iff the current connection's handshake completed
    --  using the PSK supplied via Cfg.Resume_Ticket (server
    --  accepted resumption). Cleared on every Init/Configure.
-   --  Stable across the freeing of the handshake context â the
+   --  Stable across the freeing of the handshake context  the
    --  flag is mirrored from HC into S at handshake completion.
    function Was_Resumed (S : Session) return Boolean;
 
-   --  Note: 0-RTT (RFC 8446 Â§2.3 / Â§4.2.10) is intentionally
+   --  Note: 0-RTT (RFC 8446 2.3 / 4.2.10) is intentionally
    --  not exposed. There is no Write_Early_Data / Was_0RTT_Accepted
-   --  API on this stack â the replay + lack-of-forward-secrecy
+   --  API on this stack  the replay + lack-of-forward-secrecy
    --  trade-off is incompatible with the project's threat model.
    --  Resumption (Was_Resumed above) is 1-RTT and fully supported.
 
@@ -193,11 +193,11 @@ is
    --  another process; placing it in a future Cfg.Resume_Ticket
    --  enables PSK resumption.
    --
-   --  RFC 8446 Â§4.6.1: tickets MUST NOT be reused; the caller is
+   --  RFC 8446 4.6.1: tickets MUST NOT be reused; the caller is
    --  responsible for using each persisted ticket at most once.
    function Get_Session_Ticket (S : Session) return Session_Ticket;
 
-   --  RFC 5077 Â§3.3 TLS 1.2 session ticket extraction. Mirror of the
+   --  RFC 5077 3.3 TLS 1.2 session ticket extraction. Mirror of the
    --  TLS 1.3 PSK pair above. The TLS 1.2 server populates this
    --  field via NewSessionTicket; callers persist it across
    --  connections and inject into the next Config.TLS12_Resume_Ticket

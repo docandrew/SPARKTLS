@@ -10,7 +10,7 @@ with X509;
 
 with SPARKTLS_Transcript;
 use type SPARKTLS_Transcript.Transcript_State;
---  TLS 1.2 Handshake Messages (RFC 5246 Â§7.4, RFC 8422)
+--  TLS 1.2 Handshake Messages (RFC 5246 7.4, RFC 8422)
 --
 --  TLS 1.2 ECDHE handshake flow (server-authenticated):
 --
@@ -54,15 +54,15 @@ is
    HT_Client_Key_Exchange : constant Byte := 16#10#;
    HT_Finished            : constant Byte := 16#14#;
 
-   --  RFC 8422 Â§5.4: ECCurveType
+   --  RFC 8422 5.4: ECCurveType
    EC_Curve_Type_Named : constant Byte := 3;
 
-   --  RFC 8422 Â§5.1.1: NamedGroup wire values
+   --  RFC 8422 5.1.1: NamedGroup wire values
    Group_Secp256r1 : constant Unsigned_16 := 16#0017#;
    Group_Secp384r1 : constant Unsigned_16 := 16#0018#;
    Group_X25519    : constant Unsigned_16 := 16#001D#;
 
-   --  RFC 8422 Â§5.4: ECPoint sizes (uncompressed)
+   --  RFC 8422 5.4: ECPoint sizes (uncompressed)
    --  P-256: 0x04 || x[32] || y[32] = 65 bytes
    --  P-384: 0x04 || x[48] || y[48] = 97 bytes
    --  X25519: raw u-coordinate = 32 bytes (no 0x04 prefix)
@@ -89,7 +89,7 @@ is
    function Valid_ECDHE_Group (G : Unsigned_16) return Boolean
    is (G in Group_Secp256r1 | Group_Secp384r1 | Group_X25519);
 
-   --  RFC 8422 Â§5.1.1: in TLS 1.2, supported_groups constrains the
+   --  RFC 8422 5.1.1: in TLS 1.2, supported_groups constrains the
    --  EC parameters that may appear in an ECDSA server certificate.
    --  Group = 0 means "default policy" (all supported groups advertised).
    function ECDSA_Cert_Curve_Allowed_TLS12
@@ -100,14 +100,14 @@ is
        or else (Group = Group_X25519 and then PK not in X509.Algo_EC_P256 | X509.Algo_EC_P384)
        or else (not Valid_ECDHE_Group (Group)));
 
-   --  RFC 8422 Â§5.1.1: a TLS 1.2 ECDHE server must select a group
+   --  RFC 8422 5.1.1: a TLS 1.2 ECDHE server must select a group
    --  offered by the client. Offered = 0 means the default client offer
    --  (all implemented groups).
    function Selected_Group_Allowed_TLS12
      (Offered : Unsigned_16; Selected : Unsigned_16) return Boolean
    is (Offered = 0 or else not Valid_ECDHE_Group (Offered) or else Selected = Offered);
 
-   --  RFC 8422 Â§5.4: ECPoint byte length for a given group.
+   --  RFC 8422 5.4: ECPoint byte length for a given group.
    function Point_Len_For_Group (G : Unsigned_16) return N32
    is (case G is
          when Group_Secp256r1 => P256_Point_Len,
@@ -115,13 +115,13 @@ is
          when Group_X25519 => X25519_Point_Len,
          when others => 0);
 
-   --  RFC 8422 Â§5.4: ServerKeyExchange params size (before signature).
+   --  RFC 8422 5.4: ServerKeyExchange params size (before signature).
    --  = curve_type(1) + named_curve(2) + point_length(1) + point(N)
    function SKE_Params_Len (G : Unsigned_16) return N32
    is (4 + Point_Len_For_Group (G))
    with Ghost, Pre => Valid_ECDHE_Group (G);
 
-   --  RFC 5246 Â§7.4.3: The signature input for ServerKeyExchange.
+   --  RFC 5246 7.4.3: The signature input for ServerKeyExchange.
    --  MUST be: client_random[32] || server_random[32] || params[N]
    --  Getting the random order wrong or omitting params from the
    --  signature is a critical vulnerability (allows MITM).
@@ -129,19 +129,19 @@ is
    is (64 + SKE_Params_Len (G))  --  32 + 32 + params
    with Ghost, Pre => Valid_ECDHE_Group (G);
 
-   --  RFC 5246 Â§7.4.9: Finished message is always exactly 16 bytes.
+   --  RFC 5246 7.4.9: Finished message is always exactly 16 bytes.
    --  type(1)=0x14 + length(3)=0x00000C + verify_data(12)
    function Valid_Finished_12_Len (Len : N32) return Boolean
    is (Len = Finished_12_Total_Len)
    with Ghost;
 
-   --  RFC 5246 Â§7.4.5: ServerHelloDone is always exactly 4 bytes.
+   --  RFC 5246 7.4.5: ServerHelloDone is always exactly 4 bytes.
    --  type(1)=0x0E + length(3)=0x000000 (empty body)
    function Valid_SHD_Len (Len : N32) return Boolean
    is (Len = Server_Hello_Done_Len)
    with Ghost;
 
-   --  RFC 5246 Â§7.4.1.2: Valid TLS 1.2 cipher suite (ECDHE+AEAD only).
+   --  RFC 5246 7.4.1.2: Valid TLS 1.2 cipher suite (ECDHE+AEAD only).
    function Valid_TLS12_Suite (S : Supported_Suite) return Boolean
    is (S in
          Suite_ECDHE_RSA_AES128_GCM_SHA256
@@ -152,7 +152,7 @@ is
          | Suite_ECDHE_ECDSA_CHACHA20_SHA256)
    with Ghost;
 
-   --  RFC 5246 Â§7.4.1.2: Is this an ECDHE_RSA suite (vs ECDHE_ECDSA)?
+   --  RFC 5246 7.4.1.2: Is this an ECDHE_RSA suite (vs ECDHE_ECDSA)?
    --  Determines whether the ServerKeyExchange signature uses RSA or ECDSA.
    function Is_ECDHE_RSA_Suite (S : Supported_Suite) return Boolean
    is (S in
@@ -166,7 +166,7 @@ is
    is (S in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384)
    with Ghost;
 
-   --  RFC 5246 Â§8.1 / RFC 7627: Master secret derivation label
+   --  RFC 5246 8.1 / RFC 7627: Master secret derivation label
    --  MUST match the negotiated extensions.
    --  Using EMS label without EMS extension (or vice versa) produces
    --  a valid-looking but incompatible master secret.
@@ -203,7 +203,7 @@ is
    --  Procedures
    ----------------------------------------------------------------------------
 
-   --  RFC 8422 Â§5.4 + RFC 5246 Â§7.4.3: Build ServerKeyExchange.
+   --  RFC 8422 5.4 + RFC 5246 7.4.3: Build ServerKeyExchange.
    --
    --  Wire format (inside handshake header):
    --    ec_params:
@@ -219,7 +219,7 @@ is
    --    client_random[32] || server_random[32] ||
    --    curve_type[1] || named_curve[2] || point_len[1] || point[N]
    --
-   --  RFC 5246 Â§7.4.3: "Sending handshake messages in an unexpected
+   --  RFC 5246 7.4.3: "Sending handshake messages in an unexpected
    --  order results in a fatal error."
    --
    --  Precondition: HC.KE.Curve must be set to a valid group,
@@ -238,13 +238,13 @@ is
        and HC.KE.Negotiated,
      Post => Len <= Max_Server_Key_Exchange;
 
-   --  RFC 5246 Â§7.4.5: Build ServerHelloDone.
+   --  RFC 5246 7.4.5: Build ServerHelloDone.
    --
-   --  This message has NO body â just the 4-byte handshake header:
+   --  This message has NO body  just the 4-byte handshake header:
    --    type[1] = 0x0E || length[3] = 0x000000
    --
    --  Its only purpose is to signal the end of the server's first flight.
-   --  RFC 5246 Â§7.4.5: "This message means that the server is done
+   --  RFC 5246 7.4.5: "This message means that the server is done
    --  sending messages to support the key exchange, and the client
    --  can proceed with its phase of the key exchange."
    procedure Build_Server_Hello_Done (Result : out Byte_Seq; Len : out N32)
@@ -257,7 +257,7 @@ is
        and Result (2) = 0
        and Result (3) = 0;
 
-   --  RFC 8422 Â§5.7 + RFC 5246 Â§7.4.7: Build ClientKeyExchange for ECDHE.
+   --  RFC 8422 5.7 + RFC 5246 7.4.7: Build ClientKeyExchange for ECDHE.
    --
    --  Wire format (inside handshake header):
    --    point_len[1] || point[N]
@@ -274,18 +274,18 @@ is
      Pre => Result'First = 0 and Result'Last >= Max_Client_Key_Exchange - 1,
      Post => Len <= Max_Client_Key_Exchange;
 
-   --  RFC 8422 Â§5.4: Parse ServerKeyExchange.
+   --  RFC 8422 5.4: Parse ServerKeyExchange.
    --
    --  Extracts:
    --    1. Named curve ID â validates against supported groups
    --    2. Server's ephemeral public key â stored in HC
    --    3. Signature â verified against server's certificate
    --
-   --  RFC 5246 Â§7.4.3: The signature verification MUST cover:
+   --  RFC 5246 7.4.3: The signature verification MUST cover:
    --    client_random || server_random || params
    --  Omitting the randoms from verification would allow MITM.
    --
-   --  RFC 5246 Â§7.4.3: "If the client has offered the
+   --  RFC 5246 7.4.3: "If the client has offered the
    --  'signature_algorithms' extension, the signature algorithm and
    --  hash algorithm MUST be a pair listed in that extension."
    procedure Parse_Server_Key_Exchange
@@ -299,7 +299,7 @@ is
        (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
        and then (if OK then HC.KE.Negotiated);
 
-   --  RFC 8422 Â§5.7: Parse ClientKeyExchange.
+   --  RFC 8422 5.7: Parse ClientKeyExchange.
    --
    --  Extracts the client's ephemeral ECDHE public key.
    --  The curve MUST match HC.KE.Curve (set during ServerKeyExchange).
@@ -318,7 +318,7 @@ is
                    and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local'Old)
                  then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local));
 
-   --  RFC 5246 Â§7.4.9: Build TLS 1.2 Finished message.
+   --  RFC 5246 7.4.9: Build TLS 1.2 Finished message.
    --
    --  Wire format: type[1]=0x14 || length[3]=0x00000C || verify_data[12]
    --  Total: exactly 16 bytes.
@@ -326,11 +326,11 @@ is
    --  verify_data = PRF(master_secret, finished_label,
    --                    Hash(handshake_messages))[0..11]
    --
-   --  RFC 5246 Â§7.4.9: "It is a fatal error if a Finished message is
+   --  RFC 5246 7.4.9: "It is a fatal error if a Finished message is
    --  not preceded by a ChangeCipherSpec message at the appropriate
    --  point in the handshake."
    --
-   --  RFC 5246 Â§7.4.9: "Recipients MUST verify that the contents
+   --  RFC 5246 7.4.9: "Recipients MUST verify that the contents
    --  of the Finished message are correct."
    --
    --  The Label MUST be "client finished" or "server finished".
@@ -356,9 +356,9 @@ is
        and Result (2) = 0
        and Result (3) = 12;
 
-   --  RFC 5246 Â§7.4.8: Build TLS 1.2 CertificateVerify.
+   --  RFC 5246 7.4.8: Build TLS 1.2 CertificateVerify.
    --
-   --  In TLS 1.2, the signed data is Hash(handshake_messages) â the
+   --  In TLS 1.2, the signed data is Hash(handshake_messages)  the
    --  transcript hash directly. There is NO context string prefix
    --  (unlike TLS 1.3 which prepends "TLS 1.3, server CertificateVerify\x00").
    --
@@ -385,7 +385,7 @@ is
        and Id.Has_Identity,
      Post => Len <= 520;
 
-   --  RFC 5246 Â§7.4.1.2: Build TLS 1.2 ServerHello.
+   --  RFC 5246 7.4.1.2: Build TLS 1.2 ServerHello.
    --
    --  Wire format (inside handshake header):
    --    server_version[2] = 0x0303 (TLS 1.2, real version not legacy)
@@ -396,9 +396,9 @@ is
    --    extensions_length[2] + extensions[...]
    --
    --  Required extensions:
-   --    renegotiation_info (0xFF01) â empty for initial handshake
+   --    renegotiation_info (0xFF01)  empty for initial handshake
    --
-   --  RFC 5246 Â§7.4.1.2: "The server MUST NOT send a version lower
+   --  RFC 5246 7.4.1.2: "The server MUST NOT send a version lower
    --  than the client's minimum version."
    procedure Build_Server_Hello_12
      (Negotiated : in Supported_Suite;
@@ -431,7 +431,7 @@ is
        and HC.KE = HC.KE'Old;
 
 
-   --  RFC 5246 Â§7.4.1.2: Parse TLS 1.2 ServerHello.
+   --  RFC 5246 7.4.1.2: Parse TLS 1.2 ServerHello.
    --
    --  Validates:
    --    - server_version = 0x0303
@@ -440,7 +440,7 @@ is
    --    - Extracts server_random
    --    - Extracts session_id (for resumption)
    --
-   --  RFC 5246 Â§7.4.3: "The cipher suite list ... contains the
+   --  RFC 5246 7.4.3: "The cipher suite list ... contains the
    --  cipher suites in the order of the client's preference."
    --  The server MUST select a suite from the client's list.
    procedure Parse_Server_Hello_12
@@ -461,7 +461,7 @@ is
        and then (if HC.HRR_Cookie_Len'Old <= N32 (HC.HRR_Cookie'Length)
                  then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
 
-   --  RFC 5077 Â§3.3 TLS 1.2 NewSessionTicket builder.
+   --  RFC 5077 3.3 TLS 1.2 NewSessionTicket builder.
    --
    --  Wire format (body, after the 4-byte HS header):
    --    ticket_lifetime_hint : uint32  (4 bytes, big-endian seconds)
@@ -485,7 +485,7 @@ is
        and then Result'Last >= 10 + Ticket'Last,
      Post => Len > 0 and then Result'Last >= Len - 1;
 
-   --  RFC 5077 Â§3.3 TLS 1.2 NewSessionTicket parser.
+   --  RFC 5077 3.3 TLS 1.2 NewSessionTicket parser.
    --
    --  Takes the BODY bytes (HS header already stripped). On success,
    --  OK := True; Lifetime_Hint and Ticket_Len out-params are set;
@@ -502,7 +502,7 @@ is
      Post =>
        (if OK then Ticket_Len <= N32 (NST_Body'Length) and Ticket_Len + 6 = N32 (NST_Body'Length));
 
-   --  RFC 5246 Â§7.4.2: Build TLS 1.2 Certificate message.
+   --  RFC 5246 7.4.2: Build TLS 1.2 Certificate message.
    --
    --  TLS 1.2 format (no certificate_request_context, no per-cert extensions):
    --    type[1]=0x0B || length[3] ||

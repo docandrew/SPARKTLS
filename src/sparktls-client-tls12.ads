@@ -11,8 +11,8 @@ with SPARKTLSCrypto.P384.ECDSA;
 --  Called from Client.Advance when S.Version = TLS_1_2.
 --
 --  Internal state tracking uses HC fields:
---    HC.CKE_Received_12  â client flight (CKE+CCS+Finished) sent
---    HC.CCS_Received     â server CCS received
+--    HC.CKE_Received_12   client flight (CKE+CCS+Finished) sent
+--    HC.CCS_Received      server CCS received
 --
 --  Handshake flow:
 --    1. Parse server flight: Certificate, ServerKeyExchange, ServerHelloDone

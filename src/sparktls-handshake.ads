@@ -81,19 +81,19 @@ is
    --  Pick a TLS sig-algo wire code that is (a) acceptable to the
    --  server (appears in Sig_Algs as a 2-byte big-endian list) and
    --  (b) compatible with our cert key type. Walks the server's list
-   --  in order and returns the first match. Returns 0 if no match â
+   --  in order and returns the first match. Returns 0 if no match
    --  caller should treat that as a CertificateVerify-impossible
    --  situation and either send an empty Cert or fail the handshake.
    --
    --  Sig_Algs layout: a flat byte buffer of (count*2) bytes where
    --  each pair is a 2-byte big-endian sig algo code (RFC 8446
-   --  Â§4.2.3 / RFC 5246 Â§7.4.1.4.1).
+   --  4.2.3 / RFC 5246 7.4.1.4.1).
    --
    --  Used by TLS 1.3 client (CertReq's signature_algorithms
    --  extension body) and TLS 1.2 client (CertReq's
    --  supported_signature_algorithms field).
    --  Allow_PKCS1_v1_5: True only for TLS 1.2 callers. RFC 8446
-   --  Â§4.2.3 forbids RSA-PKCS1-v1_5 codes from being selected for
+   --  4.2.3 forbids RSA-PKCS1-v1_5 codes from being selected for
    --  TLS 1.3 CertificateVerify even though servers may list them
    --  in `signature_algorithms` for back-compat.
    function Sig_Algo_Compatible_With_Cert

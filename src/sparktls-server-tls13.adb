@@ -237,7 +237,7 @@ is
    with Post => TK.Counter = 0 and TK.Suite = Suite;
 
    --  Alert_Desc / Error_Code mapping is in the parent SPARKTLS
-   --  package â child-unit visibility resolves call sites here.
+   --  package  child-unit visibility resolves call sites here.
 
    --  Send a fatal alert and set error state
    procedure Send_Alert_And_Error (S : in out Session; Err : Error_Code; Result : out Action)
@@ -306,7 +306,7 @@ is
    end Send_Encrypted_Alert;
 
    --  Append handshake message bytes to the transcript.
-   --  RFC 5246 Â§7.4.9 / RFC 8446 Â§4.4.1: append-only invariant
+   --  RFC 5246 7.4.9 / RFC 8446 4.4.1: append-only invariant
    --  (transcript drives Finished verify_data).
    procedure Append_Transcript (HC : in out Engaged_Context; Data : in Byte_Seq)
    with
@@ -385,7 +385,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.1.2: CH2 extensions must be in the same order
+      --  RFC 8446 4.1.2: CH2 extensions must be in the same order
       --  as CH1. Cookie is excluded from the hash in both messages.
       if S.HC.CH_Ext_Hash /= CH1_Hash then
          return;
@@ -454,7 +454,7 @@ is
       Validate_Client_Hello_Retry (S, D, Msg, Valid_CH2);
       if not Valid_CH2 then
          --  After HRR, CH2 parse/version/order failures are
-         --  illegal_parameter (RFC 8446 Â§4.1.4).
+         --  illegal_parameter (RFC 8446 4.1.4).
          Consume_Record;
          Free_CH2_Reasm;
          Send_Alert_And_Error (S, Illegal_Parameter, Result);
@@ -541,7 +541,7 @@ is
          end if;
 
          if Rec.Bad_Version then
-            --  RFC 8446 Â§5.1: legacy_record_version must lie
+            --  RFC 8446 5.1: legacy_record_version must lie
             --  in {3,1}..{3,4}. Out-of-band â protocol_version.
             Send_Alert_And_Error (S, Protocol_Version, Result);
             return;
@@ -568,7 +568,7 @@ is
                if CCS_OK then
                   Result := OK;
                else
-                  --  RFC 5246 Â§7.1 / RFC 8446 Â§5: CCS payload MUST
+                  --  RFC 5246 7.1 / RFC 8446 5: CCS payload MUST
                   --  be the single byte 0x01 (BoGo
                   --  BadChangeCipherSpec-*).
                   Send_Alert_And_Error (S, Unexpected_Message, Result);
@@ -719,7 +719,7 @@ is
    is
       use SPARKTLSCrypto.Hashing.SHA256;
 
-      --  RFC 8446 Â§4.1.3: SHA-256("HelloRetryRequest")
+      --  RFC 8446 4.1.3: SHA-256("HelloRetryRequest")
       HRR_Random : constant Bytes_32 :=
         (16#CF#,
          16#21#,
@@ -836,7 +836,7 @@ is
 
       pragma Assert (P = Msg_Len);
 
-      --  RFC 8446 Â§4.4.1 via the streaming ADT: select the digest the
+      --  RFC 8446 4.4.1 via the streaming ADT: select the digest the
       --  HRR names, then replace the transcript with the synthetic
       --  message_hash of ClientHello1.
       SPARKTLS_Transcript.Select_Hash
@@ -880,7 +880,7 @@ is
 
    --  Build the entire server handshake flight:
    --  ServerHello (plaintext record) + CCS + encrypted(EE + Cert + CV + Finished)
-   --  RFC 8446 Â§4.2.11 server-side PSK binder verification. Looks up
+   --  RFC 8446 4.2.11 server-side PSK binder verification. Looks up
    --  the cached PSK by ticket ID, recomputes the binder over the
    --  truncated ClientHello transcript, and either installs the PSK
    --  (S.HC.Using_PSK := True + S.HC.PSK.Value/Len populated) on a hash
@@ -1017,7 +1017,7 @@ is
       end;
    end Verify_PSK_Binder;
 
-   --  RFC 8446 Â§4.2.3 server-side signature-algorithm negotiation.
+   --  RFC 8446 4.2.3 server-side signature-algorithm negotiation.
    --  Walks S.HC.Peer_Sig_Algos in client-preferred order, picks the
    --  first entry compatible with our local identity's key type, and
    --  stores it in S.HC.Negotiated_Sig_Algo. Emits handshake_failure
@@ -1260,7 +1260,7 @@ is
          end;
       end if;
 
-      --  RFC 8446 Â§4.2.3: pick a sig_algorithm compatible with our
+      --  RFC 8446 4.2.3: pick a sig_algorithm compatible with our
       --  local cert. Skipped on PSK resumption (no signature in flight).
       if not S.HC.Using_PSK then
          declare
@@ -1275,7 +1275,7 @@ is
 
       --  Check if HelloRetryRequest is needed.
       --
-      --  RFC 8446 Â§4.1.4: choose the first mutually supported group
+      --  RFC 8446 4.1.4: choose the first mutually supported group
       --  in server preference order. If the client did not send a
       --  key_share for that selected group, send HRR requesting it.
       if not S.HC.HRR_Sent then
@@ -1321,7 +1321,7 @@ is
                end;
                Set_State (S, Wait_Client_Hello_Retry);
                S.HC.HRR_Sent := True;
-               --  RFC 8446 Â§4.1.4: at-most-one-HRR invariant. After
+               --  RFC 8446 4.1.4: at-most-one-HRR invariant. After
                --  this assignment, the outer `if not S.HC.HRR_Sent`
                --  guard prevents any further HRR from being built
                --  in this connection.
@@ -1349,7 +1349,7 @@ is
       Handshake.TLS13.Build_Server_Hello
         (TLS13_Suite (Flight_Suite), S.HC, SH_Buf, SH_Len);
       if SH_Len = 0 then
-         --  RFC 7748 Â§6.1: small-subgroup X25519 rejection sets
+         --  RFC 7748 6.1: small-subgroup X25519 rejection sets
          --  Ext_Parse_Err := Illegal_Parameter so we don't fold it
          --  into the catch-all handshake_failure.
          if S.HC.Ext_Parse_Err /= No_Error then
@@ -1574,7 +1574,7 @@ is
                begin
                   Key_Schedule.Derive_Finished_Key_384 (Fin_Key, S.HC.Server_HS_Secret);
                   HMAC384.HMAC_SHA_384 (Output => Verify_48, M => TS_Hash, K => Byte_Seq (Fin_Key));
-                  --  RFC 8446 Â§4.4.4: TLS 1.3 verify_data length =
+                  --  RFC 8446 4.4.4: TLS 1.3 verify_data length =
                   --  Hash.length. SHA-384 â 48 bytes.
                   pragma Assert (Verify_Data_Length_TLS13_RFC_8446_4_4_4 (Byte_Seq (Verify_48)));
 
@@ -1602,7 +1602,7 @@ is
                begin
                   Key_Schedule.Derive_Finished_Key (Fin_Key, S.HC.Server_HS_Secret (0 .. 31));
                   HMAC_SHA_256 (Output => Verify_32, M => TS_Hash, K => Byte_Seq (Fin_Key));
-                  --  RFC 8446 Â§4.4.4: TLS 1.3 verify_data length =
+                  --  RFC 8446 4.4.4: TLS 1.3 verify_data length =
                   --  Hash.length. SHA-256 â 32 bytes.
                   pragma Assert (Verify_Data_Length_TLS13_RFC_8446_4_4_4 (Byte_Seq (Verify_32)));
 
@@ -1832,7 +1832,7 @@ is
    end Set_Traffic_Keys;
 
    --  Process incoming records while waiting for client Finished
-   --  RFC 8446 Â§4.4.2 server-side mTLS Certificate handler. Parses
+   --  RFC 8446 4.4.2 server-side mTLS Certificate handler. Parses
    --  the client's certificate chain via the shared RFLX-backed
    --  helper, then transitions to Wait_Client_Cert_Verify (cert
    --  present) or Wait_Client_Finished (optional-mode empty cert).
@@ -1882,7 +1882,7 @@ is
             return;
          end if;
          if Cfg.Require_Client_Cert then
-            --  RFC 8446 Â§6 cert reject after server Finished â keys
+            --  RFC 8446 6 cert reject after server Finished  keys
             --  are live, MUST be encrypted alert.
             Send_Encrypted_Alert (S, Certificate_Required, Result);
             return;
@@ -1893,7 +1893,7 @@ is
       end if;
    end Handle_Client_Cert_13;
 
-   --  RFC 8446 Â§4.4.3 server-side mTLS CertificateVerify handler.
+   --  RFC 8446 4.4.3 server-side mTLS CertificateVerify handler.
    --  Reconstructs the signed Content (64 spaces || ctx_str || 0x00
    --  || transcript_hash), verifies the client's signature against
    --  its leaf cert, runs trust-store chain validation if a Trust
@@ -1958,7 +1958,7 @@ is
                Sig_Len    : constant N32 := N32 (Data (6)) * 256 + N32 (Data (7));
                Sig_Start  : constant N32 := 8;
             begin
-               --  RFC 8446 Â§4.2.3: rsa_pkcs1_* MUST NOT be used in
+               --  RFC 8446 4.2.3: rsa_pkcs1_* MUST NOT be used in
                --  TLS 1.3 CV.
                if Sig_Scheme = 16#0401# or Sig_Scheme = 16#0501# or Sig_Scheme = 16#0601# then
                   Send_Encrypted_Alert (S, Illegal_Parameter, Result);
@@ -2290,11 +2290,11 @@ is
          Expected_Len    : constant N32 :=
            (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384 then 48 else 32);
       begin
-         --  Length must match exactly. RFC 8446 Â§4.4.4
+         --  Length must match exactly. RFC 8446 4.4.4
          --  Finished is the last handshake message in
          --  the client's first flight; any plaintext
          --  bytes after it in the same record is
-         --  excess handshake data â fatal
+         --  excess handshake data  fatal
          --  unexpected_message (BoGo
          --  TrailingDataWithFinished, expected error
          --  ":EXCESS_HANDSHAKE_DATA:" / "remote error:
@@ -2335,7 +2335,7 @@ is
             return;
          end if;
 
-         --  Length is correct â verify HMAC
+         --  Length is correct  verify HMAC
          declare
             Verified : Boolean := False;
          begin
@@ -2470,7 +2470,7 @@ is
 
                --  Build and send NewSessionTicket only if the
                --  client signalled psk_dhe_ke in psk_key_
-               --  exchange_modes (RFC 8446 Â§4.6.1 + Â§4.2.9).
+               --  exchange_modes (RFC 8446 4.6.1 + 4.2.9).
                --  BoGo TLS13-ExpectNoSessionTicketOnBadKE
                --  Mode-Server checks that we DON'T issue NST
                --  when the client only offered psk_ke.
@@ -2484,7 +2484,7 @@ is
                      --  ticket_len(2) + ticket(16) + ext_len(2) +
                      --  GREASE extension(4) + optional
                      --  ticket_flags(7) = 39 or 46.
-                     --  We never emit the early_data extension â
+                     --  We never emit the early_data extension
                      --  0-RTT is intentionally out of scope (see
                      --  Cfg.Resume_Ticket comment in sparktls.ads).
                      Include_Flags : constant Boolean := S.HC.Cfg.TLS13_Resumption_Across_Names;
@@ -2542,7 +2542,7 @@ is
                      end if;
 
                      --  NewSessionTicket is a post-handshake
-                     --  optimisation (RFC 8446 Â§4.6.1); it is
+                     --  optimisation (RFC 8446 4.6.1); it is
                      --  not required for handshake completion.
                      --  If S.Output is too full to hold it,
                      --  skip silently and roll back the AEAD
@@ -2677,7 +2677,7 @@ is
             return;
          end if;
 
-         --  RFC 8446 Â§5.4: TLSInnerPlaintext MUST NOT exceed
+         --  RFC 8446 5.4: TLSInnerPlaintext MUST NOT exceed
          --  2^14 + 1 octets. Check before decrypting.
          if Frag_Len - Records.Tag_Size > Records.Max_Fragment + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2697,7 +2697,7 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not Dec_Valid then
-            --  RFC 8446 Â§4.2.10 / Â§4.6.1: 0-RTT is intentionally
+            --  RFC 8446 4.2.10 / 4.6.1: 0-RTT is intentionally
             --  not supported by this stack. If a client tried
             --  it anyway (Early_Data_Offered set in CH), its
             --  records are encrypted with a key we never
@@ -2715,7 +2715,7 @@ is
             --  MAC failure or empty inner plaintext.
             --  Send alert with app keys (client switched to app
             --  keys after receiving our Finished).
-            --  RFC 8446 Â§5.2: bad_record_mac (20)
+            --  RFC 8446 5.2: bad_record_mac (20)
             declare
                Ignored_A : N32;
             begin
@@ -2902,13 +2902,13 @@ is
 
          when others =>
             --  Plaintext handshake/alert records are not allowed here.
-            --  RFC 8446 Â§5.1: after ServerHello, all records MUST be
+            --  RFC 8446 5.1: after ServerHello, all records MUST be
             --  encrypted (content type application_data or CCS).
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
             if Rec.Content = Records.Content_Alert then
                --  Plaintext alert during post-ServerHello handshake.
-               --  Just close â do not respond.
+               --  Just close  do not respond.
                S.Last_Error := Unexpected_Message;
                Set_State (S, Error_State);
                Result := Error_Alert;
@@ -2921,7 +2921,7 @@ is
 
    --  Process records in Connected state
    ----------------------------------------------------------------------
-   --  Post-handshake handshake messages (RFC 8446 Â§4.6)
+   --  Post-handshake handshake messages (RFC 8446 4.6)
    --
    --  Until 2026-08-17 the server silently dropped every post-handshake
    --  handshake record ("when 16#16# => Result := OK;"). That was not
@@ -2943,7 +2943,7 @@ is
       Post_HS_Reasm.Reset (S.Post_HS);
    end Reset_Post_HS_Reasm;
 
-   --  RFC 8446 Â§4.6.3. The peer's KeyUpdate rotates its WRITE key, which
+   --  RFC 8446 4.6.3. The peer's KeyUpdate rotates its WRITE key, which
    --  for a server is S.Client_App (our read direction). A request_update
    --  obliges us to rotate S.Server_App and say so before our next
    --  Application Data record.
@@ -3016,7 +3016,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.6.3 requires a reply "prior to sending its next
+      --  RFC 8446 4.6.3 requires a reply "prior to sending its next
       --  Application Data record" -- the obligation is per-write, not
       --  per-message. Defer it: a burst of requests collapses to a single
       --  KeyUpdate, which is what the peer expects. Replying inline would
@@ -3044,7 +3044,7 @@ is
             Send_Encrypted_Alert (S, Unexpected_Message, Result);
          end if;
       else
-         --  RFC 8446 Â§4.6: a server legitimately receives few
+         --  RFC 8446 4.6: a server legitimately receives few
          --  post-handshake messages. NewSessionTicket is server-to-client,
          --  and post-handshake client auth is not supported here, so
          --  anything else is unexpected rather than ignorable.
@@ -3127,7 +3127,7 @@ is
       if not Rec.OK then
          if Rec.Record_Len > 0 then
             --  Parsed successfully but unknown content type.
-            --  RFC 8446 Â§5: unexpected_message
+            --  RFC 8446 5: unexpected_message
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Encrypted_Alert (S, Unexpected_Message, Result);
          else
@@ -3141,8 +3141,8 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if Rec.Content = Records.Content_Alert then
-            --  RFC 8446 Â§5.1: unencrypted alert after handshake.
-            --  Just close â do not respond with an alert.
+            --  RFC 8446 5.1: unencrypted alert after handshake.
+            --  Just close  do not respond with an alert.
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -3175,7 +3175,7 @@ is
       begin
          if Frag_Len < Records.Tag_Size + 1 then
             --  Too short for AEAD tag + at least 1 byte of ciphertext
-            --  (the inner content type byte). RFC 8446 Â§5.4.
+            --  (the inner content type byte). RFC 8446 5.4.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             declare
                Ignored_Alert_Out : N32;
@@ -3197,7 +3197,7 @@ is
             return;
          end if;
 
-         --  RFC 8446 Â§5.4: TLSInnerPlaintext MUST NOT exceed
+         --  RFC 8446 5.4: TLSInnerPlaintext MUST NOT exceed
          --  2^14 + 1 octets. Check before decrypting.
          if Frag_Len - Records.Tag_Size > Records.Max_Fragment + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -3233,7 +3233,7 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not Dec_Valid then
-            --  MAC failure or empty inner plaintext (RFC 8446 Â§5.2/Â§5.4)
+            --  MAC failure or empty inner plaintext (RFC 8446 5.2/5.4)
             --  Send encrypted bad_record_mac alert
             declare
                Ignored_Alert_Out : N32;
@@ -3249,7 +3249,7 @@ is
             S.Last_Error := Bad_Record_MAC;
             --  Return Has_Output to drain the alert before Error_Alert
             if Output_Pending (S) > 0 then
-               --  RFC 8446 Â§5.2: AEAD-failure invariant: alert
+               --  RFC 8446 5.2: AEAD-failure invariant: alert
                --  queued, Error_State entered, Last_Error pinned
                --  to Bad_Record_MAC. No timing oracle leaked.
                Result := Has_Output;
@@ -3279,7 +3279,7 @@ is
                   S.Empty_Records_Recvd := 0;
                   Result := Plaintext_Ready;
                else
-                  --  Empty plaintext record â count + cap (BoGo
+                  --  Empty plaintext record  count + cap (BoGo
                   --  SendEmptyRecords / TOO_MANY_EMPTY_FRAGMENTS).
                   --  Check BEFORE incrementing: the counter then never exceeds the
                   --  cap, so the bound holds BY CONSTRUCTION rather than being
@@ -3302,7 +3302,7 @@ is
                end if;
 
             when 16#16# =>
-               --  RFC 8446 Â§4.6 post-handshake handshake message. Until
+               --  RFC 8446 4.6 post-handshake handshake message. Until
                --  2026-08-17 this was "Result := OK" -- silently dropped,
                --  which broke any peer that sent KeyUpdate: it rotated its
                --  write key, we never rotated the matching read key, and
@@ -3320,7 +3320,7 @@ is
                end if;
 
             when 16#15# =>
-               --  Alert. RFC 8446 Â§6 / RFC 5246 Â§7.2: 2-byte payload
+               --  Alert. RFC 8446 6 / RFC 5246 7.2: 2-byte payload
                --  `level | description`. Validate level, distinguish
                --  close_notify, tolerate user_canceled (with cap),
                --  reject every other warning with decode_error, and
@@ -3345,9 +3345,9 @@ is
                   Set_State (S, Error_State);
                   Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                elsif Plaintext (1) = 0 then
-                  --  close_notify â reply in kind (warning level 1).
+                  --  close_notify  reply in kind (warning level 1).
                   --
-                  --  RFC 8446 Â§6.1: record the orderly close so the
+                  --  RFC 8446 6.1: record the orderly close so the
                   --  application can tell a finished stream from a
                   --  truncated one.
                   S.Peer_Closed_Cleanly := True;
@@ -3371,7 +3371,7 @@ is
                   end if;
                elsif Plaintext (0) = 1 then
                   --  Warning-level alert (level=1) other than
-                  --  close_notify. RFC 8446 Â§6.1 deprecates these
+                  --  close_notify. RFC 8446 6.1 deprecates these
                   --  but keeps user_canceled for back-compat.
                   if Plaintext (1) = 90 then
                      --  Check BEFORE incrementing: the counter then never exceeds the
@@ -3404,7 +3404,7 @@ is
                   end if;
                else
                   --  Fatal alert from peer (level=2): close without
-                  --  reply per RFC 8446 Â§6.2 (no alerts about alerts).
+                  --  reply per RFC 8446 6.2 (no alerts about alerts).
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
                   Result := Error_Alert;
@@ -3412,7 +3412,7 @@ is
 
             when others =>
                --  Invalid inner content type (including zero).
-               --  RFC 8446 Â§5.4: unexpected_message
+               --  RFC 8446 5.4: unexpected_message
                Send_Encrypted_Alert (S, Unexpected_Message, Result);
          end case;
       end;

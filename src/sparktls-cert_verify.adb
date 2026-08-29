@@ -62,7 +62,7 @@ is
 
       --  Parse SEQUENCE length. Supports short-form (single byte 0..127)
       --  and long-form 0x81 (one length byte 128..255). Reject 0x82+
-      --  (longer payloads) â DER ECDSA sigs for P-256/P-384/P-521 fit
+      --  (longer payloads)  DER ECDSA sigs for P-256/P-384/P-521 fit
       --  in <= 200 bytes, so any longer encoding is malformed.
       if Idx > Sig'Last then
          return;
@@ -107,7 +107,7 @@ is
       --   - byte 0 with high bit set requires a leading 0x00 (otherwise
       --     the encoding would denote a negative value)
       --   - leading 0x00 followed by byte < 0x80 is superfluous (would
-      --     shrink to one fewer byte) â also non-canonical
+      --     shrink to one fewer byte)  also non-canonical
       R_Off := 0;
       if R_Len > 0 and then Idx <= Sig'Last and then Sig (Idx) = 0 then
          if R_Len < 2 or else Idx + 1 > Sig'Last or else Sig (Idx + 1) < 16#80# then
@@ -485,11 +485,11 @@ is
       Now      : X509.Date_Time;
       Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result is
    begin
-      --  RFC 5280 Â§6.1: Structural validation of trust anchor.
-      --  Trust anchors are trusted by definition (RFC 5280 Â§6.1.1),
+      --  RFC 5280 6.1: Structural validation of trust anchor.
+      --  Trust anchors are trusted by definition (RFC 5280 6.1.1),
       --  but we validate structure to catch obviously broken certs.
       --  Exception: we tolerate Bad_Serial because legacy roots
-      --  (Starfield G2, serial=0) violate RFC 5280 Â§4.1.2.2 but
+      --  (Starfield G2, serial=0) violate RFC 5280 4.1.2.2 but
       --  are in every major trust store.
       if not X509.Is_Structurally_Valid (Root, Now) then
          --  Retry without serial: if serial is the only problem,
@@ -515,26 +515,26 @@ is
                return Err_Parse_Failed;
             end if;
          end if;
-         --  Only Bad_Serial â tolerate for trust anchors
+         --  Only Bad_Serial  tolerate for trust anchors
 
       end if;
 
-      --  RFC 5280 Â§4.2.1.9: Trust anchors must be CAs
+      --  RFC 5280 4.2.1.9: Trust anchors must be CAs
       if not X509.Is_CA (Root) then
          return Err_Not_CA;
       end if;
 
-      --  RFC 5280 Â§4.2.1.9: CA certs MUST mark BC as critical
+      --  RFC 5280 4.2.1.9: CA certs MUST mark BC as critical
       if not X509.Is_Basic_Constraints_Critical (Root) then
          return Err_Not_CA;
       end if;
 
-      --  RFC 5280 Â§4.2.1.2: CA certs MUST have SKI
+      --  RFC 5280 4.2.1.2: CA certs MUST have SKI
       if X509.CA_Missing_Subject_Key_ID (Root) then
          return Err_Structural;
       end if;
 
-      --  RFC 5280 Â§4.2.1.1: non-self-issued certs MUST have AKI
+      --  RFC 5280 4.2.1.1: non-self-issued certs MUST have AKI
       if not X509.Is_Self_Issued (Root, Root_DER) and then not X509.Authority_Key_ID (Root).Present
       then
          return Err_Missing_AKI;
@@ -630,7 +630,7 @@ is
          return Err_Not_CA;
       end if;
 
-      --  3. RFC 5280 Â§4.2.1.1: non-root certs MUST have AKI
+      --  3. RFC 5280 4.2.1.1: non-root certs MUST have AKI
       if not X509.Authority_Key_ID (Cert).Present then
          return Err_Missing_AKI;
       end if;
@@ -651,12 +651,12 @@ is
       end if;
 
       --  7. Name constraints
-      --  RFC 5280 Â§4.2.1.10: NC MUST be critical.
+      --  RFC 5280 4.2.1.10: NC MUST be critical.
       --  CABF BRs explicitly allow non-critical NC for legacy compat.
       if Mode = Mode_RFC5280 and then X509.Has_NC_Noncritical (Issuer) then
          return Err_Name_Constraint;
       end if;
-      --  RFC 5280 Â§4.2.1.10: NC do not apply to self-issued intermediates
+      --  RFC 5280 4.2.1.10: NC do not apply to self-issued intermediates
       --  (but always apply to the leaf, i.e. when Must_Be_CA = False)
       if not (Must_Be_CA and then X509.Is_Self_Issued (Cert, Cert_DER)) then
          if not X509.Satisfies_Name_Constraints (Cert, Cert_DER, Issuer, Issuer_DER) then
@@ -740,7 +740,7 @@ is
 
          --  Note: CABF BR 7.1.4.3 requires CN to match a SAN entry,
          --  but this is a CA issuance requirement. Validators do not
-         --  enforce this â it would reject many valid certificates
+         --  enforce this  it would reject many valid certificates
          --  already in the wild.
 
          --  CABF BRs: leaf must not be a CA.
@@ -758,7 +758,7 @@ is
 
       end if;
 
-      --  RFC 8446 Â§4.4.2.2 + RFC 5246 Â§7.4.2 + RFC 5280 Â§4.2.1.3:
+      --  RFC 8446 4.4.2.2 + RFC 5246 7.4.2 + RFC 5280 4.2.1.3:
       --  when the leaf's keyUsage extension is present, it MUST allow
       --  digitalSignature for the negotiated certificate role. Server
       --  certs sign ServerKeyExchange/CertificateVerify; client certs
@@ -1218,7 +1218,7 @@ is
                     Mode             => Mode);
                if R = Valid then
                   --  This intermediate is a valid issuer; recurse.
-                  --  RFC 5280 Â§4.2.1.9: self-issued certs don't count
+                  --  RFC 5280 4.2.1.9: self-issued certs don't count
                   --  toward pathLenConstraint.
                   declare
                      Next_Used : Used_Set := Used;
@@ -1310,7 +1310,7 @@ is
             --  RSA-PSS-SHA256 (0x0804) or RSA-PKCS1-SHA256 (0x0401).
             --  Both schemes are accepted at this layer; the TLS 1.3
             --  caller is responsible for rejecting rsa_pkcs1_* per
-            --  RFC 8446 Â§4.2.3 before reaching here.
+            --  RFC 8446 4.2.3 before reaching here.
 
             when 16#0804# | 16#0401# =>
                if PK_Algo /= X509.Algo_RSA then

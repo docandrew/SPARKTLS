@@ -77,11 +77,10 @@ is
        and then S.State = Wait_Client_Hello
        and then S.Role = Role_Server;
 
-
    --  Process records in Connected state for TLS 1.2.
    --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).
    --  Dispatches on inner content type (0x17=app data, 0x15=alert).
    procedure Process_Connected_12 (S : in out Session; Result : out Action)
-   with Pre => S.State in Connected | Closing and then Empty_Records_Bounded_RFC_8446_5_2 (S);
+   with Pre => S.State in Connected | Closing;
 
 end SPARKTLS.Server.TLS12;

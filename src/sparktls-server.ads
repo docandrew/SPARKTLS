@@ -62,7 +62,7 @@ is
       --  SPARK_Mode => Off, and let a null Random reach Init.
    with Pre => Random /= null and then Local /= null and then Local.Has_Identity;
    --  Select_Identity: optional SNI-based identity selector
-   --  (RFC 6066 Â§3 / RFC 8446 Â§4.4.2.4). When non-null and the client
+   --  (RFC 6066 3 / RFC 8446 4.4.2.4). When non-null and the client
    --  sent a non-empty server_name extension, the callback receives
    --  the hostname and returns the matching Identity_Access. A
    --  non-null result overrides `Local` for this session. A null
@@ -73,7 +73,7 @@ is
    --  checks certificate notBefore / notAfter. Also required for
    --  TLS 1.2 session-ticket expiry enforcement (without it the
    --  Decrypt_Ticket path skips the age window check).
-   --  Note: 0-RTT (RFC 8446 Â§2.3 / Â§4.2.10) is intentionally not
+   --  Note: 0-RTT (RFC 8446 2.3 / 4.2.10) is intentionally not
    --  supported on either side. NST omits the early_data extension,
    --  EE never echoes it, and any client that speculatively sends
    --  0-RTT records has them silently dropped (the bounded skip in
@@ -83,7 +83,7 @@ is
    --  ALPN (RFC 7301): the protocol name we'll select when a
    --  client offers it in the application_layer_protocol_negotiation
    --  extension. Empty string means we don't echo ALPN even if
-   --  the client offered something. Single-protocol only â for
+   --  the client offered something. Single-protocol only  for
    --  multi-protocol selection use Init with a built Config.
    --  SPARK_Mode Off: Ticket_Store_Access is access-all (shared mutable
    --  cache). SPARK's ownership model treats it as a move, but the pointer
@@ -102,10 +102,10 @@ is
      --  'Constrained Pre + Role Post are subsumed by the profile.
    ;
 
-   --  RFC 8446 Â§4.1: Step the server handshake / record processing
+   --  RFC 8446 4.1: Step the server handshake / record processing
    --  state machine.
    --
-   --  Result semantics (RFC 8446 Â§4, Â§5, Â§6):
+   --  Result semantics (RFC 8446 4, 5, 6):
    --    OK           â progress made, state may or may not change
    --    Need_Input   â caller must feed more ciphertext
    --    Has_Output   â caller must drain and send ciphertext
@@ -121,7 +121,7 @@ is
       --  UNSTATEABLE rather than merely required.
    with Pre => State (S) /= Idle;
 
-   --  RFC 8446 Â§6.1: Send a close_notify alert.
+   --  RFC 8446 6.1: Send a close_notify alert.
    --  Transitions to Closing state.
    procedure Close_Notify
      (S : in out Session)

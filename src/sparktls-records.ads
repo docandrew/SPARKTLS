@@ -19,7 +19,7 @@ is
       Content_Change_Cipher_Spec,
       Content_Unknown);
 
-   --  RFC 8446 Â§5.1: Parsed TLS record header.
+   --  RFC 8446 5.1: Parsed TLS record header.
    type Parse_Result is record
       OK           : Boolean := False;
       Overflow     : Boolean := False;  --  fragment exceeds RFC limit
@@ -38,13 +38,13 @@ is
           and not Parse_Result.Overflow
           and not Parse_Result.Bad_Version);
 
-   --  RFC 8446 Â§5.1: Parse a TLS record header (5 bytes).
+   --  RFC 8446 5.1: Parse a TLS record header (5 bytes).
    --  Validates content type and fragment length bounds.
    --
    --  Loose_Initial: when True, the minor record-version byte is
-   --  unconstrained (only major must be 0x03). RFC 5246 Â§E.1 / RFC
-   --  8446 Â§5.1 tell servers to tolerate any record version on the
-   --  very first ClientHello â BoGo LooseInitialRecordVersion. All
+   --  unconstrained (only major must be 0x03). RFC 5246 E.1 / RFC
+   --  8446 5.1 tell servers to tolerate any record version on the
+   --  very first ClientHello  BoGo LooseInitialRecordVersion. All
    --  other call sites leave the default False so mid-handshake junk
    --  versions still trip Bad_Version (BoGo CheckRecordVersion).
    procedure Parse_Record_Header
@@ -71,7 +71,7 @@ is
               and Result.Fragment_Len
                   <= Max_Fragment
                      + Max_Record_Overhead
-                       --  RFC 8446 Â§5.1
+                       --  RFC 8446 5.1
               and Result.Fragment_Pos
                   = Record_Header_Size
                     --  Body sets Record_Len := Header_Size + Fragment_Len,
@@ -80,7 +80,7 @@ is
               and not Result.Overflow)                  --  type predicate
        and (if Result.Overflow then not Result.OK);  --  overflow â !OK
 
-   --  RFC 8446 Â§5.1: Build a plaintext handshake record.
+   --  RFC 8446 5.1: Build a plaintext handshake record.
    --  Used for ClientHello and ServerHello (before encryption).
    procedure Build_Handshake_Record
      (Fragment : in Byte_Seq; Output : in out IO_Buffer; Bytes_Out : out N32)
@@ -88,9 +88,9 @@ is
      Pre =>
        Fragment'First = 0
        and Fragment'Length > 0
-       and Fragment'Length <= Max_Fragment;  --  RFC 8446 Â§5.1
+       and Fragment'Length <= Max_Fragment;  --  RFC 8446 5.1
 
-   --  RFC 8446 Â§5.1: Build the initial ClientHello record with the
+   --  RFC 8446 5.1: Build the initial ClientHello record with the
    --  legacy_record_version = TLS 1.0 (0x0301). The RFC permits both
    --  0x0301 and 0x0303 for the initial ClientHello, but middleboxes
    --  and version-strict peers (e.g. BoGo's VersionNegotiation tests)
@@ -108,11 +108,11 @@ is
      --  which is what blocked Client.Init's Output_Pending postcondition.
      Post => (if Bytes_Out > 0 then Available (Output) > 0);
 
-   --  RFC 8446 Â§5.2: Build an encrypted TLS record.
+   --  RFC 8446 5.2: Build an encrypted TLS record.
    --  Inner_Type: 0x15 (alert), 0x16 (handshake), 0x17 (application_data).
    --  The nonce counter is incremented for each record.
-   --  RFC 8446 Â§5.2: Build an encrypted TLS record.
-   --  Nonce counter increments by 1 for each record (Â§5.3).
+   --  RFC 8446 5.2: Build an encrypted TLS record.
+   --  Nonce counter increments by 1 for each record (5.3).
    procedure Build_Encrypted_Record
      (Plaintext  : in Byte_Seq;
       Inner_Type : in Byte;
@@ -137,13 +137,13 @@ is
      Pre =>
        Plaintext'Length
        <= Max_Fragment
-          --  RFC 8446 Â§5.4: only alert/handshake/application_data
+          --  RFC 8446 5.4: only alert/handshake/application_data
           --  may be emitted as inner content type. CCS (0x14)
           --  only appears in unencrypted records.
-       and SPARKTLS.Inner_Type_Valid_RFC_8446_5_4 (Inner_Type),             --  RFC 8446 Â§5.5
+       and SPARKTLS.Inner_Type_Valid_RFC_8446_5_4 (Inner_Type),             --  RFC 8446 5.5
      Post =>
        (if Bytes_Out > 0 then Keys.Counter = Keys.Counter'Old + 1
-        --  RFC 8446 Â§5.3
+        --  RFC 8446 5.3
         else
           Keys.Counter = Keys.Counter'Old)
        and then (if Free_Space (Output'Old)
@@ -189,13 +189,13 @@ is
             else Keys.Counter = Keys'Old.Counter and not Valid)
        and (if Valid then (Plain_Len = 0 or else Plain_Len - 1 <= Plaintext'Last));     --  bounds
 
-   --  RFC 8446 Â§5: Build a Change Cipher Spec record.
+   --  RFC 8446 5: Build a Change Cipher Spec record.
    --  Always exactly 6 bytes: header(5) + payload(1 byte = 0x01).
    procedure Build_CCS_Record (Output : in out IO_Buffer; Bytes_Out : out N32)
-   with Post => Bytes_Out in 0 | 6;  --  RFC 8446 Â§5: CCS is exactly 6 bytes
+   with Post => Bytes_Out in 0 | 6;  --  RFC 8446 5: CCS is exactly 6 bytes
 
-   --  RFC 8446 Â§6: Build an encrypted alert record.
-   --  RFC 8446 Â§6.1 / Â§6.2 binding: warning level only for close_notify
+   --  RFC 8446 6: Build an encrypted alert record.
+   --  RFC 8446 6.1 / 6.2 binding: warning level only for close_notify
    --  / user_canceled; everything else is fatal.
    procedure Build_Alert_Record
      (Level     : in Byte;
@@ -213,7 +213,7 @@ is
    --  Uses RFLX-generated alert serializer for the payload.
    --  Used during handshake before keys are established.
    --
-   --  RFC 8446 Â§6 (and the RFLX schema):
+   --  RFC 8446 6 (and the RFLX schema):
    --    Warning level (1) is ONLY valid with close_notify (0) or
    --    user_canceled (90).
    --    Fatal level (2) is for all OTHER alerts (close_notify and

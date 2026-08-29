@@ -12,8 +12,8 @@ package body SPARKTLS.Credentials
     --  SPARK_Mode Off: Read_File performs file I/O with exceptions.
     --  All pure parsing is in Credentials.Parsing (SPARK_Mode On).
 is
-   --  Read entire file into a String (file I/O â only non-SPARK code)
-   --  Read a file into a String. Capped at 1 MB â matches the
+   --  Read entire file into a String (file I/O  only non-SPARK code)
+   --  Read a file into a String. Capped at 1 MB  matches the
    --  PEM.Max_PEM_Input precondition. Mozilla's CA bundle is ~220 KB
    --  with ~140 roots; the previous 64 KB cap silently truncated
    --  after ~43 certs which is why real-world chain validation

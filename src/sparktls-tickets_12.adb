@@ -193,7 +193,7 @@ is
       Tag := SPARKNaCl.Bytes_16 (Ticket (T_Len - 16 .. T_Len - 1));
       declare
          CL           : constant N32 := Ct_Len;
-         --  Slide to First=0 â the Decrypt_256 precondition is
+         --  Slide to First=0  the Decrypt_256 precondition is
          --  C'First = 0 and AAD'First = 0; slicing Ticket (a..b)
          --  preserves a as 'First, violating the precondition for
          --  a /= 0. Build a copy with origin 0 to satisfy it.
@@ -233,7 +233,7 @@ is
 
       --  Expiry / clock-skew check.
       if Plain.Created_At > Now then
-         --  Ticket from the future â clock skew or forged. Reject.
+         --  Ticket from the future  clock skew or forged. Reject.
          return;
       end if;
       if Now - Plain.Created_At > Unsigned_64 (Max_Age) then

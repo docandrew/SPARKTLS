@@ -205,8 +205,8 @@ is
           and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length));
 
    --  Append handshake message bytes to the transcript.
-   --  RFC 5246 Â§7.4.9 / RFC 8446 Â§4.4.1: the transcript drives
-   --  Finished verify_data, so it is append-only â losing bytes
+   --  RFC 5246 7.4.9 / RFC 8446 4.4.1: the transcript drives
+   --  Finished verify_data, so it is append-only  losing bytes
    --  desyncs from the peer.
 
    procedure Configure
@@ -332,7 +332,7 @@ is
             Skipped_Early_Data_Records  => S.HC.Skipped_Early_Data_Records);
       end;
 
-      --  RFC 8446 Â§5.1: initial ClientHello uses record version 0x0301
+      --  RFC 8446 5.1: initial ClientHello uses record version 0x0301
       --  (TLS 1.0) for middlebox compatibility, even though the actual
       --  protocol is negotiated via supported_versions.
       Records.Build_Initial_ClientHello_Record
@@ -383,7 +383,7 @@ is
       --  the allocator ever recycles contexts.
       S.HC.Cfg := Cfg;
 
-      --  RFC 8446 Â§4.6.1: if the caller passed a previously-saved
+      --  RFC 8446 4.6.1: if the caller passed a previously-saved
       --  resumption ticket via Cfg, copy it into S.Ticket before
       --  Build_Client_Hello so the CH carries the pre_shared_key
       --  extension and the binder is computed from the ticket's PSK.
@@ -403,7 +403,7 @@ is
    end Init;
 
    --  Process a decrypted handshake message during the handshake
-   --  RFC 8446 Â§4.3.1 client-side EncryptedExtensions handler.
+   --  RFC 8446 4.3.1 client-side EncryptedExtensions handler.
    --  Body shape check (â¥ 2-byte ext-len prefix), ALPN extraction
    --  per RFC 7301, transition to Wait_Server_Finished (PSK path)
    --  or Wait_Certificate (full handshake).
@@ -683,10 +683,10 @@ is
       if S.Version = TLS_1_3 then
          SPARKTLS.Client.TLS13.Complete_Server_Hello_13 (S, D);
       else
-         --  RFC 5077 Â§3.4 client-side resume detection.
+         --  RFC 5077 3.4 client-side resume detection.
          --  If we sent a session_ticket ext AND the
          --  server echoed it AND we have a cached
-         --  ticket AND the suites match â we're in
+         --  ticket AND the suites match  we're in
          --  the abbreviated handshake. Install the
          --  cached master_secret + flag for the
          --  TLS 1.2 flight machinery to skip Cert/
@@ -716,10 +716,10 @@ is
          Parse_OK : Boolean;
          Candidate : TLS_Version;
       begin
-         --  RFC 8446 Â§4 / RFC 5246 Â§7.4: the first
+         --  RFC 8446 4 / RFC 5246 7.4: the first
          --  message in this state MUST be ServerHello
          --  (type 2). Any other handshake type is an
-         --  unexpected_message â BoGo
+         --  unexpected_message  BoGo
          --  WrongMessageType-ServerHello tests this.
          if Frag (Frag'First) /= Handshake.HT_Server_Hello then
             S.Last_Error := Unexpected_Message;
@@ -748,7 +748,7 @@ is
             --  Queue a plaintext alert on the wire so
             --  the peer sees a real :DECODE_ERROR: /
             --  :ILLEGAL_PARAMETER: rather than TCP RST.
-            --  Pre-key state â alert is unencrypted.
+            --  Pre-key state  alert is unencrypted.
             declare
                Ignored_A : N32;
             begin
@@ -774,11 +774,11 @@ is
             return;
          end if;
 
-         --  RFC 8446 Â§4.1.4 HelloRetryRequest: if
+         --  RFC 8446 4.1.4 HelloRetryRequest: if
          --  the SH was actually an HRR (sentinel
          --  random recognised by Parse_Server_Hello),
          --  replace the CH1 transcript with a
-         --  synthetic `message_hash` (Â§4.4.1):
+         --  synthetic `message_hash` (4.4.1):
          --
          --    Transcript-Hash(CH1) â 32 bytes
          --    Transcript becomes 0xFE 00 00 20 || hash
@@ -843,7 +843,7 @@ is
                   return;
                end if;
                SPARKTLS_Transcript.Append (S.HC.TS, CH2_Buf (0 .. CH2_Len - 1));
-               --  RFC 8446 Â§D.4 middlebox-compat:
+               --  RFC 8446 D.4 middlebox-compat:
                --  emit dummy CCS between HRR and
                --  CH2 so the server's
                --  expectChangeCipherSpec is
@@ -942,7 +942,7 @@ is
             return;
          end if;
 
-         --  RFC 8446 Â§5.1 / Â§5.2: a record whose declared
+         --  RFC 8446 5.1 / 5.2: a record whose declared
          --  fragment length exceeds the per-type cap must be
          --  rejected with `record_overflow`. Without this
          --  check the parser would loop on Need_Input
@@ -964,7 +964,7 @@ is
                Handle_WSH_HS_Frame (S, D, Rec, Result);
 
             when Records.Content_Change_Cipher_Spec =>
-               --  RFC 8446 Â§5: a TLS 1.3 client may receive at
+               --  RFC 8446 5: a TLS 1.3 client may receive at
                --  most ONE CCS for middlebox-compat between
                --  ServerHello and the encrypted handshake.
                --  Subsequent CCS records are unexpected. BoGo
@@ -1045,8 +1045,8 @@ is
                end;
 
             when others =>
-               --  RFC 8446 Â§6.2: any other record type â most
-               --  commonly Content_Application_Data â before
+               --  RFC 8446 6.2: any other record type  most
+               --  commonly Content_Application_Data  before
                --  ServerHello is a record-layer state-machine
                --  violation. Reject with unexpected_message
                --  (BoGo AppDataBeforeHandshake, expected
@@ -1304,7 +1304,7 @@ is
 
    --  Helper: derive key/IV and set Traffic_Keys based on suite.
    --  Suite must be one of the three RFC 8446 TLS-1.3 / RFC 5288/7905
-   --  TLS-1.2 negotiable AEAD suites â matches the Traffic_Keys
+   --  TLS-1.2 negotiable AEAD suites  matches the Traffic_Keys
    --  Predicate at sparktls.ads:770.
    procedure Close_Notify (S : in out Session) is
       Ignored_Alert_Out : N32;

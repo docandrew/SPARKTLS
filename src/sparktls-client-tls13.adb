@@ -64,9 +64,9 @@ is
    --  traffic_secret. Used on every TLS 1.3 client reject path that
    --  fires AFTER the handshake completes (post-handshake messages,
    --  AEAD-failure on app records, bogus peer alerts). No CCS prefix
-   --  â the legacy middlebox-compat CCS was already emitted as part
+   --   the legacy middlebox-compat CCS was already emitted as part
    --  of the client flight, and a duplicate would be a protocol
-   --  violation per RFC 8446 Â§D.4.
+   --  violation per RFC 8446 D.4.
    procedure Send_App_Encrypted_Alert (S : in out Session; Err : Error_Code; Result : out Action)
    with Post => S.State = Error_State and S.Last_Error = Err and Result in Has_Output | Error_Alert
    is
@@ -86,7 +86,7 @@ is
    --  Forward declarations for internal procedures
    procedure Derive_Handshake_Keys (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data);
 
-   --  RFC 8446 Â§4.3.1 / RFC 7301: scan a TLS 1.3 EncryptedExtensions
+   --  RFC 8446 4.3.1 / RFC 7301: scan a TLS 1.3 EncryptedExtensions
    --  message for an application_layer_protocol_negotiation entry.
    --  On a well-formed entry, copy the protocol name into
    --  S.Negotiated_ALPN. On a malformed entry (empty protocol_name,
@@ -112,7 +112,7 @@ is
    --    Unsupported_Extension : server sent an EE extension we did
    --                            not offer in CH.
    --    Illegal_Parameter     : ALPN body malformed / doesn't match
-   --                            offered protocol (RFC 7301 Â§3.2).
+   --                            offered protocol (RFC 7301 3.2).
    procedure Send_Client_Certificate
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
@@ -479,7 +479,7 @@ is
    end Transcript_Hash_384;
 
    ----------------------------------------------------------------------------
-   --  Extract_ALPN_From_EE â see forward decl above for contract.
+   --  Extract_ALPN_From_EE  see forward decl above for contract.
    --
    --  All offsets are computed against P, kept invariant by the
    --  outer guard `P + 4 <= Ext_End and P + 4 + E_Len <= Ext_End`
@@ -515,12 +515,12 @@ is
             return;
          end if;
 
-         --  RFC 8446 Â§4.2 priority: structural checks (duplicates)
+         --  RFC 8446 4.2 priority: structural checks (duplicates)
          --  take precedence over semantic checks (matrix policy).
          --  BoGo DuplicateExtensionClient-* expects decode_error
          --  even when the duplicated tag is also not in
          --  Allowed_EE. We must therefore detect ALL duplicates
-         --  before running ANY policy validation â single-pass
+         --  before running ANY policy validation  single-pass
          --  merging would short-circuit on the first instance with
          --  unsupported_extension before its duplicate is reached.
          declare
@@ -583,10 +583,10 @@ is
                --  Skip if extension overflows what's left.
                exit when P + 4 + E_Len > Ext_End;
 
-               --  RFC 8446 Â§4.2 matrix policy: rejects extensions
+               --  RFC 8446 4.2 matrix policy: rejects extensions
                --  not allowed in EE, ones we didn't offer in CH, and
                --  ones with non-empty body where RFC mandates empty
-               --  (RFC 6066 Â§3 server_name ack). BoGo
+               --  (RFC 6066 3 server_name ack). BoGo
                --  UnknownExtension-Client-TLS13,
                --  UnofferedExtension-Client-TLS13,
                --  EncryptedExtensionsWithKeyShare-TLS13,
@@ -712,9 +712,9 @@ is
       end if;
    end Handle_EE_13;
 
-   --  RFC 8446 Â§4.3.2 client-side CertificateRequest handler. Body
+   --  RFC 8446 4.3.2 client-side CertificateRequest handler. Body
    --  length-validation (ctx_len(1) + ctx + ext_len(2) + extensions),
-   --  per-RFC-Â§4.2 extension-policy gating, signature_algorithms
+   --  per-RFC-4.2 extension-policy gating, signature_algorithms
    --  required, picks a compatible S.HC.Negotiated_Sig_Algo.
    procedure Handle_CertReq_13
      (S      : in out Session;
@@ -905,9 +905,9 @@ is
       end;
    end Handle_CertReq_13;
 
-   --  RFC 8446 Â§4.4.2 client-side Certificate handler. Parses chain
+   --  RFC 8446 4.4.2 client-side Certificate handler. Parses chain
    --  via Parse_Certificate_Chain_13, runs hostname binding (RFC 6125
-   --  Â§6.4) and trust-chain validation, transitions to
+   --  6.4) and trust-chain validation, transitions to
    --  Wait_Certificate_Verify.
    procedure Handle_Cert_13
      (S      : in out Session;
@@ -1055,11 +1055,11 @@ is
       Set_State (S, Wait_Certificate_Verify);
    end Handle_Cert_13;
 
-   --  RFC 8446 Â§4.4.3 client-side CertificateVerify handler.
+   --  RFC 8446 4.4.3 client-side CertificateVerify handler.
    --  Re-hashes the transcript (suite-dependent), verifies the
    --  signature over the canonical CV content, transitions to
-   --  Wait_Server_Finished. Also enforces RFC 8446 Â§4.2.3 (no
-   --  rsa_pkcs1_* in TLS 1.3) and RFC 8446 Â§4.4.2.2 (leaf
+   --  Wait_Server_Finished. Also enforces RFC 8446 4.2.3 (no
+   --  rsa_pkcs1_* in TLS 1.3) and RFC 8446 4.4.2.2 (leaf
    --  keyUsage=digitalSignature).
    procedure Handle_CV_13
      (S       : in out Session;
@@ -1214,7 +1214,7 @@ is
       Set_State (S, Wait_Server_Finished);
    end Handle_CV_13;
 
-   --  RFC 8446 Â§4.4.4 client-side Finished handler. Verifies server
+   --  RFC 8446 4.4.4 client-side Finished handler. Verifies server
    --  Finished verify_data with the suite-appropriate HMAC, then
    --  triggers app-key derivation + client Finished emission.
    procedure Handle_Finished_13
@@ -1350,7 +1350,7 @@ is
          --  Distinguish "unknown message type" (BoGo WrongMessageType
          --  injects type+42) from "malformed length / shape" so we
          --  emit the right alert. Pre-condition: handshake records
-         --  are decrypted under S.HC.Client_HS â we're post-SH.
+         --  are decrypted under S.HC.Client_HS  we're post-SH.
          declare
             Raw_Type : constant Byte := (if Data'Length >= 1 then Data (Data'First) else 0);
             Is_Known : constant Boolean :=
@@ -1417,7 +1417,7 @@ is
             end if;
 
          when others =>
-            --  RFC 8446 Â§4: unknown handshake type â unexpected_message.
+            --  RFC 8446 4: unknown handshake type â unexpected_message.
             --  BoGo's WrongMessageType-TLS13-* injects `type + 42` here.
             Send_HS_Encrypted_Alert (S, D, Unexpected_Message, Result);
       end case;
@@ -1441,10 +1441,10 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.4.2: when we have NO identity, send an empty
+      --  RFC 8446 4.4.2: when we have NO identity, send an empty
       --  Certificate. When we DO have an identity but it can't sign
       --  with any algorithm in the server's offered list, send a
-      --  fatal handshake_failure alert â BoringSSL emits
+      --  fatal handshake_failure alert  BoringSSL emits
       --  `:NO_COMMON_SIGNATURE_ALGORITHMS:` here, which BoGo's
       --  Client-SignDefault tests use as the expected outcome.
       if S.HC.Cfg.Local /= null
@@ -1530,9 +1530,9 @@ is
          end if;
       end;
 
-      --  Send CertificateVerify (RFC 8446 Â§4.4.3). Required after
+      --  Send CertificateVerify (RFC 8446 4.4.3). Required after
       --  any non-empty client Certificate to prove possession of
-      --  the private key. Was Ed25519-only â RSA-PSS / ECDSA certs
+      --  the private key. Was Ed25519-only  RSA-PSS / ECDSA certs
       --  skipped the CV entirely, so the runner saw [Cert, Finished]
       --  and rejected with "unexpected handshake message of type
       --  finishedMsg when waiting for certificateVerifyMsg".
@@ -1658,7 +1658,7 @@ is
       Set_Traffic_Keys (S.Client_App, Bytes_48 (Byte_Seq (Client_App_Sec)), S.Negotiated_Suite);
       Set_Traffic_Keys (S.Server_App, Bytes_48 (Byte_Seq (Server_App_Sec)), S.Negotiated_Suite);
 
-      --  RFC 8446 Â§4.6.3: retain the secrets themselves, not just the
+      --  RFC 8446 4.6.3: retain the secrets themselves, not just the
       --  derived key/IV, so KeyUpdate can ratchet to the next generation.
       S.Client_App_Secret := Bytes_48 (Byte_Seq (Client_App_Sec));
       S.Server_App_Secret := Bytes_48 (Byte_Seq (Server_App_Sec));
@@ -1740,7 +1740,7 @@ is
          Set_Traffic_Keys (S.Client_App, CS48, S.Negotiated_Suite);
          Set_Traffic_Keys (S.Server_App, SS48, S.Negotiated_Suite);
 
-         --  RFC 8446 Â§4.6.3: retain the secrets for the KeyUpdate ratchet.
+         --  RFC 8446 4.6.3: retain the secrets for the KeyUpdate ratchet.
          S.Client_App_Secret := CS48;
          S.Server_App_Secret := SS48;
          S.App_Secret_Len := 32;
@@ -1759,8 +1759,8 @@ is
       --  advances S.HC.Client_HS.Counter; we save it and restore on any
       --  failure to keep AEAD nonces in sync with what the peer saw.
       Scratch         : IO_Buffer;
-      --  RFC 8446 Â§7.1: client_application_traffic_secret_0 uses
-      --  the transcript hash through SERVER's Finished â NOT
+      --  RFC 8446 7.1: client_application_traffic_secret_0 uses
+      --  the transcript hash through SERVER's Finished  NOT
       --  including any subsequent client Cert/CV. Snapshot the
       --  hash BEFORE Send_Client_Certificate appends our Cert,
       --  so App keys match what the peer derives. Was: re-hashed
@@ -1770,14 +1770,14 @@ is
       App_TS_Hash_256 : constant Digest := Transcript_Hash_256 (S.HC);
       App_TS_Hash_384 : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
    begin
-      --  RFC 8446 Â§D.4: middlebox-compatibility CCS goes FIRST
+      --  RFC 8446 D.4: middlebox-compatibility CCS goes FIRST
       --  in the client's post-server-Finished flight, BEFORE any
       --  encrypted record. Otherwise the runner-side Go TLS stack
       --  rejects with "invalid TLS 1.3 ChangeCipherSpec" because
       --  it expects a CCS where it sees an app_data record.
       --
       --  If we already emitted the dummy CCS between HRR and CH2
-      --  (S.HC.Sent_HRR_CCS), skip â the server's
+      --  (S.HC.Sent_HRR_CCS), skip  the server's
       --  expectChangeCipherSpec was cleared by that one and a
       --  second CCS would be rejected as unexpected.
       if not S.HC.Sent_HRR_CCS then
@@ -1897,12 +1897,12 @@ is
                Hello_Hash : Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
                Early      : Key_Schedule.Digest_384;
                HS_Secret  : Key_Schedule.Digest_384;
-               --  RFC 8446 Â§7.1: Early_Secret = HKDF-Extract(0, PSK).
+               --  RFC 8446 7.1: Early_Secret = HKDF-Extract(0, PSK).
                --  PSK = ticket-derived secret iff the server actually
                --  selected our PSK (S.HC.Using_PSK) AND the ticket was
                --  bound to the same suite (PSK_Len matches the hash
                --  output size). Otherwise PSK = all-zeros, which is
-               --  the Â§7.1 "fresh full handshake" sentinel.
+               --  the 7.1 "fresh full handshake" sentinel.
                PSK_Bytes  : Bytes_48 :=
                  (if S.HC.Using_PSK and then S.Ticket.PSK_Len = 48 then S.Ticket.PSK
                   else (others => 0));
@@ -2230,7 +2230,7 @@ is
             return;
          end if;
 
-         --  RFC 8446 Â§4.4.4: server Finished is the last server
+         --  RFC 8446 4.4.4: server Finished is the last server
          --  handshake message. After dispatch moves us out of the
          --  expected server-handshake states, any trailing plaintext is
          --  excess handshake data.
@@ -2389,7 +2389,7 @@ is
          if not Dec_Valid then
             S.HC.Server_HS := Server_HS_Copy;
             S.Input.Read_Pos := Next_Read;
-            --  RFC 8446 Â§5.2: AEAD decryption failure MUST emit
+            --  RFC 8446 5.2: AEAD decryption failure MUST emit
             --  a fatal bad_record_mac alert. Encrypted under
             --  S.HC.Client_HS via the helper.
             Send_HS_Encrypted_Alert (S, D, Bad_Record_MAC, Result);
@@ -2447,7 +2447,7 @@ is
          Result => Rec);
 
       if Rec.Bad_Version then
-         --  RFC 8446 Â§5.1 / RFC 5246 Â§6.2.1: legacy_record_version
+         --  RFC 8446 5.1 / RFC 5246 6.2.1: legacy_record_version
          --  must be 0x03xx with minor in 1..4. Anything else
          --  (BoGo CheckRecordVersion: 0x03FF) â fatal
          --  protocol_version alert.
@@ -2471,8 +2471,8 @@ is
 
       case Rec.Content is
          when Records.Content_Change_Cipher_Spec =>
-            --  CCS for middlebox compatibility. RFC 5246 Â§7.1: the
-            --  payload MUST be the single byte 0x01. RFC 8446 Â§5
+            --  CCS for middlebox compatibility. RFC 5246 7.1: the
+            --  payload MUST be the single byte 0x01. RFC 8446 5
             --  permits exactly one server CCS per connection (the
             --  middlebox-compat dummy); a second one is unexpected.
             declare
@@ -2503,7 +2503,7 @@ is
    end Process_Encrypted_Handshake;
 
    --  NST helpers (extracted from Process_Connected/16#16# handler).
-   --  RFC 8446 Â§4.6.1 NewSessionTicket parsing is structurally deep
+   --  RFC 8446 4.6.1 NewSessionTicket parsing is structurally deep
    --  (header â fixed prefix â nonce â ticket â extensions); keeping
    --  it as nested if/declare in the connected-state loop made every
    --  small RFC nit (zero-length ticket, dup ext, malformed flags ext)
@@ -2582,7 +2582,7 @@ is
                   return;
                end if;
 
-               --  RFC 8446 Â§4.2: duplicate extension types in any HS
+               --  RFC 8446 4.2: duplicate extension types in any HS
                --  message are forbidden (BoGo TLS13-DuplicateTicket
                --  EarlyDataSupport).
                for K in 1 .. Seen_N loop
@@ -2597,7 +2597,7 @@ is
                end if;
 
                --  draft-ietf-tls-tlsflags: flags ext (0x003E) body is
-               --  `opaque flags<1..2^8-1>` â outer ext_data is
+               --  `opaque flags<1..2^8-1>`  outer ext_data is
                --  inner_len(1) + inner_bytes with inner_len >= 1. So
                --  ext_data_len < 2, or inner_len = 0, is decode_error
                --  (BoGo TLS13-Client-EmptyTicketFlags).
@@ -2654,7 +2654,7 @@ is
    begin
       Result := OK;
 
-      --  RFC 8446 Â§4.6.1: NST = type(1)+len(3)+lifetime(4)+age_add(4)
+      --  RFC 8446 4.6.1: NST = type(1)+len(3)+lifetime(4)+age_add(4)
       --  +nonce_len(1)+nonce(var)+ticket_len(2)+ticket(var)+exts.
       --  Need at least the fixed prefix: 4+4+1 = 9 past the HS header.
       if Plain_Len < 4 + 9 then
@@ -2685,7 +2685,7 @@ is
             Tick_Len := N32 (Plaintext (P)) * 256 + N32 (Plaintext (P + 1));
             P := P + 2;
 
-            --  RFC 8446 Â§4.6.1: ticket field is opaque ticket<1..
+            --  RFC 8446 4.6.1: ticket field is opaque ticket<1..
             --  2^16-1>; a zero-length ticket is decode_error (BoGo
             --  SendEmptySessionTicket-TLS13).
             if Tick_Len = 0 then
@@ -2737,7 +2737,7 @@ is
             --  Walk the NST extension list (ticket_flags, early_data,
             --  â¦). Errors (dup ext / malformed flags) un-install the
             --  ticket and emit the right alert. early_data ext bodies
-            --  are walked-past â we don't offer 0-RTT, so the
+            --  are walked-past  we don't offer 0-RTT, so the
             --  advertised limit is irrelevant.
             declare
                Status       : NST_Status;
@@ -2781,7 +2781,7 @@ is
    procedure Dispatch_Post_HS_Message (S : in out Session; Result : out Action)
    with Pre => Post_HS_Reasm.Has_Message (S.Post_HS), Post => Post_HS_Reasm.Used (S.Post_HS) = 0;
 
-   --  RFC 8446 Â§4.6.3. A KeyUpdate from the peer rotates the peer's WRITE
+   --  RFC 8446 4.6.3. A KeyUpdate from the peer rotates the peer's WRITE
    --  key, which is our READ key -- for a client that is S.Server_App. If
    --  the peer set request_update we must rotate our own write key
    --  (S.Client_App) and tell them, before our next Application Data
@@ -2853,7 +2853,7 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§4.6.3 requires a reply "prior to sending its next
+      --  RFC 8446 4.6.3 requires a reply "prior to sending its next
       --  Application Data record" -- the obligation is per-write, not
       --  per-message. Defer it: a burst of requests collapses to a single
       --  KeyUpdate, which is what the peer expects. Replying inline would
@@ -2979,7 +2979,7 @@ is
             return;
          end if;
 
-         --  RFC 8446 Â§5.4: "the full encoded TLSInnerPlaintext MUST
+         --  RFC 8446 5.4: "the full encoded TLSInnerPlaintext MUST
          --  NOT exceed 2^14 + 1 octets". TLSInnerPlaintext = content
          --  + type + zero pad. After AEAD this becomes the ciphertext
          --  minus the AEAD tag. Reject early to avoid even attempting
@@ -3004,13 +3004,13 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not Dec_Valid then
-            --  RFC 8446 Â§5.2: post-handshake AEAD failure â fatal
+            --  RFC 8446 5.2: post-handshake AEAD failure â fatal
             --  bad_record_mac under client_application_traffic_secret.
             Send_App_Encrypted_Alert (S, Bad_Record_MAC, Result);
             return;
          end if;
 
-         --  RFC 8446 Â§5.4: TLSPlaintext.content after type+pad strip
+         --  RFC 8446 5.4: TLSPlaintext.content after type+pad strip
          --  is at most 2^14 bytes.
          if Plain_Len > Max_Record_Plaintext then
             Send_App_Encrypted_Alert (S, Record_Overflow, Result);
@@ -3056,7 +3056,7 @@ is
                      S.Empty_Records_Recvd := S.Empty_Records_Recvd + 1;
                      Result := OK;
                   end if;
-                  --  RFC 8446 Â§5.2 cap: â¤ 32 in live state, > 32
+                  --  RFC 8446 5.2 cap: â¤ 32 in live state, > 32
                   --  only after the alert is queued.
                   pragma Assert (Empty_Records_Bounded_RFC_8446_5_2 (S));
                end if;
@@ -3079,11 +3079,11 @@ is
                return;
 
             when 16#15# =>
-               --  RFC 8446 Â§6 / RFC 5246 Â§7.2 alert. The 2-byte
+               --  RFC 8446 6 / RFC 5246 7.2 alert. The 2-byte
                --  payload is `level(1) | description(1)`. The level
                --  byte MUST be 1 (warning) or 2 (fatal); any other
                --  value (e.g. BoGo SendBogusAlertType: level 0x42)
-               --  is a protocol violation â we MUST reply with a
+               --  is a protocol violation  we MUST reply with a
                --  fatal illegal_parameter alert (47).
                if Plain_Len < 2 then
                   --  Truncated alert.
@@ -3094,7 +3094,7 @@ is
                elsif Plaintext (1) = 0 then
                   --  close_notify (warning, desc=0). Reply in kind.
                   --
-                  --  RFC 8446 Â§6.1: record that the peer closed in an
+                  --  RFC 8446 6.1: record that the peer closed in an
                   --  orderly way. Without this the application cannot
                   --  distinguish a finished stream from one an attacker
                   --  truncated by cutting the transport.
@@ -3119,14 +3119,14 @@ is
                   end if;
                elsif Plaintext (0) = 1 then
                   --  Warning-level alert other than close_notify.
-                  --  RFC 8446 Â§6.1 deprecates TLS 1.3 warning alerts
+                  --  RFC 8446 6.1 deprecates TLS 1.3 warning alerts
                   --  but keeps user_canceled (90) for back-compat
                   --  (JDK11 misuses it as a half-duplex hint). Match
                   --  BoringSSL/NSS/OpenSSL: silently skip up to 4
                   --  user_canceled, fatal-decode_error every other
                   --  warning, and fatal too-many-warnings on the 5th.
                   if Plaintext (1) = 90 then
-                     --  user_canceled â tolerate, with cap.
+                     --  user_canceled  tolerate, with cap.
                      --  Check BEFORE incrementing: the counter then never exceeds the
                      --  cap, so the bound holds BY CONSTRUCTION rather than being
                      --  asserted. Behaviour is identical (the same alert/record
@@ -3138,7 +3138,7 @@ is
                         S.Warning_Alerts_Recvd := S.Warning_Alerts_Recvd + 1;
                         Result := OK;
                      end if;
-                     --  RFC 8446 Â§6.1 cap: invariant must hold on
+                     --  RFC 8446 6.1 cap: invariant must hold on
                      --  every exit path. Either â¤ 4 (still tolerable)
                      --  or > 4 with State already advanced to
                      --  Error_State by the if-branch above.
@@ -3148,14 +3148,14 @@ is
                   end if;
                else
                   --  Fatal alert from peer: close without replying
-                  --  (RFC 8446 Â§6.2: don't send alerts about alerts).
+                  --  (RFC 8446 6.2: don't send alerts about alerts).
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
                   Result := Error_Alert;
                end if;
 
             when others =>
-               --  RFC 8446 Â§5.4: after decryption, the inner
+               --  RFC 8446 5.4: after decryption, the inner
                --  content type must be application_data, alert, or
                --  handshake. Encrypted CCS and any other value are
                --  unexpected post-handshake records.
@@ -3182,7 +3182,7 @@ is
          Result => Rec);
 
       if Rec.Bad_Version then
-         --  RFC 8446 Â§5.1 / RFC 5246 Â§6.2.1: legacy_record_version
+         --  RFC 8446 5.1 / RFC 5246 6.2.1: legacy_record_version
          --  must be 0x03xx with minor in 1..4. Anything else
          --  (BoGo CheckRecordVersion: 0x03FF) â fatal
          --  protocol_version alert.
@@ -3202,11 +3202,11 @@ is
          return;
       end if;
 
-      --  RFC 8446 Â§5: in the Connected (post-handshake) TLS 1.3
+      --  RFC 8446 5: in the Connected (post-handshake) TLS 1.3
       --  state, the only valid record content type is
       --  application_data (the outer type). Encrypted handshake
       --  records (post-handshake messages like NewSessionTicket,
-      --  KeyUpdate) also arrive as outer type application_data â
+      --  KeyUpdate) also arrive as outer type application_data
       --  the inner type after AEAD decrypt is what distinguishes
       --  them. Anything else (CCS, alert, raw handshake) post-
       --  handshake is a state-machine violation. BoGo

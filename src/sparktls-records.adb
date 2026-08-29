@@ -94,12 +94,12 @@ is
 
       B := Data'First;
 
-      --  RFC 8446 Â§5.1 / RFC 5246 Â§6.2.1: the record-layer version
+      --  RFC 8446 5.1 / RFC 5246 6.2.1: the record-layer version
       --  must encode some TLS version. The major byte must be 0x03;
       --  the minor byte one of 0x01 (TLS 1.0) .. 0x04 (TLS 1.3) for
       --  every record except the very first ClientHello (where
-      --  Loose_Initial relaxes the minor-byte check â RFC 8446 Â§5.1
-      --  / RFC 5246 Â§E.1 / BoGo LooseInitialRecordVersion).
+      --  Loose_Initial relaxes the minor-byte check  RFC 8446 5.1
+      --  / RFC 5246 E.1 / BoGo LooseInitialRecordVersion).
       if Data (B + 1) /= 16#03# then
          Result.Bad_Version := True;
          return;
@@ -117,8 +117,8 @@ is
       Frag_Len := N32 (Data (B + 3)) * 256 + N32 (Data (B + 4));
 
       --  Determine content type and per-type length limit.
-      --  RFC 8446 Â§5.1: plaintext fragment â¤ 2^14
-      --  RFC 8446 Â§5.2: encrypted fragment â¤ 2^14 + 256
+      --  RFC 8446 5.1: plaintext fragment â¤ 2^14
+      --  RFC 8446 5.2: encrypted fragment â¤ 2^14 + 256
       declare
          Max_Len : constant N32 := (if Data (B) = 16#17# then Max_Fragment + 256 else Max_Fragment);
       begin
@@ -135,9 +135,9 @@ is
 
       Result.Fragment_Pos := Record_Header_Size;
       Result.Fragment_Len := Frag_Len;
-      --  RFC 8446 Â§5.1/Â§5.2: any fragment that survived the length
+      --  RFC 8446 5.1/5.2: any fragment that survived the length
       --  check above satisfies the per-type max. The pragma pins the
-      --  invariant â a future loosening of Max_Len (e.g., dropping
+      --  invariant  a future loosening of Max_Len (e.g., dropping
       --  the type-conditioned cap) would break SPARK proof here.
       pragma Assert (Record_Length_Bound_RFC_8446_5_1 (Data (B), Result.Fragment_Len));
       Result.Record_Len := Record_Header_Size + Frag_Len;
@@ -162,7 +162,7 @@ is
          when others =>
             null;  --  unknown content type, OK stays False
       end case;
-      --  RFC 8446 Â§5.1: every accepted record matches one of the
+      --  RFC 8446 5.1: every accepted record matches one of the
       --  RFC-recognized types. Pin the property; a future edit that
       --  added 0x18 or similar must update both the case AND the
       --  predicate, otherwise SPARK proof fails here.
@@ -181,8 +181,8 @@ is
       Bytes_Out := 0;
 
       --  Build 5-byte header: Handshake (0x16) + TLS 1.2 (0x0303) + length
-      --  RFC 8446 Â§5.1: SHOULD be 0x0303 for all records after ClientHello.
-      --  RFC 5246 Â§6.2.1: record version = negotiated version (0x0303).
+      --  RFC 8446 5.1: SHOULD be 0x0303 for all records after ClientHello.
+      --  RFC 5246 6.2.1: record version = negotiated version (0x0303).
       Hdr (0) := 16#16#;  --  handshake
       Hdr (1) := 16#03#;
       Hdr (2) := 16#03#;  --  TLS 1.2 / 1.3 record layer version
@@ -212,7 +212,7 @@ is
    begin
       Bytes_Out := 0;
 
-      --  RFC 8446 Â§5.1: legacy_record_version = 0x0301 (TLS 1.0) for
+      --  RFC 8446 5.1: legacy_record_version = 0x0301 (TLS 1.0) for
       --  the initial ClientHello. Middleboxes more reliably forward
       --  the record when it claims TLS 1.0 than TLS 1.2.
       Hdr (0) := 16#16#;  --  handshake
@@ -264,7 +264,7 @@ is
       pragma Assert (Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
       Hdr (3 .. 4) := TS16 (Unsigned_16 (Enc_Len));
 
-      --  RFC 8446 Â§5.3: nonce = IV xor sequence number. Fail closed at the
+      --  RFC 8446 5.3: nonce = IV xor sequence number. Fail closed at the
       --  end of the sequence space rather than wrap. Unsigned_64 is
       --  modular, so without this the increment below would silently reach
       --  zero and restart the nonce sequence under an unchanged key --
@@ -273,7 +273,7 @@ is
       --  the increment provable.
       --
       --  Unreachable on any healthy connection: KeyUpdate rotates at the
-      --  RFC 8446 Â§5.5 AEAD limit, roughly 2**40 times sooner. Bytes_Out
+      --  RFC 8446 5.5 AEAD limit, roughly 2**40 times sooner. Bytes_Out
       --  stays 0, which callers already treat as "nothing queued".
       if Keys.Counter >= Record_Counter'Last then
          Bytes_Out := 0;
@@ -466,7 +466,7 @@ is
       --  actual plaintext. If no non-zero byte is found, the record
       --  is invalid (zero-length inner plaintext).
       --  Constant-time padding removal: scan ALL bytes to find
-      --  the last non-zero byte (content type). No early exit â
+      --  the last non-zero byte (content type). No early exit
       --  prevents timing leaks of the padding length.
       declare
          Last_Nonzero : N32 := 0;
@@ -481,7 +481,7 @@ is
          end loop;
 
          if not Found then
-            --  All zeros â content type is zero (invalid per RFC 8446 Â§5.4).
+            --  All zeros  content type is zero (invalid per RFC 8446 5.4).
             --  AEAD succeeded but inner plaintext is all zeros.
             --  Return Valid = True, Inner_Type = 0, Plain_Len = 0.
             --  Caller checks Inner_Type and sends unexpected_message.

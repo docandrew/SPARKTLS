@@ -101,7 +101,7 @@ is
    --  adding a new surface-able Error_Code only requires one new
    --  arm in this table, not edits at every parse-dispatch site.
    --  Errors not in the known set fall back to Handshake_Failure
-   --  (alert 40) per RFC 8446 Â§6.
+   --  (alert 40) per RFC 8446 6.
    procedure Dispatch_CH_Parse_Error_Alert (S : in out Session; Result : out Action)
    with
      Pre => S.State not in Idle | Closed | Closing | Error_State,
@@ -119,8 +119,8 @@ is
             | Unexpected_Message
             | Protocol_Version
             | Illegal_Parameter
-            | Certificate_Verify_Failed  --  RFC 8446 Â§4.2.11.2 PSK binder
-            | Missing_Extension          --  RFC 8446 Â§4.2.9 PSK without KE_modes
+            | Certificate_Verify_Failed  --  RFC 8446 4.2.11.2 PSK binder
+            | Missing_Extension          --  RFC 8446 4.2.9 PSK without KE_modes
          =>
             Send_Alert_And_Error (S, S.Last_Error, Result);
 
@@ -131,7 +131,7 @@ is
 
    --  Send an encrypted fatal alert and set error state.
    --  Used when application/handshake keys are established.
-   --  RFC 8446 Â§6.2 / RFC 5246 Â§7.2.2: encrypted fatal alert is
+   --  RFC 8446 6.2 / RFC 5246 7.2.2: encrypted fatal alert is
    --  sent before the connection terminates so the peer learns the
    --  reason instead of seeing only a TCP RST.
 
@@ -409,7 +409,7 @@ is
       Candidate_12      : in Supported_Suite;
       Result            : out Action) is
    begin
-      --  RFC 6066 Â§3 + RFC 8446 Â§4.4.2.4: SNI-based certificate
+      --  RFC 6066 3 + RFC 8446 4.4.2.4: SNI-based certificate
       --  selection. A null callback result means "no match"; use the
       --  default identity already in S.HC.Cfg.Local.
       if S.HC.Cfg.Select_Identity /= null and then S.HC.Peer_SNI.Len > 0 then
@@ -521,7 +521,7 @@ is
       end;
    end Complete_Client_Hello;
 
-   --  RFC 8446 Â§4.1.2 Wait_Client_Hello state handler. Reads a TLS
+   --  RFC 8446 4.1.2 Wait_Client_Hello state handler. Reads a TLS
    --  record, validates header, runs RFLX-based reassembly for any
    --  multi-record handshake message, decodes the ClientHello body,
    --  populates HC fields (random, cipher suites, key shares, ext
@@ -553,8 +553,8 @@ is
          return;
       end if;
 
-      --  Parse ClientHello from input. RFC 8446 Â§5.1 / RFC 5246
-      --  Â§E.1: tolerate any record version on the initial CH â
+      --  Parse ClientHello from input. RFC 8446 5.1 / RFC 5246
+      --  E.1: tolerate any record version on the initial CH
       --  BoGo LooseInitialRecordVersion sends 0x03ff and expects
       --  the server to accept it. Major byte must still be 0x03
       --  (GarbageInitialRecordVersion sends 0xffff and expects
@@ -574,7 +574,7 @@ is
          end if;
 
          if Rec.Bad_Version then
-            --  RFC 8446 Â§5.1: legacy_record_version must lie
+            --  RFC 8446 5.1: legacy_record_version must lie
             --  in {3,1}..{3,4}. Out-of-band â protocol_version.
             Send_Alert_And_Error (S, Protocol_Version, Result);
             return;
@@ -592,7 +592,7 @@ is
          end if;
 
          if Rec.Content = Records.Content_Change_Cipher_Spec then
-            --  RFC 8446 Â§5: CCS for middlebox compatibility is
+            --  RFC 8446 5: CCS for middlebox compatibility is
             --  permitted only AFTER the first ClientHello has
             --  been sent or received. CCS arriving before any
             --  ClientHello (we're still in Wait_Client_Hello)
@@ -605,7 +605,7 @@ is
          end if;
 
          if Rec.Content = Records.Content_Alert then
-            --  Plaintext alert before handshake â just close
+            --  Plaintext alert before handshake  just close
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
@@ -784,7 +784,7 @@ is
                      Candidate_Version : TLS_Version;
                      Candidate_12      : Supported_Suite := Suite_None;
                   begin
-                     --  Full message reassembled â parse it.
+                     --  Full message reassembled  parse it.
                      --  This message will be appended to the transcript;
                      --  reject anything larger than the transcript
                      --  buffer before slicing and parsing it.
@@ -1262,7 +1262,7 @@ is
          when TLS_Undetermined =>
             return;
       end case;
-      --  RFC 8446 Â§6.1: at most one close_notify per peer; if we
+      --  RFC 8446 6.1: at most one close_notify per peer; if we
       --  already transitioned to Closing on a prior invocation, the
       --  state-machine transition is a no-op.
       if S.State = Connected then

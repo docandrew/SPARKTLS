@@ -33,20 +33,20 @@
 --
 --  DEPLOYMENT SHAPES this does and does not cover:
 --
---    * EMBEDDED / single connection at a time â you do not need this. Leave
+--    * EMBEDDED / single connection at a time  you do not need this. Leave
 --      the callbacks null; resumption is disabled and nothing here is linked.
 --
---    * MULTI-THREADED, ONE PROCESS â this package. The protected object
+--    * MULTI-THREADED, ONE PROCESS  this package. The protected object
 --      serialises access, so any number of tasks may drive sessions
 --      concurrently against one cache.
 --
---    * MULTI-PROCESS â NOT covered. Workers in separate address spaces would
+--    * MULTI-PROCESS  NOT covered. Workers in separate address spaces would
 --      each get their own copy, so a ticket issued by one is unknown to the
 --      others (clients simply re-handshake). Sharing across processes needs
 --      shared memory or a key/ticket file, which is environment-specific;
 --      implement the four callbacks over whatever your platform provides.
 --
---    * MULTI-NODE / DISTRIBUTED â NOT covered. Needs an external store
+--    * MULTI-NODE / DISTRIBUTED  NOT covered. Needs an external store
 --      (Redis, memcached, a database). Implement the callbacks against it,
 --      and note the contract below: DO NOT BLOCK. A lookup that cannot answer
 --      quickly should report Found => False and let the handshake proceed in
@@ -113,7 +113,7 @@ is
      (Random : Random_Bytes_Fn; Clock : Get_Time_Fn; Rotation_Interval : Unsigned_32 := 24 * 3600);
 
    ----------------------------------------------------------------------
-   --  Callbacks â pass these to Configure/Init via 'Access.
+   --  Callbacks  pass these to Configure/Init via 'Access.
    ----------------------------------------------------------------------
 
    --  Persist a resumption PSK and return the identity to put on the wire.
@@ -149,7 +149,7 @@ is
    with Pre => TEK'Length = 32;
 
    ----------------------------------------------------------------------
-   --  Key management â the application's job now, on its own schedule.
+   --  Key management  the application's job now, on its own schedule.
    ----------------------------------------------------------------------
 
    --  Install a new sealing key explicitly. Normally unnecessary when
