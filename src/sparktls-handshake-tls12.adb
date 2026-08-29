@@ -1,5 +1,5 @@
 with SPARKTLS.HS_Pool;
-with Interfaces;                 use Interfaces;
+with Interfaces;           use Interfaces;
 with Ada.Unchecked_Deallocation;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
@@ -17,7 +17,7 @@ with SPARKTLSCrypto.RSA;
 use SPARKTLSCrypto;
 with SPARKTLS.Cert_Verify;
 with SPARKTLS.Key_Schedule_12;
-with SPARKTLS.RFLX_Bridge;      use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.RFLX_Types;
 with RFLX.TLS_Handshake.Server_Hello;
@@ -32,8 +32,9 @@ with RFLX.Tls_Extensiontype_Values;
 
 with SPARKTLS_Transcript;
 use type SPARKTLS_Transcript.Transcript_State;
-package body SPARKTLS.Handshake.TLS12 with
-   SPARK_Mode => On
+
+package body SPARKTLS.Handshake.TLS12
+  with SPARK_Mode => On
 is
 
    pragma Unevaluated_Use_Of_Old (Allow);
@@ -44,37 +45,34 @@ is
    Max_Sig : constant := 512;  --  max RSA-4096 signature
    --  Helper: write a 3-byte big-endian length
    procedure Put24 (Buf : in out Byte_Seq; Pos : N32; Val : N32)
-   with Pre => Pos <= N32'Last - 2
-               and then Pos >= Buf'First
-               and then Pos + 2 <= Buf'Last
-               and then Val < 2**24
+   with
+     Pre =>
+       Pos <= N32'Last - 2
+       and then Pos >= Buf'First
+       and then Pos + 2 <= Buf'Last
+       and then Val < 2 ** 24
    is
    begin
-      Buf (Pos)     := Byte (Val / 65536);
+      Buf (Pos) := Byte (Val / 65536);
       Buf (Pos + 1) := Byte ((Val / 256) mod 256);
       Buf (Pos + 2) := Byte (Val mod 256);
    end Put24;
 
    --  Helper: write a 2-byte big-endian value
    procedure Put16 (Buf : in out Byte_Seq; Pos : N32; Val : Unsigned_16)
-   with Pre => Pos <= N32'Last - 1
-               and then Pos >= Buf'First
-               and then Pos + 1 <= Buf'Last
+   with Pre => Pos <= N32'Last - 1 and then Pos >= Buf'First and then Pos + 1 <= Buf'Last
    is
    begin
-      Buf (Pos)     := Byte (Val / 256);
+      Buf (Pos) := Byte (Val / 256);
       Buf (Pos + 1) := Byte (Val mod 256);
    end Put16;
 
    ------------------------------------------------------------------
-   --  Build_Server_Hello_Done (RFC 5246 §7.4.5)
+   --  Build_Server_Hello_Done (RFC 5246 Â§7.4.5)
    --  Empty message: type(1)=0x0E || length(3)=0x000000
    ------------------------------------------------------------------
 
-   procedure Build_Server_Hello_Done
-     (Result :    out Byte_Seq;
-      Len    :    out N32)
-   is
+   procedure Build_Server_Hello_Done (Result : out Byte_Seq; Len : out N32) is
    begin
       Result := (others => 0);
       Result (0) := HT_Server_Hello_Done;  --  0x0E
@@ -85,7 +83,7 @@ is
    end Build_Server_Hello_Done;
 
    ------------------------------------------------------------------
-   --  Build_Server_Key_Exchange (RFC 8422 §5.4, RFC 5246 §7.4.3)
+   --  Build_Server_Key_Exchange (RFC 8422 Â§5.4, RFC 5246 Â§7.4.3)
    --
    --  Wire format:
    --    handshake_header: type(1)=0x0C || length(3)
@@ -96,17 +94,17 @@ is
    --    signature:
    --      hash_alg(1) || sig_alg(1) || sig_len(2) || sig(M)
    --
-   --  Signature input (RFC 5246 §7.4.3):
+   --  Signature input (RFC 5246 Â§7.4.3):
    --    client_random[32] || server_random[32] ||
    --    curve_type[1] || named_curve[2] || point_len[1] || point[N]
    ------------------------------------------------------------------
 
    procedure Build_Server_Key_Exchange
-     (HC     : in     Handshake_Context;
-      Id     : in     Identity;
-      Random : in     Live_Random_Fn;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
+     (HC     : in Handshake_Context;
+      Id     : in Identity;
+      Random : in Live_Random_Fn;
+      Result : out Byte_Seq;
+      Len    : out N32)
    is
       --  EC params + point bytes (without handshake header)
       Params     : Byte_Seq (0 .. 3 + P384_Point_Len) := (others => 0);
@@ -129,7 +127,9 @@ is
 
       --  Determine point length for selected group
       Pt_Len := Point_Len_For_Group (HC.KE.Curve);
-      if Pt_Len = 0 then return; end if;
+      if Pt_Len = 0 then
+         return;
+      end if;
 
       --  Build EC params: curve_type(1) || named_curve(2) || point_len(1) || point(N)
       Params (0) := EC_Curve_Type_Named;  --  0x03
@@ -140,8 +140,8 @@ is
       case HC.KE.Curve is
          when Group_X25519 =>
             declare
-               PK   : SPARKNaCl.Cryptobox.Public_Key;
-               PKB  : Bytes_32;
+               PK  : SPARKNaCl.Cryptobox.Public_Key;
+               PKB : Bytes_32;
             begin
                declare
                   Dummy_SK : SPARKNaCl.Cryptobox.Secret_Key;
@@ -159,8 +159,7 @@ is
                PK_Jac : SPARKTLSCrypto.P256.Point.P256_Jacobian;
                PK_Enc : Byte_Seq (0 .. 64);
             begin
-               SPARKTLSCrypto.P256.Point.P256_Mulgen
-                 (PK_Jac, HC.KE.P256_SK, 32);
+               SPARKTLSCrypto.P256.Point.P256_Mulgen (PK_Jac, HC.KE.P256_SK, 32);
                SPARKTLSCrypto.P256.Point.P256_To_Affine (PK_Jac);
                SPARKTLSCrypto.P256.Point.P256_Encode (PK_Enc, PK_Jac);
                Params (4 .. 4 + 64) := PK_Enc;
@@ -180,13 +179,12 @@ is
 
       Params_Len := 4 + Pt_Len;
 
-      --  RFC 5246 §7.4.3: Build signature input.
+      --  RFC 5246 Â§7.4.3: Build signature input.
       --  MUST be: client_random[32] || server_random[32] || params
       --  Getting this wrong enables MITM attacks.
-      Sig_Input (0 .. 31)  := Byte_Seq (HC.Client_Random);
+      Sig_Input (0 .. 31) := Byte_Seq (HC.Client_Random);
       Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
-      Sig_Input (64 .. 64 + Params_Len - 1) :=
-         Params (0 .. Params_Len - 1);
+      Sig_Input (64 .. 64 + Params_Len - 1) := Params (0 .. Params_Len - 1);
       Sig_Input_Len := 64 + Params_Len;
 
       --  Sign using the negotiated signature algorithm
@@ -196,27 +194,31 @@ is
          Hash_Algo : Byte;
          Sig_Algo  : Byte;
       begin
-         --  RFC 5246 §7.4.1.4.1 / RFC 8446 §4.2.3:
+         --  RFC 5246 Â§7.4.1.4.1 / RFC 8446 Â§4.2.3:
          --  SignatureAndHashAlgorithm wire form is just the high and
          --  low bytes of the SignatureScheme code. For modern schemes
          --  (rsa_pss_*, ed25519, rsa_pkcs1_*, ecdsa_*) this gives the
          --  correct on-wire encoding directly.
          Hash_Algo := Byte (Shift_Right (HC.Negotiated_Sig_Algo, 8));
-         Sig_Algo  := Byte (HC.Negotiated_Sig_Algo and 16#FF#);
+         Sig_Algo := Byte (HC.Negotiated_Sig_Algo and 16#FF#);
          case HC.Negotiated_Sig_Algo is
             when 16#0804# | 16#0805# | 16#0806# =>
                --  rsa_pss_rsae_sha{256,384,512}.
                if Id.RSA_Mod_Len < 64
-                  or Id.RSA_Mod_Len > SPARKTLSCrypto.RSA.Max_RSA_Bytes
-                  or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
-                  or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
-               then return; end if;
+                 or Id.RSA_Mod_Len > SPARKTLSCrypto.RSA.Max_RSA_Bytes
+                 or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+                 or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+               then
+                  return;
+               end if;
                declare
                   --  Hash the SKE Sig_Input with the matching hash.
-                  H256 : SPARKTLSCrypto.Hashing.SHA256.Digest;
-                  H384 : SPARKNaCl.Hashing.SHA384.Digest;
-                  H512 : SPARKNaCl.Hashing.SHA512.Digest;
-                  Salt32 : Bytes_32; Salt48 : Bytes_48; Salt64 : Bytes_64;
+                  H256   : SPARKTLSCrypto.Hashing.SHA256.Digest;
+                  H384   : SPARKNaCl.Hashing.SHA384.Digest;
+                  H512   : SPARKNaCl.Hashing.SHA512.Digest;
+                  Salt32 : Bytes_32;
+                  Salt48 : Bytes_48;
+                  Salt64 : Bytes_64;
                begin
                   case HC.Negotiated_Sig_Algo is
                      when 16#0804# =>
@@ -224,40 +226,47 @@ is
                           (H256, Sig_Input (0 .. Sig_Input_Len - 1));
                         Random.all (Byte_Seq (Salt32));
                         SPARKTLSCrypto.RSA.Sign_PSS
-                          (M_Hash => Byte_Seq (H256), Hash_Len => 32,
-                           Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA256,
-                           Modulus => Id.RSA_Modulus,
-                           Mod_Len => Id.RSA_Mod_Len,
-                           Priv_Exp => Id.RSA_Priv_Exp,
-                           Salt => Byte_Seq (Salt32),
-                           Signature => Sig, Sig_Len => Sig_Len,
-                           OK => Sig_OK);
+                          (M_Hash    => Byte_Seq (H256),
+                           Hash_Len  => 32,
+                           Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA256,
+                           Modulus   => Id.RSA_Modulus,
+                           Mod_Len   => Id.RSA_Mod_Len,
+                           Priv_Exp  => Id.RSA_Priv_Exp,
+                           Salt      => Byte_Seq (Salt32),
+                           Signature => Sig,
+                           Sig_Len   => Sig_Len,
+                           OK        => Sig_OK);
+
                      when 16#0805# =>
-                        SPARKNaCl.Hashing.SHA384.Hash
-                          (H384, Sig_Input (0 .. Sig_Input_Len - 1));
+                        SPARKNaCl.Hashing.SHA384.Hash (H384, Sig_Input (0 .. Sig_Input_Len - 1));
                         Random.all (Byte_Seq (Salt48));
                         SPARKTLSCrypto.RSA.Sign_PSS
-                          (M_Hash => Byte_Seq (H384), Hash_Len => 48,
-                           Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA384,
-                           Modulus => Id.RSA_Modulus,
-                           Mod_Len => Id.RSA_Mod_Len,
-                           Priv_Exp => Id.RSA_Priv_Exp,
-                           Salt => Byte_Seq (Salt48),
-                           Signature => Sig, Sig_Len => Sig_Len,
-                           OK => Sig_OK);
-                     when others =>  --  0x0806
-                        SPARKNaCl.Hashing.SHA512.Hash
-                          (H512, Sig_Input (0 .. Sig_Input_Len - 1));
+                          (M_Hash    => Byte_Seq (H384),
+                           Hash_Len  => 48,
+                           Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA384,
+                           Modulus   => Id.RSA_Modulus,
+                           Mod_Len   => Id.RSA_Mod_Len,
+                           Priv_Exp  => Id.RSA_Priv_Exp,
+                           Salt      => Byte_Seq (Salt48),
+                           Signature => Sig,
+                           Sig_Len   => Sig_Len,
+                           OK        => Sig_OK);
+
+                     when others =>
+                        --  0x0806
+                        SPARKNaCl.Hashing.SHA512.Hash (H512, Sig_Input (0 .. Sig_Input_Len - 1));
                         Random.all (Byte_Seq (Salt64));
                         SPARKTLSCrypto.RSA.Sign_PSS
-                          (M_Hash => Byte_Seq (H512), Hash_Len => 64,
-                           Hash_Alg => SPARKTLSCrypto.RSA.PSS_SHA512,
-                           Modulus => Id.RSA_Modulus,
-                           Mod_Len => Id.RSA_Mod_Len,
-                           Priv_Exp => Id.RSA_Priv_Exp,
-                           Salt => Byte_Seq (Salt64),
-                           Signature => Sig, Sig_Len => Sig_Len,
-                           OK => Sig_OK);
+                          (M_Hash    => Byte_Seq (H512),
+                           Hash_Len  => 64,
+                           Hash_Alg  => SPARKTLSCrypto.RSA.PSS_SHA512,
+                           Modulus   => Id.RSA_Modulus,
+                           Mod_Len   => Id.RSA_Mod_Len,
+                           Priv_Exp  => Id.RSA_Priv_Exp,
+                           Salt      => Byte_Seq (Salt64),
+                           Signature => Sig,
+                           Sig_Len   => Sig_Len,
+                           OK        => Sig_OK);
                   end case;
                end;
 
@@ -265,10 +274,12 @@ is
                --  rsa_pkcs1_sha{256,384,512}. Hash_Algo/Sig_Algo
                --  already set above from scheme high/low bytes.
                if Id.RSA_Mod_Len < 64
-                  or Id.RSA_Mod_Len > SPARKTLSCrypto.RSA.Max_RSA_Bytes
-                  or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
-                  or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
-               then return; end if;
+                 or Id.RSA_Mod_Len > SPARKTLSCrypto.RSA.Max_RSA_Bytes
+                 or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+                 or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+               then
+                  return;
+               end if;
                declare
                   H256 : SPARKTLSCrypto.Hashing.SHA256.Digest;
                   H384 : SPARKNaCl.Hashing.SHA384.Digest;
@@ -279,36 +290,44 @@ is
                         SPARKTLSCrypto.Hashing.SHA256.Hash
                           (H256, Sig_Input (0 .. Sig_Input_Len - 1));
                         SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
-                          (M_Hash => Byte_Seq (H256), Hash_Len => 32,
-                           Modulus => Id.RSA_Modulus,
-                           Mod_Len => Id.RSA_Mod_Len,
-                           Priv_Exp => Id.RSA_Priv_Exp,
-                           Signature => Sig, Sig_Len => Sig_Len,
-                           OK => Sig_OK);
+                          (M_Hash    => Byte_Seq (H256),
+                           Hash_Len  => 32,
+                           Modulus   => Id.RSA_Modulus,
+                           Mod_Len   => Id.RSA_Mod_Len,
+                           Priv_Exp  => Id.RSA_Priv_Exp,
+                           Signature => Sig,
+                           Sig_Len   => Sig_Len,
+                           OK        => Sig_OK);
+
                      when 16#0501# =>
-                        SPARKNaCl.Hashing.SHA384.Hash
-                          (H384, Sig_Input (0 .. Sig_Input_Len - 1));
+                        SPARKNaCl.Hashing.SHA384.Hash (H384, Sig_Input (0 .. Sig_Input_Len - 1));
                         SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
-                          (M_Hash => Byte_Seq (H384), Hash_Len => 48,
-                           Modulus => Id.RSA_Modulus,
-                           Mod_Len => Id.RSA_Mod_Len,
-                           Priv_Exp => Id.RSA_Priv_Exp,
-                           Signature => Sig, Sig_Len => Sig_Len,
-                           OK => Sig_OK);
-                     when others =>  --  0x0601
-                        SPARKNaCl.Hashing.SHA512.Hash
-                          (H512, Sig_Input (0 .. Sig_Input_Len - 1));
+                          (M_Hash    => Byte_Seq (H384),
+                           Hash_Len  => 48,
+                           Modulus   => Id.RSA_Modulus,
+                           Mod_Len   => Id.RSA_Mod_Len,
+                           Priv_Exp  => Id.RSA_Priv_Exp,
+                           Signature => Sig,
+                           Sig_Len   => Sig_Len,
+                           OK        => Sig_OK);
+
+                     when others =>
+                        --  0x0601
+                        SPARKNaCl.Hashing.SHA512.Hash (H512, Sig_Input (0 .. Sig_Input_Len - 1));
                         SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
-                          (M_Hash => Byte_Seq (H512), Hash_Len => 64,
-                           Modulus => Id.RSA_Modulus,
-                           Mod_Len => Id.RSA_Mod_Len,
-                           Priv_Exp => Id.RSA_Priv_Exp,
-                           Signature => Sig, Sig_Len => Sig_Len,
-                           OK => Sig_OK);
+                          (M_Hash    => Byte_Seq (H512),
+                           Hash_Len  => 64,
+                           Modulus   => Id.RSA_Modulus,
+                           Mod_Len   => Id.RSA_Mod_Len,
+                           Priv_Exp  => Id.RSA_Priv_Exp,
+                           Signature => Sig,
+                           Sig_Len   => Sig_Len,
+                           OK        => Sig_OK);
                   end case;
                end;
 
-            when 16#0807# =>  --  ed25519
+            when 16#0807# =>
+               --  ed25519
                --  Hash_Algo=0x08, Sig_Algo=0x07 already set above.
                --  Ed25519 signs the raw Sig_Input (no pre-hash; the
                --  underlying primitive does SHA-512 internally).
@@ -318,28 +337,28 @@ is
                   SK     : Bytes_64;
                begin
                   SK := Id.Ed25519_Key;
-                  SPARKTLSCrypto.Ed25519.Sign
-                    (SM, Sig_Input (0 .. Sig_Input_Len - 1), SK);
+                  SPARKTLSCrypto.Ed25519.Sign (SM, Sig_Input (0 .. Sig_Input_Len - 1), SK);
                   Sig (0 .. 63) := SM (0 .. 63);
                   Sig_Len := 64;
                   Sig_OK := True;
                end;
 
-            when 16#0403# =>  --  ecdsa_secp256r1_sha256
-               Hash_Algo := 4; Sig_Algo := 3;
+            when 16#0403# =>
+               --  ecdsa_secp256r1_sha256
+               Hash_Algo := 4;
+               Sig_Algo := 3;
                declare
-                  H : constant SPARKTLSCrypto.Hashing.SHA256.Digest :=
-                    SPARKTLSCrypto.Hashing.SHA256.Hash
-                      (Sig_Input (0 .. Sig_Input_Len - 1));
-                  K_Bytes : Bytes_32;
-                  K_OK    : Boolean;
+                  H              : constant SPARKTLSCrypto.Hashing.SHA256.Digest :=
+                    SPARKTLSCrypto.Hashing.SHA256.Hash (Sig_Input (0 .. Sig_Input_Len - 1));
+                  K_Bytes        : Bytes_32;
+                  K_OK           : Boolean;
                   R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                begin
                   --  RFC 6979 deterministic nonce.
                   SPARKTLSCrypto.RFC6979.Derive_K_P256
-                    (D => Bytes_32 (Id.ECDSA_P256_Key),
-                     H => Bytes_32 (H),
-                     K => K_Bytes,
+                    (D  => Bytes_32 (Id.ECDSA_P256_Key),
+                     H  => Bytes_32 (H),
+                     K  => K_Bytes,
                      OK => K_OK);
                   if not K_OK then
                      Sig_OK := False;
@@ -347,25 +366,24 @@ is
                   end if;
                   SPARKTLSCrypto.P256.ECDSA.Sign
                     (Hash  => H,
-                     D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
-                                (Id.ECDSA_P256_Key),
+                     D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
                      K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
                      R_Out => R_Half,
                      S_Out => S_Half,
                      OK    => Sig_OK);
                   if Sig_OK then
                      Handshake.ECDSA_To_DER
-                       (Byte_Seq (R_Half), Byte_Seq (S_Half), 32,
-                        Sig, Sig_Len);
+                       (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
                   end if;
                end;
 
-            when 16#0503# =>  --  ecdsa_secp384r1_sha384
-               Hash_Algo := 5; Sig_Algo := 3;
+            when 16#0503# =>
+               --  ecdsa_secp384r1_sha384
+               Hash_Algo := 5;
+               Sig_Algo := 3;
                declare
-                  H : constant SPARKNaCl.Hashing.SHA384.Digest :=
-                     SPARKNaCl.Hashing.SHA384.Hash
-                       (Sig_Input (0 .. Sig_Input_Len - 1));
+                  H       : constant SPARKNaCl.Hashing.SHA384.Digest :=
+                    SPARKNaCl.Hashing.SHA384.Hash (Sig_Input (0 .. Sig_Input_Len - 1));
                   K_Bytes : Bytes_48;
                   K_OK    : Boolean;
                   R_Half  : Byte_Seq (0 .. 47);
@@ -373,9 +391,9 @@ is
                begin
                   --  RFC 6979 deterministic nonce (HMAC-SHA-384 DRBG).
                   SPARKTLSCrypto.RFC6979.Derive_K_P384
-                    (D => Bytes_48 (Id.ECDSA_P384_Key),
-                     H => Bytes_48 (H),
-                     K => K_Bytes,
+                    (D  => Bytes_48 (Id.ECDSA_P384_Key),
+                     H  => Bytes_48 (H),
+                     K  => K_Bytes,
                      OK => K_OK);
                   if not K_OK then
                      Sig_OK := False;
@@ -406,8 +424,7 @@ is
          --  body:   params(Params_Len) ||
          --          hash_alg(1) || sig_alg(1) || sig_len(2) || sig(Sig_Len)
          declare
-            Body_Len : constant N32 :=
-               Params_Len + 2 + 2 + Sig_Len;  --  params + algo + len + sig
+            Body_Len : constant N32 := Params_Len + 2 + 2 + Sig_Len;  --  params + algo + len + sig
             Total    : constant N32 := 4 + Body_Len;
          begin
             if Total > Max_Server_Key_Exchange then
@@ -420,12 +437,11 @@ is
 
             --  EC params + point
             Pos := 4;
-            Result (Pos .. Pos + Params_Len - 1) :=
-               Params (0 .. Params_Len - 1);
+            Result (Pos .. Pos + Params_Len - 1) := Params (0 .. Params_Len - 1);
             Pos := Pos + Params_Len;
 
             --  Signature algorithm (TLS 1.2 split format)
-            Result (Pos)     := Hash_Algo;
+            Result (Pos) := Hash_Algo;
             Result (Pos + 1) := Sig_Algo;
             Pos := Pos + 2;
 
@@ -440,7 +456,7 @@ is
    end Build_Server_Key_Exchange;
 
    ------------------------------------------------------------------
-   --  Build_Client_Key_Exchange (RFC 8422 §5.7)
+   --  Build_Client_Key_Exchange (RFC 8422 Â§5.7)
    --
    --  Wire format:
    --    handshake_header: type(1)=0x10 || length(3)
@@ -448,16 +464,16 @@ is
    ------------------------------------------------------------------
 
    procedure Build_Client_Key_Exchange
-     (HC     : in     Handshake_Context;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
+     (HC : in Handshake_Context; Result : out Byte_Seq; Len : out N32)
    is
       Pt_Len : constant N32 := Point_Len_For_Group (HC.KE.Curve);
    begin
       Result := (others => 0);
       Len := 0;
 
-      if Pt_Len = 0 then return; end if;
+      if Pt_Len = 0 then
+         return;
+      end if;
 
       --  Handshake header: type || length
       --  Body = point_len(1) + point(Pt_Len)
@@ -488,8 +504,7 @@ is
                PK_Jac : SPARKTLSCrypto.P256.Point.P256_Jacobian;
                PK_Enc : Byte_Seq (0 .. 64);
             begin
-               SPARKTLSCrypto.P256.Point.P256_Mulgen
-                 (PK_Jac, HC.KE.P256_SK, 32);
+               SPARKTLSCrypto.P256.Point.P256_Mulgen (PK_Jac, HC.KE.P256_SK, 32);
                SPARKTLSCrypto.P256.Point.P256_To_Affine (PK_Jac);
                SPARKTLSCrypto.P256.Point.P256_Encode (PK_Enc, PK_Jac);
                Result (5 .. 5 + 64) := PK_Enc;
@@ -511,11 +526,11 @@ is
    end Build_Client_Key_Exchange;
 
    ------------------------------------------------------------------
-   --  Parse_Server_Key_Exchange (RFC 8422 §5.4)
+   --  Parse_Server_Key_Exchange (RFC 8422 Â§5.4)
    ------------------------------------------------------------------
 
    ------------------------------------------------------------------
-   --  Parse_Server_Key_Exchange (RFC 8422 §5.4)
+   --  Parse_Server_Key_Exchange (RFC 8422 Â§5.4)
    --
    --  Data is the handshake body (after 4-byte HS header).
    --  Wire format:
@@ -531,13 +546,13 @@ is
 
    procedure Parse_Server_Key_Exchange
      (HC   : in out Engaged_Context;
-      D    : in     SPARKTLS.HS_Pool.HS_Data;
-      Data : in     Byte_Seq;
-      OK   :    out Boolean)
+      D    : in SPARKTLS.HS_Pool.HS_Data;
+      Data : in Byte_Seq;
+      OK   : out Boolean)
    is
       package SKE renames RFLX.TLS_Handshake.TLS_1_2_Server_Key_Exchange_ECDHE;
-      procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
-        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      procedure RFLX_Free_Local is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr := null;
       Ctx : SKE.Context;
    begin
@@ -545,13 +560,15 @@ is
 
       --  Minimum body: curve_type(1) + curve(2) + pt_len(1) + pt(1) +
       --                algo(2) + sig_len(2) + sig(1) = 10
-      if Data'Length < 10 then return; end if;
+      if Data'Length < 10 then
+         return;
+      end if;
       pragma Assert (Data'First = 0);
       pragma Assert (Data'Last >= 9);
 
       --  RFLX parse. The TLS_1_2_Server_Key_Exchange_ECDHE message
       --  enforces curve_type = Named_Curve (rejects explicit-prime /
-      --  explicit-char2 — those were never legal for modern TLS 1.2).
+      --  explicit-char2 â those were never legal for modern TLS 1.2).
       declare
          Data_Len : constant N32 := Data'Last + 1;
       begin
@@ -559,9 +576,7 @@ is
          Buf := new RBT.Bytes'(1 .. RBT.Index (Data_Len) => 0);
       end;
       Buf.all := To_RFLX (Data);
-      SKE.Initialize
-        (Ctx, Buf,
-         Written_Last => RBT.Bit_Length (Buf'Length * 8));
+      SKE.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Buf'Length * 8));
       SKE.Verify_Message (Ctx);
       if not SKE.Well_Formed_Message (Ctx) then
          SKE.Take_Buffer (Ctx, Buf);
@@ -570,24 +585,20 @@ is
       end if;
 
       declare
-         NC : constant RFLX.Tls_Parameters.TLS_Supported_Groups :=
-                SKE.Get_Named_Curve (Ctx);
-         Curve : constant Unsigned_16 :=
-            (if NC.Known then
-               (case NC.Enum is
-                  when RFLX.Tls_Parameters.Secp256r1 => Group_Secp256r1,
-                  when RFLX.Tls_Parameters.Secp384r1 => Group_Secp384r1,
-                  when RFLX.Tls_Parameters.X25519    => Group_X25519,
-                  when others                        => 0)
-             else 0);
+         NC      : constant RFLX.Tls_Parameters.TLS_Supported_Groups := SKE.Get_Named_Curve (Ctx);
+         Curve   : constant Unsigned_16 :=
+           (if NC.Known
+            then
+              (case NC.Enum is
+                 when RFLX.Tls_Parameters.Secp256r1 => Group_Secp256r1,
+                 when RFLX.Tls_Parameters.Secp384r1 => Group_Secp384r1,
+                 when RFLX.Tls_Parameters.X25519 => Group_X25519,
+                 when others => 0)
+            else 0);
          Pt_Len  : constant N32 := N32 (SKE.Get_Point_Length (Ctx));
          Sig_Len : constant N32 := N32 (SKE.Get_Signature_Length (Ctx));
       begin
-         if Curve = 0
-           or not Valid_ECDHE_Group (Curve)
-           or Sig_Len = 0
-           or Sig_Len > Max_Sig
-         then
+         if Curve = 0 or not Valid_ECDHE_Group (Curve) or Sig_Len = 0 or Sig_Len > Max_Sig then
             SKE.Take_Buffer (Ctx, Buf);
             RFLX_Free_Local (Buf);
             return;
@@ -602,7 +613,7 @@ is
          pragma Assert (Pt_Len = Point_Len_For_Group (Curve));
          pragma Assert (Pt_Len <= P384_Point_Len);
          pragma Assert (Sig_Len in 1 .. Max_Sig);
-         HC.KE.Curve      := Curve;
+         HC.KE.Curve := Curve;
          HC.KE.Negotiated := True;
 
          --  Extract server's ephemeral public key.
@@ -614,8 +625,7 @@ is
                when Group_X25519 =>
                   pragma Assert (Pt_Len = X25519_Point_Len);
                   for I in N32 range 0 .. 31 loop
-                     HC.KE.Peer_PK (I) :=
-                        Byte (Pt_RFLX (RBT.Index (I + 1)));
+                     HC.KE.Peer_PK (I) := Byte (Pt_RFLX (RBT.Index (I + 1)));
                   end loop;
 
                when Group_Secp256r1 =>
@@ -627,8 +637,7 @@ is
                      return;
                   end if;
                   for I in N32 range 0 .. 64 loop
-                     HC.KE.P256_PK (I) :=
-                        Byte (Pt_RFLX (RBT.Index (I + 1)));
+                     HC.KE.P256_PK (I) := Byte (Pt_RFLX (RBT.Index (I + 1)));
                   end loop;
 
                when Group_Secp384r1 =>
@@ -640,8 +649,7 @@ is
                      return;
                   end if;
                   for I in N32 range 0 .. 96 loop
-                     HC.KE.P384_PK (I) :=
-                        Byte (Pt_RFLX (RBT.Index (I + 1)));
+                     HC.KE.P384_PK (I) := Byte (Pt_RFLX (RBT.Index (I + 1)));
                   end loop;
 
                when others =>
@@ -658,22 +666,19 @@ is
          end if;
          pragma Assert (4 + Pt_Len <= Data'Length);
 
-         --  RFC 5246 §7.4.3: verify signature over
+         --  RFC 5246 Â§7.4.3: verify signature over
          --  client_random || server_random || params
          --  (params = curve_type(1) + named_curve(2) + point_len(1) + point).
          --  Not verifying allows MITM to substitute the ECDHE pubkey.
          declare
             Params_Len    : constant N32 := 4 + Pt_Len;
             Sig_Input_Len : constant N32 := 64 + Params_Len;
-            Sig_Input     : Byte_Seq (0 .. Sig_Input_Len - 1) :=
-                              (others => 0);
+            Sig_Input     : Byte_Seq (0 .. Sig_Input_Len - 1) := (others => 0);
             Sig_Bytes     : Byte_Seq (0 .. Sig_Len - 1);
-            Sig_RFLX      : RBT.Bytes
-                              (1 .. RBT.Index (Sig_Len));
+            Sig_RFLX      : RBT.Bytes (1 .. RBT.Index (Sig_Len));
             Sig_OK        : Boolean;
             Alg_Value     : constant RFLX.RFLX_Types.Base_Integer :=
-               RFLX.Tls_Parameters.To_Base_Integer
-                 (SKE.Get_Algorithm (Ctx));
+              RFLX.Tls_Parameters.To_Base_Integer (SKE.Get_Algorithm (Ctx));
             Sig_Scheme    : Unsigned_16;
          begin
             if Params_Len > Data'Length
@@ -689,13 +694,12 @@ is
             pragma Assert (Alg_Value <= RFLX.RFLX_Types.Base_Integer (Unsigned_16'Last));
             Sig_Scheme := Unsigned_16 (Alg_Value);
 
-            Sig_Input (0 .. 31)  := Byte_Seq (HC.Client_Random);
+            Sig_Input (0 .. 31) := Byte_Seq (HC.Client_Random);
             Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
             --  params is the first Params_Len bytes of the input
             --  (RFLX field order is curve_type then named_curve then
-            --  point_length then point — matches RFC 8422 §5.4 wire).
-            Sig_Input (64 .. 64 + Params_Len - 1) :=
-               Data (0 .. Params_Len - 1);
+            --  point_length then point â matches RFC 8422 Â§5.4 wire).
+            Sig_Input (64 .. 64 + Params_Len - 1) := Data (0 .. Params_Len - 1);
 
             SKE.Get_Signature (Ctx, Sig_RFLX);
             for I in N32 range 0 .. Sig_Len - 1 loop
@@ -703,11 +707,12 @@ is
             end loop;
 
             if D.Peer_Leaf.Present then
-               Sig_OK := Cert_Verify.Verify_Signature_TLS12
-                 (Data       => Sig_Input,
-                  Sig        => Sig_Bytes,
-                  Cert       => D.Peer_Leaf.Cert,
-                  Sig_Scheme => Sig_Scheme);
+               Sig_OK :=
+                 Cert_Verify.Verify_Signature_TLS12
+                   (Data       => Sig_Input,
+                    Sig        => Sig_Bytes,
+                    Cert       => D.Peer_Leaf.Cert,
+                    Sig_Scheme => Sig_Scheme);
             else
                Sig_OK := False;
             end if;
@@ -726,7 +731,7 @@ is
    end Parse_Server_Key_Exchange;
 
    ------------------------------------------------------------------
-   --  Parse_Client_Key_Exchange (RFC 8422 §5.7)
+   --  Parse_Client_Key_Exchange (RFC 8422 Â§5.7)
    --
    --  Extracts the client's ephemeral ECDHE public key.
    --  Data layout: point_len(1) || point(N)
@@ -734,13 +739,11 @@ is
    ------------------------------------------------------------------
 
    procedure Parse_Client_Key_Exchange
-     (HC   : in out Engaged_Context;
-      Data : in     Byte_Seq;
-      OK   :    out Boolean)
+     (HC : in out Engaged_Context; Data : in Byte_Seq; OK : out Boolean)
    is
       package CKE renames RFLX.TLS_Handshake.TLS_1_2_Client_Key_Exchange_ECDHE;
-      procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
-        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      procedure RFLX_Free_Local is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr;
       Ctx : CKE.Context;
    begin
@@ -757,9 +760,7 @@ is
          Buf := new RBT.Bytes'(1 .. RBT.Index (Data_Len) => 0);
       end;
       Buf.all := To_RFLX (Data);
-      CKE.Initialize
-        (Ctx, Buf,
-         Written_Last => RBT.Bit_Length (Buf'Length * 8));
+      CKE.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Buf'Length * 8));
       CKE.Verify_Message (Ctx);
       if not CKE.Well_Formed_Message (Ctx) then
          CKE.Take_Buffer (Ctx, Buf);
@@ -771,7 +772,7 @@ is
          Pt_Len  : constant N32 := N32 (CKE.Get_Point_Length (Ctx));
          Pt_RFLX : RBT.Bytes (1 .. RBT.Index (Pt_Len));
       begin
-         --  RFC 5246 §7.4.7: body ends exactly at 1 + Pt_Len bytes.
+         --  RFC 5246 Â§7.4.7: body ends exactly at 1 + Pt_Len bytes.
          --  Trailing bytes (BoGo TrailingMessageData-ClientKeyExchange)
          --  are a protocol error.
          if Data'Length /= 1 + Pt_Len then
@@ -791,8 +792,7 @@ is
          case HC.KE.Curve is
             when Group_X25519 =>
                for I in N32 range 0 .. 31 loop
-                  HC.KE.Peer_PK (I) :=
-                     Byte (Pt_RFLX (RBT.Index (I + 1)));
+                  HC.KE.Peer_PK (I) := Byte (Pt_RFLX (RBT.Index (I + 1)));
                end loop;
 
             when Group_Secp256r1 =>
@@ -803,8 +803,7 @@ is
                   return;
                end if;
                for I in N32 range 0 .. 64 loop
-                  HC.KE.P256_PK (I) :=
-                     Byte (Pt_RFLX (RBT.Index (I + 1)));
+                  HC.KE.P256_PK (I) := Byte (Pt_RFLX (RBT.Index (I + 1)));
                end loop;
 
             when Group_Secp384r1 =>
@@ -815,8 +814,7 @@ is
                   return;
                end if;
                for I in N32 range 0 .. 96 loop
-                  HC.KE.P384_PK (I) :=
-                     Byte (Pt_RFLX (RBT.Index (I + 1)));
+                  HC.KE.P384_PK (I) := Byte (Pt_RFLX (RBT.Index (I + 1)));
                end loop;
 
             when others =>
@@ -832,24 +830,23 @@ is
    end Parse_Client_Key_Exchange;
 
    ------------------------------------------------------------------
-   --  Build_Finished_12 (RFC 5246 §7.4.9)
+   --  Build_Finished_12 (RFC 5246 Â§7.4.9)
    ------------------------------------------------------------------
 
    procedure Build_Finished_12
-     (Master          : in     Bytes_48;
-      Label           : in     String;
-      Transcript_Hash : in     Byte_Seq;
-      Use_SHA384      : in     Boolean;
-      Result          :    out Byte_Seq;
-      Len             :    out N32)
+     (Master          : in Bytes_48;
+      Label           : in String;
+      Transcript_Hash : in Byte_Seq;
+      Use_SHA384      : in Boolean;
+      Result          : out Byte_Seq;
+      Len             : out N32)
    is
       VD : Key_Schedule_12.Verify_Data_12;
    begin
       Result := (others => 0);
 
       --  Compute verify_data via PRF
-      Key_Schedule_12.Compute_Finished_12
-        (VD, Master, Label, Transcript_Hash, Use_SHA384);
+      Key_Schedule_12.Compute_Finished_12 (VD, Master, Label, Transcript_Hash, Use_SHA384);
 
       --  Build message: type(1) || length(3) || verify_data(12)
       Result (0) := HT_Finished;  --  0x14
@@ -862,23 +859,23 @@ is
    end Build_Finished_12;
 
    ------------------------------------------------------------------
-   --  Build_Certificate_Verify_12 (RFC 5246 §7.4.8)
+   --  Build_Certificate_Verify_12 (RFC 5246 Â§7.4.8)
    --
    --  TLS 1.2: signs Hash(handshake_messages) directly.
    --  No "TLS 1.3, server CertificateVerify\x00" context prefix.
    ------------------------------------------------------------------
 
    procedure Build_Certificate_Verify_12
-     (Transcript_Hash : in     Byte_Seq;
-      Id              : in     Identity;
-      Sig_Algo_Wire   : in     Unsigned_16;
-      Random          : in     Live_Random_Fn;
-      Result          :    out Byte_Seq;
-      Len             :    out N32)
+     (Transcript_Hash : in Byte_Seq;
+      Id              : in Identity;
+      Sig_Algo_Wire   : in Unsigned_16;
+      Random          : in Live_Random_Fn;
+      Result          : out Byte_Seq;
+      Len             : out N32)
    is
-      Sig     : Byte_Seq (0 .. Max_Sig - 1) := (others => 0);
-      Sig_Len : N32 := 0;
-      Sig_OK  : Boolean;
+      Sig                 : Byte_Seq (0 .. Max_Sig - 1) := (others => 0);
+      Sig_Len             : N32 := 0;
+      Sig_OK              : Boolean;
       Hash_Algo, Sig_Algo : Byte;
    begin
       Result := (others => 0);
@@ -888,14 +885,17 @@ is
       --  for hashed schemes; Ed25519 receives the raw transcript).
       --  Wire (Hash_Algo, Sig_Algo) = high/low bytes of scheme.
       Hash_Algo := Byte (Shift_Right (Sig_Algo_Wire, 8));
-      Sig_Algo  := Byte (Sig_Algo_Wire and 16#FF#);
+      Sig_Algo := Byte (Sig_Algo_Wire and 16#FF#);
       case Sig_Algo_Wire is
-         when 16#0804# =>  --  rsa_pss_rsae_sha256
+         when 16#0804# =>
+            --  rsa_pss_rsae_sha256
             if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
-               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
-            then return; end if;
+              or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+            then
+               return;
+            end if;
             declare
                Salt : Bytes_32;
             begin
@@ -913,14 +913,18 @@ is
                   OK        => Sig_OK);
             end;
 
-         when 16#0401# =>  --  rsa_pkcs1_sha256
-            Hash_Algo := 4; Sig_Algo := 1;
+         when 16#0401# =>
+            --  rsa_pkcs1_sha256
+            Hash_Algo := 4;
+            Sig_Algo := 1;
             if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
-               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Transcript_Hash'Length /= 32
-            then return; end if;
+              or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Transcript_Hash'Length /= 32
+            then
+               return;
+            end if;
             SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
               (M_Hash    => Transcript_Hash (0 .. 31),
                Hash_Len  => 32,
@@ -931,14 +935,18 @@ is
                Sig_Len   => Sig_Len,
                OK        => Sig_OK);
 
-         when 16#0501# =>  --  rsa_pkcs1_sha384
-            Hash_Algo := 5; Sig_Algo := 1;
+         when 16#0501# =>
+            --  rsa_pkcs1_sha384
+            Hash_Algo := 5;
+            Sig_Algo := 1;
             if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
-               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Transcript_Hash'Length /= 48
-            then return; end if;
+              or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Transcript_Hash'Length /= 48
+            then
+               return;
+            end if;
             SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
               (M_Hash    => Transcript_Hash (0 .. 47),
                Hash_Len  => 48,
@@ -949,13 +957,16 @@ is
                Sig_Len   => Sig_Len,
                OK        => Sig_OK);
 
-         when 16#0601# =>  --  rsa_pkcs1_sha512
+         when 16#0601# =>
+            --  rsa_pkcs1_sha512
             if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
-               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Transcript_Hash'Length /= 64
-            then return; end if;
+              or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Transcript_Hash'Length /= 64
+            then
+               return;
+            end if;
             SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
               (M_Hash    => Transcript_Hash (0 .. 63),
                Hash_Len  => 64,
@@ -966,13 +977,16 @@ is
                Sig_Len   => Sig_Len,
                OK        => Sig_OK);
 
-         when 16#0805# =>  --  rsa_pss_rsae_sha384
+         when 16#0805# =>
+            --  rsa_pss_rsae_sha384
             if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
-               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Transcript_Hash'Length /= 48
-            then return; end if;
+              or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Transcript_Hash'Length /= 48
+            then
+               return;
+            end if;
             declare
                Salt : Bytes_48;
             begin
@@ -990,13 +1004,16 @@ is
                   OK        => Sig_OK);
             end;
 
-         when 16#0806# =>  --  rsa_pss_rsae_sha512
+         when 16#0806# =>
+            --  rsa_pss_rsae_sha512
             if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
-               or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
-               or else Transcript_Hash'Length /= 64
-            then return; end if;
+              or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
+              or else Transcript_Hash'Length /= 64
+            then
+               return;
+            end if;
             declare
                Salt : Bytes_64;
             begin
@@ -1014,8 +1031,11 @@ is
                   OK        => Sig_OK);
             end;
 
-         when 16#0503# =>  --  ecdsa_secp384r1_sha384 (mTLS w/ P-384 key)
-            if Transcript_Hash'Length /= 48 then return; end if;
+         when 16#0503# =>
+            --  ecdsa_secp384r1_sha384 (mTLS w/ P-384 key)
+            if Transcript_Hash'Length /= 48 then
+               return;
+            end if;
             declare
                K_Bytes : Bytes_48;
                K_OK    : Boolean;
@@ -1023,9 +1043,9 @@ is
                S_Half  : Byte_Seq (0 .. 47);
             begin
                SPARKTLSCrypto.RFC6979.Derive_K_P384
-                 (D => Bytes_48 (Id.ECDSA_P384_Key),
-                  H => Bytes_48 (Transcript_Hash (0 .. 47)),
-                  K => K_Bytes,
+                 (D  => Bytes_48 (Id.ECDSA_P384_Key),
+                  H  => Bytes_48 (Transcript_Hash (0 .. 47)),
+                  K  => K_Bytes,
                   OK => K_OK);
                if not K_OK then
                   Sig_OK := False;
@@ -1043,7 +1063,8 @@ is
                end if;
             end;
 
-         when 16#0807# =>  --  ed25519
+         when 16#0807# =>
+            --  ed25519
             --  Ed25519 signs the raw transcript (the caller passed the
             --  raw transcript bytes rather than a pre-hash).
             declare
@@ -1058,18 +1079,20 @@ is
                Sig_OK := True;
             end;
 
-         when 16#0403# =>  --  ecdsa_secp256r1_sha256
-            Hash_Algo := 4; Sig_Algo := 3;
+         when 16#0403# =>
+            --  ecdsa_secp256r1_sha256
+            Hash_Algo := 4;
+            Sig_Algo := 3;
             declare
-               K_Bytes : Bytes_32;
-               K_OK    : Boolean;
+               K_Bytes        : Bytes_32;
+               K_OK           : Boolean;
                R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
                --  RFC 6979 deterministic nonce.
                SPARKTLSCrypto.RFC6979.Derive_K_P256
-                 (D => Bytes_32 (Id.ECDSA_P256_Key),
-                  H => Bytes_32 (Transcript_Hash (0 .. 31)),
-                  K => K_Bytes,
+                 (D  => Bytes_32 (Id.ECDSA_P256_Key),
+                  H  => Bytes_32 (Transcript_Hash (0 .. 31)),
+                  K  => K_Bytes,
                   OK => K_OK);
                if not K_OK then
                   Sig_OK := False;
@@ -1077,16 +1100,13 @@ is
                end if;
                SPARKTLSCrypto.P256.ECDSA.Sign
                  (Hash  => Bytes_32 (Transcript_Hash (0 .. 31)),
-                  D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
-                             (Id.ECDSA_P256_Key),
+                  D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
                   K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
                   R_Out => R_Half,
                   S_Out => S_Half,
                   OK    => Sig_OK);
                if Sig_OK then
-                  Handshake.ECDSA_To_DER
-                    (Byte_Seq (R_Half), Byte_Seq (S_Half), 32,
-                     Sig, Sig_Len);
+                  Handshake.ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
                end if;
             end;
 
@@ -1094,7 +1114,9 @@ is
             return;
       end case;
 
-      if not Sig_OK or Sig_Len = 0 then return; end if;
+      if not Sig_OK or Sig_Len = 0 then
+         return;
+      end if;
 
       --  Wire format: type(1)=0x0F || length(3) ||
       --               hash_alg(1) || sig_alg(1) || sig_len(2) || sig(N)
@@ -1102,7 +1124,9 @@ is
          Body_Len : constant N32 := 2 + 2 + Sig_Len;
          Total    : constant N32 := 4 + Body_Len;
       begin
-         if Total - 1 > Result'Last then return; end if;
+         if Total - 1 > Result'Last then
+            return;
+         end if;
 
          pragma Assert (Sig_Len <= Max_Sig);
          pragma Assert (Body_Len <= 4 + Max_Sig);
@@ -1123,7 +1147,7 @@ is
    ------------------------------------------------------------------
 
    ------------------------------------------------------------------
-   --  Build_Server_Hello_12 (RFC 5246 §7.4.1.2)
+   --  Build_Server_Hello_12 (RFC 5246 Â§7.4.1.2)
    --
    --  Uses direct serialization. The TLS 1.2 ServerHello layout is
    --  fixed-size apart from a small extension list, and handwritten
@@ -1136,18 +1160,18 @@ is
    --    cipher_suite[2] (TLS 1.2 ECDHE+AEAD suite)
    --    compression_method[1] = 0x00
    --    extensions:
-   --      renegotiation_info (0xFF01) — empty for initial handshake
+   --      renegotiation_info (0xFF01) â empty for initial handshake
    --
    --  No supported_versions extension (that's TLS 1.3).
    --  No key_share extension (ECDHE is in ServerKeyExchange).
    ------------------------------------------------------------------
 
    procedure Build_Server_Hello_12
-     (Negotiated : in     Supported_Suite;
+     (Negotiated : in Supported_Suite;
       ALPN       : in out Hostname_Buf;
       HC         : in out Engaged_Context;
-      Result     :    out Byte_Seq;
-      Len        :    out N32)
+      Result     : out Byte_Seq;
+      Len        : out N32)
    is
       subtype TLS12_SID_Len is N32 range 0 .. 32;
       subtype TLS12_ALPN_Data_Len is N32 range 0 .. 258;
@@ -1160,14 +1184,14 @@ is
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Renegotiation info (0xFF01): data = 1 byte (length=0).
-      --  Always emit. RFC 5746 §3.6 says only emit if the client
+      --  Always emit. RFC 5746 Â§3.6 says only emit if the client
       --  offered (extension or SCSV); but most real clients always
       --  send the extension, and a few TLS-Anvil tests rely on us
-      --  echoing it. Pragmatic: ALWAYS emit (no security risk —
+      --  echoing it. Pragmatic: ALWAYS emit (no security risk â
       --  the empty initial-handshake form binds the connection).
       RI_Data_Len : constant := 1;
-      --  RFC 5746 §3.6: server emits renegotiation_info only when
-      --  the client signalled support — either by sending the
+      --  RFC 5746 Â§3.6: server emits renegotiation_info only when
+      --  the client signalled support â either by sending the
       --  extension itself or by including the TLS_EMPTY_RENEGOTIATION_
       --  INFO_SCSV (0x00FF) signaling cipher suite. BoGo
       --  Renegotiate-Server-NoExt verifies we DON'T echo it when
@@ -1186,18 +1210,16 @@ is
       --  ALPN (0x0010): if client offered and server configured
       --  Data: list_len(2) + proto_len(1) + proto(N)
       Selected_ALPN : constant Hostname_Buf := SPARKTLS.Handshake.Server_Msgs.Select_ALPN (HC);
-      ALPN_Match : constant Boolean := Selected_ALPN.Len > 0;
+      ALPN_Match    : constant Boolean := Selected_ALPN.Len > 0;
       ALPN_Data_Len : constant TLS12_ALPN_Data_Len :=
-         (if ALPN_Match then N32 (3 + Selected_ALPN.Len) else 0);
-      ALPN_Ext_Len : constant TLS12_ALPN_Ext_Len :=
-         (if ALPN_Match then 4 + ALPN_Data_Len else 0);
+        (if ALPN_Match then N32 (3 + Selected_ALPN.Len) else 0);
+      ALPN_Ext_Len  : constant TLS12_ALPN_Ext_Len := (if ALPN_Match then 4 + ALPN_Data_Len else 0);
 
       --  EMS extension is only echoed in ServerHello when the
-      --  client's ClientHello included it (RFC 7627 §5.1).
-      EMS_Ext_Len : constant N32 :=
-         (if HC.Use_EMS then 4 + EMS_Data_Len else 0);
+      --  client's ClientHello included it (RFC 7627 Â§5.1).
+      EMS_Ext_Len : constant N32 := (if HC.Use_EMS then 4 + EMS_Data_Len else 0);
 
-      --  RFC 5077 §3.3: empty session_ticket ext in SH signals to the
+      --  RFC 5077 Â§3.3: empty session_ticket ext in SH signals to the
       --  client that a NewSessionTicket message will follow. Echoed
       --  iff (a) client offered the extension and (b) we have ticket-
       --  encryption keys configured. The actual NST message is built
@@ -1207,23 +1229,21 @@ is
       --  answer at issue time (Found => False just means no ticket), so we
       --  no longer inspect key slots here.
       Emit_ST_Ext : constant Boolean :=
-         HC.T12.Ticket_Offered
-         and then HC.Cfg.Get_Active_TEK /= null;
-      ST_Ext_Len : constant N32 := (if Emit_ST_Ext then 4 else 0);
+        HC.T12.Ticket_Offered and then HC.Cfg.Get_Active_TEK /= null;
+      ST_Ext_Len  : constant N32 := (if Emit_ST_Ext then 4 else 0);
 
       --  Extensions total
-      Ext_Total   : constant TLS12_SH_Ext_Total :=
-         RI_Ext_Len + EMS_Ext_Len + SNI_Ext_Len + ALPN_Ext_Len + ST_Ext_Len;
+      Ext_Total     : constant TLS12_SH_Ext_Total :=
+        RI_Ext_Len + EMS_Ext_Len + SNI_Ext_Len + ALPN_Ext_Len + ST_Ext_Len;
       Ext_Block_Len : constant TLS12_SH_Ext_Block_Len :=
-         (if Ext_Total > 0 then 2 + Ext_Total else 0);
+        (if Ext_Total > 0 then 2 + Ext_Total else 0);
 
       --  ServerHello body size:
       --  version(2) + random(32) + sid_len(1) + sid(N) + suite(2)
       --  + comp(1) + optional ext_len(2) + extensions.
       SID_Out_Len : constant TLS12_SID_Len :=
-         (if HC.T12.Resuming then HC.Legacy_Session_ID_Len else 32);
-      SH_Body_Len : constant TLS12_SH_Body_Len :=
-         38 + SID_Out_Len + Ext_Block_Len;
+        (if HC.T12.Resuming then HC.Legacy_Session_ID_Len else 32);
+      SH_Body_Len : constant TLS12_SH_Body_Len := 38 + SID_Out_Len + Ext_Block_Len;
       SH_Msg_Len  : constant TLS12_SH_Msg_Len := 4 + SH_Body_Len;
 
       Pos : N32;
@@ -1238,7 +1258,7 @@ is
       begin
          Gen_Random (Byte_Seq (Tmp_SR));
          if HC.Cfg.Versions /= TLS_1_2_Only then
-            --  RFC 8446 §4.1.3: a TLS 1.3-capable server negotiating
+            --  RFC 8446 Â§4.1.3: a TLS 1.3-capable server negotiating
             --  TLS 1.2 MUST mark ServerHello.random with DOWNGRD\x01.
             Tmp_SR (24) := 16#44#;
             Tmp_SR (25) := 16#4F#;
@@ -1250,7 +1270,7 @@ is
             Tmp_SR (31) := 16#01#;
          end if;
          HC.Server_Random := Tmp_SR;
-         --  RFC 5246 §7.4.1.3 / RFC 5077 §3.4: when resuming a session
+         --  RFC 5246 Â§7.4.1.3 / RFC 5077 Â§3.4: when resuming a session
          --  the server MUST echo the client's offered session_id in SH.
          --  HC.Legacy_Session_ID was populated from the client's CH; do
          --  NOT overwrite it on the resume path. For a fresh handshake
@@ -1276,7 +1296,7 @@ is
 
       Pos := 4;
 
-      --  RFC 5246 §7.4.1.3: version = 0x0303 (actual TLS 1.2).
+      --  RFC 5246 Â§7.4.1.3: version = 0x0303 (actual TLS 1.2).
       pragma Assert (ServerHello_Legacy_Version_RFC_8446_4_1_3 (TLS_1_2));
       Result (Pos) := 16#03#;
       Result (Pos + 1) := 16#03#;
@@ -1298,7 +1318,7 @@ is
       Put16 (Result, Pos, Wire_Of (Negotiated));
       Pos := Pos + 2;
 
-      --  RFC 5246 §6.2.2 / §7.4.1.4: compression_method MUST be 0
+      --  RFC 5246 Â§6.2.2 / Â§7.4.1.4: compression_method MUST be 0
       --  (null compression). CRIME-class attacks come from anything
       --  else; we never accept or emit non-zero here.
       pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));
@@ -1310,15 +1330,15 @@ is
          Pos := Pos + 2;
       end if;
 
-      --  renegotiation_info (0xFF01). RFC 5746 §3.6: emit only when
-      --  the client signalled support — via the extension itself or
+      --  renegotiation_info (0xFF01). RFC 5746 Â§3.6: emit only when
+      --  the client signalled support â via the extension itself or
       --  the TLS_EMPTY_RENEGOTIATION_INFO_SCSV (0x00FF) cipher
       --  suite. Both signals land in HC.Saw_Reneg_Info during CH
       --  parsing. BoGo Renegotiate-Server-NoExt verifies we DON'T
       --  echo it when the client offered neither.
       if Emit_RI then
          declare
-            RI_Raw  : constant Byte_Seq (0 .. 0) := (0 => 0);
+            RI_Raw : constant Byte_Seq (0 .. 0) := (0 => 0);
          begin
             pragma Assert (RI_Empty_Initial_RFC_5746_3_5 (RI_Raw));
             Put16 (Result, Pos, 16#FF01#);
@@ -1328,7 +1348,7 @@ is
          end;
       end if;
 
-      --  extended_master_secret (0x0017, RFC 7627). RFC 7627 §5.1:
+      --  extended_master_secret (0x0017, RFC 7627). RFC 7627 Â§5.1:
       --  echo the extension only if the client offered it.
       if HC.Use_EMS then
          pragma Assert (EMS_Extension_Empty_Body_RFC_7627_5_1 (0));
@@ -1337,21 +1357,21 @@ is
          Pos := Pos + EMS_Ext_Len;
       end if;
 
-      --  RFC 6066 §3 server_name acknowledgement: empty body.
+      --  RFC 6066 Â§3 server_name acknowledgement: empty body.
       if HC.Peer_SNI.Len > 0 then
          Put16 (Result, Pos, 16#0000#);
          Put16 (Result, Pos + 2, 0);
          Pos := Pos + SNI_Ext_Len;
       end if;
 
-      --  RFC 5077 §3.3 session_ticket (0x0023) — empty body.
+      --  RFC 5077 Â§3.3 session_ticket (0x0023) â empty body.
       if Emit_ST_Ext then
          Put16 (Result, Pos, 16#0023#);
          Put16 (Result, Pos + 2, 0);
          Pos := Pos + ST_Ext_Len;
       end if;
 
-      --  ALPN (0x0010) — if client offered and server matches.
+      --  ALPN (0x0010) â if client offered and server matches.
       if ALPN_Match then
          declare
             Proto_Len : constant Natural := Selected_ALPN.Len;
@@ -1363,8 +1383,7 @@ is
             Result (Pos + 6) := Byte (Proto_Len);
             for I in 1 .. Proto_Len loop
                pragma Loop_Invariant (I in 1 .. Proto_Len);
-               Result (Pos + N32 (6 + I)) :=
-                  Byte (Character'Pos (Selected_ALPN.Data (I)));
+               Result (Pos + N32 (6 + I)) := Byte (Character'Pos (Selected_ALPN.Data (I)));
             end loop;
             Pos := Pos + ALPN_Ext_Len;
 
@@ -1391,28 +1410,34 @@ is
    procedure Parse_Server_Hello_12
      (Negotiated : in out Supported_Suite;
       Last_Err   : in out Error_Code;
-      HC   : in out Engaged_Context;
-      Data : in     Byte_Seq;
-      OK   :    out Boolean)
+      HC         : in out Engaged_Context;
+      Data       : in Byte_Seq;
+      OK         : out Boolean)
    is
-      B   : constant N32 := Data'First;
-      Pos : N32;
+      B       : constant N32 := Data'First;
+      Pos     : N32;
       SID_Len : N32;
    begin
       OK := False;
 
       --  Minimum: type(1) + len(3) + version(2) + random(32) +
       --  sid_len(1) + suite(2) + comp(1) = 42
-      if Data'Length < 42 then return; end if;
+      if Data'Length < 42 then
+         return;
+      end if;
 
       --  Check handshake type
-      if Data (B) /= 16#02# then return; end if;
+      if Data (B) /= 16#02# then
+         return;
+      end if;
 
       --  Skip 4-byte header
       Pos := B + 4;
 
       --  Version: must be 0x0303
-      if Data (Pos) /= 3 or Data (Pos + 1) /= 3 then return; end if;
+      if Data (Pos) /= 3 or Data (Pos + 1) /= 3 then
+         return;
+      end if;
       Pos := Pos + 2;
 
       --  Random (32 bytes)
@@ -1421,7 +1446,7 @@ is
       end loop;
       Pos := Pos + 32;
 
-      --  RFC 8446 §4.1.3 downgrade protection. If this client offered
+      --  RFC 8446 Â§4.1.3 downgrade protection. If this client offered
       --  TLS 1.3 but the server negotiated TLS 1.2 and set either the
       --  standard downgrade marker or the JDK 11 compatibility marker,
       --  abort. A TLS_1_2_Only client accepts the JDK 11 marker because
@@ -1429,22 +1454,19 @@ is
       if HC.Cfg.Versions /= TLS_1_2_Only then
          declare
             type Sentinel_T is array (N32 range 0 .. 7) of Byte;
-            S13 : constant Sentinel_T :=
-              (16#44#, 16#4F#, 16#57#, 16#4E#,
-               16#47#, 16#52#, 16#44#, 16#01#);
-            S12 : constant Sentinel_T :=
-              (16#44#, 16#4F#, 16#57#, 16#4E#,
-               16#47#, 16#52#, 16#44#, 16#00#);
-            S_JDK : constant Sentinel_T :=
-              (16#ED#, 16#BF#, 16#B4#, 16#A8#,
-               16#C2#, 16#47#, 16#10#, 16#FF#);
+            S13          : constant Sentinel_T :=
+              (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#01#);
+            S12          : constant Sentinel_T :=
+              (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#00#);
+            S_JDK        : constant Sentinel_T :=
+              (16#ED#, 16#BF#, 16#B4#, 16#A8#, 16#C2#, 16#47#, 16#10#, 16#FF#);
             M13, M12, MJ : Boolean := True;
          begin
             for I in N32 range 0 .. 7 loop
-               pragma Loop_Invariant
-                 (HC.TS = HC.TS'Loop_Entry
-                  and then HC.HRR_Cookie_Len =
-                    HC.HRR_Cookie_Len'Loop_Entry);
+               pragma
+                 Loop_Invariant
+                   (HC.TS = HC.TS'Loop_Entry
+                      and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
                if HC.Server_Random (24 + I) /= S13 (I) then
                   M13 := False;
                end if;
@@ -1452,7 +1474,7 @@ is
                   M12 := False;
                end if;
                if HC.Server_Random (24 + I) /= S_JDK (I) then
-                  MJ  := False;
+                  MJ := False;
                end if;
             end loop;
 
@@ -1473,9 +1495,9 @@ is
       --  Session ID (may be empty)
       HC.Legacy_Session_ID := (others => 0);
       for I in N32 range 0 .. SID_Len - 1 loop
-         pragma Loop_Invariant
-           (HC.TS = HC.TS'Loop_Entry
-            and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
+         pragma
+           Loop_Invariant
+             (HC.TS = HC.TS'Loop_Entry and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
          HC.Legacy_Session_ID (I) := Data (Pos + I);
       end loop;
       Pos := Pos + SID_Len;
@@ -1483,14 +1505,15 @@ is
       --  Cipher suite (2 bytes)
       declare
          Suite_Val : constant Unsigned_16 :=
-            Unsigned_16 (Data (Pos)) * 256 + Unsigned_16 (Data (Pos + 1));
+           Unsigned_16 (Data (Pos)) * 256 + Unsigned_16 (Data (Pos + 1));
       begin
-         if Suite_Val not in Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
-                           | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
-                           | Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                           | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                           | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
-                           | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
+         if Suite_Val not in
+              Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
+              | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
+              | Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+              | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+              | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
+              | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
          then
             return;
          end if;
@@ -1498,7 +1521,7 @@ is
       end;
       Pos := Pos + 2;
 
-      --  RFC 5246 §6.2.2 / §7.4.1.4: server's chosen compression
+      --  RFC 5246 Â§6.2.2 / Â§7.4.1.4: server's chosen compression
       --  method MUST be null (0x00). BoGo InvalidCompressionMethod
       --  expects illegal_parameter (not handshake_failure).
       if Data (Pos) /= 0 then
@@ -1509,37 +1532,31 @@ is
 
       --  Extension parsing (policy + ALPN extraction) was already
       --  done by Pre_Scan_SH_Extensions in the caller's
-      --  Parse_Server_Hello pass. Walk only to extract HC.Use_EMS —
-      --  the one piece of state this fallback owns. RFC 7627 §5.1:
+      --  Parse_Server_Hello pass. Walk only to extract HC.Use_EMS â
+      --  the one piece of state this fallback owns. RFC 7627 Â§5.1:
       --  EMS in SH means the server agreed to derive the master
       --  secret via the EMS PRF.
       HC.Use_EMS := False;
       if Pos + 1 <= Data'Last then
          declare
-            Ext_Len : constant N32 :=
-               N32 (Data (Pos)) * 256 + N32 (Data (Pos + 1));
+            Ext_Len       : constant N32 := N32 (Data (Pos)) * 256 + N32 (Data (Pos + 1));
             Available_End : constant N32 := Data'Last + 1;
             Ext_End       : constant N32 :=
-               (if Ext_Len <= N32'Last - Pos - 2
-                then N32'Min (Pos + 2 + Ext_Len, Available_End)
-                else Available_End);
-            Ext_Pos : N32 := Pos + 2;
+              (if Ext_Len <= N32'Last - Pos - 2 then N32'Min (Pos + 2 + Ext_Len, Available_End)
+               else Available_End);
+            Ext_Pos       : N32 := Pos + 2;
          begin
-            while Ext_Pos + 3 <= Data'Last
-              and then Ext_Pos + 4 <= Ext_End
-            loop
+            while Ext_Pos + 3 <= Data'Last and then Ext_Pos + 4 <= Ext_End loop
                declare
                   Ext_Type : constant Unsigned_16 :=
-                     Unsigned_16 (Data (Ext_Pos)) * 256 +
-                     Unsigned_16 (Data (Ext_Pos + 1));
+                    Unsigned_16 (Data (Ext_Pos)) * 256 + Unsigned_16 (Data (Ext_Pos + 1));
                   Ext_DLen : constant N32 :=
-                     N32 (Data (Ext_Pos + 2)) * 256
-                     + N32 (Data (Ext_Pos + 3));
+                    N32 (Data (Ext_Pos + 2)) * 256 + N32 (Data (Ext_Pos + 3));
                begin
                   if Ext_Type = 16#0017# then
                      HC.Use_EMS := True;
                   end if;
-                  --  RFC 5077 §3.3 session_ticket (0x0023): empty
+                  --  RFC 5077 Â§3.3 session_ticket (0x0023): empty
                   --  body in SH signals the server will send a
                   --  NewSessionTicket later in the flight. We
                   --  record the flag; the actual receive happens
@@ -1553,11 +1570,11 @@ is
          end;
       end if;
 
-      --  No supported_versions → TLS 1.2
+      --  No supported_versions â TLS 1.2
       HC.Has_TLS_1_3 := False;
       HC.Version := TLS_1_2;
 
-      --  RFC 8446 §4.2.1: enforce our Cfg.Versions policy. If the
+      --  RFC 8446 Â§4.2.1: enforce our Cfg.Versions policy. If the
       --  user constrained us to TLS_1_3_Only via `-min-version 0x0304`
       --  or `-no-tls12`, refuse to negotiate TLS 1.2 here. BoGo's
       --  MinimumVersion-{Client,Client2}-TLS13-TLS12 + the runner's
@@ -1573,7 +1590,7 @@ is
    end Parse_Server_Hello_12;
 
    ------------------------------------------------------------------
-   --  Build_Certificate_Chain_12 (RFC 5246 §7.4.2)
+   --  Build_Certificate_Chain_12 (RFC 5246 Â§7.4.2)
    --
    --  TLS 1.2 Certificate:
    --    type(1)=0x0B || msg_length(3) ||
@@ -1584,43 +1601,34 @@ is
    --  No per-certificate extensions (TLS 1.3 only).
    ------------------------------------------------------------------
 
-   procedure Build_Certificate_Chain_12
-     (Id     : in     Identity;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
-           is
-              Pos : N32;
-              List_Start : N32;
-              List_Len : N32;
+   procedure Build_Certificate_Chain_12 (Id : in Identity; Result : out Byte_Seq; Len : out N32) is
+      Pos        : N32;
+      List_Start : N32;
+      List_Len   : N32;
    begin
       Result := (others => 0);
       Len := 0;
 
-      if Id.NaCl_Cert_Len = 0
-        or else Id.NaCl_Cert_Len > Max_Cert_DER_Len
-      then
+      if Id.NaCl_Cert_Len = 0 or else Id.NaCl_Cert_Len > Max_Cert_DER_Len then
          return;
       end if;
 
       --  Compute the full certificate_list length first. TLS 1.2
       --  Certificate entries are 3-byte DER length plus DER bytes.
       List_Len := 3 + Id.NaCl_Cert_Len;
-              for I in 0 .. Id.Int_Count - 1 loop
-                 pragma Loop_Invariant
-                   (List_Len <= 3 + Id.NaCl_Cert_Len
-                                + N32 (I) * (3 + N32 (Max_Cert_DER)));
+      for I in 0 .. Id.Int_Count - 1 loop
+         pragma
+           Loop_Invariant (List_Len <= 3 + Id.NaCl_Cert_Len + N32 (I) * (3 + N32 (Max_Cert_DER)));
          if Id.Ints (I).Present then
             List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len);
          end if;
       end loop;
 
       --  Handshake header (4) + certificate_list_length (3) + list.
-              if List_Len > 2**24 - 4
-                or else List_Len > N32 (Result'Length) - 7
-              then
-                 return;
-              end if;
-              pragma Assert (List_Len + 3 < 2**24);
+      if List_Len > 2 ** 24 - 4 or else List_Len > N32 (Result'Length) - 7 then
+         return;
+      end if;
+      pragma Assert (List_Len + 3 < 2 ** 24);
 
       --  Handshake header placeholder (fill length later)
       Result (0) := 16#0B#;  --  Certificate
@@ -1632,29 +1640,24 @@ is
 
       --  Leaf certificate (use NaCl_Cert which is SPARKNaCl.Byte_Seq)
       --  Need space for: cert_len(3) + cert_data(NaCl_Cert_Len)
-      if Pos <= Result'Last
-         and then 3 + Id.NaCl_Cert_Len <= Result'Last - Pos + 1
-      then
+      if Pos <= Result'Last and then 3 + Id.NaCl_Cert_Len <= Result'Last - Pos + 1 then
          Put24 (Result, Pos, Id.NaCl_Cert_Len);
          Pos := Pos + 3;
-         Result (Pos .. Pos + Id.NaCl_Cert_Len - 1) :=
-            Id.NaCl_Cert_DER (0 .. Id.NaCl_Cert_Len - 1);
+         Result (Pos .. Pos + Id.NaCl_Cert_Len - 1) := Id.NaCl_Cert_DER (0 .. Id.NaCl_Cert_Len - 1);
          Pos := Pos + Id.NaCl_Cert_Len;
       else
          return;
       end if;
 
-              --  Intermediate certificates
-              for I in 0 .. Id.Int_Count - 1 loop
-                 pragma Loop_Invariant (Pos >= 7);
-                 pragma Loop_Invariant (Pos <= Result'Last + 1);
-                 if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
+      --  Intermediate certificates
+      for I in 0 .. Id.Int_Count - 1 loop
+         pragma Loop_Invariant (Pos >= 7);
+         pragma Loop_Invariant (Pos <= Result'Last + 1);
+         if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
             declare
                Int_Len : constant N32 := N32 (Id.Ints (I).DER_Len);
             begin
-               if Pos <= Result'Last
-                 and then 3 + Int_Len <= Result'Last - Pos + 1
-               then
+               if Pos <= Result'Last and then 3 + Int_Len <= Result'Last - Pos + 1 then
                   Put24 (Result, Pos, Int_Len);
                   Pos := Pos + 3;
                   for J in N32 range 0 .. Int_Len - 1 loop
@@ -1678,25 +1681,25 @@ is
       --  Fill certificate list length
       Put24 (Result, List_Start, List_Len);
 
-              --  Fill handshake message length
-              Put24 (Result, 1, List_Len + 3);
+      --  Fill handshake message length
+      Put24 (Result, 1, List_Len + 3);
 
-              Len := List_Len + 7;
-           end Build_Certificate_Chain_12;
+      Len := List_Len + 7;
+   end Build_Certificate_Chain_12;
 
    ------------------------------------------------------------------
-   --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket build/parse via RFLX
+   --  RFC 5077 Â§3.3 TLS 1.2 NewSessionTicket build/parse via RFLX
    ------------------------------------------------------------------
 
    procedure Build_New_Session_Ticket_12
-     (Lifetime_Hint : in     Interfaces.Unsigned_32;
-      Ticket        : in     Byte_Seq;
-      Result        :    out Byte_Seq;
-      Len           :    out N32)
+     (Lifetime_Hint : in Interfaces.Unsigned_32;
+      Ticket        : in Byte_Seq;
+      Result        : out Byte_Seq;
+      Len           : out N32)
    is
       package NST renames RFLX.TLS_Handshake.TLS_1_2_New_Session_Ticket;
-      procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
-        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      procedure RFLX_Free_Local is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Ticket_Len : constant N32 := Ticket'Last + 1;
       Body_Len   : constant N32 := 4 + 2 + Ticket_Len;
       Total_Len  : constant N32 := 4 + Body_Len;
@@ -1713,10 +1716,8 @@ is
       --  Build the body via RFLX.
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       NST.Initialize (Ctx, Buf);
-      NST.Set_Ticket_Lifetime_Hint
-        (Ctx, RFLX.TLS_Handshake.Ticket_Lifetime (Lifetime_Hint));
-      NST.Set_Ticket_Length
-        (Ctx, RFLX.TLS_Handshake.TLS_1_2_NST_Ticket_Length (Ticket_Len));
+      NST.Set_Ticket_Lifetime_Hint (Ctx, RFLX.TLS_Handshake.Ticket_Lifetime (Lifetime_Hint));
+      NST.Set_Ticket_Length (Ctx, RFLX.TLS_Handshake.TLS_1_2_NST_Ticket_Length (Ticket_Len));
       if Ticket_Len > 0 then
          NST.Set_Ticket (Ctx, To_RFLX (Ticket));
       else
@@ -1729,28 +1730,27 @@ is
       Result (1) := Byte (Body_Len / 65536);
       Result (2) := Byte ((Body_Len / 256) mod 256);
       Result (3) := Byte (Body_Len mod 256);
-      Result (4 .. 4 + Body_Len - 1) :=
-         To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+      Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
 
       RFLX_Free_Local (Buf);
       Len := Total_Len;
    end Build_New_Session_Ticket_12;
 
    procedure Parse_New_Session_Ticket_12
-     (NST_Body      : in     Byte_Seq;
-      Lifetime_Hint :    out Interfaces.Unsigned_32;
-      Ticket_Len    :    out N32;
-      OK            :    out Boolean)
+     (NST_Body      : in Byte_Seq;
+      Lifetime_Hint : out Interfaces.Unsigned_32;
+      Ticket_Len    : out N32;
+      OK            : out Boolean)
    is
       package NST renames RFLX.TLS_Handshake.TLS_1_2_New_Session_Ticket;
-      procedure RFLX_Free_Local is new Ada.Unchecked_Deallocation
-        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      procedure RFLX_Free_Local is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr;
       Ctx : NST.Context;
    begin
       Lifetime_Hint := 0;
-      Ticket_Len    := 0;
-      OK            := False;
+      Ticket_Len := 0;
+      OK := False;
 
       --  Smallest body = lifetime(4) + ticket_len(2) = 6 bytes.
       if N32 (NST_Body'Length) < 6 then
@@ -1759,9 +1759,7 @@ is
 
       Buf := new RBT.Bytes'(1 .. RBT.Index (NST_Body'Length) => 0);
       Buf.all := To_RFLX (NST_Body);
-      NST.Initialize
-        (Ctx, Buf,
-         Written_Last => RBT.Bit_Length (NST_Body'Length * 8));
+      NST.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (NST_Body'Length * 8));
       NST.Verify_Message (Ctx);
       if not NST.Well_Formed_Message (Ctx) then
          NST.Take_Buffer (Ctx, Buf);
@@ -1769,9 +1767,8 @@ is
          return;
       end if;
 
-      Lifetime_Hint := Interfaces.Unsigned_32
-                        (NST.Get_Ticket_Lifetime_Hint (Ctx));
-      Ticket_Len    := N32 (NST.Get_Ticket_Length (Ctx));
+      Lifetime_Hint := Interfaces.Unsigned_32 (NST.Get_Ticket_Lifetime_Hint (Ctx));
+      Ticket_Len := N32 (NST.Get_Ticket_Length (Ctx));
 
       NST.Take_Buffer (Ctx, Buf);
       RFLX_Free_Local (Buf);

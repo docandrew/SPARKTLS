@@ -1,5 +1,5 @@
 with SPARKTLS.HS_Pool;
-with SPARKNaCl; use SPARKNaCl;
+with SPARKNaCl;                use SPARKNaCl;
 with SPARKTLS.Handshake.TLS12; use SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLSCrypto.P384.Field;
@@ -11,8 +11,8 @@ with SPARKTLSCrypto.P384.ECDSA;
 --  Called from Client.Advance when HC.Version = TLS_1_2.
 --
 --  Internal state tracking uses HC fields:
---    HC.CKE_Received_12  — client flight (CKE+CCS+Finished) sent
---    HC.CCS_Received     — server CCS received
+--    HC.CKE_Received_12  â client flight (CKE+CCS+Finished) sent
+--    HC.CCS_Received     â server CCS received
 --
 --  Handshake flow:
 --    1. Parse server flight: Certificate, ServerKeyExchange, ServerHelloDone
@@ -26,28 +26,27 @@ with SPARKTLSCrypto.P384.ECDSA;
 --  contracts name Session components directly (a private child's visible
 --  part sees the parent's private part), which a public child's visible
 --  part may not do once Session becomes a private type.
-private package SPARKTLS.Client.TLS12 with
-   SPARK_Mode => On
+
+private package SPARKTLS.Client.TLS12
+  with SPARK_Mode => On
 is
    --  Step the TLS 1.2 handshake state machine.
    --  Called repeatedly from Client.Advance until Connected or Error.
    --
    --  Internally tracks progress via HC flags:
-   --    !CKE_Received_12           → processing server flight
-   --    CKE_Received_12, !CCS_Received → waiting for server CCS
-   --    CKE_Received_12, CCS_Received  → waiting for server Finished
+   --    !CKE_Received_12           â processing server flight
+   --    CKE_Received_12, !CCS_Received â waiting for server CCS
+   --    CKE_Received_12, CCS_Received  â waiting for server Finished
    procedure Advance_Handshake_12
-     (S      : in out Session;
-      D      : in out SPARKTLS.HS_Pool.HS_Data;
-      Result :    out Action);
+     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action);
 
    --  Process records in Connected state for TLS 1.2.
    --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).
-   procedure Process_Connected_12
-     (S      : in out Session;
-      Result :    out Action)
-   with Pre => S.State in Connected | Closing
-               and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
-                       and then Empty_Records_Bounded_RFC_8446_5_2 (S);
+   procedure Process_Connected_12 (S : in out Session; Result : out Action)
+   with
+     Pre =>
+       S.State in Connected | Closing
+       and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
+       and then Empty_Records_Bounded_RFC_8446_5_2 (S);
 
 end SPARKTLS.Client.TLS12;

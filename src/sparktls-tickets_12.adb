@@ -1,22 +1,22 @@
 with SPARKNaCl.AES;
 with SPARKTLSCrypto.AES_GCM;
 
-package body SPARKTLS.Tickets_12 with
-   SPARK_Mode => On
+package body SPARKTLS.Tickets_12
+  with SPARK_Mode => On
 is
 
    --  Cumulative days from Jan 1 to the start of each month, non-leap.
-   --  Index 1 = Jan (0), 2 = Feb (31), …, 12 = Dec (334).
+   --  Index 1 = Jan (0), 2 = Feb (31), â¦, 12 = Dec (334).
    Days_Before_Month : constant array (1 .. 12) of Unsigned_64 :=
      (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334);
 
-   function Is_Leap (Y : Natural) return Boolean is
-     ((Y mod 4 = 0 and Y mod 100 /= 0) or Y mod 400 = 0);
+   function Is_Leap (Y : Natural) return Boolean
+   is ((Y mod 4 = 0 and Y mod 100 /= 0) or Y mod 400 = 0);
 
    function To_Unix_Seconds (DT : X509.Date_Time) return Unsigned_64 is
-      Y : constant Natural := DT.Year;
-      M : constant Natural := DT.Month;
-      D : constant Natural := DT.Day;
+      Y    : constant Natural := DT.Year;
+      M    : constant Natural := DT.Month;
+      D    : constant Natural := DT.Day;
       Days : Unsigned_64 := 0;
    begin
       if Y < 1970 or M not in 1 .. 12 or D < 1 or D > 31 then
@@ -30,13 +30,13 @@ is
       Days := Days + Days_Before_Month (M);
       if M > 2 and Is_Leap (Y) then
          Days := Days + 1;  --  Feb 29 happened this year
+
       end if;
       --  Days within the current month
       Days := Days + Unsigned_64 (D - 1);
-      return Days * 86_400
-           + Unsigned_64 (DT.Hour) * 3600
-           + Unsigned_64 (DT.Minute) * 60
-           + Unsigned_64 (DT.Second);
+      return
+        Days * 86_400 + Unsigned_64 (DT.Hour) * 3600 + Unsigned_64 (DT.Minute) * 60
+        + Unsigned_64 (DT.Second);
    end To_Unix_Seconds;
 
 
@@ -46,17 +46,13 @@ is
    Plain_Created_At_Off    : constant N32 := 50;
    Plain_SID_Len_Off       : constant N32 := 58;
    Plain_SID_Off           : constant N32 := 59;
-   --  total = 59 + SID_Len (0 .. 32) → 59 .. 91 bytes
+   --  total = 59 + SID_Len (0 .. 32) â 59 .. 91 bytes
 
    --  Encode plaintext into a flat Byte_Seq.
-   procedure Encode_Plain
-     (Plain : in     Ticket_Plain;
-      Buf   :    out Byte_Seq;
-      Len   :    out N32)
-   with Pre  => Buf'First = 0
-                and then Buf'Last >= 90
-                and then Plain.SID_Len in 0 .. 32,
-        Post => Len in 59 .. 91
+   procedure Encode_Plain (Plain : in Ticket_Plain; Buf : out Byte_Seq; Len : out N32)
+   with
+     Pre => Buf'First = 0 and then Buf'Last >= 90 and then Plain.SID_Len in 0 .. 32,
+     Post => Len in 59 .. 91
    is
    begin
       Buf := (others => 0);
@@ -67,27 +63,20 @@ is
       Buf (49) := Byte (Plain.Suite and 16#FF#);
       --  created_at (8 bytes, big-endian)
       for I in 0 .. 7 loop
-         Buf (50 + N32 (I)) :=
-            Byte (Shift_Right (Plain.Created_At, 8 * (7 - I)) and 16#FF#);
+         Buf (50 + N32 (I)) := Byte (Shift_Right (Plain.Created_At, 8 * (7 - I)) and 16#FF#);
       end loop;
       --  sid_len (1 byte) + sid (SID_Len bytes, zero-padded out)
       Buf (58) := Byte (Plain.SID_Len);
       if Plain.SID_Len > 0 then
-         Buf (59 .. 59 + Plain.SID_Len - 1) :=
-            Plain.SID (0 .. Plain.SID_Len - 1);
+         Buf (59 .. 59 + Plain.SID_Len - 1) := Plain.SID (0 .. Plain.SID_Len - 1);
       end if;
       Len := 59 + Plain.SID_Len;
    end Encode_Plain;
 
    --  Inverse of Encode_Plain. Status = False if shape is wrong.
    procedure Decode_Plain
-     (Buf    : in     Byte_Seq;
-      Len    : in     N32;
-      Plain  :    out Ticket_Plain;
-      Status :    out Boolean)
-   with Pre  => Buf'First = 0
-                and then Buf'Last >= Len - 1
-                and then Len >= 0
+     (Buf : in Byte_Seq; Len : in N32; Plain : out Ticket_Plain; Status : out Boolean)
+   with Pre => Buf'First = 0 and then Buf'Last >= Len - 1 and then Len >= 0
    is
       SID_Len : N32;
    begin
@@ -101,12 +90,10 @@ is
          return;
       end if;
       Plain.Master_Secret := Buf (0 .. 47);
-      Plain.Suite := Unsigned_16 (Buf (48)) * 256
-                     + Unsigned_16 (Buf (49));
+      Plain.Suite := Unsigned_16 (Buf (48)) * 256 + Unsigned_16 (Buf (49));
       Plain.Created_At := 0;
       for I in 0 .. 7 loop
-         Plain.Created_At := Shift_Left (Plain.Created_At, 8)
-                             or Unsigned_64 (Buf (50 + N32 (I)));
+         Plain.Created_At := Shift_Left (Plain.Created_At, 8) or Unsigned_64 (Buf (50 + N32 (I)));
       end loop;
       Plain.SID_Len := SID_Len;
       if SID_Len > 0 then
@@ -117,12 +104,12 @@ is
 
    ----------------------------------------------------------------
    procedure Encrypt_Ticket
-     (Plain      : in     Ticket_Plain;
-      Key_ID     : in     Bytes_4;
-      TEK        : in     Bytes_32;
-      Nonce      : in     Bytes_12;
-      Ticket     :    out Byte_Seq;
-      Ticket_Len :    out N32)
+     (Plain      : in Ticket_Plain;
+      Key_ID     : in Bytes_4;
+      TEK        : in Bytes_32;
+      Nonce      : in Bytes_12;
+      Ticket     : out Byte_Seq;
+      Ticket_Len : out N32)
    is
       use SPARKNaCl.AES;
       Plain_Buf : Byte_Seq (0 .. 90);
@@ -166,7 +153,6 @@ is
       Ticket_Len := 32 + Plain_Len;
    end Encrypt_Ticket;
 
-
    function Ticket_Key_ID (Ticket : Byte_Seq) return Byte_Seq is
       Result : Byte_Seq (0 .. Ticket_Key_ID_Size - 1);
    begin
@@ -175,17 +161,17 @@ is
    end Ticket_Key_ID;
 
    procedure Decrypt_Ticket
-     (Ticket  : in     Byte_Seq;
-      TEK     : in     Byte_Seq;
-      Now     : in     Unsigned_64;
-      Max_Age : in     Unsigned_32;
-      Plain   :    out Ticket_Plain;
-      Status  :    out Boolean)
+     (Ticket  : in Byte_Seq;
+      TEK     : in Byte_Seq;
+      Now     : in Unsigned_64;
+      Max_Age : in Unsigned_32;
+      Plain   : out Ticket_Plain;
+      Status  : out Boolean)
    is
       use SPARKNaCl.AES;
-      T_Len : constant N32 := N32 (Ticket'Length);
-      Tag   : SPARKNaCl.Bytes_16;
-      Ct_Len : N32;
+      T_Len     : constant N32 := N32 (Ticket'Length);
+      Tag       : SPARKNaCl.Bytes_16;
+      Ct_Len    : N32;
       Plain_Buf : Byte_Seq (0 .. 90) := (others => 0);
       Decode_OK : Boolean;
       Key       : AES256_Key;
@@ -204,20 +190,18 @@ is
       end if;
 
       --  Extract tag from end, ciphertext from middle.
-      Tag := SPARKNaCl.Bytes_16
-               (Ticket (T_Len - 16 .. T_Len - 1));
+      Tag := SPARKNaCl.Bytes_16 (Ticket (T_Len - 16 .. T_Len - 1));
       declare
-         CL : constant N32 := Ct_Len;
-         --  Slide to First=0 — the Decrypt_256 precondition is
+         CL           : constant N32 := Ct_Len;
+         --  Slide to First=0 â the Decrypt_256 precondition is
          --  C'First = 0 and AAD'First = 0; slicing Ticket (a..b)
          --  preserves a as 'First, violating the precondition for
          --  a /= 0. Build a copy with origin 0 to satisfy it.
-         Ct_Slice_Raw : constant Byte_Seq :=
-                          Ticket (16 .. 16 + CL - 1);
-         Ct_Slice : Byte_Seq (0 .. CL - 1);
-         AAD : Byte_Seq (0 .. 3);
-         Pt_Slice : Byte_Seq (0 .. CL - 1);
-         Nonce_B  : SPARKNaCl.Bytes_12;
+         Ct_Slice_Raw : constant Byte_Seq := Ticket (16 .. 16 + CL - 1);
+         Ct_Slice     : Byte_Seq (0 .. CL - 1);
+         AAD          : Byte_Seq (0 .. 3);
+         Pt_Slice     : Byte_Seq (0 .. CL - 1);
+         Nonce_B      : SPARKNaCl.Bytes_12;
       begin
          Ct_Slice := Ct_Slice_Raw;
          AAD := Ticket (0 .. 3);
@@ -249,7 +233,7 @@ is
 
       --  Expiry / clock-skew check.
       if Plain.Created_At > Now then
-         --  Ticket from the future — clock skew or forged. Reject.
+         --  Ticket from the future â clock skew or forged. Reject.
          return;
       end if;
       if Now - Plain.Created_At > Unsigned_64 (Max_Age) then

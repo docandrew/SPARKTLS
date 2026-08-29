@@ -13,11 +13,11 @@
 --  key B (defence in depth against TEK confusion).
 
 with Interfaces; use Interfaces;
-with SPARKNaCl; use SPARKNaCl;
+with SPARKNaCl;  use SPARKNaCl;
 with X509;
 
-package SPARKTLS.Tickets_12 with
-   SPARK_Mode => On
+package SPARKTLS.Tickets_12
+  with SPARK_Mode => On
 is
 
    --  Convert an X509.Date_Time to seconds since the Unix epoch
@@ -28,12 +28,11 @@ is
    --  is enforced against real wall-clock time.
    function To_Unix_Seconds (DT : X509.Date_Time) return Unsigned_64;
 
-
    subtype Bytes_48 is Byte_Seq (0 .. 47);
    subtype Bytes_32 is Byte_Seq (0 .. 31);
    subtype Bytes_16 is Byte_Seq (0 .. 15);
    subtype Bytes_12 is Byte_Seq (0 .. 11);
-   subtype Bytes_4  is Byte_Seq (0 .. 3);
+   subtype Bytes_4 is Byte_Seq (0 .. 3);
 
    --  Maximum on-wire ticket length:
    --    4 (key_id) + 12 (nonce) + 91 (plaintext max) + 16 (tag) = 123
@@ -54,16 +53,18 @@ is
    --  any value) and TEK (32 bytes) come from a Config.TLS12_Ticket_Keys
    --  entry. On return, Ticket (0 .. Ticket_Len - 1) holds the wire bytes.
    procedure Encrypt_Ticket
-     (Plain      : in     Ticket_Plain;
-      Key_ID     : in     Bytes_4;
-      TEK        : in     Bytes_32;
-      Nonce      : in     Bytes_12;
-      Ticket     :    out Byte_Seq;
-      Ticket_Len :    out N32)
-   with Pre  => Ticket'First = 0
-                and then Ticket'Last >= Max_Ticket_Wire_Len - 1
-                and then Plain.SID_Len in 0 .. 32,
-        Post => Ticket_Len in 1 .. Max_Ticket_Wire_Len;
+     (Plain      : in Ticket_Plain;
+      Key_ID     : in Bytes_4;
+      TEK        : in Bytes_32;
+      Nonce      : in Bytes_12;
+      Ticket     : out Byte_Seq;
+      Ticket_Len : out N32)
+   with
+     Pre =>
+       Ticket'First = 0
+       and then Ticket'Last >= Max_Ticket_Wire_Len - 1
+       and then Plain.SID_Len in 0 .. 32,
+     Post => Ticket_Len in 1 .. Max_Ticket_Wire_Len;
 
    --  Decrypt a wire-format ticket. Looks up the Key_ID against
    --  Keys (linear scan over up to TLS12_Max_Keys entries), then
@@ -85,25 +86,27 @@ is
    Ticket_Key_ID_Size : constant := 4;
 
    function Ticket_Key_ID (Ticket : Byte_Seq) return Byte_Seq
-   with Pre  => Ticket'First = 0
-                and then Ticket'Length >= Ticket_Key_ID_Size,
-        Post => Ticket_Key_ID'Result'First = 0
-                and then Ticket_Key_ID'Result'Length = Ticket_Key_ID_Size;
+   with
+     Pre => Ticket'First = 0 and then Ticket'Length >= Ticket_Key_ID_Size,
+     Post =>
+       Ticket_Key_ID'Result'First = 0 and then Ticket_Key_ID'Result'Length = Ticket_Key_ID_Size;
 
    --  Decrypt with a single caller-supplied key -- the one named by
    --  Ticket_Key_ID. Takes raw key bytes rather than a key record so it
    --  is independent of how the caller stores keys (Config.Get_TEK_By_Id,
    --  an HSM, a file, whatever).
    procedure Decrypt_Ticket
-     (Ticket  : in     Byte_Seq;
-      TEK     : in     Byte_Seq;
-      Now     : in     Unsigned_64;
-      Max_Age : in     Unsigned_32;
-      Plain   :    out Ticket_Plain;
-      Status  :    out Boolean)
-   with Pre => Ticket'First = 0
-               and then Ticket'Last < N32'Last
-               and then TEK'First = 0
-               and then TEK'Length = 32;
+     (Ticket  : in Byte_Seq;
+      TEK     : in Byte_Seq;
+      Now     : in Unsigned_64;
+      Max_Age : in Unsigned_32;
+      Plain   : out Ticket_Plain;
+      Status  : out Boolean)
+   with
+     Pre =>
+       Ticket'First = 0
+       and then Ticket'Last < N32'Last
+       and then TEK'First = 0
+       and then TEK'Length = 32;
 
 end SPARKTLS.Tickets_12;

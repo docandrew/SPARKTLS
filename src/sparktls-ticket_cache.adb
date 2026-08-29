@@ -1,5 +1,5 @@
-package body SPARKTLS.Ticket_Cache with
-   SPARK_Mode => On
+package body SPARKTLS.Ticket_Cache
+  with SPARK_Mode => On
 is
 
    procedure Store
@@ -39,8 +39,7 @@ is
       PSK        : out Bytes_48;
       PSK_Len    : out N32;
       Suite      : out Unsigned_16;
-      Found      : out Boolean)
-   is
+      Found      : out Boolean) is
    begin
       PSK := (others => 0);
       PSK_Len := 0;
@@ -49,9 +48,7 @@ is
 
       for I in Cache.Entries'Range loop
          pragma Loop_Invariant (if Found then Suite = Want_Suite);
-         if Cache.Entries (I).Valid
-           and then Cache.Entries (I).Suite = Want_Suite
-         then
+         if Cache.Entries (I).Valid and then Cache.Entries (I).Suite = Want_Suite then
             declare
                Match : Boolean := True;
             begin

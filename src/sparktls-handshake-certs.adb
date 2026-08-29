@@ -1,6 +1,6 @@
 with SPARKTLS.HS_Pool;
 with Ada.Unchecked_Deallocation;
-with Interfaces; use Interfaces;
+with Interfaces;           use Interfaces;
 with SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKNaCl.Hashing.SHA512;
@@ -10,7 +10,7 @@ with SPARKTLSCrypto.P384.ECDSA;
 with SPARKTLSCrypto.RFC6979;
 with SPARKTLSCrypto.RSA;
 use SPARKTLSCrypto;
-with SPARKTLS.RFLX_Bridge;           use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with RFLX.TLS_Handshake.Certificate;
 with RFLX.TLS_Handshake.Certificate_Entries;
 with RFLX.TLS_Handshake.Certificate_Entry;
@@ -23,8 +23,9 @@ with RFLX.RFLX_Types;
 
 with SPARKTLS_Transcript;
 use type SPARKTLS_Transcript.Transcript_State;
-package body SPARKTLS.Handshake.Certs with
-   SPARK_Mode => On
+
+package body SPARKTLS.Handshake.Certs
+  with SPARK_Mode => On
 is
 
    pragma Unevaluated_Use_Of_Old (Allow);
@@ -36,20 +37,15 @@ is
    procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
    with Post => Buf = null;
 
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
-   with SPARK_Mode => Off
-   is
-      procedure Dealloc is new Ada.Unchecked_Deallocation
-        (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr) with SPARK_Mode => Off is
+      procedure Dealloc is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
    begin
       Dealloc (Buf);
    end RFLX_Free;
 
    procedure Build_Certificate
-     (Cert_DER : in     Byte_Seq;
-      Cert_Len : in     N32;
-      Result   :    out Byte_Seq;
-      Len      :    out N32)
+     (Cert_DER : in Byte_Seq; Cert_Len : in N32; Result : out Byte_Seq; Len : out N32)
    is
       use RFLX.TLS_Handshake.Certificate;
       --  Certificate entry: cert_data_len(3) + cert_data + ext_len(2) = 5 + Cert_Len
@@ -58,7 +54,7 @@ is
       --  Body: context_len(1) + context(0) + list_len(3) + list
       Body_Len  : constant N32 := 1 + 3 + List_Len;
       Msg_Len   : constant N32 := 4 + Body_Len;
-      Ctx        : Context;
+      Ctx       : Context;
    begin
       Result := (others => 0);
       Len := 0;
@@ -68,8 +64,7 @@ is
       end if;
 
       declare
-         Buf : RBT.Bytes_Ptr :=
-           new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       begin
          Initialize (Ctx, Buf);
 
@@ -78,8 +73,7 @@ is
          Set_Certificate_Request_Context_Empty (Ctx);
 
          --  Certificate list with one entry.
-         Set_Certificate_List_Length
-           (Ctx, RFLX.TLS_Handshake.Certificate_List_Length (List_Len));
+         Set_Certificate_List_Length (Ctx, RFLX.TLS_Handshake.Certificate_List_Length (List_Len));
 
          declare
             Entries_Ctx : RFLX.TLS_Handshake.Certificate_Entries.Context;
@@ -87,55 +81,44 @@ is
             Switch_To_Certificate_List (Ctx, Entries_Ctx);
 
             declare
-               E_Buf : RBT.Bytes_Ptr :=
-                 new RBT.Bytes'(1 .. RBT.Index (Entry_Len) => 0);
+               E_Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Entry_Len) => 0);
                E_Ctx : RFLX.TLS_Handshake.Certificate_Entry.Context;
             begin
-               RFLX.TLS_Handshake.Certificate_Entry.Initialize
-                 (E_Ctx, E_Buf);
+               RFLX.TLS_Handshake.Certificate_Entry.Initialize (E_Ctx, E_Buf);
                RFLX.TLS_Handshake.Certificate_Entry.Set_Cert_Data_Length
                  (E_Ctx, RFLX.TLS_Handshake.Cert_Data_Length (Cert_Len));
-               pragma Assert
-                 (RFLX.TLS_Handshake.Certificate_Entry.Field_Size
-                    (E_Ctx,
-                     RFLX.TLS_Handshake.Certificate_Entry.F_Cert_Data)
-                  = RBT.Bit_Length (Cert_Len) * RBT.Byte'Size);
+               pragma
+                 Assert
+                   (RFLX.TLS_Handshake.Certificate_Entry.Field_Size
+                      (E_Ctx, RFLX.TLS_Handshake.Certificate_Entry.F_Cert_Data)
+                      = RBT.Bit_Length (Cert_Len) * RBT.Byte'Size);
                declare
-                  Cert_Data : constant RBT.Bytes :=
-                    To_RFLX (Cert_DER (0 .. Cert_Len - 1));
+                  Cert_Data : constant RBT.Bytes := To_RFLX (Cert_DER (0 .. Cert_Len - 1));
                begin
                   pragma Assert (Cert_Data'Length = RBT.Length (Cert_Len));
-                  pragma Assert
-                    (RFLX.TLS_Handshake.Certificate_Entry.Valid_Length
-                       (E_Ctx,
-                        RFLX.TLS_Handshake.Certificate_Entry.F_Cert_Data,
-                        Cert_Data'Length));
-                  RFLX.TLS_Handshake.Certificate_Entry.Set_Cert_Data
-                    (E_Ctx, Cert_Data);
+                  pragma
+                    Assert
+                      (RFLX.TLS_Handshake.Certificate_Entry.Valid_Length
+                         (E_Ctx,
+                          RFLX.TLS_Handshake.Certificate_Entry.F_Cert_Data,
+                          Cert_Data'Length));
+                  RFLX.TLS_Handshake.Certificate_Entry.Set_Cert_Data (E_Ctx, Cert_Data);
                end;
-               RFLX.TLS_Handshake.Certificate_Entry.Set_Extensions_Length
-                 (E_Ctx, 0);
-               RFLX.TLS_Handshake.Certificate_Entry.Set_Extensions_Empty
-                 (E_Ctx);
-               if not RFLX.TLS_Handshake.Certificate_Entry
-                        .Well_Formed_Message (E_Ctx)
+               RFLX.TLS_Handshake.Certificate_Entry.Set_Extensions_Length (E_Ctx, 0);
+               RFLX.TLS_Handshake.Certificate_Entry.Set_Extensions_Empty (E_Ctx);
+               if not RFLX.TLS_Handshake.Certificate_Entry.Well_Formed_Message (E_Ctx)
                  or else RFLX.TLS_Handshake.Certificate_Entry.Size (E_Ctx) = 0
-                 or else RFLX.TLS_Handshake.Certificate_Entries
-                           .Available_Space (Entries_Ctx)
+                 or else RFLX.TLS_Handshake.Certificate_Entries.Available_Space (Entries_Ctx)
                          < RFLX.TLS_Handshake.Certificate_Entry.Size (E_Ctx)
                then
-                  RFLX.TLS_Handshake.Certificate_Entry.Take_Buffer
-                    (E_Ctx, E_Buf);
+                  RFLX.TLS_Handshake.Certificate_Entry.Take_Buffer (E_Ctx, E_Buf);
                   RFLX_Free (E_Buf);
-                  RFLX.TLS_Handshake.Certificate_Entries.Take_Buffer
-                    (Entries_Ctx, Buf);
+                  RFLX.TLS_Handshake.Certificate_Entries.Take_Buffer (Entries_Ctx, Buf);
                   RFLX_Free (Buf);
                   return;
                end if;
-               RFLX.TLS_Handshake.Certificate_Entries.Append_Element
-                 (Entries_Ctx, E_Ctx);
-               RFLX.TLS_Handshake.Certificate_Entry.Take_Buffer
-                 (E_Ctx, E_Buf);
+               RFLX.TLS_Handshake.Certificate_Entries.Append_Element (Entries_Ctx, E_Ctx);
+               RFLX.TLS_Handshake.Certificate_Entry.Take_Buffer (E_Ctx, E_Buf);
                RFLX_Free (E_Buf);
             end;
 
@@ -149,19 +132,14 @@ is
          Result (1) := Byte (Body_Len / 65536);
          Result (2) := Byte ((Body_Len / 256) mod 256);
          Result (3) := Byte (Body_Len mod 256);
-         Result (4 .. 4 + Body_Len - 1) :=
-           To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
          RFLX_Free (Buf);
       end;
 
       Len := Msg_Len;
    end Build_Certificate;
 
-   procedure Build_Certificate_Chain
-     (Id     : in     Identity;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
-   is
+   procedure Build_Certificate_Chain (Id : in Identity; Result : out Byte_Seq; Len : out N32) is
       --  Build the Certificate message manually (simpler than RFLX
       --  for variable-count entries).
       --
@@ -175,14 +153,11 @@ is
       Pos : N32 := 0;
 
       procedure Put_U8 (V : Byte)
-      with Pre  => Result'First = 0
-                   and then Result'Last < N32'Last
-                   and then Pos <= Result'Last + 1,
-           Post => Pos <= Result'Last + 1
-                   and then
-                     (if Pos'Old <= Result'Last
-                      then Pos = Pos'Old + 1
-                      else Pos = Pos'Old)
+      with
+        Pre => Result'First = 0 and then Result'Last < N32'Last and then Pos <= Result'Last + 1,
+        Post =>
+          Pos <= Result'Last + 1
+          and then (if Pos'Old <= Result'Last then Pos = Pos'Old + 1 else Pos = Pos'Old)
       is
       begin
          if Pos <= Result'Last then
@@ -192,15 +167,16 @@ is
       end Put_U8;
 
       procedure Put_U24 (V : N32)
-      with Pre  => Result'First = 0
-                   and then Result'Last < N32'Last
-                   and then Pos <= Result'Last + 1
-                   and then V <= 16#FFFFFF#,
-           Post => Pos <= Result'Last + 1
-                   and then
-                     (if Pos'Old <= Result'Last - 2
-                      then Pos = Pos'Old + 3
-                      else Pos <= Result'Last + 1)
+      with
+        Pre =>
+          Result'First = 0
+          and then Result'Last < N32'Last
+          and then Pos <= Result'Last + 1
+          and then V <= 16#FFFFFF#,
+        Post =>
+          Pos <= Result'Last + 1
+          and then (if Pos'Old <= Result'Last - 2 then Pos = Pos'Old + 3
+                    else Pos <= Result'Last + 1)
       is
       begin
          Put_U8 (Byte (V / 65536));
@@ -209,21 +185,21 @@ is
       end Put_U24;
 
       procedure Put_Cert_Entry (DER : Byte_Seq; DER_Len : N32)
-      with Pre  => DER'First = 0
-                   and then DER_Len > 0
-                   and then DER_Len <= N32 (Max_Cert_DER)
-                   and then DER'Last in 0 .. N32 (Max_Cert_DER) - 1
-                   and then DER'Last >= DER_Len - 1
-                   and then Result'First = 0
-                   and then Result'Last < N32'Last
-                   and then Pos <= Result'Last + 1,
-           Post => Pos <= Result'Last + 1
+      with
+        Pre =>
+          DER'First = 0
+          and then DER_Len > 0
+          and then DER_Len <= N32 (Max_Cert_DER)
+          and then DER'Last in 0 .. N32 (Max_Cert_DER) - 1
+          and then DER'Last >= DER_Len - 1
+          and then Result'First = 0
+          and then Result'Last < N32'Last
+          and then Pos <= Result'Last + 1,
+        Post => Pos <= Result'Last + 1
       is
       begin
          Put_U24 (DER_Len);              --  cert_data_length
-         if Pos <= Result'Last
-            and then Result'Last - Pos >= DER_Len - 1
-         then
+         if Pos <= Result'Last and then Result'Last - Pos >= DER_Len - 1 then
             pragma Assert (Result'First = 0);
             pragma Assert (Pos >= Result'First);
             pragma Assert (Pos <= Result'Last - (DER_Len - 1));
@@ -232,7 +208,8 @@ is
             Result (Pos .. Pos + DER_Len - 1) := DER (0 .. DER_Len - 1);
             Pos := Pos + DER_Len;
          end if;
-         Put_U8 (0); Put_U8 (0);         --  extensions_length = 0
+         Put_U8 (0);
+         Put_U8 (0);         --  extensions_length = 0
       end Put_Cert_Entry;
 
       --  Compute total list length
@@ -250,12 +227,12 @@ is
 
       --  Intermediate entries. Each entry adds at most
       --  3 + Max_Cert_DER + 2 bytes; with at most Max_Pool_Size
-      --  intermediates, total list ≤ leaf_entry + Max_Pool_Size *
+      --  intermediates, total list â¤ leaf_entry + Max_Pool_Size *
       --  (Max_Cert_DER + 5), well below N32'Last.
       for I in 0 .. Id.Int_Count - 1 loop
-         pragma Loop_Invariant
-           (List_Len <= 3 + Id.NaCl_Cert_Len + 2
-                        + N32 (I) * (3 + N32 (Max_Cert_DER) + 2));
+         pragma
+           Loop_Invariant
+             (List_Len <= 3 + Id.NaCl_Cert_Len + 2 + N32 (I) * (3 + N32 (Max_Cert_DER) + 2));
          if Id.Ints (I).Present then
             List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len) + 2;
          end if;
@@ -289,8 +266,7 @@ is
                declare
                   Int_DER : Byte_Seq (0 .. N32 (Id.Ints (I).DER_Len) - 1);
                begin
-                  pragma Assert
-                    (Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER));
+                  pragma Assert (Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER));
                   --  Convert X509.Byte_Seq to SPARKNaCl.Byte_Seq
                   for J in Int_DER'Range loop
                      pragma Assert (J <= N32 (Max_Cert_DER) - 1);
@@ -314,50 +290,49 @@ is
       end;
    end Build_Certificate_Chain;
 
-   --  RFC 8446 §4.4.3 CertificateVerify signed-content layout:
+   --  RFC 8446 Â§4.4.3 CertificateVerify signed-content layout:
    --    64 bytes 0x20 || context_str (32 or 33) || 0x00 || transcript_hash
    --  Total: 129 (32-byte hash) or 130 (32-byte hash, client) or 145/146
    --  (48-byte hash). Sized at 146 so all four shapes fit.
    Max_CV_Content : constant N32 := 146;
 
    procedure Build_CV_Content
-     (Transcript_Hash : in     Byte_Seq;
-      Role            : in     TLS_Role;
-      Content         :    out Byte_Seq;
-      Content_Len     :    out N32)
-   with Pre  => Content'First = 0
-                and Content'Last = Max_CV_Content - 1
-                and Transcript_Hash'First = 0
-                and Transcript_Hash'Last in 31 | 47,
-        Post => Content_Len = 99 + N32 (Transcript_Hash'Last)
-                and Content_Len in 130 .. Max_CV_Content;
+     (Transcript_Hash : in Byte_Seq;
+      Role            : in TLS_Role;
+      Content         : out Byte_Seq;
+      Content_Len     : out N32)
+   with
+     Pre =>
+       Content'First = 0
+       and Content'Last = Max_CV_Content - 1
+       and Transcript_Hash'First = 0
+       and Transcript_Hash'Last in 31 | 47,
+     Post => Content_Len = 99 + N32 (Transcript_Hash'Last) and Content_Len in 130 .. Max_CV_Content;
 
    procedure Build_CV_Content
-     (Transcript_Hash : in     Byte_Seq;
-      Role            : in     TLS_Role;
-      Content         :    out Byte_Seq;
-      Content_Len     :    out N32)
+     (Transcript_Hash : in Byte_Seq;
+      Role            : in TLS_Role;
+      Content         : out Byte_Seq;
+      Content_Len     : out N32)
    is
       --  Context_Str is statically 32 bytes regardless of role.
       Server_Ctx : constant String := "TLS 1.3, server CertificateVerify";
       Client_Ctx : constant String := "TLS 1.3, client CertificateVerify";
       pragma Assert (Server_Ctx'Length = 33);
       pragma Assert (Client_Ctx'Length = 33);
-      H_Len    : constant N32 := N32 (Transcript_Hash'Last) + 1;
+      H_Len      : constant N32 := N32 (Transcript_Hash'Last) + 1;
    begin
       Content := (others => 0);
       Content (0 .. 63) := (others => 16#20#);
       if Role = Role_Server then
          for I in Server_Ctx'Range loop
             pragma Loop_Invariant (I in Server_Ctx'Range);
-            Content (64 + N32 (I - Server_Ctx'First)) :=
-               Byte (Character'Pos (Server_Ctx (I)));
+            Content (64 + N32 (I - Server_Ctx'First)) := Byte (Character'Pos (Server_Ctx (I)));
          end loop;
       else
          for I in Client_Ctx'Range loop
             pragma Loop_Invariant (I in Client_Ctx'Range);
-            Content (64 + N32 (I - Client_Ctx'First)) :=
-               Byte (Character'Pos (Client_Ctx (I)));
+            Content (64 + N32 (I - Client_Ctx'First)) := Byte (Character'Pos (Client_Ctx (I)));
          end loop;
       end if;
       Content (97) := 16#00#;  --  64 + 33
@@ -366,13 +341,13 @@ is
    end Build_CV_Content;
 
    procedure Build_Certificate_Verify
-     (Transcript_Hash : in     Byte_Seq;
-      Id              : in     Identity;
-      Sig_Algo_Wire   : in     Unsigned_16;
-      Role            : in     TLS_Role;
-      Random          : in     Random_Bytes_Fn;
-      Result          :    out Byte_Seq;
-      Len             :    out N32)
+     (Transcript_Hash : in Byte_Seq;
+      Id              : in Identity;
+      Sig_Algo_Wire   : in Unsigned_16;
+      Role            : in TLS_Role;
+      Random          : in Random_Bytes_Fn;
+      Result          : out Byte_Seq;
+      Len             : out N32)
    is
       use RFLX.TLS_Handshake.Certificate_Verify;
 
@@ -400,8 +375,7 @@ is
                SK     : Bytes_64;
             begin
                SK := Id.Ed25519_Key;
-               SPARKTLSCrypto.Ed25519.Sign
-                 (SM, Content (0 .. Content_Len - 1), SK);
+               SPARKTLSCrypto.Ed25519.Sign (SM, Content (0 .. Content_Len - 1), SK);
                Sig (0 .. 63) := SM (0 .. 63);
                Sig_OK := True;
             end;
@@ -410,34 +384,28 @@ is
             Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp256r1_Sha256;
             declare
                use SPARKTLSCrypto.Hashing.SHA256;
-               H : constant Digest := Hash (Content (0 .. Content_Len - 1));
-               K_Bytes : Bytes_32;
-               K_OK    : Boolean;
+               H              : constant Digest := Hash (Content (0 .. Content_Len - 1));
+               K_Bytes        : Bytes_32;
+               K_OK           : Boolean;
                R_Half, S_Half : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
             begin
                --  RFC 6979 deterministic nonce. Abort signing if the
                --  fixed, constant-time candidate budget is exhausted.
                SPARKTLSCrypto.RFC6979.Derive_K_P256
-                 (D => Bytes_32 (Id.ECDSA_P256_Key),
-                  H => Bytes_32 (H),
-                  K => K_Bytes,
-                  OK => K_OK);
+                 (D => Bytes_32 (Id.ECDSA_P256_Key), H => Bytes_32 (H), K => K_Bytes, OK => K_OK);
                if not K_OK then
                   Sig_OK := False;
                   return;
                end if;
                SPARKTLSCrypto.P256.ECDSA.Sign
                  (Hash  => H,
-                  D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half
-                             (Id.ECDSA_P256_Key),
+                  D     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (Id.ECDSA_P256_Key),
                   K     => SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half (K_Bytes),
                   R_Out => R_Half,
                   S_Out => S_Half,
                   OK    => Sig_OK);
                if Sig_OK then
-                  ECDSA_To_DER
-                    (Byte_Seq (R_Half), Byte_Seq (S_Half), 32,
-                     Sig, Sig_Len);
+                  ECDSA_To_DER (Byte_Seq (R_Half), Byte_Seq (S_Half), 32, Sig, Sig_Len);
                end if;
             end;
 
@@ -445,7 +413,7 @@ is
             Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp384r1_Sha384;
             declare
                use SPARKNaCl.Hashing.SHA384;
-               H : constant Digest := Hash (Content (0 .. Content_Len - 1));
+               H       : constant Digest := Hash (Content (0 .. Content_Len - 1));
                K_Bytes : Bytes_48;
                K_OK    : Boolean;
                R_Half  : Byte_Seq (0 .. 47);
@@ -453,10 +421,7 @@ is
             begin
                --  RFC 6979 deterministic nonce (HMAC-SHA-384 DRBG).
                SPARKTLSCrypto.RFC6979.Derive_K_P384
-                 (D => Bytes_48 (Id.ECDSA_P384_Key),
-                  H => Bytes_48 (H),
-                  K => K_Bytes,
-                  OK => K_OK);
+                 (D => Bytes_48 (Id.ECDSA_P384_Key), H => Bytes_48 (H), K => K_Bytes, OK => K_OK);
                if not K_OK then
                   Sig_OK := False;
                   return;
@@ -561,19 +526,13 @@ is
          Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
          Initialize (Ctx, Buf);
          Set_Algorithm (Ctx, Algo_Enum);
-         Set_Signature_Length
-           (Ctx, RFLX.TLS_Handshake.Signature_Length (Sig_Len));
-         pragma Assert
-           (Field_Size (Ctx, F_Signature)
-            = RBT.Bit_Length (Sig_Len) * RBT.Byte'Size);
+         Set_Signature_Length (Ctx, RFLX.TLS_Handshake.Signature_Length (Sig_Len));
+         pragma Assert (Field_Size (Ctx, F_Signature) = RBT.Bit_Length (Sig_Len) * RBT.Byte'Size);
          declare
-            Signature_Data : constant RBT.Bytes :=
-              To_RFLX (Sig (0 .. Sig_Len - 1));
+            Signature_Data : constant RBT.Bytes := To_RFLX (Sig (0 .. Sig_Len - 1));
          begin
-            pragma Assert
-              (Signature_Data'Length = RBT.Length (Sig_Len));
-            pragma Assert
-              (Valid_Length (Ctx, F_Signature, Signature_Data'Length));
+            pragma Assert (Signature_Data'Length = RBT.Length (Sig_Len));
+            pragma Assert (Valid_Length (Ctx, F_Signature, Signature_Data'Length));
             Set_Signature (Ctx, Signature_Data);
          end;
          Take_Buffer (Ctx, Buf);
@@ -582,8 +541,7 @@ is
          Result (1) := 16#00#;
          Result (2) := Byte (Body_Len / 256);
          Result (3) := Byte (Body_Len mod 256);
-         Result (4 .. 4 + Body_Len - 1) :=
-            To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
 
          RFLX_Free (Buf);
          Len := Msg_Len;
@@ -591,7 +549,7 @@ is
    end Build_Certificate_Verify;
 
    ------------------------------------------------------------------
-   --  RFC 8446 §4.4.2 TLS 1.3 Certificate parser (via RFLX)
+   --  RFC 8446 Â§4.4.2 TLS 1.3 Certificate parser (via RFLX)
    ------------------------------------------------------------------
 
    --  Copy a single RFLX-shape cert blob (1-based RBT.Bytes index) into
@@ -600,29 +558,22 @@ is
    --  Parse_Certificate_Chain_13 body so the prover sees a tight
    --  obligation rather than a deeply-nested cascade.
 
-   procedure Copy_Cert_To_X509
-     (Cert_RFLX : in     RBT.Bytes;
-      Cert_X    :    out X509.Byte_Seq)
-   is
+   procedure Copy_Cert_To_X509 (Cert_RFLX : in RBT.Bytes; Cert_X : out X509.Byte_Seq) is
    begin
       Cert_X := (others => 0);
       for J in Natural range 0 .. Cert_X'Length - 1 loop
-         pragma Loop_Invariant
-           (J in 0 .. Cert_X'Length - 1
-            and J <= Max_Cert_DER - 1
-            and X509.N32 (J) in Cert_X'Range
-            and RBT.Index (J + 1) in Cert_RFLX'Range);
-         Cert_X (X509.N32 (J)) :=
-            X509.Byte (Cert_RFLX (RBT.Index (J + 1)));
+         pragma
+           Loop_Invariant
+             (J in 0 .. Cert_X'Length - 1
+                and J <= Max_Cert_DER - 1
+                and X509.N32 (J) in Cert_X'Range
+                and RBT.Index (J + 1) in Cert_RFLX'Range);
+         Cert_X (X509.N32 (J)) := X509.Byte (Cert_RFLX (RBT.Index (J + 1)));
       end loop;
    end Copy_Cert_To_X509;
 
-
    procedure Parse_X509_From_RFLX
-     (Cert_RFLX : in     RBT.Bytes;
-      C_Len     : in     N32;
-      Cert      :    out X509.Certificate;
-      OK        :    out Boolean)
+     (Cert_RFLX : in RBT.Bytes; C_Len : in N32; Cert : out X509.Certificate; OK : out Boolean)
    is
       Cert_X : X509.Byte_Seq (0 .. X509.N32 (C_Len) - 1);
    begin
@@ -636,10 +587,7 @@ is
    --  region (0-based, capacity Max_Cert_DER_Len).
 
    procedure Copy_Cert_To_Peer_DER
-     (Cert_RFLX : in     RBT.Bytes;
-      D         : in out SPARKTLS.HS_Pool.HS_Data;
-      C_Len     : in     N32)
-   is
+     (Cert_RFLX : in RBT.Bytes; D : in out SPARKTLS.HS_Pool.HS_Data; C_Len : in N32) is
    begin
       --  Ordering discipline: clear Present before touching any other
       --  component. While Present is False the Pool_Entry predicate is
@@ -648,56 +596,44 @@ is
       D.Peer_Leaf.Present := False;
       D.Peer_Leaf.DER_Len := X509.N32 (C_Len);
       for I in N32 range 0 .. C_Len - 1 loop
-         pragma Loop_Invariant
-           (I in 0 .. C_Len - 1
-            and RBT.Index (I + 1) in Cert_RFLX'Range);
-         D.Peer_Leaf.DER (X509.N32 (I)) :=
-            Byte (Cert_RFLX (RBT.Index (I + 1)));
+         pragma Loop_Invariant (I in 0 .. C_Len - 1 and RBT.Index (I + 1) in Cert_RFLX'Range);
+         D.Peer_Leaf.DER (X509.N32 (I)) := Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;
    end Copy_Cert_To_Peer_DER;
 
-
    procedure Store_Intermediate
-     (Cert_RFLX : in     RBT.Bytes;
-      Cert      : in     X509.Certificate;
-      C_Len     : in     N32;
-      Target    :    out Pool_Entry)
+     (Cert_RFLX : in RBT.Bytes; Cert : in X509.Certificate; C_Len : in N32; Target : out Pool_Entry)
    is
       DER_Copy : Cert_DER_Buf := (others => 0);
    begin
       for I in N32 range 0 .. C_Len - 1 loop
-         pragma Loop_Invariant
-           (I in 0 .. C_Len - 1
-            and I <= N32 (Max_Cert_DER) - 1
-            and RBT.Index (I + 1) in Cert_RFLX'Range);
-         DER_Copy (X509.N32 (I)) :=
-            X509.Byte (Cert_RFLX (RBT.Index (I + 1)));
+         pragma
+           Loop_Invariant
+             (I in 0 .. C_Len - 1
+                and I <= N32 (Max_Cert_DER) - 1
+                and RBT.Index (I + 1) in Cert_RFLX'Range);
+         DER_Copy (X509.N32 (I)) := X509.Byte (Cert_RFLX (RBT.Index (I + 1)));
       end loop;
-      Target :=
-        (Cert    => Cert,
-         DER     => DER_Copy,
-         DER_Len => X509.N32 (C_Len),
-         Present => True);
+      Target := (Cert => Cert, DER => DER_Copy, DER_Len => X509.N32 (C_Len), Present => True);
    end Store_Intermediate;
 
    procedure Parse_Certificate_Chain_13
      (HC                     : in out Engaged_Context;
       D                      : in out SPARKTLS.HS_Pool.HS_Data;
-      HS_Msg                 : in     Byte_Seq;
-      Reject_Cert_Extensions : in     Boolean;
-      OK                     :    out Boolean;
-      Err                    :    out Error_Code)
+      HS_Msg                 : in Byte_Seq;
+      Reject_Cert_Extensions : in Boolean;
+      OK                     : out Boolean;
+      Err                    : out Error_Code)
    is
       package C13 renames RFLX.TLS_Handshake.Certificate;
       package C13_Entries renames RFLX.TLS_Handshake.Certificate_Entries;
       package C13_Entry renames RFLX.TLS_Handshake.Certificate_Entry;
-      Body_Len : constant N32 := N32 (HS_Msg'Length) - 4;
-      Buf      : RBT.Bytes_Ptr;
-      Ctx      : C13.Context;
-      Cert_Idx : Natural := 0;
-      Ext_Reject : Boolean := False;
-      Saved_Client_HS_Counter : constant Unsigned_64 :=
-        HC.Client_HS.Counter
+      Body_Len                : constant N32 := N32 (HS_Msg'Length) - 4;
+      Buf                     : RBT.Bytes_Ptr;
+      Ctx                     : C13.Context;
+      Cert_Idx                : Natural := 0;
+      Ext_Reject              : Boolean := False;
+      Saved_Client_HS_Counter : constant Unsigned_64 := HC.Client_HS.Counter
       with Ghost;
    begin
       D.Peer_Leaf.Present := False;
@@ -724,12 +660,10 @@ is
          declare
             List_Off : constant N32 := HS_Msg'First + 5 + Ctx_Len;
             List_Len : constant N32 :=
-              N32 (HS_Msg (List_Off)) * 65536
-              + N32 (HS_Msg (List_Off + 1)) * 256
+              N32 (HS_Msg (List_Off)) * 65536 + N32 (HS_Msg (List_Off + 1)) * 256
               + N32 (HS_Msg (List_Off + 2));
          begin
-            if List_Len /= Body_Len - 4 - Ctx_Len
-            then
+            if List_Len /= Body_Len - 4 - Ctx_Len then
                pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                return;
             end if;
@@ -737,11 +671,8 @@ is
       end;
 
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 ..
-                                   HS_Msg'First + 4 + Body_Len - 1));
-      C13.Initialize
-        (Ctx, Buf,
-         Written_Last => RBT.Bit_Length (Body_Len) * 8);
+      Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 .. HS_Msg'First + 4 + Body_Len - 1));
+      C13.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Body_Len) * 8);
       C13.Verify_Message (Ctx);
 
       if not C13.Well_Formed_Message (Ctx) then
@@ -752,7 +683,7 @@ is
       end if;
 
       --  Walk certificate entries. Sequence iteration follows the
-      --  RFLX message-sequence pattern: Switch → loop Has_Element →
+      --  RFLX message-sequence pattern: Switch â loop Has_Element â
       --  Switch / Verify_Message / Update.
       declare
          use type RBT.Bit_Length;
@@ -765,17 +696,11 @@ is
                   pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                   return;
                end if;
-               if not
-                 (C13.Valid_Next (Ctx, C13.F_Certificate_List)
-                  and then C13.Field_First
-                             (Ctx, C13.F_Certificate_List)
-                           rem RBT.Byte'Size = 1
-                  and then C13.Available_Space
-                             (Ctx, C13.F_Certificate_List)
-                           >= C13.Field_Size
-                                (Ctx, C13.F_Certificate_List)
-                  and then C13.Field_Condition
-                             (Ctx, C13.F_Certificate_List))
+               if not (C13.Valid_Next (Ctx, C13.F_Certificate_List)
+                       and then C13.Field_First (Ctx, C13.F_Certificate_List) rem RBT.Byte'Size = 1
+                       and then C13.Available_Space (Ctx, C13.F_Certificate_List)
+                                >= C13.Field_Size (Ctx, C13.F_Certificate_List)
+                       and then C13.Field_Condition (Ctx, C13.F_Certificate_List))
                then
                   C13.Take_Buffer (Ctx, Buf);
                   RFLX_Free (Buf);
@@ -784,34 +709,29 @@ is
                end if;
                C13.Switch_To_Certificate_List (Ctx, Entries_Ctx);
 
-               while C13_Entries.Has_Element (Entries_Ctx)
-                 and then Cert_Idx <= Max_Pool_Size
-               loop
-                  pragma Loop_Invariant
-                    (C13_Entries.Has_Buffer (Entries_Ctx));
-                  pragma Loop_Invariant
-                    (C13_Entries.Valid (Entries_Ctx));
-                  pragma Loop_Invariant
-                    (HC.Client_HS.Counter = Saved_Client_HS_Counter);
+               while C13_Entries.Has_Element (Entries_Ctx) and then Cert_Idx <= Max_Pool_Size loop
+                  pragma Loop_Invariant (C13_Entries.Has_Buffer (Entries_Ctx));
+                  pragma Loop_Invariant (C13_Entries.Valid (Entries_Ctx));
+                  pragma Loop_Invariant (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                   pragma Loop_Invariant (Hash_Len (HC.Neg) = Hash_Len (HC.Neg)'Loop_Entry);
-                  pragma Loop_Invariant
-                    (if HC.Cfg.Local'Loop_Entry /= null
-                     then HC.Cfg.Local /= null);
-                  pragma Loop_Invariant
-                    (if HC.Cfg.Local'Loop_Entry /= null
-                        and then HC.Cfg.Local'Loop_Entry.Has_Identity
-                     then HC.Cfg.Local /= null
-                          and then HC.Cfg.Local.Has_Identity);
-                  pragma Loop_Invariant
-                    (if HC.Cfg.Local'Loop_Entry /= null
-                        and then SPARKTLS.Handshake.Server_Msgs
-                          .Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
-                     then HC.Cfg.Local /= null
-                          and then SPARKTLS.Handshake.Server_Msgs
-                            .Local_Config_Valid (HC.Cfg.Local));
-                  pragma Loop_Invariant
-                    (if HC.Cfg.Random'Loop_Entry /= null
-                     then HC.Cfg.Random /= null);
+                  pragma
+                    Loop_Invariant (if HC.Cfg.Local'Loop_Entry /= null then HC.Cfg.Local /= null);
+                  pragma
+                    Loop_Invariant
+                      (if HC.Cfg.Local'Loop_Entry /= null
+                           and then HC.Cfg.Local'Loop_Entry.Has_Identity
+                         then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity);
+                  pragma
+                    Loop_Invariant
+                      (if HC.Cfg.Local'Loop_Entry /= null
+                           and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                      (HC.Cfg.Local'Loop_Entry)
+                         then
+                           HC.Cfg.Local /= null
+                           and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                      (HC.Cfg.Local));
+                  pragma
+                    Loop_Invariant (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
                   declare
                      E_Ctx : C13_Entry.Context;
                   begin
@@ -819,94 +739,73 @@ is
                      C13_Entry.Verify_Message (E_Ctx);
 
                      if C13_Entry.Well_Formed_Message (E_Ctx) then
-                        if C13_Entry.Valid
-                             (E_Ctx, C13_Entry.F_Cert_Data_Length)
-                          and then C13_Entry.Valid
-                             (E_Ctx, C13_Entry.F_Extensions_Length)
-                          and then C13_Entry.Well_Formed
-                             (E_Ctx, C13_Entry.F_Cert_Data)
-                          and then C13_Entry.Valid_Next
-                             (E_Ctx, C13_Entry.F_Cert_Data)
+                        if C13_Entry.Valid (E_Ctx, C13_Entry.F_Cert_Data_Length)
+                          and then C13_Entry.Valid (E_Ctx, C13_Entry.F_Extensions_Length)
+                          and then C13_Entry.Well_Formed (E_Ctx, C13_Entry.F_Cert_Data)
+                          and then C13_Entry.Valid_Next (E_Ctx, C13_Entry.F_Cert_Data)
                         then
                            declare
-                              C_Len : constant N32 :=
-                                N32
-                                  (C13_Entry.Get_Cert_Data_Length (E_Ctx));
+                              C_Len : constant N32 := N32 (C13_Entry.Get_Cert_Data_Length (E_Ctx));
                            begin
-                              --  RFC 8446 §4.4.2 per-cert extensions
+                              --  RFC 8446 Â§4.4.2 per-cert extensions
                               --  policy check (client only).
                               if Reject_Cert_Extensions
-                                and then N32
-                                  (C13_Entry.Get_Extensions_Length (E_Ctx)) > 0
+                                and then N32 (C13_Entry.Get_Extensions_Length (E_Ctx)) > 0
                               then
                                  Ext_Reject := True;
                               end if;
                               if C_Len > 0
                                 and then C_Len <= N32 (Max_Cert_DER)
-                                and then C13_Entry.Field_Size
-                                  (E_Ctx, C13_Entry.F_Cert_Data)
-                                    = RBT.Bit_Length (C_Len) * RBT.Byte'Size
+                                and then C13_Entry.Field_Size (E_Ctx, C13_Entry.F_Cert_Data)
+                                         = RBT.Bit_Length (C_Len) * RBT.Byte'Size
                                 and then RFLX.RFLX_Types.To_Length
-                                  (C13_Entry.Field_Size
-                                     (E_Ctx, C13_Entry.F_Cert_Data))
-                                    = RBT.Length (C_Len)
+                                           (C13_Entry.Field_Size (E_Ctx, C13_Entry.F_Cert_Data))
+                                         = RBT.Length (C_Len)
                               then
                                  declare
-                                    Cert_RFLX : RBT.Bytes
-                                      (1 .. RBT.Index (C_Len));
+                                    Cert_RFLX : RBT.Bytes (1 .. RBT.Index (C_Len));
                                  begin
                                     pragma Assert (Cert_RFLX'First = 1);
-                                    pragma Assert
-                                      (Cert_RFLX'Length = RBT.Length (C_Len));
-                                    C13_Entry.Get_Cert_Data
-                                      (E_Ctx, Cert_RFLX);
+                                    pragma Assert (Cert_RFLX'Length = RBT.Length (C_Len));
+                                    C13_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
 
                                     if Cert_Idx = 0 then
                                        --  Leaf cert
-                                       Copy_Cert_To_Peer_DER
-                                         (Cert_RFLX, D, C_Len);
+                                       Copy_Cert_To_Peer_DER (Cert_RFLX, D, C_Len);
                                        declare
                                           P_OK : Boolean;
                                        begin
                                           Parse_X509_From_RFLX
-                                            (Cert_RFLX, C_Len,
-                                             D.Peer_Leaf.Cert, P_OK);
-                                          pragma Assert
-                                            (D.Peer_Leaf.DER_Len =
-                                               X509.N32 (C_Len));
-                                          pragma Assert
-                                            (D.Peer_Leaf.DER_Len > 0);
-                                          pragma Assert
-                                            (if P_OK then X509.Spans_Valid
-                                               (D.Peer_Leaf.Cert,
-                                                X509.N32 (C_Len) - 1));
-                                          pragma Assert
-                                            (if P_OK then X509.Spans_Valid
-                                               (D.Peer_Leaf.Cert,
-                                                D.Peer_Leaf.DER_Len - 1));
-                                          D.Peer_Leaf.Present := P_OK
-                                             and then
-                                               X509.Is_Valid (D.Peer_Leaf.Cert);
+                                            (Cert_RFLX, C_Len, D.Peer_Leaf.Cert, P_OK);
+                                          pragma Assert (D.Peer_Leaf.DER_Len = X509.N32 (C_Len));
+                                          pragma Assert (D.Peer_Leaf.DER_Len > 0);
+                                          pragma
+                                            Assert
+                                              (if P_OK
+                                                 then
+                                                   X509.Spans_Valid
+                                                     (D.Peer_Leaf.Cert, X509.N32 (C_Len) - 1));
+                                          pragma
+                                            Assert
+                                              (if P_OK
+                                                 then
+                                                   X509.Spans_Valid
+                                                     (D.Peer_Leaf.Cert, D.Peer_Leaf.DER_Len - 1));
+                                          D.Peer_Leaf.Present :=
+                                            P_OK and then X509.Is_Valid (D.Peer_Leaf.Cert);
                                        end;
-                                    elsif D.Peer_Int_Count < Max_Pool_Size
-                                    then
+                                    elsif D.Peer_Int_Count < Max_Pool_Size then
                                        --  Intermediate cert
                                        declare
-                                          Idx : constant Natural :=
-                                            D.Peer_Int_Count;
+                                          Idx  : constant Natural := D.Peer_Int_Count;
                                           C    : X509.Certificate;
                                           P_OK : Boolean;
                                        begin
-                                          Parse_X509_From_RFLX
-                                            (Cert_RFLX, C_Len, C, P_OK);
-                                          if P_OK
-                                            and then X509.Is_Valid (C)
-                                          then
+                                          Parse_X509_From_RFLX (Cert_RFLX, C_Len, C, P_OK);
+                                          if P_OK and then X509.Is_Valid (C) then
                                              Store_Intermediate
-                                               (Cert_RFLX, C, C_Len,
-                                                D.Peer_Ints (Idx));
-                                             D.Peer_Int_Count :=
-                                               D.Peer_Int_Count + 1;
+                                               (Cert_RFLX, C, C_Len, D.Peer_Ints (Idx));
+                                             D.Peer_Int_Count := D.Peer_Int_Count + 1;
                                           end if;
                                        end;
                                     end if;
@@ -917,17 +816,15 @@ is
                         end if;
                      end if;
 
-                             C13_Entries.Update (Entries_Ctx, E_Ctx);
-                             if not C13_Entries.Has_Buffer (Entries_Ctx) then
-                        pragma Assert
-                          (HC.Client_HS.Counter = Saved_Client_HS_Counter);
+                     C13_Entries.Update (Entries_Ctx, E_Ctx);
+                     if not C13_Entries.Has_Buffer (Entries_Ctx) then
+                        pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                         return;
                      end if;
-                             if not C13_Entries.Valid (Entries_Ctx) then
-                                C13_Entries.Take_Buffer (Entries_Ctx, Buf);
-                                RFLX_Free (Buf);
-                        pragma Assert
-                          (HC.Client_HS.Counter = Saved_Client_HS_Counter);
+                     if not C13_Entries.Valid (Entries_Ctx) then
+                        C13_Entries.Take_Buffer (Entries_Ctx, Buf);
+                        RFLX_Free (Buf);
+                        pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                         return;
                      end if;
                   end;
@@ -935,45 +832,42 @@ is
 
                C13_Entries.Take_Buffer (Entries_Ctx, Buf);
                RFLX_Free (Buf);
-                       if Ext_Reject then
-                          OK := False;
-                          Err := Unsupported_Extension;
-                       else
-                          OK := True;
-                          Err := No_Error;
-                       end if;
-                               pragma Assert
-                                 (HC.Client_HS.Counter = Saved_Client_HS_Counter);
-                               return;
-                            end;
+               if Ext_Reject then
+                  OK := False;
+                  Err := Unsupported_Extension;
+               else
+                  OK := True;
+                  Err := No_Error;
+               end if;
+               pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
+               return;
+            end;
          end if;
       end;
 
       C13.Take_Buffer (Ctx, Buf);
       RFLX_Free (Buf);
 
-              if Ext_Reject then
-                 OK := False;
-                 Err := Unsupported_Extension;
-              else
-                 OK := True;
-                 Err := No_Error;
-              end if;
-                      pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
-           end Parse_Certificate_Chain_13;
+      if Ext_Reject then
+         OK := False;
+         Err := Unsupported_Extension;
+      else
+         OK := True;
+         Err := No_Error;
+      end if;
+      pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
+   end Parse_Certificate_Chain_13;
 
    procedure Parse_Certificate_Chain_12
      (HC     : in out Engaged_Context;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
-      HS_Msg : in     Byte_Seq;
-      OK     :    out Boolean;
-      Err    :    out Error_Code)
+      HS_Msg : in Byte_Seq;
+      OK     : out Boolean;
+      Err    : out Error_Code)
    is
       package C12 renames RFLX.TLS_Handshake.TLS_1_2_Certificate;
-      package C12_Entries renames
-        RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
-      package C12_Entry renames
-        RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
+      package C12_Entries renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
+      package C12_Entry renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
       Body_Len : constant N32 := N32 (HS_Msg'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
       Ctx      : C12.Context;
@@ -991,8 +885,7 @@ is
 
       declare
          List_Len : constant N32 :=
-           N32 (HS_Msg (HS_Msg'First + 4)) * 65536
-           + N32 (HS_Msg (HS_Msg'First + 5)) * 256
+           N32 (HS_Msg (HS_Msg'First + 4)) * 65536 + N32 (HS_Msg (HS_Msg'First + 5)) * 256
            + N32 (HS_Msg (HS_Msg'First + 6));
       begin
          if List_Len /= Body_Len - 3 then
@@ -1001,11 +894,8 @@ is
       end;
 
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 ..
-                                   HS_Msg'First + 4 + Body_Len - 1));
-      C12.Initialize
-        (Ctx, Buf,
-         Written_Last => RBT.Bit_Length (Body_Len) * 8);
+      Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 .. HS_Msg'First + 4 + Body_Len - 1));
+      C12.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Body_Len) * 8);
       C12.Verify_Message (Ctx);
 
       if not C12.Well_Formed_Message (Ctx) then
@@ -1021,17 +911,11 @@ is
             if not C12.Has_Buffer (Ctx) then
                return;
             end if;
-            if not
-              (C12.Valid_Next (Ctx, C12.F_Certificate_List)
-               and then C12.Field_First
-                          (Ctx, C12.F_Certificate_List)
-                        rem RBT.Byte'Size = 1
-               and then C12.Available_Space
-                          (Ctx, C12.F_Certificate_List)
-                        >= C12.Field_Size
-                             (Ctx, C12.F_Certificate_List)
-               and then C12.Field_Condition
-                          (Ctx, C12.F_Certificate_List))
+            if not (C12.Valid_Next (Ctx, C12.F_Certificate_List)
+                    and then C12.Field_First (Ctx, C12.F_Certificate_List) rem RBT.Byte'Size = 1
+                    and then C12.Available_Space (Ctx, C12.F_Certificate_List)
+                             >= C12.Field_Size (Ctx, C12.F_Certificate_List)
+                    and then C12.Field_Condition (Ctx, C12.F_Certificate_List))
             then
                C12.Take_Buffer (Ctx, Buf);
                RFLX_Free (Buf);
@@ -1039,33 +923,25 @@ is
             end if;
 
             C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
-            while C12_Entries.Has_Element (Entries_Ctx)
-              and then Cert_Idx <= Max_Pool_Size
-            loop
-               pragma Loop_Invariant
-                 (C12_Entries.Has_Buffer (Entries_Ctx));
-               pragma Loop_Invariant
-                 (C12_Entries.Valid (Entries_Ctx));
-               pragma Loop_Invariant
-                 (Hash_Len (HC.Neg) = Hash_Len (HC.Neg)'Loop_Entry);
-               pragma Loop_Invariant
-                 (if HC.Cfg.Local'Loop_Entry /= null
-                  then HC.Cfg.Local /= null);
-               pragma Loop_Invariant
-                 (if HC.Cfg.Local'Loop_Entry /= null
-                     and then HC.Cfg.Local'Loop_Entry.Has_Identity
-                  then HC.Cfg.Local /= null
-                       and then HC.Cfg.Local.Has_Identity);
-               pragma Loop_Invariant
-                 (if HC.Cfg.Local'Loop_Entry /= null
-                     and then SPARKTLS.Handshake.Server_Msgs
-                       .Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
-                  then HC.Cfg.Local /= null
-                       and then SPARKTLS.Handshake.Server_Msgs
-                         .Local_Config_Valid (HC.Cfg.Local));
-               pragma Loop_Invariant
-                 (if HC.Cfg.Random'Loop_Entry /= null
-                  then HC.Cfg.Random /= null);
+            while C12_Entries.Has_Element (Entries_Ctx) and then Cert_Idx <= Max_Pool_Size loop
+               pragma Loop_Invariant (C12_Entries.Has_Buffer (Entries_Ctx));
+               pragma Loop_Invariant (C12_Entries.Valid (Entries_Ctx));
+               pragma Loop_Invariant (Hash_Len (HC.Neg) = Hash_Len (HC.Neg)'Loop_Entry);
+               pragma Loop_Invariant (if HC.Cfg.Local'Loop_Entry /= null then HC.Cfg.Local /= null);
+               pragma
+                 Loop_Invariant
+                   (if HC.Cfg.Local'Loop_Entry /= null and then HC.Cfg.Local'Loop_Entry.Has_Identity
+                      then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity);
+               pragma
+                 Loop_Invariant
+                   (if HC.Cfg.Local'Loop_Entry /= null
+                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
+                                   (HC.Cfg.Local'Loop_Entry)
+                      then
+                        HC.Cfg.Local /= null
+                        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local));
+               pragma
+                 Loop_Invariant (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
                declare
                   E_Ctx : C12_Entry.Context;
                begin
@@ -1074,55 +950,42 @@ is
 
                   if C12_Entry.Well_Formed_Message (E_Ctx) then
                      declare
-                        C_Len : constant N32 :=
-                          N32 (C12_Entry.Get_Cert_Data_Length (E_Ctx));
+                        C_Len : constant N32 := N32 (C12_Entry.Get_Cert_Data_Length (E_Ctx));
                      begin
-                        if C_Len > 0
-                          and then C_Len <= N32 (Max_Cert_DER)
-                        then
+                        if C_Len > 0 and then C_Len <= N32 (Max_Cert_DER) then
                            declare
-                              Cert_RFLX : RBT.Bytes
-                                (1 .. RBT.Index (C_Len));
+                              Cert_RFLX : RBT.Bytes (1 .. RBT.Index (C_Len));
                            begin
                               pragma Assert (Cert_RFLX'First = 1);
-                              pragma Assert
-                                (Cert_RFLX'Length = RBT.Length (C_Len));
+                              pragma Assert (Cert_RFLX'Length = RBT.Length (C_Len));
                               C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
                               if Cert_Idx = 0 then
-                                 Copy_Cert_To_Peer_DER
-                                   (Cert_RFLX, D, C_Len);
+                                 Copy_Cert_To_Peer_DER (Cert_RFLX, D, C_Len);
                                  declare
                                     P_OK : Boolean;
                                  begin
-                                    Parse_X509_From_RFLX
-                                      (Cert_RFLX, C_Len, D.Peer_Leaf.Cert, P_OK);
+                                    Parse_X509_From_RFLX (Cert_RFLX, C_Len, D.Peer_Leaf.Cert, P_OK);
                                     D.Peer_Leaf.Present :=
-                                      P_OK
-                                      and then X509.Is_Valid (D.Peer_Leaf.Cert);
-                                    pragma Assert
-                                      (if D.Peer_Leaf.Present
-                                       then True
-                                            and then X509.Spans_Valid
-                                              (D.Peer_Leaf.Cert,
-                                               X509.N32
-                                                 (D.Peer_Leaf.DER_Len)
-                                               - 1));
+                                      P_OK and then X509.Is_Valid (D.Peer_Leaf.Cert);
+                                    pragma
+                                      Assert
+                                        (if D.Peer_Leaf.Present
+                                           then
+                                             True
+                                             and then X509.Spans_Valid
+                                                        (D.Peer_Leaf.Cert,
+                                                         X509.N32 (D.Peer_Leaf.DER_Len) - 1));
                                  end;
                               elsif D.Peer_Int_Count < Max_Pool_Size then
                                  declare
-                                    Idx  : constant Natural :=
-                                      D.Peer_Int_Count;
+                                    Idx  : constant Natural := D.Peer_Int_Count;
                                     C    : X509.Certificate;
                                     P_OK : Boolean;
                                  begin
-                                    Parse_X509_From_RFLX
-                                      (Cert_RFLX, C_Len, C, P_OK);
+                                    Parse_X509_From_RFLX (Cert_RFLX, C_Len, C, P_OK);
                                     if P_OK and then X509.Is_Valid (C) then
-                                       Store_Intermediate
-                                         (Cert_RFLX, C, C_Len,
-                                          D.Peer_Ints (Idx));
-                                       D.Peer_Int_Count :=
-                                         D.Peer_Int_Count + 1;
+                                       Store_Intermediate (Cert_RFLX, C, C_Len, D.Peer_Ints (Idx));
+                                       D.Peer_Int_Count := D.Peer_Int_Count + 1;
                                     end if;
                                  end;
                               end if;

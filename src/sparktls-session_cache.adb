@@ -15,8 +15,8 @@
 with SPARKTLS.Ticket_Cache;
 with SPARKTLS.Tickets_12;
 
-package body SPARKTLS.Session_Cache with
-   SPARK_Mode => On
+package body SPARKTLS.Session_Cache
+  with SPARK_Mode => On
 is
 
    --  Ring of ticket-encryption keys. The newest seals outgoing tickets;
@@ -35,9 +35,9 @@ is
    --  Rotation settings. Held outside the protected object on purpose: the
    --  CSPRNG is a user callback and must never be invoked while holding the
    --  lock (a potentially blocking operation would stall every other task).
-   Rand_Fn   : Random_Bytes_Fn := null;
-   Clock_Fn  : Get_Time_Fn     := null;
-   Interval  : Unsigned_64     := 0;
+   Rand_Fn  : Random_Bytes_Fn := null;
+   Clock_Fn : Get_Time_Fn := null;
+   Interval : Unsigned_64 := 0;
 
    protected Cache is
 
@@ -47,8 +47,8 @@ is
          Suite   : Unsigned_16;
          Age_Add : Unsigned_32;
          ID_Out  : out Ticket_ID)
-      --  Ticket_Cache.Store requires a valid PSK length; a protected op
-      --  cannot inherit that, so restate it here.
+         --  Ticket_Cache.Store requires a valid PSK length; a protected op
+         --  cannot inherit that, so restate it here.
       with Pre => PSK_Len in 32 | 48;
 
       procedure Lookup
@@ -58,43 +58,39 @@ is
          PSK_Len    : out N32;
          Suite      : out Unsigned_16;
          Found      : out Boolean)
-      with Pre  => ID'First = 0 and then ID'Length = Ticket_ID_Len,
-           Post => (if Found then Suite = Want_Suite
-                                 and then PSK_Len in 32 | 48);
+      with
+        Pre => ID'First = 0 and then ID'Length = Ticket_ID_Len,
+        Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);
 
       procedure Active_Key
         (Key_ID : out Byte_Seq;
          TEK    : out Byte_Seq;
          Found  : out Boolean)
-      --  The ring stores fixed-width key material; the caller must supply
-      --  buffers of exactly that width or the copies below are unprovable.
+         --  The ring stores fixed-width key material; the caller must supply
+         --  buffers of exactly that width or the copies below are unprovable.
       with Pre => Key_ID'Length = 4 and then TEK'Length = 32;
 
       procedure Key_By_Id
         (Key_ID : Byte_Seq;
          TEK    : out Byte_Seq;
          Found  : out Boolean)
-      --  Key_ID'Length is checked inline (a wrong-sized id is a miss, not
-      --  an error); TEK is a destination and must be the right width.
+         --  Key_ID'Length is checked inline (a wrong-sized id is a miss, not
+         --  an error); TEK is a destination and must be the right width.
       with Pre => TEK'Length = 32;
 
-      procedure Rotate
-        (New_Key_ID : Byte_Seq;
-         New_TEK    : Byte_Seq;
-         Now_Secs   : Unsigned_64);
+      procedure Rotate (New_Key_ID : Byte_Seq; New_TEK : Byte_Seq; Now_Secs : Unsigned_64);
 
       function Age (Now_Secs : Unsigned_64) return Unsigned_64;
 
       procedure Clear;
 
    private
-      PSKs     : Ticket_Store;
-      Keys     : Key_Ring := (others => (Key_ID     => (others => 0),
-                                         TEK        => (others => 0),
-                                         Valid      => False,
-                                         Created_At => 0));
-      Active   : Key_Index := 0;
-      Have_Key : Boolean  := False;
+      PSKs : Ticket_Store;
+      Keys : Key_Ring :=
+        (others =>
+           (Key_ID => (others => 0), TEK => (others => 0), Valid => False, Created_At => 0));
+      Active : Key_Index := 0;
+      Have_Key : Boolean := False;
    end Cache;
 
    protected body Cache is
@@ -135,44 +131,35 @@ is
             Found      => Found);
       end Lookup;
 
-      procedure Active_Key
-        (Key_ID : out Byte_Seq;
-         TEK    : out Byte_Seq;
-         Found  : out Boolean) is
+      procedure Active_Key (Key_ID : out Byte_Seq; TEK : out Byte_Seq; Found : out Boolean) is
       begin
          Key_ID := (others => 0);
-         TEK    := (others => 0);
-         Found  := False;
+         TEK := (others => 0);
+         Found := False;
          if Have_Key and then Keys (Active).Valid then
             Key_ID := Keys (Active).Key_ID;
-            TEK    := Keys (Active).TEK;
-            Found  := True;
+            TEK := Keys (Active).TEK;
+            Found := True;
          end if;
       end Active_Key;
 
-      procedure Key_By_Id
-        (Key_ID : Byte_Seq;
-         TEK    : out Byte_Seq;
-         Found  : out Boolean) is
+      procedure Key_By_Id (Key_ID : Byte_Seq; TEK : out Byte_Seq; Found : out Boolean) is
       begin
-         TEK   := (others => 0);
+         TEK := (others => 0);
          Found := False;
          if Key_ID'Length /= 4 then
             return;
          end if;
          for I in Keys'Range loop
             if Keys (I).Valid and then Keys (I).Key_ID = Key_ID then
-               TEK   := Keys (I).TEK;
+               TEK := Keys (I).TEK;
                Found := True;
                return;
             end if;
          end loop;
       end Key_By_Id;
 
-      procedure Rotate
-        (New_Key_ID : Byte_Seq;
-         New_TEK    : Byte_Seq;
-         Now_Secs   : Unsigned_64) is
+      procedure Rotate (New_Key_ID : Byte_Seq; New_TEK : Byte_Seq; Now_Secs : Unsigned_64) is
       begin
          if New_Key_ID'Length /= 4 or else New_TEK'Length /= 32 then
             return;
@@ -183,11 +170,8 @@ is
          for I in reverse 1 .. Keys'Last loop
             Keys (I) := Keys (I - 1);
          end loop;
-         Keys (0) := (Key_ID     => New_Key_ID,
-                      TEK        => New_TEK,
-                      Valid      => True,
-                      Created_At => Now_Secs);
-         Active   := 0;
+         Keys (0) := (Key_ID => New_Key_ID, TEK => New_TEK, Valid => True, Created_At => Now_Secs);
+         Active := 0;
          Have_Key := True;
       end Rotate;
 
@@ -204,12 +188,11 @@ is
 
       procedure Clear is
       begin
-         PSKs     := (others => <>);
-         Keys     := (others => (Key_ID     => (others => 0),
-                                 TEK        => (others => 0),
-                                 Valid      => False,
-                                 Created_At => 0));
-         Active   := 0;
+         PSKs := (others => <>);
+         Keys :=
+           (others =>
+              (Key_ID => (others => 0), TEK => (others => 0), Valid => False, Created_At => 0));
+         Active := 0;
          Have_Key := False;
       end Clear;
 
@@ -220,19 +203,19 @@ is
    ----------------------------------------------------------------------
 
    procedure Initialize
-     (Random            : Random_Bytes_Fn;
-      Clock             : Get_Time_Fn;
-      Rotation_Interval : Unsigned_32 := 24 * 3600) is
-      Key_ID : Byte_Seq (0 .. 3)  := (others => 0);
+     (Random : Random_Bytes_Fn; Clock : Get_Time_Fn; Rotation_Interval : Unsigned_32 := 24 * 3600)
+   is
+      Key_ID : Byte_Seq (0 .. 3) := (others => 0);
       TEK    : Byte_Seq (0 .. 31) := (others => 0);
-      Now    : Unsigned_64        := 0;
+      Now    : Unsigned_64 := 0;
    begin
-      Rand_Fn  := Random;
+      Rand_Fn := Random;
       Clock_Fn := Clock;
       Interval := Unsigned_64 (Rotation_Interval);
 
       if Random = null then
          return;   --  no CSPRNG, no keys; tickets are simply not issued
+
       end if;
 
       if Clock /= null then
@@ -256,11 +239,12 @@ is
    procedure Maybe_Rotate is
       Now    : Unsigned_64;
       Age    : Unsigned_64;
-      Key_ID : Byte_Seq (0 .. 3)  := (others => 0);
+      Key_ID : Byte_Seq (0 .. 3) := (others => 0);
       TEK    : Byte_Seq (0 .. 31) := (others => 0);
    begin
       if Interval = 0 or else Rand_Fn = null or else Clock_Fn = null then
          return;   --  manual control, or not initialised
+
       end if;
       Now := SPARKTLS.Tickets_12.To_Unix_Seconds (Clock_Fn.all);
 
@@ -303,27 +287,18 @@ is
       Cache.Lookup (ID, Want_Suite, PSK, PSK_Len, Suite, Found);
    end Lookup_Session;
 
-   procedure Get_Active_TEK
-     (Key_ID : out Byte_Seq;
-      TEK    : out Byte_Seq;
-      Found  : out Boolean) is
+   procedure Get_Active_TEK (Key_ID : out Byte_Seq; TEK : out Byte_Seq; Found : out Boolean) is
    begin
       Maybe_Rotate;
       Cache.Active_Key (Key_ID, TEK, Found);
    end Get_Active_TEK;
 
-   procedure Get_TEK_By_Id
-     (Key_ID : Byte_Seq;
-      TEK    : out Byte_Seq;
-      Found  : out Boolean) is
+   procedure Get_TEK_By_Id (Key_ID : Byte_Seq; TEK : out Byte_Seq; Found : out Boolean) is
    begin
       Cache.Key_By_Id (Key_ID, TEK, Found);
    end Get_TEK_By_Id;
 
-   procedure Rotate_TEK
-     (New_Key_ID : Byte_Seq;
-      New_TEK    : Byte_Seq;
-      Now_Secs   : Unsigned_64) is
+   procedure Rotate_TEK (New_Key_ID : Byte_Seq; New_TEK : Byte_Seq; Now_Secs : Unsigned_64) is
    begin
       Cache.Rotate (New_Key_ID, New_TEK, Now_Secs);
    end Rotate_TEK;

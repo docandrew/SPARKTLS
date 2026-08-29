@@ -33,20 +33,20 @@
 --
 --  DEPLOYMENT SHAPES this does and does not cover:
 --
---    * EMBEDDED / single connection at a time — you do not need this. Leave
+--    * EMBEDDED / single connection at a time â you do not need this. Leave
 --      the callbacks null; resumption is disabled and nothing here is linked.
 --
---    * MULTI-THREADED, ONE PROCESS — this package. The protected object
+--    * MULTI-THREADED, ONE PROCESS â this package. The protected object
 --      serialises access, so any number of tasks may drive sessions
 --      concurrently against one cache.
 --
---    * MULTI-PROCESS — NOT covered. Workers in separate address spaces would
+--    * MULTI-PROCESS â NOT covered. Workers in separate address spaces would
 --      each get their own copy, so a ticket issued by one is unknown to the
 --      others (clients simply re-handshake). Sharing across processes needs
 --      shared memory or a key/ticket file, which is environment-specific;
 --      implement the four callbacks over whatever your platform provides.
 --
---    * MULTI-NODE / DISTRIBUTED — NOT covered. Needs an external store
+--    * MULTI-NODE / DISTRIBUTED â NOT covered. Needs an external store
 --      (Redis, memcached, a database). Implement the callbacks against it,
 --      and note the contract below: DO NOT BLOCK. A lookup that cannot answer
 --      quickly should report Found => False and let the handshake proceed in
@@ -81,11 +81,11 @@
 --  operations, there is nothing here to deadlock on -- but the guarantee is
 --  weaker than the rest of the library's, and is stated rather than implied.
 
-with SPARKNaCl; use SPARKNaCl;
+with SPARKNaCl;  use SPARKNaCl;
 with Interfaces; use Interfaces;
 
-package SPARKTLS.Session_Cache with
-   SPARK_Mode => On
+package SPARKTLS.Session_Cache
+  with SPARK_Mode => On
 is
 
    ----------------------------------------------------------------------
@@ -110,12 +110,10 @@ is
    --  Until this is called there is no key, so no TLS 1.2 tickets are
    --  issued and clients simply perform full handshakes.
    procedure Initialize
-     (Random            : Random_Bytes_Fn;
-      Clock             : Get_Time_Fn;
-      Rotation_Interval : Unsigned_32 := 24 * 3600);
+     (Random : Random_Bytes_Fn; Clock : Get_Time_Fn; Rotation_Interval : Unsigned_32 := 24 * 3600);
 
    ----------------------------------------------------------------------
-   --  Callbacks — pass these to Configure/Init via 'Access.
+   --  Callbacks â pass these to Configure/Init via 'Access.
    ----------------------------------------------------------------------
 
    --  Persist a resumption PSK and return the identity to put on the wire.
@@ -136,28 +134,22 @@ is
       PSK_Len    : out N32;
       Suite      : out Unsigned_16;
       Found      : out Boolean)
-   with Pre  => ID'First = 0 and then ID'Length = Ticket_ID_Len,
-        Post => (if Found then Suite = Want_Suite
-                             and then PSK_Len in 32 | 48);
+   with
+     Pre => ID'First = 0 and then ID'Length = Ticket_ID_Len,
+     Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);
 
    --  The key that seals new TLS 1.2 tickets. Found => False before any
    --  Rotate_TEK call, which simply means no ticket is issued.
-   procedure Get_Active_TEK
-     (Key_ID : out Byte_Seq;
-      TEK    : out Byte_Seq;
-      Found  : out Boolean)
+   procedure Get_Active_TEK (Key_ID : out Byte_Seq; TEK : out Byte_Seq; Found : out Boolean)
    with Pre => Key_ID'Length = 4 and then TEK'Length = 32;
 
    --  The key a presented ticket names. Older keys stay usable until they
    --  age out of the ring, so tickets issued before a rotation still resume.
-   procedure Get_TEK_By_Id
-     (Key_ID : Byte_Seq;
-      TEK    : out Byte_Seq;
-      Found  : out Boolean)
+   procedure Get_TEK_By_Id (Key_ID : Byte_Seq; TEK : out Byte_Seq; Found : out Boolean)
    with Pre => TEK'Length = 32;
 
    ----------------------------------------------------------------------
-   --  Key management — the application's job now, on its own schedule.
+   --  Key management â the application's job now, on its own schedule.
    ----------------------------------------------------------------------
 
    --  Install a new sealing key explicitly. Normally unnecessary when
@@ -167,10 +159,7 @@ is
    --  decryption until pushed out of the ring, so in-flight tickets keep
    --  resuming across a rotation. Generate Key_ID/TEK from your CSPRNG,
    --  or fetch them from an HSM or orchestrator.
-   procedure Rotate_TEK
-     (New_Key_ID : Byte_Seq;
-      New_TEK    : Byte_Seq;
-      Now_Secs   : Unsigned_64);
+   procedure Rotate_TEK (New_Key_ID : Byte_Seq; New_TEK : Byte_Seq; Now_Secs : Unsigned_64);
 
    --  Age of the active key in seconds, for callers driving their own
    --  rotation timer. Returns Now_Secs if no key has been installed.

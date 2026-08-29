@@ -1,5 +1,5 @@
-package body SPARKTLS.RFLX_Bridge with
-   SPARK_Mode => On
+package body SPARKTLS.RFLX_Bridge
+  with SPARK_Mode => On
 is
    use type RBT.Index;
 
@@ -9,9 +9,10 @@ is
    begin
       for I in Data'Range loop
          Result (RBT.Index (I - Data'First + 1)) := RBT.Byte (Data (I));
-         pragma Loop_Invariant
-           (for all J in Data'First .. I =>
-              Result (RBT.Index (J - Data'First + 1)) = RBT.Byte (Data (J)));
+         pragma
+           Loop_Invariant
+             (for all J in Data'First .. I
+              => Result (RBT.Index (J - Data'First + 1)) = RBT.Byte (Data (J)));
       end loop;
       return Result;
    end To_RFLX;

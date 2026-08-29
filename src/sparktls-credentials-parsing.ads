@@ -1,15 +1,15 @@
---  SPARKTLS.Credentials.Parsing — SPARK-verified credential parsing
+--  SPARKTLS.Credentials.Parsing â SPARK-verified credential parsing
 --
 --  Pure parsing of PKCS#8 keys and PEM-encoded identities.
---  No file I/O — operates on in-memory byte/string buffers.
+--  No file I/O â operates on in-memory byte/string buffers.
 --  SPARK_Mode On: formally verified for memory safety.
 
 with X509;
-with SPARKNaCl;     use SPARKNaCl;
+with SPARKNaCl; use SPARKNaCl;
 with SPARKTLS.PEM;
 
-package SPARKTLS.Credentials.Parsing with
-   SPARK_Mode => On
+package SPARKTLS.Credentials.Parsing
+  with SPARK_Mode => On
 is
    --  Extract raw key bytes from a PKCS#8 DER-encoded private key.
    --  Supports Ed25519, P-256, P-384, and RSA.
@@ -24,22 +24,20 @@ is
       Key_Out : out Byte_Seq;
       Key_Len : out N32;
       OK      : out Boolean)
-   with Pre  => DER'First = 0
-                and DER'Last < X509.N32'Last
-                and DER_Len <= DER'Last + 1
-                and Key_Out'First = 0
-                and Key_Out'Last < N32'Last,
-        Post => (if OK then Key_Len in 1 .. Key_Out'Last + 1);
+   with
+     Pre =>
+       DER'First = 0
+       and DER'Last < X509.N32'Last
+       and DER_Len <= DER'Last + 1
+       and Key_Out'First = 0
+       and Key_Out'Last < N32'Last,
+     Post => (if OK then Key_Len in 1 .. Key_Out'Last + 1);
 
    --  Load identity from PEM strings (no file I/O).
    --  Cert_PEM: leaf cert + optional intermediate chain.
    --  Key_PEM: PKCS#8 private key.
    procedure Load_Identity_PEM
-     (Id       : out Identity;
-      Cert_PEM : String;
-      Key_PEM  : String;
-      OK       : out Boolean)
-   with Pre  => Cert_PEM'Last <= PEM.Max_PEM_Input
-                and Key_PEM'Last <= PEM.Max_PEM_Input;
+     (Id : out Identity; Cert_PEM : String; Key_PEM : String; OK : out Boolean)
+   with Pre => Cert_PEM'Last <= PEM.Max_PEM_Input and Key_PEM'Last <= PEM.Max_PEM_Input;
 
 end SPARKTLS.Credentials.Parsing;

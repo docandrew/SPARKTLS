@@ -2,11 +2,11 @@ with Ada.Directories;
 with Ada.Text_IO;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
-with SPARKTLS.PEM;           use SPARKTLS.PEM;
+with SPARKTLS.PEM; use SPARKTLS.PEM;
 with SPARKTLS.Cert_Verify;
 
-package body SPARKTLS.System_Roots with
-   SPARK_Mode => Off
+package body SPARKTLS.System_Roots
+  with SPARK_Mode => Off
 is
    --  Well-known CA bundle paths on Linux
    Bundle_Paths : constant array (1 .. 3) of access constant String :=
@@ -36,15 +36,12 @@ is
       Close (F);
       return Result (1 .. Len);
    exception
-      when others => return "";
+      when others =>
+         return "";
    end Read_File;
 
    --  Decode all PEM certs from text and add to store
-   procedure Load_PEM_Certs
-     (Store  : in out Trust_Store;
-      Text   : String;
-      Loaded : out Natural)
-   is
+   procedure Load_PEM_Certs (Store : in out Trust_Store; Text : String; Loaded : out Natural) is
       Pos    : Positive := Text'First;
       Result : PEM.Decode_Result;
       Add_OK : Boolean;
@@ -56,12 +53,10 @@ is
          --  Look for next "-----BEGIN"
          declare
             Begin_Marker : constant String := "-----BEGIN ";
-            Found : Boolean := False;
+            Found        : Boolean := False;
          begin
             while Pos + Begin_Marker'Length - 1 <= Text'Last loop
-               if Text (Pos .. Pos + Begin_Marker'Length - 1) =
-                  Begin_Marker
-               then
+               if Text (Pos .. Pos + Begin_Marker'Length - 1) = Begin_Marker then
                   Found := True;
                   exit;
                end if;
@@ -77,10 +72,7 @@ is
          PEM.Decode (Text (Pos .. Text'Last), Result);
 
          if Result.OK and then Result.Label = PEM.Label_Certificate then
-            Cert_Verify.Add_Root
-              (Store,
-               Result.DER (0 .. Result.DER_Len - 1),
-               Add_OK);
+            Cert_Verify.Add_Root (Store, Result.DER (0 .. Result.DER_Len - 1), Add_OK);
             if Add_OK then
                Loaded := Loaded + 1;
             end if;
@@ -89,16 +81,12 @@ is
          --  Skip past this block to find the next one
          declare
             End_Marker : constant String := "-----END ";
-            Found : Boolean := False;
+            Found      : Boolean := False;
          begin
             while Pos + End_Marker'Length - 1 <= Text'Last loop
-               if Text (Pos .. Pos + End_Marker'Length - 1) =
-                  End_Marker
-               then
+               if Text (Pos .. Pos + End_Marker'Length - 1) = End_Marker then
                   --  Skip to end of line
-                  while Pos <= Text'Last
-                     and then Text (Pos) /= ASCII.LF
-                  loop
+                  while Pos <= Text'Last and then Text (Pos) /= ASCII.LF loop
                      Pos := Pos + 1;
                   end loop;
                   Found := True;
@@ -117,10 +105,7 @@ is
    end Load_PEM_Certs;
 
    procedure Load_Bundle
-     (Store  : in out Trust_Store;
-      Path   : String;
-      Loaded : out Natural;
-      OK     : out Boolean)
+     (Store : in out Trust_Store; Path : String; Loaded : out Natural; OK : out Boolean)
    is
       Text : constant String := Read_File (Path);
    begin
@@ -135,11 +120,7 @@ is
       OK := Loaded > 0;
    end Load_Bundle;
 
-   procedure Load
-     (Store  : out Trust_Store;
-      Loaded : out Natural;
-      OK     : out Boolean)
-   is
+   procedure Load (Store : out Trust_Store; Loaded : out Natural; OK : out Boolean) is
    begin
       Store := (others => <>);
       Loaded := 0;

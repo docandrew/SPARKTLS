@@ -1,28 +1,30 @@
-package body SPARKTLS_Reassembly_G with SPARK_Mode => On is
+package body SPARKTLS_Reassembly_G
+  with SPARK_Mode => On
+is
 
-   function Used (B : Buffer) return HS_Msg_Len is (B.Filled);
+   function Used (B : Buffer) return HS_Msg_Len
+   is (B.Filled);
 
-   function Free_Space (B : Buffer) return HS_Msg_Len is
-     (Max_HS_Msg - B.Filled);
+   function Free_Space (B : Buffer) return HS_Msg_Len
+   is (Max_HS_Msg - B.Filled);
 
-   function Header_Ready (B : Buffer) return Boolean is (B.Filled >= 4);
+   function Header_Ready (B : Buffer) return Boolean
+   is (B.Filled >= 4);
 
    --  Bounded by construction: three bytes give 0 .. 2**24 - 1, so the + 4
    --  cannot overflow N32. It CAN exceed Max_HS_Msg, which is a protocol
    --  error rather than an arithmetic one -- Message_Too_Large reports it.
-   function Declared_Size (B : Buffer) return N32 is
-     (4
-      + 65536 * N32 (B.Data (1))
-      +   256 * N32 (B.Data (2))
-      +         N32 (B.Data (3)));
+   function Declared_Size (B : Buffer) return N32
+   is (4 + 65536 * N32 (B.Data (1)) + 256 * N32 (B.Data (2)) + N32 (B.Data (3)));
 
-   function Declared_Type (B : Buffer) return Byte is (B.Data (0));
+   function Declared_Type (B : Buffer) return Byte
+   is (B.Data (0));
 
-   function Message_Too_Large (B : Buffer) return Boolean is
-     (Header_Ready (B) and then Declared_Size (B) > Max_HS_Msg);
+   function Message_Too_Large (B : Buffer) return Boolean
+   is (Header_Ready (B) and then Declared_Size (B) > Max_HS_Msg);
 
-   function Has_Message (B : Buffer) return Boolean is
-     (Header_Ready (B) and then B.Filled >= Declared_Size (B));
+   function Has_Message (B : Buffer) return Boolean
+   is (Header_Ready (B) and then B.Filled >= Declared_Size (B));
 
    --  Every branch lands inside HS_Msg_Len without needing a precondition:
    --    header not ready  -> Filled < 4, so 4 - Filled is 1 .. 4
@@ -31,17 +33,17 @@ package body SPARKTLS_Reassembly_G with SPARK_Mode => On is
    --    otherwise         -> Header_Ready and not too large give
    --                         Declared_Size <= Max_HS_Msg, and Filled <
    --                         Declared_Size, so the result is 1 .. Max_HS_Msg
-   function Wanted (B : Buffer) return HS_Msg_Len is
-     (if not Header_Ready (B) then 4 - B.Filled
-      elsif Message_Too_Large (B) then Free_Space (B)
-      elsif B.Filled >= Declared_Size (B) then 0
-      else Declared_Size (B) - B.Filled);
+   function Wanted (B : Buffer) return HS_Msg_Len
+   is (if not Header_Ready (B) then 4 - B.Filled
+       elsif Message_Too_Large (B) then Free_Space (B)
+       elsif B.Filled >= Declared_Size (B) then 0
+       else Declared_Size (B) - B.Filled);
 
-   function Message_Length (B : Buffer) return HS_Msg_Len is
-     (Declared_Size (B));
+   function Message_Length (B : Buffer) return HS_Msg_Len
+   is (Declared_Size (B));
 
-   function Message (B : Buffer) return Message_Bytes is
-     (Message_Bytes (B.Data (0 .. Declared_Size (B) - 1)));
+   function Message (B : Buffer) return Message_Bytes
+   is (Message_Bytes (B.Data (0 .. Declared_Size (B) - 1)));
 
    procedure Reset (B : out Buffer) is
    begin

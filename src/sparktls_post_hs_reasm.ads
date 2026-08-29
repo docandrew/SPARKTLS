@@ -12,5 +12,5 @@ pragma Elaborate_All (SPARKTLS_Reassembly_G);
 --  2000-line SPARKTLS root spec, the same Append postcondition VC was
 --  a hard timeout; standalone it proves in seconds (measured 2026-08-24
 --  on the 128 KB sibling, then confirmed here).
-package SPARKTLS_Post_HS_Reasm is new SPARKTLS_Reassembly_G
-  (Capacity => 16_384);
+
+package SPARKTLS_Post_HS_Reasm is new SPARKTLS_Reassembly_G (Capacity => 16_384);

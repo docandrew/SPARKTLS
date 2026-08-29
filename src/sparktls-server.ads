@@ -1,7 +1,7 @@
 with SPARKTLS.Records.TLS12;
 
-package SPARKTLS.Server with
-   SPARK_Mode => On
+package SPARKTLS.Server
+  with SPARK_Mode => On
 is
    ----------------------------------------------------------------------------
    --  Server-side TLS 1.3 session management
@@ -56,15 +56,13 @@ is
       TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
       Get_Time              : Get_Time_Fn := null;
       Select_Identity       : SNI_Cert_Selector := null)
-   --  Mirrors Server.Init's requirements, which Configure must satisfy on
-   --  the caller's behalf. Client.Configure has always carried the equivalent
-   --  check; the server's absence of one was invisible while this body was
-   --  SPARK_Mode => Off, and let a null Random reach Init.
-   with Pre => Random /= null
-               and then Local /= null
-               and then Local.Has_Identity;
+      --  Mirrors Server.Init's requirements, which Configure must satisfy on
+      --  the caller's behalf. Client.Configure has always carried the equivalent
+      --  check; the server's absence of one was invisible while this body was
+      --  SPARK_Mode => Off, and let a null Random reach Init.
+   with Pre => Random /= null and then Local /= null and then Local.Has_Identity;
    --  Select_Identity: optional SNI-based identity selector
-   --  (RFC 6066 §3 / RFC 8446 §4.4.2.4). When non-null and the client
+   --  (RFC 6066 Â§3 / RFC 8446 Â§4.4.2.4). When non-null and the client
    --  sent a non-empty server_name extension, the callback receives
    --  the hostname and returns the matching Identity_Access. A
    --  non-null result overrides `Local` for this session. A null
@@ -75,7 +73,7 @@ is
    --  checks certificate notBefore / notAfter. Also required for
    --  TLS 1.2 session-ticket expiry enforcement (without it the
    --  Decrypt_Ticket path skips the age window check).
-   --  Note: 0-RTT (RFC 8446 §2.3 / §4.2.10) is intentionally not
+   --  Note: 0-RTT (RFC 8446 Â§2.3 / Â§4.2.10) is intentionally not
    --  supported on either side. NST omits the early_data extension,
    --  EE never echoes it, and any client that speculatively sends
    --  0-RTT records has them silently dropped (the bounded skip in
@@ -85,7 +83,7 @@ is
    --  ALPN (RFC 7301): the protocol name we'll select when a
    --  client offers it in the application_layer_protocol_negotiation
    --  extension. Empty string means we don't echo ALPN even if
-   --  the client offered something. Single-protocol only — for
+   --  the client offered something. Single-protocol only â for
    --  multi-protocol selection use Init with a built Config.
    --  SPARK_Mode Off: Ticket_Store_Access is access-all (shared mutable
    --  cache). SPARK's ownership model treats it as a move, but the pointer
@@ -94,70 +92,76 @@ is
    --  Initialize a server session with full control over Config.
    --  Cfg.Local must point to an Identity with a certificate and key.
    procedure Init
-     (S   :    out Server_Session;
-      Cfg : in     Config)
-   --  This postcondition is CHECKED by GNATprove: the body is in SPARK
-   --  since the ticket-storage callbacks replaced Config's owning pointers
-   --  (an owning pointer could not be copied out of an "in" parameter, which
-   --  is what forced SPARK_Mode => Off here before). Both failure paths
-   --  leave State (S) = Error_State.
-   --  Role is set in the initial aggregate and never changed (Set_State
-   --  frames it).
-   with Pre  => Cfg.Random /= null
-                and then Cfg.Local /= null
-                and then Cfg.Local.Has_Identity
-                --  The formal is the CONSTRAINED subtype (#39, 2026-08-24):
-                --  inside the body S.Role = Role_Server by view, so the
-                --  aggregate's discriminant check is static, and the old
-                --  'Constrained Pre + Role Post are subsumed by the profile.
-                ;
+     (S   : out Server_Session;
+      Cfg : in Config)
+      --  This postcondition is CHECKED by GNATprove: the body is in SPARK
+      --  since the ticket-storage callbacks replaced Config's owning pointers
+      --  (an owning pointer could not be copied out of an "in" parameter, which
+      --  is what forced SPARK_Mode => Off here before). Both failure paths
+      --  leave State (S) = Error_State.
+      --  Role is set in the initial aggregate and never changed (Set_State
+      --  frames it).
+   with
+     Pre => Cfg.Random /= null and then Cfg.Local /= null and then Cfg.Local.Has_Identity
+     --  The formal is the CONSTRAINED subtype (#39, 2026-08-24):
+     --  inside the body S.Role = Role_Server by view, so the
+     --  aggregate's discriminant check is static, and the old
+     --  'Constrained Pre + Role Post are subsumed by the profile.
+   ;
 
-   --  RFC 8446 §4.1: Step the server handshake / record processing
+   --  RFC 8446 Â§4.1: Step the server handshake / record processing
    --  state machine.
    --
-   --  Result semantics (RFC 8446 §4, §5, §6):
-   --    OK           → progress made, state may or may not change
-   --    Need_Input   → caller must feed more ciphertext
-   --    Has_Output   → caller must drain and send ciphertext
-   --    Handshake_Done → handshake complete, state = Connected
-   --    Plaintext_Ready → decrypted app data available
-   --    Shutdown     → clean close complete, state = Closed
-   --    Error_Alert  → fatal error, alert was sent, state = Closed
+   --  Result semantics (RFC 8446 Â§4, Â§5, Â§6):
+   --    OK           â progress made, state may or may not change
+   --    Need_Input   â caller must feed more ciphertext
+   --    Has_Output   â caller must drain and send ciphertext
+   --    Handshake_Done â handshake complete, state = Connected
+   --    Plaintext_Ready â decrypted app data available
+   --    Shutdown     â clean close complete, state = Closed
+   --    Error_Alert  â fatal error, alert was sent, state = Closed
    procedure Advance
      (S      : in out Server_Session;
-      Result :    out Action)
-   --  Role (S) = Role_Server was deleted from this Pre 2026-08-20: the
-   --  Server_Session subtype constrains the discriminant, so it is now
-   --  UNSTATEABLE rather than merely required.
-   with Pre  => State (S) /= Idle;
+      Result : out Action)
+      --  Role (S) = Role_Server was deleted from this Pre 2026-08-20: the
+      --  Server_Session subtype constrains the discriminant, so it is now
+      --  UNSTATEABLE rather than merely required.
+   with Pre => State (S) /= Idle;
 
-   --  RFC 8446 §6.1: Send a close_notify alert.
+   --  RFC 8446 Â§6.1: Send a close_notify alert.
    --  Transitions to Closing state.
-   procedure Close_Notify (S : in out Session)
-   --  Deliberately callable on an already-closed session: Advance reports
-   --  both a half-duplex close and a completed close with Shutdown, and the
-   --  application cannot distinguish them. On a finished session this is a
-   --  no-op (the body returns before touching the scrubbed keys).
-   with Pre  => Role (S) = Role_Server
-                --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
-                --  the caller cannot check is unenforceable). Covers the
-                --  arithmetic backstop on both versions and the 2**23 cap
-                --  on TLS 1.2, version-gated inside -- the old ghost _12
-                --  conjunct would wrongly reject a TLS 1.3 session sitting
-                --  at the cap awaiting rotation, now that the counter is
-                --  the shared channel counter.
-                and not Write_Limit_Reached (S),
-        Post => (if State (S)'Old in Connected | Closing
-                 then State (S) = Closing)             --  RFC 8446 6.1
-                and
-                --  Plain "and"/"or", never the short-circuit forms. The right
-                --  operand of "and then"/"or else" is potentially unevaluated,
-                --  and Ada RM 6.1.1(27) bars a function call as the prefix of
-                --  'Old in such a position. S'Old is not the escape hatch:
-                --  Session is a deep type, so it introduces aliasing and SPARK
-                --  RM 3.10(13) rejects it -- which aborted proof round 26.
-                (State (S)'Old in Connected | Closing
-                 or State (S) = State (S)'Old);
+   procedure Close_Notify
+     (S : in out Session)
+      --  Deliberately callable on an already-closed session: Advance reports
+      --  both a half-duplex close and a completed close with Shutdown, and the
+      --  application cannot distinguish them. On a finished session this is a
+      --  no-op (the body returns before touching the scrubbed keys).
+   with
+     Pre =>
+       Role (S)
+       = Role_Server
+         --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
+         --  the caller cannot check is unenforceable). Covers the
+         --  arithmetic backstop on both versions and the 2**23 cap
+         --  on TLS 1.2, version-gated inside -- the old ghost _12
+         --  conjunct would wrongly reject a TLS 1.3 session sitting
+         --  at the cap awaiting rotation, now that the counter is
+         --  the shared channel counter.
+       and not Write_Limit_Reached (S),
+     Post =>
+       (if State (S)'Old in Connected | Closing
+        then State (S) = Closing)             --  RFC 8446 6.1
+       and
+       --  Plain "and"/"or", never the short-circuit forms. The right
+       --  operand of "and then"/"or else" is potentially unevaluated,
+       --  and Ada RM 6.1.1(27) bars a function call as the prefix of
+       --  'Old in such a position. S'Old is not the escape hatch:
+       --  Session is a deep type, so it introduces aliasing and SPARK
+       --  RM 3.10(13) rejects it -- which aborted proof round 26.
+                                                                   (State (S)'Old in
+                                                                      Connected
+                                                                      | Closing
+                                                                    or State (S) = State (S)'Old);
 
    --  True if a client certificate was received (mutual TLS).
    --
@@ -209,20 +213,19 @@ private
    --  private part may name the parent's private components, so these keep
    --  their original bodies verbatim once Session becomes a private type.
 
-   function Has_Peer_Certificate (S : Session) return Boolean is
-      (S.Peer_Cert_Valid);
+   function Has_Peer_Certificate (S : Session) return Boolean
+   is (S.Peer_Cert_Valid);
 
    --  A server config that can actually run a handshake: identity present
    --  and a randomness source wired. This is the gate Init applies before
    --  the ONLY write of HC.Cfg, plus the mTLS coherence rule.
-   function Server_Config_Can_Start (Cfg : Config) return Boolean is
-     (Cfg.Local /= null
-      and then Cfg.Local.Has_Identity
-      and then Cfg.Random /= null
-      and then
-        (not Cfg.Request_Client_Cert
-         or else Cfg.Skip_Verify
-         or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
+   function Server_Config_Can_Start (Cfg : Config) return Boolean
+   is (Cfg.Local /= null
+       and then Cfg.Local.Has_Identity
+       and then Cfg.Random /= null
+       and then (not Cfg.Request_Client_Cert
+                 or else Cfg.Skip_Verify
+                 or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
 
    --  The configured-server fact as a TYPE, so the handler chain receives
    --  it by construction instead of re-deriving it per call.
@@ -242,7 +245,8 @@ private
    --  path today (runtime-guarded there anyway). Strengthen with a second
    --  subtype if that path ever wants it proved instead.
    subtype Ready_Config is Config
-     with Dynamic_Predicate =>
+   with
+     Dynamic_Predicate =>
        Ready_Config.Local /= null
        and then Ready_Config.Local.Has_Identity
        and then Ready_Config.Random /= null;

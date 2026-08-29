@@ -1,13 +1,13 @@
-with Interfaces;                 use Interfaces;
-with SPARKTLSCrypto.Hashing.SHA256;    use SPARKTLSCrypto.Hashing.SHA256;
-with SPARKTLSCrypto.MAC;               use SPARKTLSCrypto.MAC;
+with Interfaces;                    use Interfaces;
+with SPARKTLSCrypto.Hashing.SHA256; use SPARKTLSCrypto.Hashing.SHA256;
+with SPARKTLSCrypto.MAC;            use SPARKTLSCrypto.MAC;
 with SPARKTLSCrypto.HMAC384;
 use SPARKTLSCrypto;
 
-package body SPARKTLS.Key_Schedule_12 with
-   SPARK_Mode => On
+package body SPARKTLS.Key_Schedule_12
+  with SPARK_Mode => On
 is
-   --  RFC 5246 §5: P_hash iteration.
+   --  RFC 5246 Â§5: P_hash iteration.
    --
    --  P_hash(secret, seed) = HMAC(secret, A(1) || seed) ||
    --                         HMAC(secret, A(2) || seed) || ...
@@ -27,10 +27,7 @@ is
    end Prove_Server_Finished_Label;
 
    procedure PRF_SHA256
-     (Output : out Byte_Seq;
-      Secret : in  Byte_Seq;
-      Label  : in  String;
-      Seed   : in  Byte_Seq)
+     (Output : out Byte_Seq; Secret : in Byte_Seq; Label : in String; Seed : in Byte_Seq)
    is
       --  SHA-256 digest = 32 bytes
       Hash_Size : constant := 32;
@@ -47,15 +44,14 @@ is
       P_Input : Byte_Seq (0 .. Hash_Size - 1 + Combined_Len) := (others => 0);
       P_Val   : Digest;
 
-      Pos     : N32;
-      Remain  : N32;
+      Pos    : N32;
+      Remain : N32;
    begin
       Output := (others => 0);
 
       --  Build combined = label_bytes || seed
       for I in Label'Range loop
-         Combined (N32 (I - Label'First)) :=
-            Byte (Character'Pos (Label (I)));
+         Combined (N32 (I - Label'First)) := Byte (Character'Pos (Label (I)));
       end loop;
       Combined (N32 (Label'Length) .. Combined_Len - 1) := Seed;
 
@@ -71,8 +67,7 @@ is
          --  P(i) = HMAC(secret, A(i) || combined)
          P_Input (0 .. Hash_Size - 1) := Byte_Seq (A_Val);
          P_Input (Hash_Size .. Hash_Size + Combined_Len - 1) := Combined;
-         HMAC_SHA_256 (P_Val, P_Input (0 .. Hash_Size - 1 + Combined_Len),
-                       Secret);
+         HMAC_SHA_256 (P_Val, P_Input (0 .. Hash_Size - 1 + Combined_Len), Secret);
 
          --  Copy to output (may be partial on last round)
          Remain := N32 (Output'Length) - Pos;
@@ -80,12 +75,11 @@ is
             Output (Pos .. Pos + Hash_Size - 1) := Byte_Seq (P_Val);
             Pos := Pos + Hash_Size;
          else
-            Output (Pos .. Pos + Remain - 1) :=
-               Byte_Seq (P_Val) (0 .. Remain - 1);
+            Output (Pos .. Pos + Remain - 1) := Byte_Seq (P_Val) (0 .. Remain - 1);
             Pos := Pos + Remain;
          end if;
 
-         --  A(i+1) = HMAC(secret, A(i)) — temp avoids out/in aliasing
+         --  A(i+1) = HMAC(secret, A(i)) â temp avoids out/in aliasing
          declare
             A_In : constant SPARKTLSCrypto.Hashing.SHA256.Digest := A_Val;
          begin
@@ -95,10 +89,7 @@ is
    end PRF_SHA256;
 
    procedure PRF_SHA384
-     (Output : out Byte_Seq;
-      Secret : in  Byte_Seq;
-      Label  : in  String;
-      Seed   : in  Byte_Seq)
+     (Output : out Byte_Seq; Secret : in Byte_Seq; Label : in String; Seed : in Byte_Seq)
    is
       Hash_Size : constant := 48;
 
@@ -110,14 +101,13 @@ is
       P_Input : Byte_Seq (0 .. Hash_Size - 1 + Combined_Len) := (others => 0);
       P_Val   : HMAC384.Digest_384;
 
-      Pos     : N32;
-      Remain  : N32;
+      Pos    : N32;
+      Remain : N32;
    begin
       Output := (others => 0);
 
       for I in Label'Range loop
-         Combined (N32 (I - Label'First)) :=
-            Byte (Character'Pos (Label (I)));
+         Combined (N32 (I - Label'First)) := Byte (Character'Pos (Label (I)));
       end loop;
       Combined (N32 (Label'Length) .. Combined_Len - 1) := Seed;
 
@@ -129,17 +119,14 @@ is
 
          P_Input (0 .. Hash_Size - 1) := Byte_Seq (A_Val);
          P_Input (Hash_Size .. Hash_Size + Combined_Len - 1) := Combined;
-         HMAC384.HMAC_SHA_384 (P_Val,
-                               P_Input (0 .. Hash_Size - 1 + Combined_Len),
-                               Secret);
+         HMAC384.HMAC_SHA_384 (P_Val, P_Input (0 .. Hash_Size - 1 + Combined_Len), Secret);
 
          Remain := N32 (Output'Length) - Pos;
          if Remain >= Hash_Size then
             Output (Pos .. Pos + Hash_Size - 1) := Byte_Seq (P_Val);
             Pos := Pos + Hash_Size;
          else
-            Output (Pos .. Pos + Remain - 1) :=
-               Byte_Seq (P_Val) (0 .. Remain - 1);
+            Output (Pos .. Pos + Remain - 1) := Byte_Seq (P_Val) (0 .. Remain - 1);
             Pos := Pos + Remain;
          end if;
 
@@ -152,64 +139,60 @@ is
    end PRF_SHA384;
 
    procedure Derive_Master_Secret_12
-     (Master        :    out Bytes_48;
-      Pre_Master    : in     Byte_Seq;
-      Client_Random : in     Bytes_32;
-      Server_Random : in     Bytes_32;
-      Use_SHA384    : in     Boolean)
+     (Master        : out Bytes_48;
+      Pre_Master    : in Byte_Seq;
+      Client_Random : in Bytes_32;
+      Server_Random : in Bytes_32;
+      Use_SHA384    : in Boolean)
    is
-      --  RFC 5246 §8.1: seed = client_random || server_random
+      --  RFC 5246 Â§8.1: seed = client_random || server_random
       Seed : Seed_64 := (others => 0);
    begin
-      Seed (0 .. 31)  := Client_Random;
+      Seed (0 .. 31) := Client_Random;
       Seed (32 .. 63) := Server_Random;
 
       if Use_SHA384 then
-         PRF_SHA384 (Byte_Seq (Master), Pre_Master,
-                     Label_Master_Secret, Byte_Seq (Seed));
+         PRF_SHA384 (Byte_Seq (Master), Pre_Master, Label_Master_Secret, Byte_Seq (Seed));
       else
-         PRF_SHA256 (Byte_Seq (Master), Pre_Master,
-                     Label_Master_Secret, Byte_Seq (Seed));
+         PRF_SHA256 (Byte_Seq (Master), Pre_Master, Label_Master_Secret, Byte_Seq (Seed));
       end if;
    end Derive_Master_Secret_12;
 
    procedure Expand_Keys_12
-     (Client_Key    :    out Byte_Seq;
-      Server_Key    :    out Byte_Seq;
-      Client_IV     :    out Byte_Seq;
-      Server_IV     :    out Byte_Seq;
-      Master        : in     Bytes_48;
-      Server_Random : in     Bytes_32;
-      Client_Random : in     Bytes_32;
-      Key_Len       : in     N32;
-      IV_Len        : in     N32;
-      Use_SHA384    : in     Boolean)
+     (Client_Key    : out Byte_Seq;
+      Server_Key    : out Byte_Seq;
+      Client_IV     : out Byte_Seq;
+      Server_IV     : out Byte_Seq;
+      Master        : in Bytes_48;
+      Server_Random : in Bytes_32;
+      Client_Random : in Bytes_32;
+      Key_Len       : in N32;
+      IV_Len        : in N32;
+      Use_SHA384    : in Boolean)
    is
-      --  RFC 5246 §6.3: seed = server_random || client_random
+      --  RFC 5246 Â§6.3: seed = server_random || client_random
       --  (OPPOSITE order from master secret derivation!)
       Seed      : Seed_64 := (others => 0);
       Block_Len : constant N32 := 2 * Key_Len + 2 * IV_Len;
       Key_Block : Byte_Seq (0 .. Block_Len - 1);
       Pos       : N32 := 0;
    begin
-      Seed (0 .. 31)  := Server_Random;
+      Seed (0 .. 31) := Server_Random;
       Seed (32 .. 63) := Client_Random;
 
       Client_IV := (others => 0);
       Server_IV := (others => 0);
 
       if Use_SHA384 then
-         PRF_SHA384 (Key_Block, Byte_Seq (Master),
-                     Label_Key_Expansion, Byte_Seq (Seed));
+         PRF_SHA384 (Key_Block, Byte_Seq (Master), Label_Key_Expansion, Byte_Seq (Seed));
       else
-         PRF_SHA256 (Key_Block, Byte_Seq (Master),
-                     Label_Key_Expansion, Byte_Seq (Seed));
+         PRF_SHA256 (Key_Block, Byte_Seq (Master), Label_Key_Expansion, Byte_Seq (Seed));
       end if;
 
-      --  Partition key_block (RFC 5246 §6.3 + RFC 5288 §3 / RFC 7905 §2):
+      --  Partition key_block (RFC 5246 Â§6.3 + RFC 5288 Â§3 / RFC 7905 Â§2):
       --    client_write_key [Key_Len]
       --    server_write_key [Key_Len]
-      --    client_write_IV  [IV_Len]   ← 4 (AES-GCM) or 12 (ChaCha20)
+      --    client_write_IV  [IV_Len]   â 4 (AES-GCM) or 12 (ChaCha20)
       --    server_write_IV  [IV_Len]
       --  The out IVs are always 12 bytes; bytes [IV_Len..11] stay zero.
       Client_Key := Key_Block (Pos .. Pos + Key_Len - 1);
@@ -222,14 +205,13 @@ is
    end Expand_Keys_12;
 
    procedure Compute_Finished_12
-     (Verify     :    out Verify_Data_12;
-      Master     : in     Bytes_48;
-      Label      : in     String;
-      TH         : in     Byte_Seq;
-      Use_SHA384 : in     Boolean)
-   is
+     (Verify     : out Verify_Data_12;
+      Master     : in Bytes_48;
+      Label      : in String;
+      TH         : in Byte_Seq;
+      Use_SHA384 : in Boolean) is
    begin
-      --  RFC 5246 §7.4.9:
+      --  RFC 5246 Â§7.4.9:
       --  verify_data = PRF(master_secret, finished_label,
       --                    Hash(handshake_messages))[0..11]
       if Use_SHA384 then
@@ -240,14 +222,14 @@ is
    end Compute_Finished_12;
 
    procedure Export_Keying_Material_12
-     (Output        :    out Byte_Seq;
-      Master        : in     Bytes_48;
-      Client_Random : in     Bytes_32;
-      Server_Random : in     Bytes_32;
-      Label         : in     String;
-      Context       : in     Byte_Seq;
-      Use_Context   : in     Boolean;
-      Use_SHA384    : in     Boolean)
+     (Output        : out Byte_Seq;
+      Master        : in Bytes_48;
+      Client_Random : in Bytes_32;
+      Server_Random : in Bytes_32;
+      Label         : in String;
+      Context       : in Byte_Seq;
+      Use_Context   : in Boolean;
+      Use_SHA384    : in Boolean)
    is
       Seed_No_Context : Byte_Seq (0 .. 63) := (others => 0);
    begin

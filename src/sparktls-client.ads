@@ -1,7 +1,7 @@
 with SPARKTLS.Records.TLS12;
 
-package SPARKTLS.Client with
-   SPARK_Mode => On
+package SPARKTLS.Client
+  with SPARK_Mode => On
 is
    ----------------------------------------------------------------------------
    --  Client-side TLS 1.3 session management
@@ -70,18 +70,18 @@ is
       Resume               : Session_Ticket := (others => <>);
       Skip_Verify          : Boolean := False;
       Skip_Hostname_Verify : Boolean := False)
-   --  Mirrors Init's postcondition: Configure is a thin wrapper that
-   --  builds a Config and calls Init, so it can promise no more than Init
-   --  does. Init fails closed to Error_State.
-   with Pre  => Random /= null and Clock /= null;
+      --  Mirrors Init's postcondition: Configure is a thin wrapper that
+      --  builds a Config and calls Init, so it can promise no more than Init
+      --  does. Init fails closed to Error_State.
+   with Pre => Random /= null and Clock /= null;
    --  Skip_Verify: skip full X.509 chain validation against Trust
    --  (development / self-signed certs). Without Skip_Verify, a trust
    --  store and clock must be configured before the handshake can
    --  start, except for valid TLS 1.3 ticket resumption. Hostname
-   --  binding (§6.4) is NOT affected by this flag — set
+   --  binding (Â§6.4) is NOT affected by this flag â set
    --  Skip_Hostname_Verify to opt out of hostname binding as well.
    --
-   --  Skip_Hostname_Verify: skip RFC 6125 §6.4 SAN/CN matching even
+   --  Skip_Hostname_Verify: skip RFC 6125 Â§6.4 SAN/CN matching even
    --  when Hostname is non-empty. The usual opt-out is to pass
    --  Hostname => ""; this flag is for callers that need SNI on the
    --  wire (Hostname-derived) but explicitly don't want the cert
@@ -89,25 +89,25 @@ is
    --  ALPN (RFC 7301): the protocol name to offer in the
    --  application_layer_protocol_negotiation extension. Empty
    --  string means no ALPN extension is sent. Single protocol
-   --  only — for multi-protocol advertisement use Init with a
+   --  only â for multi-protocol advertisement use Init with a
    --  manually-built Config.
 
    --  Initialize a client session with full control over Config.
    --  After Init, the caller should drain and send the ClientHello.
    procedure Init
-     (S   :    out Client_Session;
-      Cfg : in     Config)
-   --  This postcondition is CHECKED by GNATprove: the body is in SPARK
-   --  since the ticket-storage callbacks replaced Config's owning pointers
-   --  (an owning pointer could not be copied out of an "in" parameter, which
-   --  is what forced SPARK_Mode => Off here before). Init fails closed: Client_Config_Can_Start
-   --  rejection, HC allocation failure, and Initialize_Client_Handshake
-   --  failure all leave State (S) = Error_State with nothing queued. Role is
-   --  set in the initial aggregate and never changed (Set_State frames it).
-   --  The formal is the CONSTRAINED subtype (#39, 2026-08-24): the Role
-   --  Post is subsumed by the profile and the body's discriminant checks
-   --  become static.
-   with Pre  => Cfg.Random /= null;
+     (S   : out Client_Session;
+      Cfg : in Config)
+      --  This postcondition is CHECKED by GNATprove: the body is in SPARK
+      --  since the ticket-storage callbacks replaced Config's owning pointers
+      --  (an owning pointer could not be copied out of an "in" parameter, which
+      --  is what forced SPARK_Mode => Off here before). Init fails closed: Client_Config_Can_Start
+      --  rejection, HC allocation failure, and Initialize_Client_Handshake
+      --  failure all leave State (S) = Error_State with nothing queued. Role is
+      --  set in the initial aggregate and never changed (Set_State frames it).
+      --  The formal is the CONSTRAINED subtype (#39, 2026-08-24): the Role
+      --  Post is subsumed by the profile and the body's discriminant checks
+      --  become static.
+   with Pre => Cfg.Random /= null;
 
    --  Step the client handshake / record processing state machine.
    --
@@ -119,45 +119,50 @@ is
    --    Plaintext_Ready => call Read_Plaintext
    --    Handshake_Done => connection is ready for app data
    --    Error_Alert    => check Last_Error (S)
-   --  RFC 8446 §4.1: Step the client handshake / record processing
+   --  RFC 8446 Â§4.1: Step the client handshake / record processing
    --  state machine.
-   procedure Advance
-     (S      : in out Session;
-      Result :    out Action)
-   with Pre  => State (S) /= Idle and Role (S) = Role_Client;
+   procedure Advance (S : in out Session; Result : out Action)
+   with Pre => State (S) /= Idle and Role (S) = Role_Client;
 
-   --  RFC 8446 §6.1: Send a close_notify alert.
-   procedure Close_Notify (S : in out Session)
-   --  Deliberately callable on an already-closed session: Advance reports
-   --  both a half-duplex close and a completed close with Shutdown, and the
-   --  application cannot distinguish them. On a finished session this is a
-   --  no-op (the body returns before touching the scrubbed keys).
-   with Pre  => Role (S) = Role_Client
-                --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
-                --  the caller cannot check is unenforceable). Covers the
-                --  arithmetic backstop on both versions and the 2**23 cap
-                --  on TLS 1.2, version-gated inside -- the old ghost _12
-                --  conjunct would wrongly reject a TLS 1.3 session sitting
-                --  at the cap awaiting rotation, now that the counter is
-                --  the shared channel counter.
-                and not Write_Limit_Reached (S),
-        Post => (if State (S)'Old in Connected | Closing
-                 then State (S) = Closing)             --  RFC 8446 6.1
-                and
-                --  Plain "and"/"or", never the short-circuit forms. The right
-                --  operand of "and then"/"or else" is potentially unevaluated,
-                --  and Ada RM 6.1.1(27) bars a function call as the prefix of
-                --  'Old in such a position. S'Old is not the escape hatch:
-                --  Session is a deep type, so it introduces aliasing and SPARK
-                --  RM 3.10(13) rejects it -- which aborted proof round 26.
-                (State (S)'Old in Connected | Closing
-                 or State (S) = State (S)'Old);
+   --  RFC 8446 Â§6.1: Send a close_notify alert.
+   procedure Close_Notify
+     (S : in out Session)
+      --  Deliberately callable on an already-closed session: Advance reports
+      --  both a half-duplex close and a completed close with Shutdown, and the
+      --  application cannot distinguish them. On a finished session this is a
+      --  no-op (the body returns before touching the scrubbed keys).
+   with
+     Pre =>
+       Role (S)
+       = Role_Client
+         --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
+         --  the caller cannot check is unenforceable). Covers the
+         --  arithmetic backstop on both versions and the 2**23 cap
+         --  on TLS 1.2, version-gated inside -- the old ghost _12
+         --  conjunct would wrongly reject a TLS 1.3 session sitting
+         --  at the cap awaiting rotation, now that the counter is
+         --  the shared channel counter.
+       and not Write_Limit_Reached (S),
+     Post =>
+       (if State (S)'Old in Connected | Closing
+        then State (S) = Closing)             --  RFC 8446 6.1
+       and
+       --  Plain "and"/"or", never the short-circuit forms. The right
+       --  operand of "and then"/"or else" is potentially unevaluated,
+       --  and Ada RM 6.1.1(27) bars a function call as the prefix of
+       --  'Old in such a position. S'Old is not the escape hatch:
+       --  Session is a deep type, so it introduces aliasing and SPARK
+       --  RM 3.10(13) rejects it -- which aborted proof round 26.
+                                                                   (State (S)'Old in
+                                                                      Connected
+                                                                      | Closing
+                                                                    or State (S) = State (S)'Old);
 
    --  True if a peer certificate has been received and parsed.
    function Has_Peer_Certificate (S : Session) return Boolean;
 
    ----------------------------------------------------------------------------
-   --  Session resumption (RFC 8446 §4.6.1 / §2.2)
+   --  Session resumption (RFC 8446 Â§4.6.1 / Â§2.2)
    --
    --  Workflow:
    --    1. Connect normally. After Handshake_Done (or after any
@@ -169,7 +174,7 @@ is
    --       carries the pre_shared_key extension.
    --
    --  The Cfg-driven path is required because Init constructs and
-   --  queues CH atomically — there is no post-Init injection point
+   --  queues CH atomically â there is no post-Init injection point
    --  for the ticket.
    ----------------------------------------------------------------------------
 
@@ -182,13 +187,13 @@ is
    --  True iff the current connection's handshake completed
    --  using the PSK supplied via Cfg.Resume_Ticket (server
    --  accepted resumption). Cleared on every Init/Configure.
-   --  Stable across the freeing of the handshake context — the
+   --  Stable across the freeing of the handshake context â the
    --  flag is mirrored from HC into S at handshake completion.
    function Was_Resumed (S : Session) return Boolean;
 
-   --  Note: 0-RTT (RFC 8446 §2.3 / §4.2.10) is intentionally
+   --  Note: 0-RTT (RFC 8446 Â§2.3 / Â§4.2.10) is intentionally
    --  not exposed. There is no Write_Early_Data / Was_0RTT_Accepted
-   --  API on this stack — the replay + lack-of-forward-secrecy
+   --  API on this stack â the replay + lack-of-forward-secrecy
    --  trade-off is incompatible with the project's threat model.
    --  Resumption (Was_Resumed above) is 1-RTT and fully supported.
 
@@ -198,11 +203,11 @@ is
    --  another process; placing it in a future Cfg.Resume_Ticket
    --  enables PSK resumption.
    --
-   --  RFC 8446 §4.6.1: tickets MUST NOT be reused; the caller is
+   --  RFC 8446 Â§4.6.1: tickets MUST NOT be reused; the caller is
    --  responsible for using each persisted ticket at most once.
    function Get_Session_Ticket (S : Session) return Session_Ticket;
 
-   --  RFC 5077 §3.3 TLS 1.2 session ticket extraction. Mirror of the
+   --  RFC 5077 Â§3.3 TLS 1.2 session ticket extraction. Mirror of the
    --  TLS 1.3 PSK pair above. The TLS 1.2 server populates this
    --  field via NewSessionTicket; callers persist it across
    --  connections and inject into the next Config.TLS12_Resume_Ticket
@@ -219,22 +224,22 @@ private
    --  GNATprove reads expression-function completions here, so the prover
    --  sees exactly what it saw before this relocation.
 
-   function Has_Peer_Certificate (S : Session) return Boolean is
-      (S.Peer_Cert_Valid);
+   function Has_Peer_Certificate (S : Session) return Boolean
+   is (S.Peer_Cert_Valid);
 
-   function Has_Session_Ticket (S : Session) return Boolean is
-      (S.Ticket.Valid);
+   function Has_Session_Ticket (S : Session) return Boolean
+   is (S.Ticket.Valid);
 
-   function Was_Resumed (S : Session) return Boolean is
-      (S.Resumed_From_PSK);
+   function Was_Resumed (S : Session) return Boolean
+   is (S.Resumed_From_PSK);
 
-   function Get_Session_Ticket (S : Session) return Session_Ticket is
-      (S.Ticket);
+   function Get_Session_Ticket (S : Session) return Session_Ticket
+   is (S.Ticket);
 
-   function Has_TLS12_Ticket (S : Session) return Boolean is
-      (S.TLS12_New_Ticket.Valid);
+   function Has_TLS12_Ticket (S : Session) return Boolean
+   is (S.TLS12_New_Ticket.Valid);
 
-   function Get_TLS12_Ticket (S : Session) return Session_Ticket_12 is
-      (S.TLS12_New_Ticket);
+   function Get_TLS12_Ticket (S : Session) return Session_Ticket_12
+   is (S.TLS12_New_Ticket);
 
 end SPARKTLS.Client;

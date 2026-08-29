@@ -22,12 +22,14 @@
 --    * OUR OWN flow control is a PRECONDITION, proved. There are no runtime
 --      guards here against our own logic errors.
 with Interfaces; use Interfaces;
-with SPARKNaCl;  use SPARKNaCl;
+with SPARKNaCl;
+use SPARKNaCl;
 
 --  GENERIC over the buffer capacity (#90 carve): the same proven ADT
 --  serves both the 128 KB handshake-reassembly instance and the 16 KB
 --  post-handshake instance -- one body, one proof shape, two sizes,
 --  memory-neutral versus the loose Buf/Len/Need fields it replaces.
+
 generic
    Capacity : N32;
 package SPARKTLS_Reassembly_G with SPARK_Mode => On is
@@ -44,9 +46,8 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
    --  bound depends on it, and a single source of truth beats two constants
    --  that agree today. SPARKTLS re-exports all three unchanged.
    Max_Record_Plaintext : constant := 16_384;   --  RFC 8446 limit
-   Max_Record_Overhead  : constant := 256;      --  tag + content type
-   Max_Record_Size      : constant :=
-      Max_Record_Plaintext + Max_Record_Overhead;
+   Max_Record_Overhead : constant := 256;      --  tag + content type
+   Max_Record_Size : constant := Max_Record_Plaintext + Max_Record_Overhead;
 
    --  Capacity of the IO buffers wire data is sliced from. Large enough for
    --  two max-size records so the caller need not drain after every record.
@@ -61,8 +62,7 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
    --  so. A subtype rather than a precondition conjunct, so the bound holds
    --  everywhere the type is used instead of being restated by every
    --  subprogram that accepts wire data.
-   subtype Wire_Chunk is Byte_Seq
-     with Dynamic_Predicate => Wire_Chunk'Last < IO_Buffer_Capacity;
+   subtype Wire_Chunk is Byte_Seq with Dynamic_Predicate => Wire_Chunk'Last < IO_Buffer_Capacity;
 
    type Buffer is private;
 
@@ -80,13 +80,13 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
    --  step. Peer-controlled, so it may exceed what we can ever hold; see
    --  Message_Too_Large.
    function Declared_Size (B : Buffer) return N32
-     with Pre => Header_Ready (B);
+   with Pre => Header_Ready (B);
 
    --  Handshake message type of the message at offset 0. Readable as soon as
    --  the header is, which is what lets a caller reject a wrong-type message
    --  without first buffering a body it does not want.
    function Declared_Type (B : Buffer) return Byte
-     with Pre => Header_Ready (B);
+   with Pre => Header_Ready (B);
 
    --  The peer declared a message we can never buffer. A protocol error: the
    --  caller must alert rather than proceed.
@@ -103,7 +103,7 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
    --  Consume: that is the packed-flight case, and it needs no separate
    --  concept, no second phase and no second set of fields.
    function Has_Message (B : Buffer) return Boolean
-     with Post => (if Has_Message'Result then Header_Ready (B));
+   with Post => (if Has_Message'Result then Header_Ready (B));
 
    --  Bytes still required to complete the message at offset 0: the rest of
    --  the 4-byte header if it is not yet readable, otherwise the rest of the
@@ -123,8 +123,7 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
    function Wanted (B : Buffer) return HS_Msg_Len;
 
    function Message_Length (B : Buffer) return HS_Msg_Len
-     with Pre  => Has_Message (B),
-          Post => Message_Length'Result >= 4;
+   with Pre => Has_Message (B), Post => Message_Length'Result >= 4;
 
    --  A complete handshake message handed back to a caller.
    --
@@ -147,56 +146,58 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
 
    --  The complete message at offset 0, header included.
    function Message (B : Buffer) return Message_Bytes
-     with Pre  => Has_Message (B),
-          --  'First = 0 must be STATED. The index subtype bounds which index
-          --  VALUES are legal, not where a particular slice starts -- a
-          --  Message_Bytes value could legitimately run 5 .. 9. Dropping this
-          --  conjunct on the assumption that "the index type starts at 0
-          --  implies it" left `Frag (0)` unprovable at every consumer.
-          Post => Message'Result'First = 0
-                  and then Message'Result'Length = Message_Length (B)
-                  and then Message'Result'Length = Declared_Size (B);
+   with
+     Pre => Has_Message (B),
+     --  'First = 0 must be STATED. The index subtype bounds which index
+     --  VALUES are legal, not where a particular slice starts -- a
+     --  Message_Bytes value could legitimately run 5 .. 9. Dropping this
+     --  conjunct on the assumption that "the index type starts at 0
+     --  implies it" left `Frag (0)` unprovable at every consumer.
+     Post =>
+       Message'Result'First = 0
+       and then Message'Result'Length = Message_Length (B)
+       and then Message'Result'Length = Declared_Size (B);
 
    procedure Reset (B : out Buffer)
-     with Post => Used (B) = 0
-                  and then Free_Space (B) = Max_HS_Msg
-                  and then not Has_Message (B);
+   with Post => Used (B) = 0 and then Free_Space (B) = Max_HS_Msg and then not Has_Message (B);
 
    --  ALL-OR-NOTHING. Running out of room is not a condition to handle, it is
    --  a state the caller proves unreachable -- having first checked the
    --  peer's length against Free_Space. A partial copy would silently turn
    --  our own flow-control error into "data".
    procedure Append (B : in out Buffer; Data : Wire_Chunk)
-     with Pre  => Data'Length <= Free_Space (B),
-          --  Pre stated via Free_Space, not Used: both are true, but this
-          --  form keeps every term inside HS_Msg_Len's bounds.
-          --
-          --  Post gives BOTH sides of the accounting. Free_Space alone was
-          --  not enough: the relation Used = Max_HS_Msg - Free_Space holds
-          --  inside this package, but the expression functions live in the
-          --  body, so a CALLER cannot see it and could not work out how many
-          --  bytes the buffer now holds. Stating Used directly is what lets a
-          --  caller conclude anything about the buffer after appending --
-          --  Header_Ready above all, which is just Used >= 4.
-          --  Plain `and`, not `and then`: short-circuiting would make the
-          --  second conjunct potentially unevaluated, and 'Old is illegal
-          --  there (RM 6.1.1(27)). Non-short-circuit keeps both always
-          --  evaluated, which is what makes the 'Old prefixes legal.
-          Post => Used (B) = Used (B)'Old + Data'Length
-                  and Free_Space (B) = Free_Space (B)'Old - Data'Length
-                  --  Header bytes are never rewritten, so a readable header
-                  --  and its declared size survive every Append. This is
-                  --  what lets a caller's size-cap check (taken at
-                  --  Header_Ready) still be in force when the completed
-                  --  message is finally read out.
-                  and (if Header_Ready (B)'Old then
-                         Header_Ready (B)
-                         and then Declared_Size (B) = Declared_Size (B)'Old);
+   with
+     Pre => Data'Length <= Free_Space (B),
+     --  Pre stated via Free_Space, not Used: both are true, but this
+     --  form keeps every term inside HS_Msg_Len's bounds.
+     --
+     --  Post gives BOTH sides of the accounting. Free_Space alone was
+     --  not enough: the relation Used = Max_HS_Msg - Free_Space holds
+     --  inside this package, but the expression functions live in the
+     --  body, so a CALLER cannot see it and could not work out how many
+     --  bytes the buffer now holds. Stating Used directly is what lets a
+     --  caller conclude anything about the buffer after appending --
+     --  Header_Ready above all, which is just Used >= 4.
+     --  Plain `and`, not `and then`: short-circuiting would make the
+     --  second conjunct potentially unevaluated, and 'Old is illegal
+     --  there (RM 6.1.1(27)). Non-short-circuit keeps both always
+     --  evaluated, which is what makes the 'Old prefixes legal.
+     Post =>
+       Used (B) = Used (B)'Old + Data'Length
+       and Free_Space (B)
+           = Free_Space (B)'Old
+             - Data'Length
+               --  Header bytes are never rewritten, so a readable header
+               --  and its declared size survive every Append. This is
+               --  what lets a caller's size-cap check (taken at
+               --  Header_Ready) still be in force when the completed
+               --  message is finally read out.
+       and (if Header_Ready (B)'Old
+            then Header_Ready (B) and then Declared_Size (B) = Declared_Size (B)'Old);
 
    --  Drop the message at offset 0; shift any trailing bytes down.
    procedure Consume (B : in out Buffer)
-     with Pre  => Has_Message (B),
-          Post => Used (B) = Used (B)'Old - Message_Length (B)'Old;
+   with Pre => Has_Message (B), Post => Used (B) = Used (B)'Old - Message_Length (B)'Old;
 
 private
 
@@ -204,7 +205,7 @@ private
 
    type Buffer is record
       Data   : Byte_Seq (Buf_Index) := (others => 0);
-      Filled : HS_Msg_Len           := 0;
+      Filled : HS_Msg_Len := 0;
    end record;
 
 end SPARKTLS_Reassembly_G;

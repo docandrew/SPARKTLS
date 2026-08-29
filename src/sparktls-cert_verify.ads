@@ -7,14 +7,13 @@ with SPARKTLSCrypto.P384.ECDSA;
 --
 --  Verifies certificate signatures and validates certificate chains.
 --  Uses SPARKTLS crypto (RSA-PSS, ECDSA P-256/P-384, Ed25519).
-package SPARKTLS.Cert_Verify with
-   SPARK_Mode => On
+
+package SPARKTLS.Cert_Verify
+  with SPARK_Mode => On
 is
    --  Verify a certificate's signature against its issuer's public key.
    function Verify_Cert_Signature
-     (Cert_DER : Byte_Seq;
-      Cert     : X509.Certificate;
-      Issuer   : X509.Certificate) return Boolean
+     (Cert_DER : Byte_Seq; Cert : X509.Certificate; Issuer : X509.Certificate) return Boolean
    with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last - 256;
 
    --  Validation result
@@ -43,47 +42,55 @@ is
    --  Checks: structural validity, CA flag, known algorithms, date validity.
    --  Does NOT verify the root's self-signature (trust anchors are trusted
    --  by definition, and self-signature verification is not required by
-   --  RFC 5280 §6.1).
+   --  RFC 5280 Â§6.1).
    function Validate_Root
      (Root     : X509.Certificate;
       Root_DER : X509.Byte_Seq;
       Now      : X509.Date_Time;
       Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre  => Root_DER'First = 0 and Root_DER'Last < X509.N32'Last
-                and X509.Spans_Valid (Root, Root_DER'Last),
-        Post =>
-     (if Validate_Root'Result = Valid then
-        --  RFC 5280 §6.1.1(d): trust anchor must parse
-        X509.Is_Valid (Root)
-        --  RFC 5280 §4.2: no unrecognized critical extensions
-        and not X509.Has_Unknown_Critical_Extension (Root)
-        --  RFC 5280 §4.1.2.5: must be within validity period
-        and X509.Is_Date_Valid (Root, Now)
-        --  RFC 5280 §4.2.1.9: trust anchor must be CA
-        and X509.Is_CA (Root)
-        --  RFC 5280 §4.2.1.9: BC must be critical on CA certs
-        and X509.Is_Basic_Constraints_Critical (Root)
-        --  Full structural validity, OR every individual structural
-        --  check passes (legacy-root tolerance: Bad_Serial-only certs
-        --  like Starfield G2 violate RFC 5280 §4.1.2.2 but ship in
-        --  every major trust store).
-        and (X509.Is_Structurally_Valid (Root, Now)
-             or else
-               (X509.TBS (Root).Present
-                and not X509.Has_Duplicate_Extension (Root)
-                and not X509.Has_Bad_Extension_Criticality (Root)
-                and not X509.Has_Bad_Time_Format (Root)
-                and not X509.Has_Bad_SAN (Root)
-                and not X509.Has_Empty_Key_Usage_Value (Root)
-                and not X509.Has_Key_Cert_Sign_Without_CA (Root))));
+   with
+     Pre =>
+       Root_DER'First = 0
+       and Root_DER'Last < X509.N32'Last
+       and X509.Spans_Valid (Root, Root_DER'Last),
+     Post =>
+       (if Validate_Root'Result = Valid
+        then
+          --  RFC 5280 Â§6.1.1(d): trust anchor must parse
+          X509.Is_Valid
+            (Root)
+            --  RFC 5280 Â§4.2: no unrecognized critical extensions
+          and not X509.Has_Unknown_Critical_Extension
+                    (Root)
+                    --  RFC 5280 Â§4.1.2.5: must be within validity period
+          and X509.Is_Date_Valid
+                (Root, Now)
+                --  RFC 5280 Â§4.2.1.9: trust anchor must be CA
+          and X509.Is_CA
+                (Root)
+                --  RFC 5280 Â§4.2.1.9: BC must be critical on CA certs
+          and X509.Is_Basic_Constraints_Critical
+                (Root)
+                --  Full structural validity, OR every individual structural
+                --  check passes (legacy-root tolerance: Bad_Serial-only certs
+                --  like Starfield G2 violate RFC 5280 Â§4.1.2.2 but ship in
+                --  every major trust store).
+          and (X509.Is_Structurally_Valid (Root, Now)
+               or else (X509.TBS (Root).Present
+                        and not X509.Has_Duplicate_Extension (Root)
+                        and not X509.Has_Bad_Extension_Criticality (Root)
+                        and not X509.Has_Bad_Time_Format (Root)
+                        and not X509.Has_Bad_SAN (Root)
+                        and not X509.Has_Empty_Key_Usage_Value (Root)
+                        and not X509.Has_Key_Cert_Sign_Without_CA (Root))));
 
    ----------------------------------------------------------------------------
    --  Chain validation building blocks
    --
    --  The caller walks the chain and calls these for each level:
-   --    1. Validate_Root       — trust anchor
-   --    2. Validate_Link       — each issuer->subject pair
-   --    3. Validate_Leaf_Policy — leaf-specific policy checks
+   --    1. Validate_Root       â trust anchor
+   --    2. Validate_Link       â each issuer->subject pair
+   --    3. Validate_Leaf_Policy â leaf-specific policy checks
    --
    --  All SPARK_Mode On.  DER buffers use X509.Byte_Seq so that
    --  X509 functions (Issuer_Matches, Satisfies_Name_Constraints,
@@ -93,10 +100,8 @@ is
    --  Verify a certificate's signature using X509.Byte_Seq DER.
    --  Copies TBS bytes to SPARKNaCl.Byte_Seq internally for crypto.
    function Verify_Cert_Signature
-     (Cert_DER : X509.Byte_Seq;
-      Cert     : X509.Certificate;
-      Issuer   : X509.Certificate) return Boolean
-   with Pre => Cert_DER'First = 0 and Cert_DER'Last < 2**31 - 257;
+     (Cert_DER : X509.Byte_Seq; Cert : X509.Certificate; Issuer : X509.Certificate) return Boolean
+   with Pre => Cert_DER'First = 0 and Cert_DER'Last < 2 ** 31 - 257;
 
    --  Validate one link in the chain: Issuer signs Cert.
    --
@@ -125,27 +130,38 @@ is
       Must_Be_CA       : Boolean;
       CAs_Below_Issuer : Natural;
       Mode             : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre  => Cert_DER'First = 0 and Cert_DER'Last < 2**31 - 257
-                and Issuer_DER'First = 0 and Issuer_DER'Last < 2**31 - 257
-                and X509.Spans_Valid (Cert, Cert_DER'Last)
-                and X509.Spans_Valid (Issuer, Issuer_DER'Last),
-        Post =>
-          --  RFC 5280 §6.1.3: issuer must match
-          (if Validate_Link'Result = Valid then
-             X509.Issuer_Matches (Cert, Cert_DER, Issuer, Issuer_DER))
-          and
-          --  RFC 5280 §6.1.3: cert must be within validity period
-          (if Validate_Link'Result = Valid then
-             X509.Is_Date_Valid (Cert, Now))
-          and
-          --  RFC 5280 §4.2.1.10: name constraints must be satisfied
-          --  (self-issued intermediates are exempt per §4.2.1.10)
-          (if Validate_Link'Result = Valid
-              and then not (Must_Be_CA
-                            and then X509.Is_Self_Issued (Cert, Cert_DER))
-           then
-             X509.Satisfies_Name_Constraints
-               (Cert, Cert_DER, Issuer, Issuer_DER));
+   with
+     Pre =>
+       Cert_DER'First = 0
+       and Cert_DER'Last < 2 ** 31 - 257
+       and Issuer_DER'First = 0
+       and Issuer_DER'Last < 2 ** 31 - 257
+       and X509.Spans_Valid (Cert, Cert_DER'Last)
+       and X509.Spans_Valid (Issuer, Issuer_DER'Last),
+     Post =>
+     --  RFC 5280 Â§6.1.3: issuer must match
+       (if Validate_Link'Result = Valid
+        then X509.Issuer_Matches (Cert, Cert_DER, Issuer, Issuer_DER))
+       and
+       --  RFC 5280 Â§6.1.3: cert must be within validity period
+                                                                 (if Validate_Link'Result = Valid
+                                                                  then
+                                                                    X509.Is_Date_Valid (Cert, Now))
+       and
+       --  RFC 5280 Â§4.2.1.10: name constraints must be satisfied
+       --  (self-issued intermediates are exempt per Â§4.2.1.10)
+                                                                 (if Validate_Link'Result = Valid
+                                                                    and then not (Must_Be_CA
+                                                                                  and then X509
+                                                                                             .Is_Self_Issued
+                                                                                                (Cert,
+                                                                                                 Cert_DER))
+                                                                  then
+                                                                    X509.Satisfies_Name_Constraints
+                                                                      (Cert,
+                                                                       Cert_DER,
+                                                                       Issuer,
+                                                                       Issuer_DER));
 
    --  Validate leaf-specific policy.
    --  Called after Validate_Link succeeds on the leaf.
@@ -170,35 +186,42 @@ is
       Hostname : String;
       Purpose  : Validation_Purpose := Purpose_Server;
       Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre  => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32'Last
-                and X509.Spans_Valid (Leaf, Leaf_DER'Last),
-        Post =>
-          --  RFC 5280 §4.2.1.12: if EKU present but wrong, reject
-          (if X509.Has_EKU (Leaf)
-              and then Purpose = Purpose_Server
-              and then not X509.Has_EKU_Server_Auth (Leaf)
-           then Validate_Leaf_Policy'Result /= Valid)
-          and
-          (if X509.Has_EKU (Leaf)
+   with
+     Pre =>
+       Leaf_DER'First = 0
+       and Leaf_DER'Last < X509.N32'Last
+       and X509.Spans_Valid (Leaf, Leaf_DER'Last),
+     Post =>
+     --  RFC 5280 Â§4.2.1.12: if EKU present but wrong, reject
+       (if X509.Has_EKU (Leaf)
+          and then Purpose = Purpose_Server
+          and then not X509.Has_EKU_Server_Auth (Leaf)
+        then Validate_Leaf_Policy'Result /= Valid)
+       and (if X509.Has_EKU (Leaf)
               and then Purpose = Purpose_Client
               and then not X509.Has_EKU_Client_Auth (Leaf)
-           then Validate_Leaf_Policy'Result /= Valid)
-          and
-          --  WebPKI: missing EKU → reject
-          (if Mode = Mode_WebPKI
-              and then Purpose = Purpose_Server
-              and then not X509.Has_EKU (Leaf)
-           then Validate_Leaf_Policy'Result /= Valid)
-          and
-          --  WebPKI: CA cert as leaf → reject
-          (if Mode = Mode_WebPKI
-              and then X509.Is_CA (Leaf)
-           then Validate_Leaf_Policy'Result /= Valid)
-          and
-          --  Hostname mismatch → reject (when hostname provided)
-          (if Hostname'Length > 0
-              and then not X509.Matches_Hostname (Leaf, Leaf_DER, Hostname)
-           then Validate_Leaf_Policy'Result /= Valid);
+            then Validate_Leaf_Policy'Result /= Valid)
+       and
+       --  WebPKI: missing EKU â reject
+                                          (if Mode = Mode_WebPKI
+                                             and then Purpose = Purpose_Server
+                                             and then not X509.Has_EKU (Leaf)
+                                           then Validate_Leaf_Policy'Result /= Valid)
+       and
+       --  WebPKI: CA cert as leaf â reject
+                                              (if Mode = Mode_WebPKI and then X509.Is_CA (Leaf)
+                                               then Validate_Leaf_Policy'Result /= Valid)
+       and
+       --  Hostname mismatch â reject (when hostname provided)
+                                                                 (if Hostname'Length > 0
+                                                                    and then not X509
+                                                                                   .Matches_Hostname
+                                                                                      (Leaf,
+                                                                                       Leaf_DER,
+                                                                                       Hostname)
+                                                                  then
+                                                                    Validate_Leaf_Policy'Result
+                                                                    /= Valid);
 
    --  Verify a raw signature against a certificate's public key.
    --
@@ -217,15 +240,15 @@ is
    --
    --  Returns True if the signature is valid.
    function Verify_Signature
-     (Data       : Byte_Seq;
-      Sig        : Byte_Seq;
-      Cert       : X509.Certificate;
-      Sig_Scheme : Unsigned_16) return Boolean
-   with Pre => Data'First = 0
-               and Data'Last < N32'Last - 256  --  +64 prefix in Ed25519 path
-               and Sig'First = 0
-               and Sig'Length > 0
-               and Sig'Last < N32'Last - 256;
+     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Unsigned_16)
+      return Boolean
+   with
+     Pre =>
+       Data'First = 0
+       and Data'Last < N32'Last - 256  --  +64 prefix in Ed25519 path
+       and Sig'First = 0
+       and Sig'Length > 0
+       and Sig'Last < N32'Last - 256;
 
    --  TLS 1.2 signs ServerKeyExchange with hash_algorithm ||
    --  signature_algorithm.  The ECDSA signature algorithm does not bind
@@ -233,15 +256,15 @@ is
    --  SHA-384 digest.  TLS 1.3 SignatureScheme values remain stricter and
    --  are handled by Verify_Signature above.
    function Verify_Signature_TLS12
-     (Data       : Byte_Seq;
-      Sig        : Byte_Seq;
-      Cert       : X509.Certificate;
-      Sig_Scheme : Unsigned_16) return Boolean
-   with Pre => Data'First = 0
-               and Data'Last < N32'Last - 256
-               and Sig'First = 0
-               and Sig'Length > 0
-               and Sig'Last < N32'Last - 256;
+     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Unsigned_16)
+      return Boolean
+   with
+     Pre =>
+       Data'First = 0
+       and Data'Last < N32'Last - 256
+       and Sig'First = 0
+       and Sig'Length > 0
+       and Sig'Last < N32'Last - 256;
 
    --  Digest-based entry points for the streamed handshake transcript
    --  (carve 2): the raw transcript no longer exists, so TLS 1.2
@@ -255,9 +278,7 @@ is
       Sig        : Byte_Seq;
       Cert       : X509.Certificate;
       Sig_Scheme : Unsigned_16) return Boolean
-   with Pre => Sig'First = 0
-               and Sig'Length > 0
-               and Sig'Last < N32'Last - 256;
+   with Pre => Sig'First = 0 and Sig'Length > 0 and Sig'Last < N32'Last - 256;
 
    function Verify_Signature_TLS12_Hashed
      (H256_In    : Bytes_32;
@@ -266,9 +287,7 @@ is
       Sig        : Byte_Seq;
       Cert       : X509.Certificate;
       Sig_Scheme : Unsigned_16) return Boolean
-   with Pre => Sig'First = 0
-               and Sig'Length > 0
-               and Sig'Last < N32'Last - 256;
+   with Pre => Sig'First = 0 and Sig'Length > 0 and Sig'Last < N32'Last - 256;
 
    ----------------------------------------------------------------------------
    --  Credential loading helpers
@@ -279,50 +298,46 @@ is
 
    --  Parse a DER certificate and add it to the trust store.
    --  Fails if the store is full or the cert doesn't parse.
-   procedure Add_Root
-     (Store : in out Trust_Store;
-      DER   : X509.Byte_Seq;
-      OK    : out Boolean)
-   with Pre  => DER'First = 0 and DER'Last < X509.N32 (Max_Cert_DER)
-                and Store.Root_Count <= Max_Root_Pool_Size,
-        Post => Store.Root_Count <= Max_Root_Pool_Size
-                and Store.Root_Count >= Store.Root_Count'Old
-                and (if OK then Store.Root_Count = Store.Root_Count'Old + 1
-                     else Store.Root_Count = Store.Root_Count'Old);
+   procedure Add_Root (Store : in out Trust_Store; DER : X509.Byte_Seq; OK : out Boolean)
+   with
+     Pre =>
+       DER'First = 0
+       and DER'Last < X509.N32 (Max_Cert_DER)
+       and Store.Root_Count <= Max_Root_Pool_Size,
+     Post =>
+       Store.Root_Count <= Max_Root_Pool_Size
+       and Store.Root_Count >= Store.Root_Count'Old
+       and (if OK then Store.Root_Count = Store.Root_Count'Old + 1
+            else Store.Root_Count = Store.Root_Count'Old);
 
    --  Load all DER certificates from a concatenated blob.
    --  Each cert is a complete DER SEQUENCE (tag 0x30 + length + value).
    --  Stops when the blob is exhausted or the store is full.
    procedure Load_Roots
-     (Store  : out Trust_Store;
-      DER    : X509.Byte_Seq;
-      Loaded : out Natural;
-      OK     : out Boolean)
-   with Pre  => DER'First = 0 and then DER'Last < X509.N32'Last,
-        Post => Store.Root_Count <= Max_Root_Pool_Size;
+     (Store : out Trust_Store; DER : X509.Byte_Seq; Loaded : out Natural; OK : out Boolean)
+   with
+     Pre => DER'First = 0 and then DER'Last < X509.N32'Last,
+     Post => Store.Root_Count <= Max_Root_Pool_Size;
 
-   function Root_Count (Store : Trust_Store) return Natural is
-     (Store.Root_Count);
+   function Root_Count (Store : Trust_Store) return Natural
+   is (Store.Root_Count);
 
    --  Load a leaf certificate and private key into an Identity.
    --  The signing algorithm is inferred from the certificate:
-   --    Algo_EC_Ed25519 → Ed25519 (Key: 64 bytes, secret || public)
-   --    Algo_EC_P256    → ECDSA P-256 (Key: 32 bytes, scalar)
-   --    Algo_EC_P384    → ECDSA P-384 (Key: 48 bytes, scalar)
+   --    Algo_EC_Ed25519 â Ed25519 (Key: 64 bytes, secret || public)
+   --    Algo_EC_P256    â ECDSA P-256 (Key: 32 bytes, scalar)
+   --    Algo_EC_P384    â ECDSA P-384 (Key: 48 bytes, scalar)
    procedure Set_Identity
-     (Id       : out Identity;
-      Cert_DER : X509.Byte_Seq;
-      Key      : Byte_Seq;
-      OK       : out Boolean)
-   with Pre  => Cert_DER'First = 0 and then Cert_DER'Last < X509.N32'Last
-                and then X509.N32 (Cert_DER'Length) <= X509.N32 (Max_Cert_DER)
-                and then Key'First = 0;
+     (Id : out Identity; Cert_DER : X509.Byte_Seq; Key : Byte_Seq; OK : out Boolean)
+   with
+     Pre =>
+       Cert_DER'First = 0
+       and then Cert_DER'Last < X509.N32'Last
+       and then X509.N32 (Cert_DER'Length) <= X509.N32 (Max_Cert_DER)
+       and then Key'First = 0;
 
    --  Add an intermediate certificate to the identity's chain.
-   procedure Add_Intermediate
-     (Id  : in out Identity;
-      DER : X509.Byte_Seq;
-      OK  : out Boolean)
+   procedure Add_Intermediate (Id : in out Identity; DER : X509.Byte_Seq; OK : out Boolean)
    with Pre => DER'First = 0 and DER'Last < X509.N32 (Max_Cert_DER);
 
    ----------------------------------------------------------------------------
@@ -354,9 +369,12 @@ is
       Hostname   : String;
       Purpose    : Validation_Purpose := Purpose_Server;
       Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
-   with Pre => Leaf_DER'First = 0 and Leaf_DER'Last < X509.N32 (Max_Cert_DER)
-               and Int_Count <= Max_Pool_Size
-               and Root_Count <= Max_Root_Pool_Size
-               and X509.Spans_Valid (Leaf, Leaf_DER'Last);
+   with
+     Pre =>
+       Leaf_DER'First = 0
+       and Leaf_DER'Last < X509.N32 (Max_Cert_DER)
+       and Int_Count <= Max_Pool_Size
+       and Root_Count <= Max_Root_Pool_Size
+       and X509.Spans_Valid (Leaf, Leaf_DER'Last);
 
 end SPARKTLS.Cert_Verify;

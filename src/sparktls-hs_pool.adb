@@ -1,5 +1,5 @@
-package body SPARKTLS.HS_Pool with
-   SPARK_Mode => On
+package body SPARKTLS.HS_Pool
+  with SPARK_Mode => On
 is
 
    procedure Acquire (Slot : out Slot_Count) is

@@ -22,8 +22,9 @@
 --  SPARK note: no type predicate references this package's state --
 --  predicates cannot read globals. All pooled data is deliberately
 --  invariant-free; every proof-carrying fact stays in the Session.
-package SPARKTLS.HS_Pool with
-   SPARK_Mode => On
+
+package SPARKTLS.HS_Pool
+  with SPARK_Mode => On
 is
 
    --  Slot types live in the parent (SPARKTLS.Slot_Count etc.):
@@ -39,7 +40,7 @@ is
    end record;
 
    type Slot_Array is array (Slot_Index) of HS_Data;
-   type Use_Map    is array (Slot_Index) of Boolean;
+   type Use_Map is array (Slot_Index) of Boolean;
 
    --  Public by design: handlers receive Slots (S.Slot) as an explicit
    --  `in out HS_Data` parameter from the dispatch layer -- three

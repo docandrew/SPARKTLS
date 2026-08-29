@@ -1,4 +1,4 @@
---  SPARKTLS handshake transcript — streaming, bufferless (carve 2).
+--  SPARKTLS handshake transcript â streaming, bufferless (carve 2).
 --
 --  The transcript is the concatenation of every handshake message,
 --  hashed at several protocol points. The digest algorithm is not
@@ -34,8 +34,8 @@ with SPARKTLSCrypto.Hashing.SHA256;
 with SPARKTLSCrypto.Hashing.SHA384;
 with SPARKTLSCrypto.Hashing.SHA512;
 
-package SPARKTLS_Transcript with
-   SPARK_Mode => On
+package SPARKTLS_Transcript
+  with SPARK_Mode => On
 is
    pragma Unevaluated_Use_Of_Old (Allow);
 
@@ -60,7 +60,7 @@ is
       C384     : SPARKTLSCrypto.Hashing.SHA384.Context;
       C512     : SPARKTLSCrypto.Hashing.SHA512.Context;
       Choice   : Hash_Choice := Both;
-      Has_Data : Boolean     := False;
+      Has_Data : Boolean := False;
    end record;
 
    --  Predicate subtype (workaround shape, see tasks #113/#114): carries
@@ -68,38 +68,36 @@ is
    --  writes to transcript objects; preservation provable from Append's
    --  postcondition.
    subtype Started_Transcript is Transcript_State
-     with Dynamic_Predicate => Started (Started_Transcript);
+   with Dynamic_Predicate => Started (Started_Transcript);
 
    --  Fresh transcript: both digests initialised, nothing appended.
    procedure Start (TS : out Transcript_State)
-   with Global => null,
-        Post => not Started (TS) and then Selected (TS) = Both;
+   with Global => null, Post => not Started (TS) and then Selected (TS) = Both;
 
    --  Append handshake-message bytes. Feeds whichever contexts are
    --  still live; O(len), no storage.
    procedure Append (TS : in out Transcript_State; Data : Byte_Seq)
-   with Global => null,
-        Pre  => Data'Last < N32'Last - 256,
-        Post => Started (TS) = (Started (TS)'Old or else Data'Length > 0)
-                and then Selected (TS) = Selected (TS)'Old;
+   with
+     Global => null,
+     Pre => Data'Last < N32'Last - 256,
+     Post =>
+       Started (TS) = (Started (TS)'Old or else Data'Length > 0)
+       and then Selected (TS) = Selected (TS)'Old;
 
    --  Suite negotiated: drop the losing digest. Idempotent for the
    --  same choice; never call with a DIFFERENT choice after selecting.
    procedure Select_Hash (TS : in out Transcript_State; C : Hash_Choice)
-   with Global => null, Pre => C /= Both,
-        Post => Selected (TS) = C
-                and then Started (TS) = Started (TS)'Old;
+   with
+     Global => null,
+     Pre => C /= Both,
+     Post => Selected (TS) = C and then Started (TS) = Started (TS)'Old;
 
    --  Transcript hash at this instant (clone-and-finalize; the running
    --  context is untouched, so appends may continue afterwards).
-   procedure Current_256
-     (TS : in Transcript_State;
-      H  : out SPARKTLSCrypto.Hashing.SHA256.Digest)
+   procedure Current_256 (TS : in Transcript_State; H : out SPARKTLSCrypto.Hashing.SHA256.Digest)
    with Global => null;
 
-   procedure Current_384
-     (TS : in Transcript_State;
-      H  : out SPARKTLSCrypto.Hashing.SHA384.Digest)
+   procedure Current_384 (TS : in Transcript_State; H : out SPARKTLSCrypto.Hashing.SHA384.Digest)
    with Global => null;
 
    --  TLS 1.2 CertificateVerify may negotiate a sha512 signature
@@ -107,9 +105,7 @@ is
    --  stream serves it. Runs unconditionally -- one extra pass over a
    --  few KB of handshake per connection is cheaper than conditional
    --  state. Never a suite hash, so Select_Hash does not affect it.
-   procedure Current_512
-     (TS : in Transcript_State;
-      H  : out SPARKTLSCrypto.Hashing.SHA512.Digest)
+   procedure Current_512 (TS : in Transcript_State; H : out SPARKTLSCrypto.Hashing.SHA512.Digest)
    with Global => null;
 
    --  PSK binders (RFC 8446 Section 4.2.11.2): the binder covers the
@@ -117,33 +113,25 @@ is
    --  of the transcript yet (build side: mid-construction; verify
    --  side: before the CH is appended). Clone-update-finalize.
    procedure Suffix_256
-     (TS     : in Transcript_State;
-      Suffix : in Byte_Seq;
-      H      : out SPARKTLSCrypto.Hashing.SHA256.Digest)
-   with Global => null,
-        Pre => Suffix'Last < N32'Last - 256;
+     (TS : in Transcript_State; Suffix : in Byte_Seq; H : out SPARKTLSCrypto.Hashing.SHA256.Digest)
+   with Global => null, Pre => Suffix'Last < N32'Last - 256;
 
    procedure Suffix_384
-     (TS     : in Transcript_State;
-      Suffix : in Byte_Seq;
-      H      : out SPARKTLSCrypto.Hashing.SHA384.Digest)
-   with Global => null,
-        Pre => Suffix'Last < N32'Last - 256;
+     (TS : in Transcript_State; Suffix : in Byte_Seq; H : out SPARKTLSCrypto.Hashing.SHA384.Digest)
+   with Global => null, Pre => Suffix'Last < N32'Last - 256;
 
    --  RFC 8446 Section 4.4.1: on HelloRetryRequest the transcript is
    --  replaced by message_hash(04 00 00 Hash.length || Hash(CH1)).
    --  Requires the hash already selected (HRR names the suite).
    procedure Reset_For_HRR (TS : in out Transcript_State)
-   with Global => null,
-        Post => Selected (TS) = Selected (TS)'Old
-                and then Started (TS) = Started (TS)'Old;
+   with
+     Global => null,
+     Post => Selected (TS) = Selected (TS)'Old and then Started (TS) = Started (TS)'Old;
 
    --  Fresh, empty transcript as a value (binder Basis for the initial
    --  ClientHello, where the binder covers only the truncated CH).
    function Fresh return Transcript_State
-   with Global => null,
-        Post => not Started (Fresh'Result)
-                and then Selected (Fresh'Result) = Both;
+   with Global => null, Post => not Started (Fresh'Result) and then Selected (Fresh'Result) = Both;
 
    --  Zeroize hash state (pre-free scrub). Reinitializes every context
    --  in place; the discriminant is untouched, so this is legal on both
@@ -159,10 +147,10 @@ is
    function Selected (TS : Transcript_State) return Hash_Choice
    with Global => null;
 
-   function Started (TS : Transcript_State) return Boolean is
-     (TS.Has_Data);
+   function Started (TS : Transcript_State) return Boolean
+   is (TS.Has_Data);
 
-   function Selected (TS : Transcript_State) return Hash_Choice is
-     (TS.Choice);
+   function Selected (TS : Transcript_State) return Hash_Choice
+   is (TS.Choice);
 
 end SPARKTLS_Transcript;
