@@ -94,8 +94,8 @@ begin
    declare
       CK : Byte_Seq (0 .. 15) := (others => 0);
       SK : Byte_Seq (0 .. 15) := (others => 0);
-      CI : Byte_Seq (0 .. 3)  := (others => 0);
-      SI : Byte_Seq (0 .. 3)  := (others => 0);
+      CI : Byte_Seq (0 .. 11) := (others => 0);
+      SI : Byte_Seq (0 .. 11) := (others => 0);
    begin
       --  Use_SHA384 = False (TLS 1.2 SHA-256 PRF). The trailing
       --  arg was added when the TLS 1.2 SHA-384 cipher path landed.
