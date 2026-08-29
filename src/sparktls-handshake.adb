@@ -2,7 +2,6 @@ with Ada.Unchecked_Deallocation;
 with Interfaces;           use Interfaces;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with RFLX.TLS_Handshake.TLS_Handshake;
-with RFLX.TLS_Handshake.Finished;
 with RFLX.Tls_Parameters;
 
 --  Parent body: shared utilities only.
@@ -78,37 +77,6 @@ is
          RFLX_Free (Buf);
       end;
    end Parse_Handshake_Header;
-
-   ----------------------------------------------------------------------------
-   --  Build_Finished
-   ----------------------------------------------------------------------------
-
-   procedure Build_Finished (Verify_Data : in Bytes_32; Result : out Byte_Seq; Len : out N32) is
-      use RFLX.TLS_Handshake.Finished;
-      Body_Len : constant N32 := 32;
-      Msg_Len  : constant N32 := 4 + Body_Len;
-      Ctx      : Context;
-   begin
-      Result := (others => 0);
-
-      declare
-         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      begin
-         Initialize (Ctx, Buf);
-         Set_Verify_Data (Ctx, To_RFLX (Verify_Data));
-         Take_Buffer (Ctx, Buf);
-
-         --  Prepend handshake header
-         Result (0) := HT_Finished;
-         Result (1) := 16#00#;
-         Result (2) := 16#00#;
-         Result (3) := Byte (Body_Len);
-         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-         RFLX_Free (Buf);
-      end;
-
-      Len := Msg_Len;
-   end Build_Finished;
 
    ----------------------------------------------------------------------------
    --  ECDSA_To_DER

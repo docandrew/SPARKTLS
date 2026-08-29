@@ -309,8 +309,7 @@ is
    with
      Pre => Data'First = 0 and then Data'Last in 3 .. Max_Client_Key_Exchange - 1,
      Post =>
-       HC.Version = HC.Version'Old
-       and then HC.KE.Curve = HC.KE'Old.Curve
+       HC.KE.Curve = HC.KE'Old.Curve
        and then HC.KE.Negotiated = HC.KE'Old.Negotiated
        and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
                  then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
@@ -415,7 +414,6 @@ is
        and then HC.Cfg.Local.Has_Identity
        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
        and then HC.Cfg.Random /= null
-       and then HC.Version = TLS_1_2
        and then HC.Legacy_Session_ID_Len <= 32,
      --  Frame postcondition: ServerHello construction does not
      --  touch State (S), the configuration pointer/identity, or the
@@ -430,7 +428,6 @@ is
        and HC.Cfg.Local.Has_Identity
        and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
        and HC.Cfg.Random /= null
-       and HC.Version = HC.Version'Old
        and HC.KE = HC.KE'Old;
 
 
@@ -456,10 +453,9 @@ is
      Pre =>
        Data'First = 0
        and then Data'Length > 0
-       and then Data'Last < N32'Last
-       and then HC.Version = TLS_1_2,
+       and then Data'Last < N32'Last,
      Post =>
-       (if OK then Valid_TLS12_Suite (Negotiated) and HC.Version = TLS_1_2)
+       (if OK then Valid_TLS12_Suite (Negotiated))
        and then HC.TS = HC.TS'Old
        and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
        and then (if HC.HRR_Cookie_Len'Old <= N32 (HC.HRR_Cookie'Length)

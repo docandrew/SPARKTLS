@@ -193,7 +193,7 @@ is
    ----------------------------------------------------------------------------
 
    --  Protocol version
-   type TLS_Version is (TLS_1_3, TLS_1_2);
+   type TLS_Version is (TLS_Undetermined, TLS_1_3, TLS_1_2);
 
    --  Version policy â controls which protocol versions are offered/accepted.
    --  Default: offer both, prefer 1.3.
@@ -1705,9 +1705,6 @@ is
    is (if N.Suite = Suite_AES_256_GCM_SHA384 then 48 else 32);
 
    type Handshake_Context is record
-      --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
-      Version : TLS_Version := TLS_1_3;
-
       --  Configuration (callbacks, trust store, identity)
       Cfg : Config;
 
@@ -2741,8 +2738,7 @@ private
       App_Data_Len : Plaintext_Length := 0;
 
       --  Negotiated cipher suite (wire value from ServerHello)
-      Negotiated_Suite    : Supported_Suite := Suite_None;  --  TLS 1.3
-      Negotiated_Suite_12 : Supported_Suite := Suite_None;  --  TLS 1.2
+      Negotiated_Suite : Supported_Suite := Suite_None;
 
       --  Peer certificate valid (copied from HC before free)
       Peer_Cert_Valid : Boolean := False;
@@ -2864,8 +2860,8 @@ private
 
       --  TLS 1.2: GCM implicit nonces and sequence numbers
       --  (persist past handshake for Connected-state encrypt/decrypt)
-      Negotiated_Version : TLS_Version := TLS_1_3;
-      Negotiated_ALPN    : Hostname_Buf := (Len => 0, Data => (others => ' '));
+      Version         : TLS_Version := TLS_Undetermined;
+      Negotiated_ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
       Client_IV_12       : Byte_Seq (0 .. 11) := (others => 0);
       Server_IV_12       : Byte_Seq (0 .. 11) := (others => 0);
       --  Record_Counter, not Unsigned_64: the "< Unsigned_64'Last" bound
@@ -2937,7 +2933,7 @@ private
    --  shared with TLS 1.3, where sitting at 2**23 is the normal
    --  about-to-rotate state, not a terminal condition.
    function Write_Limit_Reached (S : Session) return Boolean
-   is (S.Negotiated_Version = TLS_1_2
+   is (S.Version = TLS_1_2
        and then (if S.Role = Role_Client then Write_Budget_Reached (S.Client_App)
                  else Write_Budget_Reached (S.Server_App)));
    function Role (S : Session) return TLS_Role
@@ -2951,7 +2947,7 @@ private
    function Suite (S : Session) return Supported_Suite
    is (S.Negotiated_Suite);
    function Negotiated_Suite_12 (S : Session) return Unsigned_16
-   is (Wire_Of (S.Negotiated_Suite_12));
+   is (if S.Version = TLS_1_2 then Wire_Of (S.Negotiated_Suite) else 0);
    function Client_App (S : Session) return Traffic_Keys
    is (S.Client_App);
    function Server_App (S : Session) return Traffic_Keys
@@ -2994,7 +2990,7 @@ private
    is (S.App_Data_Len > 0);
 
    function Get_Version (S : Session) return TLS_Version
-   is (S.Negotiated_Version);
+   is (S.Version);
 
    function Get_Cipher_Suite (S : Session) return Unsigned_16
    is (Wire_Of (S.Negotiated_Suite));

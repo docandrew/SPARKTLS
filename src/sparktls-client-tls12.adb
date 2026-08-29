@@ -1962,7 +1962,7 @@ is
          S.TLS12_New_Ticket.Ticket (0 .. Ticket_Len - 1) := NST_Body (6 .. 6 + Ticket_Len - 1);
       end if;
       S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
-      S.TLS12_New_Ticket.Suite := Wire_Of (S.Negotiated_Suite_12);
+      S.TLS12_New_Ticket.Suite := Wire_Of (S.Negotiated_Suite);
       S.TLS12_New_Ticket.Master_Secret := S.HC.Master_Secret_12;
       S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
       S.TLS12_New_Ticket.Server_Name := S.HC.Cfg.Server_Name;
@@ -2421,7 +2421,7 @@ is
         and then not S.HC.T12.Resuming
         and then S.HC.T12.Sent_Ticket_Ext
         and then S.HC.Cfg.TLS12_Resume_Ticket.Valid
-        and then S.HC.Cfg.TLS12_Resume_Ticket.Suite = Wire_Of (S.Negotiated_Suite_12)
+        and then S.HC.Cfg.TLS12_Resume_Ticket.Suite = Wire_Of (S.Negotiated_Suite)
       then
          declare
             CCS_Pos     : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
@@ -3051,7 +3051,7 @@ is
                  NST_Body (6 .. 6 + Ticket_Len - 1);
             end if;
             S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
-            S.TLS12_New_Ticket.Suite := Wire_Of (S.Negotiated_Suite_12);
+            S.TLS12_New_Ticket.Suite := Wire_Of (S.Negotiated_Suite);
             S.TLS12_New_Ticket.Master_Secret := S.HC.Master_Secret_12;
             S.TLS12_New_Ticket.Lifetime_Hint := Lifetime;
             S.TLS12_New_Ticket.Server_Name := S.HC.Cfg.Server_Name;
@@ -3555,8 +3555,7 @@ is
          end if;
       end if;
 
-      --  Copy TLS 1.2 state to Session
-      S.Negotiated_Version := TLS_1_2;
+      --  Copy TLS 1.2 record state to Session.
       S.Client_IV_12 := S.HC.Client_Write_IV_12;
       S.Server_IV_12 := S.HC.Server_Write_IV_12;
       --  Sequence counters no longer mirrored: they live inside

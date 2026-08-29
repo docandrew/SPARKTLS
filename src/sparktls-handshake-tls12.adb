@@ -1572,7 +1572,6 @@ is
 
       --  No supported_versions â TLS 1.2
       HC.Has_TLS_1_3 := False;
-      HC.Version := TLS_1_2;
 
       --  RFC 8446 Â§4.2.1: enforce our Cfg.Versions policy. If the
       --  user constrained us to TLS_1_3_Only via `-min-version 0x0304`

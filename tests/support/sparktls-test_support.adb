@@ -14,7 +14,7 @@ is
 
    procedure Set_Negotiated_Version (S : in out Session; V : TLS_Version) is
    begin
-      S.Negotiated_Version := V;
+      S.Version := V;
    end Set_Negotiated_Version;
 
    procedure Set_State (S : in out Session; V : Connection_State) is
@@ -29,7 +29,7 @@ is
 
    procedure Set_Negotiated_Suite_12 (S : in out Session; V : Unsigned_16) is
    begin
-      S.Negotiated_Suite_12 := To_Suite (V);
+      S.Negotiated_Suite := To_Suite (V);
    end Set_Negotiated_Suite_12;
 
    procedure Set_Exporter_State
@@ -88,7 +88,7 @@ is
    function Extended_Master_Secret_Used (S : Session) return Boolean is
    begin
       --  TLS 1.3 binds the transcript inherently -- see the spec note.
-      if S.Negotiated_Version = TLS_1_3 then
+      if S.Version = TLS_1_3 then
          return True;
       end if;
       return S.Use_EMS;

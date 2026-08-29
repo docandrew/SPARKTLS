@@ -50,16 +50,24 @@ with X509;
 private package SPARKTLS.Server.TLS12
   with SPARK_Mode => On
 is
+   --  Step the TLS 1.2 handshake after ClientHello negotiation.
+   procedure Advance_Handshake_12
+     (S      : in out Server_Session;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
+      Result : out Action)
+   with Pre => S.Version = TLS_1_2;
+
    --  Build the TLS 1.2 server flight:
    --  ServerHello + Certificate + ServerKeyExchange + ServerHelloDone
    --
    --  All sent as plaintext records (no encryption yet).
-   --  After this, state transitions to Server_Hello_Done_Sent_12.
+   --  After this, state transitions to Server_Hello_Sent while the
+   --  output flight is drained.
    procedure Build_Server_Flight_12
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    with
      Pre =>
-       S.HC.Version
+       S.Version
        = TLS_1_2
          --  Server-side state on entry. Client_Hello_Sent (the
          --  client's own post-CH state) is intentionally NOT
@@ -67,81 +75,8 @@ is
          --  Client_Hello_Sent is Wait_Server_Hello, which would
          --  conflict with the final Set_State (Server_Hello_Sent).
        and then S.State = Wait_Client_Hello
-       and then S.Role = Role_Server,
-     Post => (if S.State in Server_Hello_Sent | Wait_Client_Finished then S.HC.Version = TLS_1_2);
+       and then S.Role = Role_Server;
 
-   --  Process the client's KeyExchange message.
-   --  Extracts the client's ECDHE public key, computes shared secret,
-   --  derives master secret and expands into per-connection keys.
-   --
-   --  Called from server.adb's Wait_Client_Finished dispatch when
-   --  the TLS 1.2 ClientKeyExchange / ChangeCipherSpec haven't yet
-   --  arrived.
-   procedure Process_Client_Key_Exchange_12
-     (S      : in out Session;
-      D      : in out SPARKTLS.HS_Pool.HS_Data;
-      Result : out Action)
-      --  Version is what the nested helpers (Compute_Shared_Secret_12,
-      --  Finish_CKE's flight builders) require. All three dispatcher call
-      --  sites hold it: one under `if HC.Version = TLS_1_2`, two under the
-      --  else of `if HC.Version = TLS_1_3` -- equivalent because TLS_Version
-      --  has exactly those two values. Same Defect-A shape as #95's
-      --  handlers: a Post with no Pre starved the body of a fact the caller
-      --  holds.
-   with Pre => S.HC.Version = TLS_1_2;
-   --  RFC 5246 Â§7.4.7 single-CKE invariant is enforced as a
-   --  pragma Assert at the end of the body (in the .adb), since
-   --  the body's preexisting medium-severity unproven calls block
-   --  level-1 discharge of a procedure-level Post here. The Assert
-   --  pins the property at the success exit; the runtime guard at
-   --  the top of the body enforces it on the wire.
-
-   --  Process the optional TLS 1.2 client Certificate message after the
-   --  server has sent CertificateRequest. A non-empty, parseable leaf moves
-   --  the handshake to Wait_Client_Cert_Verify so the client proves private
-   --  key possession before Finished.
-   procedure Process_Client_Certificate_12
-     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action);
-
-   --  Process TLS 1.2 CertificateVerify from a client-authenticated peer.
-   procedure Process_Client_CertVerify_12
-     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action);
-
-   --  Process the client's encrypted Finished message.
-   --  Verifies the 12-byte verify_data against expected value.
-   --  On success: sends server CCS + server Finished, transitions to Connected.
-   --
-   --  RFC 5246 Â§7.1: ChangeCipherSpec MUST precede Finished. The
-   --  CCS_Precedes_Finished_RFC_5246_7_1 Pre captures this â both
-   --  CKE and CCS MUST already be received before we attempt to
-   --  decrypt and verify the Finished record.
-   procedure Process_Client_Finished_12
-     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action);
-
-   --  Derive TLS 1.2 key material from the pre-master secret.
-   --  Computes master_secret, then expands into:
-   --    client_write_key, server_write_key (16 or 32 bytes)
-   --    client_write_IV, server_write_IV (4 bytes each, GCM implicit nonce)
-   --  Sets up Traffic_Keys for both directions.
-   procedure Derive_Keys_12 (S : in out Session; Cfg : in Ready_Config)
-   with
-     Pre => S.HC.Version = TLS_1_2
-     --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
-
-     ,
-     --  RFC 7627 Â§4: master_secret PRF binding. After Derive_Keys_12
-     --  returns, HC.MS_Derivation matches HC.Use_EMS via the
-     --  EMS_PRF_Binding_RFC_7627_4 predicate. This is the v9âv12
-     --  invariant whose absence caused the TLS-Anvil regression.
-     Post =>
-       S.HC.Version = TLS_1_2
-       and then S.State = S.State'Old
-       and then S.Role = S.Role'Old
-       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-       and then S.Client_App.Counter = 0
-       and then S.Server_App.Counter = 0
-       and then EMS_PRF_Binding_RFC_7627_4 (S.HC)
-       and then S.HC.MS_Derivation /= Not_Derived;
 
    --  Process records in Connected state for TLS 1.2.
    --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).

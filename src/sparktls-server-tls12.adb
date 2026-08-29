@@ -41,7 +41,6 @@ is
        and then Result in Has_Output | Error_Alert
        and then S.Role = S.Role'Old
        and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-       and then S.Negotiated_Suite_12 = S.Negotiated_Suite_12'Old
        and then Error_Has_Alert (S.State, Output_Pending (S), S.Last_Error)
        and then (if Output_Pending (S) > 0 then S.Last_Error = Err)
        and then (if S.Output.Write_Pos'Old <= IO_Buffer_Capacity - 7
@@ -129,14 +128,13 @@ is
        > 0
          --  transcript-append bound
        and then Data'Last < N32'Last - 256,
-     Post => HC.Version = HC.Version'Old and then HC.KE = HC.KE'Old
+     Post => HC.KE = HC.KE'Old
    is
    begin
       SPARKTLS_Transcript.Append (HC.TS, Data);
    end Append_Transcript;
 
-   procedure Set_Server_Random_12 (HC : in out Handshake_Context; Random : in Bytes_32)
-   with Post => HC.Version = HC.Version'Old;
+   procedure Set_Server_Random_12 (HC : in out Handshake_Context; Random : in Bytes_32);
 
    procedure Set_Server_Random_12 (HC : in out Handshake_Context; Random : in Bytes_32) is
    begin
@@ -150,11 +148,10 @@ is
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    with
      Pre =>
-       S.HC.Version = TLS_1_2 and then S.State = Wait_Client_Hello and then S.Role = Role_Server,
+       S.Version = TLS_1_2 and then S.State = Wait_Client_Hello and then S.Role = Role_Server;
      --  No Role conjunct: S is Server_Session, so
      --  S.Role = Role_Server is the discriminant -- stating it
      --  would be a tautology carried in every VC of this body.
-     Post => S.HC.Version = TLS_1_2 and then (if S.State = Server_Hello_Sent then True);
 
    --  Resumed-handshake server flight (RFC 5077 Â§3.3 abbreviated).
    --  Caller has set HC.T12.Resuming + HC.Master_Secret_12 +
@@ -166,7 +163,7 @@ is
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    with
      Pre =>
-       S.HC.Version = TLS_1_2
+       S.Version = TLS_1_2
        and then S.HC.Cfg.Get_Active_TEK /= null
        and then S.HC.Cfg.Get_TEK_By_Id /= null
        and then S.State = Wait_Client_Hello
@@ -177,8 +174,7 @@ is
                   | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                   | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                   | Suite_ECDHE_RSA_CHACHA20_SHA256
-                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-     Post => S.HC.Version = TLS_1_2;
+                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
 
    procedure Build_Server_Flight_12
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action) is
@@ -249,15 +245,14 @@ is
                   Status  => OK);
             end if;
             if OK
-              and then S.Negotiated_Suite_12 /= Suite_None
-              and then S.Negotiated_Suite_12 in
+              and then S.Negotiated_Suite in
                          Suite_ECDHE_RSA_AES128_GCM_SHA256
                          | Suite_ECDHE_RSA_AES256_GCM_SHA384
                          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                          | Suite_ECDHE_RSA_CHACHA20_SHA256
                          | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-              and then Plain.Suite = Wire_Of (S.Negotiated_Suite_12)
+              and then Plain.Suite = Wire_Of (S.Negotiated_Suite)
             then
                --  Resume: install ticket's master_secret + force suite.
                S.HC.Master_Secret_12 := Plain.Master_Secret;
@@ -300,10 +295,16 @@ is
       end if;
       pragma Assert (S.HC.KE.Negotiated);
 
-      --  Use the TLS 1.2 suite that the client actually offered
-      if S.Negotiated_Suite_12 /= Suite_None then
-         S.Negotiated_Suite := S.Negotiated_Suite_12;
-      else
+      --  The unversioned dispatcher commits the selected TLS 1.2 suite
+      --  before entering this package.
+      if S.Negotiated_Suite not in
+           Suite_ECDHE_RSA_AES128_GCM_SHA256
+           | Suite_ECDHE_RSA_AES256_GCM_SHA384
+           | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+           | Suite_ECDHE_RSA_CHACHA20_SHA256
+           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+      then
          --  No matching TLS 1.2 ECDHE+AEAD suite
          Send_Alert_And_Error (S, Handshake_Failure, Result);
          return;
@@ -664,7 +665,7 @@ is
    procedure Derive_Keys_Resumed_12 (S : in out Session; Cfg : in Ready_Config)
    with
      Pre =>
-       S.HC.Version = TLS_1_2
+       S.Version = TLS_1_2
        and then S.Negotiated_Suite in
                   Suite_ECDHE_RSA_AES128_GCM_SHA256
                   | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -673,8 +674,7 @@ is
                   | Suite_ECDHE_RSA_CHACHA20_SHA256
                   | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
      Post =>
-       S.HC.Version = TLS_1_2
-       and then S.State = S.State'Old
+       S.State = S.State'Old
        and then S.Role = S.Role'Old
        and then S.Negotiated_Suite = S.Negotiated_Suite'Old
        and then S.Server_App.Counter = 0
@@ -922,7 +922,6 @@ is
       --  longer need mirroring: they live INSIDE S.Server_App /
       --  S.Client_App, which are already Session state -- the
       --  handshake-to-connected counter handoff is gone by construction.
-      S.Negotiated_Version := TLS_1_2;
       S.Client_IV_12 := S.HC.Client_Write_IV_12;
       S.Server_IV_12 := S.HC.Server_Write_IV_12;
 
@@ -1084,11 +1083,10 @@ is
       procedure Compute_Shared_Secret_12 (OK : out Boolean; Err : out Error_Code)
       with
         Pre =>
-          S.HC.Version = TLS_1_2
+          S.Version = TLS_1_2
           and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local),
         Post =>
-          S.HC.Version = S.HC.Version'Old
-          and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
+          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
           and then S.HC.TS = S.HC.TS'Old
       is
       begin
@@ -1351,8 +1349,7 @@ is
              and then Msg'Last < N32 (Natural'Last)
              and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local),
            Post =>
-             S.HC.Version = S.HC.Version'Old
-             and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
+             SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
          is
             Msg_Type : Byte;
             Msg_Len  : N32;
@@ -1427,8 +1424,7 @@ is
              and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity
              and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local),
            Post =>
-             S.HC.Version = S.HC.Version'Old
-             and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
+             SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
              and then S.Negotiated_Suite = S.Negotiated_Suite'Old
              and then (if Result = OK then S.State = S.State'Old else S.State = Error_State)
          is
@@ -2281,7 +2277,7 @@ is
                   --  Cfg.Get_Time we encode 0 and Decrypt_Ticket skips
                   --  the age window check (acceptable for dev / test).
                   Plain.Master_Secret := S.HC.Master_Secret_12;
-                  Plain.Suite := Wire_Of (S.Negotiated_Suite_12);
+                  Plain.Suite := Wire_Of (S.Negotiated_Suite);
                   Plain.Created_At :=
                     (if S.HC.Cfg.Get_Time /= null
                      then SPARKTLS.Tickets_12.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
@@ -2405,7 +2401,6 @@ is
       end if;  --  end "if not S.HC.T12.Resuming"
 
       --  Copy TLS 1.2 state to Session
-      S.Negotiated_Version := TLS_1_2;
       S.Client_IV_12 := S.HC.Client_Write_IV_12;
       S.Server_IV_12 := S.HC.Server_Write_IV_12;
       --  Counters live inside S.Client_App / S.Server_App: no mirror.
@@ -2419,6 +2414,52 @@ is
    end Process_Client_Finished_12;
 
    ------------------------------------------------------------------
+   procedure Advance_Handshake_12
+     (S      : in out Server_Session;
+      D      : in out SPARKTLS.HS_Pool.HS_Data;
+      Result : out Action) is
+   begin
+      case S.State is
+         when Server_Hello_Sent =>
+            if Output_Pending (S) > 0 then
+               Result := Has_Output;
+            else
+               if S.HC.Cfg.Request_Client_Cert then
+                  Set_State (S, Wait_Client_Certificate);
+               else
+                  --  Process_Client_Finished_12 first consumes the
+                  --  ClientKeyExchange and CCS before the Finished.
+                  Set_State (S, Wait_Client_Finished);
+               end if;
+               Result := (if Input_Available (S) > 0 then OK else Need_Input);
+            end if;
+
+         when Wait_Client_Certificate | Wait_Client_Cert_Verify =>
+            if S.State = Wait_Client_Certificate then
+               Process_Client_Certificate_12 (S, D, Result);
+            elsif not S.HC.CKE_Received_12 then
+               Process_Client_Key_Exchange_12 (S, D, Result);
+            else
+               Process_Client_CertVerify_12 (S, D, Result);
+            end if;
+
+         when Wait_Client_Finished =>
+            if not S.HC.CKE_Received_12 then
+               Process_Client_Key_Exchange_12 (S, D, Result);
+            elsif not S.HC.CCS_Received then
+               --  The CKE handler also accepts the following CCS record.
+               Process_Client_Key_Exchange_12 (S, D, Result);
+            else
+               Process_Client_Finished_12 (S, D, Result);
+            end if;
+
+         when others =>
+            S.Last_Error := Internal_Error;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+      end case;
+   end Advance_Handshake_12;
+
    procedure Process_Connected_12 (S : in out Session; Result : out Action) is
       use SPARKTLS.Records.TLS12;
       Rec : Records.Parse_Result;

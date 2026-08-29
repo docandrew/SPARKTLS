@@ -2130,6 +2130,7 @@ is
       ALPN       : in out Hostname_Buf;
       HC         : in out Engaged_Context;
       Data       : in Byte_Seq;
+      Version    : out TLS_Version;
       OK         : out Boolean)
    is
       use RFLX.TLS_Handshake.Server_Hello;
@@ -2152,6 +2153,7 @@ is
           and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
       with Ghost;
    begin
+      Version := TLS_Undetermined;
       OK := False;
 
       if Data'Length < 39 then
@@ -2291,28 +2293,18 @@ is
                end if;
                HC.HRR_Cipher_Suite := Suite_Val;
                Negotiated := To_Suite (Suite_Val);
-               HC.Version := TLS_1_3;
+               Version := TLS_1_3;
             end;
          end;
          OK := True;
          pragma Assert (HC.Got_HRR);
          pragma Assert (not Got_HRR_At_Entry);
          pragma
-           Assert
-             (Negotiated in
-                Suite_AES_128_GCM_SHA256
-                | Suite_AES_256_GCM_SHA384
-                | Suite_CHACHA20_POLY1305_SHA256);
-         pragma
            Assert_And_Cut
              (OK
                 and then HC.Got_HRR
                 and then not Got_HRR_At_Entry
-                and then HC.Version = TLS_1_3
-                and then Negotiated in
-                           Suite_AES_128_GCM_SHA256
-                           | Suite_AES_256_GCM_SHA384
-                           | Suite_CHACHA20_POLY1305_SHA256
+                and then Version = TLS_1_3
                 and then HC.TS = TS_At_Entry
                 and then (if Random_Was_Set then HC.Cfg.Random /= null)
                 and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
@@ -2468,13 +2460,13 @@ is
             end;
          end if;
 
-         --  Set version based on supported_versions extension
+         --  Select version based on supported_versions extension.
          if HC.Has_TLS_1_3 then
-            HC.Version := TLS_1_3;
+            Version := TLS_1_3;
          else
-            HC.Version := TLS_1_2;
+            Version := TLS_1_2;
          end if;
-         if HC.Version = TLS_1_3
+         if Version = TLS_1_3
            and then Negotiated not in
                       Suite_AES_128_GCM_SHA256
                       | Suite_AES_256_GCM_SHA384
@@ -2484,14 +2476,6 @@ is
             OK := False;
             goto Cleanup;
          end if;
-         pragma
-           Assert
-             (if HC.Version = TLS_1_3
-                then
-                  Negotiated in
-                    Suite_AES_128_GCM_SHA256
-                    | Suite_AES_256_GCM_SHA384
-                    | Suite_CHACHA20_POLY1305_SHA256);
 
          --  RFC 8446 Â§4.1.3: TLS 1.3 server's legacy_session_id_echo
          --  MUST be byte-for-byte equal to the client's
@@ -2513,14 +2497,6 @@ is
             begin
                if not Mismatch then
                   for I in N32 range 0 .. 31 loop
-                     pragma
-                       Loop_Invariant
-                         (if HC.Version = TLS_1_3
-                            then
-                              Negotiated in
-                                Suite_AES_128_GCM_SHA256
-                                | Suite_AES_256_GCM_SHA384
-                                | Suite_CHACHA20_POLY1305_SHA256);
                      if Data (SH_SID_Off + I) /= HC.Legacy_Session_ID (I) then
                         Mismatch := True;
                      end if;
@@ -2553,8 +2529,8 @@ is
          --  version outside our allowed set, reject with
          --  protocol_version (alert 70). BoGo's MinimumVersion-Client2-
          --  TLS13-TLS12 / -Server2-TLS13-TLS12 exercise this.
-         if (HC.Version = TLS_1_2 and HC.Cfg.Versions = TLS_1_3_Only)
-           or else (HC.Version = TLS_1_3 and HC.Cfg.Versions = TLS_1_2_Only)
+         if (Version = TLS_1_2 and HC.Cfg.Versions = TLS_1_3_Only)
+           or else (Version = TLS_1_3 and HC.Cfg.Versions = TLS_1_2_Only)
          then
             Last_Err := Protocol_Version;
             OK := False;
@@ -2584,14 +2560,6 @@ is
             M13, M12, MJ : Boolean := True;
          begin
             for I in N32 range 0 .. 7 loop
-               pragma
-                 Loop_Invariant
-                   (if HC.Version = TLS_1_3
-                      then
-                        Negotiated in
-                          Suite_AES_128_GCM_SHA256
-                          | Suite_AES_256_GCM_SHA384
-                          | Suite_CHACHA20_POLY1305_SHA256);
                if R (24 + I) /= S13 (I) then
                   M13 := False;
                end if;
@@ -2610,19 +2578,12 @@ is
 
          --  For TLS 1.2, skip ECDHE shared secret here
          --  (it's computed after ServerKeyExchange)
-         if HC.Version = TLS_1_2 then
+         if Version = TLS_1_2 then
             pragma
               Assert_And_Cut
                 (HC.TS = TS_At_Entry
                    and then (if Random_Was_Set then HC.Cfg.Random /= null)
-                   and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-                   and then (if HC.Version = TLS_1_3
-                               and then (not HC.Got_HRR or else Got_HRR_At_Entry)
-                             then
-                               Negotiated in
-                                 Suite_AES_128_GCM_SHA256
-                                 | Suite_AES_256_GCM_SHA384
-                                 | Suite_CHACHA20_POLY1305_SHA256));
+                   and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
             OK := True;
             goto Cleanup;
          end if;
@@ -2704,13 +2665,7 @@ is
            Assert_And_Cut
              (HC.TS = TS_At_Entry
                 and then (if Random_Was_Set then HC.Cfg.Random /= null)
-                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-                and then (if HC.Version = TLS_1_3
-                          then
-                            Negotiated in
-                              Suite_AES_128_GCM_SHA256
-                              | Suite_AES_256_GCM_SHA384
-                              | Suite_CHACHA20_POLY1305_SHA256));
+                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
          OK := True;
          <<Cleanup>>
          if Buf /= null then

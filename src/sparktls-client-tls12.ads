@@ -8,7 +8,7 @@ with SPARKTLSCrypto.P384.ECDSA;
 --  TLS 1.2 Client State Machine (RFC 5246)
 --
 --  Owns the entire TLS 1.2 handshake after ServerHello is parsed.
---  Called from Client.Advance when HC.Version = TLS_1_2.
+--  Called from Client.Advance when S.Version = TLS_1_2.
 --
 --  Internal state tracking uses HC fields:
 --    HC.CKE_Received_12  â client flight (CKE+CCS+Finished) sent

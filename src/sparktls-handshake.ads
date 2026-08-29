@@ -3,15 +3,13 @@ use SPARKNaCl;
 
 --  TLS 1.3 Handshake -- Shared Utilities
 --
---  Constants, header parsing, Finished message, and ECDSA DER encoding.
+--  Constants, header parsing, and ECDSA DER encoding.
 --  Protocol-specific messages are in child packages:
 --    SPARKTLS.Handshake.Client_Msgs  -- Build_Client_Hello, Parse_Server_Hello
---    SPARKTLS.Handshake.Server_Msgs  -- Parse_Client_Hello, Build_Server_Hello,
---                                       Build_Encrypted_Extensions,
---                                       Build_Certificate_Request
---    SPARKTLS.Handshake.Certs        -- Build_Certificate, Build_Certificate_Chain,
---                                       Build_Certificate_Verify
+--    SPARKTLS.Handshake.Server_Msgs  -- Parse_Client_Hello, shared ALPN selection
+--    SPARKTLS.Handshake.Certs        -- Shared X.509 helpers and TLS 1.2 parser
 --    SPARKTLS.Handshake.TLS12        -- TLS 1.2 handshake messages
+--    SPARKTLS.Handshake.TLS13        -- TLS 1.3 handshake messages
 
 package SPARKTLS.Handshake
   with SPARK_Mode => On
@@ -62,12 +60,6 @@ is
             | 16#14#
           and Msg_Len <= Max_HS_Msg
           and Msg_Len <= N32 (Data'Length) - 4);
-
-   --  RFC 8446 Section 4.4.4: Build a Finished handshake message.
-   --  Contains HMAC verify_data (32 bytes for SHA-256).
-   --  Result is type(1) + length(3) + verify_data(32) = 36 bytes.
-   procedure Build_Finished (Verify_Data : in Bytes_32; Result : out Byte_Seq; Len : out N32)
-   with Pre => Result'First = 0 and Result'Last < N32'Last and Result'Last >= 35, Post => Len = 36;
 
    --  Encode ECDSA (r, s) values as DER SEQUENCE of two INTEGERs.
    --  Used by both TLS 1.3 CertificateVerify and TLS 1.2 ServerKeyExchange.

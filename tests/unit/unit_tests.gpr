@@ -13,6 +13,7 @@ project Unit_Tests is
                  "test_crypto.adb", "test_fiat_p256_kat.adb",
                  "test_fiat_25519_kat.adb", "test_25519_rfc.adb",
                  "test_build_server_hello.adb",
+                 "test_handshake_tls13.adb",
                  "test_parse_client_hello.adb",
                  "test_aes_ni.adb",
                  "test_ghash_ni.adb",

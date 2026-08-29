@@ -190,7 +190,7 @@ is
        else S.Server_App.Counter >= Rekey_After_Records - Rekey_Margin);
 
    procedure Flush_Pending_Key_Update (S : in out Session)
-   with Pre => S.App_Secret_Len in 32 | 48 and then S.Negotiated_Version /= TLS_1_2;
+   with Pre => S.App_Secret_Len in 32 | 48 and then S.Version = TLS_1_3;
 
    procedure Flush_Pending_Key_Update (S : in out Session) is
       KU_Buf : Byte_Seq (0 .. Key_Update.Key_Update_Msg_Len - 1);
@@ -241,7 +241,7 @@ is
    begin
       --  TLS 1.2 has no rekey mechanism, and without retained traffic
       --  secrets there is nothing to ratchet from.
-      if S.Negotiated_Version = TLS_1_2 or else S.App_Secret_Len not in 32 | 48 then
+      if S.Version /= TLS_1_3 or else S.App_Secret_Len not in 32 | 48 then
          return;
       end if;
 
@@ -268,8 +268,13 @@ is
       TLS13_Overhead : constant N32 := 22; -- header + inner type + tag
       TLS12_Overhead : constant N32 := 29; -- header + explicit nonce + tag
       Overhead       : constant N32 :=
-        (if S.Negotiated_Version = TLS_1_2 then TLS12_Overhead else TLS13_Overhead);
+        (if S.Version = TLS_1_2 then TLS12_Overhead else TLS13_Overhead);
    begin
+      if S.Version = TLS_Undetermined then
+         Bytes_Written := 0;
+         return;
+      end if;
+
       --  RFC 8446 Â§4.6.3: if the peer asked us to rekey, we MUST send our
       --  KeyUpdate before the next Application Data record. Flushing it
       --  here -- rather than inline when the request arrived -- is what
@@ -288,7 +293,7 @@ is
       --      write direction is ours alone to do. Without it a long-lived
       --      high-volume connection runs past the AEAD security margin and,
       --      eventually, toward the modular wrap that would reuse nonces.
-      if S.Negotiated_Version /= TLS_1_2
+      if S.Version = TLS_1_3
         and then S.App_Secret_Len in 32 | 48
         and then (S.Key_Update_Pending or else Write_Key_Exhausted (S))
       then
@@ -300,7 +305,7 @@ is
            Loop_Invariant
              (Pos in 0 .. Total
                 and S.Role = S.Role'Loop_Entry
-                and S.Negotiated_Version = S.Negotiated_Version'Loop_Entry);
+                and S.Version = S.Version'Loop_Entry);
          pragma Loop_Variant (Increases => Pos);
 
          Chunk := N32'Min (Max_Record_Plaintext, Total - Pos);
@@ -313,13 +318,13 @@ is
             --  TLS 1.2 cannot rekey, so the write budget is a hard stop
             --  rather than a rotation trigger; stopping at the BUDGET
             --  (cap minus margin) leaves headroom for close_notify.
-            if S.Negotiated_Version = TLS_1_2 and then Write_Budget_Reached (S.Client_App) then
+            if S.Version = TLS_1_2 and then Write_Budget_Reached (S.Client_App) then
                exit;
             end if;
          else
             --  Mirror of the client side: budget stop with close_notify
             --  headroom.
-            if S.Negotiated_Version = TLS_1_2 and then Write_Budget_Reached (S.Server_App) then
+            if S.Version = TLS_1_2 and then Write_Budget_Reached (S.Server_App) then
                exit;
             end if;
          end if;
@@ -331,7 +336,7 @@ is
             Frag := Plaintext (Plaintext'First + Pos .. Plaintext'First + Pos + Frag_Len - 1);
 
             if S.Role = Role_Client then
-               if S.Negotiated_Version = TLS_1_2 then
+               if S.Version = TLS_1_2 then
                   Records.TLS12.Build_Encrypted_Record_12
                     (Plaintext    => Frag,
                      Content_Type => 16#17#,
@@ -348,7 +353,7 @@ is
                      Bytes_Out  => Enc_Out);
                end if;
             else
-               if S.Negotiated_Version = TLS_1_2 then
+               if S.Version = TLS_1_2 then
                   Records.TLS12.Build_Encrypted_Record_12
                     (Plaintext    => Frag,
                      Content_Type => 16#17#,
@@ -760,7 +765,9 @@ is
          return;
       end if;
 
-      if S.Negotiated_Version = TLS_1_2 then
+      if S.Version = TLS_Undetermined then
+         return;
+      elsif S.Version = TLS_1_2 then
          if S.Exporter_Secret_Len /= 48 then
             return;
          end if;
@@ -774,12 +781,10 @@ is
             Context       => Context,
             Use_Context   => Use_Context,
             Use_SHA384    =>
-              S.Negotiated_Suite_12 in
+              S.Negotiated_Suite in
                 Suite_ECDHE_RSA_AES256_GCM_SHA384
                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-              or else S.Negotiated_Suite in
-                        Suite_ECDHE_RSA_AES256_GCM_SHA384
-                        | Suite_ECDHE_ECDSA_AES256_GCM_SHA384);
+              );
          OK := True;
       elsif Label'Length = 0 then
          return;

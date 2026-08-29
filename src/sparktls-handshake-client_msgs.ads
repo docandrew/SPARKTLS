@@ -57,19 +57,15 @@ is
       ALPN       : in out Hostname_Buf;
       HC         : in out Engaged_Context;
       Data       : in Byte_Seq;
+      Version    : out TLS_Version;
       OK         : out Boolean)
    with
      Pre => Data'Length > 0 and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
      Post =>
        (if OK or else Last_Err = No_Error
-        then
+       then
           (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
           and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
-       and then (if OK and then HC.Version = TLS_1_3
-                 then
-                   Negotiated in
-                     Suite_AES_128_GCM_SHA256
-                     | Suite_AES_256_GCM_SHA384
-                     | Suite_CHACHA20_POLY1305_SHA256);
+       and then (if OK then Version in TLS_1_2 | TLS_1_3);
 
 end SPARKTLS.Handshake.Client_Msgs;
