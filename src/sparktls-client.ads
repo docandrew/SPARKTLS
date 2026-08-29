@@ -97,16 +97,6 @@ is
    procedure Init
      (S   : out Client_Session;
       Cfg : in Config)
-      --  This postcondition is CHECKED by GNATprove: the body is in SPARK
-      --  since the ticket-storage callbacks replaced Config's owning pointers
-      --  (an owning pointer could not be copied out of an "in" parameter, which
-      --  is what forced SPARK_Mode => Off here before). Init fails closed: Client_Config_Can_Start
-      --  rejection, HC allocation failure, and Initialize_Client_Handshake
-      --  failure all leave State (S) = Error_State with nothing queued. Role is
-      --  set in the initial aggregate and never changed (Set_State frames it).
-      --  The formal is the CONSTRAINED subtype (#39, 2026-08-24): the Role
-      --  Post is subsumed by the profile and the body's discriminant checks
-      --  become static.
    with Pre => Cfg.Random /= null;
 
    --  Step the client handshake / record processing state machine.

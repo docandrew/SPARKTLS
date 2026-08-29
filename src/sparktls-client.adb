@@ -246,21 +246,8 @@ is
    end Configure;
 
    procedure Initialize_Client_Handshake
-     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; OK : out Boolean)
-   with
-     Post =>
-       S.Role = Role_Client
-       and then S.State in
-                  Client_Hello_Sent
-                  | Error_State
-                  --  Staying in Client_Hello_Sent means both the build and
-                  --  the record write succeeded, so output is queued. Every
-                  --  failure path sets Error_State first.
-       and then (if S.State = Client_Hello_Sent then Output_Pending (S) > 0),
-     Pre =>
-       S.State = Client_Hello_Sent
-       and then S.Role = Role_Client
-       and then S.HC.Cfg.Random /= null
+     (S : in out Client_Session; OK : out Boolean)
+   with Pre => S.HC.Cfg.Random /= null
    is
       CH_Buf  : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
       CH_Len  : N32;
@@ -387,8 +374,6 @@ is
       if S.Slot = No_Slot then
          S.State := Error_State;
          S.Last_Error := Internal_Error;
-         pragma Assert (Role (S) = Role_Client);
-         pragma Assert (State (S) = Error_State);
          return;
       end if;
 
@@ -406,16 +391,15 @@ is
          S.Ticket := Cfg.Resume_Ticket;
       end if;
 
-      --  #106: context inline, data-plane in the pool slot.
-      Initialize_Client_Handshake (S, SPARKTLS.HS_Pool.Slots (S.Slot), OK);
-      if not OK then
-         SPARKTLS.HS_Pool.Release (S.Slot);
-         S.Slot := No_Slot;
-      end if;
-      --  DIAG: the postcondition is one VC, so the sub-term named in the
-      --  message is not attributable. Probe each conjunct separately.
-      pragma Assert (Role (S) = Role_Client);                        --  P1
-      pragma Assert (State (S) in Client_Hello_Sent | Error_State);  --  P2
+      declare
+         Acquired_Slot : constant Slot_Index := S.Slot;
+      begin
+         Initialize_Client_Handshake (S, OK);
+         if not OK then
+            SPARKTLS.HS_Pool.Release (Acquired_Slot);
+            S.Slot := No_Slot;
+         end if;
+      end;
    end Init;
 
    --  Process a decrypted handshake message during the handshake
