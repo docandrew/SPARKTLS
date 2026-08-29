@@ -1725,7 +1725,13 @@ is
    --  in the transcript, which is Started by construction; every
    --  post-CH handler takes Engaged_Context and gets that fact
    --  structurally (flow-level, no contracts).
-   type HS_Phase is (Setup, Engaged);
+   --  HS_Phase (Setup/Engaged discriminant) DELETED, MEASURED (r70,
+   --  2026-08-29): the discriminant drove no behavior (both runtime uses
+   --  were variant-existence guards) and its proof rent was 69
+   --  discriminant checks plus a ~55-conjunct Pre-threading apparatus.
+   --  The facts it coarsely encoded live in finer types already: the
+   --  transcript carries Started, the Engage aggregate forces full
+   --  initialization, and the State machine gates dispatch.
 
    --  Negotiated cipher-suite parameters (#117). The hash length is
    --  DERIVED from the discriminant, so the suite<->hash correlation
@@ -1737,7 +1743,7 @@ is
    function Hash_Len (N : Negotiated_Params) return Hash_Length is
      (if N.Suite = Suite_AES_256_GCM_SHA384 then 48 else 32);
 
-   type Handshake_Context (Phase : HS_Phase := Setup) is record
+   type Handshake_Context is record
       --  Protocol version (set during Parse_Client_Hello / Parse_Server_Hello)
       Version : TLS_Version := TLS_1_3;
 
@@ -1987,19 +1993,18 @@ is
       --  server_msgs.adb holds a message buffer and an extension buffer live
       --  simultaneously, so a single shared block is not sufficient.
 
-      case Phase is
-         when Setup =>
-            null;
-         when Engaged =>
-            --  Started by construction: the only assignment that flips
-            --  Phase to Engaged supplies a transcript that has absorbed
-            --  the ClientHello (see the Engage aggregates).
-            TS : SPARKTLS_Transcript.Started_Transcript;
-      end case;
+      --  Streaming transcript. Fresh (not Started) until the Engage
+      --  aggregate absorbs the ClientHello; Started from then on. The
+      --  Started fact is carried by SPARKTLS_Transcript's own contracts,
+      --  not by this record's shape.
+      TS : SPARKTLS_Transcript.Transcript_State;
    end record;
 
-   subtype Setup_Context   is Handshake_Context (Phase => Setup);
-   subtype Engaged_Context is Handshake_Context (Phase => Engaged);
+   --  Historical names from the phase-discriminant era; now plain views
+   --  of the flat record. Kept so the formal-subtype references read as
+   --  documentation of which handshake stage a subprogram serves.
+   subtype Setup_Context   is Handshake_Context;
+   subtype Engaged_Context is Handshake_Context;
    --  No Predicate on this record any more. Every field bound lives on a
    --  FIELD SUBTYPE, and the one genuine MULTI-field relationship -- the
    --  reassembly state machine -- moved into Reasm_Info, which carries its
@@ -2574,17 +2579,14 @@ is
       Body_Start : in     N32;
       E_Len      : in     N32;
       HC         : in     Handshake_Context;
-      S          : in out Session;
+      ALPN       : in out Hostname_Buf;
       OK         :    out Boolean;
       Err        :    out Error_Code)
    with Pre  => Data'Length > 0
                 and then Data'Last < N32'Last
                 and then Body_Start >= Data'First
                 and then Body_Start <= Data'Last + 1
-                and then E_Len <= Data'Last + 1 - Body_Start,
-        Post => State (S) = State (S)'Old
-                and then Client_App (S) = Client_App (S)'Old
-                and then Negotiated_Suite (S) = Negotiated_Suite (S)'Old;
+                and then E_Len <= Data'Last + 1 - Body_Start;
 
    ----------------------------------------------------------------------------
    --  Buffer operations (transport layer interface)
@@ -2942,18 +2944,15 @@ private
       --  in flight -- admission control refuses when the pool is full).
       HC   : Handshake_Context;
       Slot : Slot_Count := No_Slot;
-   end record
-     --  #106 PAYOFF: the state<->phase coupling, finally single-object.
-     --  Type_Invariant (not Dynamic_Predicate) deliberately: checked at
-     --  public boundaries only (~30 VCs), not at every component
-     --  assignment -- the cost that killed the old Session predicate.
-     --  Exempt states: Idle/WCH have no transcript yet; Error/Closing/
-     --  Closed are reachable from pre-Engage failures. WCH_Retry is NOT
-     --  exempt: HRR Engages on the first ClientHello.
-     with Type_Invariant =>
-       (if Session.State not in
-             Idle | Wait_Client_Hello | Error_State | Closing | Closed
-        then Session.HC.Phase = Engaged);
+   end record;
+   --  NO Type_Invariant on Session, MEASURED (r69, 2026-08-29): the
+   --  state<->phase coupling as an invariant cost ~101 checks -- the
+   --  invariant is verified at every INTERNAL call to any public
+   --  subprogram (State, Output_Pending, ... are called everywhere),
+   --  not just at true boundaries. The coupling lives instead as
+   --  one-conjunct `S.HC.Phase = Engaged` Pres on the handler chain,
+   --  rooted in Advance_Handshake's state-conditional Pre with a single
+   --  honest residual at the public Advance boundary.
 
    --  NO Dynamic_Predicate on Session. Deliberately.
    --

@@ -94,7 +94,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
-        (S, HC, Result, Len);
+        (Suite (S), HC, Result, Len);
 
       Check ("X25519: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -134,7 +134,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
-        (S, HC, Result, Len);
+        (Suite (S), HC, Result, Len);
 
       Check ("X25519: negotiated curve is 0x001D (x25519)",
              HC.KE.Negotiated and then HC.KE.Curve = 16#001D#);
@@ -149,7 +149,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
-        (S, HC, Result, Len);
+        (Suite (S), HC, Result, Len);
       Check ("Min-size buffer (256B): fits", Len > 0 and Len <= 256);
    end Test_Buffer_Too_Small;
 
@@ -165,7 +165,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P256_PK      := Make_P256_Peer_PK;
 
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
-        (S, HC, Result, Len);
+        (Suite (S), HC, Result, Len);
 
       Check ("P-256: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -189,7 +189,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P384_PK      := Make_P384_Peer_PK;
 
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
-        (S, HC, Result, Len);
+        (Suite (S), HC, Result, Len);
 
       Check ("P-384: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -213,7 +213,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P256_PK      := (others => 0);  --  not a valid point
 
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
-        (S, HC, Result, Len);
+        (Suite (S), HC, Result, Len);
       Check ("P-256: invalid peer pubkey → Len = 0", Len = 0);
    end Test_P256_Invalid_Peer_PK_Rejected;
 
@@ -228,7 +228,7 @@ procedure Test_Build_Server_Hello is
       HC.Client_Has_P256   := False;
       HC.Client_Has_P384   := False;
       SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello
-        (S, HC, Result, Len);
+        (Suite (S), HC, Result, Len);
       Check ("No common group → Len = 0", Len = 0);
    end Test_No_Common_Group;
 
@@ -273,8 +273,8 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S1, HC1);
       Init_Context (S2, HC2);
-      SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello (S1, HC1, R1, L1);
-      SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello (S2, HC2, R2, L2);
+      SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello (Suite (S1), HC1, R1, L1);
+      SPARKTLS.Handshake.Server_Msgs.Build_Server_Hello (Suite (S2), HC2, R2, L2);
 
       Check ("Two identical inputs produce identical lengths", L1 = L2);
       Check ("Two identical inputs produce identical bytes",

@@ -1143,10 +1143,11 @@ is
    ------------------------------------------------------------------
 
    procedure Build_Server_Hello_12
-     (S      : in out Session;
-      HC     : in out Engaged_Context;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
+     (Negotiated : in     Supported_Suite;
+      ALPN       : in out Hostname_Buf;
+      HC         : in out Engaged_Context;
+      Result     :    out Byte_Seq;
+      Len        :    out N32)
    is
       subtype TLS12_SID_Len is N32 range 0 .. 32;
       subtype TLS12_ALPN_Data_Len is N32 range 0 .. 258;
@@ -1294,7 +1295,7 @@ is
       end if;
       Pos := Pos + SID_Out_Len;
 
-      Put16 (Result, Pos, Wire_Of (S.Negotiated_Suite));
+      Put16 (Result, Pos, Wire_Of (Negotiated));
       Pos := Pos + 2;
 
       --  RFC 5246 §6.2.2 / §7.4.1.4: compression_method MUST be 0
@@ -1368,7 +1369,7 @@ is
             Pos := Pos + ALPN_Ext_Len;
 
             --  Store negotiated ALPN in session.
-            S.Negotiated_ALPN := Selected_ALPN;
+            ALPN := Selected_ALPN;
          end;
       end if;
 
@@ -1388,7 +1389,8 @@ is
    ------------------------------------------------------------------
 
    procedure Parse_Server_Hello_12
-     (S    : in out Session;
+     (Negotiated : in out Supported_Suite;
+      Last_Err   : in out Error_Code;
       HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
@@ -1455,7 +1457,7 @@ is
             end loop;
 
             if M13 or else M12 or else MJ then
-               S.Last_Error := Illegal_Parameter;
+               Last_Err := Illegal_Parameter;
                return;
             end if;
          end;
@@ -1492,7 +1494,7 @@ is
          then
             return;
          end if;
-         S.Negotiated_Suite := To_Suite (Suite_Val);
+         Negotiated := To_Suite (Suite_Val);
       end;
       Pos := Pos + 2;
 
@@ -1500,7 +1502,7 @@ is
       --  method MUST be null (0x00). BoGo InvalidCompressionMethod
       --  expects illegal_parameter (not handshake_failure).
       if Data (Pos) /= 0 then
-         S.Last_Error := Illegal_Parameter;
+         Last_Err := Illegal_Parameter;
          return;
       end if;
       Pos := Pos + 1;
@@ -1562,7 +1564,7 @@ is
       --  NegotiateVersion bug force a TLS 1.2 SH on our shim despite
       --  our offer; this guard fires so we reject rather than accept.
       if HC.Cfg.Versions = TLS_1_3_Only then
-         S.Last_Error := Protocol_Version;
+         Last_Err := Protocol_Version;
          OK := False;
          return;
       end if;

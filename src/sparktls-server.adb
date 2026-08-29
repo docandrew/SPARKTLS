@@ -67,7 +67,6 @@ is
                       and then S.HC.HRR_Sent)
               and then
                 (if S.State = Wait_Client_Finished and then S.HC.Version = TLS_1_3
-                    and then S.HC.Phase = Engaged
                  then SPARKTLS_Transcript.Started (S.HC.TS)
               and then Free_Space (S.Output) >=
                 Records.Record_Header_Size + 3 + Records.Tag_Size)
@@ -103,12 +102,10 @@ is
      (S      : in out Server_Session;
       D     : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
-   --  State-phase coupling (#106 payoff pending): with HC inline, this
-   --  Pre is provable at the sole call site once the Session predicate
-   --  lands. (Wait_Client_Hello_Retry is NOT exempt: the HRR path
-   --  Engages on the first ClientHello before entering it.)
-   with Pre => (if S.State /= Wait_Client_Hello
-                then S.HC.Phase = Engaged);
+   --  No state-phase Pre: the Phase discriminant was deleted (it drove
+   --  no behavior; the transcript carries its own Started fact and the
+   --  Engage aggregate still forces full initialization).
+   ;
            --  NO POSTCONDITION HERE, DELIBERATELY. It used to carry
            --  "Post => S.State in Connection_State", a TAUTOLOGY (S.State IS a
            --  Connection_State) that looked like a contract and told callers
@@ -489,7 +486,7 @@ is
    --  RFC 5246 §7.4.9 / RFC 8446 §4.4.1: append-only invariant
    --  (transcript drives Finished verify_data).
    procedure Append_Transcript
-     (HC   : in out Handshake_Context;
+     (HC   : in out Engaged_Context;
       Data : in     Byte_Seq)
    with Post => (if SPARKTLS_Transcript.Started (HC.TS)'Old
                     or else Data'First <= Data'Last
@@ -615,9 +612,7 @@ is
       HC.KE.Local_SK := (others => 0);
       HC.KE.P256_SK := (others => 0);
       HC.KE.P384_SK := (others => 0);
-      if HC.Phase = Engaged then
-         SPARKTLS_Transcript.Wipe (HC.TS);
-      end if;
+      SPARKTLS_Transcript.Wipe (HC.TS);
       HC.T12.Resumed_Master_Secret := (others => 0);
       HC.EMS_Session_Hash := (others => 0);
       HC.PSK.Value := (others => 0);
@@ -873,7 +868,7 @@ is
                if Want_12 and S.Negotiated_Suite_12 /= Suite_None then
                           S.HC.Version := TLS_1_2;
                           SPARKTLS.Server.TLS12.Build_Server_Flight_12
-                    (S, S.HC, Cfg, Result);
+                    (S, Cfg, Result);
                else
                   Send_Alert_And_Error (S, Handshake_Failure, Result);
                end if;
@@ -886,7 +881,7 @@ is
                     --  Old dead guard (= Unsigned_64'Last, unreachable by
                     --  type) deleted with the sealed-channel port.
                                     SPARKTLS.Server.TLS12.Build_Server_Flight_12
-                                      (S, S.HC, Cfg, Result);
+                                      (S, Cfg, Result);
                     return;
          else
             if (S.HC.Version = TLS_1_2 and Policy = TLS_1_3_Only)
@@ -1226,7 +1221,9 @@ is
                                 Full_Msg : constant Message_Bytes := Message (D.Reasm);
                              begin
                                         Handshake.Server_Msgs.Parse_Client_Hello
-                                          (S, S.HC, Byte_Seq (Full_Msg), Parse_OK);
+                                          (S.Negotiated_Suite, S.Negotiated_Suite_12,
+                                           S.Last_Error, S.HC,
+                                           Byte_Seq (Full_Msg), Parse_OK);
                                                 if Parse_OK then
                                                            pragma Assert
                                                              (S.HC.Legacy_Session_ID_Len in 0 .. 32);
@@ -1256,7 +1253,7 @@ is
                                                            SPARKTLS_Transcript.Append (L, Byte_Seq (Full_Msg));
                                                            --  ENGAGE (phase carve): single constructor site,
                                                            --  full-message path. L has absorbed the ClientHello.
-                                                           S.HC := (Phase => Engaged,
+                                                           S.HC := (
                                                   TS => L,
                                                   Version => S.HC.Version,
                                                   Cfg => S.HC.Cfg,
@@ -1396,7 +1393,8 @@ is
                                                          Frag_Start + Frag_Len - 1);
                                      begin
                                         Handshake.Server_Msgs.Parse_Client_Hello
-                                          (S, S.HC, Frag, Parse_OK);
+                                          (S.Negotiated_Suite, S.Negotiated_Suite_12,
+                                           S.Last_Error, S.HC, Frag, Parse_OK);
 
                                                 if not Parse_OK then
                                                    pragma Assert (S.State = Wait_Client_Hello);
@@ -1417,9 +1415,33 @@ is
                                                            L : SPARKTLS_Transcript.Transcript_State;
                                                         begin
                                                         SPARKTLS_Transcript.Start (L);
+                                                        --  Capture the binder transcript hash BEFORE the CH
+                                                        --  enters the stream (RFC 8446 4.2.11.2), exactly as
+                                                        --  the reassembled-message path does. Missing here
+                                                        --  since the streaming-transcript carve: every
+                                                        --  resumption through the single-record path failed
+                                                        --  binder verification (alert 51) against RFC
+                                                        --  clients -- masked by self-play resume tests and a
+                                                        --  silently refreshed BoGo baseline.
+                                                        if S.HC.PSK.Offered and then S.HC.PSK.Binder_Len > 0
+                                                          and then Frag_Len > 3 + S.HC.PSK.Binder_Len
+                                                        then
+                                                           declare
+                                                              T : constant N32 :=
+                                                                Frag_Len - (3 + S.HC.PSK.Binder_Len);
+                                                           begin
+                                                              SPARKTLS_Transcript.Suffix_256
+                                                                (L, Frag (Frag'First .. Frag'First + T - 1),
+                                                                 SPARKTLSCrypto.Hashing.SHA256.Digest (S.HC.PSK.Binder_Hash_256));
+                                                              SPARKTLS_Transcript.Suffix_384
+                                                                (L, Frag (Frag'First .. Frag'First + T - 1),
+                                                                 SPARKTLSCrypto.Hashing.SHA384.Digest (S.HC.PSK.Binder_Hash_384));
+                                                              S.HC.PSK.Binder_Hash_Taken := True;
+                                                           end;
+                                                        end if;
                                                         SPARKTLS_Transcript.Append (L, Frag);
                                                         --  ENGAGE (phase carve): single-record path.
-                                                        S.HC := (Phase => Engaged,
+                                                        S.HC := (
                                                   TS => L,
                                                   Version => S.HC.Version,
                                                   Cfg => S.HC.Cfg,
@@ -1665,7 +1687,9 @@ is
               S.HC.Seen_Ext_Tags := (others => 0);
               pragma Assert (S.HC.Legacy_Session_ID_Len in 0 .. 32);
 
-              Handshake.Server_Msgs.Parse_Client_Hello (S, S.HC, Msg, Parse_OK);
+              Handshake.Server_Msgs.Parse_Client_Hello
+                (S.Negotiated_Suite, S.Negotiated_Suite_12,
+                 S.Last_Error, S.HC, Msg, Parse_OK);
 
               if not Parse_OK then
                  return;
@@ -2116,13 +2140,13 @@ is
                     if S.HC.Version = TLS_1_2 then
                        if S.State = Wait_Client_Certificate then
                           SPARKTLS.Server.TLS12.Process_Client_Certificate_12
-                            (S, S.HC, D, Result);
+                            (S, D, Result);
                        elsif not S.HC.CKE_Received_12 then
                           SPARKTLS.Server.TLS12.Process_Client_Key_Exchange_12
-                            (S, S.HC, D, Result);
+                            (S, D, Result);
                        else
                           SPARKTLS.Server.TLS12.Process_Client_CertVerify_12
-                            (S, S.HC, D, Result);
+                            (S, D, Result);
                        end if;
                     else
                        declare
@@ -2147,16 +2171,16 @@ is
                --    3. Finished (encrypted)
                if not S.HC.CKE_Received_12 then
                   SPARKTLS.Server.TLS12.Process_Client_Key_Exchange_12
-                    (S, S.HC, D, Result);
+                    (S, D, Result);
                elsif not S.HC.CCS_Received then
                   --  CKE done, waiting for CCS
                   SPARKTLS.Server.TLS12.Process_Client_Key_Exchange_12
-                    (S, S.HC, D, Result);
+                    (S, D, Result);
                   --  CKE handler also accepts CCS records
                else
                   --  CCS received, next must be encrypted Finished
                           SPARKTLS.Server.TLS12.Process_Client_Finished_12
-                            (S, S.HC, D, Result);
+                            (S, D, Result);
                        end if;
                     end if;
                          when others =>
@@ -2818,7 +2842,7 @@ is
          Result := Error_Alert;
          return;
       end if;
-      Handshake.Server_Msgs.Build_Server_Hello (S, S.HC, SH_Buf, SH_Len);
+      Handshake.Server_Msgs.Build_Server_Hello (S.Negotiated_Suite, S.HC, SH_Buf, SH_Len);
       if SH_Len = 0 then
          --  RFC 7748 §6.1: small-subgroup X25519 rejection sets
          --  Ext_Parse_Err := Illegal_Parameter so we don't fold it
@@ -2881,7 +2905,7 @@ is
          EE_Len : N32;
          Emitted : Boolean;
       begin
-         Handshake.Server_Msgs.Build_Encrypted_Extensions (S.HC, S, EE_Buf, EE_Len);
+         Handshake.Server_Msgs.Build_Encrypted_Extensions (S, EE_Buf, EE_Len);
          pragma Assert (EE_Len in 6 .. N32 (EE_Buf'Length));
          pragma Assert (EE_Len <= Max_Fragment);
          pragma Assert (S.HC.Server_HS.Counter = 0);

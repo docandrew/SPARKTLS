@@ -87,7 +87,8 @@ is
    --  same choice; never call with a DIFFERENT choice after selecting.
    procedure Select_Hash (TS : in out Transcript_State; C : Hash_Choice)
    with Global => null, Pre => C /= Both,
-        Post => Selected (TS) = C;
+        Post => Selected (TS) = C
+                and then Started (TS) = Started (TS)'Old;
 
    --  Transcript hash at this instant (clone-and-finalize; the running
    --  context is untouched, so appends may continue afterwards).
@@ -134,7 +135,8 @@ is
    --  Requires the hash already selected (HRR names the suite).
    procedure Reset_For_HRR (TS : in out Transcript_State)
    with Global => null,
-        Post => Selected (TS) = Selected (TS)'Old;
+        Post => Selected (TS) = Selected (TS)'Old
+                and then Started (TS) = Started (TS)'Old;
 
    --  Fresh, empty transcript as a value (binder Basis for the initial
    --  ClientHello, where the binder covers only the truncated CH).

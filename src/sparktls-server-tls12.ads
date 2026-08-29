@@ -56,10 +56,9 @@ is
    --  After this, state transitions to Server_Hello_Done_Sent_12.
    procedure Build_Server_Flight_12
      (S      : in out Server_Session;
-      HC     : in out Engaged_Context;
       Cfg    : in     Ready_Config;
       Result :    out Action)
-   with Pre  => HC.Version = TLS_1_2
+   with Pre  => S.HC.Version = TLS_1_2
                 --  Server-side state on entry. Client_Hello_Sent (the
                 --  client's own post-CH state) is intentionally NOT
                 --  permitted here -- the only valid transition out of
@@ -69,7 +68,7 @@ is
                         and then S.Role = Role_Server,
         Post =>
                   (if S.State in Server_Hello_Sent | Wait_Client_Finished
-                   then HC.Version = TLS_1_2);
+                   then S.HC.Version = TLS_1_2);
 
    --  Process the client's KeyExchange message.
    --  Extracts the client's ECDHE public key, computes shared secret,
@@ -80,7 +79,6 @@ is
    --  arrived.
    procedure Process_Client_Key_Exchange_12
      (S      : in out Session;
-      HC     : in out Engaged_Context;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
    --  Version is what the nested helpers (Compute_Shared_Secret_12,
@@ -90,7 +88,7 @@ is
    --  has exactly those two values. Same Defect-A shape as #95's
    --  handlers: a Post with no Pre starved the body of a fact the caller
    --  holds.
-   with Pre  => HC.Version = TLS_1_2;
+   with Pre  => S.HC.Version = TLS_1_2;
    --  RFC 5246 §7.4.7 single-CKE invariant is enforced as a
    --  pragma Assert at the end of the body (in the .adb), since
    --  the body's preexisting medium-severity unproven calls block
@@ -104,7 +102,6 @@ is
    --  key possession before Finished.
    procedure Process_Client_Certificate_12
      (S      : in out Session;
-      HC     : in out Engaged_Context;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
    ;
@@ -112,21 +109,9 @@ is
    --  Process TLS 1.2 CertificateVerify from a client-authenticated peer.
    procedure Process_Client_CertVerify_12
      (S      : in out Session;
-      HC     : in out Engaged_Context;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
    ;
-
-   --  Legacy CCS entry point. The active TLS 1.2 server path validates
-   --  the client's ChangeCipherSpec inline while processing the
-   --  ClientKeyExchange/Finished sequence. Reaching this hook means
-   --  dispatch has already gone off the expected path.
-   procedure Process_Client_CCS_12
-     (S      : in out Session;
-      HC     : in out Engaged_Context;
-      Result :    out Action)
-   with Pre => HC.Version = TLS_1_2
-               and then S.State = Wait_Client_Finished;
 
    --  Process the client's encrypted Finished message.
    --  Verifies the 12-byte verify_data against expected value.
@@ -138,7 +123,6 @@ is
    --  decrypt and verify the Finished record.
    procedure Process_Client_Finished_12
      (S      : in out Session;
-      HC     : in out Engaged_Context;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
       Result :    out Action)
    ;
@@ -150,10 +134,9 @@ is
    --  Sets up Traffic_Keys for both directions.
    procedure Derive_Keys_12
      (S  : in out Session;
-      HC : in out Engaged_Context;
       Cfg : in Ready_Config)
       with Pre =>
-        HC.Version = TLS_1_2
+        S.HC.Version = TLS_1_2
         --  Transcript bound: hashing slices Transcript (0 .. Len - 1)
 
         ,
@@ -161,14 +144,14 @@ is
         --  returns, HC.MS_Derivation matches HC.Use_EMS via the
         --  EMS_PRF_Binding_RFC_7627_4 predicate. This is the v9→v12
         --  invariant whose absence caused the TLS-Anvil regression.
-                   Post => HC.Version = TLS_1_2
+                   Post => S.HC.Version = TLS_1_2
                                            and then S.State = S.State'Old
                    and then S.Role = S.Role'Old
                    and then S.Negotiated_Suite = S.Negotiated_Suite'Old
                    and then S.Client_App.Counter = 0
                    and then S.Server_App.Counter = 0
-                   and then EMS_PRF_Binding_RFC_7627_4 (HC)
-                   and then HC.MS_Derivation /= Not_Derived;
+                   and then EMS_PRF_Binding_RFC_7627_4 (S.HC)
+                   and then S.HC.MS_Derivation /= Not_Derived;
 
    --  Process records in Connected state for TLS 1.2.
    --  Decrypts incoming records using TLS 1.2 GCM (explicit nonce).

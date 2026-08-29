@@ -1139,7 +1139,8 @@ is
          PL_Depth : Natural;  --  non-self-issued CA count for pathlen
          Budget   : in out Natural;
          Result   : out Validation_Result)
-      with Pre => Cert_DER'First = 0 and Cert_DER'Last < X509.N32'Last
+      with Pre => Cert_DER'First = 0
+                  and Cert_DER'Last < X509.N32'Last - 256
                   and PL_Depth <= Max_Chain_Depth
                   and X509.Spans_Valid (Cert, Cert_DER'Last),
            Subprogram_Variant => (Decreases => Budget),
@@ -1177,9 +1178,6 @@ is
                         Now, Mode);
                begin
                   if VR = Valid then
-                     pragma Assert  --  PROBE-T8-R2
-                       (Cert_DER'First = 0
-                        and then Cert_DER'Last < 2**31 - 257);
                      pragma Assert  --  PROBE-T8
                        (X509.Spans_Valid (Cert, Cert_DER'Last)
                         and then X509.Spans_Valid
@@ -1212,9 +1210,6 @@ is
                and then Ints (Ii).DER_Len > 0
                and then Ints (Ii).DER_Len <= X509.N32 (Max_Cert_DER)
             then
-               pragma Assert  --  PROBE-T8-R2
-                 (Cert_DER'First = 0
-                  and then Cert_DER'Last < 2**31 - 257);
                pragma Assert  --  PROBE-T8
                  (X509.Spans_Valid (Cert, Cert_DER'Last)
                   and then X509.Spans_Valid

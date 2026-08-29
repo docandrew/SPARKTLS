@@ -429,10 +429,11 @@ is
    --  RFC 5246 §7.4.1.2: "The server MUST NOT send a version lower
    --  than the client's minimum version."
    procedure Build_Server_Hello_12
-     (S      : in out Session;
-      HC     : in out Engaged_Context;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
+     (Negotiated : in     Supported_Suite;
+      ALPN       : in out Hostname_Buf;
+      HC         : in out Engaged_Context;
+      Result     :    out Byte_Seq;
+      Len        :    out N32)
    with Pre  => Result'First = 0
                 and then Result'Last >= Max_Server_Hello_12 - 1
                         and then HC.Cfg.Local /= null
@@ -450,9 +451,6 @@ is
         --  access types, so we restate the specific facts as Post
         --  rather than HC.Cfg = HC.Cfg'Old.
         Post => Len <= Max_Server_Hello_12
-                and State (S) = State (S)'Old
-                and Role (S) = Role (S)'Old
-                and Negotiated_Suite (S) = Negotiated_Suite (S)'Old
                         and HC.Cfg.Local /= null
                         and HC.Cfg.Local.Has_Identity
                         and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
@@ -475,7 +473,8 @@ is
    --  cipher suites in the order of the client's preference."
    --  The server MUST select a suite from the client's list.
    procedure Parse_Server_Hello_12
-     (S    : in out Session;
+     (Negotiated : in out Supported_Suite;
+      Last_Err   : in out Error_Code;
       HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
@@ -484,7 +483,7 @@ is
                         and then Data'Last < N32'Last
                         and then HC.Version = TLS_1_2,
                         Post => (if OK then
-                                   Valid_TLS12_Suite (Suite (S))
+                                   Valid_TLS12_Suite (Negotiated)
                                    and HC.Version = TLS_1_2)
                         and then HC.TS = HC.TS'Old
                         and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
@@ -492,8 +491,7 @@ is
                                           (if HC.HRR_Cookie_Len'Old <=
                                                 N32 (HC.HRR_Cookie'Length)
                                    then HC.HRR_Cookie_Len <=
-                                        N32 (HC.HRR_Cookie'Length))
-                                and then State (S) = State (S)'Old;
+                                        N32 (HC.HRR_Cookie'Length));
 
    --  RFC 5077 §3.3 TLS 1.2 NewSessionTicket builder.
    --

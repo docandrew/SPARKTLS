@@ -42,7 +42,9 @@ is
    --  the body-length conversion and bit-length multiplications inside
    --  could overflow N32.
    procedure Parse_Client_Hello
-     (S    : in out Session;
+     (Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
               OK   :    out Boolean)
@@ -56,15 +58,9 @@ is
                             and then
                               (if HC.Cfg.Random'Old /= null
                                then HC.Cfg.Random /= null)
-                                    and then State (S) = State (S)'Old
-                                    and then Role (S) = Role (S)'Old
-                                    and then Input (S).Read_Pos =
-                                      Input (S).Read_Pos'Old
-                                    and then Input (S).Write_Pos =
-                                      Input (S).Write_Pos'Old
                                                             and then
                                       (if OK and then HC.Version = TLS_1_3
-                                       then Suite (S) in
+                                       then Negotiated in
                                          Suite_AES_128_GCM_SHA256
                                        | Suite_AES_256_GCM_SHA384
                                        | Suite_CHACHA20_POLY1305_SHA256);
@@ -73,14 +69,14 @@ is
    --  Includes key_share and supported_versions extensions.
    --  Returns the complete handshake message ready for record wrapping.
    procedure Build_Server_Hello
-     (S      : in     Session;
-      HC     : in out Engaged_Context;
-      Result :    out Byte_Seq;
-      Len    :    out N32)
+     (Negotiated : in     Supported_Suite;
+      HC         : in out Engaged_Context;
+      Result     :    out Byte_Seq;
+      Len        :    out N32)
    with Pre  => Result'First = 0
                 and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
                 and then HC.Cfg.Random /= null
-                                and then Suite (S) in Suite_AES_128_GCM_SHA256
+                                and then Negotiated in Suite_AES_128_GCM_SHA256
                                                        | Suite_AES_256_GCM_SHA384
                                                        | Suite_CHACHA20_POLY1305_SHA256,
            Post => Len <= N32 (Result'Length)
@@ -112,8 +108,7 @@ is
    --  builder can keep proving its Set_State / Send_Alert_And_Error
    --  preconditions.
    procedure Build_Encrypted_Extensions
-     (HC     : in     Engaged_Context;
-      S      : in out Session;
+     (S      : in out Session;
       Result :    out Byte_Seq;
       Len    :    out N32)
    with Pre  => Result'First = 0

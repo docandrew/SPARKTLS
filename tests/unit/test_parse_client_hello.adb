@@ -229,43 +229,55 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Reject_Short is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Data : constant Byte_Seq (0 .. 9) := (others => 0);
       OK   : Boolean;
    begin
       Init_Context (S, HC);
-      SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+      SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       Check ("Reject too-short input (len=10)", not OK);
    end Test_Reject_Short;
 
    procedure Test_Reject_Wrong_Type is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Data : Byte_Seq (0 .. 100) := (others => 0);
       OK   : Boolean;
    begin
       Init_Context (S, HC);
       Data (0) := 16#02#;  --  ServerHello type, not ClientHello
-      SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+      SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       Check ("Reject wrong handshake type byte (0x02)", not OK);
    end Test_Reject_Wrong_Type;
 
    procedure Test_Wellformed_Min is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Body_Bs : constant Byte_Seq := Build_Min_CH_Body;
       Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       OK   : Boolean;
    begin
       Init_Context (S, HC);
-      SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+      SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       Check ("Minimal well-formed CH parses (OK = True)", OK);
       Check ("Minimal CH selects TLS_AES_128_GCM_SHA256",
-             Suite (S) = Suite_AES_128_GCM_SHA256);
+             Neg = Suite_AES_128_GCM_SHA256);
    end Test_Wellformed_Min;
 
    procedure Test_Random_Extracted is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Body_Bs : Byte_Seq := Build_Min_CH_Body;
       OK   : Boolean;
@@ -278,7 +290,7 @@ procedure Test_Parse_Client_Hello is
       declare
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("Client_Random extracted from CH",
              OK and then
@@ -288,6 +300,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Session_ID_Extracted is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Body_Bs : Byte_Seq := Build_Min_CH_Body (SID_Len => 16);
       OK   : Boolean;
@@ -300,7 +315,7 @@ procedure Test_Parse_Client_Hello is
       declare
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("Legacy_Session_ID extracted from CH",
              OK and then
@@ -310,6 +325,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Suite_TLS13_AES256 is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Suites : constant Byte_Seq (0 .. 1) := (16#13#, 16#02#);  --  AES_256_GCM
       Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Suites => Suites);
@@ -319,16 +337,19 @@ procedure Test_Parse_Client_Hello is
       declare
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("TLS_AES_256_GCM_SHA384 selected",
              OK and then
-             Suite (S) = Suite_AES_256_GCM_SHA384);
+             Neg = Suite_AES_256_GCM_SHA384);
    end Test_Suite_TLS13_AES256;
 
    procedure Test_Suite_Prefers_ChaCha is
       --  Offer AES-128 then ChaCha20: server should pick ChaCha20
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Suites : constant Byte_Seq (0 .. 3) :=
         (16#13#, 16#01#,   --  AES_128
@@ -340,16 +361,19 @@ procedure Test_Parse_Client_Hello is
       declare
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("ChaCha20 preferred over AES-128",
              OK and then
-             Suite (S) = Suite_CHACHA20_POLY1305_SHA256);
+             Neg = Suite_CHACHA20_POLY1305_SHA256);
    end Test_Suite_Prefers_ChaCha;
 
    procedure Test_Suite_TLS12 is
       --  Offer only TLS 1.2 ECDHE-RSA-AES128
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Suites : constant Byte_Seq (0 .. 1) := (16#C0#, 16#2F#);
       Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Suites => Suites);
@@ -359,19 +383,21 @@ procedure Test_Parse_Client_Hello is
       declare
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("TLS 1.2 ECDHE-RSA-AES128 selected",
              OK and then
-             (Negotiated_Suite (S) = 0
-              and then Negotiated_Suite_12 (S) =
-                       Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256));
+             (Neg = Suite_None
+              and then Neg_12 = Suite_ECDHE_RSA_AES128_GCM_SHA256));
    end Test_Suite_TLS12;
 
    procedure Test_TLS12_Compression_List_With_Null is
       --  TLS 1.2 clients may offer multiple compression methods as long as
       --  the server selects null compression.
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Suites : constant Byte_Seq (0 .. 1) := (16#C0#, 16#2F#);
       Compression : constant Byte_Seq (0 .. 6) :=
@@ -384,15 +410,17 @@ procedure Test_Parse_Client_Hello is
       declare
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("TLS 1.2 compression list containing null is accepted",
-             OK and then Negotiated_Suite_12 (S) =
-               Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256);
+             OK and then Neg_12 = Suite_ECDHE_RSA_AES128_GCM_SHA256);
    end Test_TLS12_Compression_List_With_Null;
 
    procedure Test_TLS13_Compression_List_With_Extra_Rejected is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Compression : constant Byte_Seq (0 .. 1) := (0, 1);
       Vers : constant Byte_Seq (0 .. 1) := (16#03#, 16#04#);
@@ -406,14 +434,17 @@ procedure Test_Parse_Client_Hello is
       declare
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("TLS 1.3 compression list with extra method is rejected",
-             not OK and then Last_Error (S) = Illegal_Parameter);
+             not OK and then Err = Illegal_Parameter);
    end Test_TLS13_Compression_List_With_Extra_Rejected;
 
    procedure Test_KS_X25519 is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       KS   : Byte_Seq (0 .. 31) := (others => 0);
       Body_Bs : Byte_Seq := Build_Min_CH_Body
@@ -430,7 +461,7 @@ procedure Test_Parse_Client_Hello is
       declare
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("X25519 key_share parsed → Client_Has_X25519",
              OK and HC.Client_Has_X25519);
@@ -443,6 +474,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_KS_P256 is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       KS   : Byte_Seq (0 .. 64) := (others => 0);
       OK : Boolean;
@@ -457,7 +491,7 @@ procedure Test_Parse_Client_Hello is
            (Exts => Build_KS_Ext (16#0017#, KS));
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("P-256 key_share → Client_Has_P256",
              OK and HC.Client_Has_P256);
@@ -469,6 +503,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_KS_P384 is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       KS   : Byte_Seq (0 .. 96) := (others => 0);
       OK : Boolean;
@@ -483,7 +520,7 @@ procedure Test_Parse_Client_Hello is
            (Exts => Build_KS_Ext (16#0018#, KS));
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("P-384 key_share → Client_Has_P384",
              OK and HC.Client_Has_P384);
@@ -495,6 +532,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Missing_Key_Share_State is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Vers : constant Byte_Seq (0 .. 1) := (16#03#, 16#04#);
       Groups : constant Byte_Seq (0 .. 1) := (16#00#, 16#1D#);
@@ -508,7 +548,7 @@ procedure Test_Parse_Client_Hello is
          Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Exts => Exts);
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("Missing key_share leaves extension-present flag clear",
              OK and then not HC.Client_Saw_Key_Share);
@@ -518,6 +558,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Missing_Supported_Groups_State is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       KS   : Byte_Seq (0 .. 31) := (others => 16#33#);
       Vers : constant Byte_Seq (0 .. 1) := (16#03#, 16#04#);
@@ -531,7 +574,7 @@ procedure Test_Parse_Client_Hello is
          Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Exts => Exts);
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("Missing supported_groups leaves extension-present flag clear",
              OK and then not HC.Client_Saw_Supported_Groups);
@@ -542,6 +585,9 @@ procedure Test_Parse_Client_Hello is
    procedure Test_Sig_Algs is
       --  Offer Ed25519 (0x0807) + ECDSA-P256 (0x0403) + RSA-PSS-256 (0x0804)
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       Algos : constant Byte_Seq (0 .. 5) :=
         (16#08#, 16#07#, 16#04#, 16#03#, 16#08#, 16#04#);
@@ -553,7 +599,7 @@ procedure Test_Parse_Client_Hello is
            (Exts => Build_Sig_Algs_Ext (Algos));
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("Sig_Algs parsed: count = 3",
              OK and HC.Peer_Sig_Algo_Count = 3);
@@ -567,6 +613,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Supported_Groups is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       --  Offer x25519, P-256, P-384
       Groups : constant Byte_Seq (0 .. 5) :=
@@ -579,7 +628,7 @@ procedure Test_Parse_Client_Hello is
            (Exts => Build_Supported_Groups_Ext (Groups));
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("Supported_Groups: x25519",
              OK and HC.Client_Supports_X25519);
@@ -593,6 +642,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Supported_Versions is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       --  Offer TLS 1.3 (0x0304) and TLS 1.2 (0x0303)
       Vers : constant Byte_Seq (0 .. 3) :=
@@ -605,7 +657,7 @@ procedure Test_Parse_Client_Hello is
            (Exts => Build_Supported_Versions_Ext (Vers));
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("Supported_Versions: TLS 1.3 detected",
              OK and HC.Has_TLS_1_3);
@@ -613,6 +665,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_ALPN is
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       OK : Boolean;
    begin
@@ -622,7 +677,7 @@ procedure Test_Parse_Client_Hello is
            (Exts => Build_ALPN_Ext ("h2"));
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("ALPN: 'h2' parsed",
              OK and then
@@ -633,6 +688,9 @@ procedure Test_Parse_Client_Hello is
    procedure Test_Multiple_Extensions is
       --  CH with key_share + supported_versions + supported_groups
       S    : Session;
+      Neg    : Supported_Suite := Suite_None;
+      Neg_12 : Supported_Suite := Suite_None;
+      Err    : Error_Code := No_Error;
       HC   : Handshake_Context;
       KS   : Byte_Seq (0 .. 31) := (others => 16#11#);
       Vers : constant Byte_Seq (0 .. 1) := (16#03#, 16#04#);
@@ -648,7 +706,7 @@ procedure Test_Parse_Client_Hello is
          Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Exts => Exts);
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
-         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (S, HC, Data, OK);
+         SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello (Neg, Neg_12, Err, HC, Data, OK);
       end;
       Check ("Multi-ext CH parses",
              OK and HC.Client_Has_X25519
@@ -658,6 +716,9 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Idempotent is
       S1, S2   : Session;
+      Neg1, Neg2     : Supported_Suite := Suite_None;
+      Neg1_12, Neg2_12 : Supported_Suite := Suite_None;
+      Err1, Err2     : Error_Code := No_Error;
       HC1, HC2 : Handshake_Context;
       KS   : Byte_Seq (0 .. 31) := (others => 16#22#);
       OK1, OK2 : Boolean;
@@ -670,13 +731,13 @@ procedure Test_Parse_Client_Hello is
          Data : constant Byte_Seq := Wrap_Handshake (Body_Bs);
       begin
          SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello
-           (S1, HC1, Data, OK1);
+           (Neg1, Neg1_12, Err1, HC1, Data, OK1);
          SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello
-           (S2, HC2, Data, OK2);
+           (Neg2, Neg2_12, Err2, HC2, Data, OK2);
       end;
       Check ("Idempotent: both succeed", OK1 and OK2);
       Check ("Idempotent: same negotiated suite",
-             Negotiated_Suite (S1) = Negotiated_Suite (S2));
+             Neg1 = Neg2);
       Check ("Idempotent: same Client_Has_X25519",
              HC1.Client_Has_X25519 = HC2.Client_Has_X25519);
       Check ("Idempotent: same Peer_PK",

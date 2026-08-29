@@ -346,7 +346,8 @@ is
    --  Spec'd separately so Build_Client_Hello doesn't carry this
    --  140-line block in its proof footprint.
    procedure Append_PSK_Extension
-     (S         : in     Session;
+     (Ticket    : in     Session_Ticket;
+      Get_Time  : in     Get_Time_Fn;
       HC        : in out Handshake_Context;
       Retry_Mode : in    Boolean;
       Result    : in out Byte_Seq;
@@ -362,7 +363,8 @@ is
                                                 and then Len <= N32 (Result'Length);
 
    procedure Append_PSK_Extension
-     (S         : in     Session;
+     (Ticket    : in     Session_Ticket;
+      Get_Time  : in     Get_Time_Fn;
       HC        : in out Handshake_Context;
       Retry_Mode : in    Boolean;
       Result    : in out Byte_Seq;
@@ -370,8 +372,8 @@ is
    is
       use SPARKTLSCrypto.Hashing.SHA256;
    begin
-      if not (S.Ticket.Valid
-              and then S.Ticket.PSK_Len in 32 | 48)
+      if not (Ticket.Valid
+              and then Ticket.PSK_Len in 32 | 48)
       then
          return;
       end if;
@@ -381,13 +383,13 @@ is
               (if HC.HRR_Cipher_Suite = Wire_Suite_AES_256_GCM_SHA384
                then 48 else 32);
          begin
-            if S.Ticket.PSK_Len /= Needed_PSK_Len then
+            if Ticket.PSK_Len /= Needed_PSK_Len then
                return;
             end if;
          end;
       end if;
       HC.PSK.Offered := True;
-      if S.Ticket.Ticket_Len > Max_Ticket_Len
+      if Ticket.Ticket_Len > Max_Ticket_Len
         or else Len > N32 (Result'Length) - 319
       then
          return;
@@ -396,11 +398,11 @@ is
       --  streaming transcript has no size limit to protect.)
 
       declare
-         Tick_Len : constant N32 := S.Ticket.Ticket_Len;
+         Tick_Len : constant N32 := Ticket.Ticket_Len;
          ID_Entry_Len : constant N32 := 2 + Tick_Len + 4;
          IDs_Len : constant N32 := 2 + ID_Entry_Len;
          Binder_Size : constant N32 :=
-            (if S.Ticket.PSK_Len = 48 then 48 else 32);
+            (if Ticket.PSK_Len = 48 then 48 else 32);
          Binder_Entry_Len : constant N32 := 1 + Binder_Size;
          Binders_Len : constant N32 := 2 + Binder_Entry_Len;
          PSK_Ext_Len : constant N32 := 4 + IDs_Len + Binders_Len;
@@ -481,26 +483,26 @@ is
                               Result (P + 1) := Byte (Tick_Len mod 256);
                               P := P + 2;
                               Result (P .. P + Tick_Len - 1) :=
-                                S.Ticket.Ticket (0 .. Tick_Len - 1);
+                                Ticket.Ticket (0 .. Tick_Len - 1);
                               P := P + Tick_Len;
                               declare
                                  Age_MS : Unsigned_64 := 0;
                               begin
-                                 if S.Get_Time /= null
-                                   and then S.Ticket.Received_At /= 0
+                                 if Get_Time /= null
+                                   and then Ticket.Received_At /= 0
                                  then
                                     declare
                                        Now : constant Unsigned_64 :=
                                          Tickets_12.To_Unix_Seconds
-                                           (S.Get_Time.all);
+                                           (Get_Time.all);
                                     begin
-                                       if Now >= S.Ticket.Received_At
+                                       if Now >= Ticket.Received_At
                                          and then
-                                           Now - S.Ticket.Received_At
+                                           Now - Ticket.Received_At
                                            <= Unsigned_64'Last / 1000
                                        then
                                           Age_MS :=
-                                            (Now - S.Ticket.Received_At)
+                                            (Now - Ticket.Received_At)
                                             * 1000;
                                        end if;
                                     end;
@@ -510,7 +512,7 @@ is
                                     Age_Mod : constant Unsigned_32 :=
                                       Unsigned_32 (Age_MS mod 2**32);
                                     A : constant Unsigned_32 :=
-                                      S.Ticket.Age_Add + Age_Mod;
+                                      Ticket.Age_Add + Age_Mod;
                                  begin
                                     Result (P) :=
                                       Byte (A / 2**24 mod 256);
@@ -559,12 +561,12 @@ is
                                     --  the truncated CH, i.e. a fresh
                                     --  stream. The post-HRR CH2 (Engaged)
                                     --  covers CH1+HRR as before.
+                                    --  Fresh CH1: the stream is empty, so
+                                    --  Basis = TS covers both that and the
+                                    --  post-HRR CH2 (stream holds CH1+HRR).
                                     Basis : constant
                                       SPARKTLS_Transcript.Transcript_State :=
-                                        (if HC.Phase = Engaged
-                                         then SPARKTLS_Transcript
-                                                .Transcript_State (HC.TS)
-                                         else SPARKTLS_Transcript.Fresh);
+                                        HC.TS;
                                  begin
                                     --  Binder transcript = running
                                     --  transcript (empty for CH1;
@@ -573,7 +575,7 @@ is
                                     --  the truncated CH under
                                     --  construction: Suffix_* below.
 
-                                    if S.Ticket.PSK_Len = 48 then
+                                    if Ticket.PSK_Len = 48 then
                                        declare
                                           Trunc_Hash384 :
                                             SPARKNaCl.Hashing.SHA384.Digest;
@@ -590,7 +592,7 @@ is
                                              Result (0 .. Trunc_Len - 1),
                                              Trunc_Hash384);
                                           Key_Schedule.Derive_Binder_Key_384
-                                            (Binder_Key48, S.Ticket.PSK);
+                                            (Binder_Key48, Ticket.PSK);
                                           Key_Schedule.Derive_Finished_Key_384
                                             (Finished_K48,
                                              Byte_Seq (Binder_Key48));
@@ -618,7 +620,7 @@ is
                                           Key_Schedule.Derive_Binder_Key
                                             (Binder_Key,
                                              Bytes_32
-                                               (S.Ticket.PSK (0 .. 31)));
+                                               (Ticket.PSK (0 .. 31)));
                                           Key_Schedule.Derive_Finished_Key
                                             (Finished_Key,
                                              Byte_Seq (Binder_Key));
@@ -717,7 +719,8 @@ is
    end Build_SG_Raw;
 
    procedure Build_Client_Hello
-     (S          : in     Session;
+     (Ticket     : in     Session_Ticket;
+      Get_Time   : in     Get_Time_Fn;
       HC         : in out Handshake_Context;
       Result     :    out Byte_Seq;
       Len        :    out N32;
@@ -1632,7 +1635,7 @@ is
       --  predicate in one step after the HC component writes above.
       --  Each conjunct is discharged separately, then used as a lemma.
       if Len > 0 then
-         Append_PSK_Extension (S, HC, Retry_Mode, Result, Len);
+         Append_PSK_Extension (Ticket, Get_Time, HC, Retry_Mode, Result, Len);
       end if;
       pragma Assert (HC.Cfg.Random /= null);
 
@@ -1648,7 +1651,7 @@ is
    --  rejects (Saw_Rflx_Rejected branch, never escalated for TLS 1.2)
    --  or accepts without per-RFC body validation.
    --
-   --  Sets S.Last_Error and OK := False on rejection; OK := True
+   --  Sets Last_Err and OK := False on rejection; OK := True
    --  means the caller may continue with the RFLX parse.
    --
    --  RFC anchors:
@@ -1667,7 +1670,8 @@ is
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
       HC         : in out Engaged_Context;
-      S          : in out Session;
+      Last_Err   : in out Error_Code;
+      ALPN       : in out Hostname_Buf;
       Is_HRR_Msg : in     Boolean;
               OK         :    out Boolean)
                            with Pre => Data'Length in 39 .. Max_HS_Msg
@@ -1683,7 +1687,8 @@ is
    procedure Pre_Scan_SH_Extensions
      (Data       : in     Byte_Seq;
       HC         : in out Engaged_Context;
-      S          : in out Session;
+      Last_Err   : in out Error_Code;
+      ALPN       : in out Hostname_Buf;
       Is_HRR_Msg : in     Boolean;
       OK         :    out Boolean)
    is
@@ -1722,7 +1727,7 @@ is
 
               Sid_Len := N32 (Data (B + 34));
               if Sid_Len > 32 then
-                         S.Last_Error := Decode_Error;
+                         Last_Err := Decode_Error;
                          OK := False;
                          pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -1763,7 +1768,7 @@ is
       if Is_HRR_Msg
         and then Data (B + 35 + Sid_Len + 2) /= 0
       then
-                 S.Last_Error := Decode_Error;
+                 Last_Err := Decode_Error;
                  OK := False;
                  pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -1776,7 +1781,7 @@ is
       Ext_Total := N32 (Data (P)) * 256 + N32 (Data (P + 1));
       P := P + 2;
       if Ext_Total > Data'Last - P + 1 then
-                 S.Last_Error := Decode_Error;
+                 Last_Err := Decode_Error;
                  OK := False;
                  pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -1792,7 +1797,7 @@ is
          --  RFC 8446 §4: HS message MUST end exactly at its declared
          --  length. BoGo TrailingMessageData-ServerHello.
          if Ext_End /= Data'Last + 1 then
-                    S.Last_Error := Decode_Error;
+                    Last_Err := Decode_Error;
                     OK := False;
                     pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -1831,7 +1836,7 @@ is
                   N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
             begin
                if E_Len > Ext_End - P - 4 then
-                          S.Last_Error := Decode_Error;
+                          Last_Err := Decode_Error;
                           OK := False;
                           pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -1856,7 +1861,7 @@ is
                      --  expects illegal_parameter
                      --  (HelloRetryRequest-DuplicateCookie /
                      --  DuplicateCurve).
-                             S.Last_Error :=
+                             Last_Err :=
                                 (if Is_HRR_Msg then Illegal_Parameter
                                  else Decode_Error);
                              OK := False;
@@ -1933,7 +1938,7 @@ is
                   OK       => V_OK,
                   Err      => V_Err);
                if not V_OK then
-                          S.Last_Error := V_Err;
+                          Last_Err := V_Err;
                           OK := False;
                           pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -1954,11 +1959,11 @@ is
                      Body_Start => Exts (I).Offset,
                      E_Len      => Exts (I).E_Len,
                      HC         => HC,
-                     S          => S,
+                     ALPN       => ALPN,
                      OK         => V_OK,
                      Err        => V_Err);
                   if not V_OK then
-                             S.Last_Error := V_Err;
+                             Last_Err := V_Err;
                              OK := False;
                              pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -1979,7 +1984,7 @@ is
                             Data'Last + 1
                then
                   if Exts (I).E_Len = 0 then
-                     S.Last_Error := Decode_Error;
+                     Last_Err := Decode_Error;
                      OK := False;
                      pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -1996,7 +2001,7 @@ is
                      if List_Len = 0
                        or else List_Len /= Exts (I).E_Len - 1
                      then
-                        S.Last_Error := Decode_Error;
+                        Last_Err := Decode_Error;
                         OK := False;
                         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -2015,7 +2020,7 @@ is
                                  (Exts (I).Offset + 1 ..
                                   Exts (I).Offset + Exts (I).E_Len - 1))
                      then
-                        S.Last_Error := Decode_Error;
+                        Last_Err := Decode_Error;
                         OK := False;
                         pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -2057,7 +2062,7 @@ is
                end if;
                --  RFC 8446 §4.2.11: pre_shared_key in SH (not HRR)
                --  carries `selected_identity` (uint16). We offer
-               --  exactly one PSK identity (S.Ticket), so the only
+               --  exactly one PSK identity (Ticket), so the only
                --  valid selected_identity value is 0; anything else
                --  is illegal_parameter. The matrix has already
                --  rejected pre_shared_key in SH if we did not
@@ -2073,7 +2078,7 @@ is
                        Unsigned_16 (Data (Exts (I).Offset + 1));
                   begin
                      if Sel /= 0 then
-                                S.Last_Error := Illegal_Parameter;
+                                Last_Err := Illegal_Parameter;
                                 OK := False;
                                 pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -2103,7 +2108,7 @@ is
                      if C_Len = 0
                        or else 2 + C_Len /= Exts (I).E_Len
                      then
-                                S.Last_Error := Illegal_Parameter;
+                                Last_Err := Illegal_Parameter;
                                 OK := False;
                                 pragma Assert_And_Cut ((if Random_Was_Set
                                         then HC.Cfg.Random /= null)
@@ -2303,7 +2308,9 @@ is
    end Apply_SH_Key_Share;
 
    procedure Parse_Server_Hello
-     (S    : in out Session;
+     (Negotiated : in out Supported_Suite;
+      Last_Err   : in out Error_Code;
+      ALPN       : in out Hostname_Buf;
       HC   : in out Engaged_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
@@ -2360,9 +2367,9 @@ is
       if N32 (Data'Length) - 4 >= 35
         and then N32 (Data (Data'First + 4 + 34)) > 32
               then
-                 S.Last_Error := Decode_Error;
+                 Last_Err := Decode_Error;
                  pragma Assert_And_Cut
-                   (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+                   (if OK or else Last_Err = No_Error then SH_Parse_Frame);
                  return;
               end if;
 
@@ -2387,9 +2394,9 @@ is
                --  RFC 8446 §4.1.4: a server MUST send at most one
                --  HRR. A second HRR is unexpected_message.
                        if HC.Got_HRR then
-                          S.Last_Error := Unexpected_Message;
+                          Last_Err := Unexpected_Message;
                           pragma Assert_And_Cut
-                            (if OK or else S.Last_Error = No_Error
+                            (if OK or else Last_Err = No_Error
                              then SH_Parse_Frame);
                           return;
                        end if;
@@ -2404,10 +2411,10 @@ is
          Pre_OK : Boolean;
       begin
          Pre_Scan_SH_Extensions
-           (Data, HC, S, Is_HRR_Msg => Curr_Is_HRR, OK => Pre_OK);
+           (Data, HC, Last_Err, ALPN, Is_HRR_Msg => Curr_Is_HRR, OK => Pre_OK);
                  if not Pre_OK then
                     pragma Assert_And_Cut
-                      (if OK or else S.Last_Error = No_Error
+                      (if OK or else Last_Err = No_Error
                        then SH_Parse_Frame);
                     return;
                  end if;
@@ -2420,9 +2427,9 @@ is
         and then HC.HRR_Selected_Group = 0
         and then HC.HRR_Cookie_Len = 0
               then
-                 S.Last_Error := Illegal_Parameter;
+                 Last_Err := Illegal_Parameter;
                  pragma Assert_And_Cut
-                   (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+                   (if OK or else Last_Err = No_Error then SH_Parse_Frame);
                  return;
               end if;
 
@@ -2442,9 +2449,9 @@ is
            then True
            else HC.HRR_Selected_Group = 16#001D#)
               then
-                 S.Last_Error := Illegal_Parameter;
+                 Last_Err := Illegal_Parameter;
                  pragma Assert_And_Cut
-                   (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+                   (if OK or else Last_Err = No_Error then SH_Parse_Frame);
                  return;
               end if;
 
@@ -2460,9 +2467,9 @@ is
                     Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
                  begin
                             if N32 (Data'Length) < 41 + Sid_Len then
-                               S.Last_Error := Decode_Error;
+                               Last_Err := Decode_Error;
                                pragma Assert_And_Cut
-                                 (if OK or else S.Last_Error = No_Error
+                                 (if OK or else Last_Err = No_Error
                                   then SH_Parse_Frame);
                                return;
                             end if;
@@ -2477,14 +2484,14 @@ is
                                          | Wire_Suite_AES_256_GCM_SHA384
                                          | Wire_Suite_CHACHA20_POLY1305_SHA256
                                then
-                                  S.Last_Error := Illegal_Parameter;
+                                  Last_Err := Illegal_Parameter;
                                   pragma Assert_And_Cut
-                                    (if OK or else S.Last_Error = No_Error
+                                    (if OK or else Last_Err = No_Error
                                      then SH_Parse_Frame);
                                   return;
                                end if;
                        HC.HRR_Cipher_Suite := Suite_Val;
-                       S.Negotiated_Suite := To_Suite (Suite_Val);
+                       Negotiated := To_Suite (Suite_Val);
                        HC.Version := TLS_1_3;
                     end;
                  end;
@@ -2492,7 +2499,7 @@ is
                          pragma Assert (HC.Got_HRR);
                          pragma Assert (not Got_HRR_At_Entry);
                          pragma Assert
-                           (S.Negotiated_Suite in
+                           (Negotiated in
                               Suite_AES_128_GCM_SHA256
                             | Suite_AES_256_GCM_SHA384
                             | Suite_CHACHA20_POLY1305_SHA256);
@@ -2501,7 +2508,7 @@ is
                             and then HC.Got_HRR
                             and then not Got_HRR_At_Entry
                             and then HC.Version = TLS_1_3
-                            and then S.Negotiated_Suite in
+                            and then Negotiated in
                               Suite_AES_128_GCM_SHA256
                             | Suite_AES_256_GCM_SHA384
                             | Suite_CHACHA20_POLY1305_SHA256
@@ -2584,10 +2591,10 @@ is
            and then HC.HRR_Cipher_Suite /= 0
            and then Suite_Val /= HC.HRR_Cipher_Suite
                  then
-                    S.Last_Error := Illegal_Parameter;
+                    Last_Err := Illegal_Parameter;
                     goto Cleanup;
                  end if;
-         S.Negotiated_Suite := To_Suite (Suite_Val);
+         Negotiated := To_Suite (Suite_Val);
       end;
 
       --  Iterate extensions to find key_share
@@ -2690,18 +2697,18 @@ is
          HC.Version := TLS_1_2;
       end if;
       if HC.Version = TLS_1_3
-        and then S.Negotiated_Suite not in
+        and then Negotiated not in
           Suite_AES_128_GCM_SHA256
         | Suite_AES_256_GCM_SHA384
         | Suite_CHACHA20_POLY1305_SHA256
       then
-         S.Last_Error := Illegal_Parameter;
+         Last_Err := Illegal_Parameter;
          OK := False;
          goto Cleanup;
       end if;
       pragma Assert
         (if HC.Version = TLS_1_3
-         then S.Negotiated_Suite in
+         then Negotiated in
            Suite_AES_128_GCM_SHA256
          | Suite_AES_256_GCM_SHA384
          | Suite_CHACHA20_POLY1305_SHA256);
@@ -2729,7 +2736,7 @@ is
                        for I in N32 range 0 .. 31 loop
                           pragma Loop_Invariant
                             (if HC.Version = TLS_1_3
-                             then S.Negotiated_Suite in
+                             then Negotiated in
                                Suite_AES_128_GCM_SHA256
                              | Suite_AES_256_GCM_SHA384
                              | Suite_CHACHA20_POLY1305_SHA256);
@@ -2741,7 +2748,7 @@ is
                end loop;
             end if;
                     if Mismatch then
-                       S.Last_Error := Illegal_Parameter;
+                       Last_Err := Illegal_Parameter;
                        OK := False;
                        goto Cleanup;
                     end if;
@@ -2755,7 +2762,7 @@ is
       --  trigger an illegal_parameter alert. BoGo
       --  SecondServerHelloWrongVersion-TLS13.
       if HC.Got_HRR and then not HC.Has_TLS_1_3 then
-         S.Last_Error := Illegal_Parameter;
+         Last_Err := Illegal_Parameter;
          OK := False;
          goto Cleanup;
       end if;
@@ -2771,7 +2778,7 @@ is
         or else
          (HC.Version = TLS_1_3 and HC.Cfg.Versions = TLS_1_2_Only)
       then
-         S.Last_Error := Protocol_Version;
+         Last_Err := Protocol_Version;
          OK := False;
          goto Cleanup;
       end if;
@@ -2804,7 +2811,7 @@ is
          for I in N32 range 0 .. 7 loop
             pragma Loop_Invariant
               (if HC.Version = TLS_1_3
-               then S.Negotiated_Suite in
+               then Negotiated in
                  Suite_AES_128_GCM_SHA256
                | Suite_AES_256_GCM_SHA384
                | Suite_CHACHA20_POLY1305_SHA256);
@@ -2813,7 +2820,7 @@ is
             if R (24 + I) /= S_JDK (I) then MJ  := False; end if;
          end loop;
          if M13 or M12 or MJ then
-            S.Last_Error := Illegal_Parameter;
+            Last_Err := Illegal_Parameter;
             goto Cleanup;
          end if;
       end;
@@ -2828,7 +2835,7 @@ is
             and then
               (if HC.Version = TLS_1_3
                    and then (not HC.Got_HRR or else Got_HRR_At_Entry)
-               then S.Negotiated_Suite in
+               then Negotiated in
                  Suite_AES_128_GCM_SHA256
                        | Suite_AES_256_GCM_SHA384
                        | Suite_CHACHA20_POLY1305_SHA256));
@@ -2898,7 +2905,7 @@ is
          if not Shared_Secret_Is_Acceptable_X25519
                   (HC.KE.Shared (0 .. 31))
          then
-            S.Last_Error := Illegal_Parameter;
+            Last_Err := Illegal_Parameter;
             OK := False;
             goto Cleanup;
          end if;
@@ -2906,9 +2913,9 @@ is
 
       --  Bubble up extension-specific protocol errors (e.g. RFC 7301
       --  empty ALPN name → illegal_parameter). The caller's `if not
-      --  Parse_OK` arm reads S.Last_Error to pick the alert.
+      --  Parse_OK` arm reads Last_Err to pick the alert.
       if HC.Ext_Parse_Err /= No_Error then
-         S.Last_Error := HC.Ext_Parse_Err;
+         Last_Err := HC.Ext_Parse_Err;
          OK := False;
          goto Cleanup;
       end if;
@@ -2919,7 +2926,7 @@ is
          and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
          and then
            (if HC.Version = TLS_1_3
-            then S.Negotiated_Suite in
+            then Negotiated in
                               Suite_AES_128_GCM_SHA256
                             | Suite_AES_256_GCM_SHA384
                             | Suite_CHACHA20_POLY1305_SHA256));
@@ -2935,7 +2942,7 @@ is
                       pragma Assert (Buf = null);
                       pragma Assert (not Has_Buffer (Ctx));
                       pragma Assert
-                        (if OK or else S.Last_Error = No_Error then SH_Parse_Frame);
+                        (if OK or else Last_Err = No_Error then SH_Parse_Frame);
                       return;
               end;
    end Parse_Server_Hello;

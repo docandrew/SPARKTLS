@@ -30,7 +30,8 @@ is
    --   * if HC.HRR_Cookie_Len > 0, append the cookie extension
    --     (RFC 8446 §4.2.2).
    procedure Build_Client_Hello
-     (S          : in     Session;
+     (Ticket     : in     Session_Ticket;
+      Get_Time   : in     Get_Time_Fn;
       HC         : in out Handshake_Context;
       Result     :    out Byte_Seq;
       Len        :    out N32;
@@ -50,7 +51,9 @@ is
    --  Parse a ServerHello from raw handshake message bytes.
    --  Extracts: server random, cipher suite, key share (server public key).
            procedure Parse_Server_Hello
-             (S    : in out Session;
+             (Negotiated : in out Supported_Suite;
+              Last_Err   : in out Error_Code;
+              ALPN       : in out Hostname_Buf;
               HC   : in out Engaged_Context;
               Data : in     Byte_Seq;
               OK   :    out Boolean)
@@ -59,7 +62,7 @@ is
                                                          N32 (HC.HRR_Cookie'Length),
                                                                                         Post =>
                                                                                                           (if OK
-                                                                                                           or else Last_Error (S) = No_Error
+                                                                                                           or else Last_Err = No_Error
                                                                                                            then
                                                                                                              (if HC.Cfg.Random'Old /= null
                                                                                                               then HC.Cfg.Random /= null)
@@ -68,7 +71,7 @@ is
                                                                                                         and then
                                                                                                           (if OK
                                                                                                            and then HC.Version = TLS_1_3
-                                                                                                   then Suite (S) in
+                                                                                                   then Negotiated in
                                                                                                      Suite_AES_128_GCM_SHA256
                                                                                            | Suite_AES_256_GCM_SHA384
                                                                                            | Suite_CHACHA20_POLY1305_SHA256)

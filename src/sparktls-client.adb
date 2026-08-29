@@ -1159,7 +1159,7 @@ is
                         Body_Start => P + 4,
                         E_Len      => E_Len,
                         HC         => S.HC,
-                        S          => S,
+                        ALPN       => S.Negotiated_ALPN,
                         OK         => A_OK,
                         Err        => A_Err);
                      if not A_OK then
@@ -1245,7 +1245,8 @@ is
       Rec_Out   : N32;
    begin
       OK := False;
-      Handshake.Client_Msgs.Build_Client_Hello (S, S.HC, CH_Buf, CH_Len);
+      Handshake.Client_Msgs.Build_Client_Hello
+        (S.Ticket, S.Get_Time, S.HC, CH_Buf, CH_Len);
 
       if CH_Len = 0 then
          Set_State (S, Error_State);
@@ -1260,7 +1261,7 @@ is
       begin
       SPARKTLS_Transcript.Start (L);
       SPARKTLS_Transcript.Append (L, CH_Buf (0 .. CH_Len - 1));
-      S.HC := (Phase => Engaged,
+      S.HC := (
              TS => L,
              Version => S.HC.Version,
              Cfg => S.HC.Cfg,
@@ -3099,14 +3100,17 @@ is
                               S.Last_Error := Unexpected_Message;
                            end if;
                            Handshake.Client_Msgs.Parse_Server_Hello
-                             (S, S.HC, Byte_Seq (Frag), Parse_OK);
+                             (S.Negotiated_Suite, S.Last_Error,
+                              S.Negotiated_ALPN,
+                              S.HC, Byte_Seq (Frag), Parse_OK);
 
                                    if not Parse_OK
                                      and then S.Last_Error = No_Error
                                    then
                                       S.HC.Version := TLS_1_2;
                                       Handshake.TLS12.Parse_Server_Hello_12
-                                        (S, S.HC, Byte_Seq (Frag), Parse_OK);
+                                        (S.Negotiated_Suite, S.Last_Error,
+                                         S.HC, Byte_Seq (Frag), Parse_OK);
                                       pragma Assert
                                         (if Parse_OK then S.HC.Version = TLS_1_2);
                                    end if;
@@ -3210,7 +3214,7 @@ is
                                  Ignored_Rec_Out : N32;
                               begin
                                  Handshake.Client_Msgs.Build_Client_Hello
-                                   (S, S.HC, CH2_Buf, CH2_Len,
+                                   (S.Ticket, S.Get_Time, S.HC, CH2_Buf, CH2_Len,
                                     Retry_Mode => True);
                                          if CH2_Len = 0
                                            or else CH2_Len >
@@ -3562,9 +3566,7 @@ is
       HC.KE.Local_SK := (others => 0);
       HC.KE.P256_SK := (others => 0);
       HC.KE.P384_SK := (others => 0);
-      if HC.Phase = Engaged then
-         SPARKTLS_Transcript.Wipe (HC.TS);
-      end if;
+      SPARKTLS_Transcript.Wipe (HC.TS);
       HC.T12.Resumed_Master_Secret := (others => 0);
       HC.EMS_Session_Hash := (others => 0);
       HC.PSK.Value := (others => 0);

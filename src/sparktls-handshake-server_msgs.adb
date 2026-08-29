@@ -1457,13 +1457,12 @@ is
 
    procedure Apply_Raw_Cipher_Suite
      (Val : in     Unsigned_16;
-      S   : in out Session;
+      Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC  : in out Handshake_Context)
    with Post =>
-            S.Role = S.Role'Old
-            and then S.State = S.State'Old
-            and then S.Input.Read_Pos = S.Input.Read_Pos'Old
-            and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+            True
                     and then HC.Legacy_Session_ID_Len =
                            HC.Legacy_Session_ID_Len'Old
                             and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
@@ -1479,7 +1478,9 @@ is
 
    procedure Apply_Raw_Cipher_Suite
      (Val : in     Unsigned_16;
-      S   : in out Session;
+      Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC  : in out Handshake_Context)
    is
       Cert_Is_ECDSA : constant Boolean :=
@@ -1499,10 +1500,10 @@ is
               | Wire_Suite_AES_128_GCM_SHA256
               | Wire_Suite_CHACHA20_POLY1305_SHA256
       then
-         if S.Negotiated_Suite = Suite_None then
-            S.Negotiated_Suite := To_Suite (Val);
+         if Negotiated = Suite_None then
+            Negotiated := To_Suite (Val);
          elsif Val = Wire_Suite_CHACHA20_POLY1305_SHA256 then
-            S.Negotiated_Suite := To_Suite (Val);
+            Negotiated := To_Suite (Val);
          end if;
       end if;
 
@@ -1514,9 +1515,9 @@ is
                           | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
                           | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
            and then Prefer_TLS12_Candidate
-                      (HC.Cfg, Wire_Of (S.Negotiated_Suite_12), Val)
+                      (HC.Cfg, Wire_Of (Negotiated_12), Val)
          then
-            S.Negotiated_Suite_12 := To_Suite (Val);
+            Negotiated_12 := To_Suite (Val);
          end if;
          return;
       end if;
@@ -1525,34 +1526,33 @@ is
         and then Val in Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
                        | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
                        | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
-        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (S.Negotiated_Suite_12), Val)
+        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (Negotiated_12), Val)
       then
-         S.Negotiated_Suite_12 := To_Suite (Val);
+         Negotiated_12 := To_Suite (Val);
       end if;
 
       if Cert_Is_RSA
         and then Val in Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
                        | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
                        | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
-        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (S.Negotiated_Suite_12), Val)
+        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (Negotiated_12), Val)
       then
-         S.Negotiated_Suite_12 := To_Suite (Val);
+         Negotiated_12 := To_Suite (Val);
       end if;
    end Apply_Raw_Cipher_Suite;
 
   procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-      S         : in out Session;
+      Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC        : in out Handshake_Context)
   with Pre =>
              RFLX.TLS_Handshake.Cipher_Suite_TLS.Has_Buffer (Suite_Ctx)
              and then RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
                         (Suite_Ctx),
        Post =>
-            S.Role = S.Role'Old
-            and then S.State = S.State'Old
-            and then S.Input.Read_Pos = S.Input.Read_Pos'Old
-            and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+            True
                     and then HC.Legacy_Session_ID_Len =
                            HC.Legacy_Session_ID_Len'Old
                             and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
@@ -1568,7 +1568,9 @@ is
 
    procedure Apply_Cipher_Suite
      (Suite_Ctx : in     RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
-      S         : in out Session;
+      Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC        : in out Handshake_Context)
    is
       Suite : constant RFLX.Tls_Parameters.TLS_Cipher_Suites :=
@@ -1603,7 +1605,7 @@ is
          return;
       end if;
       Val := Unsigned_16 (Suite_Code);
-      Apply_Raw_Cipher_Suite (Val, S, HC);
+      Apply_Raw_Cipher_Suite (Val, Negotiated, Negotiated_12, Last_Err, HC);
    end Apply_Cipher_Suite;
 
    --  Dispatch a single CH extension by Tag and update HC accordingly.
@@ -2688,7 +2690,9 @@ is
    --  Verify / Update, Update_Outer.
    procedure Parse_CH_Cipher_Suites
      (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
-      S   : in out Session;
+      Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC  : in out Handshake_Context)
    with Pre =>
      not Ctx'Constrained
@@ -2700,10 +2704,6 @@ is
        RFLX.TLS_Handshake.Client_Hello.Has_Buffer (Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
        and Ctx.Buffer_Last  = Ctx.Buffer_Last'Old
-          and S.Role = S.Role'Old
-          and S.State = S.State'Old
-          and S.Input.Read_Pos = S.Input.Read_Pos'Old
-          and S.Input.Write_Pos = S.Input.Write_Pos'Old
                           and HC.Legacy_Session_ID_Len =
                                  HC.Legacy_Session_ID_Len'Old
                           and (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
@@ -2711,7 +2711,9 @@ is
 
    procedure Parse_CH_Cipher_Suites
      (Ctx : in out RFLX.TLS_Handshake.Client_Hello.Context;
-      S   : in out Session;
+      Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC  : in out Handshake_Context)
    is
       use RFLX.TLS_Handshake.Client_Hello;
@@ -2743,10 +2745,6 @@ is
                           Field_First (Ctx, F_Cipher_Suites_TLS)
                and then Suites_Ctx.Last  =
                           Field_Last  (Ctx, F_Cipher_Suites_TLS)
-                  and then S.Role = S.Role'Loop_Entry
-                  and then S.State = S.State'Loop_Entry
-                  and then S.Input.Read_Pos = S.Input.Read_Pos'Loop_Entry
-                  and then S.Input.Write_Pos = S.Input.Write_Pos'Loop_Entry
                           and then HC.Legacy_Session_ID_Len =
                                      HC.Legacy_Session_ID_Len'Loop_Entry
                           and then
@@ -2765,7 +2763,7 @@ is
                if RFLX.TLS_Handshake.Cipher_Suite_TLS.Well_Formed_Message
                     (Suite_Ctx)
                then
-                  Apply_Cipher_Suite (Suite_Ctx, S, HC);
+                  Apply_Cipher_Suite (Suite_Ctx, Negotiated, Negotiated_12, Last_Err, HC);
                end if;
                RFLX.TLS_Handshake.Cipher_Suites_TLS.Update
                  (Suites_Ctx, Suite_Ctx);
@@ -2841,7 +2839,9 @@ is
      (Data   : in     Byte_Seq;
       P      : in     N32;
       Cs_Len : in     N32;
-      S      : in out Session;
+      Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC     : in out Handshake_Context)
    with Pre => Data'Length > 0
                and then Data'Last <= N32 (Max_HS_Msg) - 1
@@ -2851,10 +2851,7 @@ is
                        and then P <= Data'Last
                        and then Cs_Len <= Data'Last - P + 1,
         Post =>
-            S.Role = S.Role'Old
-            and then S.State = S.State'Old
-            and then S.Input.Read_Pos = S.Input.Read_Pos'Old
-            and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+            True
             and then HC.Legacy_Session_ID_Len =
                    HC.Legacy_Session_ID_Len'Old
                             and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
@@ -2872,24 +2869,20 @@ is
      (Data   : in     Byte_Seq;
       P      : in     N32;
       Cs_Len : in     N32;
-      S      : in out Session;
+      Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC     : in out Handshake_Context)
    is
    begin
-      S.Negotiated_Suite := Suite_None;
-      S.Negotiated_Suite_12 := Suite_None;
+      Negotiated := Suite_None;
+      Negotiated_12 := Suite_None;
 
       for J in N32 range 0 .. (Cs_Len / 2) - 1 loop
          pragma Loop_Invariant (J < Cs_Len / 2);
          pragma Loop_Invariant (P >= Data'First);
          pragma Loop_Invariant (J * 2 + 1 < Cs_Len);
          pragma Loop_Invariant (P + J * 2 + 1 <= Data'Last);
-         pragma Loop_Invariant (S.Role = S.Role'Loop_Entry);
-         pragma Loop_Invariant (S.State = S.State'Loop_Entry);
-         pragma Loop_Invariant
-           (S.Input.Read_Pos = S.Input.Read_Pos'Loop_Entry);
-         pragma Loop_Invariant
-           (S.Input.Write_Pos = S.Input.Write_Pos'Loop_Entry);
          pragma Loop_Invariant
            (HC.Legacy_Session_ID_Len =
               HC.Legacy_Session_ID_Len'Loop_Entry);
@@ -2911,23 +2904,22 @@ is
                Unsigned_16 (Data (Suite_Pos)) * 256
                + Unsigned_16 (Data (Suite_Pos + 1));
          begin
-            Apply_Raw_Cipher_Suite (Val, S, HC);
+            Apply_Raw_Cipher_Suite (Val, Negotiated, Negotiated_12, Last_Err, HC);
          end;
       end loop;
    end Parse_TLS12_No_Ext_Cipher_Suites;
 
    procedure Parse_TLS12_Client_Hello_No_Extensions
-     (S    : in out Session;
+     (Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
    with Pre => Data'Length > 0
                and then Data'Last <= N32 (Max_HS_Msg) - 1,
         Post =>
-            S.Role = S.Role'Old
-            and then S.State = S.State'Old
-            and then S.Input.Read_Pos = S.Input.Read_Pos'Old
-            and then S.Input.Write_Pos = S.Input.Write_Pos'Old
+            True
                             and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
                                     and then
                                       (if HC.Cfg.Local'Old /= null
@@ -2940,7 +2932,9 @@ is
                       (if OK then HC.Version = TLS_1_2);
 
    procedure Parse_TLS12_Client_Hello_No_Extensions
-     (S    : in out Session;
+     (Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
@@ -2952,24 +2946,24 @@ is
               OK := False;
 
       if Data'Length < 4 + 35 then
-         S.Last_Error := Decode_Error;
+         Last_Err := Decode_Error;
          return;
       end if;
 
       if Data (Data'First + 4) /= 16#03#
         or else Data (Data'First + 5) /= 16#03#
       then
-         S.Last_Error := Protocol_Version;
+         Last_Err := Protocol_Version;
          return;
       end if;
 
       if not Compression_Methods_OK (Data, Is_TLS13 => False) then
-         S.Last_Error := Illegal_Parameter;
+         Last_Err := Illegal_Parameter;
          return;
       end if;
 
       if Data'Last < 34 or else BS > Data'Last - 34 then
-         S.Last_Error := Decode_Error;
+         Last_Err := Decode_Error;
          return;
       end if;
       pragma Assert (Data'Last >= 33);
@@ -2979,13 +2973,13 @@ is
 
       Sid_Len := N32 (Data (BS + 34));
       if Sid_Len > 32 then
-         S.Last_Error := Decode_Error;
+         Last_Err := Decode_Error;
          return;
       end if;
 
       P := BS + 35;
       if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
-         S.Last_Error := Decode_Error;
+         Last_Err := Decode_Error;
          return;
       end if;
       pragma Assert (P <= Data'Last);
@@ -2998,7 +2992,7 @@ is
               P := P + Sid_Len;
 
       if P > Data'Last or else Data'Last - P < 1 then
-         S.Last_Error := Decode_Error;
+         Last_Err := Decode_Error;
          return;
       end if;
 
@@ -3009,27 +3003,27 @@ is
         or else P > Data'Last
         or else Cs_Len > Data'Last - P + 1
       then
-         S.Last_Error := Decode_Error;
+         Last_Err := Decode_Error;
          return;
       end if;
       pragma Assert (P <= Data'Last);
               pragma Assert (Cs_Len <= Data'Last - P + 1);
               pragma Assert (P + Cs_Len <= Data'Last + 1);
-              Parse_TLS12_No_Ext_Cipher_Suites (Data, P, Cs_Len, S, HC);
+              Parse_TLS12_No_Ext_Cipher_Suites (Data, P, Cs_Len, Negotiated, Negotiated_12, Last_Err, HC);
               P := P + Cs_Len;
 
       if P > Data'Last then
-         S.Last_Error := Decode_Error;
+         Last_Err := Decode_Error;
          return;
       end if;
       Cm_Len := N32 (Data (P));
       P := P + 1;
       if P > Data'Last or else Cm_Len > Data'Last - P + 1 then
-         S.Last_Error := Decode_Error;
+         Last_Err := Decode_Error;
          return;
       end if;
 
-      if S.Negotiated_Suite_12 = Suite_None then
+      if Negotiated_12 = Suite_None then
          return;
       end if;
 
@@ -3042,7 +3036,9 @@ is
    end Parse_TLS12_Client_Hello_No_Extensions;
 
    procedure Parse_Client_Hello
-     (S    : in out Session;
+     (Negotiated    : in out Supported_Suite;
+      Negotiated_12 : in out Supported_Suite;
+      Last_Err      : in out Error_Code;
       HC   : in out Handshake_Context;
       Data : in     Byte_Seq;
       OK   :    out Boolean)
@@ -3068,7 +3064,7 @@ is
       OK := False;
 
          if Data'Length < 39 then
-                            S.Last_Error := Decode_Error;
+                            Last_Err := Decode_Error;
                             pragma Assert (Saved_Config_Frame);
                             pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                             return;
@@ -3081,7 +3077,7 @@ is
          --  structurally well-formed (we read its 4-byte header to
          --  reach this point); the type byte just identifies a
             --  different message that doesn't belong here.
-                            S.Last_Error := Unexpected_Message;
+                            Last_Err := Unexpected_Message;
                             pragma Assert (Saved_Config_Frame);
                             pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                             return;
@@ -3103,7 +3099,7 @@ is
           + N32 (Data (Data'First + 3));
       begin
             if HS_Body_Len + 4 < N32 (Data'Length) then
-                               S.Last_Error := Unexpected_Message;
+                               Last_Err := Unexpected_Message;
                                pragma Assert (Saved_Config_Frame);
                                pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                                return;
@@ -3117,7 +3113,7 @@ is
         or else TLS12_Client_Hello_Has_Empty_Extensions (Data)
       then
          pragma Assert (Saved_Config_Frame);
-         Parse_TLS12_Client_Hello_No_Extensions (S, HC, Data, OK);
+         Parse_TLS12_Client_Hello_No_Extensions (Negotiated, Negotiated_12, Last_Err, HC, Data, OK);
          pragma Assert (Saved_Config_Frame);
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
@@ -3180,7 +3176,7 @@ is
       then
             Take_Buffer (Ctx, Buf);
             RFLX_Free (Buf);
-                            S.Last_Error := Decode_Error;
+                            Last_Err := Decode_Error;
                             pragma Assert (Saved_Config_Frame);
                             pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                             return;
@@ -3203,7 +3199,7 @@ is
          if Data'Length >= 6 and then
             (Data (Data'First + 4) /= 16#03# or Data (Data'First + 5) /= 16#03#)
          then
-            S.Last_Error := Protocol_Version;
+            Last_Err := Protocol_Version;
          else
             --  Walk to legacy_compression_methods to check it's
             --  exactly the single byte 0x00. RFC 8446 §4.1.2 +
@@ -3235,9 +3231,9 @@ is
                   end if;
                end if;
                if OK then
-                  S.Last_Error := Illegal_Parameter;
+                  Last_Err := Illegal_Parameter;
                else
-                  S.Last_Error := Decode_Error;
+                  Last_Err := Decode_Error;
                   end if;
                end;
                             end if;
@@ -3265,7 +3261,7 @@ is
                  if SID_Len > 32 then
                     Take_Buffer (Ctx, Buf);
                     RFLX_Free (Buf);
-                    S.Last_Error := Decode_Error;
+                    Last_Err := Decode_Error;
                     pragma Assert (Saved_Config_Frame);
                     pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                     return;
@@ -3285,11 +3281,11 @@ is
       --  Iterate cipher suites to find one we support
       --  Store best TLS 1.3 suite and best TLS 1.2 suite separately.
       --  Version negotiation later picks the right one.
-      S.Negotiated_Suite := Suite_None;
-      S.Negotiated_Suite_12 := Suite_None;
+      Negotiated := Suite_None;
+      Negotiated_12 := Suite_None;
 
       if Well_Formed (Ctx, F_Cipher_Suites_TLS) then
-            Parse_CH_Cipher_Suites (Ctx, S, HC);
+            Parse_CH_Cipher_Suites (Ctx, Negotiated, Negotiated_12, Last_Err, HC);
             HC.Cfg.Local := Saved_Local;
             HC.Cfg.Random := Saved_Random;
             pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
@@ -3303,7 +3299,7 @@ is
               pragma Assert (Saved_Config_Frame);
 
               --  Need at least one matching suite (either TLS 1.3 or 1.2)
-         if S.Negotiated_Suite = Suite_None and S.Negotiated_Suite_12 = Suite_None then
+         if Negotiated = Suite_None and Negotiated_12 = Suite_None then
             Take_Buffer (Ctx, Buf);
                     RFLX_Free (Buf);
                             pragma Assert (Saved_Config_Frame);
@@ -3331,9 +3327,9 @@ is
                Take_Buffer (Ctx, Buf);
                RFLX_Free (Buf);
                if HC.Ext_Parse_Err /= No_Error then
-                  S.Last_Error := HC.Ext_Parse_Err;
+                  Last_Err := HC.Ext_Parse_Err;
                   else
-                     S.Last_Error := Decode_Error;
+                     Last_Err := Decode_Error;
                           end if;
                                   pragma Assert (Saved_Config_Frame);
                                   pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
@@ -3352,7 +3348,7 @@ is
       if not HC.Saw_Supported_Versions
         and then Raw_Legacy_Version in 16#0301# .. 16#0302#
       then
-         S.Last_Error := Protocol_Version;
+         Last_Err := Protocol_Version;
          OK := False;
          pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
          pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
@@ -3366,7 +3362,7 @@ is
       --  protocol_version (instead of silently falling back to the
       --  legacy_version path). BoGo NoSupportedVersions.
          if HC.Saw_Supported_Versions and then not HC.SV_Has_Acceptable then
-            S.Last_Error := Protocol_Version;
+            Last_Err := Protocol_Version;
             OK := False;
                     pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
                     pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
@@ -3387,7 +3383,7 @@ is
               if not Compression_Methods_OK
                       (Data, Is_TLS13 => HC.Version = TLS_1_3)
               then
-                    S.Last_Error := Illegal_Parameter;
+                    Last_Err := Illegal_Parameter;
                     OK := False;
                     pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
                     pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
@@ -3397,12 +3393,12 @@ is
               end if;
 
               if HC.Version = TLS_1_3
-                and then S.Negotiated_Suite not in
+                and then Negotiated not in
                   Suite_AES_128_GCM_SHA256
                 | Suite_AES_256_GCM_SHA384
                 | Suite_CHACHA20_POLY1305_SHA256
               then
-                 S.Last_Error := Handshake_Failure;
+                 Last_Err := Handshake_Failure;
                  OK := False;
                          pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
                          pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
@@ -3420,7 +3416,7 @@ is
         and then HC.PSK.Binder_Len > 0
         and then not HC.PSK.Has_DHE_KE
       then
-            S.Last_Error := Missing_Extension;
+            Last_Err := Missing_Extension;
             OK := False;
                     pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
                     pragma Assert (if Saved_Random /= null then HC.Cfg.Random /= null);
@@ -3742,7 +3738,7 @@ is
    end SH_Put16;
 
    procedure Serialize_Server_Hello
-     (S           : in     Session;
+     (Negotiated  : in     Supported_Suite;
       HC          : in     Handshake_Context;
       KS_Raw      : in     KS_Raw_Buffer;
       KS_Data_Len : in     N32;
@@ -3763,7 +3759,7 @@ is
                and then SH_Msg_Len <= Max_Server_Hello
                and then SH_Msg_Len = 4 + SH_Body_Len
                and then SH_Body_Len = 40 + SID_Echo + Ext_Total
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+               and then Negotiated in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256
                and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
@@ -3771,7 +3767,7 @@ is
         Post => Len = SH_Msg_Len;
 
    procedure Serialize_Server_Hello_Prefix
-     (S           : in     Session;
+     (Negotiated  : in     Supported_Suite;
       HC          : in     Handshake_Context;
       Ext_Total   : in     N32;
       SID_Echo    : in     N32;
@@ -3784,7 +3780,7 @@ is
                and then SID_Echo <= 32
                and then SH_Body_Len <= 189
                and then SH_Body_Len = 40 + SID_Echo + Ext_Total
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+               and then Negotiated in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256
                and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
@@ -3830,7 +3826,7 @@ is
    end Serialize_Server_Hello_Fixed_Prefix;
 
    procedure Serialize_Server_Hello_Variable_Prefix
-     (S           : in     Session;
+     (Negotiated  : in     Supported_Suite;
       HC          : in     Handshake_Context;
       Ext_Total   : in     N32;
       SID_Echo    : in     N32;
@@ -3841,14 +3837,14 @@ is
                and then Ext_Total in 46 .. 117
                and then SID_Echo <= 32
                and then Pos = 38
-               and then S.Negotiated_Suite in Suite_AES_128_GCM_SHA256
+               and then Negotiated in Suite_AES_128_GCM_SHA256
                                             | Suite_AES_256_GCM_SHA384
                                             | Suite_CHACHA20_POLY1305_SHA256
                and then Session_ID_Echo_RFC_8446_4_1_3 (HC),
         Post => Pos = 44 + SID_Echo;
 
    procedure Serialize_Server_Hello_Variable_Prefix
-     (S           : in     Session;
+     (Negotiated  : in     Supported_Suite;
       HC          : in     Handshake_Context;
       Ext_Total   : in     N32;
       SID_Echo    : in     N32;
@@ -3869,7 +3865,7 @@ is
       Pos := Pos + SID_Echo;
 
       pragma Assert (Pos + 1 <= Result'Last);
-      SH_Put16 (Result, Pos, Wire_Of (S.Negotiated_Suite));
+      SH_Put16 (Result, Pos, Wire_Of (Negotiated));
       Pos := Pos + 2;
 
       pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));
@@ -3883,7 +3879,7 @@ is
    end Serialize_Server_Hello_Variable_Prefix;
 
    procedure Serialize_Server_Hello_Prefix
-     (S           : in     Session;
+     (Negotiated  : in     Supported_Suite;
       HC          : in     Handshake_Context;
       Ext_Total   : in     N32;
       SID_Echo    : in     N32;
@@ -3898,7 +3894,7 @@ is
          Result      => Result,
          Pos         => Pos);
       Serialize_Server_Hello_Variable_Prefix
-        (S         => S,
+        (Negotiated => Negotiated,
          HC        => HC,
          Ext_Total => Ext_Total,
          SID_Echo  => SID_Echo,
@@ -3976,7 +3972,7 @@ is
    end Serialize_Server_Hello_Extensions;
 
    procedure Serialize_Server_Hello
-     (S           : in     Session;
+     (Negotiated  : in     Supported_Suite;
       HC          : in     Handshake_Context;
       KS_Raw      : in     KS_Raw_Buffer;
       KS_Data_Len : in     N32;
@@ -3990,7 +3986,7 @@ is
       Pos : N32;
    begin
       Serialize_Server_Hello_Prefix
-        (S           => S,
+        (Negotiated  => Negotiated,
          HC          => HC,
          Ext_Total   => Ext_Total,
          SID_Echo    => SID_Echo,
@@ -4130,7 +4126,7 @@ is
    end Select_Server_Key_Share;
 
    procedure Build_Server_Hello
-     (S      : in     Session;
+     (Negotiated  : in     Supported_Suite;
       HC     : in out Engaged_Context;
       Result :    out Byte_Seq;
       Len    :    out N32)
@@ -4215,7 +4211,7 @@ is
       pragma Assert (SH_Msg_Len <= Max_Server_Hello);
 
       Serialize_Server_Hello
-        (S           => S,
+        (Negotiated  => Negotiated,
          HC          => HC,
          KS_Raw      => KS_Raw,
          KS_Data_Len => KS_Data_Len,
@@ -4277,12 +4273,11 @@ is
    end Has_ALPN_Match;
 
    procedure Build_Encrypted_Extensions
-     (HC     : in     Engaged_Context;
-      S      : in out Session;
+     (S      : in out Session;
       Result :    out Byte_Seq;
       Len    :    out N32)
    is
-      Selected_ALPN : constant Hostname_Buf := Select_ALPN (HC);
+      Selected_ALPN : constant Hostname_Buf := Select_ALPN (S.HC);
       ALPN_Match : constant Boolean := Selected_ALPN.Len > 0;
       subtype EE_ALPN_Protocol_Len is Natural range 0 .. Max_Hostname_Len;
       subtype EE_ALPN_Ext_Len is N32 range 0 .. 262;
@@ -4301,9 +4296,9 @@ is
       --  on resumption unless the server accepts early data, which this
       --  implementation does not.
       SNI_Ext_Len : constant EE_SNI_Ext_Len :=
-         (if HC.Cfg.Ack_Server_Name
-             and then HC.Peer_SNI.Len > 0
-             and then not HC.Using_PSK
+         (if S.HC.Cfg.Ack_Server_Name
+             and then S.HC.Peer_SNI.Len > 0
+             and then not S.HC.Using_PSK
           then 4
           else 0);
 

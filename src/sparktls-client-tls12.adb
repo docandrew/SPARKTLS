@@ -3062,6 +3062,7 @@ is
                 Post => (if Ready then
                              Result = OK
                              and then Msg_Len <= Max_HS_Msg - 4
+                             and then Has_Message (D.Reasm)
                      and then
                        (if S.HC.Cfg.Local /= null
                             and then S.HC.Cfg.Local.Has_Identity

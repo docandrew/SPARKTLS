@@ -692,7 +692,7 @@ is
       Body_Start : in     N32;
       E_Len      : in     N32;
       HC         : in     Handshake_Context;
-      S          : in out Session;
+      ALPN       : in out Hostname_Buf;
       OK         :    out Boolean;
       Err        :    out Error_Code)
    is
@@ -769,12 +769,12 @@ is
          end;
 
          --  Match — copy into Negotiated_ALPN.
-         S.Negotiated_ALPN.Len := Natural (Proto_Len);
+         ALPN.Len := Natural (Proto_Len);
          for I in 1 .. Natural (Proto_Len) loop
             pragma Loop_Invariant
-              (S.Negotiated_ALPN.Len = Natural (Proto_Len)
+              (ALPN.Len = Natural (Proto_Len)
                and Proto_Len <= N32 (Max_Hostname_Len));
-            S.Negotiated_ALPN.Data (I) :=
+            ALPN.Data (I) :=
                Character'Val (Data (Body_Start + 2 + N32 (I)));
          end loop;
       end;
