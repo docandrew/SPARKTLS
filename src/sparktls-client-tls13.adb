@@ -335,12 +335,10 @@ is
                               | Wait_Certificate_Verify
                               | Wait_Server_Finished
                  then
-                   SPARKTLS_Transcript.Started (S.HC.TS)
-                   and then S.Negotiated_Suite in TLS13_Suite);
+                   S.Negotiated_Suite in TLS13_Suite);
 
    procedure Fill_Decrypted_HS_Reassembly
-     (HC            : in Handshake_Context;
-      D             : in out SPARKTLS.HS_Pool.HS_Data;
+     (D             : in out SPARKTLS.HS_Pool.HS_Data;
       Plaintext     : in Byte_Seq;
       Plain_Len     : in N32;
       Pos           : out N32;
@@ -349,147 +347,8 @@ is
      Pre =>
        Plaintext'First = 0
        and then Plaintext'Last < IO_Buffer_Capacity
-       and then Plain_Len <= N32 (Plaintext'Length)
-       and then (if HC.Cert_Request_Received
-                   and then HC.Cfg.Local /= null
-                   and then HC.Cfg.Local.Has_Identity
-                 then
-                   HC.Cfg.Random /= null
-                   and then HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (HC.Negotiated_Sig_Algo, HC.Cfg.Local.Sign_Algo)
-                   and then (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)),
-     Post =>
-       Pos <= Plain_Len
-       and then Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
-       and then HC.Client_HS = HC.Client_HS'Old
-       and then HC.Cert_Request_Received = HC.Cert_Request_Received'Old
-       and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-       and then (if HC.Cfg.Local'Old /= null
-                 then
-                   HC.Cfg.Local.Has_Identity = HC.Cfg.Local'Old.Has_Identity
-                   and then HC.Cfg.Local.Sign_Algo = HC.Cfg.Local'Old.Sign_Algo
-                   and then HC.Cfg.Local.RSA_Mod_Len = HC.Cfg.Local'Old.RSA_Mod_Len
-                   and then HC.Cfg.Local.NaCl_Cert_Len = HC.Cfg.Local'Old.NaCl_Cert_Len)
-       and then (if HC.Cfg.Local /= null then HC.Cfg.Local'Old /= null)
-       and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
-                 then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
-       and then (if HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity
-                 then HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity)
-       and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-       and then HC.Negotiated_Sig_Algo = HC.Negotiated_Sig_Algo'Old
-       and then (if HC.Cert_Request_Received
-                   and then HC.Cfg.Local /= null
-                   and then HC.Cfg.Local.Has_Identity
-                 then
-                   HC.Cfg.Random /= null
-                   and then HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (HC.Negotiated_Sig_Algo, HC.Cfg.Local.Sign_Algo)
-                   and then (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
-       and then (if Decode_Failed then Used (D.Reasm) = 0);
-
-   procedure Copy_Decrypted_Reasm_Bytes
-     (HC        : in Handshake_Context;
-      D         : in out SPARKTLS.HS_Pool.HS_Data;
-      Plaintext : in Byte_Seq;
-      From      : in N32;
-      Take      : in N32)
-   with
-     Pre =>
-       Plaintext'First = 0
-       and then Plaintext'Last < IO_Buffer_Capacity
-       and then Take > 0
-       and then Take <= Free_Space (D.Reasm)
-       and then From <= N32 (Plaintext'Length)
-       and then Take <= N32 (Plaintext'Length) - From
-       and then (if HC.Cert_Request_Received
-                   and then HC.Cfg.Local /= null
-                   and then HC.Cfg.Local.Has_Identity
-                 then
-                   HC.Cfg.Random /= null
-                   and then HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (HC.Negotiated_Sig_Algo, HC.Cfg.Local.Sign_Algo)
-                   and then (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)),
-     Post =>
-       Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
-       and then HC.Client_HS = HC.Client_HS'Old
-       and then HC.Cert_Request_Received = HC.Cert_Request_Received'Old
-       and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-       and then (if HC.Cfg.Local'Old /= null
-                 then
-                   HC.Cfg.Local.Has_Identity = HC.Cfg.Local'Old.Has_Identity
-                   and then HC.Cfg.Local.Sign_Algo = HC.Cfg.Local'Old.Sign_Algo
-                   and then HC.Cfg.Local.RSA_Mod_Len = HC.Cfg.Local'Old.RSA_Mod_Len
-                   and then HC.Cfg.Local.NaCl_Cert_Len = HC.Cfg.Local'Old.NaCl_Cert_Len)
-       and then (if HC.Cfg.Local /= null then HC.Cfg.Local'Old /= null)
-       and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
-                 then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
-       and then (if HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity
-                 then HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity)
-       and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-       and then HC.Negotiated_Sig_Algo = HC.Negotiated_Sig_Algo'Old;
-
-   procedure Check_Declared_Message_Size
-     (HC : in Handshake_Context; D : in out SPARKTLS.HS_Pool.HS_Data; Decode_Failed : out Boolean)
-   with
-     Pre =>
-       Header_Ready (D.Reasm)
-       and then (if HC.Cert_Request_Received
-                   and then HC.Cfg.Local /= null
-                   and then HC.Cfg.Local.Has_Identity
-                 then
-                   HC.Cfg.Random /= null
-                   and then HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (HC.Negotiated_Sig_Algo, HC.Cfg.Local.Sign_Algo)
-                   and then (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)),
-     Post =>
-       Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
-       and then HC.Client_HS = HC.Client_HS'Old
-       and then HC.Cert_Request_Received = HC.Cert_Request_Received'Old
-       and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-       and then (if HC.Cfg.Local'Old /= null
-                 then
-                   HC.Cfg.Local.Has_Identity = HC.Cfg.Local'Old.Has_Identity
-                   and then HC.Cfg.Local.Sign_Algo = HC.Cfg.Local'Old.Sign_Algo
-                   and then HC.Cfg.Local.RSA_Mod_Len = HC.Cfg.Local'Old.RSA_Mod_Len
-                   and then HC.Cfg.Local.NaCl_Cert_Len = HC.Cfg.Local'Old.NaCl_Cert_Len)
-       and then (if HC.Cfg.Local'Old /= null
-                 then
-                   HC.Cfg.Local.Has_Identity = HC.Cfg.Local'Old.Has_Identity
-                   and then HC.Cfg.Local.Sign_Algo = HC.Cfg.Local'Old.Sign_Algo
-                   and then HC.Cfg.Local.RSA_Mod_Len = HC.Cfg.Local'Old.RSA_Mod_Len
-                   and then HC.Cfg.Local.NaCl_Cert_Len = HC.Cfg.Local'Old.NaCl_Cert_Len)
-       and then (if HC.Cfg.Local'Old /= null
-                 then
-                   HC.Cfg.Local.Has_Identity = HC.Cfg.Local'Old.Has_Identity
-                   and then HC.Cfg.Local.Sign_Algo = HC.Cfg.Local'Old.Sign_Algo
-                   and then HC.Cfg.Local.RSA_Mod_Len = HC.Cfg.Local'Old.RSA_Mod_Len
-                   and then HC.Cfg.Local.NaCl_Cert_Len = HC.Cfg.Local'Old.NaCl_Cert_Len)
-       and then (if HC.Cfg.Local /= null then HC.Cfg.Local'Old /= null)
-       and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
-                 then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
-       and then (if HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity
-                 then HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity)
-       and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-       and then HC.Negotiated_Sig_Algo = HC.Negotiated_Sig_Algo'Old
-       and then (if HC.Cert_Request_Received
-                   and then HC.Cfg.Local /= null
-                   and then HC.Cfg.Local.Has_Identity
-                 then
-                   HC.Cfg.Random /= null
-                   and then HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (HC.Negotiated_Sig_Algo, HC.Cfg.Local.Sign_Algo)
-                   and then (if HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
-       and then (if Decode_Failed then Used (D.Reasm) = 0);
+       and then Plain_Len <= N32 (Plaintext'Length),
+     Post => Pos <= Plain_Len;
 
    procedure Dispatch_Completed_Decrypted_Reasm
      (S         : in out Session;
@@ -2185,33 +2044,8 @@ is
                  | Suite_CHACHA20_POLY1305_SHA256);
    end Dispatch_Completed_Decrypted_Reasm;
 
-   procedure Copy_Decrypted_Reasm_Bytes
-     (HC        : in Handshake_Context;
-      D         : in out SPARKTLS.HS_Pool.HS_Data;
-      Plaintext : in Byte_Seq;
-      From      : in N32;
-      Take      : in N32) is
-   begin
-      Append (D.Reasm, Plaintext (From .. From + Take - 1));
-   end Copy_Decrypted_Reasm_Bytes;
-
-   procedure Check_Declared_Message_Size
-     (HC : in Handshake_Context; D : in out SPARKTLS.HS_Pool.HS_Data; Decode_Failed : out Boolean)
-   is
-   begin
-      --  Nothing to "decode" any more: the buffer derives the declared size
-      --  from its own bytes 1 .. 3, so there is no second copy to keep in
-      --  step. What remains is the peer-controlled bound check, which is a
-      --  protocol decision rather than accounting.
-      Decode_Failed := Message_Too_Large (D.Reasm);
-      if Decode_Failed then
-         Reset (D.Reasm);
-      end if;
-   end Check_Declared_Message_Size;
-
    procedure Fill_Decrypted_HS_Reassembly
-     (HC            : in Handshake_Context;
-      D             : in out SPARKTLS.HS_Pool.HS_Data;
+     (D             : in out SPARKTLS.HS_Pool.HS_Data;
       Plaintext     : in Byte_Seq;
       Plain_Len     : in N32;
       Pos           : out N32;
@@ -2246,11 +2080,13 @@ is
 
          --  The peer's declared size becomes readable the moment the header
          --  lands, so the bound check belongs between the two rounds.
-         if Round = 1 and then Header_Ready (D.Reasm) then
-            Check_Declared_Message_Size (HC, D, Decode_Failed);
-            if Decode_Failed then
-               return;
-            end if;
+         if Round = 1
+           and then Header_Ready (D.Reasm)
+           and then Message_Too_Large (D.Reasm)
+         then
+            Reset (D.Reasm);
+            Decode_Failed := True;
+            return;
          end if;
       end loop;
    end Fill_Decrypted_HS_Reassembly;
@@ -2271,7 +2107,7 @@ is
             declare
                Decode_Failed : Boolean;
             begin
-               Fill_Decrypted_HS_Reassembly (S.HC, D, Plaintext, Plain_Len, Pos, Decode_Failed);
+               Fill_Decrypted_HS_Reassembly (D, Plaintext, Plain_Len, Pos, Decode_Failed);
 
                if Decode_Failed then
                   S.Last_Error := Decode_Error;

@@ -108,9 +108,6 @@ is
 
    type TLS_Role is (Role_Client, Role_Server);
 
-   type Cipher_Suite is
-     (TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256, TLS_AES_256_GCM_SHA384);
-
    --  The cipher suites we implement, as a CLOSED ENUMERATION (#118).
    --  Negotiated_Suite is peer-influenced but WE assign it, from this
    --  menu, at the negotiation boundary: the hostile wire Unsigned_16
@@ -1324,7 +1321,6 @@ is
    with Pre => TEK'Length = 32;
 
    type Config is record
-      Suite       : Cipher_Suite := TLS_CHACHA20_POLY1305_SHA256;
       Random      : Random_Bytes_Fn := null;
       Server_Name : Hostname_Buf;
       Skip_Verify : Boolean := False;  --  accept any cert

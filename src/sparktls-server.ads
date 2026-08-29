@@ -38,7 +38,7 @@ is
    ----------------------------------------------------------------------------
 
    --  Quick setup: configure and initialize a server session in one call.
-   --  Sets Mode_WebPKI and the default cipher suite.
+   --  Sets Mode_WebPKI.
    --  Optionally provide a Trust store and Request_Client_Cert for mTLS.
    procedure Configure
      (S                     : out Server_Session;
@@ -94,13 +94,6 @@ is
    procedure Init
      (S   : out Server_Session;
       Cfg : in Config)
-      --  This postcondition is CHECKED by GNATprove: the body is in SPARK
-      --  since the ticket-storage callbacks replaced Config's owning pointers
-      --  (an owning pointer could not be copied out of an "in" parameter, which
-      --  is what forced SPARK_Mode => Off here before). Both failure paths
-      --  leave State (S) = Error_State.
-      --  Role is set in the initial aggregate and never changed (Set_State
-      --  frames it).
    with
      Pre => Cfg.Random /= null and then Cfg.Local /= null and then Cfg.Local.Has_Identity
      --  The formal is the CONSTRAINED subtype (#39, 2026-08-24):

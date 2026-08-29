@@ -48,7 +48,6 @@ procedure Test_Build_Server_Hello is
       SPARKTLS.Test_Support.Reset (S);
       HC         := (others => <>);
       HC.Cfg.Random       := Det_Random_Lib.Det_Random'Access;
-      HC.Cfg.Suite        := TLS_AES_128_GCM_SHA256;
       HC.Client_Has_X25519 := True;
       HC.KE.Peer_PK := (others => 16#01#);  --  arbitrary peer pubkey
    end Init_Context;

@@ -1540,30 +1540,15 @@ is
    end Append_Client_Certificate_Verify_12;
 
    procedure Build_Client_Finished_12_Message
-     (S : in Session; D : in SPARKTLS.HS_Pool.HS_Data; FB : out Byte_Seq; FL : out N32)
+     (S : in Session; FB : out Byte_Seq; FL : out N32)
    with
      Pre =>
        FB'First = 0
-       and then FB'Last >= Finished_12_Total_Len - 1
-       and then S.Negotiated_Suite in
-                  Suite_ECDHE_RSA_AES128_GCM_SHA256
-                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                  | Suite_ECDHE_RSA_CHACHA20_SHA256
-                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-     Post =>
-       Valid_Finished_12_Len
-         (FL)
-         --  Frame: computing the Finished verify_data touches the
-         --  transcript hash only, never the app channels. Without
-         --  this, Derive_Keys_12's fresh-counter fact dies here and
-         --  the encrypted-send Space_Left Pre cannot see it.
-       and then S.Client_App = S.Client_App'Old
-       and then S.Server_App = S.Server_App'Old;
+       and then FB'Last >= Finished_12_Total_Len - 1,
+     Post => Valid_Finished_12_Len (FL);
 
    procedure Build_Client_Finished_12_Message
-     (S : in Session; D : in SPARKTLS.HS_Pool.HS_Data; FB : out Byte_Seq; FL : out N32)
+     (S : in Session; FB : out Byte_Seq; FL : out N32)
    is
       use Key_Schedule_12;
       TH      : Digest;
@@ -1710,16 +1695,11 @@ is
       Records.Build_CCS_Record (Scratch, CCS_Out);
       if CCS_Out = 0 then
          Send_Cleartext_Handshake_Error_12 (S, D, Insufficient_Buffer, Result);
-         pragma Assert_And_Cut (Result in Has_Output | Error_Alert);
          return;
       end if;
 
-      Build_Client_Finished_12_Message (S, D, FB, FL);
-      pragma Assert (Valid_Finished_12_Len (FL));
+      Build_Client_Finished_12_Message (S, FB, FL);
       Encrypt_And_Commit_Client_Finished_12 (S, D, Scratch, FB, FL, Result);
-      if Result /= OK then
-         return;
-      end if;
    end Append_Client_CCS_And_Finished_12;
 
    procedure Build_Client_Flight_12

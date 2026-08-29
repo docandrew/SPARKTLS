@@ -55,7 +55,7 @@ is
    ----------------------------------------------------------------------------
 
    --  Quick setup: configure and initialize a client session in one call.
-   --  Sets Mode_WebPKI, Purpose_Server, and the default cipher suite.
+   --  Sets Mode_WebPKI and Purpose_Server.
    --  After Configure, the caller should drain and send the ClientHello.
    procedure Configure
      (S                    : out Client_Session;

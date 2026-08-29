@@ -356,7 +356,6 @@ begin
          Roots : aliased Trust_Store;
       begin
          Cfg.Random      := Det_Random_Lib.Det_Random'Access;
-         Cfg.Suite       := TLS_AES_128_GCM_SHA256;
          Cfg.Skip_Verify := Skip;
          declare
             H : constant String := "localhost";

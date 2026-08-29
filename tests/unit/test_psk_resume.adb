@@ -134,7 +134,6 @@ begin
 
    --  Set up a minimal client Config with a resumption ticket.
    Cfg.Random := Det_Random_Lib.Det_Random'Access;
-   Cfg.Suite  := TLS_AES_128_GCM_SHA256;
    declare
       H : constant String := "localhost";
    begin

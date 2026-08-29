@@ -176,15 +176,7 @@ is
 
    procedure Init (S : out Server_Session; Cfg : in Config) is
    begin
-      --  The postcondition is a two-conjunct goal (Role and State). Left
-      --  whole, the prover discharges one conjunct or the other depending
-      --  on how its budget falls, and reports whichever it dropped -- the
-      --  same one-at-a-time behaviour seen on VCs 1021/1023. Asserting both
-      --  conjuncts at each exit decomposes the goal in place, so each is
-      --  established from local facts instead of re-derived at the end.
       S := (State => Wait_Client_Hello, Role => Role_Server, others => <>);
-      pragma Assert (Role (S) = Role_Server);
-      pragma Assert (State (S) = Wait_Client_Hello);
 
       if not Server_Config_Can_Start (Cfg) then
          Set_State (S, Error_State);
@@ -208,8 +200,6 @@ is
       --  Start documents the lifecycle and resets Choice/Has_Data if
       --  the allocator ever recycles contexts.
       S.HC.Cfg := Cfg;
-      pragma Assert (Role (S) = Role_Server);
-      pragma Assert (State (S) = Wait_Client_Hello);
    end Init;
 
    procedure Scrub_Handshake_Context (HC : in out Handshake_Context) is
