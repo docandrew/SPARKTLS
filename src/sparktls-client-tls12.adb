@@ -1340,7 +1340,8 @@ is
       Result  : out Action)
    with
      Pre  =>
-       S.HC.Cfg.Local /= null
+       S.HC.Cfg.Random /= null
+       and then S.HC.Cfg.Local /= null
        and then S.HC.Cfg.Local.Has_Identity
        and then S.HC.T12.Client_Cert_Allowed
        and then S.Negotiated_Suite in TLS12_Suite,
@@ -1607,7 +1608,6 @@ is
    with
      Pre  =>
        Msg_Len <= Max_HS_Msg - 4
-       and then S.HC.Cfg.Random /= null
        --  256: transcript-append bound (see Handle_CertReq_12).
        and then Frag'Last < N32'Last - 256
        and then Frag'First <= N32'Last - 4

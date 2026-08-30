@@ -1,7 +1,7 @@
-with Interfaces;                    use Interfaces;
-with SPARKTLS_Reassembly;  use SPARKTLS_Reassembly;
+with Interfaces;          use Interfaces;
+with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
 with SPARKTLS.HS_Pool;
-with SPARKTLS.Records;     use SPARKTLS.Records;
+with SPARKTLS.Records;    use SPARKTLS.Records;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Server_Msgs;
 with X509;
@@ -40,12 +40,10 @@ is
 
    --  Forward declarations
    procedure Advance_Handshake
-     (S      : in out Server_Session;
-      D      : in out SPARKTLS.HS_Pool.HS_Data;
-      Result : out Action)
-      --  No state-phase Pre: the Phase discriminant was deleted (it drove
-      --  no behavior; the transcript carries its own Started fact and the
-      --  Engage aggregate still forces full initialization).
+     (S : in out Server_Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+     --  No state-phase Pre: the Phase discriminant was deleted (it drove
+     --  no behavior; the transcript carries its own Started fact and the
+     --  Engage aggregate still forces full initialization).
    ;
    --  NO POSTCONDITION HERE, DELIBERATELY. It used to carry
    --  "Post => S.State in Connection_State", a TAUTOLOGY (S.State IS a
@@ -67,7 +65,7 @@ is
 
    procedure Send_Alert_And_Error (S : in out Session; Err : Error_Code; Result : out Action)
    with
-     Pre => S.State not in Idle | Closed | Closing | Error_State,
+     Pre  => S.State not in Idle | Closed | Closing | Error_State,
      Post =>
        S.State = Error_State
        and then S.Last_Error = Err
@@ -104,7 +102,7 @@ is
    --  (alert 40) per RFC 8446 6.
    procedure Dispatch_CH_Parse_Error_Alert (S : in out Session; Result : out Action)
    with
-     Pre => S.State not in Idle | Closed | Closing | Error_State,
+     Pre  => S.State not in Idle | Closed | Closing | Error_State,
      Post =>
        S.State = Error_State
        and then Result in Has_Output | Error_Alert
@@ -124,7 +122,7 @@ is
          =>
             Send_Alert_And_Error (S, S.Last_Error, Result);
 
-         when others =>
+         when others                                                             =>
             Send_Alert_And_Error (S, Handshake_Failure, Result);
       end case;
    end Dispatch_CH_Parse_Error_Alert;
@@ -152,21 +150,22 @@ is
       Get_Time              : Get_Time_Fn := null;
       Select_Identity       : SNI_Cert_Selector := null)
    is
-      Cfg : Config;
+      Cfg : Config :=
+        (Random                => Random,
+         Local                 => Local,
+         Trust                 => Trust,
+         Request_Client_Cert   => Request_Client_Cert,
+         Require_Client_Cert   => Require_Client_Cert,
+         Store_Session         => Store_Session,
+         Lookup_Session        => Lookup_Session,
+         Versions              => Versions,
+         Get_Active_TEK        => Get_Active_TEK,
+         Get_TEK_By_Id         => Get_TEK_By_Id,
+         TLS12_Ticket_Lifetime => TLS12_Ticket_Lifetime,
+         Get_Time              => Get_Time,
+         Select_Identity       => Select_Identity,
+         others                => <>);
    begin
-      Cfg.Random := Random;
-      Cfg.Local := Local;
-      Cfg.Trust := Trust;
-      Cfg.Request_Client_Cert := Request_Client_Cert;
-      Cfg.Require_Client_Cert := Require_Client_Cert;
-      Cfg.Store_Session := Store_Session;
-      Cfg.Lookup_Session := Lookup_Session;
-      Cfg.Versions := Versions;
-      Cfg.Get_Active_TEK := Get_Active_TEK;
-      Cfg.Get_TEK_By_Id := Get_TEK_By_Id;
-      Cfg.TLS12_Ticket_Lifetime := TLS12_Ticket_Lifetime;
-      Cfg.Get_Time := Get_Time;
-      Cfg.Select_Identity := Select_Identity;
       if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
          Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
          Cfg.ALPN.Len := ALPN'Length;
@@ -186,7 +185,7 @@ is
 
       SPARKTLS.HS_Pool.Acquire (S.Slot);
       declare
-         Fresh : Handshake_Context;
+         Fresh : Handshake_Context := (Cfg => (Random => Cfg.Random, others => <>), others => <>);
       begin
          S.HC := Fresh;
       end;
@@ -235,7 +234,7 @@ is
    begin
       Handled := True;
       case S.State is
-         when Connected =>
+         when Connected   =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             elsif S.Handshake_Just_Done then
@@ -247,10 +246,12 @@ is
                Result := Handshake_Done;
             else
                case S.Version is
-                  when TLS_1_2 =>
+                  when TLS_1_2          =>
                      SPARKTLS.Server.TLS12.Process_Connected_12 (S, Result);
-                  when TLS_1_3 =>
+
+                  when TLS_1_3          =>
                      SPARKTLS.Server.TLS13.Process_Connected_13 (S, Result);
+
                   when TLS_Undetermined =>
                      S.Last_Error := Internal_Error;
                      Set_State (S, Error_State);
@@ -258,15 +259,17 @@ is
                end case;
             end if;
 
-         when Closing =>
+         when Closing     =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             elsif Input_Available (S) > 0 then
                case S.Version is
-                  when TLS_1_2 =>
+                  when TLS_1_2          =>
                      SPARKTLS.Server.TLS12.Process_Connected_12 (S, Result);
-                  when TLS_1_3 =>
+
+                  when TLS_1_3          =>
                      SPARKTLS.Server.TLS13.Process_Connected_13 (S, Result);
+
                   when TLS_Undetermined =>
                      S.Last_Error := Internal_Error;
                      Set_State (S, Error_State);
@@ -320,7 +323,7 @@ is
                Result := Error_Alert;
             end if;
 
-         when Closed =>
+         when Closed      =>
             --  Terminal, and reaching it again is normal: a peer may still
             --  have records in flight after our close_notify (BoGo's
             --  Shutdown-Shim-* tests drain with -check-close-notify), and
@@ -339,13 +342,13 @@ is
             S.Input.Write_Pos := 0;
             Result := Shutdown;
 
-         when Idle =>
+         when Idle        =>
             --  Genuinely a caller error: Advance before Init/Configure.
             S.Last_Error := Internal_Error;
             S.State := Error_State;
             Result := Error_Alert;
 
-         when others =>
+         when others      =>
             Handled := False;
             Result := Need_Input;
       end case;
@@ -369,12 +372,14 @@ is
             Advance_Handshake (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
          else
             case S.Version is
-               when TLS_1_2 =>
+               when TLS_1_2          =>
                   SPARKTLS.Server.TLS12.Advance_Handshake_12
                     (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
-               when TLS_1_3 =>
+
+               when TLS_1_3          =>
                   SPARKTLS.Server.TLS13.Advance_Handshake_13
                     (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
+
                when TLS_Undetermined =>
                   S.Last_Error := Internal_Error;
                   Set_State (S, Error_State);
@@ -433,10 +438,12 @@ is
         or else S.HC.Cfg.Random = null
         or else S.HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
         or else S.HC.Cfg.Local.Int_Count > Max_Pool_Size
-        or else (for some I in 0 .. Max_Pool_Size - 1
-                 => S.HC.Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
-        or else (S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                 and then S.HC.Cfg.Local.RSA_Mod_Len not in 64 .. 512)
+        or else
+          (for some I in 0 .. Max_Pool_Size - 1 =>
+             S.HC.Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
+        or else
+          (S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
+           and then S.HC.Cfg.Local.RSA_Mod_Len not in 64 .. 512)
       then
          Send_Alert_And_Error (S, Handshake_Failure, Result);
          return;
@@ -452,34 +459,33 @@ is
          --  used to sit here.
          Cfg     : constant Ready_Config := S.HC.Cfg;
          Policy  : constant Version_Policy := Cfg.Versions;
-         Want_13 : constant Boolean :=
-           Candidate_Version = TLS_1_3 and Policy /= TLS_1_2_Only;
+         Want_13 : constant Boolean := Candidate_Version = TLS_1_3 and Policy /= TLS_1_2_Only;
          Want_12 : constant Boolean :=
-           (Candidate_Version = TLS_1_2
-            or (Candidate_Version = TLS_1_3 and Policy = TLS_1_2_Only))
+           (Candidate_Version = TLS_1_2 or (Candidate_Version = TLS_1_3 and Policy = TLS_1_2_Only))
            and Policy /= TLS_1_3_Only;
       begin
          if Want_13 then
-            if S.Negotiated_Suite in
-                 Suite_AES_128_GCM_SHA256
-                 | Suite_AES_256_GCM_SHA384
-                 | Suite_CHACHA20_POLY1305_SHA256
+            if S.Negotiated_Suite
+               in Suite_AES_128_GCM_SHA256
+                | Suite_AES_256_GCM_SHA384
+                | Suite_CHACHA20_POLY1305_SHA256
               and then (not S.HC.Client_Saw_Key_Share or else not S.HC.Client_Saw_Supported_Groups)
             then
                Send_Alert_And_Error (S, Missing_Extension, Result);
                return;
             end if;
 
-            if S.Negotiated_Suite not in
-                 Suite_AES_128_GCM_SHA256
-                 | Suite_AES_256_GCM_SHA384
-                 | Suite_CHACHA20_POLY1305_SHA256
-              or else not (S.HC.Client_Has_X25519
-                           or S.HC.Client_Has_P256
-                           or S.HC.Client_Has_P384
-                           or S.HC.Client_Supports_X25519
-                           or S.HC.Client_Supports_P256
-                           or S.HC.Client_Supports_P384)
+            if S.Negotiated_Suite
+               not in Suite_AES_128_GCM_SHA256
+                    | Suite_AES_256_GCM_SHA384
+                    | Suite_CHACHA20_POLY1305_SHA256
+              or else
+                not (S.HC.Client_Has_X25519
+                     or S.HC.Client_Has_P256
+                     or S.HC.Client_Has_P384
+                     or S.HC.Client_Supports_X25519
+                     or S.HC.Client_Supports_P256
+                     or S.HC.Client_Supports_P384)
             then
                if Want_12 and Candidate_12 /= Suite_None then
                   S.Version := TLS_1_2;
@@ -510,12 +516,12 @@ is
             end if;
             pragma
               Assert
-                (if S.State in
-                      Wait_Client_Hello
-                      | Wait_Client_Hello_Retry
-                      | Server_Hello_Sent
-                      | Wait_Client_Finished
-                   then True);
+                (if S.State
+                    in Wait_Client_Hello
+                     | Wait_Client_Hello_Retry
+                     | Server_Hello_Sent
+                     | Wait_Client_Finished
+                 then True);
             return;
          end if;
       end;
@@ -530,17 +536,15 @@ is
    --  Advance_Handshake case dispatch so SPARK can prove each
    --  protocol state's logic in isolation.
    procedure Handle_Wait_Client_Hello
-     (S      : in out Server_Session;
-      D      : in out SPARKTLS.HS_Pool.HS_Data;
-      Result : out Action)
-      --  The state is not decoration: without it the prover knows
-      --  nothing about S.State on entry, so every
-      --  Send_Alert_And_Error (S, ...) in the body -- whose own Pre is
-      --  just "S.State not in Idle | Closed | Closing | Error_State" --
-      --  is unprovable. That accounted for 13 of the 18
-      --  "precondition might fail" findings in this unit (round 30).
-      --  Discharged trivially: the sole caller is the
-      --  "when Wait_Client_Hello =>" arm of Advance_Handshake's case.
+     (S : in out Server_Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+     --  The state is not decoration: without it the prover knows
+     --  nothing about S.State on entry, so every
+     --  Send_Alert_And_Error (S, ...) in the body -- whose own Pre is
+     --  just "S.State not in Idle | Closed | Closing | Error_State" --
+     --  is unprovable. That accounted for 13 of the 18
+     --  "precondition might fail" findings in this unit (round 30).
+     --  Discharged trivially: the sole caller is the
+     --  "when Wait_Client_Hello =>" arm of Advance_Handshake's case.
    with Pre => S.State = Wait_Client_Hello;
 
    procedure Handle_Wait_Client_Hello
@@ -638,7 +642,7 @@ is
 
                procedure Free_Reasm
                with
-                 Pre => Server_Active (S),
+                 Pre  => Server_Active (S),
                  Post =>
                    Server_Active (S)
                    and then S.Role = S.Role'Old
@@ -664,15 +668,16 @@ is
 
                   procedure Decode_Pending_Reassembly_Header
                   with
-                    Pre =>
+                    Pre  =>
                       S.State = Wait_Client_Hello
                       and then S.Role = Role_Server
                       and then Header_Ready (D.Reasm),
                     Post =>
                       S.State in Wait_Client_Hello | Error_State
                       and then (if S.State = Wait_Client_Hello then S.Role = Role_Server)
-                      and then (if S.State = Wait_Client_Hello
-                                then S.HC.Legacy_Session_ID_Len in 0 .. 32);
+                      and then
+                        (if S.State = Wait_Client_Hello
+                         then S.HC.Legacy_Session_ID_Len in 0 .. 32);
 
                   procedure Decode_Pending_Reassembly_Header is
                   begin
@@ -688,29 +693,30 @@ is
                         pragma
                           Assert_And_Cut
                             (S.State = Error_State
-                               and then S.State in Wait_Client_Hello | Error_State
-                               and then (if S.State /= Wait_Client_Hello
-                                         then S.State = Error_State));
+                             and then S.State in Wait_Client_Hello | Error_State
+                             and then
+                               (if S.State /= Wait_Client_Hello then S.State = Error_State));
                         return;
                      end if;
                      pragma Assert (S.State = Wait_Client_Hello);
                      pragma
                        Assert_And_Cut
                          (S.Role = Role_Server
-                            and then S.State = Wait_Client_Hello
-                            and then S.State in Wait_Client_Hello | Error_State);
+                          and then S.State = Wait_Client_Hello
+                          and then S.State in Wait_Client_Hello | Error_State);
                      pragma
                        Assert_And_Cut
                          (S.Role = Role_Server
-                            and then (if S.State = Wait_Client_Hello
-                                      then S.HC.Legacy_Session_ID_Len in 0 .. 32)
-                            and then S.State in Wait_Client_Hello | Error_State);
+                          and then
+                            (if S.State = Wait_Client_Hello
+                             then S.HC.Legacy_Session_ID_Len in 0 .. 32)
+                          and then S.State in Wait_Client_Hello | Error_State);
                      pragma Assert (S.Role = Role_Server);
                   end Decode_Pending_Reassembly_Header;
 
                   procedure Append_Reassembly_Fragment
                   with
-                    Pre =>
+                    Pre  =>
                       S.State = Wait_Client_Hello
                       and then S.Role = Role_Server
                       and then Handshake_Record_Fragment_Ready (Rec)
@@ -720,10 +726,12 @@ is
                     Post =>
                       (if S.State = Wait_Client_Hello and then not More_Input_Needed
                        then S.Role = Role_Server)
-                      and then (if S.State = Wait_Client_Hello
-                                then
-                                  (if More_Input_Needed then not Has_Message (D.Reasm)
-                                   else Has_Message (D.Reasm)));
+                      and then
+                        (if S.State = Wait_Client_Hello
+                         then
+                           (if More_Input_Needed
+                            then not Has_Message (D.Reasm)
+                            else Has_Message (D.Reasm)));
 
                   procedure Append_Reassembly_Fragment is
                   begin
@@ -735,7 +743,8 @@ is
                           N32'Min (N32'Min (Wanted (D.Reasm), Frag_Len), Free_Space (D.Reasm));
                      begin
                         if Copy_Len > 0 then
-                           Append (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Copy_Len - 1));
+                           Append
+                             (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Copy_Len - 1));
                         end if;
                      end;
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -915,8 +924,7 @@ is
                         return;
                      end if;
                      pragma Assert (S.HC.Legacy_Session_ID_Len in 0 .. 32);
-                     Complete_Client_Hello
-                       (S, D, Candidate_Version, Candidate_12, Result);
+                     Complete_Client_Hello (S, D, Candidate_Version, Candidate_12, Result);
                   end Parse_Completed_Reassembly;
                begin
                   Append_Reassembly_Fragment;
@@ -1087,8 +1095,7 @@ is
 
                   Reset (D.Reasm);
                   pragma Assert (S.HC.Legacy_Session_ID_Len in 0 .. 32);
-                  Complete_Client_Hello
-                    (S, D, Candidate_Version, Candidate_12, Result);
+                  Complete_Client_Hello (S, D, Candidate_Version, Candidate_12, Result);
                end Parse_Single_Record_Client_Hello;
 
                procedure Start_Header_Pending_Reassembly
@@ -1244,7 +1251,7 @@ is
          return;
       end if;
       case S.Version is
-         when TLS_1_2 =>
+         when TLS_1_2          =>
             Records.TLS12.Build_Alert_Record_12
               (Level       => 1,
                Desc        => 0,
@@ -1252,13 +1259,15 @@ is
                Implicit_IV => S.Server_IV_12,
                Output      => S.Output,
                Bytes_Out   => Ignored_Alert_Out);
-         when TLS_1_3 =>
+
+         when TLS_1_3          =>
             Records.Build_Alert_Record
               (Level     => 1,
                Desc      => 0,
                Keys      => S.Server_App,
                Output    => S.Output,
                Bytes_Out => Ignored_Alert_Out);
+
          when TLS_Undetermined =>
             return;
       end case;

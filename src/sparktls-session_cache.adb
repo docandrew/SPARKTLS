@@ -205,11 +205,11 @@ is
    procedure Initialize
      (Random : Random_Bytes_Fn; Clock : Get_Time_Fn; Rotation_Interval : Unsigned_32 := 24 * 3600)
    is
-      Key_ID : Byte_Seq (0 .. 3) := (others => 0);
-      TEK    : Byte_Seq (0 .. 31) := (others => 0);
-      Now    : Unsigned_64 := 0;
+      Key_ID   : Byte_Seq (0 .. 3) := (others => 0);
+      TEK      : Byte_Seq (0 .. 31) := (others => 0);
+      Now      : Unsigned_64 := 0;
    begin
-      Rand_Fn := Random;
+      Rand_Fn  := Random;
       Clock_Fn := Clock;
       Interval := Unsigned_64 (Rotation_Interval);
 
@@ -242,7 +242,7 @@ is
       Key_ID : Byte_Seq (0 .. 3) := (others => 0);
       TEK    : Byte_Seq (0 .. 31) := (others => 0);
    begin
-      if Interval = 0 or else Rand_Fn = null or else Clock_Fn = null then
+      if Interval = 0 or else Clock_Fn = null then
          return;   --  manual control, or not initialised
 
       end if;

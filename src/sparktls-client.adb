@@ -225,13 +225,18 @@ is
       Skip_Verify          : Boolean := False;
       Skip_Hostname_Verify : Boolean := False)
    is
-      Cfg : Config;
+      Cfg : Config :=
+        (Random               => Random,
+         Trust                => Trust,
+         Local                => Local,
+         Skip_Verify          => Skip_Verify,
+         Skip_Hostname_Verify => Skip_Hostname_Verify,
+         Get_Time             => Clock,
+         Versions             => Versions,
+         Resume_Ticket        => Resume,
+         others               => <>);
    begin
-      Cfg.Random := Random;
-      Cfg.Trust := Trust;
-      Cfg.Local := Local;
-      Cfg.Skip_Verify := Skip_Verify;
-      Cfg.Skip_Hostname_Verify := Skip_Hostname_Verify;
+
       Cfg.Get_Time := Clock;
       Cfg.Verify_Mode := Mode;
       Cfg.Versions := Versions;
@@ -368,7 +373,7 @@ is
 
       SPARKTLS.HS_Pool.Acquire (S.Slot);
       declare
-         Fresh : Handshake_Context;
+         Fresh : Handshake_Context := (Cfg => (Random => Cfg.Random, others => <>), others => <>);
       begin
          S.HC := Fresh;
       end;
