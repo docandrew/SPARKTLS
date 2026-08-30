@@ -7,7 +7,7 @@ with SPARKTLSCrypto.HKDF;           use SPARKTLSCrypto.HKDF;
 with SPARKTLSCrypto.Ed25519;
 with SPARKTLS_Reassembly;  use SPARKTLS_Reassembly;
 with SPARKTLS.HS_Pool;
-with SPARKTLS.Records;     use SPARKTLS.Records;
+with SPARKTLS.Records;     use SPARecords.TLS13;
 with SPARKTLS.Cert_Verify; use SPARKTLS.Cert_Verify;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.TLS13;
@@ -2779,7 +2779,7 @@ is
 
          --  RFC 8446 5.4: TLSInnerPlaintext MUST NOT exceed
          --  2^14 + 1 octets. Check before decrypting.
-         if Frag_Len - Records.Tag_Size > Records.Max_Fragment + 1 then
+         if Frag_Len - Records.Tag_SRecords.TLS13.Max_Fragment + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Encrypted_Alert (S, Record_Overflow, Result);
             return;
@@ -3299,7 +3299,7 @@ is
 
          --  RFC 8446 5.4: TLSInnerPlaintext MUST NOT exceed
          --  2^14 + 1 octets. Check before decrypting.
-         if Frag_Len - Records.Tag_Size > Records.Max_Fragment + 1 then
+         if Frag_Len - Records.Tag_SRecords.TLS13.Max_Fragment + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             declare
                Ignored_Alert_Out : N32;
