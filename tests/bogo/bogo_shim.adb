@@ -78,9 +78,9 @@ procedure Bogo_Shim is
       TLS12_Cipher_Groups  : SPARKTLS.Cipher_Suite_Preference_Groups :=
         (others => 0);
       TLS12_Cipher_Count   : Natural range 0 .. Max_Config_Cipher_Suites := 0;
-      Verify_Sig_Algos     : SPARKTLS.Sig_Algo_List := (others => 0);
+      Verify_Sig_Algos     : SPARKTLS.Sig_Algo_List := (others => Scheme_None);
       Verify_Sig_Count     : Natural range 0 .. Max_Sig_Algos := 0;
-      Sign_Sig_Algos       : SPARKTLS.Sig_Algo_List := (others => 0);
+      Sign_Sig_Algos       : SPARKTLS.Sig_Algo_List := (others => Scheme_None);
       Sign_Sig_Count       : Natural range 0 .. Max_Sig_Algos := 0;
       Expect_ALPN          : Unbounded_Text := (others => Character'Val (0));
       Expect_ALPN_Len      : Natural := 0;
@@ -430,10 +430,12 @@ procedure Bogo_Shim is
       end Parse_Cipher_List;
 
       procedure Add_Verify_Sig_Algo (S : String) is
-         Scheme : constant Unsigned_16 := Dec_To_U16 (S);
+         Scheme : constant Maybe_Sig_Scheme := Scheme_From_Wire (Dec_To_U16 (S));
       begin
-         if Scheme in 16#0807# | 16#0403# | 16#0503#
-                    | 16#0804# | 16#0805# | 16#0806#
+         --  Verify side accepts PSS/ECDSA/Ed25519 only (no PKCS1),
+         --  matching the pre-enum wire set.
+         if Scheme in Sig_Ed25519 | Sig_ECDSA_P256_SHA256 | Sig_ECDSA_P384_SHA384
+                    | Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512
            and then Cfg.Verify_Sig_Count < Max_Sig_Algos
          then
             Cfg.Verify_Sig_Algos (Cfg.Verify_Sig_Count) := Scheme;
@@ -442,11 +444,9 @@ procedure Bogo_Shim is
       end Add_Verify_Sig_Algo;
 
       procedure Add_Sign_Sig_Algo (S : String) is
-         Scheme : constant Unsigned_16 := Dec_To_U16 (S);
+         Scheme : constant Maybe_Sig_Scheme := Scheme_From_Wire (Dec_To_U16 (S));
       begin
-         if Scheme in 16#0807# | 16#0403# | 16#0503#
-                    | 16#0804# | 16#0805# | 16#0806#
-                    | 16#0401# | 16#0501# | 16#0601#
+         if Scheme /= Scheme_None
            and then Cfg.Sign_Sig_Count < Max_Sig_Algos
          then
             Cfg.Sign_Sig_Algos (Cfg.Sign_Sig_Count) := Scheme;

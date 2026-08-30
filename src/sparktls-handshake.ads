@@ -15,14 +15,8 @@ package SPARKTLS.Handshake
   with SPARK_Mode => On
 is
    --  Handshake message type codes (RFC 8446 Section 4)
-   HT_Client_Hello         : constant Byte := 16#01#;
-   HT_Server_Hello         : constant Byte := 16#02#;
-   HT_New_Session_Ticket   : constant Byte := 16#04#;
-   HT_Encrypted_Extensions : constant Byte := 16#08#;
-   HT_Certificate          : constant Byte := 16#0B#;
-   HT_Certificate_Request  : constant Byte := 16#0D#;
-   HT_Certificate_Verify   : constant Byte := 16#0F#;
-   HT_Finished             : constant Byte := 16#14#;
+   --  HandshakeType names are the Maybe_HS_Msg enum literals in SPARKTLS;
+   --  wire bytes come from HS_Msg_Wire.
 
    --  Extension type codes
    Ext_Server_Name          : constant := 16#00_00#;
@@ -46,18 +40,7 @@ is
      Post =>
        (if OK
         then
-          Msg_Type in
-            16#01#
-            | 16#02#
-            | 16#04#
-            | 16#08#
-            | 16#0B#
-            | 16#0C#
-            | 16#0D#
-            | 16#0E#
-            | 16#0F#
-            | 16#10#
-            | 16#14#
+          Msg_Type /= HT_Unknown
           and Msg_Len <= Max_HS_Msg
           and Msg_Len <= N32 (Data'Length) - 4);
 
@@ -97,26 +80,25 @@ is
    --  TLS 1.3 CertificateVerify even though servers may list them
    --  in `signature_algorithms` for back-compat.
    function Sig_Algo_Compatible_With_Cert
-     (Scheme : Unsigned_16; Cert : Signing_Algorithm; Allow_PKCS1_v1_5 : Boolean := False)
+     (Scheme : Maybe_Sig_Scheme; Cert : Signing_Algorithm; Allow_PKCS1_v1_5 : Boolean := False)
       return Boolean
-   is (Scheme = 0
+   is (Scheme = Scheme_None
        or else (case Cert is
-                  when Sign_Ed25519 => Scheme = 16#0807#,
-                  when Sign_ECDSA_P256 => Scheme = 16#0403#,
-                  when Sign_ECDSA_P384 => Scheme = 16#0503#,
+                  when Sign_Ed25519 => Scheme = Sig_Ed25519,
+                  when Sign_ECDSA_P256 => Scheme = Sig_ECDSA_P256_SHA256,
+                  when Sign_ECDSA_P384 => Scheme = Sig_ECDSA_P384_SHA384,
                   when Sign_RSA_PSS =>
-                    Scheme = 16#0804#
-                    or else Scheme = 16#0805#
-                    or else Scheme = 16#0806#
+                    Scheme in Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512
                     or else (Allow_PKCS1_v1_5
-                             and then (Scheme = 16#0401#
-                                       or else Scheme = 16#0501#
-                                       or else Scheme = 16#0601#)),
+                             and then Scheme in
+                                        Sig_RSA_PKCS1_SHA256
+                                        | Sig_RSA_PKCS1_SHA384
+                                        | Sig_RSA_PKCS1_SHA512),
                   when Sign_None => False));
 
    function Pick_Sig_Algo
      (Sig_Algs : Byte_Seq; Cert : Signing_Algorithm; Allow_PKCS1_v1_5 : Boolean := False)
-      return Unsigned_16
+      return Maybe_Sig_Scheme
    with
      Pre => Sig_Algs'Last < N32'Last,
      Post => Sig_Algo_Compatible_With_Cert (Pick_Sig_Algo'Result, Cert, Allow_PKCS1_v1_5);
@@ -126,7 +108,7 @@ is
       Cert             : Signing_Algorithm;
       Prefs            : Sig_Algo_List;
       Count            : Natural;
-      Allow_PKCS1_v1_5 : Boolean := False) return Unsigned_16
+      Allow_PKCS1_v1_5 : Boolean := False) return Maybe_Sig_Scheme
    with
      Pre => Sig_Algs'Last < N32'Last and then Count <= Max_Sig_Algos,
      Post =>

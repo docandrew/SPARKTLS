@@ -85,6 +85,48 @@ is
    end;
 
    ----------------------------------------------------------------------------
+   --  Scheme_From_Wire
+   --  Wire SignatureScheme -> enum; unknown (incl. SHA-1) -> Scheme_None.
+   ----------------------------------------------------------------------------
+   function Scheme_From_Wire (W : Unsigned_16) return Maybe_Sig_Scheme is
+   begin
+      case W is
+         when 16#0401# => return Sig_RSA_PKCS1_SHA256;
+         when 16#0501# => return Sig_RSA_PKCS1_SHA384;
+         when 16#0601# => return Sig_RSA_PKCS1_SHA512;
+         when 16#0403# => return Sig_ECDSA_P256_SHA256;
+         when 16#0503# => return Sig_ECDSA_P384_SHA384;
+         when 16#0804# => return Sig_RSA_PSS_SHA256;
+         when 16#0805# => return Sig_RSA_PSS_SHA384;
+         when 16#0806# => return Sig_RSA_PSS_SHA512;
+         when 16#0807# => return Sig_Ed25519;
+         when others   => return Scheme_None;
+      end case;
+   end Scheme_From_Wire;
+
+   ----------------------------------------------------------------------------
+   --  HS_Msg_From_Wire
+   --  Wire HandshakeType byte -> enum; unknown -> HT_Unknown.
+   ----------------------------------------------------------------------------
+   function HS_Msg_From_Wire (W : Byte) return Maybe_HS_Msg is
+   begin
+      case W is
+         when 16#01# => return HT_Client_Hello;
+         when 16#02# => return HT_Server_Hello;
+         when 16#04# => return HT_New_Session_Ticket;
+         when 16#08# => return HT_Encrypted_Extensions;
+         when 16#0B# => return HT_Certificate;
+         when 16#0C# => return HT_Server_Key_Exchange;
+         when 16#0D# => return HT_Certificate_Request;
+         when 16#0E# => return HT_Server_Hello_Done;
+         when 16#0F# => return HT_Certificate_Verify;
+         when 16#10# => return HT_Client_Key_Exchange;
+         when 16#14# => return HT_Finished;
+         when others => return HT_Unknown;
+      end case;
+   end HS_Msg_From_Wire;
+
+   ----------------------------------------------------------------------------
    --  Feed_Ciphertext
    ----------------------------------------------------------------------------
    procedure Feed_Ciphertext (S : in out Session; Data : in Byte_Seq; Bytes_Fed : out N32) is

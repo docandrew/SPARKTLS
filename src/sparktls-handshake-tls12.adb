@@ -75,7 +75,7 @@ is
    procedure Build_Server_Hello_Done (Result : out Byte_Seq; Len : out N32) is
    begin
       Result := (others => 0);
-      Result (0) := HT_Server_Hello_Done;  --  0x0E
+      Result (0) := HS_Msg_Wire (HT_Server_Hello_Done);  --  0x0E
       Result (1) := 0;
       Result (2) := 0;
       Result (3) := 0;
@@ -104,7 +104,7 @@ is
    procedure Sign_SKE_RSA_PSS
      (Id      : in Identity;
       Random  : in Live_Random_Fn;
-      Scheme  : in Unsigned_16;
+      Scheme  : in Maybe_Sig_Scheme;
       Msg     : in Byte_Seq;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
@@ -131,7 +131,7 @@ is
          Salt64 : Bytes_64;
       begin
          case Scheme is
-            when 16#0804# =>
+            when Sig_RSA_PSS_SHA256 =>
                SPARKTLSCrypto.Hashing.SHA256.Hash (H256, Msg);
                Random.all (Byte_Seq (Salt32));
                SPARKTLSCrypto.RSA.Sign_PSS
@@ -146,7 +146,7 @@ is
                   Sig_Len   => Sig_Len,
                   OK        => OK);
 
-            when 16#0805# =>
+            when Sig_RSA_PSS_SHA384 =>
                SPARKNaCl.Hashing.SHA384.Hash (H384, Msg);
                Random.all (Byte_Seq (Salt48));
                SPARKTLSCrypto.RSA.Sign_PSS
@@ -184,7 +184,7 @@ is
    --  input (TLS 1.2 only; verify-side counterpart lives in Cert_Verify).
    procedure Sign_SKE_RSA_PKCS1
      (Id      : in Identity;
-      Scheme  : in Unsigned_16;
+      Scheme  : in Maybe_Sig_Scheme;
       Msg     : in Byte_Seq;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
@@ -207,7 +207,7 @@ is
          H512 : SPARKNaCl.Hashing.SHA512.Digest;
       begin
          case Scheme is
-            when 16#0401# =>
+            when Sig_RSA_PKCS1_SHA256 =>
                SPARKTLSCrypto.Hashing.SHA256.Hash (H256, Msg);
                SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
                  (M_Hash    => Byte_Seq (H256),
@@ -219,7 +219,7 @@ is
                   Sig_Len   => Sig_Len,
                   OK        => OK);
 
-            when 16#0501# =>
+            when Sig_RSA_PKCS1_SHA384 =>
                SPARKNaCl.Hashing.SHA384.Hash (H384, Msg);
                SPARKTLSCrypto.RSA.Sign_PKCS1_v1_5
                  (M_Hash    => Byte_Seq (H384),
@@ -338,9 +338,6 @@ is
       Params_Len := 0;
 
       Pt_Len := Point_Len_For_Group (KE.Curve);
-      if Pt_Len = 0 then
-         return;
-      end if;
 
       Params (0) := EC_Curve_Type_Named;  --  0x03
       Put16 (Params, 1, ECDHE_Group_Wire (KE.Curve));
@@ -380,9 +377,6 @@ is
                SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, KE.P384_SK);
                Params (4 .. 4 + 96) := PK_Enc;
             end;
-
-         when others =>
-            return;
       end case;
 
       Params_Len := 4 + Pt_Len;
@@ -438,20 +432,20 @@ is
          --  low bytes of the SignatureScheme code. For modern schemes
          --  (rsa_pss_*, ed25519, rsa_pkcs1_*, ecdsa_*) this gives the
          --  correct on-wire encoding directly.
-         Hash_Algo := Byte (Shift_Right (HC.Negotiated_Sig_Algo, 8));
-         Sig_Algo := Byte (HC.Negotiated_Sig_Algo and 16#FF#);
+         Hash_Algo := Byte (Shift_Right (Sig_Scheme_Wire (HC.Negotiated_Sig_Algo), 8));
+         Sig_Algo := Byte (Sig_Scheme_Wire (HC.Negotiated_Sig_Algo) and 16#FF#);
          case HC.Negotiated_Sig_Algo is
-            when 16#0804# | 16#0805# | 16#0806# =>
+            when Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 =>
                Sign_SKE_RSA_PSS
                  (Id, Random, HC.Negotiated_Sig_Algo,
                   Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
-            when 16#0401# | 16#0501# | 16#0601# =>
+            when Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512 =>
                Sign_SKE_RSA_PKCS1
                  (Id, HC.Negotiated_Sig_Algo,
                   Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
-            when 16#0807# =>
+            when Sig_Ed25519 =>
                --  ed25519
                --  Hash_Algo=0x08, Sig_Algo=0x07 already set above.
                --  Ed25519 signs the raw Sig_Input (no pre-hash; the
@@ -468,14 +462,14 @@ is
                   Sig_OK := True;
                end;
 
-            when 16#0403# =>
+            when Sig_ECDSA_P256_SHA256 =>
                --  ecdsa_secp256r1_sha256
                Hash_Algo := 4;
                Sig_Algo := 3;
                Sign_SKE_ECDSA_P256
                  (Id, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
-            when 16#0503# =>
+            when Sig_ECDSA_P384_SHA384 =>
                --  ecdsa_secp384r1_sha384
                Hash_Algo := 5;
                Sig_Algo := 3;
@@ -503,7 +497,7 @@ is
             end if;
 
             --  Handshake header
-            Result (0) := HT_Server_Key_Exchange;
+            Result (0) := HS_Msg_Wire (HT_Server_Key_Exchange);
             Put24 (Result, 1, Body_Len);
 
             --  EC params + point
@@ -548,7 +542,7 @@ is
 
       --  Handshake header: type || length
       --  Body = point_len(1) + point(Pt_Len)
-      Result (0) := HT_Client_Key_Exchange;
+      Result (0) := HS_Msg_Wire (HT_Client_Key_Exchange);
       Put24 (Result, 1, 1 + Pt_Len);
 
       --  Point length prefix
@@ -588,9 +582,6 @@ is
                SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.KE.P384_SK);
                Result (5 .. 5 + 96) := PK_Enc;
             end;
-
-         when others =>
-            return;
       end case;
 
       Len := 4 + 1 + Pt_Len;  --  header + point_len + point
@@ -750,7 +741,7 @@ is
             Sig_OK        : Boolean;
             Alg_Value     : constant RFLX.RFLX_Types.Base_Integer :=
               RFLX.Tls_Parameters.To_Base_Integer (SKE.Get_Algorithm (Ctx));
-            Sig_Scheme    : Unsigned_16;
+            Sig_Scheme    : Maybe_Sig_Scheme;
          begin
             if Params_Len > Data'Length
               or else Alg_Value > RFLX.RFLX_Types.Base_Integer (Unsigned_16'Last)
@@ -763,7 +754,7 @@ is
             pragma Assert (Data'First = 0);
             pragma Assert (Params_Len - 1 <= Data'Last);
             pragma Assert (Alg_Value <= RFLX.RFLX_Types.Base_Integer (Unsigned_16'Last));
-            Sig_Scheme := Unsigned_16 (Alg_Value);
+            Sig_Scheme := Scheme_From_Wire (Unsigned_16 (Alg_Value));
 
             Sig_Input (0 .. 31) := Byte_Seq (HC.Client_Random);
             Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
@@ -920,7 +911,7 @@ is
       Key_Schedule_12.Compute_Finished_12 (VD, Master, Label, Transcript_Hash, Use_SHA384);
 
       --  Build message: type(1) || length(3) || verify_data(12)
-      Result (0) := HT_Finished;  --  0x14
+      Result (0) := HS_Msg_Wire (HT_Finished);  --  0x14
       Result (1) := 0;
       Result (2) := 0;
       Result (3) := 12;           --  verify_data_length
@@ -942,7 +933,7 @@ is
    procedure Sign_CV12_RSA_PSS
      (Id      : in Identity;
       Random  : in Live_Random_Fn;
-      Scheme  : in Unsigned_16;
+      Scheme  : in Maybe_Sig_Scheme;
       TH      : in Byte_Seq;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
@@ -960,7 +951,7 @@ is
          return;
       end if;
       case Scheme is
-         when 16#0804# =>
+         when Sig_RSA_PSS_SHA256 =>
             declare
                Salt : Bytes_32;
             begin
@@ -978,7 +969,7 @@ is
                   OK        => OK);
             end;
 
-         when 16#0805# =>
+         when Sig_RSA_PSS_SHA384 =>
             if TH'Length /= 48 then
                return;
             end if;
@@ -1027,14 +1018,16 @@ is
    --  transcript hash. Width follows the scheme; guard fails closed.
    procedure Sign_CV12_RSA_PKCS1
      (Id      : in Identity;
-      Scheme  : in Unsigned_16;
+      Scheme  : in Maybe_Sig_Scheme;
       TH      : in Byte_Seq;
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
       OK      : out Boolean)
    is
       H_Len : constant N32 :=
-        (if Scheme = 16#0401# then 32 elsif Scheme = 16#0501# then 48 else 64);
+        (if Scheme = Sig_RSA_PKCS1_SHA256 then 32
+         elsif Scheme = Sig_RSA_PKCS1_SHA384 then 48
+         else 64);
    begin
       Sig := (others => 0);
       Sig_Len := 0;
@@ -1130,7 +1123,7 @@ is
    procedure Build_Certificate_Verify_12
      (Transcript_Hash : in Byte_Seq;
       Id              : in Identity;
-      Sig_Algo_Wire   : in Unsigned_16;
+      Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Random          : in Live_Random_Fn;
       Result          : out Byte_Seq;
       Len             : out N32)
@@ -1146,17 +1139,17 @@ is
       --  TLS 1.2: sign the transcript hash directly (no context prefix
       --  for hashed schemes; Ed25519 receives the raw transcript).
       --  Wire (Hash_Algo, Sig_Algo) = high/low bytes of scheme.
-      Hash_Algo := Byte (Shift_Right (Sig_Algo_Wire, 8));
-      Sig_Algo := Byte (Sig_Algo_Wire and 16#FF#);
+      Hash_Algo := Byte (Shift_Right (Sig_Scheme_Wire (Sig_Algo_Wire), 8));
+      Sig_Algo := Byte (Sig_Scheme_Wire (Sig_Algo_Wire) and 16#FF#);
       case Sig_Algo_Wire is
-         when 16#0804# | 16#0805# | 16#0806# =>
+         when Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 =>
             Sign_CV12_RSA_PSS
               (Id, Random, Sig_Algo_Wire, Transcript_Hash, Sig, Sig_Len, Sig_OK);
 
-         when 16#0401# | 16#0501# | 16#0601# =>
+         when Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512 =>
             Sign_CV12_RSA_PKCS1 (Id, Sig_Algo_Wire, Transcript_Hash, Sig, Sig_Len, Sig_OK);
 
-         when 16#0503# =>
+         when Sig_ECDSA_P384_SHA384 =>
             --  ecdsa_secp384r1_sha384 (mTLS w/ P-384 key)
             if Transcript_Hash'Length /= 48 then
                return;
@@ -1165,7 +1158,7 @@ is
               (Id, Bytes_48 (Transcript_Hash (Transcript_Hash'First .. Transcript_Hash'First + 47)),
                Sig, Sig_Len, Sig_OK);
 
-         when 16#0807# =>
+         when Sig_Ed25519 =>
             --  ed25519
             --  Ed25519 signs the raw transcript (the caller passed the
             --  raw transcript bytes rather than a pre-hash).
@@ -1181,7 +1174,7 @@ is
                Sig_OK := True;
             end;
 
-         when 16#0403# =>
+         when Sig_ECDSA_P256_SHA256 =>
             --  ecdsa_secp256r1_sha256
             Hash_Algo := 4;
             Sig_Algo := 3;

@@ -27,7 +27,6 @@ is
    subtype Index_48 is N32 range 0 .. 47;
    subtype Bytes_48 is Byte_Seq (Index_48);
 
-
    --  Reassembly state now lives in SPARKTLS_Reassembly.Buffer, which owns
    --  the bytes and the accounting together. Reasm_Phase, Reasm_Info and
    --  Reasm_Buffer are gone: the phase is a QUERY (Header_Ready,
@@ -71,7 +70,44 @@ is
    --  N32'Last, so the N32 conversions are discharged by the subtype.
    --  Handshake message type code (1 byte on wire).
    --  RFC 8446 Section 4 defines the valid values.
-   subtype HS_Msg_Type is Byte;
+   --  RFC 8446 4 / RFC 5246 7.4 HandshakeType, as an enum: the wire byte
+   --  converts exactly once (HS_Msg_From_Wire in Parse_Handshake_Header;
+   --  unknown -> HT_Unknown) and interior dispatch sees only the enum.
+   --  KeyUpdate (24) is handled in the connected-phase record layer and
+   --  keeps its own constant (SPARKTLS.Key_Update.HS_Key_Update).
+   type Maybe_HS_Msg is
+     (HT_Unknown,
+      HT_Client_Hello,          --  0x01
+      HT_Server_Hello,          --  0x02
+      HT_New_Session_Ticket,    --  0x04
+      HT_Encrypted_Extensions,  --  0x08
+      HT_Certificate,           --  0x0B
+      HT_Server_Key_Exchange,   --  0x0C
+      HT_Certificate_Request,   --  0x0D
+      HT_Server_Hello_Done,     --  0x0E
+      HT_Certificate_Verify,    --  0x0F
+      HT_Client_Key_Exchange,   --  0x10
+      HT_Finished);             --  0x14
+   subtype HS_Msg_Type is Maybe_HS_Msg;
+
+   type HS_Msg_Wire_Type is array (Maybe_HS_Msg) of Byte;
+
+   HS_Msg_Wire : constant HS_Msg_Wire_Type := [
+      HT_Unknown              => 0,
+      HT_Client_Hello         => 16#01#,
+      HT_Server_Hello         => 16#02#,
+      HT_New_Session_Ticket   => 16#04#,
+      HT_Encrypted_Extensions => 16#08#,
+      HT_Certificate          => 16#0B#,
+      HT_Server_Key_Exchange  => 16#0C#,
+      HT_Certificate_Request  => 16#0D#,
+      HT_Server_Hello_Done    => 16#0E#,
+      HT_Certificate_Verify   => 16#0F#,
+      HT_Client_Key_Exchange  => 16#10#,
+      HT_Finished             => 16#14#
+   ];
+
+   function HS_Msg_From_Wire (W : Byte) return Maybe_HS_Msg;
 
    --  TLS record fragment length after Parse_Record_Header.
    --  Always 1 .. Max_Fragment + 256 (encrypted records).
@@ -91,11 +127,46 @@ is
    Max_Cert_DER_Len : constant N32 := 8192;
 
    --  Signature algorithm negotiation
+   --  RFC 8446 4.2.3 / RFC 5246 7.4.1.4.1 SignatureScheme, as an enum:
+   --  wire values convert exactly once at the parse/config boundaries
+   --  (Scheme_From_Wire; unknown -> Scheme_None) and interior code only
+   --  ever sees the enum. SHA-1 schemes (0x0201..0x0203) are deliberately
+   --  unrepresentable -- they map to Scheme_None at the boundary.
+   type Maybe_Sig_Scheme is
+     (Scheme_None,
+      Sig_RSA_PKCS1_SHA256,    --  0x0401
+      Sig_RSA_PKCS1_SHA384,    --  0x0501
+      Sig_RSA_PKCS1_SHA512,    --  0x0601
+      Sig_ECDSA_P256_SHA256,   --  0x0403
+      Sig_ECDSA_P384_SHA384,   --  0x0503
+      Sig_RSA_PSS_SHA256,      --  0x0804
+      Sig_RSA_PSS_SHA384,      --  0x0805
+      Sig_RSA_PSS_SHA512,      --  0x0806
+      Sig_Ed25519);            --  0x0807
+   subtype Sig_Scheme is Maybe_Sig_Scheme range Sig_RSA_PKCS1_SHA256 .. Sig_Ed25519;
+
+   type Sig_Scheme_Wire_Type is array (Maybe_Sig_Scheme) of Unsigned_16;
+
+   Sig_Scheme_Wire : constant Sig_Scheme_Wire_Type := [
+      Scheme_None           => 0,
+      Sig_RSA_PKCS1_SHA256  => 16#0401#,
+      Sig_RSA_PKCS1_SHA384  => 16#0501#,
+      Sig_RSA_PKCS1_SHA512  => 16#0601#,
+      Sig_ECDSA_P256_SHA256 => 16#0403#,
+      Sig_ECDSA_P384_SHA384 => 16#0503#,
+      Sig_RSA_PSS_SHA256    => 16#0804#,
+      Sig_RSA_PSS_SHA384    => 16#0805#,
+      Sig_RSA_PSS_SHA512    => 16#0806#,
+      Sig_Ed25519           => 16#0807#
+   ];
+
+   function Scheme_From_Wire (W : Unsigned_16) return Maybe_Sig_Scheme;
+
    Max_Sig_Algos : constant := 16;
    subtype Sig_Algo_Index is Natural range 0 .. Max_Sig_Algos - 1;
-   type Sig_Algo_List is array (Sig_Algo_Index) of Unsigned_16;
+   type Sig_Algo_List is array (Sig_Algo_Index) of Maybe_Sig_Scheme;
    function Sig_Scheme_In_List
-     (Scheme : Unsigned_16; List : Sig_Algo_List; Count : Natural) return Boolean
+     (Scheme : Maybe_Sig_Scheme; List : Sig_Algo_List; Count : Natural) return Boolean
    is (Count <= Max_Sig_Algos and then (for some I in 0 .. Count - 1 => List (I) = Scheme));
 
    --  CH1 extension order tracking (for HRR CH2 validation)
@@ -206,6 +277,7 @@ is
    --  Given the wire value for a supported EC group, return the enum value.
    ----------------------------------------------------------------------------
    function Group_From_Wire (W : Unsigned_16) return Maybe_ECDHE_Group;
+
 
    ----------------------------------------------------------------------------
    --  Connection state
@@ -614,8 +686,9 @@ is
    --  path; that case is governed by the strong-hash predicate
    --  below.)
    function Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
-     (Negotiated : Unsigned_16; Offered : Sig_Algo_List; Count : Natural) return Boolean
-   is (Negotiated = 0 or else (for some I in 0 .. Count - 1 => Offered (I) = Negotiated))
+     (Negotiated : Maybe_Sig_Scheme; Offered : Sig_Algo_List; Count : Natural) return Boolean
+   is (Negotiated = Scheme_None
+       or else (for some I in 0 .. Count - 1 => Offered (I) = Negotiated))
    with Ghost, Pre => Count <= Max_Sig_Algos;
 
    --  ----- RFC 5246 7.4.1.4.1 sig_algs default fallback -----------
@@ -634,13 +707,15 @@ is
    --    rsa_pss_rsae_sha384 = 0x0805, rsa_pss_rsae_sha512 = 0x0806,
    --    ed25519 = 0x0807. The low byte â¥ 4 distinguishes SHA-256+
    --    schemes (SHA-1 schemes are 0x0201/0x0202/0x0203, low byte 1-3).
-   function Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1 (Scheme : Unsigned_16) return Boolean
-   is (Scheme = 16#0804#
-       or else Scheme = 16#0805#
-       or else Scheme = 16#0806#
-       or else Scheme = 16#0403#
-       or else Scheme = 16#0503#
-       or else Scheme = 16#0807#)
+   function Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1
+     (Scheme : Maybe_Sig_Scheme) return Boolean
+   is (Scheme in
+         Sig_RSA_PSS_SHA256
+         | Sig_RSA_PSS_SHA384
+         | Sig_RSA_PSS_SHA512
+         | Sig_ECDSA_P256_SHA256
+         | Sig_ECDSA_P384_SHA384
+         | Sig_Ed25519)
    with Ghost;
 
    --  RFC 8446 6: Error handling invariant.
@@ -660,6 +735,18 @@ is
    --  AlertDescription byte. Single source of truth used both at
    --  runtime (by Send_*_Alert helpers across client / server, TLS 1.2
    --  and TLS 1.3 paths) and as a Ghost in proof contracts via the
+   --  RFC 8446 6.2 AlertDescription wire values, named for the sites that
+   --  deliberately send a DIFFERENT description than Alert_Desc (Last_Error)
+   --  would produce (BoGo-pinned mismatches; see Fail_With_App_Alert).
+   --  A full enum for alerts waits on the #123 Error_Code renaming.
+   AD_Unexpected_Message  : constant Byte := 10;
+   AD_Bad_Record_MAC      : constant Byte := 20;
+   AD_Handshake_Failure   : constant Byte := 40;
+   AD_Certificate_Unknown : constant Byte := 46;
+   AD_Illegal_Parameter   : constant Byte := 47;
+   AD_Decode_Error        : constant Byte := 50;
+   AD_Decrypt_Error       : constant Byte := 51;
+
    --  Expected_Alert_Desc rename below.
    function Alert_Desc (E : Error_Code) return Byte
    is (case E is
@@ -798,7 +885,6 @@ is
    --      and within the AEAD margin. See #46 for the old split.
 
 
-
    --  The write-side AEAD confidentiality cap (RFC 8446 5.5 for 1.3,
    --  the same 2**23 bound adopted for 1.2 where no rekey exists), as a
    --  query on the channel that owns the counter. This is BOTH the
@@ -842,7 +928,6 @@ is
    --  Time callback for certificate validation.
    --  Called at validation time, not at configuration time.
    type Get_Time_Fn is access function return X509.Date_Time;
-
 
    ----------------------------------------------------------------------------
    --  Certificate pool types
@@ -1063,7 +1148,6 @@ is
       Next    : Natural range 0 .. Max_Cached_Tickets - 1 := 0;
    end record;
 
-
    ----------------------------------------------------------------------------
    --  Session Ticket (RFC 8446 4.6.1)
    --
@@ -1116,7 +1200,6 @@ is
    end record;
 
    type TLS12_Ticket_Key_Array is array (Natural range 0 .. TLS12_Max_Keys - 1) of TLS12_Ticket_Key;
-
 
    ----------------------------------------------------------------------------
    --  TLS 1.2 cached session ticket (client side, RFC 5077 3.4)
@@ -1414,7 +1497,7 @@ is
       --  modern list. Otherwise, clients advertise exactly
       --  Verify_Sig_Algos (0 .. Count - 1), and CertificateVerify messages
       --  from peers must use a listed scheme.
-      Verify_Sig_Algos      : Sig_Algo_List := (others => 0);
+      Verify_Sig_Algos      : Sig_Algo_List := (others => Scheme_None);
       Verify_Sig_Algo_Count : Natural range 0 .. Max_Sig_Algos := 0;
 
       --  Optional local signing preference/allow-list. When
@@ -1422,7 +1505,7 @@ is
       --  and the local identity's key type. Otherwise, signing selects the
       --  first configured scheme that is also peer-offered and compatible with
       --  the local identity.
-      Sign_Sig_Algos      : Sig_Algo_List := (others => 0);
+      Sign_Sig_Algos      : Sig_Algo_List := (others => Scheme_None);
       Sign_Sig_Algo_Count : Natural range 0 .. Max_Sig_Algos := 0;
 
       --  Server: request a client certificate (mTLS). When True the
@@ -1781,7 +1864,7 @@ is
       Legacy_Session_ID_Len : Session_ID_Length := 0;
 
       --  Signature algorithm negotiation
-      Peer_Sig_Algos      : Sig_Algo_List := (others => 0);
+      Peer_Sig_Algos      : Sig_Algo_List := (others => Scheme_None);
       --  Bounded by Max_Sig_Algos: parse site at
       --  Parse_Sig_Algs_Extension gates increment on
       --  `Peer_Sig_Algo_Count < Max_Sig_Algos`. Encoding the bound
@@ -1789,7 +1872,7 @@ is
       --  Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1's
       --  precondition directly.
       Peer_Sig_Algo_Count : Natural range 0 .. Max_Sig_Algos := 0;
-      Negotiated_Sig_Algo : Unsigned_16 := 0;
+      Negotiated_Sig_Algo : Maybe_Sig_Scheme := Scheme_None;
 
       --  Handshake tracking
       CCS_Received          : Boolean := False;
@@ -1812,7 +1895,6 @@ is
 
       --  TLS 1.2: ClientKeyExchange already received
       CKE_Received_12 : Boolean := False;
-
 
       --  TLS 1.2: Extended Master Secret (RFC 7627) negotiated
       Use_EMS          : Boolean := False;
@@ -2468,7 +2550,6 @@ is
    --  overwrites a live pointer.
    function Has_Context (S : Session) return Boolean
    with Ghost;
-
 
    --  RFC 7301 3.1/3.2: validate the server's ALPN-echo body in a
    --  SH or EE extension and (on success) copy the chosen protocol

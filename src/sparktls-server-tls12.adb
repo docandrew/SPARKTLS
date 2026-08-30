@@ -312,7 +312,7 @@ is
       CR_Buf                  : Byte_Seq (0 .. 4 + CR_Body_Len - 1) := (others => 0);
    begin
       pragma Assert (CR_Body_Len = 25);
-      CR_Buf (0) := Handshake.HT_Certificate_Request;
+      CR_Buf (0) := HS_Msg_Wire (HT_Certificate_Request);
       CR_Buf (1) := Byte (CR_Body_Len / 65536);
       CR_Buf (2) := Byte ((CR_Body_Len / 256) mod 256);
       CR_Buf (3) := Byte (CR_Body_Len mod 256);
@@ -340,38 +340,45 @@ is
    --  default family when the client omitted the extension). Negotiated = 0
    --  means no acceptable scheme.
    procedure Negotiate_Sig_Algo_12
-     (HC : in Handshake_Context; Cfg : in Ready_Config; Negotiated : out Unsigned_16)
+     (HC : in Handshake_Context; Cfg : in Ready_Config; Negotiated : out Maybe_Sig_Scheme)
    is
       Client_Sent_Recognized_Group : constant Boolean :=
         HC.Client_Supports_X25519
         or else HC.Client_Supports_P256
         or else HC.Client_Supports_P384;
 
-      function Compatible_Local_Sig (Scheme : Unsigned_16) return Boolean is
+      function Compatible_Local_Sig (Scheme : Maybe_Sig_Scheme) return Boolean is
       begin
          case Cfg.Local.Sign_Algo is
             when Sign_RSA_PSS =>
-               return Scheme in 16#0804# | 16#0805# | 16#0806# | 16#0401# | 16#0501# | 16#0601#;
+               return
+                 Scheme in
+                   Sig_RSA_PSS_SHA256
+                   | Sig_RSA_PSS_SHA384
+                   | Sig_RSA_PSS_SHA512
+                   | Sig_RSA_PKCS1_SHA256
+                   | Sig_RSA_PKCS1_SHA384
+                   | Sig_RSA_PKCS1_SHA512;
 
             when Sign_ECDSA_P256 =>
                return
-                 Scheme = 16#0403#
+                 Scheme = Sig_ECDSA_P256_SHA256
                  and then (not Client_Sent_Recognized_Group or else HC.Client_Supports_P256);
 
             when Sign_ECDSA_P384 =>
                return
-                 Scheme = 16#0503#
+                 Scheme = Sig_ECDSA_P384_SHA384
                  and then (not Client_Sent_Recognized_Group or else HC.Client_Supports_P384);
 
             when Sign_Ed25519 =>
-               return Scheme = 16#0807#;
+               return Scheme = Sig_Ed25519;
 
             when Sign_None =>
                return False;
          end case;
       end Compatible_Local_Sig;
    begin
-      Negotiated := 0;
+      Negotiated := Scheme_None;
       if HC.Peer_Sig_Algo_Count = 0 then
          --  RFC 5246 7.4.1.4.1: when client omits the
          --  signature_algorithms extension, the server uses a
@@ -383,20 +390,20 @@ is
          --  exercises this path.
          case Cfg.Local.Sign_Algo is
             when Sign_RSA_PSS =>
-               Negotiated := 16#0804#;  -- PSS-SHA256
+               Negotiated := Sig_RSA_PSS_SHA256;
 
             when Sign_ECDSA_P256 =>
                if not Client_Sent_Recognized_Group or else HC.Client_Supports_P256 then
-                  Negotiated := 16#0403#;
+                  Negotiated := Sig_ECDSA_P256_SHA256;
                end if;
 
             when Sign_ECDSA_P384 =>
                if not Client_Sent_Recognized_Group or else HC.Client_Supports_P384 then
-                  Negotiated := 16#0503#;
+                  Negotiated := Sig_ECDSA_P384_SHA384;
                end if;
 
             when Sign_Ed25519 =>
-               Negotiated := 16#0807#;
+               Negotiated := Sig_Ed25519;
 
             when Sign_None =>
                null;
@@ -408,7 +415,8 @@ is
          --  would fail SPARK proof here.
          pragma
            Assert
-             (Negotiated = 0 or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1 (Negotiated));
+             (Negotiated = Scheme_None
+                or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1 (Negotiated));
       elsif Cfg.Sign_Sig_Algo_Count > 0 then
          for J in Sig_Algo_Index loop
             pragma
@@ -435,7 +443,7 @@ is
                 (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
                    (Negotiated, HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count));
             declare
-               Scheme : constant Unsigned_16 := HC.Peer_Sig_Algos (I);
+               Scheme : constant Maybe_Sig_Scheme := HC.Peer_Sig_Algos (I);
             begin
                case Cfg.Local.Sign_Algo is
                   when Sign_RSA_PSS =>
@@ -447,19 +455,20 @@ is
                      --  first match, so client ordering wins).
                      --  PKCS#1-SHA1 (0x0201) intentionally not
                      --  accepted  SHA-1 is deprecated.
-                     if Scheme = 16#0804#
-                       or Scheme = 16#0805#
-                       or Scheme = 16#0806#
-                       or Scheme = 16#0401#
-                       or Scheme = 16#0501#
-                       or Scheme = 16#0601#
+                     if Scheme in
+                          Sig_RSA_PSS_SHA256
+                          | Sig_RSA_PSS_SHA384
+                          | Sig_RSA_PSS_SHA512
+                          | Sig_RSA_PKCS1_SHA256
+                          | Sig_RSA_PKCS1_SHA384
+                          | Sig_RSA_PKCS1_SHA512
                      then
                         Negotiated := Scheme;
                         exit;
                      end if;
 
                   when Sign_ECDSA_P256 =>
-                     if Scheme = 16#0403#
+                     if Scheme = Sig_ECDSA_P256_SHA256
                        and then (not Client_Sent_Recognized_Group
                                  or else HC.Client_Supports_P256)
                      then
@@ -468,7 +477,7 @@ is
                      end if;
 
                   when Sign_ECDSA_P384 =>
-                     if Scheme = 16#0503#
+                     if Scheme = Sig_ECDSA_P384_SHA384
                        and then (not Client_Sent_Recognized_Group
                                  or else HC.Client_Supports_P384)
                      then
@@ -477,7 +486,7 @@ is
                      end if;
 
                   when Sign_Ed25519 =>
-                     if Scheme = 16#0807# then
+                     if Scheme = Sig_Ed25519 then
                         Negotiated := Scheme;
                         exit;
                      end if;
@@ -552,10 +561,10 @@ is
       --  client cert sigs in v1.5 are still accepted via the
       --  cert_verify path.
       declare
-         Negotiated : Unsigned_16;
+         Negotiated : Maybe_Sig_Scheme;
       begin
          Negotiate_Sig_Algo_12 (S.HC, Cfg, Negotiated);
-         if Negotiated = 0 then
+         if Negotiated = Scheme_None then
             Send_Alert_And_Error (S, Handshake_Failure, Result);
             return;
          end if;
@@ -900,7 +909,7 @@ is
       --  don't pick a signature scheme (no SKE), but we DO need the
       --  Negotiated_Sig_Algo to be cleared so Build_Server_Hello_12
       --  doesn't try to echo a stale value.
-      S.HC.Negotiated_Sig_Algo := 0;
+      S.HC.Negotiated_Sig_Algo := Scheme_None;
 
       --  Fresh server random (32 bytes).
       declare
@@ -1171,7 +1180,7 @@ is
      Post =>
        SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
    is
-      Msg_Type : Byte;
+      Msg_Type : Maybe_HS_Msg;
       Msg_Len  : N32;
       POK      : Boolean;
    begin
@@ -1306,7 +1315,7 @@ is
             pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
             declare
                Frag     : constant Byte_Seq := S.Input.Data (FS .. FS + Frag_Len - 1);
-               Msg_Type : Byte;
+               Msg_Type : Maybe_HS_Msg;
                Msg_Len  : N32;
                Parse_OK : Boolean;
             begin
@@ -1333,7 +1342,7 @@ is
                   return;
                end if;
 
-               if Msg_Type = Handshake.HT_Certificate_Verify then
+               if Msg_Type = HT_Certificate_Verify then
                   if Msg_Len < 4 or else Msg_Len + 4 /= Frag_Len then
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                      Send_Alert_And_Error (S, Decode_Error, Result);
@@ -1507,10 +1516,6 @@ is
                Shared_Secret_P256_12 (S.HC.KE, OK, Err);
             when Group_Secp384r1 =>
                Shared_Secret_P384_12 (S.HC.KE, OK, Err);
-            when others =>
-               OK := False;
-               Err := Illegal_Parameter;
-               pragma Assert (False);
          end case;
       end Compute_Shared_Secret_12;
    begin
@@ -1595,7 +1600,7 @@ is
             end;
 
             if Header_Ready (D.Reasm) then
-               if Declared_Type (D.Reasm) /= HT_Client_Key_Exchange then
+               if Declared_Type (D.Reasm) /= HS_Msg_Wire (HT_Client_Key_Exchange) then
                   Consume_And_Alert_12 (S, Rec, Unexpected_Message, Result);
                   return;
                end if;
@@ -1642,7 +1647,7 @@ is
                  + N32 (S.Input.Data (FS + 3));
                HS_Total   : constant N32 := HS_Msg_Len + 4;
             begin
-               if S.Input.Data (FS) /= HT_Client_Key_Exchange then
+               if S.Input.Data (FS) /= HS_Msg_Wire (HT_Client_Key_Exchange) then
                   Consume_And_Alert_12 (S, Rec, Unexpected_Message, Result);
                   return;
                end if;
@@ -1752,7 +1757,7 @@ is
 
          declare
             Frag     : constant Byte_Seq := S.Input.Data (FS .. FS + Frag_Len - 1);
-            Msg_Type : Byte;
+            Msg_Type : Maybe_HS_Msg;
             Msg_Len  : N32;
             Parse_OK : Boolean;
          begin
@@ -1780,7 +1785,7 @@ is
                return;
             end if;
 
-            if Msg_Type /= Handshake.HT_Certificate then
+            if Msg_Type /= HT_Certificate then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Send_Alert_And_Error (S, Unexpected_Message, Result);
                return;
@@ -1860,7 +1865,7 @@ is
      (TS         : SPARKTLS_Transcript.Transcript_State;
       Sig        : Byte_Seq;
       Cert       : X509.Certificate;
-      Sig_Scheme : Unsigned_16) return Boolean
+      Sig_Scheme : Maybe_Sig_Scheme) return Boolean
    with Pre => Sig'First = 0 and Sig'Length > 0 and Sig'Last < N32'Last - 256
    is
       TH2 : SPARKTLSCrypto.Hashing.SHA256.Digest;
@@ -1975,7 +1980,7 @@ is
 
          declare
             Frag     : constant Byte_Seq := S.Input.Data (FS .. FS + Frag_Len - 1);
-            Msg_Type : Byte;
+            Msg_Type : Maybe_HS_Msg;
             Msg_Len  : N32;
             Parse_OK : Boolean;
             Cert_OK  : Boolean;
@@ -2004,7 +2009,7 @@ is
                return;
             end if;
 
-            if Msg_Type /= Handshake.HT_Certificate_Verify then
+            if Msg_Type /= HT_Certificate_Verify then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Send_Alert_And_Error (S, Unexpected_Message, Result);
                return;
@@ -2018,8 +2023,9 @@ is
 
             declare
                F          : constant N32 := Frag'First;
-               Sig_Scheme : constant Unsigned_16 :=
-                 Unsigned_16 (Frag (F + 4)) * 256 + Unsigned_16 (Frag (F + 5));
+               Scheme     : constant Maybe_Sig_Scheme :=
+                 Scheme_From_Wire
+                   (Unsigned_16 (Frag (F + 4)) * 256 + Unsigned_16 (Frag (F + 5)));
                Sig_Len    : constant N32 := N32 (Frag (F + 6)) * 256 + N32 (Frag (F + 7));
                Verified   : Boolean;
             begin
@@ -2032,7 +2038,7 @@ is
 
                if S.HC.Cfg.Verify_Sig_Algo_Count > 0
                  and then not Sig_Scheme_In_List
-                                (Sig_Scheme,
+                                (Scheme,
                                  S.HC.Cfg.Verify_Sig_Algos,
                                  S.HC.Cfg.Verify_Sig_Algo_Count)
                then
@@ -2048,7 +2054,7 @@ is
                      Sig (I) := Frag (F + 8 + I);
                   end loop;
                   Verified :=
-                    CV_Signature_Valid_12 (S.HC.TS, Sig, D.Peer_Leaf.Cert, Sig_Scheme);
+                    CV_Signature_Valid_12 (S.HC.TS, Sig, D.Peer_Leaf.Cert, Scheme);
                end;
 
                if not Verified then
@@ -2132,7 +2138,7 @@ is
       Result    : out Action)
    is
       use Key_Schedule_12;
-      Msg_Type : constant Byte := Plaintext (0);
+      Msg_Type : constant Maybe_HS_Msg := HS_Msg_From_Wire (Plaintext (0));
    begin
       Verified := False;
       if Msg_Type /= HT_Finished then
@@ -2480,7 +2486,7 @@ is
                end;
 
                if Header_Ready (D.Reasm) then
-                  if Declared_Type (D.Reasm) /= HT_Finished then
+                  if Declared_Type (D.Reasm) /= HS_Msg_Wire (HT_Finished) then
                      Send_Alert_And_Error (S, Unexpected_Message, Result);
                      return;
                   end if;
@@ -2508,7 +2514,7 @@ is
                   Reset (D.Reasm);
                end;
             elsif PL >= 4 then
-               if Plaintext (0) = HT_Finished
+               if Plaintext (0) = HS_Msg_Wire (HT_Finished)
                  and then Plaintext (1) = 0
                  and then Plaintext (2) = 0
                  and then Plaintext (3) = Byte (Finished_Verify_Len)

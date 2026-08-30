@@ -1022,20 +1022,21 @@ is
    --  first entry compatible with our local identity's key type, and
    --  stores it in S.HC.Negotiated_Sig_Algo. Emits handshake_failure
    --  on no overlap.
-   function Local_Sig_Compatible (Scheme : Unsigned_16; Cert : Signing_Algorithm) return Boolean is
+   function Local_Sig_Compatible
+     (Scheme : Maybe_Sig_Scheme; Cert : Signing_Algorithm) return Boolean is
    begin
       case Cert is
          when Sign_Ed25519 =>
-            return Scheme = 16#0807#;
+            return Scheme = Sig_Ed25519;
 
          when Sign_ECDSA_P256 =>
-            return Scheme = 16#0403#;
+            return Scheme = Sig_ECDSA_P256_SHA256;
 
          when Sign_ECDSA_P384 =>
-            return Scheme = 16#0503#;
+            return Scheme = Sig_ECDSA_P384_SHA384;
 
          when Sign_RSA_PSS =>
-            return Scheme in 16#0804# | 16#0805# | 16#0806#;
+            return Scheme in Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512;
 
          when Sign_None =>
             return False;
@@ -1060,7 +1061,7 @@ is
           S.State = S.State'Old
           and S.Role = S.Role'Old
           and S.Negotiated_Suite = S.Negotiated_Suite'Old
-          and S.HC.Negotiated_Sig_Algo /= 0
+          and S.HC.Negotiated_Sig_Algo /= Scheme_None
           and Handshake.Sig_Algo_Compatible_With_Cert
                 (S.HC.Negotiated_Sig_Algo, Cfg.Local.Sign_Algo))
        and then (if not Algo_OK then S.State = Error_State);
@@ -1085,7 +1086,7 @@ is
               Loop_Invariant
                 (if Algo_OK
                    then
-                     S.HC.Negotiated_Sig_Algo /= 0
+                     S.HC.Negotiated_Sig_Algo /= Scheme_None
                      and then Handshake.Sig_Algo_Compatible_With_Cert
                                 (S.HC.Negotiated_Sig_Algo, Cfg.Local.Sign_Algo));
             exit when J >= Cfg.Sign_Sig_Algo_Count;
@@ -1109,7 +1110,7 @@ is
               Loop_Invariant
                 (if Algo_OK
                    then
-                     S.HC.Negotiated_Sig_Algo /= 0
+                     S.HC.Negotiated_Sig_Algo /= Scheme_None
                      and then Handshake.Sig_Algo_Compatible_With_Cert
                                 (S.HC.Negotiated_Sig_Algo, Cfg.Local.Sign_Algo));
             if Local_Sig_Compatible (S.HC.Peer_Sig_Algos (I), Cfg.Local.Sign_Algo) then
@@ -1303,7 +1304,7 @@ is
          end;
       end if;
 
-      if S.HC.Negotiated_Sig_Algo in 16#0804# | 16#0805# | 16#0806#
+      if S.HC.Negotiated_Sig_Algo in Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512
         and then (Cfg.Random = null or else Cfg.Local.RSA_Mod_Len not in 64 .. 512)
       then
          S.Last_Error := Internal_Error;
@@ -1430,7 +1431,7 @@ is
                --  Hash.length. SHA-384 â 48 bytes.
                pragma Assert (Verify_Data_Length_TLS13_RFC_8446_4_4_4 (Byte_Seq (Verify_48)));
 
-               Big_Finished (0) := Handshake.HT_Finished;
+               Big_Finished (0) := HS_Msg_Wire (HT_Finished);
                Big_Finished (1) := 16#00#;
                Big_Finished (2) := 16#00#;
                Big_Finished (3) := 16#30#;  --  48
@@ -2022,14 +2023,17 @@ is
 
          if Msg_Len >= 8 and then Data'Length >= 8 then
             declare
-               Sig_Scheme : constant Unsigned_16 :=
-                 Unsigned_16 (Data (4)) * 256 + Unsigned_16 (Data (5));
+               Sig_Scheme : constant Maybe_Sig_Scheme :=
+                 Scheme_From_Wire
+                   (Unsigned_16 (Data (4)) * 256 + Unsigned_16 (Data (5)));
                Sig_Len    : constant N32 := N32 (Data (6)) * 256 + N32 (Data (7));
                Sig_Start  : constant N32 := 8;
             begin
                --  RFC 8446 4.2.3: rsa_pkcs1_* MUST NOT be used in
                --  TLS 1.3 CV.
-               if Sig_Scheme = 16#0401# or Sig_Scheme = 16#0501# or Sig_Scheme = 16#0601# then
+               if Sig_Scheme in
+                    Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512
+               then
                   Send_Encrypted_Alert (S, Illegal_Parameter, Result);
                   return;
                end if;
@@ -2178,7 +2182,7 @@ is
                declare
                   Ignored_A : N32;
                begin
-                  Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
+                  Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                end;
                S.Last_Error := Unexpected_Message;
                Set_State (S, Error_State);
@@ -2214,7 +2218,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
-                     Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
+                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Decode_Error;
                   Set_State (S, Error_State);
@@ -2241,7 +2245,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
-                     Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
+                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
@@ -2257,7 +2261,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
-                     Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
+                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
@@ -2275,7 +2279,7 @@ is
                end if;
 
                declare
-                  Msg_Type        : Byte;
+                  Msg_Type        : Maybe_HS_Msg;
                   Msg_Len         : N32;
                   Parse_OK        : Boolean;
                   Plain_Len_Const : constant N32 := Plain_Len;
@@ -2316,14 +2320,14 @@ is
 
                   case S.State is
                      when Wait_Client_Certificate =>
-                        if Msg_Type /= Handshake.HT_Certificate then
+                        if Msg_Type /= HT_Certificate then
                            Send_Encrypted_Alert (S, Unexpected_Message, Result);
                            return;
                         end if;
                         Handle_Client_Cert_13 (S, D, Cfg, Data, Result);
 
                      when Wait_Client_Cert_Verify =>
-                        if Msg_Type /= Handshake.HT_Certificate_Verify then
+                        if Msg_Type /= HT_Certificate_Verify then
                            Send_Encrypted_Alert (S, Unexpected_Message, Result);
                            return;
                         end if;
@@ -2609,11 +2613,11 @@ is
          --  (BoGo TrailingMessageData-TLS13-ClientFinished
          --  expects ":DIGEST_CHECK_FAILED:" â alert 51).
          if Msg_Len /= Expected_Len then
-            Fail_With_App_Alert (S, 51, Certificate_Verify_Failed, Result);
+            Fail_With_App_Alert (S, AD_Decrypt_Error, Certificate_Verify_Failed, Result);
             return;
          end if;
          if N32 (Data'Length) /= 4 + Expected_Len then
-            Fail_With_App_Alert (S, 10, Unexpected_Message, Result);
+            Fail_With_App_Alert (S, AD_Unexpected_Message, Unexpected_Message, Result);
             return;
          end if;
 
@@ -2623,7 +2627,7 @@ is
               Client_Finished_Verified (S.HC, S.Negotiated_Suite, Data);
          begin
             if not Verified then
-               Fail_With_App_Alert (S, 51, Handshake_Failure, Result);
+               Fail_With_App_Alert (S, AD_Decrypt_Error, Handshake_Failure, Result);
                return;
             end if;
          end;
@@ -2689,7 +2693,7 @@ is
           and then Data'Last < N32'Last
           and then Len - 1 <= Data'Last
       is
-         Msg_Type : Byte;
+         Msg_Type : Maybe_HS_Msg;
          Msg_Len  : N32;
          Parse_OK : Boolean;
       begin
@@ -2729,11 +2733,11 @@ is
             return;
          end if;
 
-         if Msg_Type /= Handshake.HT_Finished then
+         if Msg_Type /= HT_Finished then
             declare
                Ignored_A : N32;
             begin
-               Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
+               Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
             end;
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
@@ -2815,7 +2819,7 @@ is
             declare
                Ignored_A : N32;
             begin
-               Records.Build_Alert_Record (2, 20, S.Server_App, S.Output, Ignored_A);
+               Records.Build_Alert_Record (2, AD_Bad_Record_MAC, S.Server_App, S.Output, Ignored_A);
             end;
             S.Last_Error := Bad_Record_MAC;
             Set_State (S, Error_State);
@@ -2840,7 +2844,7 @@ is
             declare
                Ignored_A : N32;
             begin
-               Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
+               Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
             end;
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
@@ -2982,7 +2986,7 @@ is
                declare
                   Ignored_A : N32;
                begin
-                  Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
+                  Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                end;
                S.Last_Error := Unexpected_Message;
                Set_State (S, Error_State);
@@ -3386,7 +3390,7 @@ is
                      declare
                         Ignored_A : N32;
                      begin
-                        Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
+                        Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                      end;
                      S.Last_Error := Unexpected_Message;
                      Set_State (S, Error_State);
@@ -3425,7 +3429,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
-                     Records.Build_Alert_Record (2, 50, S.Server_App, S.Output, Ignored_A);
+                     Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Decode_Error;
                   Set_State (S, Error_State);
@@ -3435,7 +3439,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
-                     Records.Build_Alert_Record (2, 47, S.Server_App, S.Output, Ignored_A);
+                     Records.Build_Alert_Record (2, AD_Illegal_Parameter, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Illegal_Parameter;
                   Set_State (S, Error_State);
@@ -3479,7 +3483,7 @@ is
                         declare
                            Ignored_A : N32;
                         begin
-                           Records.Build_Alert_Record (2, 50, S.Server_App, S.Output, Ignored_A);
+                           Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                         end;
                         S.Last_Error := Decode_Error;
                         Set_State (S, Error_State);
@@ -3492,7 +3496,7 @@ is
                      declare
                         Ignored_A : N32;
                      begin
-                        Records.Build_Alert_Record (2, 50, S.Server_App, S.Output, Ignored_A);
+                        Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                      end;
                      S.Last_Error := Decode_Error;
                      Set_State (S, Error_State);

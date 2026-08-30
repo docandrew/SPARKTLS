@@ -240,7 +240,7 @@ is
    --
    --  Returns True if the signature is valid.
    function Verify_Signature
-     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Unsigned_16)
+     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Maybe_Sig_Scheme)
       return Boolean
    with
      Pre =>
@@ -256,7 +256,7 @@ is
    --  SHA-384 digest.  TLS 1.3 SignatureScheme values remain stricter and
    --  are handled by Verify_Signature above.
    function Verify_Signature_TLS12
-     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Unsigned_16)
+     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Maybe_Sig_Scheme)
       return Boolean
    with
      Pre =>
@@ -277,7 +277,7 @@ is
       H512_In    : Bytes_64;
       Sig        : Byte_Seq;
       Cert       : X509.Certificate;
-      Sig_Scheme : Unsigned_16) return Boolean
+      Sig_Scheme : Maybe_Sig_Scheme) return Boolean
    with Pre => Sig'First = 0 and Sig'Length > 0 and Sig'Last < N32'Last - 256;
 
    function Verify_Signature_TLS12_Hashed
@@ -286,7 +286,7 @@ is
       H512_In    : Bytes_64;
       Sig        : Byte_Seq;
       Cert       : X509.Certificate;
-      Sig_Scheme : Unsigned_16) return Boolean
+      Sig_Scheme : Maybe_Sig_Scheme) return Boolean
    with Pre => Sig'First = 0 and Sig'Length > 0 and Sig'Last < N32'Last - 256;
 
    ----------------------------------------------------------------------------

@@ -1292,7 +1292,7 @@ is
       H512_In    : Bytes_64;
       Sig        : Byte_Seq;
       Cert       : X509.Certificate;
-      Sig_Scheme : Unsigned_16) return Boolean
+      Sig_Scheme : Maybe_Sig_Scheme) return Boolean
    is
       PK_Algo : constant X509.Algorithm_ID := X509.PK_Algorithm (Cert);
       PK_Len  : constant X509.N32 := X509.PK_Length (Cert);
@@ -1312,7 +1312,7 @@ is
             --  caller is responsible for rejecting rsa_pkcs1_* per
             --  RFC 8446 4.2.3 before reaching here.
 
-            when 16#0804# | 16#0401# =>
+            when Sig_RSA_PSS_SHA256 | Sig_RSA_PKCS1_SHA256 =>
                if PK_Algo /= X509.Algo_RSA then
                   return False;
                end if;
@@ -1332,7 +1332,7 @@ is
                      Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                   end loop;
                   Sig_Bytes := Sig;
-                  if Sig_Scheme = 16#0804# then
+                  if Sig_Scheme = Sig_RSA_PSS_SHA256 then
                      return
                        RSA.Verify_PSS_SHA256
                          (Hash      => Bytes_32 (Byte_Seq (H)),
@@ -1355,7 +1355,7 @@ is
 
                --  RSA-PSS-SHA384 (0x0805) or RSA-PKCS1-SHA384 (0x0501)
 
-            when 16#0805# | 16#0501# =>
+            when Sig_RSA_PSS_SHA384 | Sig_RSA_PKCS1_SHA384 =>
                if PK_Algo /= X509.Algo_RSA then
                   return False;
                end if;
@@ -1375,7 +1375,7 @@ is
                      Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                   end loop;
                   Sig_Bytes := Sig;
-                  if Sig_Scheme = 16#0805# then
+                  if Sig_Scheme = Sig_RSA_PSS_SHA384 then
                      return
                        RSA.Verify_PSS_SHA384
                          (Hash      => Bytes_48 (Byte_Seq (H)),
@@ -1398,7 +1398,7 @@ is
 
                --  RSA-PSS-SHA512 (0x0806) or RSA-PKCS1-SHA512 (0x0601)
 
-            when 16#0806# | 16#0601# =>
+            when Sig_RSA_PSS_SHA512 | Sig_RSA_PKCS1_SHA512 =>
                if PK_Algo /= X509.Algo_RSA then
                   return False;
                end if;
@@ -1418,7 +1418,7 @@ is
                      Mod_Bytes (I) := Byte (PK_Data (X509.N32 (I)));
                   end loop;
                   Sig_Bytes := Sig;
-                  if Sig_Scheme = 16#0806# then
+                  if Sig_Scheme = Sig_RSA_PSS_SHA512 then
                      return
                        RSA.Verify_PSS_SHA512
                          (Hash      => Bytes_64 (Byte_Seq (H)),
@@ -1441,7 +1441,7 @@ is
 
                --  ECDSA-P256-SHA256 (0x0403)
 
-            when 16#0403# =>
+            when Sig_ECDSA_P256_SHA256 =>
                if PK_Algo /= X509.Algo_EC_P256 then
                   return False;
                end if;
@@ -1485,7 +1485,7 @@ is
 
                --  ECDSA-P384-SHA384 (0x0503)
 
-            when 16#0503# =>
+            when Sig_ECDSA_P384_SHA384 =>
                if PK_Algo /= X509.Algo_EC_P384 then
                   return False;
                end if;
@@ -1526,7 +1526,7 @@ is
                --  CertificateVerify over the streamed transcript) therefore
                --  cannot accept it; the raw-data entry points still do.
 
-            when 16#0807# =>
+            when Sig_Ed25519 =>
                return False;
 
             when others =>
@@ -1537,7 +1537,7 @@ is
    end Verify_Signature_Hashed;
 
    function Verify_Signature
-     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Unsigned_16)
+     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Maybe_Sig_Scheme)
       return Boolean
    is
       PK_Algo : constant X509.Algorithm_ID := X509.PK_Algorithm (Cert);
@@ -1550,14 +1550,14 @@ is
 
       --  Ed25519 verifies over the raw message and so cannot delegate
       --  to the digest core.
-      if Sig_Scheme = 16#0807# then
+      if Sig_Scheme = Sig_Ed25519 then
          declare
             PK_Data : constant X509.Byte_Seq := X509.PK_Data (Cert);
          begin
             case Sig_Scheme is
                --  Ed25519 (0x0807)
 
-               when 16#0807# =>
+               when Sig_Ed25519 =>
                   if PK_Algo not in X509.Algo_Ed25519 | X509.Algo_EC_Ed25519 then
                      return False;
                   end if;
@@ -1607,13 +1607,13 @@ is
    end Verify_Signature;
 
    function Verify_Signature_TLS12
-     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Unsigned_16)
+     (Data : Byte_Seq; Sig : Byte_Seq; Cert : X509.Certificate; Sig_Scheme : Maybe_Sig_Scheme)
       return Boolean
    is
       PK_Algo : constant X509.Algorithm_ID := X509.PK_Algorithm (Cert);
       PK_Len  : constant X509.N32 := X509.PK_Length (Cert);
    begin
-      if Sig_Scheme = 16#0503# and then PK_Algo = X509.Algo_EC_P256 then
+      if Sig_Scheme = Sig_ECDSA_P384_SHA384 and then PK_Algo = X509.Algo_EC_P256 then
          if PK_Len /= 65 then
             return False;
          end if;
@@ -1670,14 +1670,14 @@ is
       H512_In    : Bytes_64;
       Sig        : Byte_Seq;
       Cert       : X509.Certificate;
-      Sig_Scheme : Unsigned_16) return Boolean
+      Sig_Scheme : Maybe_Sig_Scheme) return Boolean
    is
       PK_Algo : constant X509.Algorithm_ID := X509.PK_Algorithm (Cert);
       PK_Len  : constant X509.N32 := X509.PK_Length (Cert);
    begin
       --  TLS 1.2 (sha384, ecdsa) with a P-256 key: the curve does not
       --  bind the hash; verify over the truncated SHA-384 digest.
-      if Sig_Scheme = 16#0503# and then PK_Algo = X509.Algo_EC_P256 then
+      if Sig_Scheme = Sig_ECDSA_P384_SHA384 and then PK_Algo = X509.Algo_EC_P256 then
          if PK_Len /= 65 then
             return False;
          end if;

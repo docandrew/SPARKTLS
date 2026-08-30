@@ -460,22 +460,14 @@ is
       begin
          while Pos + 1 <= RBT.Index (DLen) and then Iter_Count < Cap loop
             declare
-               Algo : constant Unsigned_16 :=
-                 Unsigned_16 (SA_Buf (Pos)) * 256 + Unsigned_16 (SA_Buf (Pos + 1));
+               Algo : constant Maybe_Sig_Scheme :=
+                 Scheme_From_Wire
+                   (Unsigned_16 (SA_Buf (Pos)) * 256 + Unsigned_16 (SA_Buf (Pos + 1)));
             begin
-               if Algo in
-                    16#0807#  --  Ed25519
-
-                    | 16#0403#  --  ECDSA-P256
-                    | 16#0503#  --  ECDSA-P384
-                    | 16#0804#  --  RSA-PSS-256
-                    | 16#0805#  --  RSA-PSS-384
-                    | 16#0806#  --  RSA-PSS-512
-                    | 16#0401#  --  RSA-PKCS1-SHA256
-                    | 16#0501#  --  RSA-PKCS1-SHA384
-                    | 16#0601#  --  RSA-PKCS1-SHA512
-                 and then HC.Peer_Sig_Algo_Count < Max_Sig_Algos
-               then
+               --  Unknown or SHA-1 schemes map to Scheme_None and are
+               --  dropped here; the stored list holds only schemes we
+               --  can actually negotiate.
+               if Algo /= Scheme_None and then HC.Peer_Sig_Algo_Count < Max_Sig_Algos then
                   HC.Peer_Sig_Algos (HC.Peer_Sig_Algo_Count) := Algo;
                   HC.Peer_Sig_Algo_Count := HC.Peer_Sig_Algo_Count + 1;
                end if;
@@ -2681,7 +2673,7 @@ is
          return;
       end if;
 
-      if Data (Data'First) /= HT_Client_Hello then
+      if Data (Data'First) /= HS_Msg_Wire (HT_Client_Hello) then
          --  RFC 8446 6: a handshake message of an inappropriate
          --  type for the current state must be rejected with
          --  unexpected_message, not decode_error. The message is

@@ -164,7 +164,7 @@ begin
            (Data       => Signed_Data,
             Sig        => Sig,
             Cert       => Cert,
-            Sig_Scheme => 16#0503#));
+            Sig_Scheme => SPARKTLS.Sig_ECDSA_P384_SHA384));
 
       Check
         ("TLS 1.2 allows default ECDSA cert curve policy",

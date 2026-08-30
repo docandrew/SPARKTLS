@@ -637,11 +637,11 @@ procedure Test_Parse_Client_Hello is
       Check ("Sig_Algs parsed: count = 3",
              OK and HC.Peer_Sig_Algo_Count = 3);
       Check ("Sig_Algs[0] = 0x0807 (Ed25519)",
-             HC.Peer_Sig_Algos (0) = 16#0807#);
+             HC.Peer_Sig_Algos (0) = Sig_Ed25519);
       Check ("Sig_Algs[1] = 0x0403 (ECDSA-P256)",
-             HC.Peer_Sig_Algos (1) = 16#0403#);
+             HC.Peer_Sig_Algos (1) = Sig_ECDSA_P256_SHA256);
       Check ("Sig_Algs[2] = 0x0804 (RSA-PSS-256)",
-             HC.Peer_Sig_Algos (2) = 16#0804#);
+             HC.Peer_Sig_Algos (2) = Sig_RSA_PSS_SHA256);
    end Test_Sig_Algs;
 
    procedure Test_Supported_Groups is

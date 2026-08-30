@@ -804,7 +804,7 @@ is
       --  Sig-algs selection. Empty sig_algs list is malformed per
       --  RFC 5246 7.4.1.4.1.
       declare
-         Picked   : Unsigned_16 := 0;
+         Picked   : Maybe_Sig_Scheme := Scheme_None;
          SA_Empty : Boolean := True;
          CT_OK    : Boolean := False;
       begin
@@ -868,19 +868,19 @@ is
             return;
          end if;
          if S.HC.Cfg.Local /= null then
-            if Picked /= 0 then
+            if Picked /= Scheme_None then
                S.HC.Negotiated_Sig_Algo := Picked;
                S.HC.T12.Client_Cert_Allowed := CT_OK;
             else
                case S.HC.Cfg.Local.Sign_Algo is
                   when Sign_RSA_PSS =>
-                     S.HC.Negotiated_Sig_Algo := 16#0804#;
+                     S.HC.Negotiated_Sig_Algo := Sig_RSA_PSS_SHA256;
 
                   when Sign_ECDSA_P256 =>
-                     S.HC.Negotiated_Sig_Algo := 16#0403#;
+                     S.HC.Negotiated_Sig_Algo := Sig_ECDSA_P256_SHA256;
 
                   when Sign_ECDSA_P384 =>
-                     S.HC.Negotiated_Sig_Algo := 16#0503#;
+                     S.HC.Negotiated_Sig_Algo := Sig_ECDSA_P384_SHA384;
 
                   when Sign_Ed25519 =>
                      --  PureEdDSA cannot sign the streamed 1.2
@@ -1437,9 +1437,12 @@ is
       TH_CV          : Digest;
       TH4_CV         : SPARKNaCl.Hashing.SHA384.Digest;
       TH5_CV         : SPARKNaCl.Hashing.SHA512.Digest;
-      Use_384_For_CV : constant Boolean := HC.Negotiated_Sig_Algo in 16#0503# | 16#0805# | 16#0501#;
-      Use_512_For_CV : constant Boolean := HC.Negotiated_Sig_Algo in 16#0806# | 16#0601#;
-      Use_Raw_For_CV : constant Boolean := HC.Negotiated_Sig_Algo = 16#0807#;
+      Use_384_For_CV : constant Boolean :=
+        HC.Negotiated_Sig_Algo in
+          Sig_ECDSA_P384_SHA384 | Sig_RSA_PSS_SHA384 | Sig_RSA_PKCS1_SHA384;
+      Use_512_For_CV : constant Boolean :=
+        HC.Negotiated_Sig_Algo in Sig_RSA_PSS_SHA512 | Sig_RSA_PKCS1_SHA512;
+      Use_Raw_For_CV : constant Boolean := HC.Negotiated_Sig_Algo = Sig_Ed25519;
    begin
       CV_Buf := (others => 0);
       --  Ed25519 (0x0807) is NOT offered for TLS 1.2 client auth
@@ -2023,7 +2026,7 @@ is
    procedure Dispatch_Server_Flight_Message
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
-      Msg_Type : in Byte;
+      Msg_Type : in Maybe_HS_Msg;
       Frag     : in Byte_Seq;
       Msg_Len  : in N32;
       Result   : out Action)
@@ -2051,7 +2054,7 @@ is
    procedure Dispatch_Server_Flight_Message
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
-      Msg_Type : in Byte;
+      Msg_Type : in Maybe_HS_Msg;
       Frag     : in Byte_Seq;
       Msg_Len  : in N32;
       Result   : out Action) is
@@ -2074,7 +2077,7 @@ is
       end if;
 
       case Msg_Type is
-         when 16#0B# =>
+         when HT_Certificate =>
             --  Certificate (RFC 5246 7.4.2). Parsing happens in
             --  Parse_Cert_Chain_12; subsequent validation gates
             --  (keyUsage, suite<->cert algorithm match, hostname,
@@ -2103,7 +2106,7 @@ is
             Append_Transcript (S.HC, Frag);
             Result := OK;
 
-         when 16#0D# =>
+         when HT_Certificate_Request =>
             --  RFC 5246 7.4: in an ECDHE flight ServerKeyExchange is
             --  mandatory and precedes CertificateRequest. Selected_Group
             --  is only set (to a valid group) by a successfully processed
@@ -2137,7 +2140,7 @@ is
                    then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local));
             Handle_SHD_12 (S, D, Frag, Msg_Len, Result);
 
-         when 16#04# =>
+         when HT_New_Session_Ticket =>
             --  RFC 5077 3.3: NewSessionTicket belongs after the key
             --  exchange; SKE is mandatory for ECDHE, so a zero group
             --  here means the flight is out of order.
@@ -2181,7 +2184,7 @@ is
    procedure Drain_Packed_Server_Flight
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
-      Msg_Type : in out Byte;
+      Msg_Type : in out Maybe_HS_Msg;
       Msg_Len  : in out N32;
       Result   : out Action)
       --  No reassembly preconditions. The buffer's own operations carry what
@@ -2202,7 +2205,7 @@ is
    procedure Drain_Packed_Server_Flight
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
-      Msg_Type : in out Byte;
+      Msg_Type : in out Maybe_HS_Msg;
       Msg_Len  : in out N32;
       Result   : out Action) is
    begin
@@ -2256,7 +2259,7 @@ is
 
             --  Both derived from the one buffer rather than carried in
             --  parallel out-parameters that could disagree with it.
-            Msg_Type := Frag (0);
+            Msg_Type := HS_Msg_From_Wire (Frag (0));
             Msg_Len := Frag'Length - 4;
 
             --  RFC 5246 7.4.6: ServerHelloDone is the last message of the
@@ -2452,7 +2455,7 @@ is
    procedure Prepare_Leftover_Server_Flight_Message
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
-      Msg_Type : out Byte;
+      Msg_Type : out Maybe_HS_Msg;
       Msg_Len  : out N32;
       Ready    : out Boolean;
       Result   : out Action)
@@ -2471,14 +2474,14 @@ is
    procedure Prepare_Leftover_Server_Flight_Message
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
-      Msg_Type : out Byte;
+      Msg_Type : out Maybe_HS_Msg;
       Msg_Len  : out N32;
       Ready    : out Boolean;
       Result   : out Action)
    is
       Parse_OK : Boolean;
    begin
-      Msg_Type := 0;
+      Msg_Type := HT_Unknown;
       Msg_Len := 0;
       Ready := False;
       pragma Assert (Has_Message (D.Reasm));  --  PROBE-T8
@@ -2544,7 +2547,7 @@ is
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
       Rec      : in Records.Parse_Result;
-      Msg_Type : out Byte;
+      Msg_Type : out Maybe_HS_Msg;
       Msg_Len  : out N32;
       Ready    : out Boolean;
       Result   : out Action)
@@ -2563,7 +2566,7 @@ is
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
       Rec      : in Records.Parse_Result;
-      Msg_Type : out Byte;
+      Msg_Type : out Maybe_HS_Msg;
       Msg_Len  : out N32;
       Ready    : out Boolean;
       Result   : out Action)
@@ -2571,7 +2574,7 @@ is
       FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
       Frag_Len : constant N32 := Rec.Fragment_Len;
    begin
-      Msg_Type := 0;
+      Msg_Type := HT_Unknown;
       Msg_Len := 0;
       Ready := False;
       Result := OK;
@@ -2618,7 +2621,7 @@ is
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
       Rec      : in Records.Parse_Result;
-      Msg_Type : out Byte;
+      Msg_Type : out Maybe_HS_Msg;
       Msg_Len  : out N32;
       Ready    : out Boolean;
       Result   : out Action)
@@ -2752,7 +2755,7 @@ is
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
       Rec      : in Records.Parse_Result;
-      Msg_Type : out Byte;
+      Msg_Type : out Maybe_HS_Msg;
       Msg_Len  : out N32;
       Ready    : out Boolean;
       Result   : out Action)
@@ -2761,7 +2764,7 @@ is
       Frag_Len : constant N32 := Rec.Fragment_Len;
       Parse_OK : Boolean;
    begin
-      Msg_Type := 0;
+      Msg_Type := HT_Unknown;
       Msg_Len := 0;
       Ready := False;
       Result := OK;
@@ -2859,7 +2862,7 @@ is
    procedure Prepare_Server_Flight_Message
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
-      Msg_Type : out Byte;
+      Msg_Type : out Maybe_HS_Msg;
       Msg_Len  : out N32;
       Ready    : out Boolean;
       Result   : out Action)
@@ -2880,7 +2883,7 @@ is
    procedure Prepare_Server_Flight_Message
      (S        : in out Session;
       D        : in out SPARKTLS.HS_Pool.HS_Data;
-      Msg_Type : out Byte;
+      Msg_Type : out Maybe_HS_Msg;
       Msg_Len  : out N32;
       Ready    : out Boolean;
       Result   : out Action)
@@ -2888,7 +2891,7 @@ is
       Rec               : Records.Parse_Result;
       Have_Leftover_Msg : constant Boolean := Has_Message (D.Reasm);
    begin
-      Msg_Type := 0;
+      Msg_Type := HT_Unknown;
       Msg_Len := 0;
       Ready := False;
       Result := OK;
@@ -2957,7 +2960,7 @@ is
    procedure Process_Server_Flight
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
-      Msg_Type : Byte;
+      Msg_Type : Maybe_HS_Msg;
       Msg_Len  : N32;
       Ready    : Boolean;
    begin
@@ -3056,7 +3059,7 @@ is
 
       if Used (D.Reasm) > 0 then
          declare
-            Msg_Type : Byte;
+            Msg_Type : Maybe_HS_Msg;
             Msg_Len  : N32;
             Ready    : Boolean;
          begin
@@ -3074,7 +3077,7 @@ is
             if Result /= OK or else not Ready then
                return;
             end if;
-            if Msg_Type /= 16#04# then
+            if Msg_Type /= HT_New_Session_Ticket then
                Send_Encrypted_Finished_Error_12 (S, D, 10, Unexpected_Message, Result);
                return;
             end if;
@@ -3133,7 +3136,7 @@ is
          --  handshake records, so reuse the server-flight reassembler
          --  rather than assuming the whole message is in this record.
          declare
-            Msg_Type : Byte;
+            Msg_Type : Maybe_HS_Msg;
             Msg_Len  : N32;
             Ready    : Boolean;
          begin
@@ -3151,7 +3154,7 @@ is
             if Result /= OK or else not Ready then
                return;
             end if;
-            if Msg_Type /= 16#04# then
+            if Msg_Type /= HT_New_Session_Ticket then
                Send_Encrypted_Finished_Error_12 (S, D, 10, Unexpected_Message, Result);
                return;
             end if;
@@ -3452,7 +3455,7 @@ is
          declare
             Fin      : constant Message_Bytes := Message (D.Reasm);
             RN       : constant N32 := Fin'Length;
-            Msg_Type : constant Byte := Fin (0);
+            Msg_Type : constant Maybe_HS_Msg := HS_Msg_From_Wire (Fin (0));
             Msg_Len  : constant N32 := RN - 4;
          begin
             if Msg_Type /= HT_Finished or RN < 4 + Finished_Verify_Len then
@@ -3464,7 +3467,8 @@ is
                --  unexpected_message; we treat short body as
                --  decode_error.
                declare
-                  Desc_Code : constant Byte := (if Msg_Type /= HT_Finished then 10 else 50);
+                  Desc_Code : constant Byte :=
+                    (if Msg_Type /= HT_Finished then AD_Unexpected_Message else AD_Decode_Error);
                begin
                   Send_Encrypted_Finished_Error_12
                     (S,

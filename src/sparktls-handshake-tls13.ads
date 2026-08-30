@@ -32,7 +32,7 @@ is
    procedure Build_Certificate_Verify
      (Transcript_Hash : in Byte_Seq;
       Id              : in Identity;
-      Sig_Algo_Wire   : in Unsigned_16;
+      Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
       Random          : in Random_Bytes_Fn;
       Result          : out Byte_Seq;
@@ -43,7 +43,8 @@ is
        and then Result'Last in 523 .. Max_Cert_Msg - 1
        and then Transcript_Hash'First = 0
        and then Transcript_Hash'Last in 31 | 47
-       and then (if Sig_Algo_Wire in 16#0804# | 16#0805# | 16#0806#
+       and then (if Sig_Algo_Wire in
+                      Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512
                  then Random /= null and then Id.RSA_Mod_Len in 64 .. 512),
      Post => Len <= N32 (Result'Length);
 

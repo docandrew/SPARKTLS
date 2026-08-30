@@ -721,7 +721,7 @@ is
          --  (type 2). Any other handshake type is an
          --  unexpected_message  BoGo
          --  WrongMessageType-ServerHello tests this.
-         if Frag (Frag'First) /= Handshake.HT_Server_Hello then
+         if Frag (Frag'First) /= HS_Msg_Wire (HT_Server_Hello) then
             S.Last_Error := Unexpected_Message;
          end if;
          Handshake.Client_Msgs.Parse_Server_Hello

@@ -650,6 +650,10 @@ is
    --  9-algorithm preference order. SA_Raw'Length must be
    --  2 + 2 * Effective_Sig_Algo_Count (Cfg).
    procedure Fill_SA_Raw (Cfg : in Config; SA_Raw : out Byte_Seq)
+   with
+     Pre =>
+       SA_Raw'First = 0
+       and then SA_Raw'Length = 2 + 2 * Effective_Sig_Algo_Count (Cfg)
    is
       P : N32 := 2;
    begin
@@ -659,8 +663,8 @@ is
       if Cfg.Verify_Sig_Algo_Count > 0 then
          for J in Sig_Algo_Index loop
             exit when J >= Cfg.Verify_Sig_Algo_Count;
-            SA_Raw (P) := Byte (Cfg.Verify_Sig_Algos (J) / 256);
-            SA_Raw (P + 1) := Byte (Cfg.Verify_Sig_Algos (J) mod 256);
+            SA_Raw (P) := Byte (Sig_Scheme_Wire (Cfg.Verify_Sig_Algos (J)) / 256);
+            SA_Raw (P + 1) := Byte (Sig_Scheme_Wire (Cfg.Verify_Sig_Algos (J)) mod 256);
             P := P + 2;
          end loop;
       else
@@ -786,6 +790,15 @@ is
       PK_Bytes      : out Byte_Seq;
       P256_PK_Enc   : out Byte_Seq;
       P384_PK_Enc   : out Byte_Seq)
+   with
+     Pre =>
+       Cfg.Random /= null
+       and then PK_Bytes'First = 0
+       and then PK_Bytes'Last = 31
+       and then P256_PK_Enc'First = 0
+       and then P256_PK_Enc'Last = 64
+       and then P384_PK_Enc'First = 0
+       and then P384_PK_Enc'Last = 96
    is
       procedure Gen_Random (Output : out Byte_Seq) renames Cfg.Random.all;
    begin
@@ -1545,7 +1558,7 @@ is
          return;
       end if;
 
-      Result (0) := HT_Client_Hello;
+      Result (0) := HS_Msg_Wire (HT_Client_Hello);
       Result (1) := Byte (CH_Body_Len / 65536);
       Result (2) := Byte ((CH_Body_Len / 256) mod 256);
       Result (3) := Byte (CH_Body_Len mod 256);
@@ -2239,7 +2252,7 @@ is
       end if;
 
       --  Check handshake type byte
-      if Data (Data'First) /= HT_Server_Hello then
+      if Data (Data'First) /= HS_Msg_Wire (HT_Server_Hello) then
          pragma Assert_And_Cut (SH_Parse_Frame);
          return;
       end if;

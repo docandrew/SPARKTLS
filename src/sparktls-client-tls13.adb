@@ -784,7 +784,7 @@ is
       SPARKTLS_Transcript.Append (S.HC.TS, Data);
       S.HC.Cert_Request_Received := True;
       declare
-         Picked    : Unsigned_16 := 0;
+         Picked    : Maybe_Sig_Scheme := Scheme_None;
          Sig_Found : Boolean := False;
       begin
          if Data'Length >= 7 then
@@ -1157,12 +1157,15 @@ is
 
             if Msg_Len >= 8 then
                declare
-                  Sig_Scheme : constant Unsigned_16 :=
-                    Unsigned_16 (Data (4)) * 256 + Unsigned_16 (Data (5));
+                  Sig_Scheme : constant Maybe_Sig_Scheme :=
+                    Scheme_From_Wire
+                      (Unsigned_16 (Data (4)) * 256 + Unsigned_16 (Data (5)));
                   Sig_Len    : constant N32 := N32 (Data (6)) * 256 + N32 (Data (7));
                   Sig_Start  : constant N32 := 8;
                begin
-                  if Sig_Scheme = 16#0401# or Sig_Scheme = 16#0501# or Sig_Scheme = 16#0601# then
+                  if Sig_Scheme in
+                       Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512
+                  then
                      Send_HS_Encrypted_Alert (S, D, Illegal_Parameter, Result);
                      return;
                   end if;
@@ -1339,7 +1342,7 @@ is
       Data   : in Byte_Seq;
       Result : out Action)
    is
-      Msg_Type : Byte;
+      Msg_Type : Maybe_HS_Msg;
       Msg_Len  : N32;
       Parse_OK : Boolean;
    begin
@@ -1374,19 +1377,19 @@ is
       end if;
 
       case Msg_Type is
-         when Handshake.HT_Encrypted_Extensions =>
+         when HT_Encrypted_Extensions =>
             Handle_EE_13 (S, D, Data, Result);
             if Result /= OK then
                return;
             end if;
 
-         when Handshake.HT_Certificate_Request =>
+         when HT_Certificate_Request =>
             Handle_CertReq_13 (S, D, Data, Result);
             if Result /= OK then
                return;
             end if;
 
-         when Handshake.HT_Certificate =>
+         when HT_Certificate =>
             if S.State /= Wait_Certificate then
                Send_HS_Encrypted_Alert (S, D, Unexpected_Message, Result);
                return;
@@ -1396,7 +1399,7 @@ is
                return;
             end if;
 
-         when Handshake.HT_Certificate_Verify =>
+         when HT_Certificate_Verify =>
             if S.State /= Wait_Certificate_Verify then
                Send_HS_Encrypted_Alert (S, D, Unexpected_Message, Result);
                return;
@@ -1410,7 +1413,7 @@ is
                return;
             end if;
 
-         when Handshake.HT_Finished =>
+         when HT_Finished =>
             Handle_Finished_13 (S, D, Data, Msg_Len, Result);
             if Result /= OK then
                return;
@@ -1449,7 +1452,7 @@ is
       --  Client-SignDefault tests use as the expected outcome.
       if S.HC.Cfg.Local /= null
         and then S.HC.Cfg.Local.Has_Identity
-        and then S.HC.Negotiated_Sig_Algo = 0
+        and then S.HC.Negotiated_Sig_Algo = Scheme_None
       then
          Send_HS_Encrypted_Alert (S, D, Handshake_Failure, Result);
          return;
@@ -1462,7 +1465,7 @@ is
             Empty_Cert : Byte_Seq (0 .. 7) := (others => 0);
          begin
             --  HS header: type=Certificate(0x0B), length=4
-            Empty_Cert (0) := Handshake.HT_Certificate;
+            Empty_Cert (0) := HS_Msg_Wire (HT_Certificate);
             Empty_Cert (1) := 0;
             Empty_Cert (2) := 0;
             Empty_Cert (3) := 4;
@@ -1619,7 +1622,7 @@ is
       declare
          Big_Finished : Byte_Seq (0 .. 51) := (others => 0);
       begin
-         Big_Finished (0) := Handshake.HT_Finished;
+         Big_Finished (0) := HS_Msg_Wire (HT_Finished);
          Big_Finished (1) := 16#00#;
          Big_Finished (2) := 16#00#;
          Big_Finished (3) := 16#30#;
@@ -2179,19 +2182,19 @@ is
            and then S.HC.Cfg.Local.Has_Identity
            and then (S.HC.Cfg.Random = null
                      or else S.HC.Cfg.Local.NaCl_Cert_Len not in 1 .. N32 (Max_Cert_DER)
-                     or else not (S.HC.Negotiated_Sig_Algo = 0
+                     or else not (S.HC.Negotiated_Sig_Algo = Scheme_None
                                   or else (case S.HC.Cfg.Local.Sign_Algo is
                                              when Sign_Ed25519 =>
-                                               S.HC.Negotiated_Sig_Algo = 16#0807#,
+                                               S.HC.Negotiated_Sig_Algo = Sig_Ed25519,
                                              when Sign_ECDSA_P256 =>
-                                               S.HC.Negotiated_Sig_Algo = 16#0403#,
+                                               S.HC.Negotiated_Sig_Algo = Sig_ECDSA_P256_SHA256,
                                              when Sign_ECDSA_P384 =>
-                                               S.HC.Negotiated_Sig_Algo = 16#0503#,
+                                               S.HC.Negotiated_Sig_Algo = Sig_ECDSA_P384_SHA384,
                                              when Sign_RSA_PSS =>
                                                S.HC.Negotiated_Sig_Algo in
-                                                 16#0804#
-                                                 | 16#0805#
-                                                 | 16#0806#,
+                                                 Sig_RSA_PSS_SHA256
+                                                 | Sig_RSA_PSS_SHA384
+                                                 | Sig_RSA_PSS_SHA512,
                                              when Sign_None => False))
                      or else (S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
                               and then S.HC.Cfg.Local.RSA_Mod_Len not in 64 .. 512)

@@ -31,12 +31,12 @@ is
    ----------------------------------------------------------------------------
 
    procedure Parse_Handshake_Header
-     (Data : in Byte_Seq; Msg_Type : out Byte; Msg_Len : out N32; OK : out Boolean)
+     (Data : in Byte_Seq; Msg_Type : out Maybe_HS_Msg; Msg_Len : out N32; OK : out Boolean)
    is
       use RFLX.TLS_Handshake.TLS_Handshake;
       Ctx : Context;
    begin
-      Msg_Type := 0;
+      Msg_Type := HT_Unknown;
       Msg_Len := 0;
       OK := False;
 
@@ -52,23 +52,12 @@ is
          Verify_Message (Ctx);
 
          if Well_Formed_Message (Ctx) then
-            Msg_Type := Byte (RFLX.Tls_Parameters.To_Base_Integer (Get_Tag (Ctx)));
+            Msg_Type :=
+              HS_Msg_From_Wire
+                (Byte (RFLX.Tls_Parameters.To_Base_Integer (Get_Tag (Ctx))));
             Msg_Len := N32 (RFLX.TLS_Handshake.To_Base_Integer (Get_Length (Ctx)));
-            --  Validate known handshake type (TLS 1.2 + 1.3)
-            if Msg_Type in
-                 16#01#
-                 | 16#02#
-                 | 16#04#
-                 | 16#08#
-                 | 16#0B#
-                 | 16#0C#
-                 | 16#0D#
-                 | 16#0E#
-                 | 16#0F#
-                 | 16#10#
-                 | 16#14#
-              and then Msg_Len <= Max_HS_Msg
-            then
+            --  Unknown handshake types map to HT_Unknown and are rejected.
+            if Msg_Type /= HT_Unknown and then Msg_Len <= Max_HS_Msg then
                OK := True;
             end if;
          end if;
@@ -155,34 +144,35 @@ is
    ----------------------------------------------------------------------------
    function Pick_Sig_Algo
      (Sig_Algs : Byte_Seq; Cert : Signing_Algorithm; Allow_PKCS1_v1_5 : Boolean := False)
-      return Unsigned_16
+      return Maybe_Sig_Scheme
    is
       Pos : N32;
    begin
       if Cert = Sign_None or Sig_Algs'Length < 2 then
-         return 0;
+         return Scheme_None;
       end if;
       Pos := Sig_Algs'First;
       while Pos < Sig_Algs'Last loop
          pragma Loop_Invariant (Pos >= Sig_Algs'First and Pos < Sig_Algs'Last);
          pragma Loop_Variant (Increases => Pos);
          declare
-            A : constant Unsigned_16 :=
-              Unsigned_16 (Sig_Algs (Pos)) * 256 + Unsigned_16 (Sig_Algs (Pos + 1));
+            A : constant Maybe_Sig_Scheme :=
+              Scheme_From_Wire
+                (Unsigned_16 (Sig_Algs (Pos)) * 256 + Unsigned_16 (Sig_Algs (Pos + 1)));
          begin
             case Cert is
                when Sign_Ed25519 =>
-                  if A = 16#0807# then
+                  if A = Sig_Ed25519 then
                      return A;
                   end if;
 
                when Sign_ECDSA_P256 =>
-                  if A = 16#0403# then
+                  if A = Sig_ECDSA_P256_SHA256 then
                      return A;
                   end if;
 
                when Sign_ECDSA_P384 =>
-                  if A = 16#0503# then
+                  if A = Sig_ECDSA_P384_SHA384 then
                      return A;
                   end if;
 
@@ -190,10 +180,12 @@ is
                   --  RSA private key handles both PSS and PKCS1 v1.5.
                   --  Sign_RSA_PSS is the storage type, not the wire
                   --  algorithm choice. Server's offer drives selection.
-                  if A = 16#0804# or A = 16#0805# or A = 16#0806# then
+                  if A in Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 then
                      return A;
                   end if;
-                  if Allow_PKCS1_v1_5 and (A = 16#0401# or A = 16#0501# or A = 16#0601#) then
+                  if Allow_PKCS1_v1_5
+                    and A in Sig_RSA_PKCS1_SHA256 | Sig_RSA_PKCS1_SHA384 | Sig_RSA_PKCS1_SHA512
+                  then
                      return A;
                   end if;
 
@@ -203,7 +195,7 @@ is
          end;
          Pos := Pos + 2;
       end loop;
-      return 0;
+      return Scheme_None;
    end Pick_Sig_Algo;
 
    function Pick_Sig_Algo_With_Prefs
@@ -211,7 +203,7 @@ is
       Cert             : Signing_Algorithm;
       Prefs            : Sig_Algo_List;
       Count            : Natural;
-      Allow_PKCS1_v1_5 : Boolean := False) return Unsigned_16
+      Allow_PKCS1_v1_5 : Boolean := False) return Maybe_Sig_Scheme
    is
       Pos : N32;
    begin
@@ -219,7 +211,7 @@ is
          return Pick_Sig_Algo (Sig_Algs, Cert, Allow_PKCS1_v1_5);
       end if;
       if Sig_Algs'Length < 2 then
-         return 0;
+         return Scheme_None;
       end if;
 
       for J in Sig_Algo_Index loop
@@ -229,7 +221,9 @@ is
             while Pos < Sig_Algs'Last loop
                pragma Loop_Invariant (Pos >= Sig_Algs'First and Pos < Sig_Algs'Last);
                pragma Loop_Variant (Increases => Pos);
-               if Prefs (J) = Unsigned_16 (Sig_Algs (Pos)) * 256 + Unsigned_16 (Sig_Algs (Pos + 1))
+               if Prefs (J)
+                  = Scheme_From_Wire
+                      (Unsigned_16 (Sig_Algs (Pos)) * 256 + Unsigned_16 (Sig_Algs (Pos + 1)))
                then
                   return Prefs (J);
                end if;
@@ -238,7 +232,7 @@ is
          end if;
       end loop;
 
-      return 0;
+      return Scheme_None;
    end Pick_Sig_Algo_With_Prefs;
 
 end SPARKTLS.Handshake;

@@ -49,10 +49,8 @@ is
    ----------------------------------------------------------------------------
 
    --  Handshake type codes
-   HT_Server_Key_Exchange : constant Byte := 16#0C#;
-   HT_Server_Hello_Done   : constant Byte := 16#0E#;
-   HT_Client_Key_Exchange : constant Byte := 16#10#;
-   HT_Finished            : constant Byte := 16#14#;
+   --  TLS 1.2 HandshakeType names are Maybe_HS_Msg enum literals (SPARKTLS);
+   --  the former duplicate HT_Finished constant is gone with them.
 
    --  RFC 8422 5.4: ECCurveType
    EC_Curve_Type_Named : constant Byte := 3;
@@ -79,10 +77,6 @@ is
    ----------------------------------------------------------------------------
    --  Ghost functions: RFC behavioral invariants
    ----------------------------------------------------------------------------
-
-   --  RFC 8422: Valid ECDHE group for our implementation.
-   function Valid_ECDHE_Group (G : Maybe_ECDHE_Group) return Boolean
-   is (G in ECDHE_Group);
 
    --  RFC 8422 5.1.1: in TLS 1.2, supported_groups constrains the
    --  EC parameters that may appear in an ECDSA server certificate.
@@ -244,7 +238,7 @@ is
      Pre => Result'First = 0 and Result'Last >= Server_Hello_Done_Len - 1,
      Post =>
        Valid_SHD_Len (Len)               --  exactly 4 bytes
-       and Result (0) = HT_Server_Hello_Done  --  type = 0x0E
+       and Result (0) = HS_Msg_Wire (HT_Server_Hello_Done)  --  type = 0x0E
        and Result (1) = 0                     --  length = 0
        and Result (2) = 0
        and Result (3) = 0;
@@ -343,7 +337,7 @@ is
        and (Transcript_Hash'Last = 31 or else Transcript_Hash'Last = 47),
      Post =>
        Valid_Finished_12_Len (Len)        --  exactly 16 bytes
-       and Result (0) = HT_Finished       --  type = 0x14
+       and Result (0) = HS_Msg_Wire (HT_Finished)  --  type = 0x14
        and Result (1) = 0                 --  length = 12
        and Result (2) = 0
        and Result (3) = 12;
@@ -361,7 +355,7 @@ is
    procedure Build_Certificate_Verify_12
      (Transcript_Hash : in Byte_Seq;
       Id              : in Identity;
-      Sig_Algo_Wire   : in Unsigned_16;
+      Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Random          : in Live_Random_Fn;
       Result          : out Byte_Seq;
       Len             : out N32)
@@ -370,9 +364,12 @@ is
        Result'First = 0
        and Result'Last >= 523
        and Transcript_Hash'First = 0
-       and (if Sig_Algo_Wire = 16#0807# then Transcript_Hash'Last <= N32'Last - 65
-            elsif Sig_Algo_Wire in 16#0601# | 16#0806# then Transcript_Hash'Length = 64
-            elsif Sig_Algo_Wire in 16#0501# | 16#0503# | 16#0805# then Transcript_Hash'Length = 48
+       and (if Sig_Algo_Wire = Sig_Ed25519 then Transcript_Hash'Last <= N32'Last - 65
+            elsif Sig_Algo_Wire in Sig_RSA_PKCS1_SHA512 | Sig_RSA_PSS_SHA512
+            then Transcript_Hash'Length = 64
+            elsif Sig_Algo_Wire in
+                    Sig_RSA_PKCS1_SHA384 | Sig_ECDSA_P384_SHA384 | Sig_RSA_PSS_SHA384
+            then Transcript_Hash'Length = 48
             else Transcript_Hash'Length = 32)
        and Id.Has_Identity,
      Post => Len <= 520;

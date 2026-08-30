@@ -105,7 +105,7 @@ is
          Set_Verify_Data (Ctx, To_RFLX (Verify_Data));
          Take_Buffer (Ctx, Buf);
 
-         Result (0) := HT_Finished;
+         Result (0) := HS_Msg_Wire (HT_Finished);
          Result (1) := 16#00#;
          Result (2) := 16#00#;
          Result (3) := Byte (Body_Len);
@@ -381,7 +381,7 @@ is
      (HC : in Handshake_Context; SH_Body_Len : in N32; Result : in out Byte_Seq; Pos : out N32) is
    begin
       --  Handshake header.
-      Result (0) := HT_Server_Hello;
+      Result (0) := HS_Msg_Wire (HT_Server_Hello);
       Result (1) := Byte (SH_Body_Len / 65536);
       Result (2) := Byte ((SH_Body_Len / 256) mod 256);
       Result (3) := Byte (SH_Body_Len mod 256);
@@ -815,7 +815,7 @@ is
       Result := (others => 0);
 
       --  Handshake header
-      Result (0) := HT_Encrypted_Extensions;
+      Result (0) := HS_Msg_Wire (HT_Encrypted_Extensions);
       Result (1) := Byte (Body_Len / 65536);
       Result (2) := Byte ((Body_Len / 256) mod 256);
       Result (3) := Byte (Body_Len mod 256);
@@ -957,7 +957,7 @@ is
          Take_Buffer (Ctx, Buf);
 
          --  Prepend handshake header
-         Result (0) := HT_Certificate_Request;
+         Result (0) := HS_Msg_Wire (HT_Certificate_Request);
          Result (1) := Byte (Body_Len / 65536);
          Result (2) := Byte ((Body_Len / 256) mod 256);
          Result (3) := Byte (Body_Len mod 256);
@@ -1076,7 +1076,7 @@ is
          end if;
 
          --  Handshake header
-         Put_U8 (HT_Certificate);
+         Put_U8 (HS_Msg_Wire (HT_Certificate));
          Put_U24 (Body_Len);
 
          --  certificate_request_context (empty)
@@ -1172,7 +1172,7 @@ is
    procedure Build_Certificate_Verify
      (Transcript_Hash : in Byte_Seq;
       Id              : in Identity;
-      Sig_Algo_Wire   : in Unsigned_16;
+      Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
       Random          : in Random_Bytes_Fn;
       Result          : out Byte_Seq;
@@ -1195,7 +1195,7 @@ is
       Build_CV_Content (Transcript_Hash, Role, Content, Content_Len);
 
       case Sig_Algo_Wire is
-         when 16#0807# =>
+         when Sig_Ed25519 =>
             Algo_Enum := RFLX.Tls_Parameters.Ed25519_0807;
             Sig_Len := 64;
             declare
@@ -1209,7 +1209,7 @@ is
                Sig_OK := True;
             end;
 
-         when 16#0403# =>
+         when Sig_ECDSA_P256_SHA256 =>
             Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp256r1_Sha256;
             declare
                use SPARKTLSCrypto.Hashing.SHA256;
@@ -1238,7 +1238,7 @@ is
                end if;
             end;
 
-         when 16#0503# =>
+         when Sig_ECDSA_P384_SHA384 =>
             Algo_Enum := RFLX.Tls_Parameters.Ecdsa_Secp384r1_Sha384;
             declare
                use SPARKNaCl.Hashing.SHA384;
@@ -1267,7 +1267,7 @@ is
                end if;
             end;
 
-         when 16#0804# =>
+         when Sig_RSA_PSS_SHA256 =>
             Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256;
             declare
                use SPARKTLSCrypto.Hashing.SHA256;
@@ -1288,7 +1288,7 @@ is
                   OK        => Sig_OK);
             end;
 
-         when 16#0805# =>
+         when Sig_RSA_PSS_SHA384 =>
             Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha384;
             declare
                use SPARKNaCl.Hashing.SHA384;
@@ -1309,7 +1309,7 @@ is
                   OK        => Sig_OK);
             end;
 
-         when 16#0806# =>
+         when Sig_RSA_PSS_SHA512 =>
             Algo_Enum := RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha512;
             declare
                use SPARKNaCl.Hashing.SHA512;
@@ -1366,7 +1366,7 @@ is
          end;
          Take_Buffer (Ctx, Buf);
 
-         Result (0) := HT_Certificate_Verify;
+         Result (0) := HS_Msg_Wire (HT_Certificate_Verify);
          Result (1) := 16#00#;
          Result (2) := Byte (Body_Len / 256);
          Result (3) := Byte (Body_Len mod 256);
