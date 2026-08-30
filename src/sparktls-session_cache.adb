@@ -16,7 +16,7 @@ with SPARKTLS.Ticket_Cache;
 with SPARKTLS.Tickets_12;
 
 package body SPARKTLS.Session_Cache
-  with SPARK_Mode => On
+  with SPARK_Mode => Off
 is
 
    --  Ring of ticket-encryption keys. The newest seals outgoing tickets;

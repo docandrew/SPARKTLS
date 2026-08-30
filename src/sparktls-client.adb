@@ -1,7 +1,7 @@
-with Interfaces;                    use Interfaces;
-with SPARKTLS_Reassembly;  use SPARKTLS_Reassembly;
+with Interfaces;          use Interfaces;
+with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
 with SPARKTLS.HS_Pool;
-with SPARKTLS.Records;     use SPARKTLS.Records;
+with SPARKTLS.Records;    use SPARKTLS.Records;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Client_Msgs;
 with SPARKTLS.Handshake.TLS12;
@@ -89,9 +89,10 @@ is
    function Client_Config_Can_Start (Cfg : Config; Resume_Usable : Boolean) return Boolean
    is (Cfg.Random /= null
        and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
-       and then (Cfg.Skip_Verify
-                 or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
-                 or else Resume_Usable));
+       and then
+         (Cfg.Skip_Verify
+          or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
+          or else Resume_Usable));
 
    --  Advance the version-neutral ClientHello/ServerHello prefix.
    procedure Advance_Handshake
@@ -126,7 +127,7 @@ is
    procedure Parse_SH_From_Reasm
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    with
-     Pre =>
+     Pre  =>
        S.State = Wait_Server_Hello
        and then Has_Message (D.Reasm)
        and then S.HC.Cfg.Random /= null
@@ -135,8 +136,9 @@ is
        (if Result = OK
         then
           SPARKTLS_Transcript.Started (S.HC.TS)
-          and then (if S.State = Wait_Server_Hello
-                    then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)));
+          and then
+            (if S.State = Wait_Server_Hello
+             then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)));
 
    procedure Finalize_SH_Processing
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
@@ -152,7 +154,7 @@ is
       Rec    : in Records.Parse_Result;
       Result : out Action)
    with
-     Pre =>
+     Pre  =>
        S.State = Wait_Server_Hello
        and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
@@ -179,7 +181,7 @@ is
       Frag_Start : in N32;
       Result     : out Action)
    with
-     Pre =>
+     Pre  =>
        S.State = Wait_Server_Hello
        and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
@@ -245,8 +247,7 @@ is
       Init (S, Cfg);
    end Configure;
 
-   procedure Initialize_Client_Handshake
-     (S : in out Client_Session; OK : out Boolean)
+   procedure Initialize_Client_Handshake (S : in out Client_Session; OK : out Boolean)
    with Pre => S.HC.Cfg.Random /= null
    is
       CH_Buf  : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
@@ -434,7 +435,7 @@ is
       Next_Read  : in Buffer_Size;
       Result     : out Action)
    with
-     Pre =>
+     Pre  =>
        S.State = Wait_Server_Hello
        and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
@@ -471,7 +472,7 @@ is
       Next_Read  : in Buffer_Size;
       Result     : out Action)
    with
-     Pre =>
+     Pre  =>
        S.State = Wait_Server_Hello
        and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
@@ -511,7 +512,7 @@ is
       HS_Total   : in N32;
       Next_Read  : in Buffer_Size)
    with
-     Pre =>
+     Pre  =>
        S.State = Wait_Server_Hello
        and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
@@ -563,7 +564,8 @@ is
       declare
          pragma Assert (Frag_Start + 3 <= S.Input.Data'Last);
          HS_Len   : constant N32 :=
-           N32 (S.Input.Data (Frag_Start + 1)) * 65536 + N32 (S.Input.Data (Frag_Start + 2)) * 256
+           N32 (S.Input.Data (Frag_Start + 1)) * 65536
+           + N32 (S.Input.Data (Frag_Start + 2)) * 256
            + N32 (S.Input.Data (Frag_Start + 3));
          HS_Total : constant N32 := HS_Len + 4;
       begin
@@ -667,8 +669,8 @@ is
          --  The NEXT message's declared size is peer data,
          --  so it is validated here rather than trusted.
          if Header_Ready (D.Reasm)
-           and then (Message_Too_Large (D.Reasm)
-                     or else Declared_Size (D.Reasm) > Transcript_Capacity)
+           and then
+             (Message_Too_Large (D.Reasm) or else Declared_Size (D.Reasm) > Transcript_Capacity)
          then
             Reset (D.Reasm);
             S.Last_Error := Decode_Error;
@@ -711,9 +713,9 @@ is
       Result := OK;
       --  Full ServerHello reassembled.
       declare
-         Frag     : constant Message_Bytes := Message (D.Reasm);
+         Frag      : constant Message_Bytes := Message (D.Reasm);
          pragma Assert (Has_Message (D.Reasm));  --  PROBE-T8
-         Parse_OK : Boolean;
+         Parse_OK  : Boolean;
          Candidate : TLS_Version;
       begin
          --  RFC 8446 4 / RFC 5246 7.4: the first
@@ -811,14 +813,16 @@ is
             --  SHA-256 here, wrong for 384 suites.
             SPARKTLS_Transcript.Select_Hash
               (S.HC.TS,
-               (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384 then SPARKTLS_Transcript.Only_384
+               (if S.Negotiated_Suite = Suite_AES_256_GCM_SHA384
+                then SPARKTLS_Transcript.Only_384
                 else SPARKTLS_Transcript.Only_256));
             SPARKTLS_Transcript.Reset_For_HRR (S.HC.TS);
             SPARKTLS_Transcript.Append (S.HC.TS, Byte_Seq (Frag));
             if S.HC.Cfg.Random = null
               or else S.HC.HRR_Cookie_Len > N32 (S.HC.HRR_Cookie'Length)
-              or else (S.HC.Cfg.TLS12_Resume_Ticket.Valid
-                       and then S.HC.Cfg.TLS12_Resume_Ticket.Ticket_Len > Max_TLS12_Ticket_Len)
+              or else
+                (S.HC.Cfg.TLS12_Resume_Ticket.Valid
+                 and then S.HC.Cfg.TLS12_Resume_Ticket.Ticket_Len > Max_TLS12_Ticket_Len)
             then
                S.Last_Error := Internal_Error;
                S.State := Error_State;
@@ -960,7 +964,7 @@ is
          end if;
 
          case Rec.Content is
-            when Records.Content_Handshake =>
+            when Records.Content_Handshake          =>
                Handle_WSH_HS_Frame (S, D, Rec, Result);
 
             when Records.Content_Change_Cipher_Spec =>
@@ -999,7 +1003,7 @@ is
                   end if;
                end;
 
-            when Records.Content_Alert =>
+            when Records.Content_Alert              =>
                --  Plaintext alert before keys are established
                --  (e.g. server's close_notify, warning alert,
                --  or fatal alert). TLS 1.2 peers may send
@@ -1014,7 +1018,8 @@ is
                      S.Last_Error := Decode_Error;
                      Set_State (S, Error_State);
                      Result := Error_Alert;
-                  elsif S.Input.Data (Alert_Pos) = 1 and then S.Input.Data (Alert_Pos + 1) /= 0 then
+                  elsif S.Input.Data (Alert_Pos) = 1 and then S.Input.Data (Alert_Pos + 1) /= 0
+                  then
                      if S.Warning_Alerts_Recvd >= Max_Warning_Alerts then
                         S.Last_Error := Decode_Error;
                         Set_State (S, Error_State);
@@ -1044,7 +1049,7 @@ is
                   end if;
                end;
 
-            when others =>
+            when others                             =>
                --  RFC 8446 6.2: any other record type  most
                --  commonly Content_Application_Data  before
                --  ServerHello is a record-layer state-machine
@@ -1083,7 +1088,7 @@ is
          when Wait_Server_Hello =>
             Handle_WSH_Frame (S, D, Result);
 
-         when others =>
+         when others            =>
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -1113,7 +1118,7 @@ is
    procedure Advance_Client_Non_Handshake
      (S : in out Session; Result : out Action; Handled : out Boolean)
    with
-     Pre =>
+     Pre  =>
        S.Role = Role_Client
        and then S.App_Data_Len <= Max_Record_Plaintext
        and then Warning_Alerts_Bounded_RFC_8446_6_1 (S)
@@ -1152,10 +1157,12 @@ is
                Result := Handshake_Done;
             else
                case S.Version is
-                  when TLS_1_2 =>
+                  when TLS_1_2          =>
                      SPARKTLS.Client.TLS12.Process_Connected_12 (S, Result);
-                  when TLS_1_3 =>
+
+                  when TLS_1_3          =>
                      SPARKTLS.Client.TLS13.Process_Connected_13 (S, Result);
+
                   when TLS_Undetermined =>
                      S.Last_Error := Internal_Error;
                      Set_State (S, Error_State);
@@ -1163,15 +1170,17 @@ is
                end case;
             end if;
 
-         when Closing =>
+         when Closing   =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             elsif Input_Available (S) > 0 then
                case S.Version is
-                  when TLS_1_2 =>
+                  when TLS_1_2          =>
                      SPARKTLS.Client.TLS12.Process_Connected_12 (S, Result);
-                  when TLS_1_3 =>
+
+                  when TLS_1_3          =>
                      SPARKTLS.Client.TLS13.Process_Connected_13 (S, Result);
+
                   when TLS_Undetermined =>
                      S.Last_Error := Internal_Error;
                      Set_State (S, Error_State);
@@ -1213,7 +1222,7 @@ is
                Result := Shutdown;
             end if;
 
-         when Closed =>
+         when Closed    =>
             --  The connection is finished. A peer may still have records
             --  in flight -- BoGo's Shutdown-Shim-* tests drain after
             --  close_notify with -check-close-notify, and a real
@@ -1231,7 +1240,7 @@ is
             S.Input.Write_Pos := 0;
             Result := Shutdown;
 
-         when others =>
+         when others    =>
             Handled := False;
             Result := Need_Input;
       end case;
@@ -1249,56 +1258,62 @@ is
             return;
          end if;
 
-         --  ClientHello and ServerHello negotiation are version-agnostic.
-         --  Once ServerHello selects a version, dispatch only to that
-         --  version's state machine.
-         --
-         --  BORROW: the handshake handlers take both S and the context.
-         --  Passing S and S.HC_Ptr.C together is aliasing (SPARK RM
-         --  6.4.2, reported as "high" by flow analysis -- note that
-         --  --mode=check_all does NOT catch this, since aliasing is a flow
-         --  check rather than a legality one). Move the pointer out of S
-         --  for the duration of the call so S no longer reaches the
-         --  context, then hand ownership back.
-         --  #106: state-phase coupling is now single-object (S.State vs
-         --  S.HC.Phase) -- the Session predicate carries it.
-         if S.State in Client_Hello_Sent | Wait_Server_Hello then
-            Advance_Handshake (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
-         else
-            case S.Version is
-               when TLS_1_2 =>
-                  SPARKTLS.Client.TLS12.Advance_Handshake_12
-                    (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
-               when TLS_1_3 =>
-                  SPARKTLS.Client.TLS13.Advance_Handshake_13
-                    (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
-               when TLS_Undetermined =>
-                  S.Last_Error := Internal_Error;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
-            end case;
-         end if;
+         declare
+            Sl : constant Slot_Index := S.Slot;
+         begin
+            --  ClientHello and ServerHello negotiation are version-agnostic.
+            --  Once ServerHello selects a version, dispatch only to that
+            --  version's state machine.
+            --
+            --  BORROW: the handshake handlers take both S and the context.
+            --  Passing S and S.HC_Ptr.C together is aliasing (SPARK RM
+            --  6.4.2, reported as "high" by flow analysis -- note that
+            --  --mode=check_all does NOT catch this, since aliasing is a flow
+            --  check rather than a legality one). Move the pointer out of S
+            --  for the duration of the call so S no longer reaches the
+            --  context, then hand ownership back.
+            --  #106: state-phase coupling is now single-object (S.State vs
+            --  S.HC.Phase) -- the Session predicate carries it.
+            if S.State in Client_Hello_Sent | Wait_Server_Hello then
+               Advance_Handshake (S, SPARKTLS.HS_Pool.Slots (Sl), Result);
+            else
+               case S.Version is
+                  when TLS_1_2          =>
+                     SPARKTLS.Client.TLS12.Advance_Handshake_12
+                       (S, SPARKTLS.HS_Pool.Slots (Sl), Result);
 
-         if S.State = Connected or S.State = Error_State then
-            S.Peer_Cert_Valid := SPARKTLS.HS_Pool.Slots (S.Slot).Peer_Leaf.Present;
-            S.Use_EMS := S.HC.Use_EMS;
-            --  Persist resumption flags out of HC before free.
-            S.Resumed_From_PSK := S.HC.Using_PSK;
-            --  Zero traffic keys on error (Connected path keeps them)
-            if S.State = Error_State then
-               S.Server_App.Key := (others => 0);
-               S.Server_App.IV := (others => 0);
-               S.Client_App.Key := (others => 0);
-               S.Client_App.IV := (others => 0);
+                  when TLS_1_3          =>
+                     SPARKTLS.Client.TLS13.Advance_Handshake_13
+                       (S, SPARKTLS.HS_Pool.Slots (Sl), Result);
+
+                  when TLS_Undetermined =>
+                     S.Last_Error := Internal_Error;
+                     Set_State (S, Error_State);
+                     Result := Error_Alert;
+               end case;
             end if;
-            --  Zero ALL key material before freeing S.HC.
-            --  This includes ephemeral keys (forward secrecy),
-            --  transcript (contains plaintext handshake), and
-            --  PSK material (resumption secrets).
-            Scrub_Handshake_Context (S.HC);
-            SPARKTLS.HS_Pool.Release (S.Slot);
-            S.Slot := No_Slot;
-         end if;
+
+            if S.State = Connected or S.State = Error_State then
+               S.Peer_Cert_Valid := SPARKTLS.HS_Pool.Slots (Sl).Peer_Leaf.Present;
+               S.Use_EMS := S.HC.Use_EMS;
+               --  Persist resumption flags out of HC before free.
+               S.Resumed_From_PSK := S.HC.Using_PSK;
+               --  Zero traffic keys on error (Connected path keeps them)
+               if S.State = Error_State then
+                  S.Server_App.Key := (others => 0);
+                  S.Server_App.IV := (others => 0);
+                  S.Client_App.Key := (others => 0);
+                  S.Client_App.IV := (others => 0);
+               end if;
+               --  Zero ALL key material before freeing S.HC.
+               --  This includes ephemeral keys (forward secrecy),
+               --  transcript (contains plaintext handshake), and
+               --  PSK material (resumption secrets).
+               Scrub_Handshake_Context (S.HC);
+               SPARKTLS.HS_Pool.Release (Sl);
+               S.Slot := No_Slot;
+            end if;
+         end;
       end if;
    end Advance;
 
@@ -1318,8 +1333,9 @@ is
       if S.State not in Connected | Closing then
          return;
       end if;
+
       case S.Version is
-         when TLS_1_2 =>
+         when TLS_1_2          =>
             Records.TLS12.Build_Alert_Record_12
               (Level       => 1,
                Desc        => 0,
@@ -1327,18 +1343,19 @@ is
                Implicit_IV => S.Client_IV_12,
                Output      => S.Output,
                Bytes_Out   => Ignored_Alert_Out);
-         when TLS_1_3 =>
+
+         when TLS_1_3          =>
             Records.Build_Alert_Record
               (Level     => 1,
                Desc      => 0,
                Keys      => S.Client_App,
                Output    => S.Output,
                Bytes_Out => Ignored_Alert_Out);
+
          when TLS_Undetermined =>
-            return;
+            null;
       end case;
-      --  See server-side comment: Set_State is a no-op when already
-      --  Closing (avoids an invalid Closing â Closing transition).
+
       if S.State = Connected then
          Set_State (S, Closing);
       end if;

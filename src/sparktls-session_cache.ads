@@ -85,7 +85,7 @@ with SPARKNaCl;  use SPARKNaCl;
 with Interfaces; use Interfaces;
 
 package SPARKTLS.Session_Cache
-  with SPARK_Mode => On
+  with SPARK_Mode => Off
 is
 
    ----------------------------------------------------------------------

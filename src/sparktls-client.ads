@@ -70,9 +70,9 @@ is
       Resume               : Session_Ticket := (others => <>);
       Skip_Verify          : Boolean := False;
       Skip_Hostname_Verify : Boolean := False)
-      --  Mirrors Init's postcondition: Configure is a thin wrapper that
-      --  builds a Config and calls Init, so it can promise no more than Init
-      --  does. Init fails closed to Error_State.
+     --  Mirrors Init's postcondition: Configure is a thin wrapper that
+     --  builds a Config and calls Init, so it can promise no more than Init
+     --  does. Init fails closed to Error_State.
    with Pre => Random /= null and Clock /= null;
    --  Skip_Verify: skip full X.509 chain validation against Trust
    --  (development / self-signed certs). Without Skip_Verify, a trust
@@ -94,9 +94,7 @@ is
 
    --  Initialize a client session with full control over Config.
    --  After Init, the caller should drain and send the ClientHello.
-   procedure Init
-     (S   : out Client_Session;
-      Cfg : in Config)
+   procedure Init (S : out Client_Session; Cfg : in Config)
    with Pre => Cfg.Random /= null;
 
    --  Step the client handshake / record processing state machine.
@@ -115,38 +113,17 @@ is
    with Pre => State (S) /= Idle and Role (S) = Role_Client;
 
    --  RFC 8446 6.1: Send a close_notify alert.
-   procedure Close_Notify
-     (S : in out Session)
-      --  Deliberately callable on an already-closed session: Advance reports
-      --  both a half-duplex close and a completed close with Shutdown, and the
-      --  application cannot distinguish them. On a finished session this is a
-      --  no-op (the body returns before touching the scrubbed keys).
+   procedure Close_Notify (S : in out Session)
+     --  Deliberately callable on an already-closed session: Advance reports
+     --  both a half-duplex close and a completed close with Shutdown, and the
+     --  application cannot distinguish them. On a finished session this is a
+     --  no-op (the body returns before touching the scrubbed keys).
    with
-     Pre =>
-       Role (S)
-       = Role_Client
-         --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
-         --  the caller cannot check is unenforceable). Covers the
-         --  arithmetic backstop on both versions and the 2**23 cap
-         --  on TLS 1.2, version-gated inside -- the old ghost _12
-         --  conjunct would wrongly reject a TLS 1.3 session sitting
-         --  at the cap awaiting rotation, now that the counter is
-         --  the shared channel counter.
-       and not Write_Limit_Reached (S),
+     Pre  => Role (S) = Role_Client and not Write_Limit_Reached (S),
      Post =>
        (if State (S)'Old in Connected | Closing
         then State (S) = Closing)             --  RFC 8446 6.1
-       and
-       --  Plain "and"/"or", never the short-circuit forms. The right
-       --  operand of "and then"/"or else" is potentially unevaluated,
-       --  and Ada RM 6.1.1(27) bars a function call as the prefix of
-       --  'Old in such a position. S'Old is not the escape hatch:
-       --  Session is a deep type, so it introduces aliasing and SPARK
-       --  RM 3.10(13) rejects it -- which aborted proof round 26.
-                                                                   (State (S)'Old in
-                                                                      Connected
-                                                                      | Closing
-                                                                    or State (S) = State (S)'Old);
+       and (State (S)'Old in Connected | Closing or State (S) = State (S)'Old);
 
    --  True if a peer certificate has been received and parsed.
    function Has_Peer_Certificate (S : Session) return Boolean;

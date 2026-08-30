@@ -236,7 +236,7 @@ is
             --  certs are rare; lift this restriction by extending
             --  X509.Algorithm_ID to carry the PSS hash variant.
 
-            when X509.Algo_RSA_PKCS1_SHA256 | X509.Algo_RSA_PSS =>
+            when X509.Algo_RSA_PKCS1_SHA256 | X509.Algo_RSA_PSS            =>
                if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
                  or else PK_Len < 64
                  or else PK_Len /= Sig_Len
@@ -276,9 +276,9 @@ is
                   end if;
                end;
 
-               --  RSA PKCS#1 v1.5 with SHA-384
+            --  RSA PKCS#1 v1.5 with SHA-384
 
-            when X509.Algo_RSA_PKCS1_SHA384 =>
+            when X509.Algo_RSA_PKCS1_SHA384                                =>
                if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
                  or else PK_Len < 64
                  or else PK_Len /= Sig_Len
@@ -307,9 +307,9 @@ is
                        Sig_Len   => N32 (Sig_Len));
                end;
 
-               --  RSA PKCS#1 v1.5 with SHA-512
+            --  RSA PKCS#1 v1.5 with SHA-512
 
-            when X509.Algo_RSA_PKCS1_SHA512 =>
+            when X509.Algo_RSA_PKCS1_SHA512                                =>
                if X509.PK_Algorithm (Issuer) /= X509.Algo_RSA
                  or else PK_Len < 64
                  or else PK_Len /= Sig_Len
@@ -338,8 +338,8 @@ is
                        Sig_Len   => N32 (Sig_Len));
                end;
 
-               --  ECDSA with SHA-384 or SHA-256
-               --  The sig algo determines the hash; the issuer's PK determines the curve.
+            --  ECDSA with SHA-384 or SHA-256
+            --  The sig algo determines the hash; the issuer's PK determines the curve.
 
             when X509.Algo_ECDSA_P384_SHA384 | X509.Algo_ECDSA_P256_SHA256 =>
                --  P-384 key
@@ -379,7 +379,7 @@ is
                        P384.ECDSA.Verify (Hash => H, Qx => Qx, Qy => Qy, R => R_Val, S => S_Val);
                   end;
 
-                  --  P-256 key
+               --  P-256 key
                elsif X509.PK_Algorithm (Issuer) = X509.Algo_EC_P256 and then PK_Len = 65 then
                   declare
                      H      : Bytes_32;
@@ -418,9 +418,9 @@ is
                   return False;
                end if;
 
-               --  Ed25519
+            --  Ed25519
 
-            when X509.Algo_Ed25519 =>
+            when X509.Algo_Ed25519                                         =>
                if X509.PK_Algorithm (Issuer) not in X509.Algo_Ed25519 | X509.Algo_EC_Ed25519
                  or else PK_Len /= 32
                then
@@ -463,13 +463,13 @@ is
                   return Verify_OK;
                end;
 
-               --  SHA-1 with RSA (legacy, needed for PKITS tests)
+            --  SHA-1 with RSA (legacy, needed for PKITS tests)
 
-            when X509.Algo_RSA_PKCS1_SHA1 =>
+            when X509.Algo_RSA_PKCS1_SHA1                                  =>
                --  We don't support SHA-1 verification (insecure)
                return False;
 
-            when others =>
+            when others                                                    =>
                return False;
          end case;
       end;
@@ -515,7 +515,7 @@ is
                return Err_Parse_Failed;
             end if;
          end if;
-         --  Only Bad_Serial  tolerate for trust anchors
+      --  Only Bad_Serial  tolerate for trust anchors
 
       end if;
 
@@ -710,7 +710,7 @@ is
                   return Err_Wrong_EKU;
                end if;
 
-            when Purpose_Any =>
+            when Purpose_Any    =>
                null;
          end case;
       end if;
@@ -907,7 +907,8 @@ is
                   return;
                end if;
                Cert_Len :=
-                 X509.N32 (DER (Len_Pos + 1)) * 65536 + X509.N32 (DER (Len_Pos + 2)) * 256
+                 X509.N32 (DER (Len_Pos + 1)) * 65536
+                 + X509.N32 (DER (Len_Pos + 2)) * 256
                  + X509.N32 (DER (Len_Pos + 3));
                Hdr_Len := 5;
             else
@@ -997,7 +998,7 @@ is
                Id.Ed25519_Key (I) := Key (Key'First + I);
             end loop;
 
-         when X509.Algo_EC_P256 =>
+         when X509.Algo_EC_P256                        =>
             if Key'Length /= 32 then
                return;
             end if;
@@ -1006,7 +1007,7 @@ is
                Id.ECDSA_P256_Key (I) := Key (Key'First + I);
             end loop;
 
-         when X509.Algo_EC_P384 =>
+         when X509.Algo_EC_P384                        =>
             if Key'Length /= 48 then
                return;
             end if;
@@ -1015,7 +1016,7 @@ is
                Id.ECDSA_P384_Key (I) := Key (Key'First + I);
             end loop;
 
-         when X509.Algo_RSA =>
+         when X509.Algo_RSA                            =>
             --  Key is packed: n_len(2) || n || d_len(2) || d || e(4)
             if Key'Length < 8 then
                return;
@@ -1067,7 +1068,7 @@ is
                  + Unsigned_32 (Key (E_Off + 3));
             end;
 
-         when others =>
+         when others                                   =>
             return;
       end case;
 
@@ -1131,13 +1132,13 @@ is
          Budget   : in out Natural;
          Result   : out Validation_Result)
       with
-        Pre =>
+        Pre                =>
           Cert_DER'First = 0
-          and Cert_DER'Last < X509.N32'Last - 256
+          and Cert_DER'Last < X509.N32 (Max_Cert_DER)
           and PL_Depth <= Max_Chain_Depth
           and X509.Spans_Valid (Cert, Cert_DER'Last),
         Subprogram_Variant => (Decreases => Budget),
-        Post => Budget <= Budget'Old
+        Post               => Budget <= Budget'Old
       is
          R            : Validation_Result;
          Saved_Budget : Natural
@@ -1171,9 +1172,12 @@ is
                begin
                   if VR = Valid then
                      pragma
-                       Assert  --  PROBE-T8
+                       Assert
                          (X509.Spans_Valid (Cert, Cert_DER'Last)
-                            and then X509.Spans_Valid (Roots (Ri).Cert, Roots (Ri).DER_Len - 1));
+                          and then X509.Spans_Valid (Roots (Ri).Cert, Roots (Ri).DER_Len - 1)
+                          and then Cert_DER'Last < X509.N32 (Max_Cert_DER)
+                          and then Roots (Ri).DER_Len - 1 < 2 ** 31 - 256);
+
                      R :=
                        Validate_Link
                          (Cert_DER         => Cert_DER,
@@ -1203,9 +1207,11 @@ is
               and then Ints (Ii).DER_Len <= X509.N32 (Max_Cert_DER)
             then
                pragma
-                 Assert  --  PROBE-T8
+                 Assert
                    (X509.Spans_Valid (Cert, Cert_DER'Last)
-                      and then X509.Spans_Valid (Ints (Ii).Cert, Ints (Ii).DER_Len - 1));
+                    and then X509.Spans_Valid (Ints (Ii).Cert, Ints (Ii).DER_Len - 1)
+                    and then Cert_DER'Last < X509.N32 (Max_Cert_DER)
+                    and then Ints (Ii).DER_Len - 1 < 2 ** 31 - 256);
                R :=
                  Validate_Link
                    (Cert_DER         => Cert_DER,
@@ -1353,7 +1359,7 @@ is
                   end if;
                end;
 
-               --  RSA-PSS-SHA384 (0x0805) or RSA-PKCS1-SHA384 (0x0501)
+            --  RSA-PSS-SHA384 (0x0805) or RSA-PKCS1-SHA384 (0x0501)
 
             when Sig_RSA_PSS_SHA384 | Sig_RSA_PKCS1_SHA384 =>
                if PK_Algo /= X509.Algo_RSA then
@@ -1396,7 +1402,7 @@ is
                   end if;
                end;
 
-               --  RSA-PSS-SHA512 (0x0806) or RSA-PKCS1-SHA512 (0x0601)
+            --  RSA-PSS-SHA512 (0x0806) or RSA-PKCS1-SHA512 (0x0601)
 
             when Sig_RSA_PSS_SHA512 | Sig_RSA_PKCS1_SHA512 =>
                if PK_Algo /= X509.Algo_RSA then
@@ -1439,9 +1445,9 @@ is
                   end if;
                end;
 
-               --  ECDSA-P256-SHA256 (0x0403)
+            --  ECDSA-P256-SHA256 (0x0403)
 
-            when Sig_ECDSA_P256_SHA256 =>
+            when Sig_ECDSA_P256_SHA256                     =>
                if PK_Algo /= X509.Algo_EC_P256 then
                   return False;
                end if;
@@ -1483,9 +1489,9 @@ is
                        S    => S_Val);
                end;
 
-               --  ECDSA-P384-SHA384 (0x0503)
+            --  ECDSA-P384-SHA384 (0x0503)
 
-            when Sig_ECDSA_P384_SHA384 =>
+            when Sig_ECDSA_P384_SHA384                     =>
                if PK_Algo /= X509.Algo_EC_P384 then
                   return False;
                end if;
@@ -1518,18 +1524,22 @@ is
                   end if;
                   return
                     P384.ECDSA.Verify
-                      (Hash => Bytes_48 (Byte_Seq (H)), Qx => Qx, Qy => Qy, R => R_Val, S => S_Val);
+                      (Hash => Bytes_48 (Byte_Seq (H)),
+                       Qx   => Qx,
+                       Qy   => Qy,
+                       R    => R_Val,
+                       S    => S_Val);
                end;
 
-               --  Ed25519 (0x0807): PureEdDSA signs the raw message, which
-               --  no digest can stand in for.  Digest-based callers (TLS 1.2
-               --  CertificateVerify over the streamed transcript) therefore
-               --  cannot accept it; the raw-data entry points still do.
+            --  Ed25519 (0x0807): PureEdDSA signs the raw message, which
+            --  no digest can stand in for.  Digest-based callers (TLS 1.2
+            --  CertificateVerify over the streamed transcript) therefore
+            --  cannot accept it; the raw-data entry points still do.
 
-            when Sig_Ed25519 =>
+            when Sig_Ed25519                               =>
                return False;
 
-            when others =>
+            when others                                    =>
                return False;
 
          end case;
@@ -1581,7 +1591,7 @@ is
                      return OK;
                   end;
 
-               when others =>
+               when others      =>
                   return False;
             end case;
          end;
