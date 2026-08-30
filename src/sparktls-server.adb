@@ -136,7 +136,7 @@ is
    procedure Configure
      (S                     : out Server_Session;
       Local                 : Valid_Identity_Access;
-      Random                : Random_Bytes_Fn;
+      Random                : Live_Random_Fn;
       Trust                 : Trust_Store_Access := null;
       Request_Client_Cert   : Boolean := False;
       Require_Client_Cert   : Boolean := False;

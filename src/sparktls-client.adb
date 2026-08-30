@@ -209,7 +209,7 @@ is
      (S                    : out Client_Session;
       Hostname             : String;
       Trust                : Trust_Store_Access;
-      Random               : Random_Bytes_Fn;
+      Random               : Live_Random_Fn;
       Clock                : Get_Time_Fn;
       Local                : Valid_Identity_Access := null;
       Mode                 : Validation_Mode := Mode_WebPKI;
