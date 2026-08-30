@@ -268,11 +268,243 @@ is
       Build_Server_Flight_12_Full (S, Cfg, Result);
    end Build_Server_Flight_12;
 
+   --  CertificateRequest (RFC 5246 7.4.4), fixed shape: rsa_sign +
+   --  ecdsa_sign certificate types, the modern signature-algorithm list,
+   --  empty certificate_authorities. Appends to the transcript and to the
+   --  scratch flight; OK is False when the record does not fit.
+   procedure Append_Cert_Request_12
+     (HC : in out Handshake_Context; Scratch : in out IO_Buffer; OK : out Boolean)
+   is
+      Rec_Out : N32;
+      Cert_Type_RSA_Sign   : constant Byte := 16#01#;
+      Cert_Type_ECDSA_Sign : constant Byte := 16#40#;
+      Certificate_Types    : constant Byte_Seq (0 .. 1) :=
+        (Cert_Type_RSA_Sign, Cert_Type_ECDSA_Sign);
+
+      Sig_RSA_PKCS1_SHA256  : constant Unsigned_16 := 16#0401#;
+      Sig_RSA_PKCS1_SHA384  : constant Unsigned_16 := 16#0501#;
+      Sig_RSA_PKCS1_SHA512  : constant Unsigned_16 := 16#0601#;
+      Sig_ECDSA_P256_SHA256 : constant Unsigned_16 := 16#0403#;
+      Sig_ECDSA_P384_SHA384 : constant Unsigned_16 := 16#0503#;
+      Sig_RSA_PSS_SHA256    : constant Unsigned_16 := 16#0804#;
+      Sig_RSA_PSS_SHA384    : constant Unsigned_16 := 16#0805#;
+      Sig_RSA_PSS_SHA512    : constant Unsigned_16 := 16#0806#;
+      Sig_Ed25519           : constant Unsigned_16 := 16#0807#;
+
+      function U16_Bytes (V : Unsigned_16) return Byte_Seq
+      is ((0 => Byte (V / 256), 1 => Byte (V mod 256)));
+
+      Signature_Algorithms : constant Byte_Seq :=
+        U16_Bytes (Sig_RSA_PKCS1_SHA256)
+        & U16_Bytes (Sig_RSA_PKCS1_SHA384)
+        & U16_Bytes (Sig_RSA_PKCS1_SHA512)
+        & U16_Bytes (Sig_ECDSA_P256_SHA256)
+        & U16_Bytes (Sig_ECDSA_P384_SHA384)
+        & U16_Bytes (Sig_RSA_PSS_SHA256)
+        & U16_Bytes (Sig_RSA_PSS_SHA384)
+        & U16_Bytes (Sig_RSA_PSS_SHA512)
+        & U16_Bytes (Sig_Ed25519);
+
+      Certificate_Authorities : constant Byte_Seq (0 .. 1) := (16#00#, 16#00#);
+      CR_Body_Len             : constant N32 :=
+        1 + N32 (Certificate_Types'Length) + 2 + N32 (Signature_Algorithms'Length)
+        + N32 (Certificate_Authorities'Length);
+      CR_Buf                  : Byte_Seq (0 .. 4 + CR_Body_Len - 1) := (others => 0);
+   begin
+      pragma Assert (CR_Body_Len = 25);
+      CR_Buf (0) := Handshake.HT_Certificate_Request;
+      CR_Buf (1) := Byte (CR_Body_Len / 65536);
+      CR_Buf (2) := Byte ((CR_Body_Len / 256) mod 256);
+      CR_Buf (3) := Byte (CR_Body_Len mod 256);
+
+      --  certificate_types<1..2^8-1>
+      CR_Buf (4) := Byte (Certificate_Types'Length);
+      CR_Buf (5 .. 6) := Certificate_Types;
+
+      --  supported_signature_algorithms<2..2^16-2>
+      CR_Buf (7) := Byte (Signature_Algorithms'Length / 256);
+      CR_Buf (8) := Byte (Signature_Algorithms'Length mod 256);
+      CR_Buf (9 .. 26) := Signature_Algorithms;
+
+      --  certificate_authorities<0..2^16-1>, empty.
+      CR_Buf (27 .. 28) := Certificate_Authorities;
+
+      Append_Transcript (HC, CR_Buf);
+      Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out);
+      OK := Rec_Out /= 0;
+   end Append_Cert_Request_12;
+
+   --  RFC 5246 7.4.1.4.1 signature-scheme negotiation for the server
+   --  flight: pick the first client-offered scheme compatible with our
+   --  local key (server preference list honored when configured; SHA-256
+   --  default family when the client omitted the extension). Negotiated = 0
+   --  means no acceptable scheme.
+   procedure Negotiate_Sig_Algo_12
+     (HC : in Handshake_Context; Cfg : in Ready_Config; Negotiated : out Unsigned_16)
+   is
+      Client_Sent_Recognized_Group : constant Boolean :=
+        HC.Client_Supports_X25519
+        or else HC.Client_Supports_P256
+        or else HC.Client_Supports_P384;
+
+      function Compatible_Local_Sig (Scheme : Unsigned_16) return Boolean is
+      begin
+         case Cfg.Local.Sign_Algo is
+            when Sign_RSA_PSS =>
+               return Scheme in 16#0804# | 16#0805# | 16#0806# | 16#0401# | 16#0501# | 16#0601#;
+
+            when Sign_ECDSA_P256 =>
+               return
+                 Scheme = 16#0403#
+                 and then (not Client_Sent_Recognized_Group or else HC.Client_Supports_P256);
+
+            when Sign_ECDSA_P384 =>
+               return
+                 Scheme = 16#0503#
+                 and then (not Client_Sent_Recognized_Group or else HC.Client_Supports_P384);
+
+            when Sign_Ed25519 =>
+               return Scheme = 16#0807#;
+
+            when Sign_None =>
+               return False;
+         end case;
+      end Compatible_Local_Sig;
+   begin
+      Negotiated := 0;
+      if HC.Peer_Sig_Algo_Count = 0 then
+         --  RFC 5246 7.4.1.4.1: when client omits the
+         --  signature_algorithms extension, the server uses a
+         --  default. RFC 5246 specifies SHA-1, but SHA-1 is
+         --  deprecated and we don't support it. Modern practice
+         --  (OpenSSL, Go) is to default to SHA-256 with the
+         --  cert's algorithm. TLS-Anvil's
+         --  ecdsaNoSignatureAlgorithmsExtension test (5246-MjFVuYUzfF)
+         --  exercises this path.
+         case Cfg.Local.Sign_Algo is
+            when Sign_RSA_PSS =>
+               Negotiated := 16#0804#;  -- PSS-SHA256
+
+            when Sign_ECDSA_P256 =>
+               if not Client_Sent_Recognized_Group or else HC.Client_Supports_P256 then
+                  Negotiated := 16#0403#;
+               end if;
+
+            when Sign_ECDSA_P384 =>
+               if not Client_Sent_Recognized_Group or else HC.Client_Supports_P384 then
+                  Negotiated := 16#0503#;
+               end if;
+
+            when Sign_Ed25519 =>
+               Negotiated := 16#0807#;
+
+            when Sign_None =>
+               null;
+         end case;
+         --  RFC 5246 7.4.1.4.1 strong-hash invariant: every value
+         --  the case selects above is a SHA-256-or-stronger scheme.
+         --  This pragma Assert pins the property; a future edit
+         --  that introduces a SHA-1 default (e.g. 0x0201, 0x0202)
+         --  would fail SPARK proof here.
+         pragma
+           Assert
+             (Negotiated = 0 or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1 (Negotiated));
+      elsif Cfg.Sign_Sig_Algo_Count > 0 then
+         for J in Sig_Algo_Index loop
+            pragma
+              Loop_Invariant
+                (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+                   (Negotiated, HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count));
+            exit when J >= Cfg.Sign_Sig_Algo_Count;
+            if Compatible_Local_Sig (Cfg.Sign_Sig_Algos (J))
+              and then Sig_Scheme_In_List
+                         (Cfg.Sign_Sig_Algos (J), HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count)
+            then
+               Negotiated := Cfg.Sign_Sig_Algos (J);
+               exit;
+            end if;
+         end loop;
+         pragma
+           Assert
+             (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+                (Negotiated, HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count));
+      else
+         for I in Natural range 0 .. HC.Peer_Sig_Algo_Count - 1 loop
+            pragma
+              Loop_Invariant
+                (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+                   (Negotiated, HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count));
+            declare
+               Scheme : constant Unsigned_16 := HC.Peer_Sig_Algos (I);
+            begin
+               case Cfg.Local.Sign_Algo is
+                  when Sign_RSA_PSS =>
+                     --  An RSA key can sign with either PSS or
+                     --  PKCS#1 v1.5 padding. RFC 5246 7.4.1.4.1 +
+                     --  RFC 8446 4.2.3  accept any RSA scheme the
+                     --  client offered. PSS preferred where both
+                     --  are offered (the picking loop selects the
+                     --  first match, so client ordering wins).
+                     --  PKCS#1-SHA1 (0x0201) intentionally not
+                     --  accepted  SHA-1 is deprecated.
+                     if Scheme = 16#0804#
+                       or Scheme = 16#0805#
+                       or Scheme = 16#0806#
+                       or Scheme = 16#0401#
+                       or Scheme = 16#0501#
+                       or Scheme = 16#0601#
+                     then
+                        Negotiated := Scheme;
+                        exit;
+                     end if;
+
+                  when Sign_ECDSA_P256 =>
+                     if Scheme = 16#0403#
+                       and then (not Client_Sent_Recognized_Group
+                                 or else HC.Client_Supports_P256)
+                     then
+                        Negotiated := Scheme;
+                        exit;
+                     end if;
+
+                  when Sign_ECDSA_P384 =>
+                     if Scheme = 16#0503#
+                       and then (not Client_Sent_Recognized_Group
+                                 or else HC.Client_Supports_P384)
+                     then
+                        Negotiated := Scheme;
+                        exit;
+                     end if;
+
+                  when Sign_Ed25519 =>
+                     if Scheme = 16#0807# then
+                        Negotiated := Scheme;
+                        exit;
+                     end if;
+
+                  when Sign_None =>
+                     null;
+               end case;
+            end;
+         end loop;
+         --  RFC 5246 7.4.1.4.1 / RFC 8446 4.2.3: post-loop the
+         --  Negotiated scheme (if non-zero) is one the client
+         --  offered. The loop invariant builds this incrementally:
+         --  every iteration either exits with Negotiated set to
+         --  HC.Peer_Sig_Algos(I), or leaves Negotiated unchanged.
+         pragma
+           Assert
+             (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
+                (Negotiated, HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count));
+      end if;
+   end Negotiate_Sig_Algo_12;
+
    procedure Build_Server_Flight_12_Full
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    is
       Gen_Random : constant Random_Bytes_Fn := Cfg.Random;
       Rec_Out    : N32;
+      CR_OK      : Boolean;
       --  Atomic flight assembly: build every record into a scratch buffer
       --  first. We commit to S.Output only when the entire flight has
       --  been built and we know it fits, so the peer never observes a
@@ -320,161 +552,9 @@ is
       --  client cert sigs in v1.5 are still accepted via the
       --  cert_verify path.
       declare
-         Negotiated                   : Unsigned_16 := 0;
-         Client_Sent_Recognized_Group : constant Boolean :=
-           S.HC.Client_Supports_X25519
-           or else S.HC.Client_Supports_P256
-           or else S.HC.Client_Supports_P384;
-
-         function Compatible_Local_Sig (Scheme : Unsigned_16) return Boolean is
-         begin
-            case Cfg.Local.Sign_Algo is
-               when Sign_RSA_PSS =>
-                  return Scheme in 16#0804# | 16#0805# | 16#0806# | 16#0401# | 16#0501# | 16#0601#;
-
-               when Sign_ECDSA_P256 =>
-                  return
-                    Scheme = 16#0403#
-                    and then (not Client_Sent_Recognized_Group or else S.HC.Client_Supports_P256);
-
-               when Sign_ECDSA_P384 =>
-                  return
-                    Scheme = 16#0503#
-                    and then (not Client_Sent_Recognized_Group or else S.HC.Client_Supports_P384);
-
-               when Sign_Ed25519 =>
-                  return Scheme = 16#0807#;
-
-               when Sign_None =>
-                  return False;
-            end case;
-         end Compatible_Local_Sig;
+         Negotiated : Unsigned_16;
       begin
-         if S.HC.Peer_Sig_Algo_Count = 0 then
-            --  RFC 5246 7.4.1.4.1: when client omits the
-            --  signature_algorithms extension, the server uses a
-            --  default. RFC 5246 specifies SHA-1, but SHA-1 is
-            --  deprecated and we don't support it. Modern practice
-            --  (OpenSSL, Go) is to default to SHA-256 with the
-            --  cert's algorithm. TLS-Anvil's
-            --  ecdsaNoSignatureAlgorithmsExtension test (5246-MjFVuYUzfF)
-            --  exercises this path.
-            case Cfg.Local.Sign_Algo is
-               when Sign_RSA_PSS =>
-                  Negotiated := 16#0804#;  -- PSS-SHA256
-
-               when Sign_ECDSA_P256 =>
-                  if not Client_Sent_Recognized_Group or else S.HC.Client_Supports_P256 then
-                     Negotiated := 16#0403#;
-                  end if;
-
-               when Sign_ECDSA_P384 =>
-                  if not Client_Sent_Recognized_Group or else S.HC.Client_Supports_P384 then
-                     Negotiated := 16#0503#;
-                  end if;
-
-               when Sign_Ed25519 =>
-                  Negotiated := 16#0807#;
-
-               when Sign_None =>
-                  null;
-            end case;
-            --  RFC 5246 7.4.1.4.1 strong-hash invariant: every value
-            --  the case selects above is a SHA-256-or-stronger scheme.
-            --  This pragma Assert pins the property; a future edit
-            --  that introduces a SHA-1 default (e.g. 0x0201, 0x0202)
-            --  would fail SPARK proof here.
-            pragma
-              Assert
-                (Negotiated = 0 or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1 (Negotiated));
-         elsif Cfg.Sign_Sig_Algo_Count > 0 then
-            for J in Sig_Algo_Index loop
-               pragma
-                 Loop_Invariant
-                   (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
-                      (Negotiated, S.HC.Peer_Sig_Algos, S.HC.Peer_Sig_Algo_Count));
-               exit when J >= Cfg.Sign_Sig_Algo_Count;
-               if Compatible_Local_Sig (Cfg.Sign_Sig_Algos (J))
-                 and then Sig_Scheme_In_List
-                            (Cfg.Sign_Sig_Algos (J), S.HC.Peer_Sig_Algos, S.HC.Peer_Sig_Algo_Count)
-               then
-                  Negotiated := Cfg.Sign_Sig_Algos (J);
-                  exit;
-               end if;
-            end loop;
-            pragma
-              Assert
-                (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
-                   (Negotiated, S.HC.Peer_Sig_Algos, S.HC.Peer_Sig_Algo_Count));
-         else
-            for I in Natural range 0 .. S.HC.Peer_Sig_Algo_Count - 1 loop
-               pragma
-                 Loop_Invariant
-                   (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
-                      (Negotiated, S.HC.Peer_Sig_Algos, S.HC.Peer_Sig_Algo_Count));
-               declare
-                  Scheme : constant Unsigned_16 := S.HC.Peer_Sig_Algos (I);
-               begin
-                  case Cfg.Local.Sign_Algo is
-                     when Sign_RSA_PSS =>
-                        --  An RSA key can sign with either PSS or
-                        --  PKCS#1 v1.5 padding. RFC 5246 7.4.1.4.1 +
-                        --  RFC 8446 4.2.3  accept any RSA scheme the
-                        --  client offered. PSS preferred where both
-                        --  are offered (the picking loop selects the
-                        --  first match, so client ordering wins).
-                        --  PKCS#1-SHA1 (0x0201) intentionally not
-                        --  accepted  SHA-1 is deprecated.
-                        if Scheme = 16#0804#
-                          or Scheme = 16#0805#
-                          or Scheme = 16#0806#
-                          or Scheme = 16#0401#
-                          or Scheme = 16#0501#
-                          or Scheme = 16#0601#
-                        then
-                           Negotiated := Scheme;
-                           exit;
-                        end if;
-
-                     when Sign_ECDSA_P256 =>
-                        if Scheme = 16#0403#
-                          and then (not Client_Sent_Recognized_Group
-                                    or else S.HC.Client_Supports_P256)
-                        then
-                           Negotiated := Scheme;
-                           exit;
-                        end if;
-
-                     when Sign_ECDSA_P384 =>
-                        if Scheme = 16#0503#
-                          and then (not Client_Sent_Recognized_Group
-                                    or else S.HC.Client_Supports_P384)
-                        then
-                           Negotiated := Scheme;
-                           exit;
-                        end if;
-
-                     when Sign_Ed25519 =>
-                        if Scheme = 16#0807# then
-                           Negotiated := Scheme;
-                           exit;
-                        end if;
-
-                     when Sign_None =>
-                        null;
-                  end case;
-               end;
-            end loop;
-            --  RFC 5246 7.4.1.4.1 / RFC 8446 4.2.3: post-loop the
-            --  Negotiated scheme (if non-zero) is one the client
-            --  offered. The loop invariant builds this incrementally:
-            --  every iteration either exits with Negotiated set to
-            --  S.HC.Peer_Sig_Algos(I), or leaves Negotiated unchanged.
-            pragma
-              Assert
-                (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
-                   (Negotiated, S.HC.Peer_Sig_Algos, S.HC.Peer_Sig_Algo_Count));
-         end if;
+         Negotiate_Sig_Algo_12 (S.HC, Cfg, Negotiated);
          if Negotiated = 0 then
             Send_Alert_And_Error (S, Handshake_Failure, Result);
             return;
@@ -565,67 +645,11 @@ is
 
       --  4. CertificateRequest (optional client auth)
       if Cfg.Request_Client_Cert then
-         declare
-            Cert_Type_RSA_Sign   : constant Byte := 16#01#;
-            Cert_Type_ECDSA_Sign : constant Byte := 16#40#;
-            Certificate_Types    : constant Byte_Seq (0 .. 1) :=
-              (Cert_Type_RSA_Sign, Cert_Type_ECDSA_Sign);
-
-            Sig_RSA_PKCS1_SHA256  : constant Unsigned_16 := 16#0401#;
-            Sig_RSA_PKCS1_SHA384  : constant Unsigned_16 := 16#0501#;
-            Sig_RSA_PKCS1_SHA512  : constant Unsigned_16 := 16#0601#;
-            Sig_ECDSA_P256_SHA256 : constant Unsigned_16 := 16#0403#;
-            Sig_ECDSA_P384_SHA384 : constant Unsigned_16 := 16#0503#;
-            Sig_RSA_PSS_SHA256    : constant Unsigned_16 := 16#0804#;
-            Sig_RSA_PSS_SHA384    : constant Unsigned_16 := 16#0805#;
-            Sig_RSA_PSS_SHA512    : constant Unsigned_16 := 16#0806#;
-            Sig_Ed25519           : constant Unsigned_16 := 16#0807#;
-
-            function U16_Bytes (V : Unsigned_16) return Byte_Seq
-            is ((0 => Byte (V / 256), 1 => Byte (V mod 256)));
-
-            Signature_Algorithms : constant Byte_Seq :=
-              U16_Bytes (Sig_RSA_PKCS1_SHA256)
-              & U16_Bytes (Sig_RSA_PKCS1_SHA384)
-              & U16_Bytes (Sig_RSA_PKCS1_SHA512)
-              & U16_Bytes (Sig_ECDSA_P256_SHA256)
-              & U16_Bytes (Sig_ECDSA_P384_SHA384)
-              & U16_Bytes (Sig_RSA_PSS_SHA256)
-              & U16_Bytes (Sig_RSA_PSS_SHA384)
-              & U16_Bytes (Sig_RSA_PSS_SHA512)
-              & U16_Bytes (Sig_Ed25519);
-
-            Certificate_Authorities : constant Byte_Seq (0 .. 1) := (16#00#, 16#00#);
-            CR_Body_Len             : constant N32 :=
-              1 + N32 (Certificate_Types'Length) + 2 + N32 (Signature_Algorithms'Length)
-              + N32 (Certificate_Authorities'Length);
-            CR_Buf                  : Byte_Seq (0 .. 4 + CR_Body_Len - 1) := (others => 0);
-         begin
-            pragma Assert (CR_Body_Len = 25);
-            CR_Buf (0) := Handshake.HT_Certificate_Request;
-            CR_Buf (1) := Byte (CR_Body_Len / 65536);
-            CR_Buf (2) := Byte ((CR_Body_Len / 256) mod 256);
-            CR_Buf (3) := Byte (CR_Body_Len mod 256);
-
-            --  certificate_types<1..2^8-1>
-            CR_Buf (4) := Byte (Certificate_Types'Length);
-            CR_Buf (5 .. 6) := Certificate_Types;
-
-            --  supported_signature_algorithms<2..2^16-2>
-            CR_Buf (7) := Byte (Signature_Algorithms'Length / 256);
-            CR_Buf (8) := Byte (Signature_Algorithms'Length mod 256);
-            CR_Buf (9 .. 26) := Signature_Algorithms;
-
-            --  certificate_authorities<0..2^16-1>, empty.
-            CR_Buf (27 .. 28) := Certificate_Authorities;
-
-            Append_Transcript (S.HC, CR_Buf);
-            Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out);
-            if Rec_Out = 0 then
-               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-               return;
-            end if;
-         end;
+         Append_Cert_Request_12 (S.HC, Scratch, CR_OK);
+         if not CR_OK then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
       end if;
 
       --  5. ServerHelloDone
@@ -742,6 +766,109 @@ is
    --  CCS â encrypted Finished. Caller has already restored
    --  HC.Master_Secret_12 + forced S.Negotiated_Suite from the ticket.
    ------------------------------------------------------------------
+   --  Server Finished handshake message (RFC 5246 7.4.9) over the current
+   --  transcript. FB must span 0 .. Finished_12_Total_Len - 1 or more.
+   procedure Build_Server_Finished_12
+     (TS      : in SPARKTLS_Transcript.Transcript_State;
+      Master  : in Bytes_48;
+      Use_384 : in Boolean;
+      FB      : out Byte_Seq;
+      FL      : out N32)
+   is
+      use Key_Schedule_12;
+      TH  : Digest;
+      TH4 : SPARKNaCl.Hashing.SHA384.Digest;
+   begin
+      if Use_384 then
+         SPARKTLS_Transcript.Current_384 (TS, TH4);
+         Prove_Server_Finished_Label;
+         pragma Assert (Valid_Finished_Label (Label_Server_Finished));
+         pragma Assert (TH4'Length = 48);
+         declare
+            TH_Bytes : constant Byte_Seq (0 .. 47) := Byte_Seq (TH4);
+         begin
+            pragma Assert (TH_Bytes'First = 0);
+            pragma Assert (TH_Bytes'Last = 47);
+            pragma Assert (TH_Bytes'Length = 48);
+            pragma Assert (TH_Bytes'Length = 32 or else TH_Bytes'Length = 48);
+            Handshake.TLS12.Build_Finished_12
+              (Master, Label_Server_Finished, TH_Bytes, True, FB, FL);
+         end;
+      else
+         SPARKTLS_Transcript.Current_256 (TS, TH);
+         Prove_Server_Finished_Label;
+         pragma Assert (Valid_Finished_Label (Label_Server_Finished));
+         pragma Assert (TH'Length = 32);
+         declare
+            TH_Bytes : constant Byte_Seq (0 .. 31) := Byte_Seq (TH);
+         begin
+            pragma Assert (TH_Bytes'First = 0);
+            pragma Assert (TH_Bytes'Last = 31);
+            pragma Assert (TH_Bytes'Length = 32);
+            pragma Assert (TH_Bytes'Length = 32 or else TH_Bytes'Length = 48);
+            Handshake.TLS12.Build_Finished_12
+              (Master, Label_Server_Finished, TH_Bytes, False, FB, FL);
+         end;
+      end if;
+      pragma Assert (FL = Finished_12_Total_Len);
+   end Build_Server_Finished_12;
+
+   --  Resumed-flight NewSessionTicket (RFC 5077 3.3: MUST re-issue when
+   --  session_ticket was advertised in the abbreviated ServerHello). Seals
+   --  the restored master secret under the caller-supplied active TEK with
+   --  a fresh nonce, appends to transcript and scratch flight. OK is False
+   --  when the message or record does not fit.
+   procedure Issue_Resumed_NST_12
+     (S       : in out Session;
+      Cfg     : in Ready_Config;
+      Key_ID  : in Byte_Seq;
+      TEK     : in Byte_Seq;
+      Scratch : in out IO_Buffer;
+      OK      : out Boolean)
+   is
+      Nonce_Buf   : Byte_Seq (0 .. 11) := (others => 0);
+      Plain       : SPARKTLS.Tickets_12.Ticket_Plain;
+      Ticket_Buf  : Byte_Seq (0 .. 255) := (others => 0);
+      Ticket_Len  : N32;
+      NST_Buf     : Byte_Seq (0 .. 271) := (others => 0);
+      NST_Total   : N32;
+      NST_Rec_Out : N32;
+   begin
+      OK := False;
+      Cfg.Random.all (Nonce_Buf);
+      Plain.Master_Secret := S.HC.Master_Secret_12;
+      Plain.Suite := Wire_Of (S.Negotiated_Suite);
+      Plain.Created_At :=
+        (if Cfg.Get_Time /= null then SPARKTLS.Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all)
+         else 0);
+      Plain.SID_Len := 0;
+      Plain.SID := (others => 0);
+      SPARKTLS.Tickets_12.Encrypt_Ticket
+        (Plain      => Plain,
+         Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Key_ID),
+         TEK        => SPARKTLS.Tickets_12.Bytes_32 (TEK),
+         Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
+         Ticket     => Ticket_Buf,
+         Ticket_Len => Ticket_Len);
+
+      SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12
+        (Lifetime_Hint => Cfg.TLS12_Ticket_Lifetime,
+         Ticket        => Ticket_Buf (0 .. Ticket_Len - 1),
+         Result        => NST_Buf,
+         Len           => NST_Total);
+      if NST_Total = 0 then
+         return;
+      end if;
+
+      Append_Transcript (S.HC, NST_Buf (0 .. NST_Total - 1));
+
+      Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), Scratch, NST_Rec_Out);
+      if NST_Rec_Out = 0 then
+         return;
+      end if;
+      OK := True;
+   end Issue_Resumed_NST_12;
+
    procedure Build_Abbreviated_Server_Flight_12
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    is
@@ -750,7 +877,6 @@ is
       Gen_Random    : constant Random_Bytes_Fn := Cfg.Random;
       Rec_Out       : N32;
       Scratch       : IO_Buffer;
-      Saved_Seq     : Record_Counter;
       Use_384       : constant Boolean :=
         S.Negotiated_Suite in
           Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -761,6 +887,7 @@ is
       Active_Key_ID : Byte_Seq (0 .. 3) := (others => 0);
       Active_TEK    : Byte_Seq (0 .. 31) := (others => 0);
       Have_TEK      : Boolean := False;
+      NST_OK        : Boolean;
    begin
       --  Get_Time /= null for the same reason as the full flight: an
       --  unexpirable ticket is worse than no ticket. Have_TEK stays
@@ -820,49 +947,11 @@ is
       --  3. NewSessionTicket (re-issued under our active TEK with a
       --     fresh nonce). RFC 5077 3.3: the server MUST send NST in
       --     the resumed flight if it advertised session_ticket in SH.
-      declare
-         Nonce_Buf   : Byte_Seq (0 .. 11) := (others => 0);
-         Plain       : SPARKTLS.Tickets_12.Ticket_Plain;
-         Ticket_Buf  : Byte_Seq (0 .. 255) := (others => 0);
-         Ticket_Len  : N32;
-         NST_Buf     : Byte_Seq (0 .. 271) := (others => 0);
-         NST_Total   : N32;
-         NST_Rec_Out : N32;
-      begin
-         Gen_Random (Nonce_Buf);
-         Plain.Master_Secret := S.HC.Master_Secret_12;
-         Plain.Suite := Wire_Of (S.Negotiated_Suite);
-         Plain.Created_At :=
-           (if Cfg.Get_Time /= null then SPARKTLS.Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all)
-            else 0);
-         Plain.SID_Len := 0;
-         Plain.SID := (others => 0);
-         SPARKTLS.Tickets_12.Encrypt_Ticket
-           (Plain      => Plain,
-            Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Active_Key_ID),
-            TEK        => SPARKTLS.Tickets_12.Bytes_32 (Active_TEK),
-            Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
-            Ticket     => Ticket_Buf,
-            Ticket_Len => Ticket_Len);
-
-         SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12
-           (Lifetime_Hint => Cfg.TLS12_Ticket_Lifetime,
-            Ticket        => Ticket_Buf (0 .. Ticket_Len - 1),
-            Result        => NST_Buf,
-            Len           => NST_Total);
-         if NST_Total = 0 then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            return;
-         end if;
-
-         Append_Transcript (S.HC, NST_Buf (0 .. NST_Total - 1));
-
-         Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), Scratch, NST_Rec_Out);
-         if NST_Rec_Out = 0 then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            return;
-         end if;
-      end;
+      Issue_Resumed_NST_12 (S, Cfg, Active_Key_ID, Active_TEK, Scratch, NST_OK);
+      if not NST_OK then
+         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+         return;
+      end if;
 
       --  4. ChangeCipherSpec (plaintext, content type 20).
       declare
@@ -877,21 +966,11 @@ is
 
       --  5. Server Finished (encrypted with the just-derived app keys).
       declare
-         FB     : Byte_Seq (0 .. Finished_12_Total_Len - 1);
-         FL     : N32;
-         TH     : Digest;
-         TH_384 : SPARKNaCl.Hashing.SHA384.Digest;
-         EO     : N32;
+         FB : Byte_Seq (0 .. Finished_12_Total_Len - 1);
+         FL : N32;
+         EO : N32;
       begin
-         if Use_384 then
-            SPARKTLS_Transcript.Current_384 (S.HC.TS, TH_384);
-            Build_Finished_12
-              (S.HC.Master_Secret_12, Label_Server_Finished, Byte_Seq (TH_384), True, FB, FL);
-         else
-            SPARKTLS_Transcript.Current_256 (S.HC.TS, TH);
-            Build_Finished_12
-              (S.HC.Master_Secret_12, Label_Server_Finished, Byte_Seq (TH), False, FB, FL);
-         end if;
+         Build_Server_Finished_12 (S.HC.TS, S.HC.Master_Secret_12, Use_384, FB, FL);
 
          --  Append server Finished plaintext to transcript so the
          --  client's expected Finished hash (which covers up to
@@ -1074,6 +1153,333 @@ is
    end Derive_Keys_12;
 
    ------------------------------------------------------------------
+   --  Mid-handshake record consumers for the CKE phase (decomposition
+   --  round 1): CCS and plaintext-alert records arriving while the
+   --  server waits for ClientKeyExchange.
+
+   --  Validates the header of a complete (reassembled or single-fragment)
+   --  ClientKeyExchange message and hands the body to
+   --  Parse_Client_Key_Exchange.  Sets HC.Ext_Parse_Err when the failure
+   --  deserves a specific alert (otherwise the caller sends decode_error).
+   procedure Parse_Complete_CKE_12
+     (HC : in out Handshake_Context; Msg : in Byte_Seq; CKE_Good : out Boolean)
+   with
+     Pre =>
+       Msg'Length > 0
+       and then Msg'Last < N32 (Natural'Last)
+       and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local),
+     Post =>
+       SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
+   is
+      Msg_Type : Byte;
+      Msg_Len  : N32;
+      POK      : Boolean;
+   begin
+      CKE_Good := False;
+      Handshake.Parse_Handshake_Header (Msg, Msg_Type, Msg_Len, POK);
+      if not POK
+        or else Msg_Type /= HT_Client_Key_Exchange
+        or else 4 + Msg_Len /= N32 (Msg'Length)
+      then
+         return;
+      end if;
+      if Msg_Len > Max_Client_Key_Exchange then
+         return;
+      end if;
+      if Msg_Len < 4 then
+         HC.Ext_Parse_Err := Illegal_Parameter;
+         return;
+      end if;
+
+      declare
+         Msg_Len_Const : constant N32 := Msg_Len;
+         Body_Data     : Byte_Seq (0 .. Msg_Len_Const - 1);
+      begin
+         pragma Assert (Msg'First + 4 <= Msg'Last);
+         pragma Assert (Msg'First + 4 + Msg_Len - 1 = Msg'Last);
+         Body_Data := Msg (Msg'First + 4 .. Msg'First + 4 + Msg_Len - 1);
+         Parse_Client_Key_Exchange (HC, Body_Data, CKE_Good);
+      end;
+   end Parse_Complete_CKE_12;
+
+   --  Consumes the current record and fails the handshake with Err.
+   procedure Consume_And_Alert_12
+     (S      : in out Session;
+      Rec    : in Records.Parse_Result;
+      Err    : in Error_Code;
+      Result : out Action)
+   with
+     Pre =>
+       S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+       and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
+       and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity,
+     Post =>
+       S.State = Error_State
+       and then Result /= OK
+       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+   is
+   begin
+      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      Send_Alert_And_Error (S, Err, Result);
+   end Consume_And_Alert_12;
+
+   --  A complete ClientKeyExchange message is in hand: parse it, extend the
+   --  transcript, and draw the EMS session hash (RFC 7627) at exactly this
+   --  point -- before Finished, after CKE.
+   procedure Finish_CKE_12
+     (S      : in out Session;
+      Rec    : in Records.Parse_Result;
+      Msg    : in Byte_Seq;
+      Result : out Action)
+   with
+     Pre =>
+       Msg'Length > 0
+       and then Msg'Last < N32 (Natural'Last)
+       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+       and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
+       and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity
+       and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local),
+     Post =>
+       SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
+       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+       and then (if Result = OK then S.State = S.State'Old else S.State = Error_State)
+   is
+      CKE_OK                 : Boolean;
+      Saved_Negotiated_Suite : constant Supported_Suite := S.Negotiated_Suite
+      with Ghost;
+   begin
+      Parse_Complete_CKE_12 (S.HC, Msg, CKE_OK);
+      if not CKE_OK then
+         if S.HC.Ext_Parse_Err /= No_Error then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, S.HC.Ext_Parse_Err, Result);
+            pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
+         else
+            Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
+            pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
+         end if;
+         return;
+      end if;
+
+      Append_Transcript (S.HC, Msg);
+      if S.Negotiated_Suite in
+           Suite_ECDHE_RSA_AES256_GCM_SHA384
+           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+      then
+         declare
+            D : SPARKNaCl.Hashing.SHA384.Digest;
+         begin
+            SPARKTLS_Transcript.Current_384 (S.HC.TS, D);
+            S.HC.EMS_Session_Hash := Bytes_48 (D);
+         end;
+      else
+         declare
+            D : Digest;
+         begin
+            SPARKTLS_Transcript.Current_256 (S.HC.TS, D);
+            S.HC.EMS_Session_Hash := (others => 0);
+            S.HC.EMS_Session_Hash (0 .. 31) := Byte_Seq (D);
+         end;
+      end if;
+      S.HC.EMS_Hash_Taken := True;
+      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      Result := OK;
+      pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
+   end Finish_CKE_12;
+
+   --  RFC 5246 7.4.7: only one ClientKeyExchange permitted; any further
+   --  handshake-content record after CKE is a state-machine violation.
+   --  Classifies the offending message for the alert code the suites
+   --  expect (TLS-Anvil secondClientKeyExchange, BoGo trailing-data):
+   --  malformed header of a known type -> decode_error; malformed
+   --  CertificateVerify length fields -> decode_error; everything
+   --  else -> unexpected_message.
+   procedure Reject_Post_CKE_Handshake_12
+     (S : in out Session; Rec : in Records.Parse_Result; Result : out Action)
+   is
+   begin
+      if Rec.Content = Records.Content_Handshake and then Rec.Fragment_Len >= 4 then
+         declare
+            FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+            Frag_Len : constant N32 := Rec.Fragment_Len;
+         begin
+            pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+            declare
+               Frag     : constant Byte_Seq := S.Input.Data (FS .. FS + Frag_Len - 1);
+               Msg_Type : Byte;
+               Msg_Len  : N32;
+               Parse_OK : Boolean;
+            begin
+               Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
+               if not Parse_OK then
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Alert_And_Error
+                    (S,
+                     (if Frag (Frag'First) in
+                           16#01#
+                           | 16#02#
+                           | 16#04#
+                           | 16#08#
+                           | 16#0B#
+                           | 16#0C#
+                           | 16#0D#
+                           | 16#0E#
+                           | 16#0F#
+                           | 16#10#
+                           | 16#14#
+                      then Decode_Error
+                      else Unexpected_Message),
+                     Result);
+                  return;
+               end if;
+
+               if Msg_Type = Handshake.HT_Certificate_Verify then
+                  if Msg_Len < 4 or else Msg_Len + 4 /= Frag_Len then
+                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                     Send_Alert_And_Error (S, Decode_Error, Result);
+                     return;
+                  end if;
+
+                  declare
+                     F : constant N32 := Frag'First;
+                  begin
+                     pragma Assert (Frag_Len >= 8);
+                     pragma Assert (F + 7 <= Frag'Last);
+                     declare
+                        Sig_Len : constant N32 := N32 (Frag (F + 6)) * 256 + N32 (Frag (F + 7));
+                     begin
+                        if Sig_Len /= Msg_Len - 4 then
+                           S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                           Send_Alert_And_Error (S, Decode_Error, Result);
+                           return;
+                        end if;
+                     end;
+                  end;
+               end if;
+            end;
+         end;
+      end if;
+      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      Send_Alert_And_Error (S, Unexpected_Message, Result);
+   end Reject_Post_CKE_Handshake_12;
+
+   procedure Consume_CKE_Phase_CCS_12
+     (S : in out Session; Rec : in Records.Parse_Result; Result : out Action)
+   is
+      CCS_Pos : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+      CCS_OK  : constant Boolean :=
+        Rec.Fragment_Len = 1
+        and then S.Input.Data (CCS_Pos) = 16#01#
+        and then not S.HC.CCS_Received;
+   begin
+      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      if CCS_OK then
+         S.HC.CCS_Received := True;
+         Result := OK;
+         --  RFC 5246 7.1 single-CCS invariant: future CCS records on
+         --  this connection are rejected via `not S.HC.CCS_Received`.
+         pragma Assert (Single_CCS_RFC_5246_7_1 (S.HC));
+      else
+         --  RFC 5246 7.1: CCS payload MUST be the single byte 0x01
+         --  (BoGo BadChangeCipherSpec-*).
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+      end if;
+   end Consume_CKE_Phase_CCS_12;
+
+   procedure Consume_CKE_Phase_Alert_12
+     (S : in out Session; Rec : in Records.Parse_Result; Result : out Action)
+   is
+      --  RFC 5246 7.2.1: close_notify can arrive at any time, including
+      --  mid-handshake before keys are established; reply with a
+      --  plaintext close_notify and close. Other plaintext alerts
+      --  during the handshake are protocol violations -- fatal.
+      FS         : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+      Alert_Desc : Byte := 0;
+   begin
+      if Rec.Fragment_Len >= 2 then
+         Alert_Desc := S.Input.Data (FS + 1);
+      end if;
+      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      if Alert_Desc = 0 then
+         declare
+            A : N32;
+         begin
+            Records.Build_Plaintext_Alert
+              (Level => 1, Desc => 0, Output => S.Output, Bytes_Out => A);
+            pragma Assert (A in 0 | 7);
+         end;
+         Set_State (S, Closing);
+         if Output_Pending (S) > 0 then
+            pragma
+              Assert (Close_Notify_Reply_State_RFC_5246_7_2_1 (S.State, Output_Pending (S)));
+            Result := Has_Output;
+         else
+            Result := Shutdown;
+         end if;
+      else
+         S.Last_Error := Unexpected_Message;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+      end if;
+   end Consume_CKE_Phase_Alert_12;
+
+   --  ECDHE shared-secret computation, one procedure per group.
+   --  Split from Compute_Shared_Secret_12 (decomposition round 1):
+   --  each operates on KE state alone.
+
+   procedure Shared_Secret_X25519_12
+     (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
+   is
+   begin
+      KE.Shared (0 .. 31) := SPARKNaCl.Scalar.Mult (KE.Local_SK, KE.Peer_PK);
+      --  RFC 7748 6.1 / RFC 8422 5.10: reject all-zeros shared secret
+      --  (small-subgroup defence). The helper's Post is formally proven.
+      OK := Shared_Secret_Is_Acceptable_X25519 (KE.Shared (0 .. 31));
+      Err := (if OK then No_Error else Illegal_Parameter);
+   end Shared_Secret_X25519_12;
+
+   procedure Shared_Secret_P256_12
+     (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
+   is
+      use SPARKTLSCrypto.P256.Point;
+      Pt : P256_Jacobian;
+      V  : SPARKNaCl.U32;
+   begin
+      OK := False;
+      Err := Illegal_Parameter;
+      P256_Decode (Pt, KE.P256_PK, V);
+      if V /= 0 then
+         P256_Mul (Pt, KE.P256_SK, 32);
+         P256_To_Affine (Pt);
+         declare
+            E : Byte_Seq (0 .. 64);
+         begin
+            P256_Encode (E, Pt);
+            KE.Shared := (others => 0);
+            KE.Shared (0 .. 31) := E (1 .. 32);
+         end;
+         OK := True;
+         Err := No_Error;
+      end if;
+   end Shared_Secret_P256_12;
+
+   procedure Shared_Secret_P384_12
+     (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
+   is
+      SS    : Bytes_48;
+      OK384 : Boolean;
+   begin
+      SPARKTLSCrypto.P384.Point.P384_ECDHE (SS, OK384, KE.P384_SK, KE.P384_PK);
+      if OK384 then
+         KE.Shared := SS;
+         OK := True;
+         Err := No_Error;
+      else
+         OK := False;
+         Err := Illegal_Parameter;
+      end if;
+   end Shared_Secret_P384_12;
+
    procedure Process_Client_Key_Exchange_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
@@ -1091,81 +1497,19 @@ is
           and then S.HC.TS = S.HC.TS'Old
       is
       begin
-         OK := False;
          --  RFC 5246 7.2.2 / RFC 8446 6.2: invalid peer share is
          --  illegal_parameter; an unselectable group is the generic
          --  handshake_failure.
-
          case S.HC.KE.Curve is
             when Group_X25519 =>
-               S.HC.KE.Shared (0 .. 31) :=
-                 SPARKNaCl.Scalar.Mult (S.HC.KE.Local_SK, S.HC.KE.Peer_PK);
-               --  RFC 7748 6.1 / RFC 8422 5.10: reject all-zeros
-               --  shared secret (small-subgroup defence). The
-               --  helper's Post is formally proven by SPARK.
-               OK := Shared_Secret_Is_Acceptable_X25519 (S.HC.KE.Shared (0 .. 31));
-               if OK then
-                  Err := No_Error;
-               else
-                  Err := Illegal_Parameter;
-               end if;
-
+               Shared_Secret_X25519_12 (S.HC.KE, OK, Err);
             when Group_Secp256r1 =>
-               declare
-                  use SPARKTLSCrypto.P256.Point;
-                  subtype P256_SK_Seq is Byte_Seq (0 .. 31);
-                  subtype P256_PK_Seq is Byte_Seq (0 .. 64);
-                  Pt       : P256_Jacobian;
-                  V        : SPARKNaCl.U32;
-                  Local_SK : constant P256_SK_Seq := S.HC.KE.P256_SK;
-                  Peer_PK  : constant P256_PK_Seq := S.HC.KE.P256_PK;
-               begin
-                  pragma Assert (Local_SK'First = 0);
-                  pragma Assert (Local_SK'Length = 32);
-                  pragma Assert (Peer_PK'First = 0);
-                  pragma Assert (Peer_PK'Length = 65);
-                  P256_Decode (Pt, Peer_PK, V);
-                  if V /= 0 then
-                     P256_Mul (Pt, Local_SK, 32);
-                     P256_To_Affine (Pt);
-                     declare
-                        E : Byte_Seq (0 .. 64);
-                     begin
-                        P256_Encode (E, Pt);
-                        S.HC.KE.Shared := (others => 0);
-                        S.HC.KE.Shared (0 .. 31) := E (1 .. 32);
-                     end;
-                     OK := True;
-                     Err := No_Error;
-                  else
-                     Err := Illegal_Parameter;
-                  end if;
-               end;
-
+               Shared_Secret_P256_12 (S.HC.KE, OK, Err);
             when Group_Secp384r1 =>
-               declare
-                  subtype P384_SK_Seq is Byte_Seq (0 .. 47);
-                  subtype P384_PK_Seq is Byte_Seq (0 .. 96);
-                  SS       : Bytes_48;
-                  OK384    : Boolean;
-                  Local_SK : constant P384_SK_Seq := S.HC.KE.P384_SK;
-                  Peer_PK  : constant P384_PK_Seq := S.HC.KE.P384_PK;
-               begin
-                  pragma Assert (Local_SK'First = 0);
-                  pragma Assert (Local_SK'Length = 48);
-                  pragma Assert (Peer_PK'First = 0);
-                  pragma Assert (Peer_PK'Length = 97);
-                  SPARKTLSCrypto.P384.Point.P384_ECDHE (SS, OK384, Local_SK, Peer_PK);
-                  if OK384 then
-                     S.HC.KE.Shared := SS;
-                     OK := True;
-                     Err := No_Error;
-                  else
-                     Err := Illegal_Parameter;
-                  end if;
-               end;
-
+               Shared_Secret_P384_12 (S.HC.KE, OK, Err);
             when others =>
+               OK := False;
+               Err := Illegal_Parameter;
                pragma Assert (False);
          end case;
       end Compute_Shared_Secret_12;
@@ -1190,76 +1534,13 @@ is
       end if;
 
       if Rec.Content = Records.Content_Change_Cipher_Spec then
-         declare
-            CCS_Pos : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-            CCS_OK  : constant Boolean :=
-              Rec.Fragment_Len = 1
-              and then S.Input.Data (CCS_Pos) = 16#01#
-              and then not S.HC.CCS_Received;
-         begin
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            if CCS_OK then
-               S.HC.CCS_Received := True;
-               Result := OK;
-               --  RFC 5246 7.1 single-CCS invariant: after this
-               --  assignment the server's view records that the client
-               --  has signaled switch-to-encrypted exactly once. Future
-               --  CCS records on this connection MUST be rejected via
-               --  the `not S.HC.CCS_Received` guard above.
-               pragma Assert (Single_CCS_RFC_5246_7_1 (S.HC));
-            else
-               --  RFC 5246 7.1: CCS payload MUST be the single byte
-               --  0x01 (BoGo BadChangeCipherSpec-*).
-               Send_Alert_And_Error (S, Unexpected_Message, Result);
-            end if;
-         end;
+         Consume_CKE_Phase_CCS_12 (S, Rec, Result);
          return;
       end if;
 
       if Rec.Content = Records.Content_Alert then
-         --  RFC 5246 7.2.1: close_notify can arrive at any time
-         --  (including mid-handshake before keys are established).
-         --  We must reply with close_notify (warning level) and
-         --  close. Other plaintext alerts during handshake are
-         --  protocol violations  fatal.
-         declare
-            FS          : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-            Alert_Level : Byte := 0;
-            Alert_Desc  : Byte := 0;
-         begin
-            if Rec.Fragment_Len >= 2 then
-               Alert_Level := S.Input.Data (FS);
-               Alert_Desc := S.Input.Data (FS + 1);
-            end if;
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            if Alert_Desc = 0 then
-               --  close_notify  reply in kind (plaintext warning).
-               declare
-                  A : N32;
-               begin
-                  Records.Build_Plaintext_Alert
-                    (Level => 1, Desc => 0, Output => S.Output, Bytes_Out => A);
-                  pragma Assert (A in 0 | 7);
-               end;
-               Set_State (S, Closing);
-               if Output_Pending (S) > 0 then
-                  --  RFC 5246 7.2.1: invariant after queued reply.
-                  pragma
-                    Assert (Close_Notify_Reply_State_RFC_5246_7_2_1 (S.State, Output_Pending (S)));
-                  Result := Has_Output;
-               else
-                  Result := Shutdown;
-               end if;
-            else
-               --  Other alert mid-handshake  peer is closing on us
-               --  with a fatal condition; just close (no reply).
-               S.Last_Error := Unexpected_Message;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-            end if;
-            pragma Unreferenced (Alert_Level);
-            return;
-         end;
+         Consume_CKE_Phase_Alert_12 (S, Rec, Result);
+         return;
       end if;
 
       if Rec.Content /= Records.Content_Handshake then
@@ -1273,204 +1554,13 @@ is
       --  CKE is a state-machine violation  fatal alert.
       --  TLS-Anvil's secondClientKeyExchange test (XSM-zmpmr7nVki).
       if S.HC.CKE_Received_12 then
-         if Rec.Content = Records.Content_Handshake and then Rec.Fragment_Len >= 4 then
-            declare
-               FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-               Frag_Len : constant N32 := Rec.Fragment_Len;
-            begin
-               pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
-               declare
-                  Frag     : constant Byte_Seq := S.Input.Data (FS .. FS + Frag_Len - 1);
-                  Msg_Type : Byte;
-                  Msg_Len  : N32;
-                  Parse_OK : Boolean;
-               begin
-                  Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
-                  if not Parse_OK then
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     Send_Alert_And_Error
-                       (S,
-                        (if Frag (Frag'First) in
-                              16#01#
-                              | 16#02#
-                              | 16#04#
-                              | 16#08#
-                              | 16#0B#
-                              | 16#0C#
-                              | 16#0D#
-                              | 16#0E#
-                              | 16#0F#
-                              | 16#10#
-                              | 16#14#
-                         then Decode_Error
-                         else Unexpected_Message),
-                        Result);
-                     return;
-                  end if;
-
-                  if Msg_Type = Handshake.HT_Certificate_Verify then
-                     if Msg_Len < 4 or else Msg_Len + 4 /= Frag_Len then
-                        S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                        Send_Alert_And_Error (S, Decode_Error, Result);
-                        return;
-                     end if;
-
-                     declare
-                        F : constant N32 := Frag'First;
-                     begin
-                        pragma Assert (Frag_Len >= 8);
-                        pragma Assert (F + 7 <= Frag'Last);
-                        declare
-                           Sig_Len : constant N32 := N32 (Frag (F + 6)) * 256 + N32 (Frag (F + 7));
-                        begin
-                           if Sig_Len /= Msg_Len - 4 then
-                              S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                              Send_Alert_And_Error (S, Decode_Error, Result);
-                              return;
-                           end if;
-                        end;
-                     end;
-                  end if;
-               end;
-            end;
-         end if;
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         Reject_Post_CKE_Handshake_12 (S, Rec, Result);
          return;
       end if;
 
       declare
          Frag_Len : constant N32 := Rec.Fragment_Len;
          FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-
-         procedure Parse_Complete_CKE (Msg : in Byte_Seq; CKE_Good : out Boolean)
-         with
-           Pre =>
-             Msg'Length > 0
-             and then Msg'Last < N32 (Natural'Last)
-             and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local),
-           Post =>
-             SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
-         is
-            Msg_Type : Byte;
-            Msg_Len  : N32;
-            POK      : Boolean;
-         begin
-            CKE_Good := False;
-            Handshake.Parse_Handshake_Header (Msg, Msg_Type, Msg_Len, POK);
-            if not POK
-              or else Msg_Type /= HT_Client_Key_Exchange
-              or else 4 + Msg_Len /= N32 (Msg'Length)
-            then
-               return;
-            end if;
-            if Msg_Len > Max_Client_Key_Exchange then
-               return;
-            end if;
-            if Msg_Len < 4 then
-               S.HC.Ext_Parse_Err := Illegal_Parameter;
-               return;
-            end if;
-
-            declare
-               Msg_Len_Const : constant N32 := Msg_Len;
-               Body_Data     : Byte_Seq (0 .. Msg_Len_Const - 1);
-            begin
-               pragma Assert (Msg'First + 4 <= Msg'Last);
-               pragma Assert (Msg'First + 4 + Msg_Len - 1 = Msg'Last);
-               Body_Data := Msg (Msg'First + 4 .. Msg'First + 4 + Msg_Len - 1);
-               Parse_Client_Key_Exchange (S.HC, Body_Data, CKE_Good);
-            end;
-         end Parse_Complete_CKE;
-
-         procedure Fail_Decode
-         with
-           Pre =>
-             S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-             and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
-             and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity,
-           Post =>
-             S.State = Error_State
-             and then Result /= OK
-             and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-         is
-         begin
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Decode_Error, Result);
-         end Fail_Decode;
-
-         procedure Fail_Unexpected
-         with
-           Pre =>
-             S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-             and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
-             and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity,
-           Post =>
-             S.State = Error_State
-             and then Result /= OK
-             and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-         is
-         begin
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Unexpected_Message, Result);
-         end Fail_Unexpected;
-
-         procedure Finish_CKE (Msg : in Byte_Seq)
-         with
-           Pre =>
-             Msg'Length > 0
-             and then Msg'Last < N32 (Natural'Last)
-             and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
-             and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
-             and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity
-             and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local),
-           Post =>
-             SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
-             and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-             and then (if Result = OK then S.State = S.State'Old else S.State = Error_State)
-         is
-            CKE_OK                 : Boolean;
-            Saved_Negotiated_Suite : constant Supported_Suite := S.Negotiated_Suite
-            with Ghost;
-         begin
-            Parse_Complete_CKE (Msg, CKE_OK);
-            if not CKE_OK then
-               if S.HC.Ext_Parse_Err /= No_Error then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, S.HC.Ext_Parse_Err, Result);
-                  pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
-               else
-                  Fail_Decode;
-                  pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
-               end if;
-               return;
-            end if;
-
-            Append_Transcript (S.HC, Msg);
-            if S.Negotiated_Suite in
-                 Suite_ECDHE_RSA_AES256_GCM_SHA384
-                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-            then
-               declare
-                  D : SPARKNaCl.Hashing.SHA384.Digest;
-               begin
-                  SPARKTLS_Transcript.Current_384 (S.HC.TS, D);
-                  S.HC.EMS_Session_Hash := Bytes_48 (D);
-               end;
-            else
-               declare
-                  D : Digest;
-               begin
-                  SPARKTLS_Transcript.Current_256 (S.HC.TS, D);
-                  S.HC.EMS_Session_Hash := (others => 0);
-                  S.HC.EMS_Session_Hash (0 .. 31) := Byte_Seq (D);
-               end;
-            end if;
-            S.HC.EMS_Hash_Taken := True;
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
-            pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
-         end Finish_CKE;
 
       begin
          --  Slice bound: Parse_Record_Header Post gives Record_Len <= Avail,
@@ -1499,18 +1589,18 @@ is
                if Take /= Frag_Len then
                   --  A CKE handshake message may span records, but this
                   --  state expects exactly that one message before CCS.
-                  Fail_Decode;
+                  Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
                   return;
                end if;
             end;
 
             if Header_Ready (D.Reasm) then
                if Declared_Type (D.Reasm) /= HT_Client_Key_Exchange then
-                  Fail_Unexpected;
+                  Consume_And_Alert_12 (S, Rec, Unexpected_Message, Result);
                   return;
                end if;
                if Declared_Size (D.Reasm) - 4 > Max_Client_Key_Exchange then
-                  Fail_Decode;
+                  Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
                   return;
                end if;
             end if;
@@ -1526,8 +1616,7 @@ is
             begin
                begin
                   Reset (D.Reasm);
-                  Result := OK;
-                  Finish_CKE (Byte_Seq (Full));
+                  Finish_CKE_12 (S, Rec, Byte_Seq (Full), Result);
                   if Result /= OK then
                      return;
                   end if;
@@ -1537,7 +1626,7 @@ is
             end;
          elsif Frag_Len < 4 then
             if Frag_Len = 0 then
-               Fail_Decode;
+               Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
                return;
             end if;
 
@@ -1554,11 +1643,11 @@ is
                HS_Total   : constant N32 := HS_Msg_Len + 4;
             begin
                if S.Input.Data (FS) /= HT_Client_Key_Exchange then
-                  Fail_Unexpected;
+                  Consume_And_Alert_12 (S, Rec, Unexpected_Message, Result);
                   return;
                end if;
                if HS_Msg_Len > Max_Client_Key_Exchange then
-                  Fail_Decode;
+                  Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
                   return;
                end if;
 
@@ -1575,7 +1664,7 @@ is
                Frag : constant Byte_Seq := S.Input.Data (FS .. FS + Frag_Len - 1);
             begin
                Result := OK;
-               Finish_CKE (Frag);
+               Finish_CKE_12 (S, Rec, Frag, Result);
                if Result /= OK then
                   return;
                end if;
@@ -1764,6 +1853,84 @@ is
    end Process_Client_Certificate_12;
 
    ------------------------------------------------------------------
+   --  CertificateVerify signature check (RFC 5246 7.4.8): the client signs
+   --  the handshake-message transcript; all three hashes are drawn and the
+   --  scheme picks which one Verify uses.
+   function CV_Signature_Valid_12
+     (TS         : SPARKTLS_Transcript.Transcript_State;
+      Sig        : Byte_Seq;
+      Cert       : X509.Certificate;
+      Sig_Scheme : Unsigned_16) return Boolean
+   with Pre => Sig'First = 0 and Sig'Length > 0 and Sig'Last < N32'Last - 256
+   is
+      TH2 : SPARKTLSCrypto.Hashing.SHA256.Digest;
+      TH3 : SPARKTLSCrypto.Hashing.SHA384.Digest;
+      TH5 : SPARKTLSCrypto.Hashing.SHA512.Digest;
+   begin
+      SPARKTLS_Transcript.Current_256 (TS, TH2);
+      SPARKTLS_Transcript.Current_384 (TS, TH3);
+      SPARKTLS_Transcript.Current_512 (TS, TH5);
+      return
+        Cert_Verify.Verify_Signature_TLS12_Hashed
+          (H256_In    => Bytes_32 (TH2),
+           H384_In    => Bytes_48 (TH3),
+           H512_In    => Bytes_64 (TH5),
+           Sig        => Sig,
+           Cert       => Cert,
+           Sig_Scheme => Sig_Scheme);
+   end CV_Signature_Valid_12;
+
+   --  Client certificate policy + chain validation for TLS 1.2 mTLS.
+   --  OK requires leaf policy AND (unless Skip_Verify) a full chain to a
+   --  configured root; missing Trust/Get_Time callbacks fail closed.
+   procedure Validate_Client_Cert_12
+     (Cfg : in Config; D : in SPARKTLS.HS_Pool.HS_Data; OK : out Boolean)
+   is
+      Leaf_Last : constant X509.N32 := D.Peer_Leaf.DER_Len - 1;
+      --  DER is X509.Byte_Seq now (#101): validators take it
+      --  directly -- the conversion copy loop is gone, and with
+      --  it the Leaf_DER bound obligations it generated.
+      Cert_X    : X509.Byte_Seq renames D.Peer_Leaf.DER (0 .. Leaf_Last);
+      VR        : Validation_Result;
+   begin
+      OK := False;
+
+      VR :=
+        Validate_Leaf_Policy
+          (Leaf     => D.Peer_Leaf.Cert,
+           Leaf_DER => Cert_X,
+           Hostname => "",
+           Purpose  => Purpose_Client,
+           Mode     => Cfg.Verify_Mode);
+      if VR /= Valid then
+         return;
+      end if;
+
+      if not Cfg.Skip_Verify then
+         if Cfg.Trust = null or else Cfg.Get_Time = null then
+            return;
+         end if;
+
+         VR :=
+           Validate_Chain
+             (Leaf_DER   => Cert_X,
+              Leaf       => D.Peer_Leaf.Cert,
+              Ints       => D.Peer_Ints,
+              Int_Count  => D.Peer_Int_Count,
+              Roots      => Cfg.Trust.Roots,
+              Root_Count => Cfg.Trust.Root_Count,
+              Now        => Cfg.Get_Time.all,
+              Hostname   => "",
+              Purpose    => Purpose_Client,
+              Mode       => Cfg.Verify_Mode);
+         if VR /= Valid then
+            return;
+         end if;
+      end if;
+
+      OK := True;
+   end Validate_Client_Cert_12;
+
    procedure Process_Client_CertVerify_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
@@ -1811,6 +1978,7 @@ is
             Msg_Type : Byte;
             Msg_Len  : N32;
             Parse_OK : Boolean;
+            Cert_OK  : Boolean;
          begin
             Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
 
@@ -1879,24 +2047,8 @@ is
                   for I in N32 range 0 .. Sig_Len - 1 loop
                      Sig (I) := Frag (F + 8 + I);
                   end loop;
-
-                  declare
-                     TH2 : SPARKTLSCrypto.Hashing.SHA256.Digest;
-                     TH3 : SPARKTLSCrypto.Hashing.SHA384.Digest;
-                     TH5 : SPARKTLSCrypto.Hashing.SHA512.Digest;
-                  begin
-                     SPARKTLS_Transcript.Current_256 (S.HC.TS, TH2);
-                     SPARKTLS_Transcript.Current_384 (S.HC.TS, TH3);
-                     SPARKTLS_Transcript.Current_512 (S.HC.TS, TH5);
-                     Verified :=
-                       Cert_Verify.Verify_Signature_TLS12_Hashed
-                         (H256_In    => Bytes_32 (TH2),
-                          H384_In    => Bytes_48 (TH3),
-                          H512_In    => Bytes_64 (TH5),
-                          Sig        => Sig,
-                          Cert       => D.Peer_Leaf.Cert,
-                          Sig_Scheme => Sig_Scheme);
-                  end;
+                  Verified :=
+                    CV_Signature_Valid_12 (S.HC.TS, Sig, D.Peer_Leaf.Cert, Sig_Scheme);
                end;
 
                if not Verified then
@@ -1906,54 +2058,12 @@ is
                end if;
             end;
 
-            declare
-               Leaf_Last : constant X509.N32 := D.Peer_Leaf.DER_Len - 1;
-               --  DER is X509.Byte_Seq now (#101): validators take it
-               --  directly -- the conversion copy loop is gone, and with
-               --  it the Leaf_DER bound obligations it generated.
-               Cert_X    : X509.Byte_Seq renames D.Peer_Leaf.DER (0 .. Leaf_Last);
-               VR        : Validation_Result;
-            begin
-
-               VR :=
-                 Validate_Leaf_Policy
-                   (Leaf     => D.Peer_Leaf.Cert,
-                    Leaf_DER => Cert_X,
-                    Hostname => "",
-                    Purpose  => Purpose_Client,
-                    Mode     => S.HC.Cfg.Verify_Mode);
-               if VR /= Valid then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, Bad_Certificate, Result);
-                  return;
-               end if;
-
-               if not S.HC.Cfg.Skip_Verify then
-                  if S.HC.Cfg.Trust = null or else S.HC.Cfg.Get_Time = null then
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     Send_Alert_And_Error (S, Bad_Certificate, Result);
-                     return;
-                  end if;
-
-                  VR :=
-                    Validate_Chain
-                      (Leaf_DER   => Cert_X,
-                       Leaf       => D.Peer_Leaf.Cert,
-                       Ints       => D.Peer_Ints,
-                       Int_Count  => D.Peer_Int_Count,
-                       Roots      => S.HC.Cfg.Trust.Roots,
-                       Root_Count => S.HC.Cfg.Trust.Root_Count,
-                       Now        => S.HC.Cfg.Get_Time.all,
-                       Hostname   => "",
-                       Purpose    => Purpose_Client,
-                       Mode       => S.HC.Cfg.Verify_Mode);
-                  if VR /= Valid then
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     Send_Alert_And_Error (S, Bad_Certificate, Result);
-                     return;
-                  end if;
-               end if;
-            end;
+            Validate_Client_Cert_12 (S.HC.Cfg, D, Cert_OK);
+            if not Cert_OK then
+               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+               Send_Alert_And_Error (S, Bad_Certificate, Result);
+               return;
+            end if;
 
             Append_Transcript (S.HC, Frag);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1965,13 +2075,308 @@ is
 
    ------------------------------------------------------------------
    ------------------------------------------------------------------
+   --  Expected client Finished verify_data (RFC 5246 7.4.9) over the
+   --  current transcript.
+   procedure Expected_Client_Finished_12
+     (TS      : in SPARKTLS_Transcript.Transcript_State;
+      Master  : in Bytes_48;
+      Use_384 : in Boolean;
+      Exp     : out Key_Schedule_12.Verify_Data_12)
+   is
+      use Key_Schedule_12;
+      TH  : Digest;
+      TH4 : SPARKNaCl.Hashing.SHA384.Digest;
+   begin
+      if Use_384 then
+         SPARKTLS_Transcript.Current_384 (TS, TH4);
+         Prove_Client_Finished_Label;
+         pragma Assert (Valid_Finished_Label (Label_Client_Finished));
+         pragma Assert (TH4'Length = 48);
+         declare
+            TH_Bytes : constant Byte_Seq (0 .. 47) := Byte_Seq (TH4);
+         begin
+            pragma Assert (TH_Bytes'First = 0);
+            pragma Assert (TH_Bytes'Last = 47);
+            pragma Assert (TH_Bytes'Length = 48);
+            pragma Assert (TH_Bytes'Length = 32 or else TH_Bytes'Length = 48);
+            Compute_Finished_12 (Exp, Master, Label_Client_Finished, TH_Bytes, True);
+         end;
+      else
+         SPARKTLS_Transcript.Current_256 (TS, TH);
+         Prove_Client_Finished_Label;
+         pragma Assert (Valid_Finished_Label (Label_Client_Finished));
+         pragma Assert (TH'Length = 32);
+         declare
+            TH_Bytes : constant Byte_Seq (0 .. 31) := Byte_Seq (TH);
+         begin
+            pragma Assert (TH_Bytes'First = 0);
+            pragma Assert (TH_Bytes'Last = 31);
+            pragma Assert (TH_Bytes'Length = 32);
+            pragma Assert (TH_Bytes'Length = 32 or else TH_Bytes'Length = 48);
+            Compute_Finished_12 (Exp, Master, Label_Client_Finished, TH_Bytes, False);
+         end;
+      end if;
+   end Expected_Client_Finished_12;
+
+   --  Validates a complete decrypted Finished message (type, length header,
+   --  exact record fit per RFC 5246 7.4.9) and checks verify_data in
+   --  constant time. On success appends the message to the transcript and
+   --  sets Verified; on failure sends the appropriate alert (encrypted in
+   --  the abbreviated-resume flow, where our CCS is already out).
+   procedure Verify_Client_Finished_12
+     (S         : in out Session;
+      Plaintext : in Byte_Seq;
+      PL        : in N32;
+      Use_384   : in Boolean;
+      Verified  : out Boolean;
+      Result    : out Action)
+   is
+      use Key_Schedule_12;
+      Msg_Type : constant Byte := Plaintext (0);
+   begin
+      Verified := False;
+      if Msg_Type /= HT_Finished then
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         return;
+      end if;
+      if Plaintext (1) /= 0
+        or else Plaintext (2) /= 0
+        or else Plaintext (3) /= Byte (Finished_Verify_Len)
+      then
+         --  Finished length mismatch RFC 8446 6.2:
+         --  decrypt_error (alert 51). BoGo
+         --  TrailingMessageData-ClientFinished expects this
+         --  rather than decode_error.
+         Send_Alert_And_Error (S, Certificate_Verify_Failed, Result);
+         return;
+      end if;
+      --  RFC 5246 7.4.9: Finished is the last handshake
+      --  message in the client's flight. Any bytes in the same
+      --  record beyond `4 + Finished_Verify_Len` are excess
+      --  data and therefore fatal unexpected_message. In the
+      --  abbreviated resume flow, the server has already sent
+      --  CCS+Finished, so the alert must use the encrypted
+      --  write epoch. In the full flow, the server has not sent
+      --  CCS yet, so the alert remains plaintext.
+      if PL /= 4 + Finished_Verify_Len then
+         if S.HC.T12.Resuming then
+            Send_Encrypted_Alert_12 (S, Unexpected_Message, Result);
+         else
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
+         end if;
+         return;
+      end if;
+
+      declare
+         Exp : Verify_Data_12;
+      begin
+         Expected_Client_Finished_12 (S.HC.TS, S.HC.Master_Secret_12, Use_384, Exp);
+
+         --  Constant-time comparison (prevents timing attacks
+         --  on the verify_data). SPARKNaCl.Equal uses XOR
+         --  accumulation  no early exit on mismatch.
+         declare
+            Received : constant Key_Schedule_12.Verify_Data_12 :=
+              Key_Schedule_12.Verify_Data_12
+                (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
+         begin
+            if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
+               --  RFC 5246 7.4.9 / 7.2.1: Finished verify
+               --  mismatch â fatal alert. Server WRITE state
+               --  is still plaintext (no CCS sent yet) so the
+               --  alert MUST be plaintext, not encrypted.
+               Send_Alert_And_Error (S, Handshake_Failure, Result);
+               return;
+            end if;
+         end;
+      end;
+
+      Append_Transcript (S.HC, Plaintext (0 .. PL - 1));
+      Verified := True;
+      Result := OK;
+   end Verify_Client_Finished_12;
+
+   --  RFC 5077 3.3 NewSessionTicket (full handshake): issued iff the client
+   --  offered the session_ticket extension AND we have configured
+   --  ticket-encryption keys. Resumed-flight NSTs (the abbreviated case) are
+   --  emitted from a different code path. Appends the NST to the transcript
+   --  (RFC 5077 3.5: before the server Finished hash) and to Scratch as a
+   --  plaintext handshake record. On failure sets the error state; the
+   --  caller aborts the flight.
+   procedure Issue_NST_12 (S : in out Session; Scratch : in out IO_Buffer; OK : out Boolean)
+   is
+   begin
+      OK := True;
+      if S.HC.T12.Ticket_Offered
+        and then S.HC.Cfg.Get_Active_TEK
+                 /= null
+                    --  Fail closed without a clock: Created_At would be 0 and the
+                    --  decrypt-side age check would pass forever, so the ticket
+                    --  would never expire. Issue none instead.
+        and then S.HC.Cfg.Get_Time /= null
+      then
+         declare
+            use type SPARKTLS.Tickets_12.Bytes_4;
+            --  Sealing key supplied by the caller's store.
+            Key_ID_Buf  : Byte_Seq (0 .. 3) := (others => 0);
+            TEK_Buf     : Byte_Seq (0 .. 31) := (others => 0);
+            Have_TEK    : Boolean := False;
+            Nonce_Buf   : Byte_Seq (0 .. 11);
+            Plain       : SPARKTLS.Tickets_12.Ticket_Plain;
+            Ticket_Buf  : Byte_Seq (0 .. 255);
+            Ticket_Len  : N32;
+            NST_Buf     : Byte_Seq (0 .. 271);
+            NST_Total   : N32;
+            NST_Rec_Out : N32;
+         begin
+            S.HC.Cfg.Get_Active_TEK.all (Key_ID_Buf, TEK_Buf, Have_TEK);
+            S.HC.Cfg.Random.all (Nonce_Buf);
+
+            --  Ticket plaintext = master_secret + suite + creation
+            --  time + sid_len=0 (we don't encode the SID in the
+            --  encrypted state; clients echo their own SID on
+            --  resumption attempts). Created_At drives the
+            --  expiry check on the decrypt side; without
+            --  Cfg.Get_Time we encode 0 and Decrypt_Ticket skips
+            --  the age window check (acceptable for dev / test).
+            Plain.Master_Secret := S.HC.Master_Secret_12;
+            Plain.Suite := Wire_Of (S.Negotiated_Suite);
+            Plain.Created_At :=
+              (if S.HC.Cfg.Get_Time /= null
+               then SPARKTLS.Tickets_12.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
+               else 0);
+            Plain.SID_Len := 0;
+            Plain.SID := (others => 0);
+
+            SPARKTLS.Tickets_12.Encrypt_Ticket
+              (Plain      => Plain,
+               Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Key_ID_Buf),
+               TEK        => SPARKTLS.Tickets_12.Bytes_32 (TEK_Buf),
+               Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
+               Ticket     => Ticket_Buf,
+               Ticket_Len => Ticket_Len);
+
+            --  Build NewSessionTicket handshake message via RFLX.
+            SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12
+              (Lifetime_Hint => S.HC.Cfg.TLS12_Ticket_Lifetime,
+               Ticket        => Ticket_Buf (0 .. Ticket_Len - 1),
+               Result        => NST_Buf,
+               Len           => NST_Total);
+            if NST_Total = 0 then
+               S.Last_Error := Insufficient_Buffer;
+               Set_State (S, Error_State);
+               OK := False;
+               return;
+            end if;
+            pragma Assert (NST_Total > 0);
+            pragma Assert (NST_Total - 1 <= NST_Buf'Last);
+
+            declare
+               NST_Last : constant N32 := NST_Total - 1;
+               NST_Data : Byte_Seq renames NST_Buf (0 .. NST_Last);
+            begin
+               pragma Assert (NST_Data'Length > 0);
+
+               --  Append to transcript BEFORE server Finished hash.
+               Append_Transcript (S.HC, NST_Data);
+
+               --  Emit as plaintext handshake record (server WRITE
+               --  state still pre-CCS).
+               Records.Build_Handshake_Record (NST_Data, Scratch, NST_Rec_Out);
+               if NST_Rec_Out = 0 then
+                  S.Last_Error := Insufficient_Buffer;
+                  Set_State (S, Error_State);
+                  OK := False;
+                  return;
+               end if;
+            end;
+         end;
+      end if;
+   end Issue_NST_12;
+
+   --  Full-handshake server flight: [NST?] + CCS + encrypted Finished,
+   --  assembled in a scratch buffer and committed to S.Output atomically
+   --  (all or nothing). The Finished encryption advances
+   --  S.Server_App.Counter, so a commit failure after encryption is fatal:
+   --  the burned nonce stays burned and the connection dies here. On any
+   --  failure the error state is set and OK is False.
+   --
+   --  NST goes BEFORE CCS (RFC 5077 3.3): server's WRITE state is still
+   --  plaintext until CCS, so NST is a plaintext handshake record.
+   procedure Commit_Finished_Flight_12
+     (S : in out Session; Use_384 : in Boolean; OK : out Boolean)
+   is
+      Scratch : IO_Buffer;
+      NST_OK  : Boolean;
+      CCS_Out : N32;
+      EO      : N32;
+      FB      : Byte_Seq (0 .. Finished_12_Total_Len - 1);
+      FL      : N32;
+   begin
+      OK := False;
+      Issue_NST_12 (S, Scratch, NST_OK);
+      if not NST_OK then
+         return;
+      end if;
+
+      Records.Build_CCS_Record (Scratch, CCS_Out);
+      if CCS_Out = 0 then
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         return;
+      end if;
+
+      Build_Server_Finished_12 (S.HC.TS, S.HC.Master_Secret_12, Use_384, FB, FL);
+
+      pragma Assert (FB'First = 0);
+      pragma Assert (FB'Last = Finished_12_Total_Len - 1);
+      pragma Assert (S.HC.Server_Write_IV_12'First = 0);
+      pragma Assert (S.HC.Server_Write_IV_12'Last = 11);
+      pragma Assert (S.HC.Server_Write_IV_12'Length = Records.TLS12.Implicit_IV_Len);
+
+      Records.TLS12.Build_Encrypted_Record_12
+        (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO);
+
+      if EO = 0 then
+         --  Fatal path: no rewind, the burned nonce stays
+         --  burned and the connection dies here.
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         return;
+      end if;
+
+      --  Atomic commit
+      if Free_Space (S.Output) < Scratch.Write_Pos then
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         return;
+      end if;
+
+      declare
+         --  Bind the commit length HERE, after the flight is built:
+         --  binding it at block entry froze Write_Pos = 0 and the
+         --  commit copied nothing (a414432 regression -- killed every
+         --  TLS 1.2 full handshake; range 1.. makes the empty-flight
+         --  case a checked error instead of a silent no-op).
+         subtype Commit_Length is Buffer_Size range 1 .. IO_Buffer_Capacity;
+         Len           : constant Commit_Length := Scratch.Write_Pos;
+         New_Write_Pos : constant Buffer_Size := S.Output.Write_Pos + Len;
+      begin
+         S.Output.Data (S.Output.Write_Pos .. New_Write_Pos - 1) :=
+            Scratch.Data (0 .. Len - 1);
+         S.Output.Write_Pos := New_Write_Pos;
+      end;
+      OK := True;
+   end Commit_Finished_Flight_12;
+
    procedure Process_Client_Finished_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
       use SPARKTLS.Records.TLS12;
       use Key_Schedule_12;
-      Rec     : Records.Parse_Result;
-      Use_384 : constant Boolean :=
+      Rec       : Records.Parse_Result;
+      Flight_OK : Boolean;
+      Use_384   : constant Boolean :=
         S.Negotiated_Suite in
           Suite_ECDHE_RSA_AES256_GCM_SHA384
           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
@@ -2034,6 +2439,7 @@ is
             Plaintext : Byte_Seq (0 .. Frag_Len - 1);
             PL        : N32;
             DV        : Boolean;
+            Fin_OK    : Boolean;
          begin
             for I in N32 range 0 .. Frag_Len - 1 loop
                Encrypted (I) := S.Input.Data (FS + I);
@@ -2120,99 +2526,10 @@ is
                return;
             end if;
 
-            declare
-               Msg_Type : constant Byte := Plaintext (0);
-            begin
-               if Msg_Type /= HT_Finished then
-                  Send_Alert_And_Error (S, Unexpected_Message, Result);
-                  return;
-               end if;
-               if Plaintext (1) /= 0
-                 or else Plaintext (2) /= 0
-                 or else Plaintext (3) /= Byte (Finished_Verify_Len)
-               then
-                  --  Finished length mismatch RFC 8446 6.2:
-                  --  decrypt_error (alert 51). BoGo
-                  --  TrailingMessageData-ClientFinished expects this
-                  --  rather than decode_error.
-                  Send_Alert_And_Error (S, Certificate_Verify_Failed, Result);
-                  return;
-               end if;
-               --  RFC 5246 7.4.9: Finished is the last handshake
-               --  message in the client's flight. Any bytes in the same
-               --  record beyond `4 + Finished_Verify_Len` are excess
-               --  data and therefore fatal unexpected_message. In the
-               --  abbreviated resume flow, the server has already sent
-               --  CCS+Finished, so the alert must use the encrypted
-               --  write epoch. In the full flow, the server has not sent
-               --  CCS yet, so the alert remains plaintext.
-               if PL /= 4 + Finished_Verify_Len then
-                  if S.HC.T12.Resuming then
-                     Send_Encrypted_Alert_12 (S, Unexpected_Message, Result);
-                  else
-                     Send_Alert_And_Error (S, Unexpected_Message, Result);
-                  end if;
-                  return;
-               end if;
-
-               declare
-                  Exp : Verify_Data_12;
-                  TH  : Digest;
-                  TH4 : SPARKNaCl.Hashing.SHA384.Digest;
-               begin
-                  if Use_384 then
-                     SPARKTLS_Transcript.Current_384 (S.HC.TS, TH4);
-                     Prove_Client_Finished_Label;
-                     pragma Assert (Valid_Finished_Label (Label_Client_Finished));
-                     pragma Assert (TH4'Length = 48);
-                     declare
-                        TH_Bytes : constant Byte_Seq (0 .. 47) := Byte_Seq (TH4);
-                     begin
-                        pragma Assert (TH_Bytes'First = 0);
-                        pragma Assert (TH_Bytes'Last = 47);
-                        pragma Assert (TH_Bytes'Length = 48);
-                        pragma Assert (TH_Bytes'Length = 32 or else TH_Bytes'Length = 48);
-                        Compute_Finished_12
-                          (Exp, S.HC.Master_Secret_12, Label_Client_Finished, TH_Bytes, True);
-                     end;
-                  else
-                     SPARKTLS_Transcript.Current_256 (S.HC.TS, TH);
-                     Prove_Client_Finished_Label;
-                     pragma Assert (Valid_Finished_Label (Label_Client_Finished));
-                     pragma Assert (TH'Length = 32);
-                     declare
-                        TH_Bytes : constant Byte_Seq (0 .. 31) := Byte_Seq (TH);
-                     begin
-                        pragma Assert (TH_Bytes'First = 0);
-                        pragma Assert (TH_Bytes'Last = 31);
-                        pragma Assert (TH_Bytes'Length = 32);
-                        pragma Assert (TH_Bytes'Length = 32 or else TH_Bytes'Length = 48);
-                        Compute_Finished_12
-                          (Exp, S.HC.Master_Secret_12, Label_Client_Finished, TH_Bytes, False);
-                     end;
-                  end if;
-
-                  --  Constant-time comparison (prevents timing attacks
-                  --  on the verify_data). SPARKNaCl.Equal uses XOR
-                  --  accumulation  no early exit on mismatch.
-                  declare
-                     Received : constant Key_Schedule_12.Verify_Data_12 :=
-                       Key_Schedule_12.Verify_Data_12
-                         (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
-                  begin
-                     if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
-                        --  RFC 5246 7.4.9 / 7.2.1: Finished verify
-                        --  mismatch â fatal alert. Server WRITE state
-                        --  is still plaintext (no CCS sent yet) so the
-                        --  alert MUST be plaintext, not encrypted.
-                        Send_Alert_And_Error (S, Handshake_Failure, Result);
-                        return;
-                     end if;
-                  end;
-               end;
-
-               Append_Transcript (S.HC, Plaintext (0 .. PL - 1));
-            end;
+            Verify_Client_Finished_12 (S, Plaintext, PL, Use_384, Fin_OK, Result);
+            if not Fin_OK then
+               return;
+            end if;
          end;
       end;
 
@@ -2232,183 +2549,11 @@ is
       --  Finished. RFC 5077 3.3  the abbreviated flight inverts
       --  the order so this code path must NOT re-emit.
       if not S.HC.T12.Resuming then
-         declare
-            Scratch : IO_Buffer;
-            CCS_Out : N32;
-            EO      : N32;
-            FB      : Byte_Seq (0 .. Finished_12_Total_Len - 1);
-            FL      : N32;
-            TH      : Digest;
-            TH4     : SPARKNaCl.Hashing.SHA384.Digest;
-
-            subtype Commit_Length is Buffer_Size range 1 .. IO_Buffer_Capacity;
-            Len : constant Commit_Length := Scratch.Write_Pos;
-         begin
-            --  RFC 5077 3.3 NewSessionTicket (full handshake): issued iff
-            --  the client offered the session_ticket extension AND we have
-            --  configured ticket-encryption keys. Resumed-flight NSTs (the
-            --  abbreviated case) are emitted from a different code path.
-            if S.HC.T12.Ticket_Offered
-              and then S.HC.Cfg.Get_Active_TEK
-                       /= null
-                          --  Fail closed without a clock: Created_At would be 0 and the
-                          --  decrypt-side age check would pass forever, so the ticket
-                          --  would never expire. Issue none instead.
-              and then S.HC.Cfg.Get_Time /= null
-            then
-               declare
-                  use type SPARKTLS.Tickets_12.Bytes_4;
-                  --  Sealing key supplied by the caller's store.
-                  Key_ID_Buf  : Byte_Seq (0 .. 3) := (others => 0);
-                  TEK_Buf     : Byte_Seq (0 .. 31) := (others => 0);
-                  Have_TEK    : Boolean := False;
-                  Nonce_Buf   : Byte_Seq (0 .. 11);
-                  Plain       : SPARKTLS.Tickets_12.Ticket_Plain;
-                  Ticket_Buf  : Byte_Seq (0 .. 255);
-                  Ticket_Len  : N32;
-                  NST_Buf     : Byte_Seq (0 .. 271);
-                  NST_Total   : N32;
-                  NST_Rec_Out : N32;
-               begin
-                  S.HC.Cfg.Get_Active_TEK.all (Key_ID_Buf, TEK_Buf, Have_TEK);
-                  S.HC.Cfg.Random.all (Nonce_Buf);
-
-                  --  Ticket plaintext = master_secret + suite + creation
-                  --  time + sid_len=0 (we don't encode the SID in the
-                  --  encrypted state; clients echo their own SID on
-                  --  resumption attempts). Created_At drives the
-                  --  expiry check on the decrypt side; without
-                  --  Cfg.Get_Time we encode 0 and Decrypt_Ticket skips
-                  --  the age window check (acceptable for dev / test).
-                  Plain.Master_Secret := S.HC.Master_Secret_12;
-                  Plain.Suite := Wire_Of (S.Negotiated_Suite);
-                  Plain.Created_At :=
-                    (if S.HC.Cfg.Get_Time /= null
-                     then SPARKTLS.Tickets_12.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
-                     else 0);
-                  Plain.SID_Len := 0;
-                  Plain.SID := (others => 0);
-
-                  SPARKTLS.Tickets_12.Encrypt_Ticket
-                    (Plain      => Plain,
-                     Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Key_ID_Buf),
-                     TEK        => SPARKTLS.Tickets_12.Bytes_32 (TEK_Buf),
-                     Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
-                     Ticket     => Ticket_Buf,
-                     Ticket_Len => Ticket_Len);
-
-                  --  Build NewSessionTicket handshake message via RFLX.
-                  SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12
-                    (Lifetime_Hint => S.HC.Cfg.TLS12_Ticket_Lifetime,
-                     Ticket        => Ticket_Buf (0 .. Ticket_Len - 1),
-                     Result        => NST_Buf,
-                     Len           => NST_Total);
-                  if NST_Total = 0 then
-                     S.Last_Error := Insufficient_Buffer;
-                     Set_State (S, Error_State);
-                     Result := Error_Alert;
-                     return;
-                  end if;
-                  pragma Assert (NST_Total > 0);
-                  pragma Assert (NST_Total - 1 <= NST_Buf'Last);
-
-                  declare
-                     NST_Last : constant N32 := NST_Total - 1;
-                     NST_Data : Byte_Seq renames NST_Buf (0 .. NST_Last);
-                  begin
-                     pragma Assert (NST_Data'Length > 0);
-
-                     --  Append to transcript BEFORE server Finished hash.
-                     Append_Transcript (S.HC, NST_Data);
-
-                     --  Emit as plaintext handshake record (server WRITE
-                     --  state still pre-CCS).
-                     Records.Build_Handshake_Record (NST_Data, Scratch, NST_Rec_Out);
-                     if NST_Rec_Out = 0 then
-                        S.Last_Error := Insufficient_Buffer;
-                        Set_State (S, Error_State);
-                        Result := Error_Alert;
-                        return;
-                     end if;
-                  end;
-               end;
-            end if;
-
-            Records.Build_CCS_Record (Scratch, CCS_Out);
-            if CCS_Out = 0 then
-               S.Last_Error := Insufficient_Buffer;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-
-            if Use_384 then
-               SPARKTLS_Transcript.Current_384 (S.HC.TS, TH4);
-               Prove_Server_Finished_Label;
-               pragma Assert (Valid_Finished_Label (Label_Server_Finished));
-               pragma Assert (TH4'Length = 48);
-               declare
-                  TH_Bytes : constant Byte_Seq (0 .. 47) := Byte_Seq (TH4);
-               begin
-                  pragma Assert (TH_Bytes'First = 0);
-                  pragma Assert (TH_Bytes'Last = 47);
-                  pragma Assert (TH_Bytes'Length = 48);
-                  pragma Assert (TH_Bytes'Length = 32 or else TH_Bytes'Length = 48);
-                  Build_Finished_12
-                    (S.HC.Master_Secret_12, Label_Server_Finished, TH_Bytes, True, FB, FL);
-               end;
-            else
-               SPARKTLS_Transcript.Current_256 (S.HC.TS, TH);
-               Prove_Server_Finished_Label;
-               pragma Assert (Valid_Finished_Label (Label_Server_Finished));
-               pragma Assert (TH'Length = 32);
-               declare
-                  TH_Bytes : constant Byte_Seq (0 .. 31) := Byte_Seq (TH);
-               begin
-                  pragma Assert (TH_Bytes'First = 0);
-                  pragma Assert (TH_Bytes'Last = 31);
-                  pragma Assert (TH_Bytes'Length = 32);
-                  pragma Assert (TH_Bytes'Length = 32 or else TH_Bytes'Length = 48);
-                  Build_Finished_12
-                    (S.HC.Master_Secret_12, Label_Server_Finished, TH_Bytes, False, FB, FL);
-               end;
-            end if;
-
-            pragma Assert (FL = Finished_12_Total_Len);
-            pragma Assert (FB'First = 0);
-            pragma Assert (FB'Last = Finished_12_Total_Len - 1);
-            pragma Assert (S.HC.Server_Write_IV_12'First = 0);
-            pragma Assert (S.HC.Server_Write_IV_12'Last = 11);
-            pragma Assert (S.HC.Server_Write_IV_12'Length = Records.TLS12.Implicit_IV_Len);
-
-            Build_Encrypted_Record_12
-              (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO);
-
-            if EO = 0 then
-               --  Fatal path: no rewind, the burned nonce stays
-               --  burned and the connection dies here.
-               S.Last_Error := Insufficient_Buffer;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-
-            --  Atomic commit
-            if Free_Space (S.Output) < Scratch.Write_Pos then
-               S.Last_Error := Insufficient_Buffer;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-
-            declare
-               New_Write_Pos : constant Buffer_Size := S.Output.Write_Pos + Len;
-            begin
-               S.Output.Data (S.Output.Write_Pos .. New_Write_Pos - 1) :=
-                  Scratch.Data (0 .. Len - 1);
-               S.Output.Write_Pos := New_Write_Pos;
-            end;
-         end;
+         Commit_Finished_Flight_12 (S, Use_384, Flight_OK);
+         if not Flight_OK then
+            Result := Error_Alert;
+            return;
+         end if;
       end if;  --  end "if not S.HC.T12.Resuming"
 
       --  Copy TLS 1.2 state to Session
