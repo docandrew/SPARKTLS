@@ -2267,7 +2267,7 @@ is
       Ready    : out Boolean;
       Result   : out Action)
    with
-     Pre  => SPARKTLS_Transcript.Started (S.HC.TS) and then Has_Message (D.Reasm),
+     Pre  => Has_Message (D.Reasm),
      Post =>
        (if Ready
         then
