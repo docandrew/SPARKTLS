@@ -1581,7 +1581,7 @@ is
       Result  : out Action)
    with
      Pre => FB'First = 0 and then Valid_Finished_12_Len (FL) and then FL - 1 <= FB'Last,
-     Post => Result in OK | Has_Output | Error_Alert;
+     Post => Result in OK | Has_Output | Error_Alert and then (if Result = OK then SPARKTLS_Transcript.Started (S.HC.TS));
 
    procedure Encrypt_Client_Finished_Record_12
      (S       : in out Session;
@@ -1606,7 +1606,7 @@ is
          pragma Assert_And_Cut (Result in Has_Output | Error_Alert);
          return;
       end if;
-      pragma Assert_And_Cut (Result = OK);
+      pragma Assert_And_Cut (Result = OK and then SPARKTLS_Transcript.Started (S.HC.TS));
    end Encrypt_Client_Finished_Record_12;
 
    procedure Commit_Client_Flight_Scratch_12
@@ -1614,7 +1614,7 @@ is
       D       : in out SPARKTLS.HS_Pool.HS_Data;
       Scratch : in IO_Buffer;
       Result  : out Action)
-   with Post => Result in OK | Has_Output | Error_Alert;
+   with Post => Result in OK | Has_Output | Error_Alert and then (if (SPARKTLS_Transcript.Started(S.HC.TS)'Old and then Result = OK) then SPARKTLS_Transcript.Started (S.HC.TS));
 
    procedure Commit_Client_Flight_Scratch_12
      (S       : in out Session;
@@ -1627,14 +1627,14 @@ is
          --  Fatal path -- no counter rewind (the counter lives inside
          --  S.Client_App now); the connection dies here.
          Send_Cleartext_Handshake_Error_12 (S, D, Insufficient_Buffer, Result);
-         pragma Assert_And_Cut (Result in Has_Output | Error_Alert);
+         pragma Assert (Result in Has_Output | Error_Alert);
          return;
       end if;
 
       S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
         Scratch.Data (0 .. Scratch.Write_Pos - 1);
       S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
-      pragma Assert_And_Cut (Result = OK);
+      pragma Assert (Result = OK);
    end Commit_Client_Flight_Scratch_12;
 
    procedure Encrypt_And_Commit_Client_Finished_12

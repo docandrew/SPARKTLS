@@ -1,4 +1,4 @@
-with SPARKNaCl;  use SPARKNaCl;
+with SPARKNaCl; use SPARKNaCl;
 with X509;
 with SPARKTLS.HS_Pool;
 with SPARKTLS.Handshake.Server_Msgs;
@@ -33,19 +33,20 @@ is
       OK     : out Boolean;
       Err    : out Error_Code)
    with
-     Pre => HS_Msg'First = 0 and then HS_Msg'Length >= 7 and then HS_Msg'Length <= Max_Cert_Msg,
+     Pre  => HS_Msg'First = 0 and then HS_Msg'Length >= 7 and then HS_Msg'Length <= Max_Cert_Msg,
      Post =>
        Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
        and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-       and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
-                 then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
-       and then (if HC.Cfg.Local'Old /= null
-                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local'Old)
-                 then
-                   HC.Cfg.Local /= null
-                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local))
+       and then
+         (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
+          then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
+       and then
+         (if HC.Cfg.Local'Old /= null
+            and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local'Old)
+          then
+            HC.Cfg.Local /= null
+            and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local))
        and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
-
 
    --  Shared RFLX-to-X509 copy helpers (were duplicated verbatim in
    --  Client.TLS12; deduplicated 2026-08-27, see task #116).
@@ -65,7 +66,7 @@ is
       Cert      : out X509.Certificate;
       OK        : out Boolean)
    with
-     Pre =>
+     Pre  =>
        C_Len > 0
        and then C_Len <= N32 (Max_Cert_DER)
        and then Cert_RFLX'First = 1
@@ -77,7 +78,7 @@ is
       D         : in out SPARKTLS.HS_Pool.HS_Data;
       C_Len     : in N32)
    with
-     Pre =>
+     Pre  =>
        Cert_RFLX'First = 1
        and then Cert_RFLX'Length = RFLX.RFLX_Builtin_Types.Length (C_Len)
        and then C_Len > 0
@@ -92,12 +93,13 @@ is
       C_Len     : in N32;
       Target    : out Pool_Entry)
    with
-     Pre =>
+     Pre  =>
        Cert_RFLX'First = 1
        and Cert_RFLX'Length = RFLX.RFLX_Builtin_Types.Length (C_Len)
        and C_Len > 0
        and C_Len <= N32 (Max_Cert_DER)
        and X509.Is_Valid (Cert)
-       and X509.Spans_Valid (Cert, X509.N32 (C_Len) - 1);
+       and X509.Spans_Valid (Cert, X509.N32 (C_Len) - 1),
+     Post => Target.Present;
 
 end SPARKTLS.Handshake.Certs;
