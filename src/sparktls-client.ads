@@ -61,7 +61,7 @@ is
      (S                    : out Client_Session;
       Hostname             : String;
       Trust                : Trust_Store_Access;
-      Random               : Random_Bytes_Fn;
+      Random               : Live_Random_Fn;
       Clock                : Get_Time_Fn;
       Local                : Valid_Identity_Access := null;
       Mode                 : Validation_Mode := Mode_WebPKI;
@@ -73,7 +73,7 @@ is
      --  Mirrors Init's postcondition: Configure is a thin wrapper that
      --  builds a Config and calls Init, so it can promise no more than Init
      --  does. Init fails closed to Error_State.
-   with Pre => Random /= null and Clock /= null;
+   with Pre => Clock /= null;
    --  Skip_Verify: skip full X.509 chain validation against Trust
    --  (development / self-signed certs). Without Skip_Verify, a trust
    --  store and clock must be configured before the handshake can
@@ -94,8 +94,7 @@ is
 
    --  Initialize a client session with full control over Config.
    --  After Init, the caller should drain and send the ClientHello.
-   procedure Init (S : out Client_Session; Cfg : in Config)
-   with Pre => Cfg.Random /= null;
+   procedure Init (S : out Client_Session; Cfg : in Config);
 
    --  Step the client handshake / record processing state machine.
    --

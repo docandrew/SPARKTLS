@@ -281,9 +281,7 @@ is
       OK   : out Boolean)
    with
      Pre => Data'First = 0 and then Data'Last in 9 .. Max_Server_Key_Exchange - 1,
-     Post =>
-       (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-       and then (if OK then HC.KE.Negotiated);
+     Post => (if OK then HC.KE.Negotiated);
 
    --  RFC 8422 5.7: Parse ClientKeyExchange.
    --
@@ -402,7 +400,6 @@ is
        and then HC.Cfg.Local /= null
        and then HC.Cfg.Local.Has_Identity
        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
-       and then HC.Cfg.Random /= null
        and then HC.Legacy_Session_ID_Len <= 32,
      --  Frame postcondition: ServerHello construction does not
      --  touch State (S), the configuration pointer/identity, or the
@@ -416,7 +413,6 @@ is
        and HC.Cfg.Local /= null
        and HC.Cfg.Local.Has_Identity
        and SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
-       and HC.Cfg.Random /= null
        and HC.KE = HC.KE'Old;
 
 

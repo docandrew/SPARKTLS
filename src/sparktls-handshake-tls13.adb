@@ -139,10 +139,8 @@ is
       KS_Raw_Len : out N32;
       OK         : out Boolean)
    with
-     Pre => HC.Cfg.Random /= null,
      Post =>
        (if OK then KS_Raw_Len = 36 else KS_Raw_Len = 0)
-       and then HC.Cfg.Random /= null
        and then (if Local_Config_Valid (HC.Cfg.Local'Old) then Local_Config_Valid (HC.Cfg.Local))
        and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
        and then (if HC.Cfg.Local'Old /= null and then Local_Config_Valid (HC.Cfg.Local'Old)
@@ -201,10 +199,8 @@ is
       KS_Raw_Len : out N32;
       OK         : out Boolean)
    with
-     Pre => HC.Cfg.Random /= null,
      Post =>
        (if OK then KS_Raw_Len = 69 else KS_Raw_Len = 0)
-       and then HC.Cfg.Random /= null
        and then (if Local_Config_Valid (HC.Cfg.Local'Old) then Local_Config_Valid (HC.Cfg.Local))
        and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
        and then (if HC.Cfg.Local'Old /= null and then Local_Config_Valid (HC.Cfg.Local'Old)
@@ -268,10 +264,8 @@ is
       KS_Raw_Len : out N32;
       OK         : out Boolean)
    with
-     Pre => HC.Cfg.Random /= null,
      Post =>
        (if OK then KS_Raw_Len = 101 else KS_Raw_Len = 0)
-       and then HC.Cfg.Random /= null
        and then (if Local_Config_Valid (HC.Cfg.Local'Old) then Local_Config_Valid (HC.Cfg.Local))
        and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
        and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
@@ -579,12 +573,10 @@ is
       OK         : out Boolean)
    with
      Pre =>
-       HC.Cfg.Random /= null
-       and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
+       Session_ID_Echo_RFC_8446_4_1_3 (HC)
        and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
      Post =>
        (if OK then KS_Raw_Len in 36 | 69 | 101 else KS_Raw_Len = 0)
-       and then HC.Cfg.Random /= null
        and then (if Local_Config_Valid (HC.Cfg.Local'Old) then Local_Config_Valid (HC.Cfg.Local))
        and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
        and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
@@ -1494,8 +1486,7 @@ is
                            HC.Cfg.Local /= null
                            and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid
                                       (HC.Cfg.Local));
-                  pragma
-                    Loop_Invariant (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
+
                   declare
                      E_Ctx : C13_Entry.Context;
                   begin

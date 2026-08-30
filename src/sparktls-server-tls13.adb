@@ -489,7 +489,6 @@ is
       Free_CH2_Reasm;
       if S.HC.Cfg.Local = null
         or else not S.HC.Cfg.Local.Has_Identity
-        or else S.HC.Cfg.Random = null
         or else S.HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
         or else S.HC.Cfg.Local.Int_Count > Max_Pool_Size
         or else (for some I in 0 .. Max_Pool_Size - 1
@@ -1305,7 +1304,7 @@ is
       end if;
 
       if S.HC.Negotiated_Sig_Algo in Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512
-        and then (Cfg.Random = null or else Cfg.Local.RSA_Mod_Len not in 64 .. 512)
+        and then (Cfg.Local.RSA_Mod_Len not in 64 .. 512)
       then
          S.Last_Error := Internal_Error;
          Set_State (S, Error_State);
@@ -1545,17 +1544,9 @@ is
          return;
       end if;
 
-      --  Build ServerHello. The Random guard discharges Build_Server_Hello's
-      --  cross-package Pre (view-copy equality is invisible to the prover);
-      --  semantically never null (Init's gate) -- fail closed if it ever is.
-      if S.HC.Cfg.Random = null then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
       Handshake.TLS13.Build_Server_Hello
         (TLS13_Suite (Flight_Suite), S.HC, SH_Buf, SH_Len);
+
       if SH_Len = 0 then
          --  RFC 7748 6.1: small-subgroup X25519 rejection sets
          --  Ext_Parse_Err := Illegal_Parameter so we don't fold it
@@ -2637,31 +2628,27 @@ is
          Append_Transcript (S.HC, Data);
 
          --  Derive resumption master secret and send NewSessionTicket.
-         --  The Random guard replaces the deleted Server_Configured
-         --  threading: semantically never null (Init's gate), and a
-         --  session ticket is optional -- skipping it on the
+         --  A session ticket is optional, skipping it on the
          --  impossible branch fails SAFE, not closed.
-         if S.HC.Cfg.Random /= null then
-            declare
-               use SPARKTLS.Ticket_Cache;
-               Ticket_Random : Byte_Seq (0 .. 5);
-               Nonce         : Byte_Seq (0 .. 1);
-               Age_Add       : Unsigned_32;
-               TID           : Ticket_ID := (others => 0);
-            begin
-               S.HC.Cfg.Random.all (Ticket_Random);
-               Nonce := Ticket_Random (0 .. 1);
-               Age_Add :=
-                 Unsigned_32 (Ticket_Random (2)) * 2 ** 24
-                 + Unsigned_32 (Ticket_Random (3)) * 2 ** 16
-                 + Unsigned_32 (Ticket_Random (4)) * 2 ** 8
-                 + Unsigned_32 (Ticket_Random (5));
+         declare
+            use SPARKTLS.Ticket_Cache;
+            Ticket_Random : Byte_Seq (0 .. 5);
+            Nonce         : Byte_Seq (0 .. 1);
+            Age_Add       : Unsigned_32;
+            TID           : Ticket_ID := (others => 0);
+         begin
+            S.HC.Cfg.Random.all (Ticket_Random);
+            Nonce := Ticket_Random (0 .. 1);
+            Age_Add :=
+              Unsigned_32 (Ticket_Random (2)) * 2 ** 24
+                + Unsigned_32 (Ticket_Random (3)) * 2 ** 16
+              + Unsigned_32 (Ticket_Random (4)) * 2 ** 8
+              + Unsigned_32 (Ticket_Random (5));
 
-               Store_Resumption_Secrets (S, Nonce, Age_Add, TID);
+            Store_Resumption_Secrets (S, Nonce, Age_Add, TID);
 
-               Send_New_Session_Ticket_13 (S, Nonce, Age_Add, TID);
-            end;
-         end if;
+            Send_New_Session_Ticket_13 (S, Nonce, Age_Add, TID);
+         end;
 
          Set_State (S, Connected);
          S.Handshake_Just_Done := True;

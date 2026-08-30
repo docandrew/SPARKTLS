@@ -87,8 +87,7 @@ is
    --  conjunct still lets it start. If such a client is forced into a
    --  full handshake it fails closed at the same runtime guard.
    function Client_Config_Can_Start (Cfg : Config; Resume_Usable : Boolean) return Boolean
-   is (Cfg.Random /= null
-       and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
+   is ((Cfg.Skip_Verify or else Cfg.Get_Time /= null)
        and then
          (Cfg.Skip_Verify
           or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
@@ -97,13 +96,14 @@ is
    --  Advance the version-neutral ClientHello/ServerHello prefix.
    procedure Advance_Handshake
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action);
+
    procedure Handle_WSH_Frame
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    with
      Pre =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length);
+
    procedure Handle_WSH_HS_Frame
      (S      : in out Session;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
@@ -112,7 +112,6 @@ is
    with
      Pre =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
 
        and then Rec.OK
@@ -124,13 +123,13 @@ is
        and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
        and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
        and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity;
+
    procedure Parse_SH_From_Reasm
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    with
      Pre  =>
        S.State = Wait_Server_Hello
        and then Has_Message (D.Reasm)
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length),
      Post =>
        (if Result = OK
@@ -145,7 +144,6 @@ is
    with
      Pre =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length);
 
    procedure Reassemble_For_SH
@@ -156,7 +154,6 @@ is
    with
      Pre  =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
        and then Rec.OK
        and then Rec.Content = Records.Content_Handshake
@@ -171,7 +168,6 @@ is
        (if Result = OK
         then
           S.State = Wait_Server_Hello
-          and then S.HC.Cfg.Random /= null
           and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length));
    procedure Reasm_Fresh_Fragment
      (S          : in out Session;
@@ -183,7 +179,6 @@ is
    with
      Pre  =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
        and then Rec.OK
        and then Rec.Content = Records.Content_Handshake
@@ -203,7 +198,6 @@ is
        (if Result = OK
         then
           S.State = Wait_Server_Hello
-          and then S.HC.Cfg.Random /= null
           and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length));
 
    --  Append handshake message bytes to the transcript.
@@ -253,7 +247,6 @@ is
    end Configure;
 
    procedure Initialize_Client_Handshake (S : in out Client_Session; OK : out Boolean)
-   with Pre => S.HC.Cfg.Random /= null
    is
       CH_Buf  : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
       CH_Len  : N32;
@@ -360,10 +353,7 @@ is
       S.Get_Time := Cfg.Get_Time;
       S.Server_Name := Cfg.Server_Name;
 
-      if Cfg.Random /= null then
-         Check_Resume_Ticket_Usable
-           (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name, Resume_Usable);
-      end if;
+      Check_Resume_Ticket_Usable (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name, Resume_Usable);
 
       if not Client_Config_Can_Start (Cfg, Resume_Usable) then
          Set_State (S, Error_State);
@@ -442,7 +432,6 @@ is
    with
      Pre  =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
        and then Frag_Len in 1 .. 3
        and then Frag_Start <= N32'Last - Frag_Len
@@ -451,7 +440,6 @@ is
      Post =>
        Result = OK
        and then S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length);
 
    procedure Start_Pending_SH_Reassembly
@@ -465,7 +453,6 @@ is
       Copy_Input_Fragment (S, D, Frag_Start, Frag_Len);
       S.Input.Read_Pos := Next_Read;
       Result := OK;
-      pragma Assert (S.HC.Cfg.Random /= null);
    end Start_Pending_SH_Reassembly;
 
    procedure Start_Spanning_SH_Reassembly
@@ -479,7 +466,6 @@ is
    with
      Pre  =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
        and then Frag_Len >= 4
        and then HS_Total > Frag_Len
@@ -491,7 +477,6 @@ is
      Post =>
        Result = OK
        and then S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length);
 
    procedure Start_Spanning_SH_Reassembly
@@ -506,7 +491,6 @@ is
       Copy_Input_Fragment (S, D, Frag_Start, Frag_Len);
       S.Input.Read_Pos := Next_Read;
       Result := OK;
-      pragma Assert (S.HC.Cfg.Random /= null);
    end Start_Spanning_SH_Reassembly;
 
    procedure Start_Complete_SH_Reassembly
@@ -519,7 +503,6 @@ is
    with
      Pre  =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
        and then Frag_Len >= 4
        and then HS_Total >= 4
@@ -530,7 +513,6 @@ is
        and then Next_Read <= S.Input.Write_Pos,
      Post =>
        S.State = Wait_Server_Hello
-       and then S.HC.Cfg.Random /= null
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length);
 
    procedure Start_Complete_SH_Reassembly
@@ -543,7 +525,6 @@ is
    begin
       Copy_Input_Fragment (S, D, Frag_Start, Frag_Len);
       S.Input.Read_Pos := Next_Read;
-      pragma Assert (S.HC.Cfg.Random /= null);
    end Start_Complete_SH_Reassembly;
 
    procedure Reasm_Fresh_Fragment
@@ -609,7 +590,6 @@ is
          if Has_Message (D.Reasm) then
             Result := OK;
             pragma Assert (S.State = Wait_Server_Hello);
-            pragma Assert (S.HC.Cfg.Random /= null);
             return;
          end if;
 
@@ -640,14 +620,12 @@ is
          if not Has_Message (D.Reasm) then
             Result := OK;
             pragma Assert (S.State = Wait_Server_Hello);
-            pragma Assert (S.HC.Cfg.Random /= null);
             return;  --  need more fragments
 
          end if;
       else
          Reasm_Fresh_Fragment (S, D, Rec, Frag_Len, Frag_Start, Result);
          pragma Assert (if Result = OK then S.State = Wait_Server_Hello);
-         pragma Assert (if Result = OK then S.HC.Cfg.Random /= null);
       end if;
    end Reassemble_For_SH;
 
@@ -823,8 +801,8 @@ is
                 else SPARKTLS_Transcript.Only_256));
             SPARKTLS_Transcript.Reset_For_HRR (S.HC.TS);
             SPARKTLS_Transcript.Append (S.HC.TS, Byte_Seq (Frag));
-            if S.HC.Cfg.Random = null
-              or else S.HC.HRR_Cookie_Len > N32 (S.HC.HRR_Cookie'Length)
+
+            if S.HC.HRR_Cookie_Len > N32 (S.HC.HRR_Cookie'Length)
               or else
                 (S.HC.Cfg.TLS12_Resume_Ticket.Valid
                  and then S.HC.Cfg.TLS12_Resume_Ticket.Ticket_Len > Max_TLS12_Ticket_Len)
@@ -910,17 +888,6 @@ is
          return;
       end if;
       if S.State /= Wait_Server_Hello then
-         return;
-      end if;
-
-      --  Pre guarantees S.HC.Cfg.Random /= null at entry, but the fact is
-      --  not carried through the in out reassembly calls above.
-      --  Semantically unreachable; fail closed (same pattern as
-      --  Server.TLS12's Ready_Config membership guards).
-      if S.HC.Cfg.Random = null then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
          return;
       end if;
 
@@ -1074,13 +1041,6 @@ is
    begin
       --  This parent state machine owns only the version-neutral prefix.
       --  ServerHello commits S.Version before post-negotiation dispatch.
-      if S.HC.Cfg.Random = null then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
-
       case S.State is
          when Client_Hello_Sent =>
             if Output_Pending (S) > 0 then

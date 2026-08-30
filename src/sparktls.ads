@@ -938,7 +938,7 @@ is
    ----------------------------------------------------------------------------
 
    --  Max entries in an intermediate cert pool (Peer_Ints, Identity.Ints).
-   --  Real cert chains have 6 intermediates; 8 is comfortably above that.
+   --  Real cert chains have <= 6 intermediates; 8 is comfortably above that.
    --  Previously 40, which cost ~400 KB per Session (Cert_Pool dominates
    --  Session size) and made it impractical to hold many sessions in BSS
    --  or on the stack. The trust store uses a separate larger pool

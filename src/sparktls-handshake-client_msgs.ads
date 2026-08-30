@@ -41,11 +41,9 @@ is
      Pre =>
        Result'First = 0
        and then Result'Last in Max_Client_Hello - 1 .. N32'Last - 1
-       and then HC.Cfg.Random /= null
        and then (if Retry_Mode then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)),
      Post =>
-       (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-       and then Len <= N32 (Result'Length)
+       Len <= N32 (Result'Length)
        and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
        and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old;
 
@@ -63,9 +61,7 @@ is
      Pre => Data'Length > 0 and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
      Post =>
        (if OK or else Last_Err = No_Error
-       then
-          (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-          and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
+       then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
        and then (if OK then Version in TLS_1_2 | TLS_1_3);
 
 end SPARKTLS.Handshake.Client_Msgs;

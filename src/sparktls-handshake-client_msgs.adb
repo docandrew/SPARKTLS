@@ -335,8 +335,7 @@ is
        and then Len > 0
        and then Len <= N32 (Result'Length),
      Post =>
-       (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-       and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+       HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
        and then HC.Sent_HRR_CCS = HC.Sent_HRR_CCS'Old
        and then Len <= N32 (Result'Length);
 
@@ -792,8 +791,7 @@ is
       P384_PK_Enc   : out Byte_Seq)
    with
      Pre =>
-       Cfg.Random /= null
-       and then PK_Bytes'First = 0
+       PK_Bytes'First = 0
        and then PK_Bytes'Last = 31
        and then P256_PK_Enc'First = 0
        and then P256_PK_Enc'Last = 64
@@ -1066,7 +1064,6 @@ is
       --  Failing here is identical in effect to failing at the old site:
       --  Len stays 0 and the caller sees no ClientHello.
       if CH_Msg_Len > N32 (Result'Length) then
-         pragma Assert (HC.Cfg.Random /= null);
          return;
       end if;
 
@@ -1554,7 +1551,6 @@ is
 
       if CH_Msg_Len > N32 (Result'Length) then
          RFLX_Free (Buf);
-         pragma Assert (HC.Cfg.Random /= null);
          return;
       end if;
 
@@ -1629,8 +1625,7 @@ is
        and then Data'Last < N32 (Natural'Last)
        and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
      Post =>
-       (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-       and then HC.TS = HC.TS'Old
+       HC.TS = HC.TS'Old
        and then (if HC.Got_HRR'Old then HC.Got_HRR)
        and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
 
@@ -1652,8 +1647,7 @@ is
       end record;
       Exts               : array (1 .. 32) of SH_Ext_Entry := (others => (0, 0, 0));
       N_Ext              : Natural := 0;
-      Random_Was_Set     : constant Boolean := HC.Cfg.Random /= null
-      with Ghost;
+
       Saved_TS           : constant SPARKTLS_Transcript.Transcript_State := HC.TS
       with Ghost;
       Saved_Got_HRR      : constant Boolean := HC.Got_HRR
@@ -1667,10 +1661,9 @@ is
       if N32 (Data'Length) - 4 < 35 then
          pragma
            Assert_And_Cut
-             ((if Random_Was_Set then HC.Cfg.Random /= null)
-                and then HC.TS = Saved_TS
-                and then (if Saved_Got_HRR then HC.Got_HRR)
-                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
+             (HC.TS = Saved_TS
+              and then (if Saved_Got_HRR then HC.Got_HRR)
+              and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
          return;
       end if;
 
@@ -1680,27 +1673,24 @@ is
          OK := False;
          pragma
            Assert_And_Cut
-             ((if Random_Was_Set then HC.Cfg.Random /= null)
-                and then HC.TS = Saved_TS
-                and then (if Saved_Got_HRR then HC.Got_HRR));
+             (HC.TS = Saved_TS
+              and then (if Saved_Got_HRR then HC.Got_HRR));
          return;
       end if;
       pragma Assert (Sid_Len <= 32);
       if B > N32'Last - 38 or else Sid_Len > N32'Last - B - 38 then
          pragma
            Assert_And_Cut
-             ((if Random_Was_Set then HC.Cfg.Random /= null)
-                and then HC.TS = Saved_TS
-                and then (if Saved_Got_HRR then HC.Got_HRR));
+             (HC.TS = Saved_TS
+              and then (if Saved_Got_HRR then HC.Got_HRR));
          return;
       end if;
       P := B + 38 + Sid_Len;  --  past sid + cipher + comp
       if P > Data'Last - 2 then
          pragma
            Assert_And_Cut
-             ((if Random_Was_Set then HC.Cfg.Random /= null)
-                and then HC.TS = Saved_TS
-                and then (if Saved_Got_HRR then HC.Got_HRR));
+             (HC.TS = Saved_TS
+              and then (if Saved_Got_HRR then HC.Got_HRR));
          return;
       end if;
 
@@ -1717,9 +1707,8 @@ is
          OK := False;
          pragma
            Assert_And_Cut
-             ((if Random_Was_Set then HC.Cfg.Random /= null)
-                and then HC.TS = Saved_TS
-                and then (if Saved_Got_HRR then HC.Got_HRR));
+             (HC.TS = Saved_TS
+              and then (if Saved_Got_HRR then HC.Got_HRR));
          return;
       end if;
 
@@ -1730,9 +1719,8 @@ is
          OK := False;
          pragma
            Assert_And_Cut
-             ((if Random_Was_Set then HC.Cfg.Random /= null)
-                and then HC.TS = Saved_TS
-                and then (if Saved_Got_HRR then HC.Got_HRR));
+             (HC.TS = Saved_TS
+              and then (if Saved_Got_HRR then HC.Got_HRR));
          return;
       end if;
 
@@ -1746,9 +1734,8 @@ is
             OK := False;
             pragma
               Assert_And_Cut
-                ((if Random_Was_Set then HC.Cfg.Random /= null)
-                   and then HC.TS = Saved_TS
-                   and then (if Saved_Got_HRR then HC.Got_HRR));
+                (HC.TS = Saved_TS
+                 and then (if Saved_Got_HRR then HC.Got_HRR));
             return;
          end if;
 
@@ -1780,14 +1767,11 @@ is
                   OK := False;
                   pragma
                     Assert_And_Cut
-                      ((if Random_Was_Set then HC.Cfg.Random /= null)
-                         and then HC.TS = Saved_TS
-                         and then (if Saved_Got_HRR then HC.Got_HRR));
+                      (HC.TS = Saved_TS
+                       and then (if Saved_Got_HRR then HC.Got_HRR));
                   return;
                end if;
                for I in 1 .. N_Ext loop
-                  pragma
-                    Loop_Invariant (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
                   pragma Loop_Invariant (HC.TS = HC.TS'Loop_Entry);
                   pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
                   pragma Loop_Invariant (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
@@ -1801,9 +1785,8 @@ is
                      OK := False;
                      pragma
                        Assert_And_Cut
-                         ((if Random_Was_Set then HC.Cfg.Random /= null)
-                            and then HC.TS = Saved_TS
-                            and then (if Saved_Got_HRR then HC.Got_HRR));
+                         (HC.TS = Saved_TS
+                          and then (if Saved_Got_HRR then HC.Got_HRR));
                      return;
                   end if;
                end loop;
@@ -1845,7 +1828,7 @@ is
             pragma Loop_Invariant (HC.TS = HC.TS'Loop_Entry);
             pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
             pragma Loop_Invariant (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-            pragma Loop_Invariant (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
+
             pragma
               Loop_Invariant
                 (for all J in 1 .. N_Ext
@@ -1868,9 +1851,8 @@ is
                   OK := False;
                   pragma
                     Assert_And_Cut
-                      ((if Random_Was_Set then HC.Cfg.Random /= null)
-                         and then HC.TS = Saved_TS
-                         and then (if Saved_Got_HRR then HC.Got_HRR));
+                      (HC.TS = Saved_TS
+                       and then (if Saved_Got_HRR then HC.Got_HRR));
                   return;
                end if;
 
@@ -1891,9 +1873,8 @@ is
                      OK := False;
                      pragma
                        Assert_And_Cut
-                         ((if Random_Was_Set then HC.Cfg.Random /= null)
-                            and then HC.TS = Saved_TS
-                            and then (if Saved_Got_HRR then HC.Got_HRR));
+                         (HC.TS = Saved_TS
+                          and then (if Saved_Got_HRR then HC.Got_HRR));
                      return;
                   end if;
                end if;
@@ -1911,9 +1892,8 @@ is
                      OK := False;
                      pragma
                        Assert_And_Cut
-                         ((if Random_Was_Set then HC.Cfg.Random /= null)
-                            and then HC.TS = Saved_TS
-                            and then (if Saved_Got_HRR then HC.Got_HRR));
+                         (HC.TS = Saved_TS
+                          and then (if Saved_Got_HRR then HC.Got_HRR));
                      return;
                   end if;
 
@@ -1925,9 +1905,8 @@ is
                         OK := False;
                         pragma
                           Assert_And_Cut
-                            ((if Random_Was_Set then HC.Cfg.Random /= null)
-                               and then HC.TS = Saved_TS
-                               and then (if Saved_Got_HRR then HC.Got_HRR));
+                            (HC.TS = Saved_TS
+                             and then (if Saved_Got_HRR then HC.Got_HRR));
                         return;
                      end if;
 
@@ -1940,9 +1919,8 @@ is
                         OK := False;
                         pragma
                           Assert_And_Cut
-                            ((if Random_Was_Set then HC.Cfg.Random /= null)
-                               and then HC.TS = Saved_TS
-                               and then (if Saved_Got_HRR then HC.Got_HRR));
+                            (HC.TS = Saved_TS
+                             and then (if Saved_Got_HRR then HC.Got_HRR));
                         return;
                      end if;
                   end;
@@ -1998,9 +1976,8 @@ is
                         OK := False;
                         pragma
                           Assert_And_Cut
-                            ((if Random_Was_Set then HC.Cfg.Random /= null)
-                               and then HC.TS = Saved_TS
-                               and then (if Saved_Got_HRR then HC.Got_HRR));
+                            (HC.TS = Saved_TS
+                             and then (if Saved_Got_HRR then HC.Got_HRR));
                         return;
                      end if;
                      HC.Using_PSK := True;
@@ -2024,9 +2001,8 @@ is
                         OK := False;
                         pragma
                           Assert_And_Cut
-                            ((if Random_Was_Set then HC.Cfg.Random /= null)
-                               and then HC.TS = Saved_TS
-                               and then (if Saved_Got_HRR then HC.Got_HRR));
+                            (HC.TS = Saved_TS
+                             and then (if Saved_Got_HRR then HC.Got_HRR));
                         return;
                      end if;
                      if C_Len <= N32 (HC.HRR_Cookie'Length) then
@@ -2065,7 +2041,6 @@ is
          pragma Loop_Invariant (HC.TS = Saved_TS);
          pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
          pragma Loop_Invariant (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-         pragma Loop_Invariant (if Random_Was_Set then HC.Cfg.Random /= null);
          if Exts (I).Tag = 16#0017# then
             HC.Use_EMS := True;
          end if;
@@ -2073,10 +2048,9 @@ is
 
       pragma
         Assert_And_Cut
-          ((if Random_Was_Set then HC.Cfg.Random /= null)
-             and then HC.TS = Saved_TS
-             and then (if Saved_Got_HRR then HC.Got_HRR)
-             and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
+          (HC.TS = Saved_TS
+           and then (if Saved_Got_HRR then HC.Got_HRR)
+           and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
    end Pre_Scan_SH_Extensions;
 
    --  RFC 8446 4.2.8 ServerHello key_share: a single KeyShareEntry
@@ -2101,8 +2075,7 @@ is
        and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid_Next
                   (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data),
      Post =>
-       (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
-       and then HC.TS = HC.TS'Old
+       HC.TS = HC.TS'Old
        and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old;
 
    procedure Apply_SH_Key_Share
@@ -2221,17 +2194,11 @@ is
       --  early return) so the same Parse_Server_Hello body handles
       --  both HRR and the post-HRR SH2 correctly.
       Curr_Is_HRR      : Boolean := False;
-      TS_At_Entry      : constant SPARKTLS_Transcript.Transcript_State := HC.TS
-      with Ghost;
-      Random_Was_Set   : constant Boolean := HC.Cfg.Random /= null
-      with Ghost;
-      Got_HRR_At_Entry : constant Boolean := HC.Got_HRR
-      with Ghost;
+      TS_At_Entry      : constant SPARKTLS_Transcript.Transcript_State := HC.TS with Ghost;
+      Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
+
       function SH_Parse_Frame return Boolean
-      is (HC.TS = TS_At_Entry
-          and then (if Random_Was_Set then HC.Cfg.Random /= null)
-          and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length))
-      with Ghost;
+      is (HC.TS = TS_At_Entry and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)) with Ghost;
    begin
       Version := TLS_Undetermined;
       OK := False;
@@ -2386,7 +2353,6 @@ is
                 and then not Got_HRR_At_Entry
                 and then Version = TLS_1_3
                 and then HC.TS = TS_At_Entry
-                and then (if Random_Was_Set then HC.Cfg.Random /= null)
                 and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
          return;
       end if;
@@ -2498,9 +2464,7 @@ is
                             and then Ctx.Buffer_Last = Ctx_Last
                             and then Exts_Ctx.Buffer_First = Ctx_First
                             and then Exts_Ctx.Buffer_Last = Ctx_Last);
-                     pragma
-                       Loop_Invariant
-                         (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
+
                      pragma Loop_Invariant (HC.TS = HC.TS'Loop_Entry);
                      pragma Loop_Invariant (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
                      declare
@@ -2662,7 +2626,6 @@ is
             pragma
               Assert_And_Cut
                 (HC.TS = TS_At_Entry
-                   and then (if Random_Was_Set then HC.Cfg.Random /= null)
                    and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
             OK := True;
             goto Cleanup;
@@ -2744,7 +2707,6 @@ is
          pragma
            Assert_And_Cut
              (HC.TS = TS_At_Entry
-                and then (if Random_Was_Set then HC.Cfg.Random /= null)
                 and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
          OK := True;
          <<Cleanup>>

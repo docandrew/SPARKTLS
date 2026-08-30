@@ -7,9 +7,9 @@ authors = ["Jon Andrew"]
 maintainers = ["Jon Andrew <jonfandrew@fastmail.com>"]
 maintainers-logins = ["docandrew"]
 [[depends-on]]
-gnatprove = "^15.1.0"
+gnatprove = "^16.0.0"
 [[depends-on]]
-gnat = "^15.2.1"
+gnat = "^16.0.0"
 [[depends-on]]
 sparknacl = "^4.0.0"
 [[depends-on]]

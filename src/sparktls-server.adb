@@ -435,7 +435,6 @@ is
 
       if S.HC.Cfg.Local = null
         or else not S.HC.Cfg.Local.Has_Identity
-        or else S.HC.Cfg.Random = null
         or else S.HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
         or else S.HC.Cfg.Local.Int_Count > Max_Pool_Size
         or else

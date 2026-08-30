@@ -12,7 +12,6 @@ package SPARKTLS.Handshake.TLS13
 is
    pragma Unevaluated_Use_Of_Old (Allow);
 
-
    Max_Server_Hello : constant := 256;
    Max_Cert_Msg     : constant := SPARKTLS.Handshake.Certs.Max_Cert_Msg;
 
@@ -106,8 +105,7 @@ is
                    and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local'Old)
                  then
                    HC.Cfg.Local /= null
-                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local))
-       and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
+                   and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local));
    --  RFC 8446 Section 4.1.3: ServerHello with key_share and
    --  supported_versions extensions. The suite type makes the TLS 1.3
    --  ownership explicit without a separate membership precondition.

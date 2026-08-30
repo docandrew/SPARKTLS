@@ -176,8 +176,7 @@ is
                       then
                         HC.Cfg.Local /= null
                         and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local));
-               pragma
-                 Loop_Invariant (if HC.Cfg.Random'Loop_Entry /= null then HC.Cfg.Random /= null);
+
                declare
                   E_Ctx : C12_Entry.Context;
                begin

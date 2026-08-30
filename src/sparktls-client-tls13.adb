@@ -122,11 +122,9 @@ is
      Pre =>
        SPARKTLS_Transcript.Started (S.HC.TS)
        and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -143,8 +141,7 @@ is
                       and then S.HC.Cfg.Local /= null
                       and then S.HC.Cfg.Local.Has_Identity
                     then
-                      S.HC.Cfg.Random /= null
-                      and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                      S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                       and then Handshake.Sig_Algo_Compatible_With_Cert
                                  (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                       and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -160,8 +157,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -187,8 +183,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -214,8 +209,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -232,8 +226,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -263,8 +256,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -284,8 +276,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -319,8 +310,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -363,8 +353,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -652,8 +641,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -731,8 +719,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -925,8 +912,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -1236,8 +1222,7 @@ is
                    and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
-                   S.HC.Cfg.Random /= null
-                   and then S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
+                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
                    and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
@@ -1316,8 +1301,7 @@ is
            Assert
              (if S.HC.Cert_Request_Received
                   and then S.HC.Cfg.Local /= null
-                  and then S.HC.Cfg.Local.Has_Identity
-                then S.HC.Cfg.Random /= null);
+                  then S.HC.Cfg.Local.Has_Identity);
 
          if not Verified then
             S.Last_Error := Handshake_Failure;
@@ -2180,8 +2164,7 @@ is
          if S.HC.Cert_Request_Received
            and then S.HC.Cfg.Local /= null
            and then S.HC.Cfg.Local.Has_Identity
-           and then (S.HC.Cfg.Random = null
-                     or else S.HC.Cfg.Local.NaCl_Cert_Len not in 1 .. N32 (Max_Cert_DER)
+           and then (S.HC.Cfg.Local.NaCl_Cert_Len not in 1 .. N32 (Max_Cert_DER)
                      or else not (S.HC.Negotiated_Sig_Algo = Scheme_None
                                   or else (case S.HC.Cfg.Local.Sign_Algo is
                                              when Sign_Ed25519 =>
@@ -3247,7 +3230,7 @@ is
       --  The suite is established at the ServerHello negotiation boundary.
       --  Keep the defensive check here rather than exporting that derived
       --  fact as a precondition on every TLS 1.3 entry point.
-      if S.Negotiated_Suite not in TLS13_Suite or else S.HC.Cfg.Random = null then
+      if S.Negotiated_Suite not in TLS13_Suite then
          S.Last_Error := Internal_Error;
          Set_State (S, Error_State);
          Result := Error_Alert;

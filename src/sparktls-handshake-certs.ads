@@ -45,8 +45,7 @@ is
             and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local'Old)
           then
             HC.Cfg.Local /= null
-            and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local))
-       and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null);
+            and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local));
 
    --  Shared RFLX-to-X509 copy helpers (were duplicated verbatim in
    --  Client.TLS12; deduplicated 2026-08-27, see task #116).

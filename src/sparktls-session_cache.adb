@@ -215,7 +215,6 @@ is
 
       if Random = null then
          return;   --  no CSPRNG, no keys; tickets are simply not issued
-
       end if;
 
       if Clock /= null then

@@ -43,7 +43,7 @@ is
    procedure Configure
      (S                     : out Server_Session;
       Local                 : Valid_Identity_Access;
-      Random                : Random_Bytes_Fn;
+      Random                : Live_Random_Fn;
       Trust                 : Trust_Store_Access := null;
       Request_Client_Cert   : Boolean := False;
       Require_Client_Cert   : Boolean := False;
@@ -60,7 +60,7 @@ is
       --  the caller's behalf. Client.Configure has always carried the equivalent
       --  check; the server's absence of one was invisible while this body was
       --  SPARK_Mode => Off, and let a null Random reach Init.
-   with Pre => Random /= null and then Local /= null and then Local.Has_Identity;
+   with Pre => Local /= null and then Local.Has_Identity;
    --  Select_Identity: optional SNI-based identity selector
    --  (RFC 6066 3 / RFC 8446 4.4.2.4). When non-null and the client
    --  sent a non-empty server_name extension, the callback receives
@@ -95,12 +95,11 @@ is
      (S   : out Server_Session;
       Cfg : in Config)
    with
-     Pre => Cfg.Random /= null and then Cfg.Local /= null and then Cfg.Local.Has_Identity
+     Pre => Cfg.Local /= null and then Cfg.Local.Has_Identity;
      --  The formal is the CONSTRAINED subtype (#39, 2026-08-24):
      --  inside the body S.Role = Role_Server by view, so the
      --  aggregate's discriminant check is static, and the old
      --  'Constrained Pre + Role Post are subsumed by the profile.
-   ;
 
    --  RFC 8446 4.1: Step the server handshake / record processing
    --  state machine.
@@ -215,7 +214,6 @@ private
    function Server_Config_Can_Start (Cfg : Config) return Boolean
    is (Cfg.Local /= null
        and then Cfg.Local.Has_Identity
-       and then Cfg.Random /= null
        and then (not Cfg.Request_Client_Cert
                  or else Cfg.Skip_Verify
                  or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
@@ -241,7 +239,6 @@ private
    with
      Dynamic_Predicate =>
        Ready_Config.Local /= null
-       and then Ready_Config.Local.Has_Identity
-       and then Ready_Config.Random /= null;
+       and then Ready_Config.Local.Has_Identity;
 
 end SPARKTLS.Server;

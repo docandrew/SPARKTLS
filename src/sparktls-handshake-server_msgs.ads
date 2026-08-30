@@ -49,7 +49,6 @@ is
         then
           HC.Cfg.Local /= null
           and then (if HC.Cfg.Local'Old.Has_Identity then HC.Cfg.Local.Has_Identity))
-       and then (if HC.Cfg.Random'Old /= null then HC.Cfg.Random /= null)
        and then (if OK then Version in TLS_1_2 | TLS_1_3);
 
    function Has_ALPN_Match (HC : Handshake_Context) return Boolean;
