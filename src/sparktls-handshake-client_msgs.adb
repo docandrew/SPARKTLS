@@ -644,6 +644,217 @@ is
       return R;
    end Build_SG_Raw;
 
+   --  signature_algorithms payload (RFC 8446 4.2.3 / RFC 5246 7.4.1.4.1):
+   --  the configured verify list when present, else the built-in
+   --  9-algorithm preference order. SA_Raw'Length must be
+   --  2 + 2 * Effective_Sig_Algo_Count (Cfg).
+   procedure Fill_SA_Raw (Cfg : in Config; SA_Raw : out Byte_Seq)
+   is
+      P : N32 := 2;
+   begin
+      SA_Raw := (others => 0);
+      SA_Raw (0) := Byte ((SA_Raw'Length - 2) / 256);
+      SA_Raw (1) := Byte ((SA_Raw'Length - 2) mod 256);
+      if Cfg.Verify_Sig_Algo_Count > 0 then
+         for J in Sig_Algo_Index loop
+            exit when J >= Cfg.Verify_Sig_Algo_Count;
+            SA_Raw (P) := Byte (Cfg.Verify_Sig_Algos (J) / 256);
+            SA_Raw (P + 1) := Byte (Cfg.Verify_Sig_Algos (J) mod 256);
+            P := P + 2;
+         end loop;
+      else
+         --  Preference order: the server picks the first entry it
+         --  can satisfy, so PSS/ECDSA/Ed25519 come before PKCS#1.
+         --
+         --  rsa_pkcs1_* are listed LAST but must be listed. TLS 1.2
+         --  (RFC 5246 7.4.1.4.1) allows them for ServerKeyExchange
+         --  and most RSA deployments still use them; omitting them
+         --  made every such server unreachable -- the server signs
+         --  with rsa_pkcs1 regardless and a conforming client then
+         --  rejects a signature type it never offered (observed
+         --  against badssl.com, 2026-08-16: OpenSSL fails the same
+         --  way when restricted to our old list). We can already
+         --  verify all three: see Cert_Verify.Verify_Signature,
+         --  covered by the Wycheproof rsa_pkcs1_sha256/384/512
+         --  vectors.
+         --
+         --  Listing them here is RFC 8446 4.2.3 conformant: in TLS
+         --  1.3 rsa_pkcs1_* apply to signatures in CERTIFICATES and
+         --  must not be accepted for CertificateVerify. That
+         --  restriction belongs to the TLS 1.3 CV path, not to what
+         --  we advertise.
+         SA_Raw :=
+           (16#00#,
+            16#12#,          --  list_len=18 (9 algorithms)
+            16#04#,
+            16#03#,          --  ecdsa_secp256r1_sha256
+            16#05#,
+            16#03#,          --  ecdsa_secp384r1_sha384
+            16#08#,
+            16#04#,          --  rsa_pss_rsae_sha256
+            16#08#,
+            16#05#,          --  rsa_pss_rsae_sha384
+            16#08#,
+            16#06#,          --  rsa_pss_rsae_sha512
+            16#08#,
+            16#07#,          --  ed25519
+            16#04#,
+            16#01#,          --  rsa_pkcs1_sha256  (TLS 1.2)
+            16#05#,
+            16#01#,          --  rsa_pkcs1_sha384  (TLS 1.2)
+            16#06#,
+            16#01#);         --  rsa_pkcs1_sha512  (TLS 1.2)
+      end if;
+   end Fill_SA_Raw;
+
+   --  key_share payload (RFC 8446 4.2.8). Retry_Single selects the
+   --  single-entry CH2 shape for the HRR-selected group; otherwise the
+   --  single configured initial entry. KS_Raw'Length must match the
+   --  entry accounting done by the caller (KS_Data_Len).
+   procedure Fill_KS_Raw
+     (Retry_Single : in Boolean;
+      Retry_Group  : in Unsigned_16;
+      Retry_Entry  : in N32;
+      Init_Group   : in Unsigned_16;
+      Init_Entry   : in N32;
+      PK_Bytes     : in Byte_Seq;
+      P256_PK_Enc  : in Byte_Seq;
+      P384_PK_Enc  : in Byte_Seq;
+      KS_Raw       : out Byte_Seq)
+   is
+   begin
+      KS_Raw := (others => 0);
+      if Retry_Single then
+         --  Single-entry retry key_share.
+         KS_Raw (0) := Byte (Retry_Entry / 256);
+         KS_Raw (1) := Byte (Retry_Entry mod 256);
+         if Retry_Group = 16#001D# then
+            KS_Raw (2) := 16#00#;
+            KS_Raw (3) := 16#1D#;  --  X25519
+            KS_Raw (4) := 16#00#;
+            KS_Raw (5) := 16#20#;
+            KS_Raw (6 .. 37) := PK_Bytes;
+         elsif Retry_Group = 16#0017# then
+            KS_Raw (2) := 16#00#;
+            KS_Raw (3) := 16#17#;  --  secp256r1
+            KS_Raw (4) := 16#00#;
+            KS_Raw (5) := 16#41#;
+            KS_Raw (6 .. 70) := P256_PK_Enc;
+         elsif Retry_Group = 16#0018# then
+            KS_Raw (2) := 16#00#;
+            KS_Raw (3) := 16#18#;  --  secp384r1
+            KS_Raw (4) := 16#00#;
+            KS_Raw (5) := 16#61#;
+            KS_Raw (6 .. 102) := P384_PK_Enc;
+         end if;
+      else
+         --  CH1 / cookie-only retry: single configured initial entry.
+         KS_Raw (0) := Byte (Init_Entry / 256);
+         KS_Raw (1) := Byte (Init_Entry mod 256);
+         KS_Raw (2) := Byte (Init_Group / 256);
+         KS_Raw (3) := Byte (Init_Group mod 256);
+         if Init_Group = 16#001D# then
+            KS_Raw (4) := 16#00#;
+            KS_Raw (5) := 16#20#;
+            KS_Raw (6 .. 37) := PK_Bytes;
+         elsif Init_Group = 16#0017# then
+            KS_Raw (4) := 16#00#;
+            KS_Raw (5) := 16#41#;
+            KS_Raw (6 .. 70) := P256_PK_Enc;
+         else
+            KS_Raw (4) := 16#00#;
+            KS_Raw (5) := 16#61#;
+            KS_Raw (6 .. 102) := P384_PK_Enc;
+         end if;
+      end if;
+   end Fill_KS_Raw;
+
+   --  Ephemeral key material for a ClientHello: X25519/P-256/P-384
+   --  keypairs, client random, and the legacy session ID. In retry mode
+   --  (CH2 after HRR) every value is REUSED from CH1 -- the server must
+   --  recognise the share and the randoms must not change -- so only the
+   --  public encodings are recomputed.
+   procedure Generate_CH_Ephemerals
+     (HC          : in out Handshake_Context;
+      Retry_Mode  : in Boolean;
+      PK_Bytes    : out Byte_Seq;
+      P256_PK_Enc : out Byte_Seq;
+      P384_PK_Enc : out Byte_Seq)
+   is
+      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
+   begin
+      --  Generate ephemeral X25519 keypair (Fiat X25519).
+      --  In retry mode (CH2 for HRR), reuse the CH1 SK so the server
+      --  still recognises the share if the selected_group matches.
+      declare
+         Tmp_X25519 : Bytes_32;
+      begin
+         if not Retry_Mode then
+            Gen_Random (Byte_Seq (Tmp_X25519));
+            HC.KE.Local_SK := Tmp_X25519;
+         end if;
+         declare
+            Basepoint : constant Bytes_32 := (9, others => 0);
+         begin
+            SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Local_SK, Basepoint);
+         end;
+      end;
+
+      --  Generate ephemeral P-256 keypair (reused in retry mode).
+      declare
+         P256_Pt  : SPARKTLSCrypto.P256.Point.P256_Jacobian;
+         Tmp_P256 : Bytes_32;
+      begin
+         if not Retry_Mode then
+            Gen_Random (Byte_Seq (Tmp_P256));
+            HC.KE.P256_SK := Tmp_P256;
+         end if;
+         SPARKTLSCrypto.P256.Point.P256_Mulgen (P256_Pt, HC.KE.P256_SK, 32);
+         SPARKTLSCrypto.P256.Point.P256_To_Affine (P256_Pt);
+         SPARKTLSCrypto.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
+      end;
+
+      --  Generate ephemeral P-384 keypair (reused in retry mode).
+      declare
+         Tmp_P384 : Bytes_48;
+      begin
+         if not Retry_Mode then
+            Gen_Random (Byte_Seq (Tmp_P384));
+            HC.KE.P384_SK := Tmp_P384;
+         end if;
+         SPARKTLSCrypto.P384.Point.P384_Mulgen (P384_PK_Enc, HC.KE.P384_SK);
+      end;
+
+      --  Generate client random (retain CH1's random across HRR).
+      declare
+         Tmp_CR : Bytes_32;
+      begin
+         if not Retry_Mode then
+            Gen_Random (Byte_Seq (Tmp_CR));
+            HC.Client_Random := Tmp_CR;
+         end if;
+      end;
+
+      --  Generate 32-byte legacy session ID for middlebox compatibility
+      --  (RFC 8446 D.4 / 4.1.2). TLS-1.2-only clients have no
+      --  middlebox concern, so they SHOULD send an empty session_id;
+      --  doing otherwise leaks "client speaks TLS 1.3" to a real
+      --  TLS 1.2 server. BoGo TLS12NoSessionID-TLS13 exercises this.
+      --  In retry mode, reuse the CH1 session_id verbatim.
+      declare
+         Legacy_Session_ID : Byte_Seq (0 .. 31);
+      begin
+         if not Retry_Mode then
+            if HC.Cfg.Versions = TLS_1_2_Only then
+               Legacy_Session_ID := (others => 0);
+            else
+               Gen_Random (Legacy_Session_ID);
+            end if;
+            HC.Legacy_Session_ID := Legacy_Session_ID;
+         end if;
+      end;
+   end Generate_CH_Ephemerals;
+
    procedure Build_Client_Hello
      (Ticket     : in Session_Ticket;
       Get_Time   : in Get_Time_Fn;
@@ -654,8 +865,6 @@ is
    is
       use RFLX.TLS_Handshake.Client_Hello;
       use RFLX.TLS_Common;
-
-      procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Retry CH2 with a server-selected group: only that group's
       --  share goes in key_share. Server-chose-no-group â
@@ -818,76 +1027,8 @@ is
       HC.PSK.Offered := False;
       HC.Using_PSK := False;
 
-      --  Generate ephemeral X25519 keypair (Fiat X25519).
-      --  In retry mode (CH2 for HRR), reuse the CH1 SK so the server
-      --  still recognises the share if the selected_group matches.
-      declare
-         Tmp_X25519 : Bytes_32;
-      begin
-         if not Retry_Mode then
-            Gen_Random (Byte_Seq (Tmp_X25519));
-            HC.KE.Local_SK := Tmp_X25519;
-         end if;
-         declare
-            Basepoint : constant Bytes_32 := (9, others => 0);
-         begin
-            SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Local_SK, Basepoint);
-         end;
-      end;
+      Generate_CH_Ephemerals (HC, Retry_Mode, PK_Bytes, P256_PK_Enc, P384_PK_Enc);
 
-      --  Generate ephemeral P-256 keypair (reused in retry mode).
-      declare
-         P256_Pt  : SPARKTLSCrypto.P256.Point.P256_Jacobian;
-         Tmp_P256 : Bytes_32;
-      begin
-         if not Retry_Mode then
-            Gen_Random (Byte_Seq (Tmp_P256));
-            HC.KE.P256_SK := Tmp_P256;
-         end if;
-         SPARKTLSCrypto.P256.Point.P256_Mulgen (P256_Pt, HC.KE.P256_SK, 32);
-         SPARKTLSCrypto.P256.Point.P256_To_Affine (P256_Pt);
-         SPARKTLSCrypto.P256.Point.P256_Encode (P256_PK_Enc, P256_Pt);
-      end;
-
-      --  Generate ephemeral P-384 keypair (reused in retry mode).
-      declare
-         Tmp_P384 : Bytes_48;
-      begin
-         if not Retry_Mode then
-            Gen_Random (Byte_Seq (Tmp_P384));
-            HC.KE.P384_SK := Tmp_P384;
-         end if;
-         SPARKTLSCrypto.P384.Point.P384_Mulgen (P384_PK_Enc, HC.KE.P384_SK);
-      end;
-
-      --  Generate client random (retain CH1's random across HRR).
-      declare
-         Tmp_CR : Bytes_32;
-      begin
-         if not Retry_Mode then
-            Gen_Random (Byte_Seq (Tmp_CR));
-            HC.Client_Random := Tmp_CR;
-         end if;
-      end;
-
-      --  Generate 32-byte legacy session ID for middlebox compatibility
-      --  (RFC 8446 D.4 / 4.1.2). TLS-1.2-only clients have no
-      --  middlebox concern, so they SHOULD send an empty session_id;
-      --  doing otherwise leaks "client speaks TLS 1.3" to a real
-      --  TLS 1.2 server. BoGo TLS12NoSessionID-TLS13 exercises this.
-      --  In retry mode, reuse the CH1 session_id verbatim.
-      declare
-         Legacy_Session_ID : Byte_Seq (0 .. 31);
-      begin
-         if not Retry_Mode then
-            if HC.Cfg.Versions = TLS_1_2_Only then
-               Legacy_Session_ID := (others => 0);
-            else
-               Gen_Random (Legacy_Session_ID);
-            end if;
-            HC.Legacy_Session_ID := Legacy_Session_ID;
-         end if;
-      end;
 
       --  PK_Bytes already set by X25519.Scalar_Mult above
 
@@ -1107,61 +1248,9 @@ is
 
          --  Extension 3: signature_algorithms (0x000D)
          declare
-            SA_Raw : Byte_Seq (0 .. SA_Data_Len - 1) := (others => 0);
-            P      : N32 := 2;
+            SA_Raw : Byte_Seq (0 .. SA_Data_Len - 1);
          begin
-            SA_Raw (0) := Byte ((SA_Data_Len - 2) / 256);
-            SA_Raw (1) := Byte ((SA_Data_Len - 2) mod 256);
-            if HC.Cfg.Verify_Sig_Algo_Count > 0 then
-               for J in Sig_Algo_Index loop
-                  exit when J >= HC.Cfg.Verify_Sig_Algo_Count;
-                  SA_Raw (P) := Byte (HC.Cfg.Verify_Sig_Algos (J) / 256);
-                  SA_Raw (P + 1) := Byte (HC.Cfg.Verify_Sig_Algos (J) mod 256);
-                  P := P + 2;
-               end loop;
-            else
-               --  Preference order: the server picks the first entry it
-               --  can satisfy, so PSS/ECDSA/Ed25519 come before PKCS#1.
-               --
-               --  rsa_pkcs1_* are listed LAST but must be listed. TLS 1.2
-               --  (RFC 5246 7.4.1.4.1) allows them for ServerKeyExchange
-               --  and most RSA deployments still use them; omitting them
-               --  made every such server unreachable -- the server signs
-               --  with rsa_pkcs1 regardless and a conforming client then
-               --  rejects a signature type it never offered (observed
-               --  against badssl.com, 2026-08-16: OpenSSL fails the same
-               --  way when restricted to our old list). We can already
-               --  verify all three: see Cert_Verify.Verify_Signature,
-               --  covered by the Wycheproof rsa_pkcs1_sha256/384/512
-               --  vectors.
-               --
-               --  Listing them here is RFC 8446 4.2.3 conformant: in TLS
-               --  1.3 rsa_pkcs1_* apply to signatures in CERTIFICATES and
-               --  must not be accepted for CertificateVerify. That
-               --  restriction belongs to the TLS 1.3 CV path, not to what
-               --  we advertise.
-               SA_Raw :=
-                 (16#00#,
-                  16#12#,          --  list_len=18 (9 algorithms)
-                  16#04#,
-                  16#03#,          --  ecdsa_secp256r1_sha256
-                  16#05#,
-                  16#03#,          --  ecdsa_secp384r1_sha384
-                  16#08#,
-                  16#04#,          --  rsa_pss_rsae_sha256
-                  16#08#,
-                  16#05#,          --  rsa_pss_rsae_sha384
-                  16#08#,
-                  16#06#,          --  rsa_pss_rsae_sha512
-                  16#08#,
-                  16#07#,          --  ed25519
-                  16#04#,
-                  16#01#,          --  rsa_pkcs1_sha256  (TLS 1.2)
-                  16#05#,
-                  16#01#,          --  rsa_pkcs1_sha384  (TLS 1.2)
-                  16#06#,
-                  16#01#);         --  rsa_pkcs1_sha512  (TLS 1.2)
-            end if;
+            Fill_SA_Raw (HC.Cfg, SA_Raw);
             pragma
               Assert
                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
@@ -1182,51 +1271,18 @@ is
          --  36, secp256r1 69, secp384r1 101). Retry with selected
          --  group: a single entry for that group only.
          declare
-            KS_Raw : Byte_Seq (0 .. KS_Data_Len - 1) := (others => 0);
+            KS_Raw : Byte_Seq (0 .. KS_Data_Len - 1);
          begin
-            if Retry_KS_Single then
-               --  Single-entry retry key_share.
-               KS_Raw (0) := Byte (Retry_KS_Entry / 256);
-               KS_Raw (1) := Byte (Retry_KS_Entry mod 256);
-               if HC.HRR_Selected_Group = 16#001D# then
-                  KS_Raw (2) := 16#00#;
-                  KS_Raw (3) := 16#1D#;  --  X25519
-                  KS_Raw (4) := 16#00#;
-                  KS_Raw (5) := 16#20#;
-                  KS_Raw (6 .. 37) := PK_Bytes;
-               elsif HC.HRR_Selected_Group = 16#0017# then
-                  KS_Raw (2) := 16#00#;
-                  KS_Raw (3) := 16#17#;  --  secp256r1
-                  KS_Raw (4) := 16#00#;
-                  KS_Raw (5) := 16#41#;
-                  KS_Raw (6 .. 70) := P256_PK_Enc;
-               elsif HC.HRR_Selected_Group = 16#0018# then
-                  KS_Raw (2) := 16#00#;
-                  KS_Raw (3) := 16#18#;  --  secp384r1
-                  KS_Raw (4) := 16#00#;
-                  KS_Raw (5) := 16#61#;
-                  KS_Raw (6 .. 102) := P384_PK_Enc;
-               end if;
-            else
-               --  CH1 / cookie-only retry: single configured initial entry.
-               KS_Raw (0) := Byte (Initial_KS_Entry / 256);
-               KS_Raw (1) := Byte (Initial_KS_Entry mod 256);
-               KS_Raw (2) := Byte (Initial_Key_Share_Group / 256);
-               KS_Raw (3) := Byte (Initial_Key_Share_Group mod 256);
-               if Initial_Key_Share_Group = 16#001D# then
-                  KS_Raw (4) := 16#00#;
-                  KS_Raw (5) := 16#20#;
-                  KS_Raw (6 .. 37) := PK_Bytes;
-               elsif Initial_Key_Share_Group = 16#0017# then
-                  KS_Raw (4) := 16#00#;
-                  KS_Raw (5) := 16#41#;
-                  KS_Raw (6 .. 70) := P256_PK_Enc;
-               else
-                  KS_Raw (4) := 16#00#;
-                  KS_Raw (5) := 16#61#;
-                  KS_Raw (6 .. 102) := P384_PK_Enc;
-               end if;
-            end if;
+            Fill_KS_Raw
+              (Retry_KS_Single,
+               HC.HRR_Selected_Group,
+               Retry_KS_Entry,
+               Initial_Key_Share_Group,
+               Initial_KS_Entry,
+               PK_Bytes,
+               P256_PK_Enc,
+               P384_PK_Enc,
+               KS_Raw);
             pragma
               Assert
                 (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)

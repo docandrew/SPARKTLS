@@ -1219,6 +1219,258 @@ is
       end if;
    end Append_And_Encrypt_Server_HS_Fragmented;
 
+   --  Certificate message (RFC 8446 4.4.2): leaf + intermediates from the
+   --  local identity, encrypted under the server HS keys, fragmented when
+   --  the chain exceeds one record. Oversized/unconfigured identities fail
+   --  closed with Emitted = False and the error state set.
+   procedure Emit_Certificate_Chain
+     (S       : in out Session;
+      D       : in out SPARKTLS.HS_Pool.HS_Data;
+      Cfg     : in Ready_Config;
+      Scratch : in out IO_Buffer;
+      Result  : out Action;
+      Emitted : out Boolean)
+   is
+      --  Max: leaf + 8 intermediates, each up to 8 KB + 5 bytes overhead
+      Cert_Buf : Byte_Seq (0 .. 9 * (Max_Cert_DER_Len + 5) + 10);
+      Cert_Len : N32;
+   begin
+      Emitted := False;
+      if Cfg.Local = null
+        or else Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
+        or else Cfg.Local.Int_Count > Max_Pool_Size
+        or else (for some I in 0 .. Max_Pool_Size - 1
+                 => Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
+      then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+      Handshake.TLS13.Build_Certificate_Chain
+        (Id => Cfg.Local.all, Result => Cert_Buf, Len => Cert_Len);
+
+      if Cert_Len = 0
+        or else Cert_Len >= Transcript_Capacity
+        or else Cert_Len > 2 * Max_Fragment
+      then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
+      pragma Assert (Cert_Len < Transcript_Capacity);
+      pragma Assert (Cert_Len <= 2 * Max_Fragment);
+      pragma Assert (S.HC.Server_HS.Counter <= Unsigned_64'Last - 2);
+      Append_And_Encrypt_Server_HS_Fragmented
+        (S         => S,
+         D         => D,
+         Plaintext => Cert_Buf (0 .. Cert_Len - 1),
+         Scratch   => Scratch,
+         Result    => Result,
+         Emitted   => Emitted);
+   end Emit_Certificate_Chain;
+
+   --  CertificateVerify (RFC 8446 4.4.3): sign the transcript hash with
+   --  the negotiated scheme. Hash_Width is the suite hash length (the
+   --  #117 type-derived dispatch: 48 selects SHA-384).
+   procedure Emit_Cert_Verify
+     (S          : in out Session;
+      D          : in out SPARKTLS.HS_Pool.HS_Data;
+      Cfg        : in Ready_Config;
+      Hash_Width : in N32;
+      Scratch    : in out IO_Buffer;
+      Result     : out Action;
+      Emitted    : out Boolean)
+   is
+      H_Len   : constant N32 := Hash_Width;
+      CV_Hash : Byte_Seq (0 .. H_Len - 1);
+      CV_Buf  : Byte_Seq (0 .. 523);
+      CV_Len  : N32;
+   begin
+      Emitted := False;
+      --  Dispatch on the type-derived hash width (#117): H_Len is
+      --  Hash_Len (S.HC.Neg) at the call site, so the width Pre of the
+      --  chosen hash discharges locally.
+      if H_Len = 48 then
+         CV_Hash := Transcript_Hash_384 (S.HC);
+      else
+         declare
+            H256 : constant Digest := Transcript_Hash_256 (S.HC);
+         begin
+            CV_Hash := H256;
+         end;
+      end if;
+
+      if S.HC.Negotiated_Sig_Algo in 16#0804# | 16#0805# | 16#0806#
+        and then (Cfg.Random = null or else Cfg.Local.RSA_Mod_Len not in 64 .. 512)
+      then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+      Handshake.TLS13.Build_Certificate_Verify
+        (Transcript_Hash => CV_Hash,
+         Id              => Cfg.Local.all,
+         Sig_Algo_Wire   => S.HC.Negotiated_Sig_Algo,
+         Role            => Role_Server,
+         Random          => Cfg.Random,
+         Result          => CV_Buf,
+         Len             => CV_Len);
+
+      if CV_Len = 0 then
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+
+      pragma Assert (CV_Len <= Max_Fragment);
+      Append_And_Encrypt_Server_HS
+        (S         => S,
+         D         => D,
+         Plaintext => CV_Buf (0 .. CV_Len - 1),
+         Scratch   => Scratch,
+         Result    => Result,
+         Emitted   => Emitted);
+   end Emit_Cert_Verify;
+
+   --  RFC 8446 4.1.4 HelloRetryRequest decision: pick the first mutually
+   --  supported group in server preference order; if the client sent no
+   --  key_share for it, send HRR requesting that group. Handled is True
+   --  when this call fully disposed of the flight (HRR sent, or a fatal
+   --  alert) and the caller must return with Result as set; False means
+   --  no HRR was needed and the flight build continues.
+   procedure Maybe_Send_HRR (S : in out Session; Handled : out Boolean; Result : out Action)
+   is
+      Need_HRR            : Boolean := False;
+      HRR_Group           : Unsigned_16 := 0;
+      Preferred_Has_Share : Boolean := False;
+   begin
+      Handled := False;
+      Result := OK;
+      if S.HC.HRR_Sent then
+         return;
+      end if;
+
+      Handled := True;
+      if not S.HC.Client_Saw_Key_Share then
+         Send_Alert_And_Error (S, Missing_Extension, Result);
+         return;
+      end if;
+
+      --  Pick the server-preferred mutually supported group.
+      if S.HC.Client_Supports_X25519 then
+         HRR_Group := 16#001D#;
+         Preferred_Has_Share := S.HC.Client_Has_X25519;
+      elsif S.HC.Client_Supports_P256 then
+         HRR_Group := 16#0017#;
+         Preferred_Has_Share := S.HC.Client_Has_P256;
+      elsif S.HC.Client_Supports_P384 then
+         HRR_Group := 16#0018#;
+         Preferred_Has_Share := S.HC.Client_Has_P384;
+      end if;
+
+      if HRR_Group /= 0 and then not Preferred_Has_Share then
+         Need_HRR := True;
+      end if;
+
+      if Need_HRR then
+         declare
+            HRR_Built : Boolean;
+         begin
+            Build_Hello_Retry_Request (S, HRR_Group, HRR_Built);
+            if not HRR_Built then
+               if S.State not in Idle | Closed | Closing | Error_State then
+                  Send_Alert_And_Error (S, Internal_Error, Result);
+               else
+                  Result := Error_Alert;
+               end if;
+               return;
+            end if;
+         end;
+         Set_State (S, Wait_Client_Hello_Retry);
+         S.HC.HRR_Sent := True;
+         --  RFC 8446 4.1.4: at-most-one-HRR invariant. After
+         --  this assignment, the outer `if not S.HC.HRR_Sent`
+         --  guard prevents any further HRR from being built
+         --  in this connection.
+         pragma Assert (HRR_Sent_At_Most_Once_RFC_8446_4_1_4 (S.HC));
+         Result := Has_Output;
+         return;
+      end if;
+      Handled := False;
+   end Maybe_Send_HRR;
+
+   --  Server Finished (RFC 8446 4.4.4): verify_data = HMAC over the
+   --  current transcript hash under the finished key derived from the
+   --  server handshake-traffic secret; width follows the suite hash.
+   procedure Emit_Server_Finished
+     (S       : in out Session;
+      D       : in out SPARKTLS.HS_Pool.HS_Data;
+      Scratch : in out IO_Buffer;
+      Result  : out Action;
+      Emitted : out Boolean)
+   is
+   begin
+      case S.Negotiated_Suite is
+         when Suite_AES_256_GCM_SHA384 =>
+            declare
+               use HKDF384;
+               TS_Hash      : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
+               Fin_Key      : OKM384_Seq (0 .. 47);
+               Verify_48    : Bytes_48;
+               Big_Finished : Byte_Seq (0 .. 51) := (others => 0);  --  4 + 48
+            begin
+               Key_Schedule.Derive_Finished_Key_384 (Fin_Key, S.HC.Server_HS_Secret);
+               HMAC384.HMAC_SHA_384 (Output => Verify_48, M => TS_Hash, K => Byte_Seq (Fin_Key));
+               --  RFC 8446 4.4.4: TLS 1.3 verify_data length =
+               --  Hash.length. SHA-384 â 48 bytes.
+               pragma Assert (Verify_Data_Length_TLS13_RFC_8446_4_4_4 (Byte_Seq (Verify_48)));
+
+               Big_Finished (0) := Handshake.HT_Finished;
+               Big_Finished (1) := 16#00#;
+               Big_Finished (2) := 16#00#;
+               Big_Finished (3) := 16#30#;  --  48
+               Big_Finished (4 .. 51) := Verify_48;
+               Append_And_Encrypt_Server_HS
+                 (S         => S,
+                  D         => D,
+                  Plaintext => Big_Finished,
+                  Scratch   => Scratch,
+                  Result    => Result,
+                  Emitted   => Emitted);
+            end;
+
+         when others =>
+            declare
+               TS_Hash   : constant Digest := Transcript_Hash_256 (S.HC);
+               Fin_Key   : OKM_Seq (0 .. 31);
+               Verify_32 : Digest;
+               Fin_Buf   : Byte_Seq (0 .. 35);
+               Fin_Len   : N32;
+            begin
+               Key_Schedule.Derive_Finished_Key (Fin_Key, S.HC.Server_HS_Secret (0 .. 31));
+               HMAC_SHA_256 (Output => Verify_32, M => TS_Hash, K => Byte_Seq (Fin_Key));
+               --  RFC 8446 4.4.4: TLS 1.3 verify_data length =
+               --  Hash.length. SHA-256 â 32 bytes.
+               pragma Assert (Verify_Data_Length_TLS13_RFC_8446_4_4_4 (Byte_Seq (Verify_32)));
+
+               Handshake.TLS13.Build_Finished (Verify_32, Fin_Buf, Fin_Len);
+               pragma Assert (Fin_Len <= Max_Fragment);
+               Append_And_Encrypt_Server_HS
+                 (S         => S,
+                  D         => D,
+                  Plaintext => Fin_Buf (0 .. Fin_Len - 1),
+                  Scratch   => Scratch,
+                  Result    => Result,
+                  Emitted   => Emitted);
+            end;
+      end case;
+   end Emit_Server_Finished;
+
    procedure Build_Server_Flight_13
      (S      : in out Session;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
@@ -1278,59 +1530,14 @@ is
       --  RFC 8446 4.1.4: choose the first mutually supported group
       --  in server preference order. If the client did not send a
       --  key_share for that selected group, send HRR requesting it.
-      if not S.HC.HRR_Sent then
-         declare
-            Need_HRR            : Boolean := False;
-            HRR_Group           : Unsigned_16 := 0;
-            Preferred_Has_Share : Boolean := False;
-         begin
-            if not S.HC.Client_Saw_Key_Share then
-               Send_Alert_And_Error (S, Missing_Extension, Result);
-               return;
-            end if;
-
-            --  Pick the server-preferred mutually supported group.
-            if S.HC.Client_Supports_X25519 then
-               HRR_Group := 16#001D#;
-               Preferred_Has_Share := S.HC.Client_Has_X25519;
-            elsif S.HC.Client_Supports_P256 then
-               HRR_Group := 16#0017#;
-               Preferred_Has_Share := S.HC.Client_Has_P256;
-            elsif S.HC.Client_Supports_P384 then
-               HRR_Group := 16#0018#;
-               Preferred_Has_Share := S.HC.Client_Has_P384;
-            end if;
-
-            if HRR_Group /= 0 and then not Preferred_Has_Share then
-               Need_HRR := True;
-            end if;
-
-            if Need_HRR then
-               declare
-                  HRR_Built : Boolean;
-               begin
-                  Build_Hello_Retry_Request (S, HRR_Group, HRR_Built);
-                  if not HRR_Built then
-                     if S.State not in Idle | Closed | Closing | Error_State then
-                        Send_Alert_And_Error (S, Internal_Error, Result);
-                     else
-                        Result := Error_Alert;
-                     end if;
-                     return;
-                  end if;
-               end;
-               Set_State (S, Wait_Client_Hello_Retry);
-               S.HC.HRR_Sent := True;
-               --  RFC 8446 4.1.4: at-most-one-HRR invariant. After
-               --  this assignment, the outer `if not S.HC.HRR_Sent`
-               --  guard prevents any further HRR from being built
-               --  in this connection.
-               pragma Assert (HRR_Sent_At_Most_Once_RFC_8446_4_1_4 (S.HC));
-               Result := Has_Output;
-               return;
-            end if;
-         end;
-      end if;
+      declare
+         HRR_Handled : Boolean;
+      begin
+         Maybe_Send_HRR (S, HRR_Handled, Result);
+         if HRR_Handled then
+            return;
+         end if;
+      end;
 
       if Cfg.Require_ALPN and then not Handshake.Server_Msgs.Has_ALPN_Match (S.HC) then
          Send_Alert_And_Error (S, No_Application_Protocol, Result);
@@ -1455,45 +1662,9 @@ is
 
          --  Build Certificate chain (leaf + intermediates, encrypted)
          declare
-            --  Max: leaf + 8 intermediates, each up to 8 KB + 5 bytes overhead
-            Cert_Buf : Byte_Seq (0 .. 9 * (Max_Cert_DER_Len + 5) + 10);
-            Cert_Len : N32;
-            Emitted  : Boolean;
+            Emitted : Boolean;
          begin
-            if Cfg.Local = null
-              or else Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
-              or else Cfg.Local.Int_Count > Max_Pool_Size
-              or else (for some I in 0 .. Max_Pool_Size - 1
-                       => Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
-            then
-               S.Last_Error := Internal_Error;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-            Handshake.TLS13.Build_Certificate_Chain
-              (Id => Cfg.Local.all, Result => Cert_Buf, Len => Cert_Len);
-
-            if Cert_Len = 0
-              or else Cert_Len >= Transcript_Capacity
-              or else Cert_Len > 2 * Max_Fragment
-            then
-               S.Last_Error := Internal_Error;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-
-            pragma Assert (Cert_Len < Transcript_Capacity);
-            pragma Assert (Cert_Len <= 2 * Max_Fragment);
-            pragma Assert (S.HC.Server_HS.Counter <= Unsigned_64'Last - 2);
-            Append_And_Encrypt_Server_HS_Fragmented
-              (S         => S,
-               D         => D,
-               Plaintext => Cert_Buf (0 .. Cert_Len - 1),
-               Scratch   => Scratch,
-               Result    => Result,
-               Emitted   => Emitted);
+            Emit_Certificate_Chain (S, D, Cfg, Scratch, Result, Emitted);
             if not Emitted then
                return;
             end if;
@@ -1501,57 +1672,9 @@ is
 
          --  Build CertificateVerify (encrypted)
          declare
-            H_Len   : constant N32 := Flight_Hash_Len;
-            CV_Hash : Byte_Seq (0 .. H_Len - 1);
-            CV_Buf  : Byte_Seq (0 .. 523);
-            CV_Len  : N32;
             Emitted : Boolean;
          begin
-            --  Dispatch on the type-derived hash width (#117): H_Len is
-            --  Flight_Hash_Len = Hash_Len (S.HC.Neg), so the width Pre of the
-            --  chosen hash discharges locally.
-            if H_Len = 48 then
-               CV_Hash := Transcript_Hash_384 (S.HC);
-            else
-               declare
-                  H256 : constant Digest := Transcript_Hash_256 (S.HC);
-               begin
-                  CV_Hash := H256;
-               end;
-            end if;
-
-            if S.HC.Negotiated_Sig_Algo in 16#0804# | 16#0805# | 16#0806#
-              and then (Cfg.Random = null or else Cfg.Local.RSA_Mod_Len not in 64 .. 512)
-            then
-               S.Last_Error := Internal_Error;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-            Handshake.TLS13.Build_Certificate_Verify
-              (Transcript_Hash => CV_Hash,
-               Id              => Cfg.Local.all,
-               Sig_Algo_Wire   => S.HC.Negotiated_Sig_Algo,
-               Role            => Role_Server,
-               Random          => Cfg.Random,
-               Result          => CV_Buf,
-               Len             => CV_Len);
-
-            if CV_Len = 0 then
-               S.Last_Error := Internal_Error;
-               Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
-            end if;
-
-            pragma Assert (CV_Len <= Max_Fragment);
-            Append_And_Encrypt_Server_HS
-              (S         => S,
-               D         => D,
-               Plaintext => CV_Buf (0 .. CV_Len - 1),
-               Scratch   => Scratch,
-               Result    => Result,
-               Emitted   => Emitted);
+            Emit_Cert_Verify (S, D, Cfg, Flight_Hash_Len, Scratch, Result, Emitted);
             if not Emitted then
                return;
             end if;
@@ -1563,61 +1686,7 @@ is
       declare
          Emitted : Boolean;
       begin
-         case S.Negotiated_Suite is
-            when Suite_AES_256_GCM_SHA384 =>
-               declare
-                  use HKDF384;
-                  TS_Hash      : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
-                  Fin_Key      : OKM384_Seq (0 .. 47);
-                  Verify_48    : Bytes_48;
-                  Big_Finished : Byte_Seq (0 .. 51) := (others => 0);  --  4 + 48
-               begin
-                  Key_Schedule.Derive_Finished_Key_384 (Fin_Key, S.HC.Server_HS_Secret);
-                  HMAC384.HMAC_SHA_384 (Output => Verify_48, M => TS_Hash, K => Byte_Seq (Fin_Key));
-                  --  RFC 8446 4.4.4: TLS 1.3 verify_data length =
-                  --  Hash.length. SHA-384 â 48 bytes.
-                  pragma Assert (Verify_Data_Length_TLS13_RFC_8446_4_4_4 (Byte_Seq (Verify_48)));
-
-                  Big_Finished (0) := Handshake.HT_Finished;
-                  Big_Finished (1) := 16#00#;
-                  Big_Finished (2) := 16#00#;
-                  Big_Finished (3) := 16#30#;  --  48
-                  Big_Finished (4 .. 51) := Verify_48;
-                  Append_And_Encrypt_Server_HS
-                    (S         => S,
-                     D         => D,
-                     Plaintext => Big_Finished,
-                     Scratch   => Scratch,
-                     Result    => Result,
-                     Emitted   => Emitted);
-               end;
-
-            when others =>
-               declare
-                  TS_Hash   : constant Digest := Transcript_Hash_256 (S.HC);
-                  Fin_Key   : OKM_Seq (0 .. 31);
-                  Verify_32 : Digest;
-                  Fin_Buf   : Byte_Seq (0 .. 35);
-                  Fin_Len   : N32;
-               begin
-                  Key_Schedule.Derive_Finished_Key (Fin_Key, S.HC.Server_HS_Secret (0 .. 31));
-                  HMAC_SHA_256 (Output => Verify_32, M => TS_Hash, K => Byte_Seq (Fin_Key));
-                  --  RFC 8446 4.4.4: TLS 1.3 verify_data length =
-                  --  Hash.length. SHA-256 â 32 bytes.
-                  pragma Assert (Verify_Data_Length_TLS13_RFC_8446_4_4_4 (Byte_Seq (Verify_32)));
-
-                  Handshake.TLS13.Build_Finished (Verify_32, Fin_Buf, Fin_Len);
-                  pragma Assert (Fin_Len <= Max_Fragment);
-                  Append_And_Encrypt_Server_HS
-                    (S         => S,
-                     D         => D,
-                     Plaintext => Fin_Buf (0 .. Fin_Len - 1),
-                     Scratch   => Scratch,
-                     Result    => Result,
-                     Emitted   => Emitted);
-               end;
-         end case;
-
+         Emit_Server_Finished (S, D, Scratch, Result, Emitted);
          if not Emitted then
             return;
          end if;
