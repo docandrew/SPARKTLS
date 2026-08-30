@@ -82,14 +82,10 @@ project Sparktls is
         Runtime_Checks_Switches &
         Style_Checks_Switches &
         Contracts_Switches &
-        ("-gnat2022", -- Ada 2022. Required for the postcondition on the
-                      -- Lookup_Session_Fn access-to-subprogram type in
-                      -- sparktls.ads. NOTE: this project builds its own
-                      -- switch list and does NOT pick up
-                      -- Sparktls_Config.Ada_Compiler_Switches, so setting
-                      -- ada_version in alire.toml alone has no effect here.
-         "-gnatw.X", -- Disable warnings for No_Exception_Propagation
-         "-gnatQ");  -- Don't quit. Generate ALI and tree files even if illegalities
+        ("-gnat2022", -- Ada 2022
+         "-gnato13",  -- expressions within assertions evaluate intermediate overflow checks
+         "-gnatw.X",  -- Disable warnings for No_Exception_Propagation
+         "-gnatQ");   -- Don't quit. Generate ALI and tree files even if illegalities
    end Compiler;
 
    package Binder is
