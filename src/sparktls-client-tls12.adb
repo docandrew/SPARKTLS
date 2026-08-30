@@ -1822,7 +1822,7 @@ is
 
       Cache_New_Session_Ticket_12 (S, D, NST_Body, Ticket_Len, Lifetime);
 
-      Append_Transcript (S.HC, Frag);
+      Append_Transcript (S.HC.TS, Frag);
 
       if S.HC.T12.Resuming then
          Derive_Keys_Resumed_12 (S, D);
@@ -1906,7 +1906,7 @@ is
                return;
             end if;
 
-            Append_Transcript (S.HC, Frag);
+            Append_Transcript (S.HC.TS, Frag);
             Result := OK;
 
          when HT_Certificate_Request =>
@@ -2857,7 +2857,7 @@ is
             S.TLS12_New_Ticket.EMS := (if S.HC.Use_EMS then EMS_Negotiated else EMS_Absent);
             S.TLS12_New_Ticket.Valid := True;
 
-            Append_Transcript (S.HC, Byte_Seq (NST_Msg));
+            Append_Transcript (S.HC.TS, Byte_Seq (NST_Msg));
             Reset (D.Reasm);
             Result := OK;
          end;
@@ -3341,7 +3341,7 @@ is
             Fin_Snap : constant Message_Bytes := Message (D.Reasm);
          begin
             pragma Assert (Fin_Snap'Length = Finished_12_Total_Len);
-            Append_Transcript (S.HC, Byte_Seq (Fin_Snap));
+            Append_Transcript (S.HC.TS, Byte_Seq (Fin_Snap));
          end;
 
          Reset (D.Reasm);
