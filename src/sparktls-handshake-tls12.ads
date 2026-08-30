@@ -57,11 +57,6 @@ is
    --  RFC 8422 5.4: ECCurveType
    EC_Curve_Type_Named : constant Byte := 3;
 
-   --  RFC 8422 5.1.1: NamedGroup wire values
-   Group_Secp256r1 : constant Unsigned_16 := 16#0017#;
-   Group_Secp384r1 : constant Unsigned_16 := 16#0018#;
-   Group_X25519    : constant Unsigned_16 := 16#001D#;
-
    --  RFC 8422 5.4: ECPoint sizes (uncompressed)
    --  P-256: 0x04 || x[32] || y[32] = 65 bytes
    --  P-384: 0x04 || x[48] || y[48] = 97 bytes
@@ -86,48 +81,45 @@ is
    ----------------------------------------------------------------------------
 
    --  RFC 8422: Valid ECDHE group for our implementation.
-   function Valid_ECDHE_Group (G : Unsigned_16) return Boolean
-   is (G in Group_Secp256r1 | Group_Secp384r1 | Group_X25519);
+   function Valid_ECDHE_Group (G : Maybe_ECDHE_Group) return Boolean
+   is (G in ECDHE_Group);
 
    --  RFC 8422 5.1.1: in TLS 1.2, supported_groups constrains the
    --  EC parameters that may appear in an ECDSA server certificate.
    --  Group = 0 means "default policy" (all supported groups advertised).
    function ECDSA_Cert_Curve_Allowed_TLS12
-     (Group : Unsigned_16; PK : X509.Algorithm_ID) return Boolean
-   is ((Group = 0)
+     (Group : Maybe_ECDHE_Group; PK : X509.Algorithm_ID) return Boolean
+   is ((Group = Group_None)
        or else (Group = Group_Secp256r1 and then PK /= X509.Algo_EC_P384)
        or else (Group = Group_Secp384r1 and then PK /= X509.Algo_EC_P256)
-       or else (Group = Group_X25519 and then PK not in X509.Algo_EC_P256 | X509.Algo_EC_P384)
-       or else (not Valid_ECDHE_Group (Group)));
+       or else (Group = Group_X25519 and then PK not in X509.Algo_EC_P256 | X509.Algo_EC_P384));
 
    --  RFC 8422 5.1.1: a TLS 1.2 ECDHE server must select a group
    --  offered by the client. Offered = 0 means the default client offer
    --  (all implemented groups).
    function Selected_Group_Allowed_TLS12
-     (Offered : Unsigned_16; Selected : Unsigned_16) return Boolean
-   is (Offered = 0 or else not Valid_ECDHE_Group (Offered) or else Selected = Offered);
+     (Offered : Maybe_ECDHE_Group; Selected : ECDHE_Group) return Boolean
+   is (Offered = Group_None or else Selected = Offered);
 
    --  RFC 8422 5.4: ECPoint byte length for a given group.
-   function Point_Len_For_Group (G : Unsigned_16) return N32
-   is (case G is
-         when Group_Secp256r1 => P256_Point_Len,
-         when Group_Secp384r1 => P384_Point_Len,
-         when Group_X25519 => X25519_Point_Len,
-         when others => 0);
+   type Point_Len_For_Group_Type is array (ECDHE_Group) of N32;
+   Point_Len_For_Group : constant Point_Len_For_Group_Type := [
+      Group_Secp256r1 => P256_Point_Len,
+      Group_Secp384r1 => P384_Point_Len,
+      Group_X25519    => X25519_Point_Len
+   ];
 
    --  RFC 8422 5.4: ServerKeyExchange params size (before signature).
    --  = curve_type(1) + named_curve(2) + point_length(1) + point(N)
-   function SKE_Params_Len (G : Unsigned_16) return N32
-   is (4 + Point_Len_For_Group (G))
-   with Ghost, Pre => Valid_ECDHE_Group (G);
+   function SKE_Params_Len (G : ECDHE_Group) return N32 is (4 + Point_Len_For_Group (G))
+      with Ghost;
 
    --  RFC 5246 7.4.3: The signature input for ServerKeyExchange.
    --  MUST be: client_random[32] || server_random[32] || params[N]
    --  Getting the random order wrong or omitting params from the
    --  signature is a critical vulnerability (allows MITM).
-   function SKE_Sig_Input_Len (G : Unsigned_16) return N32
-   is (64 + SKE_Params_Len (G))  --  32 + 32 + params
-   with Ghost, Pre => Valid_ECDHE_Group (G);
+   function SKE_Sig_Input_Len (G : ECDHE_Group) return N32 is (64 + SKE_Params_Len (G))  --  32 + 32 + params
+      with Ghost;
 
    --  RFC 5246 7.4.9: Finished message is always exactly 16 bytes.
    --  type(1)=0x14 + length(3)=0x00000C + verify_data(12)

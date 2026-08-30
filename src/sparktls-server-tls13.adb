@@ -113,7 +113,7 @@ is
 
    procedure Build_Hello_Retry_Request
      (S       : in out Session;
-      Group   : in Unsigned_16;
+      Group   : in ECDHE_Group;
       Built   : out Boolean)
    with
      Pre => Server_Active (S),
@@ -714,7 +714,7 @@ is
 
    procedure Build_Hello_Retry_Request
      (S       : in out Session;
-      Group   : in Unsigned_16;
+      Group   : in ECDHE_Group;
       Built   : out Boolean)
    is
       use SPARKTLSCrypto.Hashing.SHA256;
@@ -820,8 +820,8 @@ is
       HRR_Buf (P + 1) := 16#33#;  --  key_share
       HRR_Buf (P + 2) := 16#00#;
       HRR_Buf (P + 3) := 16#02#;  --  2 bytes data
-      HRR_Buf (P + 4) := Byte (Group / 256);
-      HRR_Buf (P + 5) := Byte (Group mod 256);
+      HRR_Buf (P + 4) := Byte (ECDHE_Group_Wire (Group) / 256);
+      HRR_Buf (P + 5) := Byte (ECDHE_Group_Wire (Group) mod 256);
       P := P + 6;
 
       --  supported_versions extension: type(2) + length(2) + version(2)
@@ -1346,7 +1346,7 @@ is
    procedure Maybe_Send_HRR (S : in out Session; Handled : out Boolean; Result : out Action)
    is
       Need_HRR            : Boolean := False;
-      HRR_Group           : Unsigned_16 := 0;
+      HRR_Group           : Maybe_ECDHE_Group := Group_None;
       Preferred_Has_Share : Boolean := False;
    begin
       Handled := False;
@@ -1363,17 +1363,17 @@ is
 
       --  Pick the server-preferred mutually supported group.
       if S.HC.Client_Supports_X25519 then
-         HRR_Group := 16#001D#;
+         HRR_Group := Group_X25519;
          Preferred_Has_Share := S.HC.Client_Has_X25519;
       elsif S.HC.Client_Supports_P256 then
-         HRR_Group := 16#0017#;
+         HRR_Group := Group_Secp256r1;
          Preferred_Has_Share := S.HC.Client_Has_P256;
       elsif S.HC.Client_Supports_P384 then
-         HRR_Group := 16#0018#;
+         HRR_Group := Group_Secp384r1;
          Preferred_Has_Share := S.HC.Client_Has_P384;
       end if;
 
-      if HRR_Group /= 0 and then not Preferred_Has_Share then
+      if HRR_Group /= Group_None and then not Preferred_Has_Share then
          Need_HRR := True;
       end if;
 
@@ -1728,7 +1728,7 @@ is
                Server_Sec : OKM384_Seq (0 .. 47);
             begin
                Key_Schedule.Derive_Early_Secret_384 (Early, S.HC.PSK.Value);
-               if S.HC.KE.Curve = 16#0018# then
+               if S.HC.KE.Curve = Group_Secp384r1 then
                   Key_Schedule.Derive_Handshake_Secret_384
                     (HS_Secret, Byte_Seq (S.HC.KE.Shared), Early);
                else
@@ -1758,7 +1758,7 @@ is
                Server_Sec : OKM_Seq (0 .. 31);
             begin
                Key_Schedule.Derive_Early_Secret (Early, Bytes_32 (S.HC.PSK.Value (0 .. 31)));
-               if S.HC.KE.Curve = 16#0018# then
+               if S.HC.KE.Curve = Group_Secp384r1 then
                   Key_Schedule.Derive_Handshake_Secret
                     (HS_Secret, Byte_Seq (S.HC.KE.Shared), Early);
                else
@@ -2343,6 +2343,241 @@ is
       end case;
    end Process_Client_Auth;
 
+   --  Fatal failure under the application/handshake write keys: emit an
+   --  encrypted alert with the EXACT wire description Desc (the BoGo-checked
+   --  codes here deliberately differ from the Alert_Desc (Err) mapping --
+   --  e.g. decrypt_error (51) with Last_Error = Handshake_Failure), set the
+   --  error state, and let the caller drain the alert first.
+   procedure Fail_With_App_Alert
+     (S : in out Session; Desc : in Byte; Err : in Error_Code; Result : out Action)
+   is
+      Ignored_A : N32;
+   begin
+      Records.Build_Alert_Record (2, Desc, S.Server_App, S.Output, Ignored_A);
+      S.Last_Error := Err;
+      Set_State (S, Error_State);
+      if Output_Pending (S) > 0 then
+         Result := Has_Output;
+      else
+         Result := Error_Alert;
+      end if;
+   end Fail_With_App_Alert;
+
+   --  RFC 8446 4.4.4 client Finished check: constant-time compare of the
+   --  received verify_data against HMAC (finished_key, transcript hash),
+   --  widths following the suite hash.
+   function Client_Finished_Verified
+     (HC : in Handshake_Context; Suite : in Supported_Suite; Data : in Byte_Seq) return Boolean
+   is
+      Verified : Boolean := False;
+   begin
+      case Suite is
+         when Suite_AES_256_GCM_SHA384 =>
+            declare
+               use HKDF384;
+               Pre_Hash : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (HC);
+               Fin_Key  : OKM384_Seq (0 .. 47);
+               Expected : Bytes_48;
+            begin
+               Key_Schedule.Derive_Finished_Key_384 (Fin_Key, HC.Client_HS_Secret);
+               HMAC384.HMAC_SHA_384 (Output => Expected, M => Pre_Hash, K => Byte_Seq (Fin_Key));
+
+               if Equal (Expected, Bytes_48 (Data (4 .. 51))) then
+                  Verified := True;
+               end if;
+            end;
+
+         when others =>
+            declare
+               Pre_Hash : constant Digest := Transcript_Hash_256 (HC);
+               Fin_Key  : OKM_Seq (0 .. 31);
+               Expected : Digest;
+            begin
+               Key_Schedule.Derive_Finished_Key (Fin_Key, HC.Client_HS_Secret (0 .. 31));
+               HMAC_SHA_256 (Output => Expected, M => Pre_Hash, K => Byte_Seq (Fin_Key));
+
+               if Equal (Expected, Bytes_32 (Data (4 .. 35))) then
+                  Verified := True;
+               end if;
+            end;
+      end case;
+      return Verified;
+   end Client_Finished_Verified;
+
+   --  Resumption secrets (RFC 8446 7.1): derive res_master over the full
+   --  transcript (through client Finished), the PSK from it, store in the
+   --  session cache when callbacks are configured, and record res_master
+   --  in the Session for later key material.
+   procedure Store_Resumption_Secrets
+     (S       : in out Session;
+      Nonce   : in Byte_Seq;
+      Age_Add : in Unsigned_32;
+      TID     : out Ticket_ID)
+   is
+      use SPARKTLS.Ticket_Cache;
+   begin
+      TID := (others => 0);
+   case S.Negotiated_Suite is
+      when Suite_AES_256_GCM_SHA384 =>
+         declare
+            use HKDF384;
+            Full_Hash  : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
+            Res_Master : OKM384_Seq (0 .. 47);
+            PSK_Out    : OKM384_Seq (0 .. 47);
+         begin
+            Key_Schedule.Derive_Resumption_Master_Secret_384
+              (Res_Master, S.HC.Master_Secret (0 .. 47), Full_Hash);
+            Key_Schedule.Derive_PSK_384 (PSK_Out, Byte_Seq (Res_Master), Nonce);
+            --  Store in cache
+            if S.HC.Cfg.Store_Session /= null and then S.HC.Cfg.Lookup_Session /= null
+            then
+               pragma Warnings (Off, "value conversion implemented by copy");
+               S.HC.Cfg.Store_Session
+                 (Bytes_48 (PSK_Out), 48, Wire_Of (S.Negotiated_Suite), Age_Add, TID);
+               pragma Warnings (On, "value conversion implemented by copy");
+            end if;
+            pragma Warnings (Off, "value conversion implemented by copy");
+            S.Res_Master := Bytes_48 (Res_Master);
+            pragma Warnings (On, "value conversion implemented by copy");
+            S.Res_Master_Len := 48;
+         end;
+
+      when others =>
+         declare
+            Full_Hash  : constant Digest := Transcript_Hash_256 (S.HC);
+            Res_Master : OKM_Seq (0 .. 31);
+            PSK_Out    : OKM_Seq (0 .. 31);
+         begin
+            Key_Schedule.Derive_Resumption_Master_Secret
+              (Res_Master, Digest (S.HC.Master_Secret (0 .. 31)), Full_Hash);
+            Key_Schedule.Derive_PSK (PSK_Out, Byte_Seq (Res_Master), Nonce);
+            if S.HC.Cfg.Store_Session /= null and then S.HC.Cfg.Lookup_Session /= null
+            then
+               declare
+                  PSK_48 : Bytes_48 := (others => 0);
+               begin
+                  for I in N32 range 0 .. 31 loop
+                     PSK_48 (I) := PSK_Out (I);
+                  end loop;
+                  S.HC.Cfg.Store_Session
+                    (PSK_48, 32, Wire_Of (S.Negotiated_Suite), Age_Add, TID);
+               end;
+            end if;
+            S.Res_Master := (others => 0);
+            for I in N32 range 0 .. 31 loop
+               S.Res_Master (I) := Res_Master (I);
+            end loop;
+            S.Res_Master_Len := 32;
+         end;
+   end case;
+   end Store_Resumption_Secrets;
+
+   --  NewSessionTicket (RFC 8446 4.6.1): issued only when the client
+   --  signalled psk_dhe_ke (RFC 8446 4.2.9) and cache callbacks exist.
+   --  Best-effort: if S.Output cannot hold it, the record is skipped and
+   --  the AEAD counter stays in sync by construction.
+   procedure Send_New_Session_Ticket_13
+     (S       : in out Session;
+      Nonce   : in Byte_Seq;
+      Age_Add : in Unsigned_32;
+      TID     : in Ticket_ID)
+   is
+      Enc_Out : N32;
+   begin
+      --  Build and send NewSessionTicket only if the
+      --  client signalled psk_dhe_ke in psk_key_
+      --  exchange_modes (RFC 8446 4.6.1 + 4.2.9).
+      --  BoGo TLS13-ExpectNoSessionTicketOnBadKE
+      --  Mode-Server checks that we DON'T issue NST
+      --  when the client only offered psk_ke.
+      if S.HC.Cfg.Store_Session /= null
+        and then S.HC.Cfg.Lookup_Session /= null
+        and then S.HC.PSK.Has_DHE_KE
+      then
+         declare
+            --  NST format: type(1) + len(3) + lifetime(4) +
+            --  age_add(4) + nonce_len(1) + nonce(2) +
+            --  ticket_len(2) + ticket(16) + ext_len(2) +
+            --  GREASE extension(4) + optional
+            --  ticket_flags(7) = 39 or 46.
+            --  We never emit the early_data extension
+            --  0-RTT is intentionally out of scope (see
+            --  Cfg.Resume_Ticket comment in sparktls.ads).
+            Include_Flags : constant Boolean := S.HC.Cfg.TLS13_Resumption_Across_Names;
+            NST_Total     : constant N32 := (if Include_Flags then 46 else 39);
+            NST_Body_Len  : constant N32 := NST_Total - 4;
+            NST_Ext_Len   : constant N32 := (if Include_Flags then 11 else 4);
+            NST           : Byte_Seq (0 .. 45) := (others => 0);
+         begin
+            --  Handshake type: NewSessionTicket (0x04)
+            NST (0) := 16#04#;
+            --  Length: 35 or 42 bytes
+            NST (1) := 0;
+            NST (2) := 0;
+            NST (3) := Byte (NST_Body_Len);
+            --  ticket_lifetime: 3600 seconds (1 hour)
+            NST (4) := 0;
+            NST (5) := 0;
+            NST (6) := 16#0E#;
+            NST (7) := 16#10#;
+            --  ticket_age_add
+            NST (8) := Byte (Shift_Right (Age_Add, 24));
+            NST (9) := Byte (Shift_Right (Age_Add, 16) and 16#FF#);
+            NST (10) := Byte (Shift_Right (Age_Add, 8) and 16#FF#);
+            NST (11) := Byte (Age_Add and 16#FF#);
+            --  ticket_nonce_length: 2
+            NST (12) := 2;
+            --  ticket_nonce
+            NST (13) := Nonce (0);
+            NST (14) := Nonce (1);
+            --  ticket_length: 16
+            NST (15) := 0;
+            NST (16) := 16;
+            --  ticket (the cache ID)
+            NST (17 .. 32) := TID;
+            --  extensions_length: 4 or 11
+            NST (33) := 0;
+            NST (34) := Byte (NST_Ext_Len);
+            --  GREASE extension 0x0a0a, empty body.
+            NST (35) := 16#0A#;
+            NST (36) := 16#0A#;
+            NST (37) := 0;
+            NST (38) := 0;
+            if Include_Flags then
+               --  ticket_flags extension (0x003E), body
+               --  opaque flags<1..255>. Bit 8
+               --  resumption_across_names is encoded as
+               --  two minimally-encoded flag bytes: 00 01.
+               NST (39) := 0;
+               NST (40) := 16#3E#;
+               NST (41) := 0;
+               NST (42) := 3;
+               NST (43) := 2;
+               NST (44) := 0;
+               NST (45) := 1;
+            end if;
+
+            --  NewSessionTicket is a post-handshake
+            --  optimisation (RFC 8446 4.6.1); it is
+            --  not required for handshake completion.
+            --  If S.Output is too full to hold it,
+            --  skip silently and roll back the AEAD
+            --  counter so the next encrypted record
+            --  on these keys keeps its nonce in sync
+            --  with what the peer last received.
+            --  No save/restore: Build's Post already
+            --  guarantees the counter is unchanged when
+            --  Bytes_Out = 0 (space checked before seal).
+            Records.Build_Encrypted_Record
+              (Plaintext  => NST (0 .. NST_Total - 1),
+               Inner_Type => 16#16#,  --  handshake
+               Keys       => S.Server_App,
+               Output     => S.Output,
+               Bytes_Out  => Enc_Out);
+         end;
+      end if;
+   end Send_New_Session_Ticket_13;
+
    procedure Verify_Client_Finished
      (S         : in out Session;
       D         : in out SPARKTLS.HS_Pool.HS_Data;
@@ -2374,85 +2609,21 @@ is
          --  (BoGo TrailingMessageData-TLS13-ClientFinished
          --  expects ":DIGEST_CHECK_FAILED:" â alert 51).
          if Msg_Len /= Expected_Len then
-            declare
-               Ignored_A : N32;
-            begin
-               Records.Build_Alert_Record (2, 51, S.Server_App, S.Output, Ignored_A);
-            end;
-            S.Last_Error := Certificate_Verify_Failed;
-            Set_State (S, Error_State);
-            if Output_Pending (S) > 0 then
-               Result := Has_Output;
-            else
-               Result := Error_Alert;
-            end if;
+            Fail_With_App_Alert (S, 51, Certificate_Verify_Failed, Result);
             return;
          end if;
          if N32 (Data'Length) /= 4 + Expected_Len then
-            declare
-               Ignored_A : N32;
-            begin
-               Records.Build_Alert_Record (2, 10, S.Server_App, S.Output, Ignored_A);
-            end;
-            S.Last_Error := Unexpected_Message;
-            Set_State (S, Error_State);
-            if Output_Pending (S) > 0 then
-               Result := Has_Output;
-            else
-               Result := Error_Alert;
-            end if;
+            Fail_With_App_Alert (S, 10, Unexpected_Message, Result);
             return;
          end if;
 
-         --  Length is correct  verify HMAC
+         --  Length is correct: verify HMAC
          declare
-            Verified : Boolean := False;
+            Verified : constant Boolean :=
+              Client_Finished_Verified (S.HC, S.Negotiated_Suite, Data);
          begin
-            case S.Negotiated_Suite is
-               when Suite_AES_256_GCM_SHA384 =>
-                  declare
-                     use HKDF384;
-                     Pre_Hash : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
-                     Fin_Key  : OKM384_Seq (0 .. 47);
-                     Expected : Bytes_48;
-                  begin
-                     Key_Schedule.Derive_Finished_Key_384 (Fin_Key, S.HC.Client_HS_Secret);
-                     HMAC384.HMAC_SHA_384
-                       (Output => Expected, M => Pre_Hash, K => Byte_Seq (Fin_Key));
-
-                     if Equal (Expected, Bytes_48 (Data (4 .. 51))) then
-                        Verified := True;
-                     end if;
-                  end;
-
-               when others =>
-                  declare
-                     Pre_Hash : constant Digest := Transcript_Hash_256 (S.HC);
-                     Fin_Key  : OKM_Seq (0 .. 31);
-                     Expected : Digest;
-                  begin
-                     Key_Schedule.Derive_Finished_Key (Fin_Key, S.HC.Client_HS_Secret (0 .. 31));
-                     HMAC_SHA_256 (Output => Expected, M => Pre_Hash, K => Byte_Seq (Fin_Key));
-
-                     if Equal (Expected, Bytes_32 (Data (4 .. 35))) then
-                        Verified := True;
-                     end if;
-                  end;
-            end case;
-
             if not Verified then
-               declare
-                  Ignored_A : N32;
-               begin
-                  Records.Build_Alert_Record (2, 51, S.Server_App, S.Output, Ignored_A);
-               end;
-               S.Last_Error := Handshake_Failure;
-               Set_State (S, Error_State);
-               if Output_Pending (S) > 0 then
-                  Result := Has_Output;
-               else
-                  Result := Error_Alert;
-               end if;
+               Fail_With_App_Alert (S, 51, Handshake_Failure, Result);
                return;
             end if;
          end;
@@ -2473,7 +2644,6 @@ is
                Nonce         : Byte_Seq (0 .. 1);
                Age_Add       : Unsigned_32;
                TID           : Ticket_ID := (others => 0);
-               Enc_Out       : N32;
             begin
                S.HC.Cfg.Random.all (Ticket_Random);
                Nonce := Ticket_Random (0 .. 1);
@@ -2483,152 +2653,9 @@ is
                  + Unsigned_32 (Ticket_Random (4)) * 2 ** 8
                  + Unsigned_32 (Ticket_Random (5));
 
-               case S.Negotiated_Suite is
-                  when Suite_AES_256_GCM_SHA384 =>
-                     declare
-                        use HKDF384;
-                        Full_Hash  : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
-                        Res_Master : OKM384_Seq (0 .. 47);
-                        PSK_Out    : OKM384_Seq (0 .. 47);
-                     begin
-                        Key_Schedule.Derive_Resumption_Master_Secret_384
-                          (Res_Master, S.HC.Master_Secret (0 .. 47), Full_Hash);
-                        Key_Schedule.Derive_PSK_384 (PSK_Out, Byte_Seq (Res_Master), Nonce);
-                        --  Store in cache
-                        if S.HC.Cfg.Store_Session /= null and then S.HC.Cfg.Lookup_Session /= null
-                        then
-                           pragma Warnings (Off, "value conversion implemented by copy");
-                           S.HC.Cfg.Store_Session
-                             (Bytes_48 (PSK_Out), 48, Wire_Of (S.Negotiated_Suite), Age_Add, TID);
-                           pragma Warnings (On, "value conversion implemented by copy");
-                        end if;
-                        pragma Warnings (Off, "value conversion implemented by copy");
-                        S.Res_Master := Bytes_48 (Res_Master);
-                        pragma Warnings (On, "value conversion implemented by copy");
-                        S.Res_Master_Len := 48;
-                     end;
+               Store_Resumption_Secrets (S, Nonce, Age_Add, TID);
 
-                  when others =>
-                     declare
-                        Full_Hash  : constant Digest := Transcript_Hash_256 (S.HC);
-                        Res_Master : OKM_Seq (0 .. 31);
-                        PSK_Out    : OKM_Seq (0 .. 31);
-                     begin
-                        Key_Schedule.Derive_Resumption_Master_Secret
-                          (Res_Master, Digest (S.HC.Master_Secret (0 .. 31)), Full_Hash);
-                        Key_Schedule.Derive_PSK (PSK_Out, Byte_Seq (Res_Master), Nonce);
-                        if S.HC.Cfg.Store_Session /= null and then S.HC.Cfg.Lookup_Session /= null
-                        then
-                           declare
-                              PSK_48 : Bytes_48 := (others => 0);
-                           begin
-                              for I in N32 range 0 .. 31 loop
-                                 PSK_48 (I) := PSK_Out (I);
-                              end loop;
-                              S.HC.Cfg.Store_Session
-                                (PSK_48, 32, Wire_Of (S.Negotiated_Suite), Age_Add, TID);
-                           end;
-                        end if;
-                        S.Res_Master := (others => 0);
-                        for I in N32 range 0 .. 31 loop
-                           S.Res_Master (I) := Res_Master (I);
-                        end loop;
-                        S.Res_Master_Len := 32;
-                     end;
-               end case;
-
-               --  Build and send NewSessionTicket only if the
-               --  client signalled psk_dhe_ke in psk_key_
-               --  exchange_modes (RFC 8446 4.6.1 + 4.2.9).
-               --  BoGo TLS13-ExpectNoSessionTicketOnBadKE
-               --  Mode-Server checks that we DON'T issue NST
-               --  when the client only offered psk_ke.
-               if S.HC.Cfg.Store_Session /= null
-                 and then S.HC.Cfg.Lookup_Session /= null
-                 and then S.HC.PSK.Has_DHE_KE
-               then
-                  declare
-                     --  NST format: type(1) + len(3) + lifetime(4) +
-                     --  age_add(4) + nonce_len(1) + nonce(2) +
-                     --  ticket_len(2) + ticket(16) + ext_len(2) +
-                     --  GREASE extension(4) + optional
-                     --  ticket_flags(7) = 39 or 46.
-                     --  We never emit the early_data extension
-                     --  0-RTT is intentionally out of scope (see
-                     --  Cfg.Resume_Ticket comment in sparktls.ads).
-                     Include_Flags : constant Boolean := S.HC.Cfg.TLS13_Resumption_Across_Names;
-                     NST_Total     : constant N32 := (if Include_Flags then 46 else 39);
-                     NST_Body_Len  : constant N32 := NST_Total - 4;
-                     NST_Ext_Len   : constant N32 := (if Include_Flags then 11 else 4);
-                     NST           : Byte_Seq (0 .. 45) := (others => 0);
-                  begin
-                     --  Handshake type: NewSessionTicket (0x04)
-                     NST (0) := 16#04#;
-                     --  Length: 35 or 42 bytes
-                     NST (1) := 0;
-                     NST (2) := 0;
-                     NST (3) := Byte (NST_Body_Len);
-                     --  ticket_lifetime: 3600 seconds (1 hour)
-                     NST (4) := 0;
-                     NST (5) := 0;
-                     NST (6) := 16#0E#;
-                     NST (7) := 16#10#;
-                     --  ticket_age_add
-                     NST (8) := Byte (Shift_Right (Age_Add, 24));
-                     NST (9) := Byte (Shift_Right (Age_Add, 16) and 16#FF#);
-                     NST (10) := Byte (Shift_Right (Age_Add, 8) and 16#FF#);
-                     NST (11) := Byte (Age_Add and 16#FF#);
-                     --  ticket_nonce_length: 2
-                     NST (12) := 2;
-                     --  ticket_nonce
-                     NST (13) := Nonce (0);
-                     NST (14) := Nonce (1);
-                     --  ticket_length: 16
-                     NST (15) := 0;
-                     NST (16) := 16;
-                     --  ticket (the cache ID)
-                     NST (17 .. 32) := TID;
-                     --  extensions_length: 4 or 11
-                     NST (33) := 0;
-                     NST (34) := Byte (NST_Ext_Len);
-                     --  GREASE extension 0x0a0a, empty body.
-                     NST (35) := 16#0A#;
-                     NST (36) := 16#0A#;
-                     NST (37) := 0;
-                     NST (38) := 0;
-                     if Include_Flags then
-                        --  ticket_flags extension (0x003E), body
-                        --  opaque flags<1..255>. Bit 8
-                        --  resumption_across_names is encoded as
-                        --  two minimally-encoded flag bytes: 00 01.
-                        NST (39) := 0;
-                        NST (40) := 16#3E#;
-                        NST (41) := 0;
-                        NST (42) := 3;
-                        NST (43) := 2;
-                        NST (44) := 0;
-                        NST (45) := 1;
-                     end if;
-
-                     --  NewSessionTicket is a post-handshake
-                     --  optimisation (RFC 8446 4.6.1); it is
-                     --  not required for handshake completion.
-                     --  If S.Output is too full to hold it,
-                     --  skip silently and roll back the AEAD
-                     --  counter so the next encrypted record
-                     --  on these keys keeps its nonce in sync
-                     --  with what the peer last received.
-                     --  No save/restore: Build's Post already
-                     --  guarantees the counter is unchanged when
-                     --  Bytes_Out = 0 (space checked before seal).
-                     Records.Build_Encrypted_Record
-                       (Plaintext  => NST (0 .. NST_Total - 1),
-                        Inner_Type => 16#16#,  --  handshake
-                        Keys       => S.Server_App,
-                        Output     => S.Output,
-                        Bytes_Out  => Enc_Out);
-                  end;
-               end if;
+               Send_New_Session_Ticket_13 (S, Nonce, Age_Add, TID);
             end;
          end if;
 

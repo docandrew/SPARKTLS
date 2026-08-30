@@ -1911,7 +1911,7 @@ is
             begin
                Key_Schedule.Derive_Early_Secret_384 (Early, PSK_Bytes);
                --  Use full 48 bytes if P-384 ECDHE, else first 32
-               if (S.HC.KE.Negotiated and then S.HC.KE.Curve = 16#0018#) then
+               if (S.HC.KE.Negotiated and then S.HC.KE.Curve = Group_Secp384r1) then
                   Key_Schedule.Derive_Handshake_Secret_384
                     (HS_Secret, Byte_Seq (S.HC.KE.Shared), Early);
                else
@@ -1948,7 +1948,7 @@ is
             begin
                Key_Schedule.Derive_Early_Secret (Early, PSK_Bytes);
                --  Pass full shared secret: 48 bytes for P-384, 32 for others
-               if (S.HC.KE.Negotiated and then S.HC.KE.Curve = 16#0018#) then
+               if (S.HC.KE.Negotiated and then S.HC.KE.Curve = Group_Secp384r1) then
                   Key_Schedule.Derive_Handshake_Secret
                     (HS_Secret, Byte_Seq (S.HC.KE.Shared), Early);
                else

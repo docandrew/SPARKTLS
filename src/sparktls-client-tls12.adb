@@ -419,7 +419,7 @@ is
       B                    : constant N32 := Frag'First + 4;
       Body_Bytes           : Byte_Seq (0 .. Msg_Len - 1);
       Cert_Idx             : Natural := 0;
-      Saved_Selected_Group : constant Unsigned_16 := HC.KE.Curve
+      Saved_Selected_Group : constant ECDHE_Group := HC.KE.Curve
       with Ghost;
    begin
       Reset_Peer_Cert_Chain_12 (D);
@@ -1225,7 +1225,7 @@ is
       Rec_Out     : N32;
       Saved_Suite : constant Supported_Suite := S.Negotiated_Suite
       with Ghost;
-      Saved_Group : constant Unsigned_16 := S.HC.KE.Curve
+      Saved_Group : constant ECDHE_Group := S.HC.KE.Curve
       with Ghost;
    begin
       Result := OK;

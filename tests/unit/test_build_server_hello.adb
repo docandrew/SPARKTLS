@@ -135,7 +135,7 @@ procedure Test_Build_Server_Hello is
         (TLS13_Suite (Suite (S)), HC, Result, Len);
 
       Check ("X25519: negotiated curve is 0x001D (x25519)",
-             HC.KE.Negotiated and then HC.KE.Curve = 16#001D#);
+             HC.KE.Negotiated and then HC.KE.Curve = Group_X25519);
    end Test_Selected_Group;
 
    procedure Test_Buffer_Too_Small is
@@ -170,7 +170,7 @@ procedure Test_Build_Server_Hello is
       Check ("P-256: type byte = 0x02 (server_hello)",
              Result (0) = 16#02#);
       Check ("P-256: negotiated curve is 0x0017 (secp256r1)",
-             HC.KE.Negotiated and then HC.KE.Curve = 16#0017#);
+             HC.KE.Negotiated and then HC.KE.Curve = Group_Secp256r1);
       Check ("P-256: shared secret is non-zero",
              (for some I in 0 .. 31 => HC.KE.Shared (N32 (I)) /= 0));
    end Test_P256_Builds;
@@ -194,7 +194,7 @@ procedure Test_Build_Server_Hello is
       Check ("P-384: type byte = 0x02 (server_hello)",
              Result (0) = 16#02#);
       Check ("P-384: negotiated curve is 0x0018 (secp384r1)",
-             HC.KE.Negotiated and then HC.KE.Curve = 16#0018#);
+             HC.KE.Negotiated and then HC.KE.Curve = Group_Secp384r1);
       Check ("P-384: shared secret is non-zero",
              (for some I in 0 .. 47 => HC.KE.Shared (N32 (I)) /= 0));
    end Test_P384_Builds;

@@ -182,6 +182,32 @@ is
      array (Cipher_Pref_Index) of Natural range 0 .. Max_Config_Cipher_Suites;
 
    ----------------------------------------------------------------------------
+   -- ECDHE Groups
+   ----------------------------------------------------------------------------
+   type Maybe_ECDHE_Group is (Group_None, Group_Secp256r1, Group_Secp384r1, Group_X25519);
+   subtype ECDHE_Group is Maybe_ECDHE_Group range Group_Secp256r1 .. Group_X25519;
+
+   --  RFC 8422 5.1.1: NamedGroup wire values
+   Group_Secp256r1_Wire : constant Unsigned_16 := 16#0017#;
+   Group_Secp384r1_Wire : constant Unsigned_16 := 16#0018#;
+   Group_X25519_Wire    : constant Unsigned_16 := 16#001D#;
+
+   type ECDHE_Group_Wire_Type is array (Maybe_ECDHE_Group) of Unsigned_16;
+
+   ECDHE_Group_Wire : constant ECDHE_Group_Wire_Type := [
+      Group_None => 0,
+      Group_Secp256r1 => Group_Secp256r1_Wire,
+      Group_Secp384r1 => Group_Secp384r1_Wire,
+      Group_X25519 => Group_X25519_Wire
+   ];
+
+   ----------------------------------------------------------------------------
+   --  Group_From_Wire
+   --  Given the wire value for a supported EC group, return the enum value.
+   ----------------------------------------------------------------------------
+   function Group_From_Wire (W : Unsigned_16) return Maybe_ECDHE_Group;
+
+   ----------------------------------------------------------------------------
    --  Connection state
    --
    --  The handshake proceeds through these states in order.
@@ -1316,12 +1342,11 @@ is
       DoS_Caps : SPARKTLS.DoS_Caps := Default_DoS_Caps;
       Versions : Version_Policy := Allow_Both;  --  TLS version control
 
-      --  Client: preferred initial TLS 1.3 key_share group. Zero keeps
+      --  Client: preferred initial TLS 1.3 key_share group. Group_None keeps
       --  the default browser-like behavior: advertise X25519/P-256/P-384
       --  in supported_groups and send an initial X25519 key_share. Set to
-      --  16#001D# (X25519), 16#0017# (secp256r1), or 16#0018#
-      --  (secp384r1) to advertise and send only that group in CH1.
-      Client_Key_Share_Group : Unsigned_16 := 0;
+      --  a specific Group if only advertising that particular one.
+      Client_Key_Share_Group : Maybe_ECDHE_Group := Group_None;
 
       --  Validation settings
       Verify_Mode    : Validation_Mode := Mode_WebPKI;
@@ -1564,34 +1589,11 @@ is
    subtype Session_ID_Length is N32 range 0 .. 32;
    subtype TLS12_Ticket_Buffer is Byte_Seq (0 .. Max_TLS12_Ticket_Len - 1);
 
-   --  0 = not yet selected / absent. The predicate makes
-   --  Valid_ECDHE_Group free at every /= 0 use site (#82); the check
-   --  moves to the two guarded parse sites that produce the value.
-   --  Constants live in the Handshake.TLS12 child, hence literals
-   --  (16#001D# X25519, 16#0017# secp256r1, 16#0018# secp384r1).
-   subtype Maybe_ECDHE_Group is Unsigned_16
-   with Static_Predicate => Maybe_ECDHE_Group in 0 | 16#001D# | 16#0017# | 16#0018#;
-
-   --  Carve 3a: negotiated-curve seed of the KE ADT. Validity is BY TYPE
-   --  (no zero member), so Valid_ECDHE_Group demands on this value are
-   --  tautologies; Negotiated carries only the phase  whether Curve is
-   --  the peer-agreed group or the meaningless default. No predicate:
-   --  there is no cross-field relation to state (user rule 2026-08-24
-   --  predicates only for what the base type system cannot express).
-   subtype ECDHE_Group is Unsigned_16
-   with Static_Predicate => ECDHE_Group in 16#001D# | 16#0017# | 16#0018#;
-
-   --  Carve 3b: the key material joins the seed. The 1.3 client
-   --  generates shares for several curves BEFORE negotiation, so
-   --  material-presence is NOT gated on Negotiated; Curve selects the
-   --  live pair once Negotiated. No predicate: there is no cross-field
-   --  relation the base type system cannot express (arrays are always
-   --  initialized; Curve is valid by type; Negotiated is pure phase).
    type KE_State is record
       Negotiated : Boolean := False;
-      Curve      : ECDHE_Group := 16#001D#;
-      Local_SK   : Bytes_32 := (others => 0);  --  X25519
-      Peer_PK    : Bytes_32 := (others => 0);  --  X25519
+      Curve      : ECDHE_Group := Group_X25519;
+      Local_SK   : Bytes_32 := (others => 0);
+      Peer_PK    : Bytes_32 := (others => 0);
       P256_SK    : Bytes_32 := (others => 0);
       P256_PK    : P256_Peer_Key := (others => 0);
       P384_SK    : Bytes_48 := (others => 0);
@@ -1720,7 +1722,7 @@ is
       --  (BoGo HelloRetryRequest-CipherChange-TLS13). Stash for
       --  comparison.
       HRR_Cipher_Suite            : Unsigned_16 := 0;
-      HRR_Selected_Group          : Maybe_ECDHE_Group := 0;
+      HRR_Selected_Group          : Maybe_ECDHE_Group := Group_None;
       HRR_Cookie_Len              : N32 range 0 .. 1024 := 0;
       HRR_Cookie                  : Byte_Seq (0 .. 1023) := (others => 0);
       --  RFC 8446 D.4: the dummy CCS is emitted exactly once per
@@ -2112,11 +2114,11 @@ is
    --  prior to ServerHello build.
    function Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC : Handshake_Context) return Boolean
    is (not HC.KE.Negotiated
-       or else (HC.KE.Curve = 16#001D#
+       or else (HC.KE.Curve = Group_X25519
                 and then (HC.Client_Has_X25519 or else HC.Client_Supports_X25519))
-       or else (HC.KE.Curve = 16#0017#
+       or else (HC.KE.Curve = Group_Secp256r1
                 and then (HC.Client_Has_P256 or else HC.Client_Supports_P256))
-       or else (HC.KE.Curve = 16#0018#
+       or else (HC.KE.Curve = Group_Secp384r1
                 and then (HC.Client_Has_P384 or else HC.Client_Supports_P384)))
    with Ghost;
 

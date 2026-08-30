@@ -72,6 +72,19 @@ is
    end Compact;
 
    ----------------------------------------------------------------------------
+   --  Group_From_Wire
+   ----------------------------------------------------------------------------
+   function Group_From_Wire (W : Unsigned_16) return Maybe_ECDHE_Group is
+   begin
+      case W is
+         when Group_Secp256r1_Wire => return Group_Secp256r1;
+         when Group_Secp384r1_Wire => return Group_Secp384r1;
+         when Group_X25519_Wire    => return Group_X25519;
+         when others               => return Group_None;
+      end case;
+   end;
+
+   ----------------------------------------------------------------------------
    --  Feed_Ciphertext
    ----------------------------------------------------------------------------
    procedure Feed_Ciphertext (S : in out Session; Data : in Byte_Seq; Bytes_Fed : out N32) is

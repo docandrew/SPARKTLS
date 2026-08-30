@@ -606,13 +606,13 @@ is
       --  matching Client_Has_* flag so the per-branch pragma Assert
       --  proves the cross-reference.
       HC.KE.Shared := (others => 0);
-      if HC.HRR_Sent and then HC.HRR_Selected_Group = 16#001D# then
+      if HC.HRR_Sent and then HC.HRR_Selected_Group = Group_X25519 then
          if not HC.Client_Has_X25519 then
             KS_Raw_Len := 0;
             OK := False;
             return;
          end if;
-         HC.KE.Curve := 16#001D#;
+         HC.KE.Curve := Group_X25519;
          HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len, OK);
@@ -620,13 +620,13 @@ is
             HC.Ext_Parse_Err := Illegal_Parameter;
             return;
          end if;
-      elsif HC.HRR_Sent and then HC.HRR_Selected_Group = 16#0017# then
+      elsif HC.HRR_Sent and then HC.HRR_Selected_Group = Group_Secp256r1 then
          if not HC.Client_Has_P256 then
             KS_Raw_Len := 0;
             OK := False;
             return;
          end if;
-         HC.KE.Curve := 16#0017#;
+         HC.KE.Curve := Group_Secp256r1;
          HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_P256 (HC, KS_Raw, KS_Raw_Len, OK);
@@ -634,13 +634,13 @@ is
             KS_Raw_Len := 0;
             return;
          end if;
-      elsif HC.HRR_Sent and then HC.HRR_Selected_Group = 16#0018# then
+      elsif HC.HRR_Sent and then HC.HRR_Selected_Group = Group_Secp384r1 then
          if not HC.Client_Has_P384 then
             KS_Raw_Len := 0;
             OK := False;
             return;
          end if;
-         HC.KE.Curve := 16#0018#;
+         HC.KE.Curve := Group_Secp384r1;
          HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_P384 (HC, KS_Raw, KS_Raw_Len, OK);
@@ -652,7 +652,7 @@ is
          KS_Raw_Len := 0;
          OK := False;
       elsif HC.Client_Has_X25519 then
-         HC.KE.Curve := 16#001D#;
+         HC.KE.Curve := Group_X25519;
          HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_X25519 (HC, KS_Raw, KS_Raw_Len, OK);
@@ -662,7 +662,7 @@ is
             return;
          end if;
       elsif HC.Client_Has_P256 then
-         HC.KE.Curve := 16#0017#;
+         HC.KE.Curve := Group_Secp256r1;
          HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_P256 (HC, KS_Raw, KS_Raw_Len, OK);
@@ -671,7 +671,7 @@ is
             return;
          end if;
       elsif HC.Client_Has_P384 then
-         HC.KE.Curve := 16#0018#;
+         HC.KE.Curve := Group_Secp384r1;
          HC.KE.Negotiated := True;
          pragma Assert (Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC));
          Generate_KS_P384 (HC, KS_Raw, KS_Raw_Len, OK);

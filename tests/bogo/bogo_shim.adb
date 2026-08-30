@@ -1327,7 +1327,7 @@ procedure Bogo_Shim is
                Client_Cfg.Get_Time := Current_Time'Unrestricted_Access;
                Client_Cfg.Verify_Mode := Mode_RFC5280;
                Client_Cfg.Versions := Policy;
-               Client_Cfg.Client_Key_Share_Group := Cfg.Preferred_Group;
+               Client_Cfg.Client_Key_Share_Group := Group_From_Wire (Cfg.Preferred_Group);
                Client_Cfg.Resume_Ticket := Saved_Ticket;
                Client_Cfg.TLS12_Resume_Ticket := Saved_Ticket_12;
                Client_Cfg.Skip_Verify := True;

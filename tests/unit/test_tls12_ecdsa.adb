@@ -169,39 +169,39 @@ begin
       Check
         ("TLS 1.2 allows default ECDSA cert curve policy",
          SPARKTLS.Handshake.TLS12.ECDSA_Cert_Curve_Allowed_TLS12
-           (0, X509.Algo_EC_P256));
+           (SPARKTLS.Group_None, X509.Algo_EC_P256));
 
       Check
         ("TLS 1.2 rejects P-256 ECDSA cert when only P-384 offered",
          not SPARKTLS.Handshake.TLS12.ECDSA_Cert_Curve_Allowed_TLS12
-           (SPARKTLS.Handshake.TLS12.Group_Secp384r1, X509.Algo_EC_P256));
+           (SPARKTLS.Group_Secp384r1, X509.Algo_EC_P256));
 
       Check
         ("TLS 1.2 accepts P-384 ECDSA cert when P-384 offered",
          SPARKTLS.Handshake.TLS12.ECDSA_Cert_Curve_Allowed_TLS12
-           (SPARKTLS.Handshake.TLS12.Group_Secp384r1, X509.Algo_EC_P384));
+           (SPARKTLS.Group_Secp384r1, X509.Algo_EC_P384));
 
       Check
         ("TLS 1.2 rejects NIST ECDSA cert when only X25519 offered",
          not SPARKTLS.Handshake.TLS12.ECDSA_Cert_Curve_Allowed_TLS12
-           (SPARKTLS.Handshake.TLS12.Group_X25519, X509.Algo_EC_P384));
+           (SPARKTLS.Group_X25519, X509.Algo_EC_P384));
 
       Check
         ("TLS 1.2 allows default selected ECDHE group policy",
          SPARKTLS.Handshake.TLS12.Selected_Group_Allowed_TLS12
-           (0, SPARKTLS.Handshake.TLS12.Group_Secp256r1));
+           (SPARKTLS.Group_None, SPARKTLS.Group_Secp256r1));
 
       Check
         ("TLS 1.2 accepts selected group that was offered",
          SPARKTLS.Handshake.TLS12.Selected_Group_Allowed_TLS12
-           (SPARKTLS.Handshake.TLS12.Group_Secp384r1,
-            SPARKTLS.Handshake.TLS12.Group_Secp384r1));
+           (SPARKTLS.Group_Secp384r1,
+            SPARKTLS.Group_Secp384r1));
 
       Check
         ("TLS 1.2 rejects selected group that was not offered",
          not SPARKTLS.Handshake.TLS12.Selected_Group_Allowed_TLS12
-           (SPARKTLS.Handshake.TLS12.Group_Secp384r1,
-            SPARKTLS.Handshake.TLS12.Group_Secp256r1));
+           (SPARKTLS.Group_Secp384r1,
+            SPARKTLS.Group_Secp256r1));
 
       declare
          HC       : Handshake_Context;
@@ -256,7 +256,7 @@ begin
            ("2103c365b84dd207191b2c2d091dd08cd2f3578331125e86a"
             & "278aab2616153e63257");
       begin
-         HC.KE.Curve      := SPARKTLS.Handshake.TLS12.Group_Secp256r1;
+         HC.KE.Curve      := SPARKTLS.Group_Secp256r1;
          HC.KE.Negotiated := True;
          SPARKTLS.Handshake.TLS12.Parse_Client_Key_Exchange
            (HC, Bad_CKE, Parse_OK);

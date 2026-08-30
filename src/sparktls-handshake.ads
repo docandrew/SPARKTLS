@@ -25,12 +25,12 @@ is
    HT_Finished             : constant Byte := 16#14#;
 
    --  Extension type codes
-   Ext_Server_Name : constant := 16#00_00#;
-   Ext_Supported_Groups : constant := 16#00_0A#;
+   Ext_Server_Name          : constant := 16#00_00#;
+   Ext_Supported_Groups     : constant := 16#00_0A#;
    Ext_Signature_Algorithms : constant := 16#00_0D#;
-   Ext_Key_Share : constant := 16#00_33#;
-   Ext_PSK_Key_Exchange : constant := 16#00_2D#;
-   Ext_Supported_Versions : constant := 16#00_2B#;
+   Ext_Key_Share            : constant := 16#00_33#;
+   Ext_PSK_Key_Exchange     : constant := 16#00_2D#;
+   Ext_Supported_Versions   : constant := 16#00_2B#;
 
    --  RFC 8446 Section 4: Parse handshake message header.
    --  Every handshake message starts with type(1) + length(3).
