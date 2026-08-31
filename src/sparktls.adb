@@ -938,6 +938,14 @@ is
          when Insufficient_Buffer =>
             return "the caller-supplied buffer was too small for the data";
 
+         when Bad_Configuration =>
+            return "the Config cannot start a handshake (missing RNG, missing server identity or " &
+              "incoherent mTLS settings)";
+
+         when No_Free_Sessions =>
+            return "all handshake pool slots are in use; retry after a session completes or raise" &
+              " the HS_Pool capacity";
+
          when Unsupported_Cipher_Suite =>
             return "peer selected a cipher suite this build does not " & "implement";
       end case;
@@ -951,10 +959,10 @@ is
    begin
       case Description is
          when 40 =>
-            return Handshake_Failure;          --  handshake_failure
+            return Handshake_Failure;           --  handshake_failure
 
          when 42 | 43 =>
-            return Bad_Certificate;        --  bad/unsupported cert
+            return Bad_Certificate;             --  bad/unsupported cert
 
          when 44 =>
             return Certificate_Verify_Failed;   --  certificate_revoked
@@ -990,23 +998,54 @@ is
             return Internal_Error;              --  internal_error
 
          when 109 =>
-            return Missing_Extension;          --  missing_extension
+            return Missing_Extension;           --  missing_extension
 
          when 110 =>
-            return Unsupported_Extension;      --  unsupported_extension
+            return Unsupported_Extension;       --  unsupported_extension
 
          when 112 =>
-            return Illegal_Parameter;          --  unrecognized_name
+            return Illegal_Parameter;           --  unrecognized_name
 
          when 116 =>
-            return Certificate_Required;       --  certificate_required
+            return Certificate_Required;        --  certificate_required
 
          when 120 =>
-            return No_Application_Protocol;    --  no_application_protocol
+            return No_Application_Protocol;     --  no_application_protocol
 
          when others =>
             return Handshake_Failure;
       end case;
    end Error_From_Alert;
+
+   ----------------------------------------------------------------------------
+   --  To_Name
+   ----------------------------------------------------------------------------
+   function To_Name (ALPN_Str : String) return Hostname_Buf
+   is
+   begin
+      return HB : Hostname_Buf do
+         HB.Data (1 .. ALPN_Str'Length) := ALPN_Str;
+         HB.Len := ALPN_Str'Length;
+      end return;
+   end To_Name;
+
+   ----------------------------------------------------------------------------
+   --  Not_Random
+   ----------------------------------------------------------------------------
+   procedure Not_Random (Output : out Byte_Seq)
+   is
+   begin
+      Output := (others => 0);
+   end Not_Random;
+
+   ----------------------------------------------------------------------------
+   --  Is_Sentinel_Random
+   ----------------------------------------------------------------------------
+   function Is_Sentinel_Random (F : Live_Random_Fn) return Boolean
+      with SPARK_Mode => Off
+   is
+   begin
+      return F = Not_Random'Access;
+   end Is_Sentinel_Random;
 
 end SPARKTLS;

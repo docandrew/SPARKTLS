@@ -69,25 +69,22 @@ is
       end;
    end Check_Resume_Ticket_Usable;
 
-   --  First conjunct: certificate checking ON (not Skip_Verify) requires
-   --  a CLOCK, with no exception for resumption.
+   ----------------------------------------------------------------------------
+   --  Client_Config_Can_Start
    --
-   --  Resumption used to excuse it, via the "or else Resume_Usable" arm
-   --  below. That was wrong, because the PEER decides whether resumption
-   --  happens: a server -- or an attacker in the path -- can decline the
-   --  ticket and force a full handshake, and chain validation then needs
-   --  a clock to check notBefore/notAfter. Without one the runtime guards
-   --  fail closed (Bad_Certificate), so this was never a validation
-   --  bypass, but it let an application build a config that only works
-   --  while an attacker permits it. Reject at Init, where the operator
-   --  sees it at startup rather than on the first declined ticket.
+   --  A RNG callback must be supplied.
+   --
+   --  Certificate checking ON (not Skip_Verify) requires a CLOCK, with no
+   --  exception for resumption.
    --
    --  A missing TRUST STORE is deliberately NOT fatal here: a client that
    --  only ever resumes legitimately has no roots, and the second
    --  conjunct still lets it start. If such a client is forced into a
    --  full handshake it fails closed at the same runtime guard.
+   ----------------------------------------------------------------------------
    function Client_Config_Can_Start (Cfg : Config; Resume_Usable : Boolean) return Boolean
-   is ((Cfg.Skip_Verify or else Cfg.Get_Time /= null)
+   is (not Is_Sentinel_Random (Cfg.Random)
+       and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
        and then
          (Cfg.Skip_Verify
           or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)
@@ -169,6 +166,7 @@ is
         then
           S.State = Wait_Server_Hello
           and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length));
+
    procedure Reasm_Fresh_Fragment
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
@@ -199,52 +197,6 @@ is
         then
           S.State = Wait_Server_Hello
           and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length));
-
-   --  Append handshake message bytes to the transcript.
-   --  RFC 5246 7.4.9 / RFC 8446 4.4.1: the transcript drives
-   --  Finished verify_data, so it is append-only  losing bytes
-   --  desyncs from the peer.
-
-   procedure Configure
-     (S                    : out Client_Session;
-      Hostname             : String;
-      Trust                : Trust_Store_Access;
-      Random               : Live_Random_Fn;
-      Clock                : Get_Time_Fn;
-      Local                : Valid_Identity_Access := null;
-      Mode                 : Validation_Mode := Mode_WebPKI;
-      ALPN                 : String := "";
-      Versions             : Version_Policy := Allow_Both;
-      Resume               : Session_Ticket := (others => <>);
-      Skip_Verify          : Boolean := False;
-      Skip_Hostname_Verify : Boolean := False)
-   is
-      Cfg : Config :=
-        (Random               => Random,
-         Trust                => Trust,
-         Local                => Local,
-         Skip_Verify          => Skip_Verify,
-         Skip_Hostname_Verify => Skip_Hostname_Verify,
-         Get_Time             => Clock,
-         Versions             => Versions,
-         Resume_Ticket        => Resume,
-         others               => <>);
-   begin
-
-      Cfg.Get_Time := Clock;
-      Cfg.Verify_Mode := Mode;
-      Cfg.Versions := Versions;
-      Cfg.Resume_Ticket := Resume;
-      if Hostname'Length > 0 and then Hostname'Length <= Max_Hostname_Len then
-         Cfg.Server_Name.Data (1 .. Hostname'Length) := Hostname;
-         Cfg.Server_Name.Len := Hostname'Length;
-      end if;
-      if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
-         Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
-         Cfg.ALPN.Len := ALPN'Length;
-      end if;
-      Init (S, Cfg);
-   end Configure;
 
    procedure Initialize_Client_Handshake (S : in out Client_Session; OK : out Boolean)
    is
@@ -345,58 +297,50 @@ is
       end if;
    end Initialize_Client_Handshake;
 
-   procedure Init (S : out Client_Session; Cfg : in Config) is
+   function Configure (Cfg : in Config) return Session is
       OK            : Boolean;
       Resume_Usable : Boolean := False;
    begin
-      S := (State => Client_Hello_Sent, Role => Role_Client, others => <>);
-      S.Get_Time := Cfg.Get_Time;
-      S.Server_Name := Cfg.Server_Name;
-
       Check_Resume_Ticket_Usable (Cfg.Resume_Ticket, Cfg.Get_Time, Cfg.Server_Name, Resume_Usable);
 
-      if not Client_Config_Can_Start (Cfg, Resume_Usable) then
-         Set_State (S, Error_State);
-         S.Last_Error := Internal_Error;
-         return;
-      end if;
+      return S : Client_Session :=
+        (Role  => Role_Client,
+         State => Client_Hello_Sent,
+         Get_Time => Cfg.Get_Time,
+         Server_Name => Cfg.Server_Name,
+         HC => (Cfg => Cfg, others => <>),
+         others => <>)
+      do
+         if not Client_Config_Can_Start (Cfg, Resume_Usable) then
+            Set_State (S, Error_State);
+            S.Last_Error := Bad_Configuration;
+         else
+            SPARKTLS.HS_Pool.Acquire (S.Slot);
 
-      SPARKTLS.HS_Pool.Acquire (S.Slot);
-      declare
-         Fresh : Handshake_Context := (Cfg => (Random => Cfg.Random, others => <>), others => <>);
-      begin
-         S.HC := Fresh;
-      end;
-      if S.Slot = No_Slot then
-         S.State := Error_State;
-         S.Last_Error := Internal_Error;
-         return;
-      end if;
+            if S.Slot = No_Slot then
+               S.State := Error_State;
+               S.Last_Error := No_Free_Sessions;
+            else
+               --  RFC 8446 4.6.1: a usable saved ticket rides in the CH as pre_shared_key;
+               --  the binder derives from its PSK.
+               if Resume_Usable then
+                  S.Ticket := Cfg.Resume_Ticket;
+               end if;
 
-      --  Fresh transcript for this handshake. The hash contexts also
-      --  carry correct defaults (see SHA256.Context), but the explicit
-      --  Start documents the lifecycle and resets Choice/Has_Data if
-      --  the allocator ever recycles contexts.
-      S.HC.Cfg := Cfg;
+               declare
+                  Acquired_Slot : constant Slot_Index := S.Slot;
+               begin
+                  Initialize_Client_Handshake (S, OK);
 
-      --  RFC 8446 4.6.1: if the caller passed a previously-saved
-      --  resumption ticket via Cfg, copy it into S.Ticket before
-      --  Build_Client_Hello so the CH carries the pre_shared_key
-      --  extension and the binder is computed from the ticket's PSK.
-      if Resume_Usable then
-         S.Ticket := Cfg.Resume_Ticket;
-      end if;
-
-      declare
-         Acquired_Slot : constant Slot_Index := S.Slot;
-      begin
-         Initialize_Client_Handshake (S, OK);
-         if not OK then
-            SPARKTLS.HS_Pool.Release (Acquired_Slot);
-            S.Slot := No_Slot;
+                  if not OK then
+                     SPARKTLS.HS_Pool.Release (Acquired_Slot);
+                     S.Slot := No_Slot;
+                  end if;
+               end;
+            end if;
          end if;
-      end;
-   end Init;
+      end return;
+   end Configure;
 
    --  Process a decrypted handshake message during the handshake
    --  RFC 8446 4.3.1 client-side EncryptedExtensions handler.

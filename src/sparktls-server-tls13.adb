@@ -1236,8 +1236,7 @@ is
       Cert_Len : N32;
    begin
       Emitted := False;
-      if Cfg.Local = null
-        or else Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
+      if Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
         or else Cfg.Local.Int_Count > Max_Pool_Size
         or else (for some I in 0 .. Max_Pool_Size - 1
                  => Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
@@ -1247,6 +1246,7 @@ is
          Result := Error_Alert;
          return;
       end if;
+
       Handshake.TLS13.Build_Certificate_Chain
         (Id => Cfg.Local.all, Result => Cert_Buf, Len => Cert_Len);
 

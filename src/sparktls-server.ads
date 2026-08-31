@@ -37,30 +37,21 @@ is
    --    end loop;
    ----------------------------------------------------------------------------
 
-   --  Quick setup: configure and initialize a server session in one call.
+   ----------------------------------------------------------------------------
+   --  Configure
+   --
+   --  Return a Session ready for handshakes.
    --  Sets Mode_WebPKI.
    --  Optionally provide a Trust store and Request_Client_Cert for mTLS.
-   procedure Configure
-     (S                     : out Server_Session;
-      Local                 : Valid_Identity_Access;
-      Random                : Live_Random_Fn;
-      Trust                 : Trust_Store_Access := null;
-      Request_Client_Cert   : Boolean := False;
-      Require_Client_Cert   : Boolean := False;
-      Store_Session         : Store_Session_Fn := null;
-      Lookup_Session        : Lookup_Session_Fn := null;
-      ALPN                  : String := "";
-      Versions              : Version_Policy := Allow_Both;
-      Get_Active_TEK        : Get_Active_TEK_Fn := null;
-      Get_TEK_By_Id         : Get_TEK_By_Id_Fn := null;
-      TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
-      Get_Time              : Get_Time_Fn := null;
-      Select_Identity       : SNI_Cert_Selector := null)
-      --  Mirrors Server.Init's requirements, which Configure must satisfy on
-      --  the caller's behalf. Client.Configure has always carried the equivalent
-      --  check; the server's absence of one was invisible while this body was
-      --  SPARK_Mode => Off, and let a null Random reach Init.
-   with Pre => Local /= null and then Local.Has_Identity;
+   --
+   --  Side_Effects: allocate from the available Handshake Context (HC) pool
+   ----------------------------------------------------------------------------
+   function Configure (Cfg : Config) return Session
+   with
+     Side_Effects,
+     Pre  => Cfg.Local.Has_Identity,
+     Post => Configure'Result.Role = Role_Server and then State (Configure'Result) /= Idle;
+
    --  Select_Identity: optional SNI-based identity selector
    --  (RFC 6066 3 / RFC 8446 4.4.2.4). When non-null and the client
    --  sent a non-empty server_name extension, the callback receives
@@ -89,71 +80,52 @@ is
    --  cache). SPARK's ownership model treats it as a move, but the pointer
    --  is intentionally shared between caller and Config.
 
-   --  Initialize a server session with full control over Config.
-   --  Cfg.Local must point to an Identity with a certificate and key.
-   procedure Init
-     (S   : out Server_Session;
-      Cfg : in Config)
-   with
-     Pre => Cfg.Local /= null and then Cfg.Local.Has_Identity;
-     --  The formal is the CONSTRAINED subtype (#39, 2026-08-24):
-     --  inside the body S.Role = Role_Server by view, so the
-     --  aggregate's discriminant check is static, and the old
-     --  'Constrained Pre + Role Post are subsumed by the profile.
-
    --  RFC 8446 4.1: Step the server handshake / record processing
    --  state machine.
    --
    --  Result semantics (RFC 8446 4, 5, 6):
-   --    OK           â progress made, state may or may not change
-   --    Need_Input   â caller must feed more ciphertext
-   --    Has_Output   â caller must drain and send ciphertext
-   --    Handshake_Done â handshake complete, state = Connected
-   --    Plaintext_Ready â decrypted app data available
-   --    Shutdown     â clean close complete, state = Closed
-   --    Error_Alert  â fatal error, alert was sent, state = Closed
-   procedure Advance
-     (S      : in out Server_Session;
-      Result : out Action)
-      --  Role (S) = Role_Server was deleted from this Pre 2026-08-20: the
-      --  Server_Session subtype constrains the discriminant, so it is now
-      --  UNSTATEABLE rather than merely required.
+   --    OK              progress made, state may or may not change
+   --    Need_Input      caller must feed more ciphertext
+   --    Has_Output      caller must drain and send ciphertext
+   --    Handshake_Done  handshake complete, state = Connected
+   --    Plaintext_Ready decrypted app data available
+   --    Shutdown        clean close complete, state = Closed
+   --    Error_Alert     fatal error, alert was sent, state = Closed
+   procedure Advance (S : in out Server_Session; Result : out Action)
+     --  Role (S) = Role_Server was deleted from this Pre 2026-08-20: the
+     --  Server_Session subtype constrains the discriminant, so it is now
+     --  UNSTATEABLE rather than merely required.
    with Pre => State (S) /= Idle;
 
    --  RFC 8446 6.1: Send a close_notify alert.
    --  Transitions to Closing state.
-   procedure Close_Notify
-     (S : in out Session)
-      --  Deliberately callable on an already-closed session: Advance reports
-      --  both a half-duplex close and a completed close with Shutdown, and the
-      --  application cannot distinguish them. On a finished session this is a
-      --  no-op (the body returns before touching the scrubbed keys).
+   procedure Close_Notify (S : in out Session)
+     --  Deliberately callable on an already-closed session: Advance reports
+     --  both a half-duplex close and a completed close with Shutdown, and the
+     --  application cannot distinguish them. On a finished session this is a
+     --  no-op (the body returns before touching the scrubbed keys).
    with
-     Pre =>
-       Role (S)
-       = Role_Server
-         --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
-         --  the caller cannot check is unenforceable). Covers the
-         --  arithmetic backstop on both versions and the 2**23 cap
-         --  on TLS 1.2, version-gated inside -- the old ghost _12
-         --  conjunct would wrongly reject a TLS 1.3 session sitting
-         --  at the cap awaiting rotation, now that the counter is
-         --  the shared channel counter.
+     Pre  =>
+       Role (S) = Role_Server
+       --  EXECUTABLE nonce-space fact (the #2302 doctrine: a Pre
+       --  the caller cannot check is unenforceable). Covers the
+       --  arithmetic backstop on both versions and the 2**23 cap
+       --  on TLS 1.2, version-gated inside -- the old ghost _12
+       --  conjunct would wrongly reject a TLS 1.3 session sitting
+       --  at the cap awaiting rotation, now that the counter is
+       --  the shared channel counter.
        and not Write_Limit_Reached (S),
      Post =>
        (if State (S)'Old in Connected | Closing
         then State (S) = Closing)             --  RFC 8446 6.1
        and
-       --  Plain "and"/"or", never the short-circuit forms. The right
-       --  operand of "and then"/"or else" is potentially unevaluated,
-       --  and Ada RM 6.1.1(27) bars a function call as the prefix of
-       --  'Old in such a position. S'Old is not the escape hatch:
-       --  Session is a deep type, so it introduces aliasing and SPARK
-       --  RM 3.10(13) rejects it -- which aborted proof round 26.
-                                                                   (State (S)'Old in
-                                                                      Connected
-                                                                      | Closing
-                                                                    or State (S) = State (S)'Old);
+         --  Plain "and"/"or", never the short-circuit forms. The right
+         --  operand of "and then"/"or else" is potentially unevaluated,
+         --  and Ada RM 6.1.1(27) bars a function call as the prefix of
+         --  'Old in such a position. S'Old is not the escape hatch:
+         --  Session is a deep type, so it introduces aliasing and SPARK
+         --  RM 3.10(13) rejects it -- which aborted proof round 26.
+         (State (S)'Old in Connected | Closing or State (S) = State (S)'Old);
 
    --  True if a client certificate was received (mutual TLS).
    --
@@ -198,7 +170,6 @@ is
    --  Now_Secs is wall-clock Unix seconds recorded as Created_At for the
    --  new key, typically Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all).
 
-
 private
 
    --  Completions of the query functions declared above. A public child's
@@ -208,15 +179,20 @@ private
    function Has_Peer_Certificate (S : Session) return Boolean
    is (S.Peer_Cert_Valid);
 
-   --  A server config that can actually run a handshake: identity present
-   --  and a randomness source wired. This is the gate Init applies before
-   --  the ONLY write of HC.Cfg, plus the mTLS coherence rule.
+   ----------------------------------------------------------------------------
+   --  Server_Config_Can_Start
+   --
+   --  A server config that can actually run a handshake:
+   --  Identity must be present, RNG must be present, trust store and clock
+   --  must be present if certificate checking is enabled.
+   ----------------------------------------------------------------------------
    function Server_Config_Can_Start (Cfg : Config) return Boolean
-   is (Cfg.Local /= null
+   is (not Is_Sentinel_Random (Cfg.Random)
        and then Cfg.Local.Has_Identity
-       and then (not Cfg.Request_Client_Cert
-                 or else Cfg.Skip_Verify
-                 or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
+       and then
+         (not Cfg.Request_Client_Cert
+          or else Cfg.Skip_Verify
+          or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)));
 
    --  The configured-server fact as a TYPE, so the handler chain receives
    --  it by construction instead of re-deriving it per call.
@@ -236,9 +212,6 @@ private
    --  path today (runtime-guarded there anyway). Strengthen with a second
    --  subtype if that path ever wants it proved instead.
    subtype Ready_Config is Config
-   with
-     Dynamic_Predicate =>
-       Ready_Config.Local /= null
-       and then Ready_Config.Local.Has_Identity;
+   with Dynamic_Predicate => Ready_Config.Local /= null and then Ready_Config.Local.Has_Identity;
 
 end SPARKTLS.Server;

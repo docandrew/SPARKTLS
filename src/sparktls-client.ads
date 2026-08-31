@@ -54,58 +54,31 @@ is
    --       Socket_Write (Buf (0 .. N - 1));
    ----------------------------------------------------------------------------
 
+   ----------------------------------------------------------------------------
+   --  Configure
    --  Quick setup: configure and initialize a client session in one call.
    --  Sets Mode_WebPKI and Purpose_Server.
    --  After Configure, the caller should drain and send the ClientHello.
-   procedure Configure
-     (S                    : out Client_Session;
-      Hostname             : String;
-      Trust                : Trust_Store_Access;
-      Random               : Live_Random_Fn;
-      Clock                : Get_Time_Fn;
-      Local                : Valid_Identity_Access := null;
-      Mode                 : Validation_Mode := Mode_WebPKI;
-      ALPN                 : String := "";
-      Versions             : Version_Policy := Allow_Both;
-      Resume               : Session_Ticket := (others => <>);
-      Skip_Verify          : Boolean := False;
-      Skip_Hostname_Verify : Boolean := False)
-     --  Mirrors Init's postcondition: Configure is a thin wrapper that
-     --  builds a Config and calls Init, so it can promise no more than Init
-     --  does. Init fails closed to Error_State.
-   with Pre => Clock /= null;
-   --  Skip_Verify: skip full X.509 chain validation against Trust
-   --  (development / self-signed certs). Without Skip_Verify, a trust
-   --  store and clock must be configured before the handshake can
-   --  start, except for valid TLS 1.3 ticket resumption. Hostname
-   --  binding (6.4) is NOT affected by this flag  set
-   --  Skip_Hostname_Verify to opt out of hostname binding as well.
    --
-   --  Skip_Hostname_Verify: skip RFC 6125 6.4 SAN/CN matching even
-   --  when Hostname is non-empty. The usual opt-out is to pass
-   --  Hostname => ""; this flag is for callers that need SNI on the
-   --  wire (Hostname-derived) but explicitly don't want the cert
-   --  bound to it (rare; e.g. trust-on-first-use schemes).
-   --  ALPN (RFC 7301): the protocol name to offer in the
-   --  application_layer_protocol_negotiation extension. Empty
-   --  string means no ALPN extension is sent. Single protocol
-   --  only  for multi-protocol advertisement use Init with a
-   --  manually-built Config.
+   --  Side_Effects: allocate from the available Handshake Context (HC) pool
+   ----------------------------------------------------------------------------
+   function Configure (Cfg : Config) return Session
+   with
+     Side_Effects,
+     Post => Configure'Result.Role = Role_Client and then State (Configure'Result) /= Idle;
 
-   --  Initialize a client session with full control over Config.
-   --  After Init, the caller should drain and send the ClientHello.
-   procedure Init (S : out Client_Session; Cfg : in Config);
-
+   ----------------------------------------------------------------------------
+   --  Advance
    --  Step the client handshake / record processing state machine.
    --
    --  Processes available input, advances state, and may produce
    --  output. The returned Action tells the caller what to do:
    --
-   --    Need_Input     => read from transport, Feed_Ciphertext, Advance
-   --    Has_Output     => Drain_Ciphertext, send, Advance
+   --    Need_Input      => read from transport, Feed_Ciphertext, Advance
+   --    Has_Output      => Drain_Ciphertext, send, Advance
    --    Plaintext_Ready => call Read_Plaintext
-   --    Handshake_Done => connection is ready for app data
-   --    Error_Alert    => check Last_Error (S)
+   --    Handshake_Done  => connection is ready for app data
+   --    Error_Alert     => check Last_Error (S)
    --  RFC 8446 4.1: Step the client handshake / record processing
    --  state machine.
    procedure Advance (S : in out Session; Result : out Action)

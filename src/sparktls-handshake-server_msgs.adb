@@ -1246,10 +1246,12 @@ is
       HC            : in out Handshake_Context)
    is
       Cert_Is_ECDSA : constant Boolean :=
-        HC.Cfg.Local /= null
+        HC.Cfg.Local.Has_Identity
         and then HC.Cfg.Local.Sign_Algo in Sign_ECDSA_P256 | Sign_ECDSA_P384 | Sign_Ed25519;
+
       Cert_Is_RSA   : constant Boolean :=
-        HC.Cfg.Local /= null and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS;
+        HC.Cfg.Local.Has_Identity
+        and then HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS;
    begin
       if Val = 16#00FF# then
          HC.Saw_Reneg_Info := True;
@@ -1266,21 +1268,6 @@ is
          elsif Val = Wire_Suite_CHACHA20_POLY1305_SHA256 then
             Negotiated := To_Suite (Val);
          end if;
-      end if;
-
-      if HC.Cfg.Local = null then
-         if Val in
-              Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
-              | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
-              | Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-              | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-              | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
-              | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
-           and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (Negotiated_12), Val)
-         then
-            Negotiated_12 := To_Suite (Val);
-         end if;
-         return;
       end if;
 
       if Cert_Is_ECDSA

@@ -1,4 +1,5 @@
 with Interfaces;          use Interfaces;
+with SPARKTLS;
 with SPARKTLS_Reassembly; use SPARKTLS_Reassembly;
 with SPARKTLS.HS_Pool;
 with SPARKTLS.Records;    use SPARKTLS.Records;
@@ -40,28 +41,7 @@ is
 
    --  Forward declarations
    procedure Advance_Handshake
-     (S : in out Server_Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
-     --  No state-phase Pre: the Phase discriminant was deleted (it drove
-     --  no behavior; the transcript carries its own Started fact and the
-     --  Engage aggregate still forces full initialization).
-   ;
-   --  NO POSTCONDITION HERE, DELIBERATELY. It used to carry
-   --  "Post => S.State in Connection_State", a TAUTOLOGY (S.State IS a
-   --  Connection_State) that looked like a contract and told callers
-   --  nothing -- which is how Advance's own
-   --  "Result = Handshake_Done => State (S) = Connected" stayed
-   --  unprovable without anyone noticing.
-   --
-   --  Replacing it with the TRUE implication was tried 2026-08-20 and
-   --  REVERTED: the fact holds (the only Handshake_Done exit reachable
-   --  from here is in Verify_Client_Finished, immediately after
-   --  Set_State (S, Connected)), but the prover cannot discharge it --
-   --  the VC carries ~1550 SMT assertions because Session reaches
-   --  Handshake_Context, which inlines X509.Certificate and an 8-entry
-   --  Cert_Pool. It cost 2 extra findings and closed none. Adding
-   --  "Result /= Handshake_Done" to the four callees did not help
-   --  either. Do not re-add a postcondition here until the VC context
-   --  problem is addressed -- see #65.
+     (S : in out Server_Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action);
 
    procedure Send_Alert_And_Error (S : in out Session; Err : Error_Code; Result : out Action)
    with
@@ -110,6 +90,11 @@ is
        and then S.Input.Read_Pos = S.Input.Read_Pos'Old
        and then S.Input.Write_Pos = S.Input.Write_Pos'Old;
 
+   --  Send an encrypted fatal alert and set error state.
+   --  Used when application/handshake keys are established.
+   --  RFC 8446 6.2 / RFC 5246 7.2.2: encrypted fatal alert is
+   --  sent before the connection terminates so the peer learns the
+   --  reason instead of seeing only a TCP RST.
    procedure Dispatch_CH_Parse_Error_Alert (S : in out Session; Result : out Action) is
    begin
       case S.Last_Error is
@@ -127,79 +112,32 @@ is
       end case;
    end Dispatch_CH_Parse_Error_Alert;
 
-   --  Send an encrypted fatal alert and set error state.
-   --  Used when application/handshake keys are established.
-   --  RFC 8446 6.2 / RFC 5246 7.2.2: encrypted fatal alert is
-   --  sent before the connection terminates so the peer learns the
-   --  reason instead of seeing only a TCP RST.
-
-   procedure Configure
-     (S                     : out Server_Session;
-      Local                 : Valid_Identity_Access;
-      Random                : Live_Random_Fn;
-      Trust                 : Trust_Store_Access := null;
-      Request_Client_Cert   : Boolean := False;
-      Require_Client_Cert   : Boolean := False;
-      Store_Session         : Store_Session_Fn := null;
-      Lookup_Session        : Lookup_Session_Fn := null;
-      ALPN                  : String := "";
-      Versions              : Version_Policy := Allow_Both;
-      Get_Active_TEK        : Get_Active_TEK_Fn := null;
-      Get_TEK_By_Id         : Get_TEK_By_Id_Fn := null;
-      TLS12_Ticket_Lifetime : Unsigned_32 := 3600;
-      Get_Time              : Get_Time_Fn := null;
-      Select_Identity       : SNI_Cert_Selector := null)
+   ----------------------------------------------------------------------------
+   --  Configure
+   ----------------------------------------------------------------------------
+   function Configure (Cfg : Config) return Session
    is
-      Cfg : Config :=
-        (Random                => Random,
-         Local                 => Local,
-         Trust                 => Trust,
-         Request_Client_Cert   => Request_Client_Cert,
-         Require_Client_Cert   => Require_Client_Cert,
-         Store_Session         => Store_Session,
-         Lookup_Session        => Lookup_Session,
-         Versions              => Versions,
-         Get_Active_TEK        => Get_Active_TEK,
-         Get_TEK_By_Id         => Get_TEK_By_Id,
-         TLS12_Ticket_Lifetime => TLS12_Ticket_Lifetime,
-         Get_Time              => Get_Time,
-         Select_Identity       => Select_Identity,
-         others                => <>);
    begin
-      if ALPN'Length > 0 and then ALPN'Length <= Max_Hostname_Len then
-         Cfg.ALPN.Data (1 .. ALPN'Length) := ALPN;
-         Cfg.ALPN.Len := ALPN'Length;
-      end if;
-      Init (S, Cfg);
+      return S : Server_Session :=
+        (Role   => Role_Server,
+         State  => Wait_Client_Hello,
+         HC     => (Cfg => Cfg, others => <>),
+         others => <>)
+      do
+         if not Server_Config_Can_Start (Cfg) then
+            Set_State (S, Error_State);
+            S.Last_Error := Bad_Configuration;
+         else
+
+            SPARKTLS.HS_Pool.Acquire (S.Slot);
+
+            if S.Slot = No_Slot then
+               Set_State (S, Error_State);
+               S.Last_Error := No_Free_Sessions;
+            end if;
+         end if;
+      end return;
    end Configure;
-
-   procedure Init (S : out Server_Session; Cfg : in Config) is
-   begin
-      S := (State => Wait_Client_Hello, Role => Role_Server, others => <>);
-
-      if not Server_Config_Can_Start (Cfg) then
-         Set_State (S, Error_State);
-         S.Last_Error := Internal_Error;
-         return;
-      end if;
-
-      SPARKTLS.HS_Pool.Acquire (S.Slot);
-      declare
-         Fresh : Handshake_Context := (Cfg => (Random => Cfg.Random, others => <>), others => <>);
-      begin
-         S.HC := Fresh;
-      end;
-      if S.Slot = No_Slot then
-         Set_State (S, Error_State);
-         S.Last_Error := Internal_Error;
-         return;
-      end if;
-      --  Fresh transcript for this handshake. The hash contexts also
-      --  carry correct defaults (see SHA256.Context), but the explicit
-      --  Start documents the lifecycle and resets Choice/Has_Data if
-      --  the allocator ever recycles contexts.
-      S.HC.Cfg := Cfg;
-   end Init;
 
    procedure Scrub_Handshake_Context (HC : in out Handshake_Context) is
    begin

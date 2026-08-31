@@ -92,8 +92,8 @@ is
 
    type HS_Msg_Wire_Type is array (Maybe_HS_Msg) of Byte;
 
-   HS_Msg_Wire : constant HS_Msg_Wire_Type := [
-      HT_Unknown              => 0,
+   HS_Msg_Wire : constant HS_Msg_Wire_Type :=
+     [HT_Unknown              => 0,
       HT_Client_Hello         => 16#01#,
       HT_Server_Hello         => 16#02#,
       HT_New_Session_Ticket   => 16#04#,
@@ -104,8 +104,7 @@ is
       HT_Server_Hello_Done    => 16#0E#,
       HT_Certificate_Verify   => 16#0F#,
       HT_Client_Key_Exchange  => 16#10#,
-      HT_Finished             => 16#14#
-   ];
+      HT_Finished             => 16#14#];
 
    function HS_Msg_From_Wire (W : Byte) return Maybe_HS_Msg;
 
@@ -147,8 +146,8 @@ is
 
    type Sig_Scheme_Wire_Type is array (Maybe_Sig_Scheme) of Unsigned_16;
 
-   Sig_Scheme_Wire : constant Sig_Scheme_Wire_Type := [
-      Scheme_None           => 0,
+   Sig_Scheme_Wire : constant Sig_Scheme_Wire_Type :=
+     [Scheme_None           => 0,
       Sig_RSA_PKCS1_SHA256  => 16#0401#,
       Sig_RSA_PKCS1_SHA384  => 16#0501#,
       Sig_RSA_PKCS1_SHA512  => 16#0601#,
@@ -157,8 +156,7 @@ is
       Sig_RSA_PSS_SHA256    => 16#0804#,
       Sig_RSA_PSS_SHA384    => 16#0805#,
       Sig_RSA_PSS_SHA512    => 16#0806#,
-      Sig_Ed25519           => 16#0807#
-   ];
+      Sig_Ed25519           => 16#0807#];
 
    function Scheme_From_Wire (W : Unsigned_16) return Maybe_Sig_Scheme;
 
@@ -231,20 +229,20 @@ is
          when 16#C02C# => Suite_ECDHE_ECDSA_AES256_GCM_SHA384,
          when 16#CCA8# => Suite_ECDHE_RSA_CHACHA20_SHA256,
          when 16#CCA9# => Suite_ECDHE_ECDSA_CHACHA20_SHA256,
-         when others => Suite_None);
+         when others   => Suite_None);
 
    function Wire_Of (S : Supported_Suite) return Unsigned_16
    is (case S is
-         when Suite_None => 0,
-         when Suite_AES_128_GCM_SHA256 => 16#1301#,
-         when Suite_CHACHA20_POLY1305_SHA256 => 16#1303#,
-         when Suite_AES_256_GCM_SHA384 => 16#1302#,
-         when Suite_ECDHE_RSA_AES128_GCM_SHA256 => 16#C02F#,
-         when Suite_ECDHE_RSA_AES256_GCM_SHA384 => 16#C030#,
+         when Suite_None                          => 0,
+         when Suite_AES_128_GCM_SHA256            => 16#1301#,
+         when Suite_CHACHA20_POLY1305_SHA256      => 16#1303#,
+         when Suite_AES_256_GCM_SHA384            => 16#1302#,
+         when Suite_ECDHE_RSA_AES128_GCM_SHA256   => 16#C02F#,
+         when Suite_ECDHE_RSA_AES256_GCM_SHA384   => 16#C030#,
          when Suite_ECDHE_ECDSA_AES128_GCM_SHA256 => 16#C02B#,
          when Suite_ECDHE_ECDSA_AES256_GCM_SHA384 => 16#C02C#,
-         when Suite_ECDHE_RSA_CHACHA20_SHA256 => 16#CCA8#,
-         when Suite_ECDHE_ECDSA_CHACHA20_SHA256 => 16#CCA9#);
+         when Suite_ECDHE_RSA_CHACHA20_SHA256     => 16#CCA8#,
+         when Suite_ECDHE_ECDSA_CHACHA20_SHA256   => 16#CCA9#);
 
    Max_Config_Cipher_Suites : constant := 16;
    subtype Cipher_Pref_Index is Natural range 1 .. Max_Config_Cipher_Suites;
@@ -265,19 +263,17 @@ is
 
    type ECDHE_Group_Wire_Type is array (Maybe_ECDHE_Group) of Unsigned_16;
 
-   ECDHE_Group_Wire : constant ECDHE_Group_Wire_Type := [
-      Group_None => 0,
+   ECDHE_Group_Wire : constant ECDHE_Group_Wire_Type :=
+     [Group_None      => 0,
       Group_Secp256r1 => Group_Secp256r1_Wire,
       Group_Secp384r1 => Group_Secp384r1_Wire,
-      Group_X25519 => Group_X25519_Wire
-   ];
+      Group_X25519    => Group_X25519_Wire];
 
    ----------------------------------------------------------------------------
    --  Group_From_Wire
    --  Given the wire value for a supported EC group, return the enum value.
    ----------------------------------------------------------------------------
    function Group_From_Wire (W : Unsigned_16) return Maybe_ECDHE_Group;
-
 
    ----------------------------------------------------------------------------
    --  Connection state
@@ -349,23 +345,23 @@ is
    --  Before server Finished is sent, handshake traffic keys are used.
    --  After server Finished, application traffic keys are used.
    function In_Handshake_Key_Phase (State : Connection_State) return Boolean
-   is (State in
-         Wait_Client_Hello
-         | Wait_Client_Hello_Retry
-         | Server_Hello_Sent
-         | Sent_Certificate_Request
-         | Wait_Client_Certificate
-         | Wait_Client_Cert_Verify
-         | Wait_Client_Finished
-         | Client_Hello_Sent
-         | Wait_Server_Hello
-         | Wait_Encrypted_Extensions
-         | Wait_Certificate_Request
-         | Wait_Certificate
-         | Wait_Certificate_Verify
-         | Wait_Server_Finished
-         | Client_Certificate_Sent
-         | Client_Cert_Verify_Sent)
+   is (State
+       in Wait_Client_Hello
+        | Wait_Client_Hello_Retry
+        | Server_Hello_Sent
+        | Sent_Certificate_Request
+        | Wait_Client_Certificate
+        | Wait_Client_Cert_Verify
+        | Wait_Client_Finished
+        | Client_Hello_Sent
+        | Wait_Server_Hello
+        | Wait_Encrypted_Extensions
+        | Wait_Certificate_Request
+        | Wait_Certificate
+        | Wait_Certificate_Verify
+        | Wait_Server_Finished
+        | Client_Certificate_Sent
+        | Client_Cert_Verify_Sent)
    with Ghost;
 
    function In_App_Key_Phase (State : Connection_State) return Boolean
@@ -382,33 +378,33 @@ is
 
    --  RFC 8446 4: Expected handshake message type per state.
    --  Server expects these message types from the client:
-   --    Wait_Client_Hello    â ClientHello (type 0x01)
-   --    Wait_Client_Finished â Finished (type 0x14)
-   --    Wait_Client_Certificate â Certificate (type 0x0B)
-   --    Wait_Client_Cert_Verify â CertificateVerify (type 0x0F)
+   --    Wait_Client_Hello       -> ClientHello (type 0x01)
+   --    Wait_Client_Finished    -> Finished (type 0x14)
+   --    Wait_Client_Certificate -> Certificate (type 0x0B)
+   --    Wait_Client_Cert_Verify -> CertificateVerify (type 0x0F)
    --  Returns 0 if no specific handshake type is expected (e.g., Connected).
    function Expected_HS_Type (State : Connection_State) return Byte
    is (case State is
-         when Wait_Client_Hello => 16#01#,  --  ClientHello
+         when Wait_Client_Hello       => 16#01#,  --  ClientHello
          when Wait_Client_Hello_Retry => 16#01#,  --  ClientHello (retry)
-         when Wait_Client_Finished => 16#14#,  --  Finished
+         when Wait_Client_Finished    => 16#14#,  --  Finished
          when Wait_Client_Certificate => 16#0B#,  --  Certificate
          when Wait_Client_Cert_Verify => 16#0F#,  --  CertificateVerify
-         when Wait_Server_Hello => 16#02#,  --  ServerHello
-         when Wait_Server_Finished => 16#14#,  --  Finished
-         when others => 0)
+         when Wait_Server_Hello       => 16#02#,  --  ServerHello
+         when Wait_Server_Finished    => 16#14#,  --  Finished
+         when others                  => 0)
    with Ghost;
 
    --  RFC 8446 4: Is this state expecting encrypted records?
    --  Before ServerHello, records are plaintext.
    --  After ServerHello, records are encrypted with traffic keys.
    function Expects_Encrypted (State : Connection_State) return Boolean
-   is (State not in
-         Idle
-         | Wait_Client_Hello
-         | Wait_Client_Hello_Retry
-         | Client_Hello_Sent
-         | Wait_Server_Hello)
+   is (State
+       not in Idle
+            | Wait_Client_Hello
+            | Wait_Client_Hello_Retry
+            | Client_Hello_Sent
+            | Wait_Server_Hello)
    with Ghost;
 
    --  RFC 8446 4.2.9: Key share group MUST match what the client offered.
@@ -485,6 +481,8 @@ is
       No_Application_Protocol,     --  RFC 7301 3.2 alert 120
       Internal_Error,
       Insufficient_Buffer,
+      Bad_Configuration,           --  Internal-only: Rejected configuration
+      No_Free_Sessions,            --  Internal-only: HS_Pool exhausted
       Unsupported_Cipher_Suite);
 
    ----------------------------------------------------------------------------
@@ -687,8 +685,7 @@ is
    --  below.)
    function Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
      (Negotiated : Maybe_Sig_Scheme; Offered : Sig_Algo_List; Count : Natural) return Boolean
-   is (Negotiated = Scheme_None
-       or else (for some I in 0 .. Count - 1 => Offered (I) = Negotiated))
+   is (Negotiated = Scheme_None or else (for some I in 0 .. Count - 1 => Offered (I) = Negotiated))
    with Ghost, Pre => Count <= Max_Sig_Algos;
 
    --  ----- RFC 5246 7.4.1.4.1 sig_algs default fallback -----------
@@ -709,13 +706,13 @@ is
    --    schemes (SHA-1 schemes are 0x0201/0x0202/0x0203, low byte 1-3).
    function Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1
      (Scheme : Maybe_Sig_Scheme) return Boolean
-   is (Scheme in
-         Sig_RSA_PSS_SHA256
-         | Sig_RSA_PSS_SHA384
-         | Sig_RSA_PSS_SHA512
-         | Sig_ECDSA_P256_SHA256
-         | Sig_ECDSA_P384_SHA384
-         | Sig_Ed25519)
+   is (Scheme
+       in Sig_RSA_PSS_SHA256
+        | Sig_RSA_PSS_SHA384
+        | Sig_RSA_PSS_SHA512
+        | Sig_ECDSA_P256_SHA256
+        | Sig_ECDSA_P384_SHA384
+        | Sig_Ed25519)
    with Ghost;
 
    --  RFC 8446 6: Error handling invariant.
@@ -750,22 +747,26 @@ is
    --  Expected_Alert_Desc rename below.
    function Alert_Desc (E : Error_Code) return Byte
    is (case E is
-         when Unexpected_Message => 10,
-         when Bad_Record_MAC => 20,
-         when Record_Overflow => 22,
-         when Handshake_Failure => 40,
-         when Bad_Certificate => 42,
-         when Certificate_Expired => 45,
-         when Illegal_Parameter => 47,
-         when Decode_Error => 50,
+         when Unexpected_Message        => 10,
+         when Bad_Record_MAC            => 20,
+         when Record_Overflow           => 22,
+         when Handshake_Failure         => 40,
+         when Bad_Certificate           => 42,
+         when Certificate_Expired       => 45,
+         when Illegal_Parameter         => 47,
+         when Decode_Error              => 50,
          when Certificate_Verify_Failed => 51,
-         when Protocol_Version => 70,
-         when Unsupported_Extension => 110,
-         when Missing_Extension => 109,
-         when Certificate_Required => 116,
-         when No_Application_Protocol => 120,
-         when Internal_Error | Insufficient_Buffer | No_Error => 80,
-         when Unsupported_Cipher_Suite => 40);
+         when Protocol_Version          => 70,
+         when Unsupported_Extension     => 110,
+         when Missing_Extension         => 109,
+         when Certificate_Required      => 116,
+         when No_Application_Protocol   => 120,
+         when Internal_Error
+            | Insufficient_Buffer
+            | No_Error
+            | Bad_Configuration
+            | No_Free_Sessions          => 80,
+         when Unsupported_Cipher_Suite  => 40);
 
    function Expected_Alert_Desc (E : Error_Code) return Byte renames Alert_Desc;
 
@@ -884,7 +885,6 @@ is
    --      of Record_Counter), and rotating keeps the connection alive
    --      and within the AEAD margin. See #46 for the old split.
 
-
    --  The write-side AEAD confidentiality cap (RFC 8446 5.5 for 1.3,
    --  the same 2**23 bound adopted for 1.2 where no rekey exists), as a
    --  query on the channel that owns the counter. This is BOTH the
@@ -948,10 +948,10 @@ is
    Max_Inflight : constant := 16;
    type Slot_Count is range 0 .. Max_Inflight;
    subtype Slot_Index is Slot_Count range 1 .. Max_Inflight;
-   No_Slot : constant Slot_Count := 0;
+   No_Slot      : constant Slot_Count := 0;
 
    Max_Pool_Size : constant := 8;
-   Max_Cert_DER : constant := 8192;   --  max DER bytes per cert
+   Max_Cert_DER  : constant := 8192;   --  max DER bytes per cert
 
    subtype Cert_DER_Buf is X509.Byte_Seq (0 .. X509.N32 (Max_Cert_DER) - 1);
 
@@ -970,7 +970,8 @@ is
    with
      Predicate =>
        (if Pool_Entry.Present
-        then Pool_Entry.DER_Len > 0 and X509.Spans_Valid (Pool_Entry.Cert, Pool_Entry.DER_Len - 1));
+        then
+          Pool_Entry.DER_Len > 0 and X509.Spans_Valid (Pool_Entry.Cert, Pool_Entry.DER_Len - 1));
 
    type Cert_Pool is array (0 .. Max_Pool_Size - 1) of Pool_Entry;
    type Used_Set is array (0 .. Max_Pool_Size - 1) of Boolean;
@@ -1044,7 +1045,9 @@ is
       Has_Identity : Boolean := False;
    end record;
 
-   type Identity_Access is access constant Identity;
+   type Identity_Access is not null access constant Identity;
+
+   No_Identity : aliased constant Identity := (Has_Identity => False, others => <>);
 
    --  Length bounds every Identity must satisfy for the certificate and
    --  signature paths to index it safely. Identical in content to
@@ -1066,24 +1069,30 @@ is
    with
      Dynamic_Predicate =>
        Valid_Identity_Access = null
-       or else (Valid_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
-                and then Valid_Identity_Access.Int_Count <= Max_Pool_Size
-                and then (for all I in 0 .. Max_Pool_Size - 1
-                          => Valid_Identity_Access.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
-                and then (if Valid_Identity_Access.Sign_Algo = Sign_RSA_PSS
-                          then Valid_Identity_Access.RSA_Mod_Len in 64 .. 512));
+       or else
+         (Valid_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+          and then Valid_Identity_Access.Int_Count <= Max_Pool_Size
+          and then
+            (for all I in 0 .. Max_Pool_Size - 1 =>
+               Valid_Identity_Access.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
+          and then
+            (if Valid_Identity_Access.Sign_Algo = Sign_RSA_PSS
+             then Valid_Identity_Access.RSA_Mod_Len in 64 .. 512));
 
    subtype Selected_Identity_Access is Identity_Access
    with
      Dynamic_Predicate =>
        Selected_Identity_Access = null
-       or else (Selected_Identity_Access.Has_Identity
-                and then Selected_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
-                and then Selected_Identity_Access.Int_Count <= Max_Pool_Size
-                and then (for all I in 0 .. Max_Pool_Size - 1
-                          => Selected_Identity_Access.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
-                and then (if Selected_Identity_Access.Sign_Algo = Sign_RSA_PSS
-                          then Selected_Identity_Access.RSA_Mod_Len in 64 .. 512));
+       or else
+         (Selected_Identity_Access.Has_Identity
+          and then Selected_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+          and then Selected_Identity_Access.Int_Count <= Max_Pool_Size
+          and then
+            (for all I in 0 .. Max_Pool_Size - 1 =>
+               Selected_Identity_Access.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
+          and then
+            (if Selected_Identity_Access.Sign_Algo = Sign_RSA_PSS
+             then Selected_Identity_Access.RSA_Mod_Len in 64 .. 512));
 
    ----------------------------------------------------------------------------
    --  SNI-based certificate selection (RFC 6066 3, RFC 8446 4.4.2.4)
@@ -1119,7 +1128,7 @@ is
    ----------------------------------------------------------------------------
 
    Max_Cached_Tickets : constant := 1024;
-   Ticket_ID_Len : constant := 16;
+   Ticket_ID_Len      : constant := 16;
    subtype Ticket_ID is Byte_Seq (0 .. Ticket_ID_Len - 1);
 
    --  Length fields carry their own bounds (#84/#82): the check moves to
@@ -1136,9 +1145,9 @@ is
    end record
    with
      Predicate =>
-     --  RFC 8446 4.6.1: PSK is SHA-256 (32 byte) or SHA-384 (48
-     --  byte) only when Valid; zero-length on invalid slots is OK
-     --  because they're never read.
+       --  RFC 8446 4.6.1: PSK is SHA-256 (32 byte) or SHA-384 (48
+       --  byte) only when Valid; zero-length on invalid slots is OK
+       --  because they're never read.
        (if Ticket_Entry.Valid then Ticket_Entry.PSK_Len in 32 | 48 else Ticket_Entry.PSK_Len = 0);
 
    type Ticket_Array is array (Natural range 0 .. Max_Cached_Tickets - 1) of Ticket_Entry;
@@ -1199,7 +1208,8 @@ is
       --  rotation fires Interval seconds later, not immediately.
    end record;
 
-   type TLS12_Ticket_Key_Array is array (Natural range 0 .. TLS12_Max_Keys - 1) of TLS12_Ticket_Key;
+   type TLS12_Ticket_Key_Array is
+     array (Natural range 0 .. TLS12_Max_Keys - 1) of TLS12_Ticket_Key;
 
    ----------------------------------------------------------------------------
    --  TLS 1.2 cached session ticket (client side, RFC 5077 3.4)
@@ -1368,7 +1378,7 @@ is
         Suite      : out Unsigned_16;
         Found      : out Boolean)
    with
-     Pre => ID'First = 0 and then ID'Length = Ticket_ID_Len,
+     Pre  => ID'First = 0 and then ID'Length = Ticket_ID_Len,
      Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);
    --  Mirrors SPARKTLS.Ticket_Cache.Lookup, which already proves it.
    --  Requires Ada 2022 (postcondition on an access-to-subprogram type);
@@ -1399,15 +1409,25 @@ is
      access procedure (Key_ID : Byte_Seq; TEK : out Byte_Seq; Found : out Boolean)
    with Pre => TEK'Length = 32;
 
+   ----------------------------------------------------------------------------
+   --  Not_Random
+   --  Default initializer for Config.Random RNG function. Used only as a
+   --  sentinel value to detect apps not passing in an RNG.
+   ----------------------------------------------------------------------------
+   procedure Not_Random (Output : out Byte_Seq);
+
+   ----------------------------------------------------------------------------
+   --  Config
+   ----------------------------------------------------------------------------
    type Config is record
-      Random      : Live_Random_Fn;
+      Random      : Live_Random_Fn := Not_Random'Access;
       Server_Name : Hostname_Buf;
       Skip_Verify : Boolean := False;  --  accept any cert
 
       --  Client-side hostname verification opt-out (RFC 6125 6.4).
       --  When Server_Name is non-empty AND this is False (default),
       --  the client checks that the server's leaf cert contains a
-      --  matching SAN dNSName or iPAddress (or Subject CN as a
+      --  matching SAN DNSName or IPAddress (or Subject CN as a
       --  fallback per the prevailing CN-in-SAN rules). On mismatch
       --  the handshake is aborted with `bad_certificate`. This check
       --  runs INDEPENDENTLY of `Skip_Verify` / `Trust` / `Get_Time`
@@ -1449,7 +1469,7 @@ is
       --  On the server side, this is the default identity used when
       --  Select_Identity is null OR when Select_Identity returns null
       --  for the client's SNI hostname.
-      Local : Valid_Identity_Access := null;
+      Local : Valid_Identity_Access := No_Identity'Access;
 
       --  Server-side SNI acknowledgement. When True, the server emits
       --  the empty server_name extension if the client sent SNI. Set
@@ -2054,8 +2074,8 @@ is
    function EMS_PRF_Binding_RFC_7627_4 (HC : Handshake_Context) return Boolean
    is (case HC.MS_Derivation is
          when Not_Derived => True,  --  not yet derived; vacuously true
-         when Extended => HC.Use_EMS,
-         when Legacy => not HC.Use_EMS)
+         when Extended    => HC.Use_EMS,
+         when Legacy      => not HC.Use_EMS)
    with Ghost;
 
    --  ----- RFC 8446 5.1 outer record content_type recognition -----
@@ -2196,12 +2216,15 @@ is
    --  prior to ServerHello build.
    function Selected_Group_Was_Offered_RFC_8446_4_2_8 (HC : Handshake_Context) return Boolean
    is (not HC.KE.Negotiated
-       or else (HC.KE.Curve = Group_X25519
-                and then (HC.Client_Has_X25519 or else HC.Client_Supports_X25519))
-       or else (HC.KE.Curve = Group_Secp256r1
-                and then (HC.Client_Has_P256 or else HC.Client_Supports_P256))
-       or else (HC.KE.Curve = Group_Secp384r1
-                and then (HC.Client_Has_P384 or else HC.Client_Supports_P384)))
+       or else
+         (HC.KE.Curve = Group_X25519
+          and then (HC.Client_Has_X25519 or else HC.Client_Supports_X25519))
+       or else
+         (HC.KE.Curve = Group_Secp256r1
+          and then (HC.Client_Has_P256 or else HC.Client_Supports_P256))
+       or else
+         (HC.KE.Curve = Group_Secp384r1
+          and then (HC.Client_Has_P384 or else HC.Client_Supports_P384)))
    with Ghost;
 
    --  ----- RFC 8446 4.1.4 HelloRetryRequest at most once -----------
@@ -2352,15 +2375,15 @@ is
        or else (Tag = 16#0023# and then HC.T12.Sent_Ticket_Ext)
        or else (Tag = 16#0029# and then HC.PSK.Offered)
        or else (Tag = 16#002A# and then HC.Early_Data_Offered)
-               --  RFC 7627 EMS is a CONDITIONAL offering: the CH builder emits it
-               --  iff Cfg.Versions /= TLS_1_3_Only (see Offer_EMS in
-               --  Handshake.Client_Msgs.Build_Client_Hello), so Always_In_CH is
-               --  False on its policy row and Tag_Is_Offered_Static cannot answer
-               --  for it. Without this arm the server's legitimate EMS echo failed
-               --  the Requires_Offer check and the client replied
-               --  unsupported_extension -- BoGo ExtendedMasterSecret-TLS12-Client.
-               --  The condition MUST track Offer_EMS exactly; if one changes so
-               --  must the other.
+       --  RFC 7627 EMS is a CONDITIONAL offering: the CH builder emits it
+       --  iff Cfg.Versions /= TLS_1_3_Only (see Offer_EMS in
+       --  Handshake.Client_Msgs.Build_Client_Hello), so Always_In_CH is
+       --  False on its policy row and Tag_Is_Offered_Static cannot answer
+       --  for it. Without this arm the server's legitimate EMS echo failed
+       --  the Requires_Offer check and the client replied
+       --  unsupported_extension -- BoGo ExtendedMasterSecret-TLS12-Client.
+       --  The condition MUST track Offer_EMS exactly; if one changes so
+       --  must the other.
        or else (Tag = 16#0017# and then HC.Cfg.Versions /= TLS_1_3_Only));
 
    --  RFC 8446 4.2 single-call validator for any server-generated
@@ -2387,49 +2410,9 @@ is
    --  Definition was moved earlier (before Config) so Config can
    --  embed a Resume_Ticket.
    ----------------------------------------------------------------------------
-
-   --  Opaque session state. The full definition is in the private part
-   --  below: consumers must go through the query functions rather than
-   --  reading or assigning components directly, so the state machine
-   --  cannot be corrupted from outside the library.
-   --
-   --  SIZE: a Session is large -- roughly 100 KB (103,240 bytes measured on
-   --  x86-64, 2026-08-16). It embeds its own I/O buffers and a
-   --  Max_Record_Plaintext (16 KB) application-data staging area rather than
-   --  allocating them, which is what lets the record path run without
-   --  per-record heap traffic.
-   --
-   --  Practical consequences:
-   --
-   --    * Declaring one as an ordinary local variable puts ~100 KB on the
-   --      stack. Fine on a default main-task stack; NOT fine inside an Ada
-   --      task with a small stack, or on an embedded target. Prefer a
-   --      library-level object, or allocate it.
-   --    * A server holding N concurrent connections needs ~100 KB * N of
-   --      session state alone. At 1000 connections that is ~100 MB. Size
-   --      your connection pool accordingly -- see examples/tls_web_epoll.adb,
-   --      which keeps its Connection array at library level (BSS) for
-   --      exactly this reason.
-   --    * Passing a Session by value copies all of it. The API takes
-   --      "in out Session" throughout; do not introduce copies.
-   --
-   --  Config is ~5.9 KB and Session_Ticket ~600 bytes, for comparison.
-   --  SPIKE 2026-08-20: Role is a DISCRIMINANT, not a field. There is no
-   --  variant part -- no component's subtype depends on Role, so SPARK's
-   --  mutable-discriminant restrictions largely do not apply. The point is
-   --  the constrained subtypes below: a subprogram taking Server_Session
-   --  cannot be called with a client session, so ~50 "Role = Role_Server"
-   --  preconditions become UNSTATEABLE rather than merely satisfied.
-   --  Existing "S : SPARKTLS.Session;" keeps compiling via the default.
-   --  16 KB instance of the reassembly ADT (#90): post-handshake
-   --  messages (KeyUpdate, NewSessionTicket) are handshake-framed and
-   --  never exceed one record's plaintext in this design. Same proven
-   --  body as the 128 KB handshake instance; the Len/Need relation the
-   --  loose fields used to thread is structural here.
    package Post_HS_Reasm renames SPARKTLS_Post_HS_Reasm;
 
-   type Session (Role : TLS_Role := Role_Client) is private;
-
+   type Session (Role : TLS_Role) is private;
    subtype Client_Session is Session (Role_Client);
    subtype Server_Session is Session (Role_Server);
 
@@ -2441,11 +2424,6 @@ is
    --  function returning exactly one field (completions in the private part),
    --  so every contract that used to say S.X and now says X (S) has the same
    --  logical content -- the prover unfolds the definition either way.
-   --
-   --  The Ghost ones exist only so contracts can keep their original form.
-   --  They are usable in Pre/Post but NOT callable from ordinary code, so
-   --  internals like Traffic_Keys and the TLS 1.2 sequence counters are not
-   --  committed to the public API.
    ---------------------------------------------------------------------------
 
    function State (S : Session) return Connection_State;
@@ -2590,12 +2568,11 @@ is
    procedure Set_State (S : in out Session; To : Connection_State)
    with
      Post =>
-       State (S)
-       = To
-         --  Frame: Set_State only mutates State (S). Pin the
-         --  unchanged fields so callers don't have to
-         --  re-establish Pre's like Nonce_Space_Available
-         --  (Server_App (S)) across the call.
+       State (S) = To
+       --  Frame: Set_State only mutates State (S). Pin the
+       --  unchanged fields so callers don't have to
+       --  re-establish Pre's like Nonce_Space_Available
+       --  (Server_App (S)) across the call.
        and Role (S) = Role (S)'Old
        and Has_Context (S) = Has_Context (S)'Old
        and Server_App (S) = Server_App (S)'Old
@@ -2613,7 +2590,7 @@ is
    --  State is not modified by feeding data.
    procedure Feed_Ciphertext (S : in out Session; Data : in Byte_Seq; Bytes_Fed : out N32)
    with
-     Pre => Data'First = 0 and Data'Last < N32'Last,
+     Pre  => Data'First = 0 and Data'Last < N32'Last,
      Post =>
        Bytes_Fed <= N32 (Data'Length)
        and State (S) = State (S)'Old;         --  feeding doesn't change state
@@ -2622,9 +2599,9 @@ is
    --  State is not modified by draining data.
    procedure Drain_Ciphertext (S : in out Session; Dest : out Byte_Seq; Bytes_Drained : out N32)
    with
-     Pre => Dest'First = 0 and Dest'Last < N32'Last,
+     Pre                    => Dest'First = 0 and Dest'Last < N32'Last,
      Relaxed_Initialization => Dest,
-     Post =>
+     Post                   =>
        Bytes_Drained <= N32 (Dest'Length)
        and State (S) = State (S)'Old
        and (for all I in 0 .. Bytes_Drained - 1 => Dest (I)'Initialized);
@@ -2679,7 +2656,7 @@ is
       Output      : out Byte_Seq;
       OK          : out Boolean)
    with
-     Pre =>
+     Pre                    =>
        Output'First = 0
        and Output'Length > 0
        and Output'Length <= 1024
@@ -2688,14 +2665,15 @@ is
        and (if Context'Length > 0 then Context'First = 0)
        and Context'Last < N32'Last - 256,
      Relaxed_Initialization => Output,
-     Post => (for all I in Output'Range => Output (I)'Initialized);
+     Post                   => (for all I in Output'Range => Output (I)'Initialized);
 
    --  Read decrypted application data.
    procedure Read_Plaintext (S : in out Session; Dest : out Byte_Seq; Bytes_Read : out N32)
    with
-     Pre => Dest'First = 0 and Dest'Last < N32'Last and App_Data_Len (S) <= Max_Record_Plaintext,
+     Pre                    =>
+       Dest'First = 0 and Dest'Last < N32'Last and App_Data_Len (S) <= Max_Record_Plaintext,
      Relaxed_Initialization => Dest,
-     Post =>
+     Post                   =>
        Bytes_Read <= N32 (Dest'Length)
        and (for all I in 0 .. Bytes_Read - 1 => Dest (I)'Initialized);
 
@@ -2726,7 +2704,7 @@ is
 
    procedure Write_Plaintext (S : in out Session; Plaintext : in Byte_Seq; Bytes_Written : out N32)
    with
-     Pre =>
+     Pre  =>
        State (S) = Connected
        and In_App_Key_Phase (State (S))
        and Plaintext'First = 0
@@ -2735,15 +2713,22 @@ is
        and not Write_Limit_Reached (S),
      Post => Bytes_Written <= N32 (Plaintext'Length);
 
+   ----------------------------------------------------------------------------
+   --  To_Name
+   --  Given the String containing an ALPN hostname, return
+   --  the Hostname_Buf type.
+   ----------------------------------------------------------------------------
+   function To_Name (ALPN_Str : String) return Hostname_Buf
+   with Pre => ALPN_Str'Length <= Max_Hostname_Len;
+
+   ----------------------------------------------------------------------------
+   --  Is_Sentinel_Random
+   --  Check to see if RNG callback has been initialized
+   ----------------------------------------------------------------------------
+   function Is_Sentinel_Random (F : Live_Random_Fn) return Boolean;
 private
 
-   --  Completions of the query functions and ghost predicates declared
-   --  above. Bodies are verbatim -- this is a relocation, not a rewrite.
-   --  The visible part of a package cannot name its own private
-   --  components, but the private part can, and GNATprove reads
-   --  expression-function completions here exactly as it did before.
-
-   type Session (Role : TLS_Role := Role_Client) is record
+   type Session (Role : TLS_Role) is record
       --  State
       State      : Connection_State := Idle;
       Last_Error : Error_Code := No_Error;
@@ -2792,7 +2777,7 @@ private
 
       --  Resumption: snapshot of HC.Using_PSK captured before the
       --  handshake context is freed. The Advance loop nulls HC_Ptr
-      --  at stateâConnected so callers who want to know "did we
+      --  at state connected so callers who want to know "did we
       --  resume?" need a Session-level mirror.
       Resumed_From_PSK : Boolean := False;
 
@@ -2865,18 +2850,18 @@ private
       --  RFC 8446 6.1: TLS 1.3 deprecates warning alerts but keeps
       --  user_canceled (90) for compatibility with TLS 1.2 stacks
       --  (notably JDK11). BoringSSL/NSS/OpenSSL convention is to
-      --  tolerate up to 4 in a row; 5+ â fatal "too_many_warning_alerts"
+      --  tolerate up to 4 in a row; 5+ yields fatal "too_many_warning_alerts"
       --  to limit DoS via alert-flooding. Resets on application data.
       --  Bounded BY CONSTRUCTION: every site checks the cap BEFORE
       --  incrementing, so the increment only runs when the counter is
-      --  strictly below it. That is what makes this subtype provable --
-      --  narrowing alone would just move the obligation onto the '+ 1'.
+      --  strictly below it. That is what makes this subtype provable.
+      --  Narrowing alone would just move the obligation onto the '+ 1'.
       Warning_Alerts_Recvd : Natural range 0 .. Max_Warning_Alerts := 0;
 
       --  Counter for received empty (zero-length plaintext) records.
       --  RFC 8446 5.2 / RFC 5246 6.2.1: zero-length-plaintext
       --  records waste decrypt CPU without delivering progress.
-      --  BoringSSL caps at 32; 33+ â fatal too_many_empty_fragments.
+      --  BoringSSL caps at 32; 33+ with fatal too_many_empty_fragments.
       --  Resets on any non-empty record.
       --  Same construction as Warning_Alerts_Recvd above.
       Empty_Records_Recvd : Natural range 0 .. Max_Empty_Records := 0;
@@ -2885,8 +2870,8 @@ private
       --  (persist past handshake for Connected-state encrypt/decrypt)
       Version         : TLS_Version := TLS_Undetermined;
       Negotiated_ALPN : Hostname_Buf := (Len => 0, Data => (others => ' '));
-      Client_IV_12       : Byte_Seq (0 .. 11) := (others => 0);
-      Server_IV_12       : Byte_Seq (0 .. 11) := (others => 0);
+      Client_IV_12    : Byte_Seq (0 .. 11) := (others => 0);
+      Server_IV_12    : Byte_Seq (0 .. 11) := (others => 0);
       --  Record_Counter, not Unsigned_64: the "< Unsigned_64'Last" bound
       --  belongs to the FIELD, not to the Session. As a subtype it is
       --  checked once at assignment; as a Session predicate conjunct it
@@ -2899,53 +2884,6 @@ private
       HC   : Handshake_Context;
       Slot : Slot_Count := No_Slot;
    end record;
-   --  NO Type_Invariant on Session, MEASURED (r69, 2026-08-29): the
-   --  state<->phase coupling as an invariant cost ~101 checks -- the
-   --  invariant is verified at every INTERNAL call to any public
-   --  subprogram (State, Output_Pending, ... are called everywhere),
-   --  not just at true boundaries. The coupling lives instead as
-   --  one-conjunct `S.HC.Phase = Engaged` Pres on the handler chain,
-   --  rooted in Advance_Handshake's state-conditional Pre with a single
-   --  honest residual at the public Advance boundary.
-
-   --  NO Dynamic_Predicate on Session. Deliberately.
-   --
-   --  WHAT WOULD LIVE HERE AND WHY NOTHING DOES.
-   --
-   --  A Dynamic_Predicate is re-checked on EVERY assignment to ANY component
-   --  of the record, and at every call boundary that passes a Session. So a
-   --  conjunct constraining a single field costs a proof obligation at every
-   --  unrelated write elsewhere in the record. A subtype on that field costs
-   --  one range check at the assignment that actually touches it.
-   --
-   --  Single-field bounds therefore belong on the FIELD's subtype. Moved out
-   --  2026-08-18, when they were 78% of all owned proof findings (159
-   --  VC_PREDICATE_CHECK across the four largest units):
-   --    Client_App.Counter / Server_App.Counter  -> Record_Counter
-   --    Client_Seq_12 / Server_Seq_12            -> Record_Counter
-   --    App_Data_Len, Post_HS_Len, Post_HS_Need  -> Plaintext_Length
-   --
-   --  That left ONE conjunct, the post-handshake reassembly relation
-   --  (Post_HS_Need = 0 -> Post_HS_Len = 0, else Need >= 4 and Len <= Need).
-   --  Removed 2026-08-22: it was a genuine two-field relationship, but as the
-   --  sole survivor it made every Session write and every call boundary pay a
-   --  predicate check to carry one fact about two fields -- and it was still
-   --  unproved. Session is passed to nearly every subprogram in the library,
-   --  and 13 of the 18 "precondition might fail" findings in server.adb were
-   --  Send_Alert_And_Error (S, ...) calls whose own Pre is a single state
-   --  test; the cost was this predicate riding along.
-   --
-   --  The individual bounds survive on Plaintext_Length. What is NOT
-   --  reinstated here is Len <= Need: see #90, which makes it STRUCTURAL by
-   --  moving the buffer and its accounting into the reassembly ADT, the same
-   --  way round 30 did for handshake reassembly. Until then, any site that
-   --  genuinely depends on the relation must show it as an honest AoRTE
-   --  check rather than inherit it from a predicate nothing could prove.
-   --
-   --  NOTE: the output-buffer compaction invariant deliberately lives on
-   --  IO_Buffer's own predicate, not here -- see the comment there.
-
-   --  Query function completions: one field each, verbatim.
 
    function State (S : Session) return Connection_State
    is (S.State);
@@ -2957,8 +2895,10 @@ private
    --  about-to-rotate state, not a terminal condition.
    function Write_Limit_Reached (S : Session) return Boolean
    is (S.Version = TLS_1_2
-       and then (if S.Role = Role_Client then Write_Budget_Reached (S.Client_App)
-                 else Write_Budget_Reached (S.Server_App)));
+       and then
+         (if S.Role = Role_Client
+          then Write_Budget_Reached (S.Client_App)
+          else Write_Budget_Reached (S.Server_App)));
    function Role (S : Session) return TLS_Role
    is (S.Role);
    function Last_Error (S : Session) return Error_Code
