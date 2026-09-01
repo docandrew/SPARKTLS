@@ -2538,6 +2538,269 @@ is
       end if;
    end Parse_SH_RFLX_Core;
 
+   --  R5 (#131): ServerHello version selection and policy checks.
+   --  Pure over narrow formals (no HC): picks Version from the
+   --  supported_versions signal, then enforces the TLS 1.3 suite set,
+   --  the legacy_session_id_echo match (RFC 8446 4.1.3), the
+   --  post-HRR same-version rule (4.1.4) and the Cfg.Versions policy
+   --  (4.2.1). The Post pins Version to a real version on success --
+   --  this is where Parse_Server_Hello's own Version Post is earned.
+   procedure Check_SH_Policy
+     (Data              : in Byte_Seq;
+      Has_TLS_1_3       : in Boolean;
+      Got_HRR           : in Boolean;
+      Cfg_Versions      : in Version_Policy;
+      Legacy_Session_ID : in Bytes_32;
+      Negotiated        : in Supported_Suite;
+      Version           : out TLS_Version;
+      OK                : out Boolean;
+      Err               : out Error_Code)
+   with
+     Pre  => Data'Length in 39 .. Max_HS_Msg,
+     Post => (if OK then Version in TLS_1_2 | TLS_1_3)
+   is
+   begin
+      OK  := True;
+      Err := No_Error;
+
+      --  Select version based on supported_versions extension.
+      if Has_TLS_1_3 then
+         Version := TLS_1_3;
+      else
+         Version := TLS_1_2;
+      end if;
+      if Version = TLS_1_3
+        and then Negotiated not in
+                   Suite_AES_128_GCM_SHA256
+                   | Suite_AES_256_GCM_SHA384
+                   | Suite_CHACHA20_POLY1305_SHA256
+      then
+         Err := Illegal_Parameter;
+         OK := False;
+         return;
+      end if;
+
+      --  RFC 8446 4.1.3: TLS 1.3 server's legacy_session_id_echo
+      --  MUST be byte-for-byte equal to the client's
+      --  legacy_session_id. We always send a 32-byte SID (unless
+      --  TLS_1_2_Only), so when the server picked TLS 1.3 the echo
+      --  must also be 32 bytes and match. In TLS 1.2, by contrast,
+      --  the server may assign a new SID for a full handshake, so
+      --  this check is gated on Has_TLS_1_3. BoGo
+      --  EchoTLS13CompatibilitySessionID-style mismatches that
+      --  reach a TLS 1.3 SH (e.g. via supported_versions).
+      if Has_TLS_1_3
+        and then Cfg_Versions /= TLS_1_2_Only
+        and then Data'Length >= 4 + 35 + 32
+      then
+         declare
+            SH_SID_Off : constant N32 := Data'First + 4 + 35;
+            SH_SID_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
+            Mismatch   : Boolean := SH_SID_Len /= 32;
+         begin
+            if not Mismatch then
+               for I in N32 range 0 .. 31 loop
+                  if Data (SH_SID_Off + I) /= Legacy_Session_ID (I) then
+                     Mismatch := True;
+                  end if;
+               end loop;
+            end if;
+            if Mismatch then
+               Err := Illegal_Parameter;
+               OK := False;
+               return;
+            end if;
+         end;
+      end if;
+
+      --  RFC 8446 4.1.4: after a HelloRetryRequest, the second SH
+      --  MUST select the same version as the HRR (TLS 1.3, indicated
+      --  by supported_versions). A 2nd SH without TLS 1.3 in supported
+      --  _versions is a SECOND_SERVERHELLO_VERSION_MISMATCH and MUST
+      --  trigger an illegal_parameter alert. BoGo
+      --  SecondServerHelloWrongVersion-TLS13.
+      if Got_HRR and then not Has_TLS_1_3 then
+         Err := Illegal_Parameter;
+         OK := False;
+         return;
+      end if;
+
+      --  RFC 8446 4.2.1: enforce our Cfg.Versions policy on the
+      --  server's choice. -min-version / -max-version / -no-tlsN may
+      --  have constrained the policy below what's in the supported_
+      --  versions extension we sent; if the server still picks a
+      --  version outside our allowed set, reject with
+      --  protocol_version (alert 70). BoGo's MinimumVersion-Client2-
+      --  TLS13-TLS12 / -Server2-TLS13-TLS12 exercise this.
+      if (Version = TLS_1_2 and Cfg_Versions = TLS_1_3_Only)
+        or else (Version = TLS_1_3 and Cfg_Versions = TLS_1_2_Only)
+      then
+         Err := Protocol_Version;
+         OK := False;
+         return;
+      end if;
+
+   end Check_SH_Policy;
+
+   --  R7 (#131): TLS 1.3 ECDHE shared-secret computation. Takes KE
+   --  only, so the transcript (HC.TS) frame is not implicated and the
+   --  two SH_Parse_Frame probes bracketing the P-384 call are gone.
+   --  Dispatches on the negotiated curve (P-384 / P-256 / X25519) and
+   --  writes KE.Shared. Failure: OK False; Err carries the alert
+   --  (RFC 8446 6.2 invalid peer share -> illegal_parameter for
+   --  X25519; the P-256/P-384 decode failures leave Err No_Error so
+   --  the caller picks the generic alert, as before).
+   procedure Compute_SH_Shared_Secret
+     (KE  : in out KE_State;
+      OK  : out Boolean;
+      Err : out Error_Code)
+   is
+   begin
+      OK  := True;
+      Err := No_Error;
+
+      --  Compute shared secret (TLS 1.3 only  key_share in ServerHello)
+      if (KE.Negotiated and then KE.Curve = Group_Secp384r1) then
+         --  P-384 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
+         declare
+            Secret_384 : Bytes_48;
+            P384_OK    : Boolean;
+         begin
+            Compute_P384_Shared_Secret
+              (Secret  => Secret_384,
+               OK      => P384_OK,
+               SK      => KE.P384_SK,
+               Peer_PK => KE.P384_PK);
+            if not P384_OK then
+               OK := False;
+               return;
+            end if;
+            KE.Shared := Secret_384;
+         end;
+      elsif (KE.Negotiated and then KE.Curve = Group_Secp256r1) then
+         --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
+         declare
+            Peer_Pt : SPARKTLSCrypto.P256.Point.P256_Jacobian;
+            Valid   : SPARKNaCl.U32;
+            X_Bytes : Byte_Seq (0 .. 31);
+         begin
+            SPARKTLSCrypto.P256.Point.P256_Decode (Peer_Pt, KE.P256_PK, Valid);
+            if Valid = 0 then
+               OK := False;
+               return;
+            end if;
+            --  Multiply peer's public key by our private scalar
+            SPARKTLSCrypto.P256.Point.P256_Mul (Peer_Pt, KE.P256_SK, 32);
+            SPARKTLSCrypto.P256.Point.P256_To_Affine (Peer_Pt);
+            --  Encode to get x-coordinate (bytes 1..32 of uncompressed point)
+            declare
+               Encoded : Byte_Seq (0 .. 64);
+            begin
+               SPARKTLSCrypto.P256.Point.P256_Encode (Encoded, Peer_Pt);
+               X_Bytes := Encoded (1 .. 32);
+            end;
+            KE.Shared := (others => 0);
+            KE.Shared (0 .. 31) := X_Bytes;
+         end;
+      else
+         --  X25519 ECDHE
+         KE.Shared := (others => 0);
+         SPARKTLSCrypto.X25519.Scalar_Mult
+           (KE.Shared (0 .. 31), KE.Local_SK, KE.Peer_PK);
+         --  RFC 7748 6.1: small-subgroup defence. The helper has
+         --  a SPARK-proven Post that ties its result to the byte-
+         --  sequence existential. RFC 8446 6.2: invalid peer share
+         --  is illegal_parameter, not the generic handshake_failure
+         --  the caller would otherwise pick.
+         if not Shared_Secret_Is_Acceptable_X25519 (KE.Shared (0 .. 31)) then
+            Err := Illegal_Parameter;
+            OK := False;
+            return;
+         end if;
+      end if;
+   end Compute_SH_Shared_Secret;
+
+   --  R6 (#131): RFC 8446 4.1.3 downgrade-sentinel detection over the
+   --  last 8 bytes of ServerRandom, independent of negotiated version
+   --  (a server MUST NOT set these markers when negotiating TLS 1.3,
+   --  so a marker on a TLS 1.3 SH is itself an abort signal --
+   --  BoringSSL convention). Three sentinels:
+   --    * "DOWNGRD" + 0x01  TLS 1.3 -> TLS 1.2 (RFC 8446 4.1.3)
+   --    * "DOWNGRD" + 0x00  TLS 1.3 -> TLS 1.0/1.1 (same RFC)
+   --    * 0xED 0xBF 0xB4 0xA8 0xC2 0x47 0x10 0xFF  JDK 11 marker.
+   --  BoGo Client-RejectJDK11DowngradeRandom.
+   function Downgrade_Sentinel_Present (R : Bytes_32) return Boolean is
+      type Sentinel_T is array (N32 range 0 .. 7) of Byte;
+      S13   : constant Sentinel_T :=
+        (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#01#);
+      S12   : constant Sentinel_T :=
+        (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#00#);
+      S_JDK : constant Sentinel_T :=
+        (16#ED#, 16#BF#, 16#B4#, 16#A8#, 16#C2#, 16#47#, 16#10#, 16#FF#);
+   begin
+      return
+        (for all I in N32 range 0 .. 7 => R (24 + I) = S13 (I))
+        or else (for all I in N32 range 0 .. 7 => R (24 + I) = S12 (I))
+        or else (for all I in N32 range 0 .. 7 => R (24 + I) = S_JDK (I));
+   end Downgrade_Sentinel_Present;
+
+   --  R3 (#131): HelloRetryRequest detection. RFC 8446 4.1.4: an HRR
+   --  is on-wire a ServerHello whose random equals the magic
+   --  HRR_Sentinel. Random is at offset 6 .. 37 in Data (4-byte HS
+   --  header + 2-byte legacy_version). Pure function of Data; the
+   --  caller guards Data'Length >= 38 and owns the Got_HRR/Curr_Is_HRR
+   --  writes and the double-HRR (unexpected_message) rejection.
+   function Is_HRR_Random (Data : Byte_Seq) return Boolean
+   is (for all I in N32 range 0 .. 31 =>
+         Data (Data'First + 6 + I) = HRR_Sentinel (I))
+   with
+     Pre => N32 (Data'Length) >= 38;
+
+   --  R2 (#131): ServerHello preliminaries -- the shape checks that
+   --  must pass before any parsing. Pure function of Data. Outcomes:
+   --  OK -> proceed (Post carries the bounds every downstream Pre
+   --  needs); not OK and Err = No_Error -> silent no-parse (caller
+   --  falls back to the TLS 1.2 parser as before); not OK and
+   --  Err /= No_Error -> reject.
+   procedure Check_SH_Preliminaries
+     (Data : in Byte_Seq;
+      OK   : out Boolean;
+      Err  : out Error_Code)
+   with
+     Post =>
+       (if OK then
+          Data'Length in 39 .. Max_HS_Msg
+          and then Data'Last < N32 (Natural'Last))
+   is
+   begin
+      OK  := False;
+      Err := No_Error;
+
+      --  Shape checks -- silent no-parse on any failure: the caller
+      --  falls back to the TLS 1.2 parser exactly as before.
+      if Data'Length < 39
+        or else Data'Last >= N32 (Natural'Last)
+        or else Data'Length > Max_HS_Msg
+        or else Data (Data'First) /= HS_Msg_Wire (HT_Server_Hello)  --  not a ServerHello
+      then
+         return;
+      end if;
+
+      --  RFC 5246 7.4.1.2 / RFC 8446 4.1.3: legacy_session_id
+      --  length field is 0..32. The full ServerHello body is
+      --  version(2) + random(32) + sid_len(1) + sid(0..32) + ...
+      --  Catch over-long sid early  RFLX rejects the message but
+      --  we'd otherwise fall through to the TLS 1.2 parser and emit
+      --  Handshake_Failure instead of the correct Decode_Error
+      --  (BoGo's Client-TooLongSessionID test).
+      if N32 (Data'Length) - 4 >= 35 and then N32 (Data (Data'First + 4 + 34)) > 32 then
+         Err := Decode_Error;
+         return;
+      end if;
+
+      OK := True;
+   end Check_SH_Preliminaries;
+
    procedure Parse_Server_Hello
      (Negotiated : in out Supported_Suite;
       Last_Err   : in out Error_Code;
@@ -2555,6 +2818,10 @@ is
       --  early return) so the same Parse_Server_Hello body handles
       --  both HRR and the post-HRR SH2 correctly.
       Curr_Is_HRR      : Boolean := False;
+      Prelim_OK        : Boolean;
+      Prelim_Err       : Error_Code;
+      Pol_OK           : Boolean;
+      Pol_Err          : Error_Code;
       TS_At_Entry      : constant SPARKTLS_Transcript.Transcript_State := HC.TS with Ghost;
       Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
 
@@ -2564,70 +2831,35 @@ is
       Version := TLS_Undetermined;
       OK := False;
 
-      if Data'Length < 39 then
+      --  R2 (#131): Q0 preliminaries.
+      Check_SH_Preliminaries (Data, Prelim_OK, Prelim_Err);
+      if not Prelim_OK then
+         if Prelim_Err /= No_Error then
+            Last_Err := Prelim_Err;
+         end if;
+         --  HC untouched on every preliminary exit.
          pragma Assert_And_Cut (SH_Parse_Frame);
-         return;
-      end if;
-
-      if Data'Last >= N32 (Natural'Last) then
-         pragma Assert_And_Cut (SH_Parse_Frame);
-         return;
-      end if;
-
-      if Data'Length > Max_HS_Msg then
-         pragma Assert_And_Cut (SH_Parse_Frame);
-         return;
-      end if;
-
-      --  Check handshake type byte
-      if Data (Data'First) /= HS_Msg_Wire (HT_Server_Hello) then
-         pragma Assert_And_Cut (SH_Parse_Frame);
-         return;
-      end if;
-
-      --  RFC 5246 7.4.1.2 / RFC 8446 4.1.3: legacy_session_id
-      --  length field is 0..32. The full ServerHello body is
-      --  version(2) + random(32) + sid_len(1) + sid(0..32) + ...
-      --  Catch over-long sid early  RFLX rejects the message but
-      --  we'd otherwise fall through to the TLS 1.2 parser and emit
-      --  Handshake_Failure instead of the correct Decode_Error
-      --  (BoGo's Client-TooLongSessionID test).
-      if N32 (Data'Length) - 4 >= 35 and then N32 (Data (Data'First + 4 + 34)) > 32 then
-         Last_Err := Decode_Error;
-         pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
          return;
       end if;
 
       --  RFC 8446 4.1.4: HelloRetryRequest is on-wire a ServerHello
       --  with a magic random value. Compare here so the SH parser
       --  can apply HRR-specific extension policy
-      --  (Where_Allowed = E_HRR, dup â illegal_parameter not
+      --  (Where_Allowed = E_HRR, dup -> illegal_parameter not
       --  decode_error, must contain key_share or cookie). Random is
       --  at offset 6..37 in Data (4-byte HS hdr + 2-byte
       --  legacy_version).
-      if N32 (Data'Length) >= 38 then
-         declare
-            Sentinel_Match : Boolean := True;
-         begin
-            for I in N32 range 0 .. 31 loop
-               if Data (Data'First + 6 + I) /= HRR_Sentinel (I) then
-                  Sentinel_Match := False;
-                  exit;
-               end if;
-            end loop;
-            if Sentinel_Match then
-               --  RFC 8446 4.1.4: a server MUST send at most one
-               --  HRR. A second HRR is unexpected_message.
-               if HC.Got_HRR then
-                  Last_Err := Unexpected_Message;
-                  pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
-                  return;
-               end if;
-               HC.Got_HRR := True;
-               Curr_Is_HRR := True;
-               pragma Assert (not Got_HRR_At_Entry);
-            end if;
-         end;
+      if N32 (Data'Length) >= 38 and then Is_HRR_Random (Data) then
+         --  RFC 8446 4.1.4: a server MUST send at most one HRR. A
+         --  second HRR is unexpected_message.
+         if HC.Got_HRR then
+            Last_Err := Unexpected_Message;
+            pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
+            return;
+         end if;
+         HC.Got_HRR := True;
+         Curr_Is_HRR := True;
+         pragma Assert (not Got_HRR_At_Entry);
       end if;
 
       declare
@@ -2734,121 +2966,32 @@ is
          end if;
       end;
 
-         --  Select version based on supported_versions extension.
-         if HC.Has_TLS_1_3 then
-            Version := TLS_1_3;
-         else
-            Version := TLS_1_2;
+         --  Version selection + policy (R5, #131).
+         Check_SH_Policy
+           (Data              => Data,
+            Has_TLS_1_3       => HC.Has_TLS_1_3,
+            Got_HRR           => HC.Got_HRR,
+            Cfg_Versions      => HC.Cfg.Versions,
+            Legacy_Session_ID => HC.Legacy_Session_ID,
+            Negotiated        => Negotiated,
+            Version           => Version,
+            OK                => Pol_OK,
+            Err               => Pol_Err);
+         if not Pol_OK then
+            Last_Err := Pol_Err;
+            OK := False;
+            return;
          end if;
-         if Version = TLS_1_3
-           and then Negotiated not in
-                      Suite_AES_128_GCM_SHA256
-                      | Suite_AES_256_GCM_SHA384
-                      | Suite_CHACHA20_POLY1305_SHA256
-         then
+
+         --  RFC 8446 4.1.3: downgrade-sentinel check (see
+         --  Downgrade_Sentinel_Present). Independent of the negotiated
+         --  version; on a TLS 1.2 SH the marker is the canonical RFC
+         --  8446 downgrade indicator, on a TLS 1.3 SH it is an abort
+         --  signal in its own right.
+         if Downgrade_Sentinel_Present (HC.Server_Random) then
             Last_Err := Illegal_Parameter;
-            OK := False;
             return;
          end if;
-
-         --  RFC 8446 4.1.3: TLS 1.3 server's legacy_session_id_echo
-         --  MUST be byte-for-byte equal to the client's
-         --  legacy_session_id. We always send a 32-byte SID (unless
-         --  TLS_1_2_Only), so when the server picked TLS 1.3 the echo
-         --  must also be 32 bytes and match. In TLS 1.2, by contrast,
-         --  the server may assign a new SID for a full handshake, so
-         --  this check is gated on HC.Has_TLS_1_3. BoGo
-         --  EchoTLS13CompatibilitySessionID-style mismatches that
-         --  reach a TLS 1.3 SH (e.g. via supported_versions).
-         if HC.Has_TLS_1_3
-           and then HC.Cfg.Versions /= TLS_1_2_Only
-           and then Data'Length >= 4 + 35 + 32
-         then
-            declare
-               SH_SID_Off : constant N32 := Data'First + 4 + 35;
-               SH_SID_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
-               Mismatch   : Boolean := SH_SID_Len /= 32;
-            begin
-               if not Mismatch then
-                  for I in N32 range 0 .. 31 loop
-                     if Data (SH_SID_Off + I) /= HC.Legacy_Session_ID (I) then
-                        Mismatch := True;
-                     end if;
-                  end loop;
-               end if;
-               if Mismatch then
-                  Last_Err := Illegal_Parameter;
-                  OK := False;
-                  return;
-               end if;
-            end;
-         end if;
-
-         --  RFC 8446 4.1.4: after a HelloRetryRequest, the second SH
-         --  MUST select the same version as the HRR (TLS 1.3, indicated
-         --  by supported_versions). A 2nd SH without TLS 1.3 in supported
-         --  _versions is a SECOND_SERVERHELLO_VERSION_MISMATCH and MUST
-         --  trigger an illegal_parameter alert. BoGo
-         --  SecondServerHelloWrongVersion-TLS13.
-         if HC.Got_HRR and then not HC.Has_TLS_1_3 then
-            Last_Err := Illegal_Parameter;
-            OK := False;
-            return;
-         end if;
-
-         --  RFC 8446 4.2.1: enforce our Cfg.Versions policy on the
-         --  server's choice. -min-version / -max-version / -no-tlsN may
-         --  have constrained the policy below what's in the supported_
-         --  versions extension we sent; if the server still picks a
-         --  version outside our allowed set, reject with
-         --  protocol_version (alert 70). BoGo's MinimumVersion-Client2-
-         --  TLS13-TLS12 / -Server2-TLS13-TLS12 exercise this.
-         if (Version = TLS_1_2 and HC.Cfg.Versions = TLS_1_3_Only)
-           or else (Version = TLS_1_3 and HC.Cfg.Versions = TLS_1_2_Only)
-         then
-            Last_Err := Protocol_Version;
-            OK := False;
-            return;
-         end if;
-
-         --  RFC 8446 4.1.3: Downgrade-sentinel check, independent of
-         --  the negotiated version. The server MUST NOT set these
-         --  markers when negotiating TLS 1.3, so a marker on a TLS 1.3
-         --  SH is itself a signal to abort (BoringSSL convention; BoGo
-         --  Client-RejectJDK11DowngradeRandom). On a TLS 1.2 SH the
-         --  marker is the canonical RFC 8446 downgrade indicator.
-         --
-         --  Three sentinels:
-         --   * "DOWNGRD" + 0x01  TLS 1.3 â TLS 1.2 (RFC 8446 4.1.3)
-         --   * "DOWNGRD" + 0x00  TLS 1.3 â TLS 1.0/1.1 (same RFC)
-         --   * 0xED 0xBF 0xB4 0xA8 0xC2 0x47 0x10 0xFF  JDK 11 marker.
-         declare
-            R            : Byte_Seq renames HC.Server_Random;
-            type Sentinel_T is array (N32 range 0 .. 7) of Byte;
-            S13          : constant Sentinel_T :=
-              (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#01#);
-            S12          : constant Sentinel_T :=
-              (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#00#);
-            S_JDK        : constant Sentinel_T :=
-              (16#ED#, 16#BF#, 16#B4#, 16#A8#, 16#C2#, 16#47#, 16#10#, 16#FF#);
-            M13, M12, MJ : Boolean := True;
-         begin
-            for I in N32 range 0 .. 7 loop
-               if R (24 + I) /= S13 (I) then
-                  M13 := False;
-               end if;
-               if R (24 + I) /= S12 (I) then
-                  M12 := False;
-               end if;
-               if R (24 + I) /= S_JDK (I) then
-                  MJ := False;
-               end if;
-            end loop;
-            if M13 or M12 or MJ then
-               Last_Err := Illegal_Parameter;
-               return;
-            end if;
-         end;
 
          --  For TLS 1.2, skip ECDHE shared secret here
          --  (it's computed after ServerKeyExchange)
@@ -2861,69 +3004,20 @@ is
             return;
          end if;
 
-         --  Compute shared secret (TLS 1.3 only  key_share in ServerHello)
-         if (HC.KE.Negotiated and then HC.KE.Curve = Group_Secp384r1) then
-            --  P-384 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
-            declare
-               Secret_384 : Bytes_48;
-               P384_OK    : Boolean;
-            begin
-               pragma Assert (SH_Parse_Frame);
-               Compute_P384_Shared_Secret
-                 (Secret  => Secret_384,
-                  OK      => P384_OK,
-                  SK      => HC.KE.P384_SK,
-                  Peer_PK => HC.KE.P384_PK);
-               pragma Assert (SH_Parse_Frame);
-               if not P384_OK then
-                  OK := False;
-                  pragma Assert_And_Cut (SH_Parse_Frame);
-                  return;
+         --  Compute shared secret (TLS 1.3 only) -- R7 (#131).
+         declare
+            SS_OK  : Boolean;
+            SS_Err : Error_Code;
+         begin
+            Compute_SH_Shared_Secret (HC.KE, SS_OK, SS_Err);
+            if not SS_OK then
+               if SS_Err /= No_Error then
+                  Last_Err := SS_Err;
                end if;
-               HC.KE.Shared := Secret_384;
-            end;
-         elsif (HC.KE.Negotiated and then HC.KE.Curve = Group_Secp256r1) then
-            --  P-256 ECDHE: shared_secret = x-coordinate of [sk] * peer_PK
-            declare
-               Peer_Pt : SPARKTLSCrypto.P256.Point.P256_Jacobian;
-               Valid   : SPARKNaCl.U32;
-               X_Bytes : Byte_Seq (0 .. 31);
-            begin
-               SPARKTLSCrypto.P256.Point.P256_Decode (Peer_Pt, HC.KE.P256_PK, Valid);
-               if Valid = 0 then
-                  OK := False;
-                  pragma Assert_And_Cut (SH_Parse_Frame);
-                  return;
-               end if;
-               --  Multiply peer's public key by our private scalar
-               SPARKTLSCrypto.P256.Point.P256_Mul (Peer_Pt, HC.KE.P256_SK, 32);
-               SPARKTLSCrypto.P256.Point.P256_To_Affine (Peer_Pt);
-               --  Encode to get x-coordinate (bytes 1..32 of uncompressed point)
-               declare
-                  Encoded : Byte_Seq (0 .. 64);
-               begin
-                  SPARKTLSCrypto.P256.Point.P256_Encode (Encoded, Peer_Pt);
-                  X_Bytes := Encoded (1 .. 32);
-               end;
-               HC.KE.Shared := (others => 0);
-               HC.KE.Shared (0 .. 31) := X_Bytes;
-            end;
-         else
-            --  X25519 ECDHE
-            HC.KE.Shared := (others => 0);
-            SPARKTLSCrypto.X25519.Scalar_Mult
-              (HC.KE.Shared (0 .. 31), HC.KE.Local_SK, HC.KE.Peer_PK);
-            --  RFC 7748 6.1: small-subgroup defence. The helper has
-            --  a SPARK-proven Post that ties its result to the byte-
-            --  sequence existential. RFC 8446 6.2: invalid peer share
-            --  is illegal_parameter, not the generic handshake_failure
-            --  the caller would otherwise pick.
-            if not Shared_Secret_Is_Acceptable_X25519 (HC.KE.Shared (0 .. 31)) then
-               Last_Err := Illegal_Parameter;
                OK := False;
                return;
             end if;
-         end if;
+         end;
 
          --  Bubble up extension-specific protocol errors (e.g. RFC 7301
          --  empty ALPN name â illegal_parameter). The caller's `if not
