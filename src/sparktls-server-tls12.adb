@@ -36,7 +36,7 @@ is
 
    procedure Send_Alert_And_Error (S : in out Session; Err : Error_Code; Result : out Action)
    with
-     Pre => Alert_Desc (Err) /= 0 and Alert_Desc (Err) /= 90,
+     Pre  => Alert_Desc (Err) /= 0 and Alert_Desc (Err) /= 90,
      Post =>
        S.State = Error_State
        and then Result in Has_Output | Error_Alert
@@ -44,8 +44,9 @@ is
        and then S.Negotiated_Suite = S.Negotiated_Suite'Old
        and then Error_Has_Alert (S.State, Output_Pending (S), S.Last_Error)
        and then (if Output_Pending (S) > 0 then S.Last_Error = Err)
-       and then (if S.Output.Write_Pos'Old <= IO_Buffer_Capacity - 7
-                 then Output_Pending (S) > 0 and then S.Last_Error = Err);
+       and then
+         (if S.Output.Write_Pos'Old <= IO_Buffer_Capacity - 7
+          then Output_Pending (S) > 0 and then S.Last_Error = Err);
 
    procedure Send_Alert_And_Error (S : in out Session; Err : Error_Code; Result : out Action) is
       Dummy : N32;
@@ -75,7 +76,7 @@ is
    --  explicit sequence number.
    procedure Send_Encrypted_Alert_12 (S : in out Session; Err : Error_Code; Result : out Action)
    with
-     Pre => Alert_Desc (Err) /= 0 and then Alert_Desc (Err) /= 90,
+     Pre  => Alert_Desc (Err) /= 0 and then Alert_Desc (Err) /= 90,
      Post => S.State = Error_State and S.Role = S.Role'Old and S.Last_Error = Err;
    --  Error_Has_Alert is NOT in this Post  see
    --  matching note on Send_Encrypted_Alert in
@@ -124,10 +125,9 @@ is
 
    procedure Append_Transcript (HC : in out Engaged_Context; Data : Byte_Seq)
    with
-     Pre =>
-       Data'Length
-       > 0
-         --  transcript-append bound
+     Pre  =>
+       Data'Length > 0
+       --  transcript-append bound
        and then Data'Last < N32'Last - 256,
      Post => HC.KE = HC.KE'Old
    is
@@ -148,11 +148,10 @@ is
    procedure Build_Server_Flight_12_Full
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    with
-     Pre =>
-       S.Version = TLS_1_2 and then S.State = Wait_Client_Hello and then S.Role = Role_Server;
-     --  No Role conjunct: S is Server_Session, so
-     --  S.Role = Role_Server is the discriminant -- stating it
-     --  would be a tautology carried in every VC of this body.
+     Pre => S.Version = TLS_1_2 and then S.State = Wait_Client_Hello and then S.Role = Role_Server;
+   --  No Role conjunct: S is Server_Session, so
+   --  S.Role = Role_Server is the discriminant -- stating it
+   --  would be a tautology carried in every VC of this body.
 
    --  Resumed-handshake server flight (RFC 5077 3.3 abbreviated).
    --  Caller has set HC.T12.Resuming + HC.Master_Secret_12 +
@@ -169,13 +168,14 @@ is
        and then S.HC.Cfg.Get_TEK_By_Id /= null
        and then S.State = Wait_Client_Hello
        and then S.Role = Role_Server
-       and then S.Negotiated_Suite in
-                  Suite_ECDHE_RSA_AES128_GCM_SHA256
-                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                  | Suite_ECDHE_RSA_CHACHA20_SHA256
-                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
+       and then
+         S.Negotiated_Suite
+         in Suite_ECDHE_RSA_AES128_GCM_SHA256
+          | Suite_ECDHE_RSA_AES256_GCM_SHA384
+          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+          | Suite_ECDHE_RSA_CHACHA20_SHA256
+          | Suite_ECDHE_ECDSA_CHACHA20_SHA256;
 
    procedure Build_Server_Flight_12
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action) is
@@ -193,21 +193,17 @@ is
       --  mismatch, etc.) we silently fall through to the full handshake
       --   RFC 5077 3.4 requires this: "If the server refuses to use
       --  the ticket, it SHOULD proceed with a full handshake."
-      if S
-           .HC
-           .T12
-           .Ticket_Offered
-           --  >= Key_ID width, not merely > 0: Ticket_Key_ID reads a 4-byte
-           --  prefix, and the peer chooses this length. A 1..3 byte ticket is
-           --  malformed -- fall through to a full handshake per RFC 5077 3.4.
+      if S.HC.T12.Ticket_Offered
+        --  >= Key_ID width, not merely > 0: Ticket_Key_ID reads a 4-byte
+        --  prefix, and the peer chooses this length. A 1..3 byte ticket is
+        --  malformed -- fall through to a full handshake per RFC 5077 3.4.
         and then S.HC.T12.Peer_Ticket_Len >= SPARKTLS.Tickets_12.Ticket_Key_ID_Size
         and then S.HC.T12.Peer_Ticket_Len <= Max_TLS12_Ticket_Len
         and then S.HC.Cfg.Get_Active_TEK /= null
-        and then S.HC.Cfg.Get_TEK_By_Id
-                 /= null
-                    --  No clock => we cannot enforce the RFC 5077 5.6 age window, so
-                    --  we refuse to resume rather than honour a ticket of unknown
-                    --  age. Falls through to a full handshake, which 3.4 permits.
+        and then S.HC.Cfg.Get_TEK_By_Id /= null
+        --  No clock => we cannot enforce the RFC 5077 5.6 age window, so
+        --  we refuse to resume rather than honour a ticket of unknown
+        --  age. Falls through to a full handshake, which 3.4 permits.
         and then S.HC.Cfg.Get_Time /= null
       then
          declare
@@ -246,13 +242,14 @@ is
                   Status  => OK);
             end if;
             if OK
-              and then S.Negotiated_Suite in
-                         Suite_ECDHE_RSA_AES128_GCM_SHA256
-                         | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                         | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                         | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                         | Suite_ECDHE_RSA_CHACHA20_SHA256
-                         | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+              and then
+                S.Negotiated_Suite
+                in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                 | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                 | Suite_ECDHE_RSA_CHACHA20_SHA256
+                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
               and then Plain.Suite = Wire_Of (S.Negotiated_Suite)
             then
                --  Resume: install ticket's master_secret + force suite.
@@ -275,7 +272,7 @@ is
    procedure Append_Cert_Request_12
      (HC : in out Handshake_Context; Scratch : in out IO_Buffer; OK : out Boolean)
    is
-      Rec_Out : N32;
+      Rec_Out              : N32;
       Cert_Type_RSA_Sign   : constant Byte := 16#01#;
       Cert_Type_ECDSA_Sign : constant Byte := 16#40#;
       Certificate_Types    : constant Byte_Seq (0 .. 1) :=
@@ -307,7 +304,10 @@ is
 
       Certificate_Authorities : constant Byte_Seq (0 .. 1) := (16#00#, 16#00#);
       CR_Body_Len             : constant N32 :=
-        1 + N32 (Certificate_Types'Length) + 2 + N32 (Signature_Algorithms'Length)
+        1
+        + N32 (Certificate_Types'Length)
+        + 2
+        + N32 (Signature_Algorithms'Length)
         + N32 (Certificate_Authorities'Length);
       CR_Buf                  : Byte_Seq (0 .. 4 + CR_Body_Len - 1) := (others => 0);
    begin
@@ -343,22 +343,20 @@ is
      (HC : in Handshake_Context; Cfg : in Ready_Config; Negotiated : out Maybe_Sig_Scheme)
    is
       Client_Sent_Recognized_Group : constant Boolean :=
-        HC.Client_Supports_X25519
-        or else HC.Client_Supports_P256
-        or else HC.Client_Supports_P384;
+        HC.Client_Supports_X25519 or else HC.Client_Supports_P256 or else HC.Client_Supports_P384;
 
       function Compatible_Local_Sig (Scheme : Maybe_Sig_Scheme) return Boolean is
       begin
          case Cfg.Local.Sign_Algo is
-            when Sign_RSA_PSS =>
+            when Sign_RSA_PSS    =>
                return
-                 Scheme in
-                   Sig_RSA_PSS_SHA256
-                   | Sig_RSA_PSS_SHA384
-                   | Sig_RSA_PSS_SHA512
-                   | Sig_RSA_PKCS1_SHA256
-                   | Sig_RSA_PKCS1_SHA384
-                   | Sig_RSA_PKCS1_SHA512;
+                 Scheme
+                 in Sig_RSA_PSS_SHA256
+                  | Sig_RSA_PSS_SHA384
+                  | Sig_RSA_PSS_SHA512
+                  | Sig_RSA_PKCS1_SHA256
+                  | Sig_RSA_PKCS1_SHA384
+                  | Sig_RSA_PKCS1_SHA512;
 
             when Sign_ECDSA_P256 =>
                return
@@ -370,10 +368,10 @@ is
                  Scheme = Sig_ECDSA_P384_SHA384
                  and then (not Client_Sent_Recognized_Group or else HC.Client_Supports_P384);
 
-            when Sign_Ed25519 =>
+            when Sign_Ed25519    =>
                return Scheme = Sig_Ed25519;
 
-            when Sign_None =>
+            when Sign_None       =>
                return False;
          end case;
       end Compatible_Local_Sig;
@@ -389,7 +387,7 @@ is
          --  ecdsaNoSignatureAlgorithmsExtension test (5246-MjFVuYUzfF)
          --  exercises this path.
          case Cfg.Local.Sign_Algo is
-            when Sign_RSA_PSS =>
+            when Sign_RSA_PSS    =>
                Negotiated := Sig_RSA_PSS_SHA256;
 
             when Sign_ECDSA_P256 =>
@@ -402,10 +400,10 @@ is
                   Negotiated := Sig_ECDSA_P384_SHA384;
                end if;
 
-            when Sign_Ed25519 =>
+            when Sign_Ed25519    =>
                Negotiated := Sig_Ed25519;
 
-            when Sign_None =>
+            when Sign_None       =>
                null;
          end case;
          --  RFC 5246 7.4.1.4.1 strong-hash invariant: every value
@@ -416,7 +414,7 @@ is
          pragma
            Assert
              (Negotiated = Scheme_None
-                or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1 (Negotiated));
+              or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1 (Negotiated));
       elsif Cfg.Sign_Sig_Algo_Count > 0 then
          for J in Sig_Algo_Index loop
             pragma
@@ -425,8 +423,9 @@ is
                    (Negotiated, HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count));
             exit when J >= Cfg.Sign_Sig_Algo_Count;
             if Compatible_Local_Sig (Cfg.Sign_Sig_Algos (J))
-              and then Sig_Scheme_In_List
-                         (Cfg.Sign_Sig_Algos (J), HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count)
+              and then
+                Sig_Scheme_In_List
+                  (Cfg.Sign_Sig_Algos (J), HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count)
             then
                Negotiated := Cfg.Sign_Sig_Algos (J);
                exit;
@@ -446,7 +445,7 @@ is
                Scheme : constant Maybe_Sig_Scheme := HC.Peer_Sig_Algos (I);
             begin
                case Cfg.Local.Sign_Algo is
-                  when Sign_RSA_PSS =>
+                  when Sign_RSA_PSS    =>
                      --  An RSA key can sign with either PSS or
                      --  PKCS#1 v1.5 padding. RFC 5246 7.4.1.4.1 +
                      --  RFC 8446 4.2.3  accept any RSA scheme the
@@ -455,13 +454,13 @@ is
                      --  first match, so client ordering wins).
                      --  PKCS#1-SHA1 (0x0201) intentionally not
                      --  accepted  SHA-1 is deprecated.
-                     if Scheme in
-                          Sig_RSA_PSS_SHA256
-                          | Sig_RSA_PSS_SHA384
-                          | Sig_RSA_PSS_SHA512
-                          | Sig_RSA_PKCS1_SHA256
-                          | Sig_RSA_PKCS1_SHA384
-                          | Sig_RSA_PKCS1_SHA512
+                     if Scheme
+                        in Sig_RSA_PSS_SHA256
+                         | Sig_RSA_PSS_SHA384
+                         | Sig_RSA_PSS_SHA512
+                         | Sig_RSA_PKCS1_SHA256
+                         | Sig_RSA_PKCS1_SHA384
+                         | Sig_RSA_PKCS1_SHA512
                      then
                         Negotiated := Scheme;
                         exit;
@@ -469,8 +468,7 @@ is
 
                   when Sign_ECDSA_P256 =>
                      if Scheme = Sig_ECDSA_P256_SHA256
-                       and then (not Client_Sent_Recognized_Group
-                                 or else HC.Client_Supports_P256)
+                       and then (not Client_Sent_Recognized_Group or else HC.Client_Supports_P256)
                      then
                         Negotiated := Scheme;
                         exit;
@@ -478,20 +476,19 @@ is
 
                   when Sign_ECDSA_P384 =>
                      if Scheme = Sig_ECDSA_P384_SHA384
-                       and then (not Client_Sent_Recognized_Group
-                                 or else HC.Client_Supports_P384)
+                       and then (not Client_Sent_Recognized_Group or else HC.Client_Supports_P384)
                      then
                         Negotiated := Scheme;
                         exit;
                      end if;
 
-                  when Sign_Ed25519 =>
+                  when Sign_Ed25519    =>
                      if Scheme = Sig_Ed25519 then
                         Negotiated := Scheme;
                         exit;
                      end if;
 
-                  when Sign_None =>
+                  when Sign_None       =>
                      null;
                end case;
             end;
@@ -539,13 +536,13 @@ is
 
       --  The unversioned dispatcher commits the selected TLS 1.2 suite
       --  before entering this package.
-      if S.Negotiated_Suite not in
-           Suite_ECDHE_RSA_AES128_GCM_SHA256
-           | Suite_ECDHE_RSA_AES256_GCM_SHA384
-           | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-           | Suite_ECDHE_RSA_CHACHA20_SHA256
-           | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+      if S.Negotiated_Suite
+         not in Suite_ECDHE_RSA_AES128_GCM_SHA256
+              | Suite_ECDHE_RSA_AES256_GCM_SHA384
+              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+              | Suite_ECDHE_RSA_CHACHA20_SHA256
+              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
       then
          --  No matching TLS 1.2 ECDHE+AEAD suite
          Send_Alert_And_Error (S, Handshake_Failure, Result);
@@ -572,7 +569,7 @@ is
       end;
 
       case S.HC.KE.Curve is
-         when Group_X25519 =>
+         when Group_X25519    =>
             Gen_Random (Byte_Seq (S.HC.KE.Local_SK));
 
          when Group_Secp256r1 =>
@@ -581,7 +578,7 @@ is
          when Group_Secp384r1 =>
             Gen_Random (Byte_Seq (S.HC.KE.P384_SK));
 
-         when others =>
+         when others          =>
             null;
       end case;
 
@@ -698,15 +695,16 @@ is
    --  assignments) without the master-secret PRF step.
    procedure Derive_Keys_Resumed_12 (S : in out Session; Cfg : in Ready_Config)
    with
-     Pre =>
+     Pre  =>
        S.Version = TLS_1_2
-       and then S.Negotiated_Suite in
-                  Suite_ECDHE_RSA_AES128_GCM_SHA256
-                  | Suite_ECDHE_RSA_AES256_GCM_SHA384
-                  | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-                  | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-                  | Suite_ECDHE_RSA_CHACHA20_SHA256
-                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
+       and then
+         S.Negotiated_Suite
+         in Suite_ECDHE_RSA_AES128_GCM_SHA256
+          | Suite_ECDHE_RSA_AES256_GCM_SHA384
+          | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+          | Suite_ECDHE_RSA_CHACHA20_SHA256
+          | Suite_ECDHE_ECDSA_CHACHA20_SHA256,
      Post =>
        S.State = S.State'Old
        and then S.Role = S.Role'Old
@@ -715,19 +713,16 @@ is
    is
       use Key_Schedule_12;
       Use_384 : constant Boolean :=
-        S.Negotiated_Suite in
-          Suite_ECDHE_RSA_AES256_GCM_SHA384
-          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+        S.Negotiated_Suite
+        in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
       Key_Len : constant N32 :=
-        (if S.Negotiated_Suite in
-              Suite_ECDHE_RSA_AES128_GCM_SHA256
-              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+        (if S.Negotiated_Suite
+            in Suite_ECDHE_RSA_AES128_GCM_SHA256 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
          then 16
          else 32);
       IV_Len  : constant N32 :=
-        (if S.Negotiated_Suite in
-              Suite_ECDHE_RSA_CHACHA20_SHA256
-              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+        (if S.Negotiated_Suite
+            in Suite_ECDHE_RSA_CHACHA20_SHA256 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
          then 12
          else 4);
       CK      : Byte_Seq (0 .. Key_Len - 1);
@@ -753,7 +748,8 @@ is
                 Suite_AES_128_GCM_SHA256,
               when Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384 =>
                 Suite_AES_256_GCM_SHA384,
-              when others => Suite_CHACHA20_POLY1305_SHA256);
+              when others                                                                  =>
+                Suite_CHACHA20_POLY1305_SHA256);
       begin
          S.Client_App :=
            (Key => (others => 0), IV => (others => 0), Counter => 0, Suite => Int_Suite);
@@ -830,8 +826,8 @@ is
    procedure Issue_Resumed_NST_12
      (S       : in out Session;
       Cfg     : in Ready_Config;
-      Key_ID  : in Byte_Seq;
-      TEK     : in Byte_Seq;
+      Key_ID  : in SPARKTLS.Tickets_12.Bytes_4;
+      TEK     : in SPARKTLS.Tickets_12.Bytes_32;
       Scratch : in out IO_Buffer;
       OK      : out Boolean)
    is
@@ -847,15 +843,19 @@ is
       Cfg.Random.all (Nonce_Buf);
       Plain.Master_Secret := S.HC.Master_Secret_12;
       Plain.Suite := Wire_Of (S.Negotiated_Suite);
+
       Plain.Created_At :=
-        (if Cfg.Get_Time /= null then SPARKTLS.Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all)
+        (if Cfg.Get_Time /= null
+         then SPARKTLS.Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all)
          else 0);
+
       Plain.SID_Len := 0;
       Plain.SID := (others => 0);
+
       SPARKTLS.Tickets_12.Encrypt_Ticket
         (Plain      => Plain,
-         Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Key_ID),
-         TEK        => SPARKTLS.Tickets_12.Bytes_32 (TEK),
+         Key_ID     => Key_ID,
+         TEK        => TEK,
          Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
          Ticket     => Ticket_Buf,
          Ticket_Len => Ticket_Len);
@@ -865,16 +865,18 @@ is
          Ticket        => Ticket_Buf (0 .. Ticket_Len - 1),
          Result        => NST_Buf,
          Len           => NST_Total);
+
       if NST_Total = 0 then
          return;
       end if;
 
       Append_Transcript (S.HC, NST_Buf (0 .. NST_Total - 1));
-
       Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), Scratch, NST_Rec_Out);
+
       if NST_Rec_Out = 0 then
          return;
       end if;
+
       OK := True;
    end Issue_Resumed_NST_12;
 
@@ -887,9 +889,8 @@ is
       Rec_Out       : N32;
       Scratch       : IO_Buffer;
       Use_384       : constant Boolean :=
-        S.Negotiated_Suite in
-          Suite_ECDHE_RSA_AES256_GCM_SHA384
-          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+        S.Negotiated_Suite
+        in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
       --  Sealing key comes from the caller's store, not from Config.
       --  Filled by Get_Active_TEK below; if the callback reports no key
       --  we simply do not issue a ticket.
@@ -956,7 +957,14 @@ is
       --  3. NewSessionTicket (re-issued under our active TEK with a
       --     fresh nonce). RFC 5077 3.3: the server MUST send NST in
       --     the resumed flight if it advertised session_ticket in SH.
-      Issue_Resumed_NST_12 (S, Cfg, Active_Key_ID, Active_TEK, Scratch, NST_OK);
+      Issue_Resumed_NST_12
+        (S,
+         Cfg,
+         SPARKTLS.Tickets_12.Bytes_4 (Active_Key_ID),
+         SPARKTLS.Tickets_12.Bytes_32 (Active_TEK),
+         Scratch,
+         NST_OK);
+
       if not NST_OK then
          Send_Alert_And_Error (S, Insufficient_Buffer, Result);
          return;
@@ -1027,21 +1035,18 @@ is
    procedure Derive_Keys_12 (S : in out Session; Cfg : in Ready_Config) is
       use Key_Schedule_12;
       Use_384    : constant Boolean :=
-        S.Negotiated_Suite in
-          Suite_ECDHE_RSA_AES256_GCM_SHA384
-          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+        S.Negotiated_Suite
+        in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
       Key_Len    : constant N32 :=
-        (if S.Negotiated_Suite in
-              Suite_ECDHE_RSA_AES128_GCM_SHA256
-              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+        (if S.Negotiated_Suite
+            in Suite_ECDHE_RSA_AES128_GCM_SHA256 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
          then 16
          else 32);
       --  RFC 5288 3: AES-GCM IV salt is 4 bytes.
       --  RFC 7905 2: ChaCha20-Poly1305 IV is 12 bytes.
       IV_Len     : constant N32 :=
-        (if S.Negotiated_Suite in
-              Suite_ECDHE_RSA_CHACHA20_SHA256
-              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+        (if S.Negotiated_Suite
+            in Suite_ECDHE_RSA_CHACHA20_SHA256 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
          then 12
          else 4);
       CK         : Byte_Seq (0 .. Key_Len - 1);
@@ -1141,7 +1146,8 @@ is
                 Suite_AES_128_GCM_SHA256,
               when Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384 =>
                 Suite_AES_256_GCM_SHA384,
-              when others => Suite_CHACHA20_POLY1305_SHA256);
+              when others                                                                  =>
+                Suite_CHACHA20_POLY1305_SHA256);
       begin
          --  Verify the mapping matches the ghost function
 
@@ -1173,12 +1179,11 @@ is
    procedure Parse_Complete_CKE_12
      (HC : in out Handshake_Context; Msg : in Byte_Seq; CKE_Good : out Boolean)
    with
-     Pre =>
+     Pre  =>
        Msg'Length > 0
        and then Msg'Last < N32 (Natural'Last)
        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local),
-     Post =>
-       SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
+     Post => SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (HC.Cfg.Local)
    is
       Msg_Type : Maybe_HS_Msg;
       Msg_Len  : N32;
@@ -1186,9 +1191,7 @@ is
    begin
       CKE_Good := False;
       Handshake.Parse_Handshake_Header (Msg, Msg_Type, Msg_Len, POK);
-      if not POK
-        or else Msg_Type /= HT_Client_Key_Exchange
-        or else 4 + Msg_Len /= N32 (Msg'Length)
+      if not POK or else Msg_Type /= HT_Client_Key_Exchange or else 4 + Msg_Len /= N32 (Msg'Length)
       then
          return;
       end if;
@@ -1213,12 +1216,9 @@ is
 
    --  Consumes the current record and fails the handshake with Err.
    procedure Consume_And_Alert_12
-     (S      : in out Session;
-      Rec    : in Records.Parse_Result;
-      Err    : in Error_Code;
-      Result : out Action)
+     (S : in out Session; Rec : in Records.Parse_Result; Err : in Error_Code; Result : out Action)
    with
-     Pre =>
+     Pre  =>
        S.Input.Read_Pos <= N32'Last - Rec.Record_Len
        and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
        and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity,
@@ -1236,12 +1236,9 @@ is
    --  transcript, and draw the EMS session hash (RFC 7627) at exactly this
    --  point -- before Finished, after CKE.
    procedure Finish_CKE_12
-     (S      : in out Session;
-      Rec    : in Records.Parse_Result;
-      Msg    : in Byte_Seq;
-      Result : out Action)
+     (S : in out Session; Rec : in Records.Parse_Result; Msg : in Byte_Seq; Result : out Action)
    with
-     Pre =>
+     Pre  =>
        Msg'Length > 0
        and then Msg'Last < N32 (Natural'Last)
        and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
@@ -1271,9 +1268,8 @@ is
       end if;
 
       Append_Transcript (S.HC, Msg);
-      if S.Negotiated_Suite in
-           Suite_ECDHE_RSA_AES256_GCM_SHA384
-           | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+      if S.Negotiated_Suite
+         in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
       then
          declare
             D : SPARKNaCl.Hashing.SHA384.Digest;
@@ -1331,18 +1327,18 @@ is
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error
                     (S,
-                     (if Frag (Frag'First) in
-                           16#01#
-                           | 16#02#
-                           | 16#04#
-                           | 16#08#
-                           | 16#0B#
-                           | 16#0C#
-                           | 16#0D#
-                           | 16#0E#
-                           | 16#0F#
-                           | 16#10#
-                           | 16#14#
+                     (if Frag (Frag'First)
+                         in 16#01#
+                          | 16#02#
+                          | 16#04#
+                          | 16#08#
+                          | 16#0B#
+                          | 16#0C#
+                          | 16#0D#
+                          | 16#0E#
+                          | 16#0F#
+                          | 16#10#
+                          | 16#14#
                       then Decode_Error
                       else Unexpected_Message),
                      Result);
@@ -1440,8 +1436,7 @@ is
          end;
          Set_State (S, Closing);
          if Output_Pending (S) > 0 then
-            pragma
-              Assert (Close_Notify_Reply_State_RFC_5246_7_2_1 (S.State, Output_Pending (S)));
+            pragma Assert (Close_Notify_Reply_State_RFC_5246_7_2_1 (S.State, Output_Pending (S)));
             Result := Has_Output;
          else
             Result := Shutdown;
@@ -1457,8 +1452,7 @@ is
    --  Split from Compute_Shared_Secret_12 (decomposition round 1):
    --  each operates on KE state alone.
 
-   procedure Shared_Secret_X25519_12
-     (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
+   procedure Shared_Secret_X25519_12 (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
    is
    begin
       KE.Shared (0 .. 31) := SPARKNaCl.Scalar.Mult (KE.Local_SK, KE.Peer_PK);
@@ -1468,8 +1462,7 @@ is
       Err := (if OK then No_Error else Illegal_Parameter);
    end Shared_Secret_X25519_12;
 
-   procedure Shared_Secret_P256_12
-     (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
+   procedure Shared_Secret_P256_12 (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
    is
       use SPARKTLSCrypto.P256.Point;
       Pt : P256_Jacobian;
@@ -1493,8 +1486,7 @@ is
       end if;
    end Shared_Secret_P256_12;
 
-   procedure Shared_Secret_P384_12
-     (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
+   procedure Shared_Secret_P384_12 (KE : in out KE_State; OK : out Boolean; Err : out Error_Code)
    is
       SS    : Bytes_48;
       OK384 : Boolean;
@@ -1517,26 +1509,21 @@ is
       CKE_Transcript_Nonempty : Boolean := False
       with Ghost;
 
-      procedure Compute_Shared_Secret_12 (OK : out Boolean; Err : out Error_Code)
-      with
-        Pre =>
-          S.Version = TLS_1_2
-          and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local),
-        Post =>
-          SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)
-          and then S.HC.TS = S.HC.TS'Old
-      is
+      procedure Compute_Shared_Secret_12
+        (KE : in out KE_State; OK : out Boolean; Err : out Error_Code) is
       begin
          --  RFC 5246 7.2.2 / RFC 8446 6.2: invalid peer share is
          --  illegal_parameter; an unselectable group is the generic
          --  handshake_failure.
          case S.HC.KE.Curve is
-            when Group_X25519 =>
-               Shared_Secret_X25519_12 (S.HC.KE, OK, Err);
+            when Group_X25519    =>
+               Shared_Secret_X25519_12 (KE, OK, Err);
+
             when Group_Secp256r1 =>
-               Shared_Secret_P256_12 (S.HC.KE, OK, Err);
+               Shared_Secret_P256_12 (KE, OK, Err);
+
             when Group_Secp384r1 =>
-               Shared_Secret_P384_12 (S.HC.KE, OK, Err);
+               Shared_Secret_P384_12 (KE, OK, Err);
          end case;
       end Compute_Shared_Secret_12;
    begin
@@ -1664,7 +1651,8 @@ is
          else
             declare
                HS_Msg_Len : constant N32 :=
-                 N32 (S.Input.Data (FS + 1)) * 65536 + N32 (S.Input.Data (FS + 2)) * 256
+                 N32 (S.Input.Data (FS + 1)) * 65536
+                 + N32 (S.Input.Data (FS + 2)) * 256
                  + N32 (S.Input.Data (FS + 3));
                HS_Total   : constant N32 := HS_Msg_Len + 4;
             begin
@@ -1705,7 +1693,7 @@ is
          SS_OK  : Boolean := False;
          SS_Err : Error_Code := Handshake_Failure;
       begin
-         Compute_Shared_Secret_12 (SS_OK, SS_Err);
+         Compute_Shared_Secret_12 (S.HC.KE, SS_OK, SS_Err);
          if not SS_OK then
             Send_Alert_And_Error (S, SS_Err, Result);
             return;
@@ -1788,18 +1776,18 @@ is
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Send_Alert_And_Error
                  (S,
-                  (if Frag (Frag'First) in
-                        16#01#
-                        | 16#02#
-                        | 16#04#
-                        | 16#08#
-                        | 16#0B#
-                        | 16#0C#
-                        | 16#0D#
-                        | 16#0E#
-                        | 16#0F#
-                        | 16#10#
-                        | 16#14#
+                  (if Frag (Frag'First)
+                      in 16#01#
+                       | 16#02#
+                       | 16#04#
+                       | 16#08#
+                       | 16#0B#
+                       | 16#0C#
+                       | 16#0D#
+                       | 16#0E#
+                       | 16#0F#
+                       | 16#10#
+                       | 16#14#
                    then Decode_Error
                    else Unexpected_Message),
                   Result);
@@ -2012,18 +2000,18 @@ is
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                Send_Alert_And_Error
                  (S,
-                  (if Frag (Frag'First) in
-                        16#01#
-                        | 16#02#
-                        | 16#04#
-                        | 16#08#
-                        | 16#0B#
-                        | 16#0C#
-                        | 16#0D#
-                        | 16#0E#
-                        | 16#0F#
-                        | 16#10#
-                        | 16#14#
+                  (if Frag (Frag'First)
+                      in 16#01#
+                       | 16#02#
+                       | 16#04#
+                       | 16#08#
+                       | 16#0B#
+                       | 16#0C#
+                       | 16#0D#
+                       | 16#0E#
+                       | 16#0F#
+                       | 16#10#
+                       | 16#14#
                    then Decode_Error
                    else Unexpected_Message),
                   Result);
@@ -2043,14 +2031,15 @@ is
             end if;
 
             declare
-               F          : constant N32 := Frag'First;
-               Scheme     : constant Maybe_Sig_Scheme :=
-                 Scheme_From_Wire
-                   (Unsigned_16 (Frag (F + 4)) * 256 + Unsigned_16 (Frag (F + 5)));
-               Sig_Len    : constant N32 := N32 (Frag (F + 6)) * 256 + N32 (Frag (F + 7));
-               Verified   : Boolean;
+               F        : constant N32 := Frag'First;
+               Scheme   : constant Maybe_Sig_Scheme :=
+                 Scheme_From_Wire (Unsigned_16 (Frag (F + 4)) * 256 + Unsigned_16 (Frag (F + 5)));
+               Sig_Len  : constant N32 := N32 (Frag (F + 6)) * 256 + N32 (Frag (F + 7));
+               Verified : Boolean;
             begin
-               if Sig_Len = 0 or else Sig_Len /= Msg_Len - 4 or else F + 8 + Sig_Len - 1 > Frag'Last
+               if Sig_Len = 0
+                 or else Sig_Len /= Msg_Len - 4
+                 or else F + 8 + Sig_Len - 1 > Frag'Last
                then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error (S, Decode_Error, Result);
@@ -2058,10 +2047,9 @@ is
                end if;
 
                if S.HC.Cfg.Verify_Sig_Algo_Count > 0
-                 and then not Sig_Scheme_In_List
-                                (Scheme,
-                                 S.HC.Cfg.Verify_Sig_Algos,
-                                 S.HC.Cfg.Verify_Sig_Algo_Count)
+                 and then
+                   not Sig_Scheme_In_List
+                         (Scheme, S.HC.Cfg.Verify_Sig_Algos, S.HC.Cfg.Verify_Sig_Algo_Count)
                then
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Send_Alert_And_Error (S, Illegal_Parameter, Result);
@@ -2074,8 +2062,7 @@ is
                   for I in N32 range 0 .. Sig_Len - 1 loop
                      Sig (I) := Frag (F + 8 + I);
                   end loop;
-                  Verified :=
-                    CV_Signature_Valid_12 (S.HC.TS, Sig, D.Peer_Leaf.Cert, Scheme);
+                  Verified := CV_Signature_Valid_12 (S.HC.TS, Sig, D.Peer_Leaf.Cert, Scheme);
                end;
 
                if not Verified then
@@ -2145,11 +2132,23 @@ is
       end if;
    end Expected_Client_Finished_12;
 
+   ----------------------------------------------------------------------------
+   --  Verify_Client_Finished_12
    --  Validates a complete decrypted Finished message (type, length header,
    --  exact record fit per RFC 5246 7.4.9) and checks verify_data in
    --  constant time. On success appends the message to the transcript and
    --  sets Verified; on failure sends the appropriate alert (encrypted in
    --  the abbreviated-resume flow, where our CCS is already out).
+   ----------------------------------------------------------------------------
+   procedure Verify_Client_Finished_12
+     (S         : in out Session;
+      Plaintext : in Byte_Seq;
+      PL        : in N32;
+      Use_384   : in Boolean;
+      Verified  : out Boolean;
+      Result    : out Action)
+   with Pre => Plaintext'First = 0 and then PL >= 4 and then PL - 1 <= Plaintext'Last;
+
    procedure Verify_Client_Finished_12
      (S         : in out Session;
       Plaintext : in Byte_Seq;
@@ -2204,8 +2203,7 @@ is
          --  accumulation  no early exit on mismatch.
          declare
             Received : constant Key_Schedule_12.Verify_Data_12 :=
-              Key_Schedule_12.Verify_Data_12
-                (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
+              Key_Schedule_12.Verify_Data_12 (Plaintext (4 .. 4 + Finished_Verify_Len - 1));
          begin
             if not Equal (Byte_Seq (Received), Byte_Seq (Exp)) then
                --  RFC 5246 7.4.9 / 7.2.1: Finished verify
@@ -2230,16 +2228,14 @@ is
    --  (RFC 5077 3.5: before the server Finished hash) and to Scratch as a
    --  plaintext handshake record. On failure sets the error state; the
    --  caller aborts the flight.
-   procedure Issue_NST_12 (S : in out Session; Scratch : in out IO_Buffer; OK : out Boolean)
-   is
+   procedure Issue_NST_12 (S : in out Session; Scratch : in out IO_Buffer; OK : out Boolean) is
    begin
       OK := True;
       if S.HC.T12.Ticket_Offered
-        and then S.HC.Cfg.Get_Active_TEK
-                 /= null
-                    --  Fail closed without a clock: Created_At would be 0 and the
-                    --  decrypt-side age check would pass forever, so the ticket
-                    --  would never expire. Issue none instead.
+        and then S.HC.Cfg.Get_Active_TEK /= null
+        --  Fail closed without a clock: Created_At would be 0 and the
+        --  decrypt-side age check would pass forever, so the ticket
+        --  would never expire. Issue none instead.
         and then S.HC.Cfg.Get_Time /= null
       then
          declare
@@ -2330,8 +2326,7 @@ is
    --
    --  NST goes BEFORE CCS (RFC 5077 3.3): server's WRITE state is still
    --  plaintext until CCS, so NST is a plaintext handshake record.
-   procedure Commit_Finished_Flight_12
-     (S : in out Session; Use_384 : in Boolean; OK : out Boolean)
+   procedure Commit_Finished_Flight_12 (S : in out Session; Use_384 : in Boolean; OK : out Boolean)
    is
       Scratch : IO_Buffer;
       NST_OK  : Boolean;
@@ -2389,8 +2384,7 @@ is
          Len           : constant Commit_Length := Scratch.Write_Pos;
          New_Write_Pos : constant Buffer_Size := S.Output.Write_Pos + Len;
       begin
-         S.Output.Data (S.Output.Write_Pos .. New_Write_Pos - 1) :=
-            Scratch.Data (0 .. Len - 1);
+         S.Output.Data (S.Output.Write_Pos .. New_Write_Pos - 1) := Scratch.Data (0 .. Len - 1);
          S.Output.Write_Pos := New_Write_Pos;
       end;
       OK := True;
@@ -2404,9 +2398,8 @@ is
       Rec       : Records.Parse_Result;
       Flight_OK : Boolean;
       Use_384   : constant Boolean :=
-        S.Negotiated_Suite in
-          Suite_ECDHE_RSA_AES256_GCM_SHA384
-          | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+        S.Negotiated_Suite
+        in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
    begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
@@ -2448,7 +2441,8 @@ is
 
          declare
             Min_Frag : constant N32 :=
-              (if S.Client_App.Suite = Suite_CHACHA20_POLY1305_SHA256 then GCM_Tag_Len + 1
+              (if S.Client_App.Suite = Suite_CHACHA20_POLY1305_SHA256
+               then GCM_Tag_Len + 1
                else Explicit_Nonce_Len + GCM_Tag_Len + 1);
          begin
             if Frag_Len < Min_Frag then
@@ -2598,12 +2592,10 @@ is
 
    ------------------------------------------------------------------
    procedure Advance_Handshake_12
-     (S      : in out Server_Session;
-      D      : in out SPARKTLS.HS_Pool.HS_Data;
-      Result : out Action) is
+     (S : in out Server_Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action) is
    begin
       case S.State is
-         when Server_Hello_Sent =>
+         when Server_Hello_Sent                                 =>
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
@@ -2626,7 +2618,7 @@ is
                Process_Client_CertVerify_12 (S, D, Result);
             end if;
 
-         when Wait_Client_Finished =>
+         when Wait_Client_Finished                              =>
             if not S.HC.CKE_Received_12 then
                Process_Client_Key_Exchange_12 (S, D, Result);
             elsif not S.HC.CCS_Received then
@@ -2636,7 +2628,7 @@ is
                Process_Client_Finished_12 (S, D, Result);
             end if;
 
-         when others =>
+         when others                                            =>
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -2747,7 +2739,8 @@ is
                --  ChaCha20-Poly1305 (RFC 7905) omits the on-wire
                --  explicit_nonce; AES-GCM (RFC 5288) includes it.
                Min_Frag : constant N32 :=
-                 (if S.Client_App.Suite = Suite_CHACHA20_POLY1305_SHA256 then GCM_Tag_Len
+                 (if S.Client_App.Suite = Suite_CHACHA20_POLY1305_SHA256
+                  then GCM_Tag_Len
                   else Explicit_Nonce_Len + GCM_Tag_Len);
             begin
                if Frag_Len < Min_Frag then
@@ -2798,7 +2791,7 @@ is
                      end if;
                   end if;
 
-               when Records.Content_Alert =>
+               when Records.Content_Alert            =>
                   if PL >= 2 and then Plaintext (1) = 0 then
                      --  RFC 8446 6.1: record the orderly close, so the
                      --  application can distinguish a finished stream
@@ -2836,7 +2829,7 @@ is
                      Result := Error_Alert;
                   end if;
 
-               when others =>
+               when others                           =>
                   --  RFC 5246 6 / RFC 8446 5.1: an unrecognised record
                   --  content type is unexpected_message, not something to
                   --  skip. Silently returning OK let a peer feed us
