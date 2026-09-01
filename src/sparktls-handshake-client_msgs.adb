@@ -2538,6 +2538,85 @@ is
       end if;
    end Parse_SH_RFLX_Core;
 
+   --  R4 (#131): HelloRetryRequest arm. RFC 8446 4.1.4. Bundles the
+   --  three HRR-specific checks the caller ran inline: (1) a valid HRR
+   --  must carry key_share or cookie (empty -> illegal_parameter; BoGo
+   --  HelloRetryRequest-Empty-TLS13); (2) it MUST change the
+   --  ClientHello, so an HRR naming a group we already offered is
+   --  unnecessary -> illegal_parameter (UnnecessaryHelloRetryRequest-
+   --  TLS13); (3) stash the HRR cipher suite (which MUST be a TLS 1.3
+   --  suite) for the CH2 transcript and the SH2 cipher-match check.
+   --  The Post carries the strong exit facts the inline 6-conjunct cut
+   --  stated: TS and Got_HRR untouched, cookie bound preserved, and
+   --  Version pinned to TLS 1.3 on success.
+   procedure Parse_HRR
+     (Data       : in     Byte_Seq;
+      HC         : in out Engaged_Context;
+      Negotiated : in out Supported_Suite;
+      Version    : in out TLS_Version;
+      OK         :    out Boolean;
+      Err        :    out Error_Code)
+   with
+     Pre  => Data'Length in 39 .. Max_HS_Msg
+             and then Data'Last < N32 (Natural'Last)
+             and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
+     Post => HC.TS = HC.TS'Old
+             and then HC.Got_HRR = HC.Got_HRR'Old
+             and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+             and then (if OK then Version = TLS_1_3)
+   is
+   begin
+      OK  := True;
+      Err := No_Error;
+
+      --  (1) empty HRR (neither key_share nor cookie).
+      if HC.HRR_Selected_Group = Group_None and then HC.HRR_Cookie_Len = 0 then
+         Err := Illegal_Parameter;
+         OK  := False;
+         return;
+      end if;
+
+      --  (2) unnecessary HRR. In the default profile CH1 carries only
+      --  X25519; when Client_Key_Share_Group is set, CH1 carries only
+      --  that configured group, so any HRR is a real change.
+      if (if HC.Cfg.Client_Key_Share_Group /= Group_None then True
+          else HC.HRR_Selected_Group = Group_X25519)
+      then
+         Err := Illegal_Parameter;
+         OK  := False;
+         return;
+      end if;
+
+      --  (3) stash HRR cipher suite (RFC 8446 4.1.4: HRR and SH2
+      --  cipher_suite MUST match; the suite MUST be a TLS 1.3 suite).
+      declare
+         Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
+      begin
+         if N32 (Data'Length) < 41 + Sid_Len then
+            Err := Decode_Error;
+            OK  := False;
+            return;
+         end if;
+         declare
+            Cs_Off    : constant N32 := Data'First + 39 + Sid_Len;
+            Suite_Val : constant Unsigned_16 :=
+              Unsigned_16 (Data (Cs_Off)) * 256 + Unsigned_16 (Data (Cs_Off + 1));
+         begin
+            pragma Assert (Cs_Off + 1 <= Data'Last);
+            --  Enum-subtype membership, not wire literals: To_Suite is
+            --  total and TLS13_Suite is the type-level fact (#121).
+            if To_Suite (Suite_Val) not in TLS13_Suite then
+               Err := Illegal_Parameter;
+               OK  := False;
+               return;
+            end if;
+            HC.HRR_Cipher_Suite := Suite_Val;
+            Negotiated := To_Suite (Suite_Val);
+            Version := TLS_1_3;
+         end;
+      end;
+   end Parse_HRR;
+
    --  R5 (#131): ServerHello version selection and policy checks.
    --  Pure over narrow formals (no HC): picks Version from the
    --  supported_versions signal, then enforces the TLS 1.3 suite set,
@@ -2754,7 +2833,8 @@ is
    is (for all I in N32 range 0 .. 31 =>
          Data (Data'First + 6 + I) = HRR_Sentinel (I))
    with
-     Pre => N32 (Data'Length) >= 38;
+     Pre => Data'Length in 39 .. Max_HS_Msg
+            and then Data'Last < N32 (Natural'Last);
 
    --  R2 (#131): ServerHello preliminaries -- the shape checks that
    --  must pass before any parsing. Pure function of Data. Outcomes:
@@ -2822,6 +2902,8 @@ is
       Prelim_Err       : Error_Code;
       Pol_OK           : Boolean;
       Pol_Err          : Error_Code;
+      HRR_OK           : Boolean;
+      HRR_Err          : Error_Code;
       TS_At_Entry      : constant SPARKTLS_Transcript.Transcript_State := HC.TS with Ghost;
       Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
 
@@ -2872,69 +2954,17 @@ is
          end if;
       end;
 
-      --  RFC 8446 4.1.4: a valid HRR must contain at least one of
-      --  key_share or cookie. An HRR with neither is empty â
-      --  illegal_parameter. BoGo HelloRetryRequest-Empty-TLS13.
-      if Curr_Is_HRR and then HC.HRR_Selected_Group = Group_None and then HC.HRR_Cookie_Len = 0 then
-         Last_Err := Illegal_Parameter;
-         pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
-         return;
-      end if;
-
-      --  RFC 8446 4.1.4: "Clients MUST abort the handshake with an
-      --  'illegal_parameter' alert if the HelloRetryRequest would
-      --  not result in any change in the ClientHello." Concretely,
-      --  if HRR.selected_group names a group we already offered in
-      --  CH1's key_share, the HRR is unnecessary. In the default
-      --  client profile CH1 carries only X25519. When the caller
-      --  restricts Client_Key_Share_Group, CH1 carries only that
-      --  configured group and supported_groups advertises only that
-      --  configured group.
-      --  BoGo UnnecessaryHelloRetryRequest-TLS13.
-      if Curr_Is_HRR
-        and then (if HC.Cfg.Client_Key_Share_Group /= Group_None then True
-                  else HC.HRR_Selected_Group = Group_X25519)
-      then
-         Last_Err := Illegal_Parameter;
-         pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
-         return;
-      end if;
-
-      --  HRR is well-formed. Return OK := True; the caller in
-      --  sparktls-client.adb sees HC.Got_HRR and runs the retry
-      --  flow (transcript message_hash replacement â CH2 build â
-      --  send â wait for the real ServerHello).
       if Curr_Is_HRR then
-         --  Stash HRR cipher suite for the CH2 build's transcript
-         --  + the cipher-mismatch check on the second SH (RFC
-         --  8446 4.1.4: cipher_suite from HRR and SH MUST match).
-         declare
-            Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
-         begin
-            if N32 (Data'Length) < 41 + Sid_Len then
-               Last_Err := Decode_Error;
-               pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
-               return;
-            end if;
-            declare
-               Cs_Off    : constant N32 := Data'First + 39 + Sid_Len;
-               Suite_Val : constant Unsigned_16 :=
-                 Unsigned_16 (Data (Cs_Off)) * 256 + Unsigned_16 (Data (Cs_Off + 1));
-            begin
-               pragma Assert (Cs_Off + 1 <= Data'Last);
-               --  RFC 8446 4.1.4: an HRR must select a TLS 1.3 suite.
-               --  Enum-subtype membership, not wire literals: To_Suite is
-               --  total and TLS13_Suite is the type-level fact (#121).
-               if To_Suite (Suite_Val) not in TLS13_Suite then
-                  Last_Err := Illegal_Parameter;
-                  pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
-                  return;
-               end if;
-               HC.HRR_Cipher_Suite := Suite_Val;
-               Negotiated := To_Suite (Suite_Val);
-               Version := TLS_1_3;
-            end;
-         end;
+         --  HRR arm (R4, #131): empty/unnecessary checks + cipher
+         --  stash. On success the caller sees HC.Got_HRR and runs the
+         --  retry flow (transcript message_hash replacement -> CH2
+         --  build -> send -> wait for the real ServerHello).
+         Parse_HRR (Data, HC, Negotiated, Version, HRR_OK, HRR_Err);
+         if not HRR_OK then
+            Last_Err := HRR_Err;
+            pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
+            return;
+         end if;
          OK := True;
          pragma Assert (HC.Got_HRR);
          pragma Assert (not Got_HRR_At_Entry);
