@@ -1305,6 +1305,13 @@ is
    --  else -> unexpected_message.
    procedure Reject_Post_CKE_Handshake_12
      (S : in out Session; Rec : in Records.Parse_Result; Result : out Action)
+   with
+     Pre =>
+       Rec.OK
+       and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+       and then Rec.Record_Len = Rec.Fragment_Pos + Rec.Fragment_Len
+       and then Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos
+       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
    is
    begin
       if Rec.Content = Records.Content_Handshake and then Rec.Fragment_Len >= 4 then
@@ -1374,6 +1381,13 @@ is
 
    procedure Consume_CKE_Phase_CCS_12
      (S : in out Session; Rec : in Records.Parse_Result; Result : out Action)
+   with
+     Pre =>
+       Rec.OK
+       and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+       and then Rec.Record_Len = Rec.Fragment_Pos + Rec.Fragment_Len
+       and then Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos
+       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
    is
       CCS_Pos : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
       CCS_OK  : constant Boolean :=
@@ -1397,6 +1411,13 @@ is
 
    procedure Consume_CKE_Phase_Alert_12
      (S : in out Session; Rec : in Records.Parse_Result; Result : out Action)
+   with
+     Pre =>
+       Rec.OK
+       and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+       and then Rec.Record_Len = Rec.Fragment_Pos + Rec.Fragment_Len
+       and then Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos
+       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
    is
       --  RFC 5246 7.2.1: close_notify can arrive at any time, including
       --  mid-handshake before keys are established; reply with a
