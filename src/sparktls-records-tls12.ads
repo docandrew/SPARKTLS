@@ -115,7 +115,11 @@ is
        (if Space_Left (Keys)'Old then Keys = (Keys'Old with delta Counter => Keys'Old.Counter + 1)
         else Keys = Keys'Old and Bytes_Out = 0)
        and Bytes_Out
-           <= Record_Header_Size + Explicit_Nonce_Len + N32 (Plaintext'Length) + GCM_Tag_Len;
+           <= Record_Header_Size + Explicit_Nonce_Len + N32 (Plaintext'Length) + GCM_Tag_Len
+       --  A committed record leaves bytes in the buffer: lets flight
+       --  committers prove their deliberate 1..-range commit length
+       --  (the a414432 defense) never trips at runtime.
+       and (if Bytes_Out > 0 then Output.Write_Pos > 0);
    --  Exact size depends on suite: AES-GCM includes an
    --  on-wire explicit_nonce[8], ChaCha20 (RFC 7905 2)
    --  does not. Either is bounded above by the GCM size.

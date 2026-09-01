@@ -1240,7 +1240,7 @@ is
    with
      Pre  =>
        Msg'Length > 0
-       and then Msg'Last < N32 (Natural'Last)
+       and then Msg'Last < N32'Last - 256  --  transcript-append headroom
        and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
        and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
        and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity
@@ -1515,7 +1515,7 @@ is
          --  RFC 5246 7.2.2 / RFC 8446 6.2: invalid peer share is
          --  illegal_parameter; an unselectable group is the generic
          --  handshake_failure.
-         case S.HC.KE.Curve is
+         case KE.Curve is
             when Group_X25519    =>
                Shared_Secret_X25519_12 (KE, OK, Err);
 
@@ -1900,15 +1900,35 @@ is
    procedure Validate_Client_Cert_12
      (Cfg : in Config; D : in SPARKTLS.HS_Pool.HS_Data; OK : out Boolean)
    is
-      Leaf_Last : constant X509.N32 := D.Peer_Leaf.DER_Len - 1;
-      --  DER is X509.Byte_Seq now (#101): validators take it
-      --  directly -- the conversion copy loop is gone, and with
-      --  it the Leaf_DER bound obligations it generated.
-      Cert_X    : X509.Byte_Seq renames D.Peer_Leaf.DER (0 .. Leaf_Last);
-      VR        : Validation_Result;
+      VR : Validation_Result;
    begin
       OK := False;
 
+      --  Fail closed: no presented certificate, no valid client cert. The
+      --  state machine should make this unreachable (CertVerify follows a
+      --  nonempty Certificate), but the guard makes absence harmless AND
+      --  unlocks Pool_Entry's predicate (DER_Len > 0, Spans_Valid) for
+      --  every bound below -- declarations included, hence the declare
+      --  block: Leaf_Last elaborates before any statement could guard it.
+      if not D.Peer_Leaf.Present then
+         return;
+      end if;
+
+      --  Lemma step, not scaffolding: proves in one hop from Pool_Entry's
+      --  predicate (Present holds past the guard), and both validator Pres
+      --  then consume the assumed result. Without this line the prover
+      --  re-derives the predicate implication inline at each Pre and
+      --  exhausts (4 findings without, 0 with -- measured 2026-09-01).
+      pragma
+        Assert (X509.Spans_Valid (D.Peer_Leaf.Cert, D.Peer_Leaf.DER_Len - 1));
+
+      declare
+         Leaf_Last : constant X509.N32 := D.Peer_Leaf.DER_Len - 1;
+         --  DER is X509.Byte_Seq now (#101): validators take it
+         --  directly -- the conversion copy loop is gone, and with
+         --  it the Leaf_DER bound obligations it generated.
+         Cert_X    : X509.Byte_Seq renames D.Peer_Leaf.DER (0 .. Leaf_Last);
+      begin
       VR :=
         Validate_Leaf_Policy
           (Leaf     => D.Peer_Leaf.Cert,
@@ -1942,7 +1962,8 @@ is
          end if;
       end if;
 
-      OK := True;
+         OK := True;
+      end;
    end Validate_Client_Cert_12;
 
    procedure Process_Client_CertVerify_12

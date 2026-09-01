@@ -200,7 +200,7 @@ is
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    with
      Pre =>
-       True
+       S.Negotiated_Suite in TLS13_Suite
        and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
@@ -259,6 +259,7 @@ is
        Msg'First = 0
        and then Msg'Length >= 4
        and then Msg'Last < N32'Last - 4
+       and then Msg'Last < Transcript_Capacity
        and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
@@ -1259,8 +1260,6 @@ is
                end;
          end case;
 
-         pragma Assert (if S.HC.Cert_Request_Received then S.HC.Cfg.Local.Has_Identity);
-
          if not Verified then
             S.Last_Error := Handshake_Failure;
             Set_State (S, Error_State);
@@ -1935,6 +1934,9 @@ is
          Full : constant Message_Bytes := Message (D.Reasm);
       begin
          Reset (D.Reasm);
+         --  Lemma step: free from Message_Bytes' index subtype; the
+         --  dispatch Pre consumes the assumed result in one hop.
+         pragma Assert (Full'Last < Transcript_Capacity);
          Dispatch_Decrypted_HS_Message (S, D, Byte_Seq (Full), Result);
       end;
       pragma

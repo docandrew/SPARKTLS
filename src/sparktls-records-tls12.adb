@@ -41,7 +41,15 @@ is
 
    --  Helper: write bytes into output buffer
    procedure Write_To_Output (Output : in out IO_Buffer; Data : in Byte_Seq; OK : out Boolean)
-   with Pre => Data'First = 0 and Data'Last < N32'Last
+   with
+     Pre  => Data'First = 0 and Data'Last < N32'Last,
+     --  Monotone growth + strictly-positive after a nonempty write: what
+     --  Build_Encrypted_Record_12's Post needs to promise Write_Pos > 0.
+     Post =>
+       (if OK
+        then
+          Output.Write_Pos >= Output.Write_Pos'Old
+          and (if Data'Length > 0 then Output.Write_Pos > 0))
    is
    begin
       if Data'Length = 0 then

@@ -182,7 +182,8 @@ is
       Result : out Action);
 
    procedure Process_Client_Finished
-     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action);
+     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+   with Pre => S.Role = Role_Server and then S.State = Wait_Client_Finished;
    procedure Handle_PCF_App_Data
      (S      : in out Session;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
@@ -1231,6 +1232,14 @@ is
       Scratch : in out IO_Buffer;
       Result  : out Action;
       Emitted : out Boolean)
+   with
+     Pre  => Server_Active (S),
+     Post =>
+       (if Emitted
+        then
+          Server_Active (S)
+          and then S.State = S.State'Old
+          and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
    is
       --  Max: leaf + 8 intermediates, each up to 8 KB + 5 bytes overhead
       Cert_Buf : Byte_Seq (0 .. 9 * (Max_Cert_DER_Len + 5) + 10);
@@ -1280,12 +1289,22 @@ is
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
       Cfg        : in Ready_Config;
-      Hash_Width : in N32;
       Scratch    : in out IO_Buffer;
       Result     : out Action;
       Emitted    : out Boolean)
+   with
+     Pre  => Server_Active (S),
+     Post =>
+       (if Emitted
+        then
+          Server_Active (S)
+          and then S.State = S.State'Old
+          and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
    is
-      H_Len   : constant N32 := Hash_Width;
+      --  Derived, not threaded: H_Len from the negotiated suite makes the
+      --  width Pre of the chosen transcript hash discharge locally, as the
+      --  comment below always claimed.
+      H_Len   : constant N32 := Hash_Len (S.HC.Neg);
       CV_Hash : Byte_Seq (0 .. H_Len - 1);
       CV_Buf  : Byte_Seq (0 .. 523);
       CV_Len  : N32;
@@ -1345,6 +1364,9 @@ is
    --  alert) and the caller must return with Result as set; False means
    --  no HRR was needed and the flight build continues.
    procedure Maybe_Send_HRR (S : in out Session; Handled : out Boolean; Result : out Action)
+   with
+     Pre  => Server_Active (S),
+     Post => (if not Handled then Server_Active (S) and then S.State = S.State'Old)
    is
       Need_HRR            : Boolean := False;
       HRR_Group           : Maybe_ECDHE_Group := Group_None;
@@ -1414,6 +1436,9 @@ is
       Scratch : in out IO_Buffer;
       Result  : out Action;
       Emitted : out Boolean)
+   with
+     Pre  => Server_Active (S),
+     Post => (if Emitted then Server_Active (S) and then S.State = S.State'Old)
    is
    begin
       case S.Negotiated_Suite is
@@ -1667,7 +1692,7 @@ is
          declare
             Emitted : Boolean;
          begin
-            Emit_Cert_Verify (S, D, Cfg, Flight_Hash_Len, Scratch, Result, Emitted);
+            Emit_Cert_Verify (S, D, Cfg, Scratch, Result, Emitted);
             if not Emitted then
                return;
             end if;
@@ -2323,6 +2348,20 @@ is
                            Send_Encrypted_Alert (S, Unexpected_Message, Result);
                            return;
                         end if;
+                        --  RFC 8446 4.4.3: CertificateVerify is only legal
+                        --  after a nonempty client Certificate. Fail closed;
+                        --  the guard also unlocks Pool_Entry's predicate.
+                        if not D.Peer_Leaf.Present then
+                           Send_Encrypted_Alert (S, Unexpected_Message, Result);
+                           return;
+                        end if;
+                        --  Lemma step (one hop from the predicate; the callee
+                        --  Pre consumes the assumed result -- same pattern as
+                        --  Validate_Client_Cert_12).
+                        pragma
+                          Assert
+                            (X509.Spans_Valid
+                               (D.Peer_Leaf.Cert, D.Peer_Leaf.DER_Len - 1));
                         Handle_Client_CertVerify_13 (S, D, Cfg, Data, Msg_Len, Result);
 
                      when others =>
@@ -2346,6 +2385,9 @@ is
    --  error state, and let the caller drain the alert first.
    procedure Fail_With_App_Alert
      (S : in out Session; Desc : in Byte; Err : in Error_Code; Result : out Action)
+   --  RFC 8446 6.1: fatal (level 2) alerts exclude close_notify (0) and
+   --  user_canceled (90) -- the emission predicate's Level-2 arm.
+   with Pre => Desc /= 0 and then Desc /= 90
    is
       Ignored_A : N32;
    begin
@@ -2364,6 +2406,12 @@ is
    --  widths following the suite hash.
    function Client_Finished_Verified
      (HC : in Handshake_Context; Suite : in Supported_Suite; Data : in Byte_Seq) return Boolean
+   with
+     Pre =>
+       Data'First = 0
+       and then (if Suite = Suite_AES_256_GCM_SHA384
+                 then Data'Last >= 51
+                 else Data'Last >= 35)
    is
       Verified : Boolean := False;
    begin
@@ -2409,6 +2457,7 @@ is
       Nonce   : in Byte_Seq;
       Age_Add : in Unsigned_32;
       TID     : out Ticket_ID)
+   with Pre => Nonce'First = 0 and then Nonce'Last in 1 .. 254
    is
       use SPARKTLS.Ticket_Cache;
    begin
@@ -2477,6 +2526,7 @@ is
       Nonce   : in Byte_Seq;
       Age_Add : in Unsigned_32;
       TID     : in Ticket_ID)
+   with Pre => Nonce'First = 0 and then Nonce'Last >= 1
    is
       Enc_Out : N32;
    begin
@@ -2986,7 +3036,16 @@ is
             end if;
 
          when Records.Content_Application_Data =>
-            Handle_PCF_App_Data (S, D, Rec, Result);
+            --  H_PCF_App_Data may need to emit one encrypted alert. If the
+            --  output buffer cannot hold it, have the app drain first: the
+            --  record stays buffered (Read_Pos untouched) and we re-enter.
+            if Free_Space (S.Output)
+              < Records.Record_Header_Size + 3 + Records.Tag_Size
+            then
+               Result := Has_Output;
+            else
+               Handle_PCF_App_Data (S, D, Rec, Result);
+            end if;
 
          when others =>
             --  Plaintext handshake/alert records are not allowed here.
