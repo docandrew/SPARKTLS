@@ -233,14 +233,15 @@ begin
                         Conns (Conn_Index (Slot)).FD := Client_FD;
                         Conns (Conn_Index (Slot)).State := Handshaking;
                         Conns (Conn_Index (Slot)).Req_Len := 0;
-                        SPARKTLS.Server.Configure
-                          (S       => Conns (Conn_Index (Slot)).S,
-                           Local   => Id'Unchecked_Access,
-                           Random  => Entropy_Random.Random'Access,
-                           Store_Session  =>
-                             SPARKTLS.Session_Cache.Store_Session'Access,
-                           Lookup_Session =>
-                             SPARKTLS.Session_Cache.Lookup_Session'Access);
+                        Conns (Conn_Index (Slot)).S :=
+                          SPARKTLS.Server.Configure
+                            ((Local   => Id'Unchecked_Access,
+                              Random  => Entropy_Random.Random'Access,
+                              Store_Session  =>
+                                SPARKTLS.Session_Cache.Store_Session'Access,
+                              Lookup_Session =>
+                                SPARKTLS.Session_Cache.Lookup_Session'Access,
+                              others  => <>));
                         Ev.Events := unsigned (EPOLLIN);
                         Ev.Data.FD := Client_FD;
                         Dummy := Epoll_Ctl (Epfd, EPOLL_CTL_ADD,

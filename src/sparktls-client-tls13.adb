@@ -790,14 +790,12 @@ is
                                  begin
                                     if List_Len + 2 = E_Len and List_Len >= 2 then
                                        Sig_Found := True;
-                                       if S.HC.Cfg.Local.Has_Identity then
-                                          Picked :=
-                                            Handshake.Pick_Sig_Algo_With_Prefs
-                                              (Data (P + 6 .. P + 5 + List_Len),
-                                               S.HC.Cfg.Local.Sign_Algo,
-                                               S.HC.Cfg.Sign_Sig_Algos,
-                                               S.HC.Cfg.Sign_Sig_Algo_Count);
-                                       end if;
+                                       Picked :=
+                                         Handshake.Pick_Sig_Algo_With_Prefs
+                                           (Data (P + 6 .. P + 5 + List_Len),
+                                            S.HC.Cfg.Local.Sign_Algo,
+                                            S.HC.Cfg.Sign_Sig_Algos,
+                                            S.HC.Cfg.Sign_Sig_Algo_Count);
                                     end if;
                                  end;
                               elsif Tag = 16#002F# and E_Len >= 2 then
@@ -858,9 +856,7 @@ is
             return;
          end if;
 
-         if S.HC.Cfg.Local.Has_Identity then
-            S.HC.Negotiated_Sig_Algo := Picked;
-         end if;
+         S.HC.Negotiated_Sig_Algo := Picked;
       end;
    end Handle_CertReq_13;
 

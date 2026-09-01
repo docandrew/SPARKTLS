@@ -126,7 +126,7 @@ procedure Test_PSK_Resume is
       return Not_Found;
    end Find_Ext;
 
-   S   : Session;
+   S   : Client_Session;
    Cfg : Config;
 
 begin
@@ -145,7 +145,7 @@ begin
    Now_Second := 10;
 
    --  Init builds CH and queues it in S.Output.
-   SPARKTLS.Client.Init (S, Cfg);
+   S := SPARKTLS.Client.Configure (Cfg);
 
    Check ("Init sets Client_Hello_Sent state",
           State (S) = Client_Hello_Sent);
@@ -216,7 +216,7 @@ begin
           SPARKTLS.Test_Support.PSK_Offered (S));
 
    declare
-      S_Mismatch   : Session;
+      S_Mismatch   : Client_Session;
       Cfg_Mismatch : Config := Cfg;
       H            : constant String := "example.com";
       Net          : Byte_Seq (0 .. 16383);
@@ -229,7 +229,7 @@ begin
       Cfg_Mismatch.Server_Name.Len := H'Length;
       Cfg_Mismatch.Skip_Verify := True;
 
-      SPARKTLS.Client.Init (S_Mismatch, Cfg_Mismatch);
+      S_Mismatch := SPARKTLS.Client.Configure (Cfg_Mismatch);
       Drain_Ciphertext (S_Mismatch, Net, Drained);
       if Drained > 5 then
          Has_PSK := Find_Ext (Net (5 .. Drained - 1), 16#0029#) /= Not_Found;
@@ -245,13 +245,13 @@ begin
    --  comment in sparktls.ads). The CH must NEVER carry the
    --  early_data extension (0x002A), even when resuming.
    declare
-      S2      : Session;
+      S2      : Client_Session;
       Cfg2    : constant Config := Cfg;
       Net     : Byte_Seq (0 .. 16383);
       Drained : N32;
       No_ED   : Boolean := True;
    begin
-      SPARKTLS.Client.Init (S2, Cfg2);
+      S2 := SPARKTLS.Client.Configure (Cfg2);
       Drain_Ciphertext (S2, Net, Drained);
       if Drained > 5 then
          No_ED := Find_Ext (Net (5 .. Drained - 1), 16#002A#) = Not_Found;

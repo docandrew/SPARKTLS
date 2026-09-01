@@ -352,7 +352,7 @@ begin
                       Want_Start : Boolean)
       is
          Cfg   : Config;
-         Sess  : SPARKTLS.Session;
+         Sess  : SPARKTLS.Client_Session;
          Roots : aliased Trust_Store;
       begin
          Cfg.Random      := Det_Random_Lib.Det_Random'Access;
@@ -372,7 +372,7 @@ begin
          if With_Ticket then
             Cfg.Resume_Ticket := Usable_Ticket;
          end if;
-         SPARKTLS.Client.Init (Sess, Cfg);
+         Sess := SPARKTLS.Client.Configure (Cfg);
          if Want_Start then
             Check (Label, State (Sess) = Client_Hello_Sent);
          else

@@ -206,8 +206,7 @@ is
                                       Assert
                                         (if D.Peer_Leaf.Present
                                            then
-                                             True
-                                             and then X509.Spans_Valid
+                                             X509.Spans_Valid
                                                         (D.Peer_Leaf.Cert,
                                                          X509.N32 (D.Peer_Leaf.DER_Len) - 1));
                                  end;

@@ -100,10 +100,10 @@ begin
       GNAT.Sockets.Image (Client_Addr));
 
    --  Initialize TLS server session
-   SPARKTLS.Server.Configure
-     (S      => S,
-      Local  => Id'Unchecked_Access,
-      Random => Entropy_Random.Random'Access);
+   S := SPARKTLS.Server.Configure
+     ((Local  => Id'Unchecked_Access,
+       Random => Entropy_Random.Random'Access,
+       others => <>));
 
    Put_Line ("Waiting for ClientHello...");
 

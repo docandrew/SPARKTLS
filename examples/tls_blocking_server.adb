@@ -165,23 +165,23 @@ procedure TLS_Blocking_Server is
         (Client_Sock, IP_Protocol_For_TCP_Level,
          (Name => No_Delay, Enabled => True));
 
-      Server.Configure
-        (S                   => S,
-         Local               => Id'Unchecked_Access,
-         Random              => Entropy_Random.Random'Access,
-         Trust               => (if MTLS then Roots'Unchecked_Access
-                                 else null),
-         Request_Client_Cert => MTLS,
-         Require_Client_Cert => MTLS_Require,
-         Store_Session       =>
-           SPARKTLS.Session_Cache.Store_Session'Access,
-         Lookup_Session      =>
-           SPARKTLS.Session_Cache.Lookup_Session'Access,
-         Get_Active_TEK      =>
-           SPARKTLS.Session_Cache.Get_Active_TEK'Access,
-         Get_TEK_By_Id       =>
-           SPARKTLS.Session_Cache.Get_TEK_By_Id'Access,
-         Get_Time            => Now_UTC'Unrestricted_Access);
+      S := Server.Configure
+        ((Local               => Id'Unchecked_Access,
+          Random              => Entropy_Random.Random'Access,
+          Trust               => (if MTLS then Roots'Unchecked_Access
+                                  else null),
+          Request_Client_Cert => MTLS,
+          Require_Client_Cert => MTLS_Require,
+          Store_Session       =>
+            SPARKTLS.Session_Cache.Store_Session'Access,
+          Lookup_Session      =>
+            SPARKTLS.Session_Cache.Lookup_Session'Access,
+          Get_Active_TEK      =>
+            SPARKTLS.Session_Cache.Get_Active_TEK'Access,
+          Get_TEK_By_Id       =>
+            SPARKTLS.Session_Cache.Get_TEK_By_Id'Access,
+          Get_Time            => Now_UTC'Unrestricted_Access,
+          others              => <>));
 
       --  Handshake + data loop
       loop

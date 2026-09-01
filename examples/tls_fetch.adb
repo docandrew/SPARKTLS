@@ -184,7 +184,7 @@ procedure TLS_Fetch is
    end Read_Record;
 
    --  Session and config
-   S   : SPARKTLS.Session;
+   S   : SPARKTLS.Client_Session;
    Res : SPARKTLS.Action;
 
    --  Network I/O buffer
@@ -331,18 +331,18 @@ begin
       end if;
 
       --  TLS handshake
-      SPARKTLS.Client.Configure
-        (S        => S,
-         Hostname => Hostname,
-         Trust    => (if Insecure or not Roots_OK
-                      then null
-                      else Roots'Unchecked_Access),
-         Random   => Entropy_Random.Random'Access,
-         Clock    => Current_Time'Unrestricted_Access,
-         Mode     => (if Use_RFC5280
-                      then SPARKTLS.Mode_RFC5280
-                      else SPARKTLS.Mode_WebPKI),
-         Skip_Verify => Insecure);
+      S := SPARKTLS.Client.Configure
+        ((Server_Name => SPARKTLS.To_Name (Hostname),
+          Trust       => (if Insecure or not Roots_OK
+                          then null
+                          else Roots'Unchecked_Access),
+          Random      => Entropy_Random.Random'Access,
+          Get_Time    => Current_Time'Unrestricted_Access,
+          Verify_Mode => (if Use_RFC5280
+                          then SPARKTLS.Mode_RFC5280
+                          else SPARKTLS.Mode_WebPKI),
+          Skip_Verify => Insecure,
+          others      => <>));
 
       Handshake : loop
          SPARKTLS.Client.Advance (S, Res);

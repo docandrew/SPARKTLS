@@ -15,7 +15,7 @@ package TLS_Echo_Pool is
    type Conn_State is (Handshaking, Ready, Closing, Closed);
 
    type Connection is record
-      S       : SPARKTLS.Session;
+      S       : SPARKTLS.Server_Session;
       FD      : int := -1;
       State   : Conn_State := Closed;
       Req_Buf : Byte_Seq (0 .. 4095) := (others => 0);

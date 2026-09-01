@@ -49,7 +49,7 @@ procedure Test_Exporter is
    end Seq32;
 
    procedure Test_Unavailable is
-      S : Session;
+      S : Client_Session;
       Outp : SPARKNaCl.Byte_Seq (0 .. 31);
       OK : Boolean;
    begin
@@ -60,7 +60,7 @@ procedure Test_Exporter is
    end Test_Unavailable;
 
    procedure Test_TLS12 is
-      S : Session;
+      S : Client_Session;
       Outp : SPARKNaCl.Byte_Seq (0 .. 31);
       Expected : SPARKNaCl.Byte_Seq (0 .. 31);
       Ctx : constant SPARKNaCl.Byte_Seq (0 .. 2) := (16#A0#, 16#A1#, 16#A2#);
@@ -117,7 +117,7 @@ procedure Test_Exporter is
    end Test_TLS12;
 
    procedure Test_TLS13 is
-      S : Session;
+      S : Client_Session;
       Outp : SPARKNaCl.Byte_Seq (0 .. 31);
       Expected : SPARKTLSCrypto.HKDF.OKM_Seq (0 .. 31);
       Ctx : constant SPARKNaCl.Byte_Seq (0 .. 3) := (1, 2, 3, 4);
@@ -145,7 +145,7 @@ procedure Test_Exporter is
    end Test_TLS13;
 
    procedure Test_Sanitize is
-      S : Session;
+      S : Client_Session;
    begin
       SPARKTLS.Test_Support.Set_Exporter_State
         (S, Seq (16#33#), 48, Seq32 (16#44#), Seq32 (16#55#));

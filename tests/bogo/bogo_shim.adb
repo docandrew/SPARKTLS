@@ -249,6 +249,8 @@ procedure Bogo_Shim is
          when No_Application_Protocol  => return "No_Application_Protocol";
          when Internal_Error           => return "Internal_Error";
          when Insufficient_Buffer      => return "Insufficient_Buffer";
+         when Bad_Configuration        => return "Bad_Configuration";
+         when No_Free_Sessions         => return "No_Free_Sessions";
          when Unsupported_Cipher_Suite => return "Unsupported_Cipher_Suite";
       end case;
    end Error_Name;
@@ -930,7 +932,8 @@ procedure Bogo_Shim is
    --  Run a single TLS handshake (no resumption yet — Phase 1).
    --  ------------------------------------------------------------------
    procedure Run_Handshake is
-      S   : SPARKTLS.Session;
+      S   : SPARKTLS.Session
+        ((if Cfg.Is_Server then SPARKTLS.Role_Server else SPARKTLS.Role_Client));
       Res : SPARKTLS.Action;
       Close_Drain_Reads : Natural := 0;
 
@@ -1284,7 +1287,7 @@ procedure Bogo_Shim is
                   Server_Cfg.ALPN_Count := 1;
                end if;
 
-               SPARKTLS.Server.Init (S, Server_Cfg);
+               S := SPARKTLS.Server.Configure (Server_Cfg);
             end;
          end;
       else
@@ -1338,8 +1341,12 @@ procedure Bogo_Shim is
                Client_Cfg.Sign_Sig_Algo_Count := Cfg.Sign_Sig_Count;
                Client_Cfg.Trust :=
                  (if Trust /= "" then Roots'Unchecked_Access else null);
+               --  Never null: Local is a not-null field and -gnatp lets a
+               --  null through unchecked, to segfault at first dereference
+               --  (2026-09-01). No_Identity is the absent-identity value.
                Client_Cfg.Local :=
-                 (if Have_Local then Id'Unchecked_Access else null);
+                 (if Have_Local then Id'Unchecked_Access
+                  else SPARKTLS.No_Identity'Access);
 
                if Cfg.Host_Name_Len > 0 then
                   Client_Cfg.Server_Name.Data (1 .. Cfg.Host_Name_Len) :=
@@ -1355,7 +1362,7 @@ procedure Bogo_Shim is
                   Client_Cfg.ALPN_List := Cfg.ALPN_List;
                end if;
 
-               SPARKTLS.Client.Init (S, Client_Cfg);
+               S := SPARKTLS.Client.Configure (Client_Cfg);
             end;
          end;
       end if;

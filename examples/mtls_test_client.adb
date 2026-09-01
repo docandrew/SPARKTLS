@@ -198,7 +198,7 @@ procedure MTLS_Test_Client is
               Hour   => Hr, Minute => Mn, Second => Sc);
    end Current_Time;
 
-   S       : SPARKTLS.Session;
+   S       : SPARKTLS.Client_Session;
    Res     : SPARKTLS.Action;
    Sock    : Socket_Type;
 
@@ -325,19 +325,20 @@ begin
    --  Mode_RFC5280: structural cert validation only, no WebPKI
    --  CT/SCT/etc. enforcement. Test certs are self-signed; the
    --  WebPKI mode would reject them as untrusted.
-   SPARKTLS.Client.Configure
-     (S                    => S,
-      Hostname             => Cfg_Host (1 .. Cfg_Host_Len),
-      Trust                =>
-         (if Have_Trust then Roots'Unchecked_Access else null),
-      Random               => Entropy_Random.Random'Access,
-      Clock                => Current_Time'Unrestricted_Access,
-      Local                =>
-         (if Have_Local then Id'Unchecked_Access else null),
-      Mode                 => SPARKTLS.Mode_RFC5280,
-      ALPN                 => Cfg_ALPN (1 .. Cfg_ALPN_Len),
-      Skip_Verify          => Cfg_Skip_Verify,
-      Skip_Hostname_Verify => Cfg_Skip_Hostname_Verify);
+   S := SPARKTLS.Client.Configure
+     ((Server_Name          => SPARKTLS.To_Name (Cfg_Host (1 .. Cfg_Host_Len)),
+       Trust                =>
+          (if Have_Trust then Roots'Unchecked_Access else null),
+       Random               => Entropy_Random.Random'Access,
+       Get_Time             => Current_Time'Unrestricted_Access,
+       Local                =>
+          (if Have_Local then Id'Unchecked_Access
+           else SPARKTLS.No_Identity'Access),
+       Verify_Mode          => SPARKTLS.Mode_RFC5280,
+       ALPN                 => SPARKTLS.To_Name (Cfg_ALPN (1 .. Cfg_ALPN_Len)),
+       Skip_Verify          => Cfg_Skip_Verify,
+       Skip_Hostname_Verify => Cfg_Skip_Hostname_Verify,
+       others               => <>));
 
    --  Drive handshake to completion, then exchange app data, then close.
    Loop1 :

@@ -801,20 +801,18 @@ is
                            if SA_Len >= 2 and then SA_Len <= Frag'Last - SA_Off - 1 then
                               SA_Empty := False;
 
-                              if S.HC.Cfg.Local.Has_Identity then
-                                 declare
-                                    SA_Slice : constant Byte_Seq (0 .. SA_Len - 1) :=
-                                      Frag (SA_Off + 2 .. SA_Off + 1 + SA_Len);
-                                 begin
-                                    Picked :=
-                                      Handshake.Pick_Sig_Algo_With_Prefs
-                                        (SA_Slice,
-                                         S.HC.Cfg.Local.Sign_Algo,
-                                         S.HC.Cfg.Sign_Sig_Algos,
-                                         S.HC.Cfg.Sign_Sig_Algo_Count,
-                                         Allow_PKCS1_v1_5 => True);
-                                 end;
-                              end if;
+                              declare
+                                 SA_Slice : constant Byte_Seq (0 .. SA_Len - 1) :=
+                                   Frag (SA_Off + 2 .. SA_Off + 1 + SA_Len);
+                              begin
+                                 Picked :=
+                                   Handshake.Pick_Sig_Algo_With_Prefs
+                                     (SA_Slice,
+                                      S.HC.Cfg.Local.Sign_Algo,
+                                      S.HC.Cfg.Sign_Sig_Algos,
+                                      S.HC.Cfg.Sign_Sig_Algo_Count,
+                                      Allow_PKCS1_v1_5 => True);
+                              end;
                            end if;
                         end;
                      end if;
@@ -831,8 +829,7 @@ is
             return;
          end if;
 
-         if S.HC.Cfg.Local.Has_Identity then
-            if Picked /= Scheme_None then
+         if Picked /= Scheme_None then
                S.HC.Negotiated_Sig_Algo := Picked;
                S.HC.T12.Client_Cert_Allowed := CT_OK;
             else
@@ -856,7 +853,6 @@ is
                   when Sign_None       =>
                      null;
                end case;
-            end if;
          end if;
 
          if S.HC.Cfg.Local.Has_Identity and then not S.HC.T12.Client_Cert_Allowed

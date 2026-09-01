@@ -87,7 +87,7 @@ procedure TLS_Resume_Test is
       OK       :    out Boolean;
       Was_PSK  :    out Boolean)
    is
-      S        : Session;
+      S        : Client_Session;
       Cfg      : Config;
       Res      : Action;
       Sock     : Socket_Type;
@@ -132,7 +132,7 @@ procedure TLS_Resume_Test is
                     Port   => Port));
       Channel := Stream (Sock);
 
-      SPARKTLS.Client.Init (S, Cfg);
+      S := SPARKTLS.Client.Configure (Cfg);
 
       --  Handshake loop.
       Handshake_Loop : loop

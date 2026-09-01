@@ -216,11 +216,18 @@ procedure Test_Parse_Client_Hello is
    --  Context init
    ----------------------------------------------------------------------------
 
+   --  Servers always carry an identity (path-dependent rule, 2026-08-31):
+   --  the white-box HCs get a minimal RSA one so TLS 1.2 ECDHE_RSA suites
+   --  are negotiable, as on any real server.
+   Test_Identity : aliased constant Identity :=
+     (Has_Identity => True, Sign_Algo => Sign_RSA_PSS, others => <>);
+
    procedure Init_Context (S : out Session; HC : out Handshake_Context) is
    begin
       SPARKTLS.Test_Support.Reset (S);
       HC := (others => <>);
       HC.Cfg.Random := Det_Random_Lib.Det_Random'Access;
+      HC.Cfg.Local := Test_Identity'Unchecked_Access;
    end Init_Context;
 
    ----------------------------------------------------------------------------
@@ -228,7 +235,7 @@ procedure Test_Parse_Client_Hello is
    ----------------------------------------------------------------------------
 
    procedure Test_Reject_Short is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -244,7 +251,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Reject_Short;
 
    procedure Test_Reject_Wrong_Type is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -261,7 +268,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Reject_Wrong_Type;
 
    procedure Test_Wellformed_Min is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -280,7 +287,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Wellformed_Min;
 
    procedure Test_Random_Extracted is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -307,7 +314,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Random_Extracted;
 
    procedure Test_Session_ID_Extracted is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -334,7 +341,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Session_ID_Extracted;
 
    procedure Test_Suite_TLS13_AES256 is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -358,7 +365,7 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Suite_Prefers_ChaCha is
       --  Offer AES-128 then ChaCha20: server should pick ChaCha20
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -384,7 +391,7 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Suite_TLS12 is
       --  Offer only TLS 1.2 ECDHE-RSA-AES128
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -411,7 +418,7 @@ procedure Test_Parse_Client_Hello is
    procedure Test_TLS12_Compression_List_With_Null is
       --  TLS 1.2 clients may offer multiple compression methods as long as
       --  the server selects null compression.
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -436,7 +443,7 @@ procedure Test_Parse_Client_Hello is
    end Test_TLS12_Compression_List_With_Null;
 
    procedure Test_TLS13_Compression_List_With_Extra_Rejected is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -462,7 +469,7 @@ procedure Test_Parse_Client_Hello is
    end Test_TLS13_Compression_List_With_Extra_Rejected;
 
    procedure Test_KS_X25519 is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -496,7 +503,7 @@ procedure Test_Parse_Client_Hello is
    end Test_KS_X25519;
 
    procedure Test_KS_P256 is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -527,7 +534,7 @@ procedure Test_Parse_Client_Hello is
    end Test_KS_P256;
 
    procedure Test_KS_P384 is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -558,7 +565,7 @@ procedure Test_Parse_Client_Hello is
    end Test_KS_P384;
 
    procedure Test_Missing_Key_Share_State is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -586,7 +593,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Missing_Key_Share_State;
 
    procedure Test_Missing_Supported_Groups_State is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -615,7 +622,7 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Sig_Algs is
       --  Offer Ed25519 (0x0807) + ECDSA-P256 (0x0403) + RSA-PSS-256 (0x0804)
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -645,7 +652,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Sig_Algs;
 
    procedure Test_Supported_Groups is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -676,7 +683,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Supported_Groups;
 
    procedure Test_Supported_Versions is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -701,7 +708,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Supported_Versions;
 
    procedure Test_ALPN is
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -726,7 +733,7 @@ procedure Test_Parse_Client_Hello is
 
    procedure Test_Multiple_Extensions is
       --  CH with key_share + supported_versions + supported_groups
-      S    : Session;
+      S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
       Neg_12 : Supported_Suite := Suite_None;
       Version : TLS_Version;
@@ -756,7 +763,7 @@ procedure Test_Parse_Client_Hello is
    end Test_Multiple_Extensions;
 
    procedure Test_Idempotent is
-      S1, S2   : Session;
+      S1, S2   : Server_Session;
       Neg1, Neg2     : Supported_Suite := Suite_None;
       Neg1_12, Neg2_12 : Supported_Suite := Suite_None;
       Version1, Version2 : TLS_Version;

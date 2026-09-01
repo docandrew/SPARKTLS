@@ -9,7 +9,7 @@ is
 
    procedure Reset (S : out Session) is
    begin
-      S := (others => <>);
+      S := (Role => S.Role, others => <>);
    end Reset;
 
    procedure Set_Negotiated_Version (S : in out Session; V : TLS_Version) is

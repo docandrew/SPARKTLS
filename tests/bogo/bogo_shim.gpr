@@ -22,4 +22,8 @@ project Bogo_Shim is
    package Compiler is
       for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatn", "-gnatp");
    end Compiler;
+   package Binder is
+      for Switches ("Ada") use ("-Es");
+   end Binder;
+
 end Bogo_Shim;

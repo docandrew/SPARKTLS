@@ -45,7 +45,7 @@ procedure TLS12_Resume_Test is
       OK_Out :    out Boolean;
       Got_Ticket : out Boolean)
    is
-      S       : Session;
+      S       : Client_Session;
       Cfg     : Config;
       Res     : Action;
       Sock    : Socket_Type;
@@ -83,7 +83,7 @@ procedure TLS12_Resume_Test is
           Port   => Port));
       Channel := Stream (Sock);
 
-      SPARKTLS.Client.Init (S, Cfg);
+      S := SPARKTLS.Client.Configure (Cfg);
 
       Loop_HS : loop
          Iter := Iter + 1;

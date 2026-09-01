@@ -50,7 +50,7 @@ procedure TLS_Test_Client is
    end Current_Time;
 
    --  Session
-   S   : SPARKTLS.Session;
+   S   : SPARKTLS.Client_Session;
    Res : SPARKTLS.Action;
 
    --  Network I/O buffers
@@ -93,13 +93,13 @@ begin
    Put_Line ("Connected.");
 
    --  Initialize TLS client session (skip verification for test)
-   SPARKTLS.Client.Configure
-     (S           => S,
-      Hostname    => Host,
-      Trust       => null,
-      Random      => Entropy_Random.Random'Access,
-      Clock       => Current_Time'Unrestricted_Access,
-      Skip_Verify => True);
+   S := SPARKTLS.Client.Configure
+     ((Server_Name => SPARKTLS.To_Name (Host),
+       Trust       => null,
+       Random      => Entropy_Random.Random'Access,
+       Get_Time    => Current_Time'Unrestricted_Access,
+       Skip_Verify => True,
+       others      => <>));
    Put_Line ("ClientHello built, output pending:" &
       SPARKTLS.Output_Pending (S)'Image & " bytes");
 

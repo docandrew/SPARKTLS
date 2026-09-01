@@ -85,7 +85,7 @@ procedure Test_Build_Server_Hello is
    ----------------------------------------------------------------------------
 
    procedure Test_X25519_Builds is
-      S      : Session;
+      S      : Server_Session;
       HC     : Handshake_Context;
       Result : Byte_Seq (0 .. 511) := (others => 0);
       Len    : N32;
@@ -125,7 +125,7 @@ procedure Test_Build_Server_Hello is
    end Test_X25519_Builds;
 
    procedure Test_Selected_Group is
-      S      : Session;
+      S      : Server_Session;
       HC     : Handshake_Context;
       Result : Byte_Seq (0 .. 511) := (others => 0);
       Len    : N32;
@@ -139,7 +139,7 @@ procedure Test_Build_Server_Hello is
    end Test_Selected_Group;
 
    procedure Test_Buffer_Too_Small is
-      S      : Session;
+      S      : Server_Session;
       HC     : Handshake_Context;
       --  Min by Pre is Max_Server_Hello = 256.
       Result : Byte_Seq (0 .. 255) := (others => 16#FF#);
@@ -152,7 +152,7 @@ procedure Test_Build_Server_Hello is
    end Test_Buffer_Too_Small;
 
    procedure Test_P256_Builds is
-      S      : Session;
+      S      : Server_Session;
       HC     : Handshake_Context;
       Result : Byte_Seq (0 .. 511) := (others => 0);
       Len    : N32;
@@ -176,7 +176,7 @@ procedure Test_Build_Server_Hello is
    end Test_P256_Builds;
 
    procedure Test_P384_Builds is
-      S      : Session;
+      S      : Server_Session;
       HC     : Handshake_Context;
       Result : Byte_Seq (0 .. 511) := (others => 0);
       Len    : N32;
@@ -200,7 +200,7 @@ procedure Test_Build_Server_Hello is
    end Test_P384_Builds;
 
    procedure Test_P256_Invalid_Peer_PK_Rejected is
-      S      : Session;
+      S      : Server_Session;
       HC     : Handshake_Context;
       Result : Byte_Seq (0 .. 511) := (others => 0);
       Len    : N32;
@@ -216,7 +216,7 @@ procedure Test_Build_Server_Hello is
    end Test_P256_Invalid_Peer_PK_Rejected;
 
    procedure Test_No_Common_Group is
-      S      : Session;
+      S      : Server_Session;
       HC     : Handshake_Context;
       Result : Byte_Seq (0 .. 511) := (others => 0);
       Len    : N32;
@@ -263,7 +263,7 @@ procedure Test_Build_Server_Hello is
    end Test_X25519_Small_Subgroup_Helper;
 
    procedure Test_Idempotent_Two_Calls is
-      S1, S2   : Session;
+      S1, S2   : Server_Session;
       HC1, HC2 : Handshake_Context;
       R1 : Byte_Seq (0 .. 511) := (others => 0);
       R2 : Byte_Seq (0 .. 511) := (others => 0);

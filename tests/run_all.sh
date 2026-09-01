@@ -2,7 +2,9 @@
 # SPARKTLS comprehensive test suite.
 #
 # Usage:
-#   ./tests/run_all.sh              # release build, all suites (incl integration + BoGo)
+#   ./tests/run_all.sh              # release build, all suites (incl integration + BoGo),
+#                                   # then chains the --checked pass automatically
+#                                   # (NO_CHAIN=1 to run the release pass alone)
 #   ./tests/run_all.sh integration  # release build, only integration
 #   ./tests/run_all.sh protocol     # release build, only protocol compliance
 #   ./tests/run_all.sh unit         # release build, only unit tests
@@ -431,4 +433,21 @@ echo ""
 echo "================================================================"
 echo "  OVERALL: $OVERALL_PASS suites passed, $OVERALL_FAIL suites failed"
 echo "================================================================"
+
+# Default full run: chain the --checked pass (unit + protocol + x509 with
+# runtime checks + contracts ON) so one no-arg invocation covers both
+# build modes. Explicit suite selectors and --checked invocations keep
+# single-pass behavior; NO_CHAIN=1 skips the chain.
+if [ "$CHECKED_BUILD" = "0" ] && [ ${#SUITES_ARG[@]} -eq 0 ] && [ "${NO_CHAIN:-0}" = "0" ]; then
+    echo ""
+    echo "================================================================"
+    echo "  Release pass complete -- chaining --checked pass"
+    echo "================================================================"
+    if bash "$0" --checked; then
+        CHECKED_FAIL=0
+    else
+        CHECKED_FAIL=1
+    fi
+    [ $OVERALL_FAIL -eq 0 ] && [ $CHECKED_FAIL -eq 0 ] && exit 0 || exit 1
+fi
 [ $OVERALL_FAIL -eq 0 ] && exit 0 || exit 1

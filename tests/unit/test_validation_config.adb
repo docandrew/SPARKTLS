@@ -34,21 +34,21 @@ procedure Test_Validation_Config is
        Hour => 0, Minute => 0, Second => 0));
 
    procedure Test_Client_Quick_Null_Trust_Fails_Closed is
-      S : Session;
+      S : Client_Session;
    begin
-      SPARKTLS.Client.Configure
-        (S        => S,
-         Hostname => "example.com",
-         Trust    => null,
-         Random   => Det_Random_Lib.Det_Random'Access,
-         Clock    => Fixed_Now'Unrestricted_Access);
+      S := SPARKTLS.Client.Configure
+        ((Random      => Det_Random_Lib.Det_Random'Access,
+          Get_Time    => Fixed_Now'Unrestricted_Access,
+          Trust       => null,
+          Server_Name => To_Name ("example.com"),
+          others      => <>));
 
       Check ("client Configure: null Trust fails closed",
              State (S) = Error_State);
    end Test_Client_Quick_Null_Trust_Fails_Closed;
 
    procedure Test_Client_Init_Null_Time_Fails_Closed is
-      S   : Session;
+      S   : Client_Session;
       Cfg : Config;
    begin
       Cfg.Random := Det_Random_Lib.Det_Random'Access;
@@ -56,14 +56,14 @@ procedure Test_Validation_Config is
       Cfg.Get_Time := null;
       Cfg.Skip_Verify := False;
 
-      SPARKTLS.Client.Init (S, Cfg);
+      S := SPARKTLS.Client.Configure (Cfg);
 
       Check ("client Init: null Get_Time with verification fails closed",
              State (S) = Error_State);
    end Test_Client_Init_Null_Time_Fails_Closed;
 
    procedure Test_Client_Explicit_Skip_Verify_Allowed is
-      S   : Session;
+      S   : Client_Session;
       Cfg : Config;
    begin
       Cfg.Random := Det_Random_Lib.Det_Random'Access;
@@ -71,55 +71,55 @@ procedure Test_Validation_Config is
       Cfg.Get_Time := null;
       Cfg.Skip_Verify := True;
 
-      SPARKTLS.Client.Init (S, Cfg);
+      S := SPARKTLS.Client.Configure (Cfg);
 
       Check ("client Init: explicit Skip_Verify allows no Trust/Get_Time",
              State (S) = Client_Hello_Sent);
    end Test_Client_Explicit_Skip_Verify_Allowed;
 
    procedure Test_Server_MTLS_Null_Trust_Fails_Closed is
-      S : Session;
+      S : Server_Session;
    begin
-      SPARKTLS.Server.Configure
-        (S                   => S,
-         Local               => Id'Unchecked_Access,
-         Random              => Det_Random_Lib.Det_Random'Access,
-         Trust               => null,
-         Request_Client_Cert => True,
-         Require_Client_Cert => True,
-         Get_Time            => Fixed_Now'Unrestricted_Access);
+      S := SPARKTLS.Server.Configure
+        ((Local               => Id'Unchecked_Access,
+          Random              => Det_Random_Lib.Det_Random'Access,
+          Trust               => null,
+          Request_Client_Cert => True,
+          Require_Client_Cert => True,
+          Get_Time            => Fixed_Now'Unrestricted_Access,
+          others              => <>));
 
       Check ("server Configure: mTLS with null Trust fails closed",
              State (S) = Error_State);
    end Test_Server_MTLS_Null_Trust_Fails_Closed;
 
    procedure Test_Server_MTLS_Null_Time_Fails_Closed is
-      S : Session;
+      S : Server_Session;
    begin
-      SPARKTLS.Server.Configure
-        (S                   => S,
-         Local               => Id'Unchecked_Access,
-         Random              => Det_Random_Lib.Det_Random'Access,
-         Trust               => Roots'Unchecked_Access,
-         Request_Client_Cert => True,
-         Require_Client_Cert => True,
-         Get_Time            => null);
+      S := SPARKTLS.Server.Configure
+        ((Local               => Id'Unchecked_Access,
+          Random              => Det_Random_Lib.Det_Random'Access,
+          Trust               => Roots'Unchecked_Access,
+          Request_Client_Cert => True,
+          Require_Client_Cert => True,
+          Get_Time            => null,
+          others              => <>));
 
       Check ("server Configure: mTLS with null Get_Time fails closed",
              State (S) = Error_State);
    end Test_Server_MTLS_Null_Time_Fails_Closed;
 
    procedure Test_Server_No_MTLS_Allows_Null_Trust_Time is
-      S : Session;
+      S : Server_Session;
    begin
-      SPARKTLS.Server.Configure
-        (S                   => S,
-         Local               => Id'Unchecked_Access,
-         Random              => Det_Random_Lib.Det_Random'Access,
-         Trust               => null,
-         Request_Client_Cert => False,
-         Require_Client_Cert => False,
-         Get_Time            => null);
+      S := SPARKTLS.Server.Configure
+        ((Local               => Id'Unchecked_Access,
+          Random              => Det_Random_Lib.Det_Random'Access,
+          Trust               => null,
+          Request_Client_Cert => False,
+          Require_Client_Cert => False,
+          Get_Time            => null,
+          others              => <>));
 
       Check ("server Configure: no mTLS allows null Trust/Get_Time",
              State (S) = Wait_Client_Hello);

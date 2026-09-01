@@ -115,11 +115,11 @@ procedure TLS_SNI_Server is
         (Client_Sock, Socket_Level,
          (Name => Receive_Timeout, Timeout => 10.0));
 
-      Server.Configure
-        (S               => S,
-         Local           => Id_Default'Unchecked_Access,
-         Random          => Entropy_Random.Random'Access,
-         Select_Identity => Pick_Identity'Unrestricted_Access);
+      S := Server.Configure
+        ((Local           => Id_Default'Unchecked_Access,
+          Random          => Entropy_Random.Random'Access,
+          Select_Identity => Pick_Identity'Unrestricted_Access,
+          others          => <>));
 
       loop
          Server.Advance (S, Res);
