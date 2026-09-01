@@ -371,8 +371,7 @@ is
          pragma Assert (S.HC.Legacy_Session_ID_Len in 0 .. 32);
       end if;
 
-      if S.HC.Cfg.Local = null
-        or else not S.HC.Cfg.Local.Has_Identity
+      if not S.HC.Cfg.Local.Has_Identity
         or else S.HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
         or else S.HC.Cfg.Local.Int_Count > Max_Pool_Size
         or else
@@ -385,6 +384,7 @@ is
          Send_Alert_And_Error (S, Handshake_Failure, Result);
          return;
       end if;
+
       declare
          --  The Ready_Config VIEW, taken AFTER SNI identity selection --
          --  a view copied any earlier would serve the pre-selection

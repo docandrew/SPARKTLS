@@ -2619,25 +2619,17 @@ is
       OK            : out Boolean)
    is
       use RFLX.TLS_Handshake.Client_Hello;
+
       Body_Len           : N32;
       Buf                : RBT.Bytes_Ptr;
       Ctx                : Context;
       Raw_Legacy_Version : N32 := 0;
-      Saved_Local        : constant Valid_Identity_Access := HC.Cfg.Local;
-
-      function Saved_Config_Frame return Boolean
-      is ((if Saved_Local /= null
-           then
-             HC.Cfg.Local /= null
-             and then (if Saved_Local.Has_Identity then HC.Cfg.Local.Has_Identity)))
-      with Ghost;
    begin
       Version := TLS_Undetermined;
       OK := False;
 
       if Data'Length < 39 then
          Last_Err := Decode_Error;
-         pragma Assert (Saved_Config_Frame);
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2650,7 +2642,6 @@ is
          --  reach this point); the type byte just identifies a
          --  different message that doesn't belong here.
          Last_Err := Unexpected_Message;
-         pragma Assert (Saved_Config_Frame);
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2671,7 +2662,6 @@ is
       begin
          if HS_Body_Len + 4 < N32 (Data'Length) then
             Last_Err := Unexpected_Message;
-            pragma Assert (Saved_Config_Frame);
             pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
             return;
          end if;
@@ -2683,18 +2673,20 @@ is
       if TLS12_Client_Hello_Omits_Extensions (Data)
         or else TLS12_Client_Hello_Has_Empty_Extensions (Data)
       then
-         pragma Assert (Saved_Config_Frame);
+
          Parse_TLS12_Client_Hello_No_Extensions (Negotiated, Negotiated_12, Last_Err, HC, Data, OK);
+
          if OK then
             Version := TLS_1_2;
          end if;
-         pragma Assert (Saved_Config_Frame);
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
 
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
+
       if Buf.all'Length >= 2 then
          Raw_Legacy_Version := N32 (Buf.all (1)) * 256 + N32 (Buf.all (2));
       end if;
@@ -2747,7 +2739,6 @@ is
          Take_Buffer (Ctx, Buf);
          RFLX_Free (Buf);
          Last_Err := Decode_Error;
-         pragma Assert (Saved_Config_Frame);
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2803,7 +2794,7 @@ is
                end if;
             end;
          end if;
-         pragma Assert (Saved_Config_Frame);
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2827,12 +2818,15 @@ is
             Take_Buffer (Ctx, Buf);
             RFLX_Free (Buf);
             Last_Err := Decode_Error;
-            pragma Assert (Saved_Config_Frame);
+
             pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
             return;
          end if;
+
          HC.Legacy_Session_ID_Len := SID_Len;
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+
          if SID_Len > 0 then
             declare
                SID : RBT.Bytes (1 .. RBT.Index (SID_Len));
@@ -2851,20 +2845,13 @@ is
 
       if Well_Formed (Ctx, F_Cipher_Suites_TLS) then
          Parse_CH_Cipher_Suites (Ctx, Negotiated, Negotiated_12, Last_Err, HC);
-         HC.Cfg.Local := Saved_Local;
-         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-         pragma Assert (Saved_Config_Frame);
-      else
-         pragma Assert (Saved_Config_Frame);
       end if;
-      HC.Cfg.Local := Saved_Local;
-      pragma Assert (Saved_Config_Frame);
 
       --  Need at least one matching suite (either TLS 1.3 or 1.2)
       if Negotiated = Suite_None and Negotiated_12 = Suite_None then
          Take_Buffer (Ctx, Buf);
          RFLX_Free (Buf);
-         pragma Assert (Saved_Config_Frame);
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2875,9 +2862,7 @@ is
             Ext_OK : Boolean;
          begin
             Parse_CH_Extensions (Ctx, HC, Ext_OK);
-            HC.Cfg.Local := Saved_Local;
-            pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-            pragma Assert (Saved_Config_Frame);
+
             if not Ext_OK then
                --  Some extension's contents were malformed.
                --  Most paths default to decode_error; specific
@@ -2885,12 +2870,13 @@ is
                --  HC.Ext_Parse_Err
                Take_Buffer (Ctx, Buf);
                RFLX_Free (Buf);
+
                if HC.Ext_Parse_Err /= No_Error then
                   Last_Err := HC.Ext_Parse_Err;
                else
                   Last_Err := Decode_Error;
                end if;
-               pragma Assert (Saved_Config_Frame);
+
                pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
                return;
             end if;
@@ -2907,8 +2893,7 @@ is
       if not HC.Saw_Supported_Versions and then Raw_Legacy_Version in 16#0301# .. 16#0302# then
          Last_Err := Protocol_Version;
          OK := False;
-         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-         pragma Assert (Saved_Config_Frame);
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2920,8 +2905,7 @@ is
       if HC.Saw_Supported_Versions and then not HC.SV_Has_Acceptable then
          Last_Err := Protocol_Version;
          OK := False;
-         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-         pragma Assert (Saved_Config_Frame);
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2938,8 +2922,7 @@ is
       if not Compression_Methods_OK (Data, Is_TLS13 => Version = TLS_1_3) then
          Last_Err := Illegal_Parameter;
          OK := False;
-         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-         pragma Assert (Saved_Config_Frame);
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2952,8 +2935,7 @@ is
       then
          Last_Err := Handshake_Failure;
          OK := False;
-         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-         pragma Assert (Saved_Config_Frame);
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2966,8 +2948,7 @@ is
       if Version = TLS_1_3 and then HC.PSK.Binder_Len > 0 and then not HC.PSK.Has_DHE_KE then
          Last_Err := Missing_Extension;
          OK := False;
-         pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-         pragma Assert (Saved_Config_Frame);
+
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
       end if;
@@ -2976,8 +2957,7 @@ is
       --  where we know which group to select.
 
       OK := True;
-      pragma Assert (if Saved_Local /= null then HC.Cfg.Local /= null);
-      pragma Assert (Saved_Config_Frame);
+
       pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
    end Parse_Client_Hello;
 

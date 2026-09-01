@@ -138,7 +138,6 @@ is
           and then Hash_Len (S.HC.Neg) = Hash_Len (S.HC.Neg'Old)
           and then True
           and then (if S.HC.Cert_Request_Received
-                      and then S.HC.Cfg.Local /= null
                       and then S.HC.Cfg.Local.Has_Identity
                     then
                       S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
@@ -154,7 +153,6 @@ is
      Pre =>
        S.State = Wait_Server_Finished
        and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
                    and then S.HC.Cfg.Local.Has_Identity
                  then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
@@ -179,9 +177,7 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Last < Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity
                  then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
@@ -205,10 +201,7 @@ is
    with
      Pre =>
        True
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -222,10 +215,7 @@ is
    with
      Pre =>
        S.Negotiated_Suite in TLS13_Suite
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -252,10 +242,7 @@ is
        and then Plaintext'First = 0
        and then Plaintext'Last < IO_Buffer_Capacity
        and then Plain_Len <= N32 (Plaintext'Length)
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -272,10 +259,7 @@ is
        Msg'First = 0
        and then Msg'Length >= 4
        and then Msg'Last < N32'Last - 4
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -306,10 +290,7 @@ is
        and then Plaintext'First = 0
        and then Plaintext'Last < IO_Buffer_Capacity
        and then Plain_Len <= N32 (Plaintext'Length)
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -349,10 +330,7 @@ is
    with
      Pre =>
        S.Negotiated_Suite in TLS13_Suite
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -637,10 +615,7 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Length <= Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -715,10 +690,7 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Length <= Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -818,7 +790,7 @@ is
                                  begin
                                     if List_Len + 2 = E_Len and List_Len >= 2 then
                                        Sig_Found := True;
-                                       if S.HC.Cfg.Local /= null then
+                                       if S.HC.Cfg.Local.Has_Identity then
                                           Picked :=
                                             Handshake.Pick_Sig_Algo_With_Prefs
                                               (Data (P + 6 .. P + 5 + List_Len),
@@ -886,7 +858,7 @@ is
             return;
          end if;
 
-         if S.HC.Cfg.Local /= null then
+         if S.HC.Cfg.Local.Has_Identity then
             S.HC.Negotiated_Sig_Algo := Picked;
          end if;
       end;
@@ -908,10 +880,7 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Length <= Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -1218,10 +1187,7 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Length <= Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local /= null
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
+       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
                    S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
                    and then Handshake.Sig_Algo_Compatible_With_Cert
                               (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
@@ -1297,11 +1263,7 @@ is
                end;
          end case;
 
-         pragma
-           Assert
-             (if S.HC.Cert_Request_Received
-                  and then S.HC.Cfg.Local /= null
-                  then S.HC.Cfg.Local.Has_Identity);
+         pragma Assert (if S.HC.Cert_Request_Received then S.HC.Cfg.Local.Has_Identity);
 
          if not Verified then
             S.Last_Error := Handshake_Failure;
@@ -1434,15 +1396,12 @@ is
       --  fatal handshake_failure alert  BoringSSL emits
       --  `:NO_COMMON_SIGNATURE_ALGORITHMS:` here, which BoGo's
       --  Client-SignDefault tests use as the expected outcome.
-      if S.HC.Cfg.Local /= null
-        and then S.HC.Cfg.Local.Has_Identity
-        and then S.HC.Negotiated_Sig_Algo = Scheme_None
-      then
+      if S.HC.Cfg.Local.Has_Identity and then S.HC.Negotiated_Sig_Algo = Scheme_None then
          Send_HS_Encrypted_Alert (S, D, Handshake_Failure, Result);
          return;
       end if;
 
-      if S.HC.Cfg.Local = null or else not S.HC.Cfg.Local.Has_Identity then
+      if not S.HC.Cfg.Local.Has_Identity then
          --  Server requested cert but we have none.
          --  Send empty Certificate message (allowed by RFC 8446 S.4.4.2).
          declare
@@ -2162,7 +2121,6 @@ is
 
          --  Complete message -- process it.
          if S.HC.Cert_Request_Received
-           and then S.HC.Cfg.Local /= null
            and then S.HC.Cfg.Local.Has_Identity
            and then (S.HC.Cfg.Local.NaCl_Cert_Len not in 1 .. N32 (Max_Cert_DER)
                      or else not (S.HC.Negotiated_Sig_Algo = Scheme_None

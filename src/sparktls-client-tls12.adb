@@ -294,10 +294,7 @@ is
      Pre =>
        Warning_Alerts_Bounded_RFC_8446_6_1 (S)
        and then
-         (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
-          then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local))
-       and then
-         (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
+         (if S.HC.Cfg.Local.Has_Identity
           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local));
 
    procedure Append_Intermediate_12
@@ -698,12 +695,12 @@ is
        and then Frag'Last - Frag'First < Transcript_Capacity
        and then S.Negotiated_Suite in TLS12_Suite
        and then
-         (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
+         (if S.HC.Cfg.Local.Has_Identity
           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)),
      Post =>
        (if Result = OK
         then
-          (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
+          (if S.HC.Cfg.Local.Has_Identity
            then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)));
 
    procedure Handle_CertReq_12
@@ -777,10 +774,7 @@ is
                CT_Len : constant N32 := N32 (Frag (B));
             begin
                if CT_Len <= Frag'Last - B - 1 then
-                  if S.HC.Cfg.Local /= null
-                    and then S.HC.Cfg.Local.Has_Identity
-                    and then CT_Len > 0
-                  then
+                  if S.HC.Cfg.Local.Has_Identity and then CT_Len > 0 then
                      declare
                         Required_CT : constant Byte :=
                           (case S.HC.Cfg.Local.Sign_Algo is
@@ -806,7 +800,8 @@ is
                         begin
                            if SA_Len >= 2 and then SA_Len <= Frag'Last - SA_Off - 1 then
                               SA_Empty := False;
-                              if S.HC.Cfg.Local /= null then
+
+                              if S.HC.Cfg.Local.Has_Identity then
                                  declare
                                     SA_Slice : constant Byte_Seq (0 .. SA_Len - 1) :=
                                       Frag (SA_Off + 2 .. SA_Off + 1 + SA_Len);
@@ -827,6 +822,7 @@ is
                end if;
             end;
          end if;
+
          if SA_Empty then
             Reset (D.Reasm);
             Send_Alert_And_Error (S, Decode_Error, Result);
@@ -834,7 +830,8 @@ is
             pragma Assert_And_Cut (Result /= OK and then S.State = Error_State);
             return;
          end if;
-         if S.HC.Cfg.Local /= null then
+
+         if S.HC.Cfg.Local.Has_Identity then
             if Picked /= Scheme_None then
                S.HC.Negotiated_Sig_Algo := Picked;
                S.HC.T12.Client_Cert_Allowed := CT_OK;
@@ -861,9 +858,8 @@ is
                end case;
             end if;
          end if;
-         if S.HC.Cfg.Local /= null
-           and then S.HC.Cfg.Local.Has_Identity
-           and then not S.HC.T12.Client_Cert_Allowed
+
+         if S.HC.Cfg.Local.Has_Identity and then not S.HC.T12.Client_Cert_Allowed
          then
             Reset (D.Reasm);
             Send_Alert_And_Error (S, Illegal_Parameter, Result);
@@ -878,7 +874,7 @@ is
           ((if Transcript_Was_Nonempty then SPARKTLS_Transcript.Started (S.HC.TS))
            and then S.Negotiated_Suite in TLS12_Suite
            and then
-             (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
+             (if S.HC.Cfg.Local.Has_Identity
               then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)));
    end Handle_CertReq_12;
 
@@ -910,7 +906,7 @@ is
        and then Frag'Last - Frag'First < Transcript_Capacity
        and then S.Negotiated_Suite in TLS12_Suite
        and then
-         (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
+         (if S.HC.Cfg.Local.Has_Identity
           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)),
      Post =>
        (if Result = OK then S.State = S.State'Old and then S.Negotiated_Suite in TLS12_Suite);
@@ -1076,7 +1072,6 @@ is
        S.Negotiated_Suite in TLS12_Suite
        and then
          (if S.HC.Cert_Request_Received
-            and then S.HC.Cfg.Local /= null
             and then S.HC.Cfg.Local.Has_Identity
             and then S.HC.T12.Client_Cert_Allowed
           then
@@ -1172,13 +1167,13 @@ is
       Rec_Out  : N32;
    begin
       Result := OK;
+
       if not S.HC.Cert_Request_Received then
          pragma Assert_And_Cut (Result = OK and then S.Negotiated_Suite in TLS12_Suite);
          return;
       end if;
 
-      if S.HC.Cfg.Local /= null
-        and then S.HC.Cfg.Local.Has_Identity
+      if S.HC.Cfg.Local.Has_Identity
         and then S.HC.T12.Client_Cert_Allowed
       then
          pragma Assert (SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local));
@@ -1338,8 +1333,7 @@ is
       Result  : out Action)
    with
      Pre  =>
-       S.HC.Cfg.Local /= null
-       and then S.HC.Cfg.Local.Has_Identity
+       S.HC.Cfg.Local.Has_Identity
        and then S.HC.T12.Client_Cert_Allowed
        and then S.Negotiated_Suite in TLS12_Suite,
      Post =>
@@ -1539,7 +1533,6 @@ is
        S.Negotiated_Suite in TLS12_Suite
        and then
          (if S.HC.Cert_Request_Received
-            and then S.HC.Cfg.Local /= null
             and then S.HC.Cfg.Local.Has_Identity
             and then S.HC.T12.Client_Cert_Allowed
           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)),
@@ -1563,7 +1556,6 @@ is
       end if;
 
       if S.HC.Cert_Request_Received
-        and then S.HC.Cfg.Local /= null
         and then S.HC.Cfg.Local.Has_Identity
         and then S.HC.T12.Client_Cert_Allowed
       then
@@ -1626,12 +1618,6 @@ is
       Msg_Len : in N32;
       Result  : out Action)
    is
-      Saved_Local              : constant Valid_Identity_Access := S.HC.Cfg.Local;
-      Saved_Local_Config_Valid : constant Boolean :=
-        Saved_Local /= null
-        and then Saved_Local.Has_Identity
-        and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (Saved_Local)
-      with Ghost;
    begin
       if Msg_Len /= 0 then
          Reset (D.Reasm);
@@ -1639,7 +1625,9 @@ is
          pragma Assert (Result /= OK);
          return;
       end if;
+
       Append_Transcript (S.HC.TS, Frag);
+
       --  Compute ECDHE shared secret per Selected_Group.
       declare
          SS_OK  : Boolean;
@@ -1654,23 +1642,15 @@ is
          end if;
       end;
 
-      --  Build + atomically commit the client flight.
-      S.HC.Cfg.Local := Saved_Local;
-      pragma
-        Assert
-          (if Saved_Local_Config_Valid
-           then
-             S.HC.Cfg.Local /= null
-             and then S.HC.Cfg.Local.Has_Identity
-             and then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local));
       pragma
         Assert
           (if S.HC.Cert_Request_Received
-             and then S.HC.Cfg.Local /= null
              and then S.HC.Cfg.Local.Has_Identity
              and then S.HC.T12.Client_Cert_Allowed
            then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local));
+
       Build_Client_Flight_12 (S, D, Result);
+
       if Result /= OK then
          return;
       end if;
@@ -2716,9 +2696,11 @@ is
          begin
             Read_Server_Flight_Record
               (S => S, D => D, Rec => Rec, Have_Record => Have_Record, Result => Result);
+
             if not Have_Record then
                return;
             end if;
+
             pragma Assert (Rec.OK);
             pragma Assert (Rec.Content = Records.Content_Handshake);
 
@@ -2798,14 +2780,17 @@ is
    is
       Rec : Records.Parse_Result;
 
-      procedure Consume_Reassembled_NST (Msg_Len : in N32; Result : out Action)
-      with Pre => Msg_Len <= Max_HS_Msg - 4 and then Has_Message (D.Reasm);
+      procedure Consume_Reassembled_NST (Result : out Action)
+      with Pre => Has_Message (D.Reasm);
 
-      procedure Consume_Reassembled_NST (Msg_Len : in N32; Result : out Action) is
-         pragma Assert (Has_Message (D.Reasm));  --  PROBE-T8
-         NST_Msg : constant Message_Bytes := Message (D.Reasm);
+      procedure Consume_Reassembled_NST (Result : out Action)
+      is
+         NST_Msg  : constant Message_Bytes := Message (D.Reasm);
+
+         --  Msg len - 4 byte header
+         Body_Len : constant N32 := NST_Msg'Length - 4;
       begin
-         if NST_Msg (0) /= 16#04# or else Msg_Len < 6 then
+         if NST_Msg (0) /= 16#04# or else Body_Len < 6 then
             Send_Encrypted_Finished_Error_12
               (S,
                D,
@@ -2816,8 +2801,8 @@ is
          end if;
 
          declare
-            NST_Body   : constant Byte_Seq (0 .. Msg_Len - 1) :=
-              Byte_Seq (NST_Msg (4 .. 4 + Msg_Len - 1));
+            NST_Body   : constant Byte_Seq (0 .. Body_Len - 1) :=
+               Byte_Seq (NST_Msg (4 .. NST_Msg'Last));
             Lifetime   : Unsigned_32;
             Ticket_Len : N32;
             Parse_OK   : Boolean;
@@ -2827,14 +2812,17 @@ is
                Lifetime_Hint => Lifetime,
                Ticket_Len    => Ticket_Len,
                OK            => Parse_OK);
+
             if not Parse_OK or Ticket_Len > Max_TLS12_Ticket_Len then
                Send_Encrypted_Finished_Error_12 (S, D, 50, Decode_Error, Result);
                return;
             end if;
+
             if Ticket_Len > 0 then
                S.TLS12_New_Ticket.Ticket (0 .. Ticket_Len - 1) :=
                  NST_Body (6 .. 6 + Ticket_Len - 1);
             end if;
+
             S.TLS12_New_Ticket.Ticket_Len := Ticket_Len;
             S.TLS12_New_Ticket.Suite := Wire_Of (S.Negotiated_Suite);
             S.TLS12_New_Ticket.Master_Secret := S.HC.Master_Secret_12;
@@ -2862,10 +2850,12 @@ is
             Msg_Len  : N32;
             Ready    : Boolean;
          begin
+
             pragma
               Assert
-                (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
+                (if S.HC.Cfg.Local.Has_Identity
                  then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local));
+
             Prepare_Server_Flight_Message
               (S        => S,
                D        => D,
@@ -2873,14 +2863,17 @@ is
                Msg_Len  => Msg_Len,
                Ready    => Ready,
                Result   => Result);
+
             if Result /= OK or else not Ready then
                return;
             end if;
+
             if Msg_Type /= HT_New_Session_Ticket then
                Send_Encrypted_Finished_Error_12 (S, D, 10, Unexpected_Message, Result);
                return;
             end if;
-            Consume_Reassembled_NST (Msg_Len, Result);
+
+            Consume_Reassembled_NST (Result);
             return;
          end;
       end if;
@@ -2941,8 +2934,9 @@ is
          begin
             pragma
               Assert
-                (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
+                (if S.HC.Cfg.Local.Has_Identity
                  then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local));
+
             Prepare_Server_Flight_Message
               (S        => S,
                D        => D,
@@ -2950,14 +2944,17 @@ is
                Msg_Len  => Msg_Len,
                Ready    => Ready,
                Result   => Result);
+
             if Result /= OK or else not Ready then
                return;
             end if;
+
             if Msg_Type /= HT_New_Session_Ticket then
                Send_Encrypted_Finished_Error_12 (S, D, 10, Unexpected_Message, Result);
                return;
             end if;
-            Consume_Reassembled_NST (Msg_Len, Result);
+
+            Consume_Reassembled_NST (Result);
             --  Dispatcher will call us again to consume the CCS
             --  that follows the NST.
          end;
@@ -3097,11 +3094,11 @@ is
    --  where they were already sent). Atomic flight assembly: build
    --  into Scratch first; commit-fail paths are fatal (no rollback).
    procedure Send_Abbreviated_Client_Flight_12
-     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+     (S : in out Session; Result : out Action)
    with Post => (if Result = OK then S.State = S.State'Old);
 
    procedure Send_Abbreviated_Client_Flight_12
-     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+     (S : in out Session; Result : out Action)
    is
       use Records.TLS12;
       use Key_Schedule_12;
@@ -3340,7 +3337,7 @@ is
       --  case both records were sent before the server's Finished
       --  arrived, so this is a no-op.
       if S.HC.T12.Resuming then
-         Send_Abbreviated_Client_Flight_12 (S, D, Result);
+         Send_Abbreviated_Client_Flight_12 (S, Result);
          if Result /= OK then
             return;
          end if;

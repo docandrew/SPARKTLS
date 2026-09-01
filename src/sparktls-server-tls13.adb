@@ -484,11 +484,12 @@ is
             S.HC.PSK.Binder_Hash_Taken := True;
          end;
       end if;
+
       Append_Transcript (S.HC, Msg);
       Consume_Record;
       Free_CH2_Reasm;
-      if S.HC.Cfg.Local = null
-        or else not S.HC.Cfg.Local.Has_Identity
+
+      if not S.HC.Cfg.Local.Has_Identity
         or else S.HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
         or else S.HC.Cfg.Local.Int_Count > Max_Pool_Size
         or else (for some I in 0 .. Max_Pool_Size - 1
