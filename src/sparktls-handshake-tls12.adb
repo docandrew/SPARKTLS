@@ -109,13 +109,21 @@ is
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
       OK      : out Boolean)
+   with
+     Pre  =>
+       Sig'First = 0
+       and then Sig'Last >= Max_Sig - 1
+       and then Sig'Last < N32'Last
+       --  hash-padding headroom (SHA-2 Pre family)
+       and then Msg'Last < N32'Last - 128,
+     Post => (if OK then Sig_Len <= Max_Sig)
    is
    begin
       Sig := (others => 0);
       Sig_Len := 0;
       OK := False;
       if Id.RSA_Mod_Len < 64
-        or Id.RSA_Mod_Len > SPARKTLSCrypto.RSA.Max_RSA_Bytes
+        or Id.RSA_Mod_Len > Max_Sig  --  layer max: RSA-4096 (Sig buffers)
         or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
         or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
       then
@@ -195,7 +203,7 @@ is
       Sig_Len := 0;
       OK := False;
       if Id.RSA_Mod_Len < 64
-        or Id.RSA_Mod_Len > SPARKTLSCrypto.RSA.Max_RSA_Bytes
+        or Id.RSA_Mod_Len > Max_Sig  --  layer max: RSA-4096 (Sig buffers)
         or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
         or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
       then
@@ -938,12 +946,22 @@ is
       Sig     : out Byte_Seq;
       Sig_Len : out N32;
       OK      : out Boolean)
+   with
+     Pre  =>
+       Sig'First = 0
+       and then Sig'Last >= Max_Sig - 1
+       and then Sig'Last < N32'Last
+       and then TH'First = 0
+       and then (if Scheme = Sig_RSA_PSS_SHA512 then TH'Last >= 63
+                 elsif Scheme = Sig_RSA_PSS_SHA384 then TH'Last >= 47
+                 else TH'Last >= 31),
+     Post => (if OK then Sig_Len <= Max_Sig)
    is
    begin
       Sig := (others => 0);
       Sig_Len := 0;
       OK := False;
-      if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
+      if Id.RSA_Mod_Len not in 64 .. Max_Sig  --  layer max: RSA-4096
         or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
         or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
         or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
@@ -1032,7 +1050,7 @@ is
       Sig := (others => 0);
       Sig_Len := 0;
       OK := False;
-      if Id.RSA_Mod_Len not in 64 .. SPARKTLSCrypto.RSA.Max_RSA_Bytes
+      if Id.RSA_Mod_Len not in 64 .. Max_Sig  --  layer max: RSA-4096
         or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
         or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
         or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
