@@ -294,10 +294,16 @@ is
 
    procedure Advance (S : in out Server_Session; Result : out Action) is
       Handled : Boolean;
+      --  Snapshot of the handshake slot. The handshake procedures below
+      --  take S in out and never touch S.Slot, but that fact does not
+      --  cross their call boundary; indexing Slots through a local
+      --  constant keeps the guard's S.Slot /= No_Slot structurally in
+      --  scope for every Slots (...) below, with no contract needed.
+      Slot    : constant Slot_Count := S.Slot;
    begin
       Advance_Server_Non_Handshake (S, Result, Handled);
       if not Handled then
-         if S.Slot = No_Slot then
+         if Slot = No_Slot then
             S.Last_Error := Internal_Error;
             Set_State (S, Error_State);
             Result := Error_Alert;
@@ -307,16 +313,16 @@ is
          --  ClientHello parsing is version-neutral. Once negotiation
          --  commits S.Version, dispatch only to that version's child.
          if S.State = Wait_Client_Hello then
-            Advance_Handshake (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
+            Advance_Handshake (S, SPARKTLS.HS_Pool.Slots (Slot), Result);
          else
             case S.Version is
                when TLS_1_2          =>
                   SPARKTLS.Server.TLS12.Advance_Handshake_12
-                    (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
+                    (S, SPARKTLS.HS_Pool.Slots (Slot), Result);
 
                when TLS_1_3          =>
                   SPARKTLS.Server.TLS13.Advance_Handshake_13
-                    (S, SPARKTLS.HS_Pool.Slots (S.Slot), Result);
+                    (S, SPARKTLS.HS_Pool.Slots (Slot), Result);
 
                when TLS_Undetermined =>
                   S.Last_Error := Internal_Error;
@@ -326,12 +332,12 @@ is
          end if;
 
          if S.State in Connected | Error_State | Closed then
-            S.Peer_Cert_Valid := SPARKTLS.HS_Pool.Slots (S.Slot).Peer_Leaf.Present;
+            S.Peer_Cert_Valid := SPARKTLS.HS_Pool.Slots (Slot).Peer_Leaf.Present;
             S.Use_EMS := S.HC.Use_EMS;
             --  Zero ALL key material, then free the slot (Release wipes
             --  the data-plane).
             Scrub_Handshake_Context (S.HC);
-            SPARKTLS.HS_Pool.Release (S.Slot);
+            SPARKTLS.HS_Pool.Release (Slot);
             S.Slot := No_Slot;
          end if;
       end if;

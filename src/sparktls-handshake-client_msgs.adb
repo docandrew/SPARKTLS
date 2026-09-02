@@ -1038,7 +1038,12 @@ is
         (if Need_Pad then (if Pre_Pad_Msg_Len <= 508 then 512 - Pre_Pad_Msg_Len else 4) else 0);
       Pad_Data_Len    : constant N32 := (if Pad_Ext_Total >= 4 then Pad_Ext_Total - 4 else 0);
 
-      Ext_Total_All : constant N32 := Ext_Total + Pad_Ext_Total;
+      --  Mirrors RFLX Client_Hello_Extensions_Length (8 .. 2**16 - 1) so
+      --  the wire conversion below is range-trivial: the bound is
+      --  discharged ONCE here from the per-extension size constants,
+      --  instead of being an unprovable N32 -> 16-bit conversion.
+      subtype CH_Extensions_Total is N32 range 8 .. 2**16 - 1;
+      Ext_Total_All : constant CH_Extensions_Total := Ext_Total + Pad_Ext_Total;
       CH_Body_Len   : constant N32 := 59 + Session_ID_Len + Ext_Total_All;
       CH_Msg_Len    : constant N32 := 4 + CH_Body_Len;
 
@@ -1465,8 +1470,8 @@ is
       --  4.2.11. We patch the extensions list length and
       --  handshake length after.
       --
-      --  Binder hash matches the ticket's hash: PSK_Len=32 â SHA-256;
-      --  PSK_Len=48 â SHA-384. Both paths share the same wire
+      --  Binder hash matches the ticket's hash: PSK_Len=32 -> SHA-256;
+      --  PSK_Len=48 -> SHA-384. Both paths share the same wire
       --  layout (only the binder VALUE size differs).
       --  Proof decomposition: the prover cannot re-establish the whole
       --  predicate in one step after the HC component writes above.
@@ -1789,7 +1794,7 @@ is
                   Err := V_Err;
                   OK := False;
                   pragma
-                    Assert_And_Cut
+                    Assert
                       (HC.TS = Saved_TS
                        and then (if Saved_Got_HRR then HC.Got_HRR));
                   return;
@@ -1811,7 +1816,7 @@ is
                      Err := V_Err;
                      OK := False;
                      pragma
-                       Assert_And_Cut
+                       Assert
                          (HC.TS = Saved_TS
                           and then (if Saved_Got_HRR then HC.Got_HRR));
                      return;
@@ -1836,7 +1841,7 @@ is
                      Err := V_Err;
                      OK := False;
                      pragma
-                       Assert_And_Cut
+                       Assert
                          (HC.TS = Saved_TS
                           and then (if Saved_Got_HRR then HC.Got_HRR));
                      return;
@@ -1882,7 +1887,7 @@ is
                      Err := Illegal_Parameter;
                      OK := False;
                      pragma
-                       Assert_And_Cut
+                       Assert
                          (HC.TS = Saved_TS
                           and then (if Saved_Got_HRR then HC.Got_HRR));
                      return;
@@ -1905,7 +1910,7 @@ is
                      Err := V_Err;
                      OK := False;
                      pragma
-                       Assert_And_Cut
+                       Assert
                          (HC.TS = Saved_TS
                           and then (if Saved_Got_HRR then HC.Got_HRR));
                      return;
@@ -1947,7 +1952,7 @@ is
    --  E1 (#131): P0 of the ServerHello extension pre-scan -- the
    --  fixed-header walk. Pure function of Data (no HC formal), so
    --  every early exit leaves the caller's frame facts trivially
-   --  intact; the seven Assert_And_Cut frames the inline version
+   --  intact; the seven exit-fact frames the inline version
    --  carried become plain returns.
    --  Outcomes: Scan_OK -> extensions block is Ext_Start .. Data'Last
    --            and ends exactly at the declared length;
@@ -2040,7 +2045,7 @@ is
    --  means the caller may continue with the RFLX parse.
    --
    --  RFC anchors:
-   --    RFC 8446 4.2    duplicate extensions â decode_error
+   --    RFC 8446 4.2    duplicate extensions -> decode_error
    --    RFC 5246 7.4.1.4 / RFC 8446 4.2 SH may only echo offered
    --    RFC 6066 3      SNI ack body MUST be empty
    --    RFC 8446 4.2.11 pre_shared_key in SH iff client offered PSK
@@ -2124,7 +2129,7 @@ is
          Last_Err := Drv_Err;
          OK := False;
          pragma
-           Assert_And_Cut
+           Assert
              (HC.TS = Saved_TS
               and then (if Saved_Got_HRR then HC.Got_HRR));
          return;
@@ -2134,7 +2139,7 @@ is
 
 
       pragma
-        Assert_And_Cut
+        Assert
           (HC.TS = Saved_TS
            and then (if Saved_Got_HRR then HC.Got_HRR)
            and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
@@ -2811,14 +2816,14 @@ is
             Last_Err := Prelim_Err;
          end if;
          --  HC untouched on every preliminary exit.
-         pragma Assert_And_Cut (SH_Parse_Frame);
+         pragma Assert (SH_Parse_Frame);
          return;
       end if;
 
       --  RFC 8446 4.1.4: HelloRetryRequest is on-wire a ServerHello
       --  with a magic random value. Compare here so the SH parser
       --  can apply HRR-specific extension policy
-      --  (Where_Allowed = E_HRR, dup -> illegal_parameter not
+      --  (Where_Allowed = E_HRR, dup -> illegal_parameter not
       --  decode_error, must contain key_share or cookie). Random is
       --  at offset 6..37 in Data (4-byte HS hdr + 2-byte
       --  legacy_version).
@@ -2827,7 +2832,7 @@ is
          --  second HRR is unexpected_message.
          if HC.Got_HRR then
             Last_Err := Unexpected_Message;
-            pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
+            pragma Assert (if OK or else Last_Err = No_Error then SH_Parse_Frame);
             return;
          end if;
          HC.Got_HRR := True;
@@ -2840,7 +2845,7 @@ is
       begin
          Pre_Scan_SH_Extensions (Data, HC, Last_Err, ALPN, Is_HRR_Msg => Curr_Is_HRR, OK => Pre_OK);
          if not Pre_OK then
-            pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
+            pragma Assert (if OK or else Last_Err = No_Error then SH_Parse_Frame);
             return;
          end if;
       end;
@@ -2853,14 +2858,14 @@ is
          Parse_HRR (Data, HC, Negotiated, Version, HRR_OK, HRR_Err);
          if not HRR_OK then
             Last_Err := HRR_Err;
-            pragma Assert_And_Cut (if OK or else Last_Err = No_Error then SH_Parse_Frame);
+            pragma Assert (if OK or else Last_Err = No_Error then SH_Parse_Frame);
             return;
          end if;
          OK := True;
          pragma Assert (HC.Got_HRR);
          pragma Assert (not Got_HRR_At_Entry);
          pragma
-           Assert_And_Cut
+           Assert
              (OK
                 and then HC.Got_HRR
                 and then not Got_HRR_At_Entry
@@ -2918,7 +2923,7 @@ is
          --  (it's computed after ServerKeyExchange)
          if Version = TLS_1_2 then
             pragma
-              Assert_And_Cut
+              Assert
                 (HC.TS = TS_At_Entry
                    and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
             OK := True;
@@ -2941,7 +2946,7 @@ is
          end;
 
          --  Bubble up extension-specific protocol errors (e.g. RFC 7301
-         --  empty ALPN name â illegal_parameter). The caller's `if not
+         --  empty ALPN name -> illegal_parameter). The caller's `if not
          --  Parse_OK` arm reads Last_Err to pick the alert.
          if HC.Ext_Parse_Err /= No_Error then
             Last_Err := HC.Ext_Parse_Err;
@@ -2950,7 +2955,7 @@ is
          end if;
 
          pragma
-           Assert_And_Cut
+           Assert
              (HC.TS = TS_At_Entry
                 and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
          OK := True;

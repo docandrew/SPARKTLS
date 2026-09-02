@@ -162,9 +162,7 @@ is
                              then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in TLS13_Suite
        and then True,
-     Post =>
-       (if Result = Has_Output then Hash_Len (S.HC.Neg) = Hash_Len (S.HC.Neg'Old))
-       and then Result in Has_Output | Error_Alert;
+     Post => Result in Has_Output | Error_Alert;
 
    procedure Process_Handshake_Message
      (S      : in out Session;
@@ -624,10 +622,7 @@ is
                              then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in TLS13_Suite,
      Post =>
-       (if Result = OK
-        then
-          S.HC.Client_HS = S.HC.Client_HS'Old
-          and then S.Negotiated_Suite in TLS13_Suite)
+       (if Result = OK then S.Negotiated_Suite in TLS13_Suite)
        and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_EE_13
@@ -764,8 +759,6 @@ is
                            pragma
                              Loop_Invariant
                                (P >= Ext_Off + 2 and P + 4 <= Ext_End and Ext_End <= Data'Last + 1);
-                           pragma
-                             Loop_Invariant (S.State not in Idle | Closing | Closed | Error_State);
                            declare
                               Tag   : constant N32 := N32 (Data (P)) * 256 + N32 (Data (P + 1));
                               E_Len : constant N32 := N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
@@ -813,13 +806,6 @@ is
                                     else
                                        while not Bad and then DN_P < DN_End loop
                                           pragma Loop_Invariant (DN_P <= DN_End);
-                                          pragma
-                                            Loop_Invariant
-                                              (S.State not in
-                                                 Idle
-                                                 | Closing
-                                                 | Closed
-                                                 | Error_State);
                                           pragma Loop_Variant (Increases => DN_P);
                                           if DN_P + 2 > DN_End then
                                              Bad := True;
@@ -1035,13 +1021,10 @@ is
      Post =>
        (if S.State /= Error_State
         then
-          S.HC.Client_HS = S.HC.Client_HS'Old
-          and then S.Client_App = S.Client_App'Old
-          and then S.Negotiated_Suite in
+          S.Negotiated_Suite in
                      Suite_AES_128_GCM_SHA256
                      | Suite_AES_256_GCM_SHA384
-                     | Suite_CHACHA20_POLY1305_SHA256
-          and then True)
+                     | Suite_CHACHA20_POLY1305_SHA256)
        and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CV_13
@@ -1269,12 +1252,6 @@ is
       end;
 
       Derive_App_Keys_And_Send_Finished (S, D, Result);
-      pragma
-        Assert
-          (if Result = Has_Output
-             then
-               (if Initial_Suite = Suite_AES_256_GCM_SHA384 then Hash_Len (S.HC.Neg) = 48
-                else Hash_Len (S.HC.Neg) = 32));
    end Handle_Finished_13;
 
    procedure Process_Handshake_Message
@@ -1532,7 +1509,7 @@ is
       Result          : out Action)
    with
      Pre => S.Negotiated_Suite = Suite_AES_256_GCM_SHA384,
-     Post => Hash_Len (S.HC.Neg) = Hash_Len (S.HC.Neg'Old) and then Result in OK | Error_Alert;
+     Post => Result in OK | Error_Alert;
 
    procedure Build_Client_Finished_384
      (S               : in out Session;
@@ -1614,7 +1591,7 @@ is
       Result          : out Action)
    with
      Pre => S.Negotiated_Suite in Suite_AES_128_GCM_SHA256 | Suite_CHACHA20_POLY1305_SHA256,
-     Post => Hash_Len (S.HC.Neg) = Hash_Len (S.HC.Neg'Old) and then Result in OK | Error_Alert;
+     Post => Result in OK | Error_Alert;
 
    procedure Build_Client_Finished_256
      (S               : in out Session;

@@ -24,10 +24,55 @@
               [ pkgs.alire ]
             else
               [ ];
+          #  Colibri2 (CEA LIST, LGPL-2.1): the constraint-programming SMT
+          #  solver RecordFlux routes its 2**N `Fits_Into` arithmetic to. FSF
+          #  gnatprove 16.1.0 already ships the why3 driver and the
+          #  gnatprove.conf entry for `colibri2`; only the binary is missing,
+          #  so putting this on PATH is the whole integration
+          #  (`gnatprove --prover=z3,cvc5,altergo,colibri2`).
+          #
+          #  Source: Frama-C GitLab, tag 0.6 (2026-06-22), CI job
+          #  `generate-static` of pipeline 111937. The release .tbz assets
+          #  are SOURCE tarballs; the static-PIE binary only exists as this
+          #  job artifact, fetched as a fixed-output derivation so the bytes
+          #  are pinned. Their own flake.nix does not build on current
+          #  nixpkgs (stale dune pin), hence the binary rather than a source
+          #  build for now. Job artifacts can expire upstream: if this fetch
+          #  ever fails, mirror the zip and update the URL (hash stays).
+          #  Nine popop_lib/colibrics files carry a CEA proprietary header
+          #  alongside the LGPL package license -- review before
+          #  redistributing the binary itself.
+          colibri2 =
+            if system == "x86_64-linux" then
+              [
+                (pkgs.stdenvNoCC.mkDerivation {
+                  pname = "colibri2";
+                  version = "0.6";
+                  src = pkgs.fetchurl {
+                    name = "colibri2-0.6-generate-static-artifacts.zip";
+                    url = "https://git.frama-c.com/api/v4/projects/879/jobs/1970747/artifacts";
+                    hash = "sha256-VycazpUOjL4LkUU+s+GmzIHz/AE43FuO/1dOeWLMpa4=";
+                  };
+                  nativeBuildInputs = [ pkgs.unzip ];
+                  unpackPhase = "unzip -q $src";
+                  dontBuild = true;
+                  #  static-pie: no patchelf, no strip -- keep the bytes as shipped.
+                  dontFixup = true;
+                  installPhase = "install -Dm755 bin/colibri2 $out/bin/colibri2";
+                  meta = {
+                    description = "Colibri2 CP-based SMT solver (static binary)";
+                    homepage = "https://colibri.frama-c.com";
+                    license = pkgs.lib.licenses.lgpl21Only;
+                    platforms = [ "x86_64-linux" ];
+                  };
+                })
+              ]
+            else
+              [ ];
         in
         {
           default = pkgs.mkShell {
-            packages = alirePackages ++ (with pkgs; [
+            packages = alirePackages ++ colibri2 ++ (with pkgs; [
               bash
               coreutils
               curl

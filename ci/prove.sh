@@ -50,7 +50,27 @@ PROVE_JOBS="${PROVE_JOBS:-0}"        # 0 = all cores
 #   PROVE_CEX=on ci/prove.sh -u sparktls-server.adb
 PROVE_CEX="${PROVE_CEX:-off}"
 PROVE_LEVEL_ARGS=()
-[[ "$*" == *"--level"* ]] || PROVE_LEVEL_ARGS=(--level=1)
+[[ "$*" == *"--level"*    ]] || PROVE_LEVEL_ARGS=(--level=1)
+# Per-prover memory cap. Level 1 defaults to 1000 MB, which is the binding
+# limit for most of our exhaustion findings: at 60 s / 4000 MB six of seven
+# remaining Build_Client_Hello checks and 45 of 49 sparknacl-sign checks
+# prove (measured 2026-09-02, cold sessions). 4000 MB x PROVE_JOBS=8 = 32 GB,
+# well inside PROVE_MEM. Set explicitly here so it no longer depends on any
+# dependency project's Prove package. Timeout and level are unchanged.
+[[ "$*" == *"--memlimit"* ]] || PROVE_LEVEL_ARGS+=(--memlimit=4000)
+# Prover set. Colibri2 (CEA, LGPL-2.1) is the solver RecordFlux routes its
+# 2**N Fits_Into arithmetic to; FSF gnatprove ships its driver and config
+# but not the binary. flake.nix provides it, and the gate ASSUMES the flake
+# environment: a missing binary is a misconfigured run, not a reason to
+# quietly prove with fewer provers (a silent downgrade would make the
+# ledger incomparable). Run as: nix develop --command bash ci/prove.sh ...
+if [[ "$*" != *"--prover"* ]]; then
+    if ! command -v colibri2 >/dev/null 2>&1; then
+        echo "== FATAL: colibri2 not on PATH. Run inside the flake: nix develop --command bash ci/prove.sh ..." >&2
+        exit 1
+    fi
+    PROVE_LEVEL_ARGS+=(--prover=z3,cvc5,altergo,colibri2)
+fi
 
 # MemoryHigh at 85% of the cap: throttle before killing.
 high_num="${PROVE_MEM%G}"
