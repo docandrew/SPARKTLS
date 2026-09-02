@@ -209,11 +209,11 @@ is
       end if;
    end Build_ALPN_Extension_Data;
 
-   function Effective_Sig_Algo_Count (Cfg : Config) return Natural
+   function Effective_Sig_Algo_Count (Cfg : Config) return Sig_Algo_Count
    is (if Cfg.Verify_Sig_Algo_Count > 0 then Cfg.Verify_Sig_Algo_Count else 9);
 
    ----------------------------------------------------------------------------
-   --  Build procedures (keep manual serialization for simple output)
+   --  Build procedures
    ----------------------------------------------------------------------------
 
    --  Append a 2-byte cipher_suite entry to the in-flight RFLX
@@ -646,13 +646,13 @@ is
 
    --  signature_algorithms payload (RFC 8446 4.2.3 / RFC 5246 7.4.1.4.1):
    --  the configured verify list when present, else the built-in
-   --  9-algorithm preference order. SA_Raw'Length must be
-   --  2 + 2 * Effective_Sig_Algo_Count (Cfg).
+   --  9-algorithm preference order. SA_Raw'Last must be
+   --  1 + 2 * Effective_Sig_Algo_Count (Cfg).
    procedure Fill_SA_Raw (Cfg : in Config; SA_Raw : out Byte_Seq)
    with
      Pre =>
        SA_Raw'First = 0
-       and then SA_Raw'Length = 2 + 2 * Effective_Sig_Algo_Count (Cfg)
+       and then SA_Raw'Last = 1 + 2 * N32 (Effective_Sig_Algo_Count (Cfg))
    is
       P : N32 := 2;
    begin
@@ -930,7 +930,7 @@ is
       --  supported_groups data: list_len(2) + group(2) * count.
       SG_Data_Len  : constant N32 := 2 + 2 * SG_Group_Count;
       --  signature_algorithms data: list_len(2) + alg(2) * N
-      SA_Count     : constant Natural := Effective_Sig_Algo_Count (HC.Cfg);
+      SA_Count     : constant Sig_Algo_Count := Effective_Sig_Algo_Count (HC.Cfg);
       SA_Data_Len  : constant N32 := 2 + 2 * N32 (SA_Count);
       --  key_share data: shares_len(2) + entries.
       --

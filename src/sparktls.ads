@@ -162,7 +162,10 @@ is
 
    Max_Sig_Algos : constant := 16;
    subtype Sig_Algo_Index is Natural range 0 .. Max_Sig_Algos - 1;
+   subtype Sig_Algo_Count is Natural range 0 .. Max_Sig_Algos;
+
    type Sig_Algo_List is array (Sig_Algo_Index) of Maybe_Sig_Scheme;
+
    function Sig_Scheme_In_List
      (Scheme : Maybe_Sig_Scheme; List : Sig_Algo_List; Count : Natural) return Boolean
    is (Count <= Max_Sig_Algos and then (for some I in 0 .. Count - 1 => List (I) = Scheme));
@@ -1518,7 +1521,7 @@ is
       --  Verify_Sig_Algos (0 .. Count - 1), and CertificateVerify messages
       --  from peers must use a listed scheme.
       Verify_Sig_Algos      : Sig_Algo_List := (others => Scheme_None);
-      Verify_Sig_Algo_Count : Natural range 0 .. Max_Sig_Algos := 0;
+      Verify_Sig_Algo_Count : Sig_Algo_Count := 0;
 
       --  Optional local signing preference/allow-list. When
       --  Sign_Sig_Algo_Count = 0, the signer uses the peer's offered order
@@ -1526,7 +1529,7 @@ is
       --  first configured scheme that is also peer-offered and compatible with
       --  the local identity.
       Sign_Sig_Algos      : Sig_Algo_List := (others => Scheme_None);
-      Sign_Sig_Algo_Count : Natural range 0 .. Max_Sig_Algos := 0;
+      Sign_Sig_Algo_Count : Sig_Algo_Count := 0;
 
       --  Server: request a client certificate (mTLS). When True the
       --  server sends a CertificateRequest in the handshake.
