@@ -726,26 +726,33 @@ is
       P384_PK_Enc  : in Byte_Seq;
       KS_Raw       : out Byte_Seq)
    is
+      Retry_Group_A : constant Byte := Byte (ECDHE_Group_Wire (Retry_Group) / 256);
+      Retry_Group_B : constant Byte := Byte (ECDHE_Group_Wire (Retry_Group) mod 256);
+      Init_Group_A  : constant Byte := Byte (ECDHE_Group_Wire (Init_Group) / 256);
+      Init_Group_B  : constant Byte := Byte (ECDHE_Group_Wire (Init_Group) mod 256);
    begin
       KS_Raw := (others => 0);
       if Retry_Single then
          --  Single-entry retry key_share.
          KS_Raw (0) := Byte (Retry_Entry / 256);
          KS_Raw (1) := Byte (Retry_Entry mod 256);
-         if Retry_Group /= Group_None then
-            KS_Raw (2) := Byte (ECDHE_Group_Wire (Retry_Group) / 256);
-            KS_Raw (3) := Byte (ECDHE_Group_Wire (Retry_Group) mod 256);
-         end if;
+
          case Retry_Group is
             when Group_X25519 =>
+               KS_Raw (2) := Retry_Group_A;
+               KS_Raw (3) := Retry_Group_B;
                KS_Raw (4) := 16#00#;
                KS_Raw (5) := 16#20#;
                KS_Raw (6 .. 37) := PK_Bytes;
             when Group_Secp256r1 =>
+               KS_Raw (2) := Retry_Group_A;
+               KS_Raw (3) := Retry_Group_B;
                KS_Raw (4) := 16#00#;
                KS_Raw (5) := 16#41#;
                KS_Raw (6 .. 70) := P256_PK_Enc;
             when Group_Secp384r1 =>
+               KS_Raw (2) := Retry_Group_A;
+               KS_Raw (3) := Retry_Group_B;
                KS_Raw (4) := 16#00#;
                KS_Raw (5) := 16#61#;
                KS_Raw (6 .. 102) := P384_PK_Enc;
@@ -756,18 +763,23 @@ is
          --  CH1 / cookie-only retry: single configured initial entry.
          KS_Raw (0) := Byte (Init_Entry / 256);
          KS_Raw (1) := Byte (Init_Entry mod 256);
-         KS_Raw (2) := Byte (ECDHE_Group_Wire (Init_Group) / 256);
-         KS_Raw (3) := Byte (ECDHE_Group_Wire (Init_Group) mod 256);
+
          case Init_Group is
             when Group_X25519 =>
+               KS_Raw (2) := Init_Group_A;
+               KS_Raw (3) := Init_Group_B;
                KS_Raw (4) := 16#00#;
                KS_Raw (5) := 16#20#;
                KS_Raw (6 .. 37) := PK_Bytes;
             when Group_Secp256r1 =>
+               KS_Raw (2) := Init_Group_A;
+               KS_Raw (3) := Init_Group_B;
                KS_Raw (4) := 16#00#;
                KS_Raw (5) := 16#41#;
                KS_Raw (6 .. 70) := P256_PK_Enc;
             when Group_Secp384r1 =>
+               KS_Raw (2) := Init_Group_A;
+               KS_Raw (3) := Init_Group_B;
                KS_Raw (4) := 16#00#;
                KS_Raw (5) := 16#61#;
                KS_Raw (6 .. 102) := P384_PK_Enc;
