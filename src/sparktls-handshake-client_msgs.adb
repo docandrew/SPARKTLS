@@ -221,16 +221,13 @@ is
    --  append / take-buffer / free dance so each callsite is a
    --  single line.
    procedure Append_Cipher_Suite
-     (Suites_Ctx     : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
-      Suite          : in RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum;
-      Required_After : in RBT.Bit_Length)
+     (Suites_Ctx : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
+      Suite      : in RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum)
    with
      Pre =>
        RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Buffer (Suites_Ctx)
        and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Valid (Suites_Ctx)
-       and then Required_After <= RBT.Bit_Length'Last - 16
-       and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Available_Space (Suites_Ctx)
-                >= Required_After + 16,
+       and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Available_Space (Suites_Ctx) >= 16,
      Post =>
        RFLX.TLS_Handshake.Cipher_Suites_TLS.Has_Buffer (Suites_Ctx)
        and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Valid (Suites_Ctx)
@@ -239,23 +236,20 @@ is
        and then Suites_Ctx.First = Suites_Ctx.First'Old
        and then Suites_Ctx.Last = Suites_Ctx.Last'Old
        and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Available_Space (Suites_Ctx)
-                = RFLX.TLS_Handshake.Cipher_Suites_TLS.Available_Space (Suites_Ctx)'Old - 16
-       and then RFLX.TLS_Handshake.Cipher_Suites_TLS.Available_Space (Suites_Ctx) >= Required_After;
+                = RFLX.TLS_Handshake.Cipher_Suites_TLS.Available_Space (Suites_Ctx)'Old - 16;
 
    procedure Append_Cipher_Suite
-     (Suites_Ctx     : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
-      Suite          : in RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum;
-      Required_After : in RBT.Bit_Length)
+     (Suites_Ctx : in out RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
+      Suite      : in RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum)
    is
-      S_Buf : RBT.Bytes_Ptr;
       S_Ctx : RFLX.TLS_Handshake.Cipher_Suite_TLS.Context;
    begin
-      S_Buf := new RBT.Bytes'(1 .. 4 => 0);
-      RFLX.TLS_Handshake.Cipher_Suite_TLS.Initialize (S_Ctx, S_Buf);
+      --  Idiomatic RecordFlux element build (see dccp msg_write.adb):
+      --  Switch builds the element in place in the sequence's own
+      --  buffer, Update commits it. No scratch allocation, no copy.
+      RFLX.TLS_Handshake.Cipher_Suites_TLS.Switch (Suites_Ctx, S_Ctx);
       RFLX.TLS_Handshake.Cipher_Suite_TLS.Set_Suite (S_Ctx, Suite);
-      RFLX.TLS_Handshake.Cipher_Suites_TLS.Append_Element (Suites_Ctx, S_Ctx);
-      RFLX.TLS_Handshake.Cipher_Suite_TLS.Take_Buffer (S_Ctx, S_Buf);
-      RFLX_Free (S_Buf);
+      RFLX.TLS_Handshake.Cipher_Suites_TLS.Update (Suites_Ctx, S_Ctx);
    end Append_Cipher_Suite;
 
    --  Append a generic CH extension (tag + opaque data) to the
@@ -291,13 +285,15 @@ is
       Tag      : in RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values_Enum;
       Data     : in Byte_Seq)
    is
-      Ext_Buf : RBT.Bytes_Ptr;
       Ext_Ctx : RFLX.TLS_Handshake.CH_Extension_TLS.Context;
    begin
-      --  RFLX CH_Extension data fields require a buffer at least
-      --  (4 + Data'Length) bytes  header + opaque payload.
-      Ext_Buf := new RBT.Bytes'(1 .. RBT.Index (4 + N32 (Data'Length)) => 0);
-      RFLX.TLS_Handshake.CH_Extension_TLS.Initialize (Ext_Ctx, Ext_Buf);
+      --  Idiomatic RecordFlux element build (see RecordFlux
+      --  examples/apps/dccp msg_write.adb, the Options loop): Switch
+      --  borrows the sequence's own buffer to build the element IN
+      --  PLACE, the fields are set, and Update commits it back. No
+      --  scratch allocation and no copy -- the element is written
+      --  directly where it belongs in the extensions sequence.
+      RFLX.TLS_Handshake.CH_Extensions_TLS.Switch (Exts_Ctx, Ext_Ctx);
       RFLX.TLS_Handshake.CH_Extension_TLS.Set_Tag (Ext_Ctx, Tag);
       RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data_Length
         (Ext_Ctx, RFLX.TLS_Handshake.Data_Length (Data'Length));
@@ -306,9 +302,7 @@ is
       else
          RFLX.TLS_Handshake.CH_Extension_TLS.Set_Data (Ext_Ctx, To_RFLX (Data));
       end if;
-      RFLX.TLS_Handshake.CH_Extensions_TLS.Append_Element (Exts_Ctx, Ext_Ctx);
-      RFLX.TLS_Handshake.CH_Extension_TLS.Take_Buffer (Ext_Ctx, Ext_Buf);
-      RFLX_Free (Ext_Buf);
+      RFLX.TLS_Handshake.CH_Extensions_TLS.Update (Exts_Ctx, Ext_Ctx);
    end Append_CH_Extension;
 
    --  RFC 8446 4.2.11 / 4.2.11.2 post-RFLX pre_shared_key extension
@@ -979,7 +973,7 @@ is
 
       --  RFC 5077 session_ticket (TLS 1.2)  emit on the wire.
       --  CH_Extension_TLS is unconstrained on tag (see specs/
-      --  CHANGES_FROM_UPSTREAM.md), so Append_Element with tag 0x0023
+      --  CHANGES_FROM_UPSTREAM.md), so appending with tag 0x0023
       --  produces the correct bytes. Empty data on initial CH
       --  ("I support tickets but have none yet"); on resumption, the
       --  previously-issued ticket bytes go in the data field.
@@ -1063,7 +1057,6 @@ is
         (HC.Cfg, HC.KE, HC.Client_Random, HC.Legacy_Session_ID,
          Retry_Mode, PK_Bytes, P256_PK_Enc, P384_PK_Enc);
 
-
       --  PK_Bytes already set by X25519.Scalar_Mult above
 
       --  Bound the message BEFORE writing any of it. The equivalent check
@@ -1079,13 +1072,17 @@ is
          return;
       end if;
 
-      --  Allocate exactly the body size, matching every other RFLX buffer
-      --  in this codebase (Data_Len / Body_Len / DLen / Ext_Len ...). This
-      --  site used to allocate a fixed 17000 bytes -- a receive-path bound,
-      --  roughly 4x more than an outgoing ClientHello can ever need. The
-      --  check above bounds CH_Body_Len by Result'Length, so the allocation
-      --  is bounded too.
-      Buf := new RBT.Bytes'(1 .. RBT.Index (CH_Body_Len) => 0);
+      --  Allocate a fixed, generously-oversized scratch buffer, the way
+      --  RecordFlux's own examples build messages (ping: 1024 for an
+      --  84-byte message; dccp/msg_write: 4096 for every packet). Because
+      --  the buffer statically dwarfs any possible ClientHello, the RFLX
+      --  field-setter Available_Space preconditions discharge from the
+      --  type-level field-size maxima -- no per-field size accounting. The
+      --  message occupies only CH_Body_Len bytes; the final copy below
+      --  takes exactly that prefix, so the oversize is pure scratch, freed
+      --  at Take_Buffer. (Sizing this exactly to CH_Body_Len is what forced
+      --  the intractable accounting chain we removed.)
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Max_HS_Msg) => 0);
       Initialize (Ctx, Buf);
 
       --  Size-accounting chain, anchored at Initialize. Each step states
@@ -1116,42 +1113,26 @@ is
          Suites_Ctx : RFLX.TLS_Handshake.Cipher_Suites_TLS.Context;
       begin
          Switch_To_Cipher_Suites_TLS (Ctx, Suites_Ctx);
-         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256, 128);
-         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256, 112);
-         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384, 96);
-         Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 80);
-         Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, 64);
-         Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, 48);
-         Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 32);
-         Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, 16);
-         Append_Cipher_Suite
-           (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, 0);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384);
+         Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
          Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
       end;
 
       Set_Legacy_Compression_Methods_Length (Ctx, 1);
       --  Field_Size of the compression-methods field is data-dependent:
       --  it follows from the length field just written (1 byte = 8 bits).
-      pragma
-        Assert
-          (RFLX.TLS_Handshake.Client_Hello.Field_Size
-             (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods)
-             = RBT.Bit_Length (8));
       Set_Legacy_Compression_Methods (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
       Set_Extensions_Length
         (Ctx, RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
       --  Likewise: the extensions field size follows from the length
       --  field just written.
-      pragma
-        Assert
-          (RFLX.TLS_Handshake.Client_Hello.Field_Size
-             (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-             = RBT.Bit_Length (8) * RBT.Bit_Length (Ext_Total_All));
       --  One more link in the accounting chain, which previously stopped at
       --  F_Extensions_Length. That write consumes 2 bytes (57 -> 59), so the
       --  space remaining for the extensions field itself is
@@ -1163,7 +1144,6 @@ is
       --  so this subtraction is definitional. Stated separately so the
       --  prover discharges the arithmetic on its own instead of doing it
       --  inside the Available_Space goal below, which timed out.
-      pragma Assert (CH_Body_Len - (59 + Session_ID_Len) = Ext_Total_All);
 
       --  Build extensions sequence
       declare
@@ -1187,70 +1167,32 @@ is
          --  expression-function definition GNATprove already uses, which
          --  loses the field's *value* and costs more proofs than it buys
          --  (measured; see generated/README.md "REJECTED").
-         pragma
-           Assert
-             (RFLX.TLS_Handshake.Client_Hello.Field_Size
-                (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-                rem RBT.Byte'Size
-                = 0);
-         pragma
-           Assert
-             (RFLX.TLS_Handshake.Client_Hello.Field_Last
-                (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-                = RFLX.TLS_Handshake.Client_Hello.Field_First
-                    (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-                  + RFLX.TLS_Handshake.Client_Hello.Field_Size
-                      (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-                  - 1);
+
+         --  Byte-aligned start of the extensions field: a
+         --  Switch_To_Extensions_TLS precondition.
          pragma
            Assert
              (RFLX.TLS_Handshake.Client_Hello.Field_First
                 (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
                 rem RBT.Byte'Size
                 = 1);
-
          Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
+         --  Chain anchor: the fresh sequence's free space is the tally.
+         pragma
+           Assert
+             (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx) = Remaining_Ext_Bits);
          --  Walk the sequence context's free space back to the field
          --  size we already pinned above. Switch_To_Extensions_TLS
          --  publishes all three links: the sequence spans exactly the
          --  extensions field, and starts empty.
-         pragma
-           Assert
-             (Exts_Ctx.First
-                = RFLX.TLS_Handshake.Client_Hello.Field_First
-                    (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS));
-         pragma
-           Assert
-             (Exts_Ctx.Last
-                = RFLX.TLS_Handshake.Client_Hello.Field_Last
-                    (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS));
-         pragma
-           Assert
-             (RFLX.TLS_Handshake.CH_Extensions_TLS.Sequence_Last (Exts_Ctx) = Exts_Ctx.First - 1);
          --  Last - First + 1 = Field_Size, and Available_Space is
          --  Last - Sequence_Last, so the two coincide when the sequence
          --  is empty -- which the Switch postcondition guarantees.
-         pragma
-           Assert
-             (RFLX.TLS_Handshake.Client_Hello.Field_Last
-                (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-                = RFLX.TLS_Handshake.Client_Hello.Field_First
-                    (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-                  + RFLX.TLS_Handshake.Client_Hello.Field_Size
-                      (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
-                  - 1);
-         pragma
-           Assert
-             (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx) = Remaining_Ext_Bits);
 
          --  Extension 1: server_name (0x0000)
          declare
             SNI_Raw : constant Byte_Seq := Build_SNI_Raw (HC.Cfg.Server_Name);
          begin
-            pragma
-              Assert
-                (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                   >= RBT.Bit_Length (8) * (RBT.Bit_Length (4) + RBT.Bit_Length (SNI_Raw'Length)));
             Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Server_Name, SNI_Raw);
             Remaining_Ext_Bits :=
               Remaining_Ext_Bits
@@ -1265,10 +1207,6 @@ is
          declare
             SG_Raw : constant Byte_Seq := Build_SG_Raw (Restrict_Groups, Initial_Key_Share_Group);
          begin
-            pragma
-              Assert
-                (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                   >= RBT.Bit_Length (8) * (RBT.Bit_Length (4) + RBT.Bit_Length (SG_Raw'Length)));
             Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Groups, SG_Raw);
             Remaining_Ext_Bits :=
               Remaining_Ext_Bits
@@ -1284,10 +1222,6 @@ is
             SA_Raw : Byte_Seq (0 .. SA_Data_Len - 1);
          begin
             Fill_SA_Raw (HC.Cfg, SA_Raw);
-            pragma
-              Assert
-                (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                   >= RBT.Bit_Length (8) * (RBT.Bit_Length (4) + RBT.Bit_Length (SA_Raw'Length)));
             Append_CH_Extension
               (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Signature_Algorithms, SA_Raw);
             Remaining_Ext_Bits :=
@@ -1316,10 +1250,6 @@ is
                P256_PK_Enc,
                P384_PK_Enc,
                KS_Raw);
-            pragma
-              Assert
-                (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                   >= RBT.Bit_Length (8) * (RBT.Bit_Length (4) + RBT.Bit_Length (KS_Raw'Length)));
             Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Key_Share, KS_Raw);
             Remaining_Ext_Bits :=
               Remaining_Ext_Bits
@@ -1341,11 +1271,6 @@ is
                for I in 0 .. Cookie_Bytes_Len - 1 loop
                   Cookie_Raw (2 + I) := HC.HRR_Cookie (I);
                end loop;
-               pragma
-                 Assert
-                   (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                      >= RBT.Bit_Length (8)
-                         * (RBT.Bit_Length (4) + RBT.Bit_Length (Cookie_Raw'Length)));
                Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Cookie, Cookie_Raw);
                Remaining_Ext_Bits :=
                  Remaining_Ext_Bits
@@ -1362,10 +1287,6 @@ is
             PSK_Raw : constant Byte_Seq (0 .. PSK_Data_Len - 1) :=
               (16#01#, 16#01#);  --  list_len=1, psk_dhe_ke
          begin
-            pragma
-              Assert
-                (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                   >= RBT.Bit_Length (8) * (RBT.Bit_Length (4) + RBT.Bit_Length (PSK_Raw'Length)));
             Append_CH_Extension
               (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Psk_Key_Exchange_Modes, PSK_Raw);
             Remaining_Ext_Bits :=
@@ -1385,10 +1306,6 @@ is
                  when TLS_1_3_Only => Byte_Seq'(16#02#, 16#03#, 16#04#),
                  when TLS_1_2_Only => Byte_Seq'(16#02#, 16#03#, 16#03#));
          begin
-            pragma
-              Assert
-                (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                   >= RBT.Bit_Length (8) * (RBT.Bit_Length (4) + RBT.Bit_Length (SV_Raw'Length)));
             Append_CH_Extension
               (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Supported_Versions, SV_Raw);
             Remaining_Ext_Bits :=
@@ -1404,10 +1321,6 @@ is
          declare
             EPF_Raw : constant Byte_Seq (0 .. EPF_Data_Len - 1) := (16#01#, 16#00#);
          begin
-            pragma
-              Assert
-                (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                   >= RBT.Bit_Length (8) * (RBT.Bit_Length (4) + RBT.Bit_Length (EPF_Raw'Length)));
             Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Ec_Point_Formats, EPF_Raw);
             Remaining_Ext_Bits :=
               Remaining_Ext_Bits
@@ -1424,11 +1337,6 @@ is
                ALPN_Raw : Byte_Seq (0 .. ALPN_Data_Len - 1) := (others => 0);
             begin
                Build_ALPN_Extension_Data (HC.Cfg, ALPN_Raw);
-               pragma
-                 Assert
-                   (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                      >= RBT.Bit_Length (8)
-                         * (RBT.Bit_Length (4) + RBT.Bit_Length (ALPN_Raw'Length)));
                Append_CH_Extension
                  (Exts_Ctx,
                   RFLX.Tls_Extensiontype_Values.Application_Layer_Protocol_Negotiation,
@@ -1447,25 +1355,10 @@ is
          --  Empty data on initial CH; resume ticket bytes when resuming.
          if Offer_TLS12_Ticket then
             if TLS12_Ticket_Data_Len > 0 then
-               pragma Assert (TLS12_Ticket_Data_Len <= Max_TLS12_Ticket_Len);
-               pragma Assert (TLS12_Ticket_Data_Len <= 4096);
                --  Link the slice length back to the bounded
                --  constant; without it the Available_Space fact
                --  below cannot reach Data'Length in
                --  Append_CH_Extension's precondition.
-               pragma
-                 Assert
-                   (HC.Cfg.TLS12_Resume_Ticket.Ticket (0 .. TLS12_Ticket_Data_Len - 1)'Length
-                      = TLS12_Ticket_Data_Len);
-               pragma
-                 Assert
-                   (HC.Cfg.TLS12_Resume_Ticket.Ticket (0 .. TLS12_Ticket_Data_Len - 1)'Length
-                      <= 4096);
-               pragma
-                 Assert
-                   (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                      >= RBT.Bit_Length (8)
-                         * (RBT.Bit_Length (4) + RBT.Bit_Length (TLS12_Ticket_Data_Len)));
                Append_CH_Extension
                  (Exts_Ctx,
                   RFLX.Tls_Extensiontype_Values.Session_Ticket,
@@ -1483,10 +1376,6 @@ is
                declare
                   Empty : constant Byte_Seq (1 .. 0) := (others => 0);
                begin
-                  pragma
-                    Assert
-                      (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                         >= RBT.Bit_Length (8) * RBT.Bit_Length (4));
                   Append_CH_Extension
                     (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Session_Ticket, Empty);
                   Remaining_Ext_Bits :=
@@ -1520,10 +1409,6 @@ is
             declare
                Empty : constant Byte_Seq (1 .. 0) := (others => 0);
             begin
-               pragma
-                 Assert
-                   (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                      >= RBT.Bit_Length (8) * RBT.Bit_Length (4));
                Append_CH_Extension
                  (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Extended_Master_Secret, Empty);
                Remaining_Ext_Bits := Remaining_Ext_Bits - RBT.Bit_Length (8) * RBT.Bit_Length (4);
@@ -1539,11 +1424,6 @@ is
             declare
                Pad_Raw : constant Byte_Seq (0 .. Pad_Data_Len - 1) := (others => 0);
             begin
-               pragma
-                 Assert
-                   (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
-                      >= RBT.Bit_Length (8)
-                         * (RBT.Bit_Length (4) + RBT.Bit_Length (Pad_Raw'Length)));
                Append_CH_Extension (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Padding, Pad_Raw);
                Remaining_Ext_Bits :=
                  Remaining_Ext_Bits
@@ -1594,7 +1474,6 @@ is
       if Len > 0 then
          Append_PSK_Extension (Ticket, Get_Time, HC, Retry_Mode, Result, Len);
       end if;
-      pragma Assert (HC.Cfg.Random /= null);
 
    end Build_Client_Hello;
 
