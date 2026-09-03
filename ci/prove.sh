@@ -58,18 +58,19 @@ PROVE_LEVEL_ARGS=()
 # well inside PROVE_MEM. Set explicitly here so it no longer depends on any
 # dependency project's Prove package. Timeout and level are unchanged.
 [[ "$*" == *"--memlimit"* ]] || PROVE_LEVEL_ARGS+=(--memlimit=4000)
-# Prover set. Colibri2 (CEA, LGPL-2.1) is the solver RecordFlux routes its
-# 2**N Fits_Into arithmetic to; FSF gnatprove ships its driver and config
-# but not the binary. flake.nix provides it, and the gate ASSUMES the flake
+# Prover set. COLIBRI (CEA LIST, LGPL-2.1) is the solver RecordFlux routes its
+# 2**N Fits_Into arithmetic to and the one SPARK Pro bundles; FSF gnatprove ships
+# its driver (colibri.drv, with the native integer-power mapping) and config
+# entry but not the binary. flake.nix provides it, and the gate ASSUMES the flake
 # environment: a missing binary is a misconfigured run, not a reason to
 # quietly prove with fewer provers (a silent downgrade would make the
 # ledger incomparable). Run as: nix develop --command bash ci/prove.sh ...
 if [[ "$*" != *"--prover"* ]]; then
-    if ! command -v colibri2 >/dev/null 2>&1; then
-        echo "== FATAL: colibri2 not on PATH. Run inside the flake: nix develop --command bash ci/prove.sh ..." >&2
+    if ! command -v colibri >/dev/null 2>&1; then
+        echo "== FATAL: colibri not on PATH. Run inside the flake: nix develop --command bash ci/prove.sh ..." >&2
         exit 1
     fi
-    PROVE_LEVEL_ARGS+=(--prover=z3,cvc5,altergo,colibri2)
+    PROVE_LEVEL_ARGS+=(--prover=z3,cvc5,altergo,colibri)
 fi
 
 # MemoryHigh at 85% of the cap: throttle before killing.

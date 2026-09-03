@@ -24,43 +24,50 @@
               [ pkgs.alire ]
             else
               [ ];
-          #  Colibri2 (CEA LIST, LGPL-2.1): the constraint-programming SMT
-          #  solver RecordFlux routes its 2**N `Fits_Into` arithmetic to. FSF
-          #  gnatprove 16.1.0 already ships the why3 driver and the
-          #  gnatprove.conf entry for `colibri2`; only the binary is missing,
+          #  COLIBRI (CEA LIST, LGPL-2.1): the constraint-programming SMT solver
+          #  RecordFlux routes its 2**N `Fits_Into` arithmetic to, and the one
+          #  SPARK Pro bundles. FSF gnatprove 16.1.0 already ships the why3
+          #  driver (colibri.drv, with the native integer-power mapping) and
+          #  the gnatprove.conf entry for `colibri`; only the binary is missing,
           #  so putting this on PATH is the whole integration
-          #  (`gnatprove --prover=z3,cvc5,altergo,colibri2`).
+          #  (`gnatprove --prover=z3,cvc5,altergo,colibri`).
           #
-          #  Source: Frama-C GitLab, tag 0.6 (2026-06-22), CI job
-          #  `generate-static` of pipeline 111937. The release .tbz assets
-          #  are SOURCE tarballs; the static-PIE binary only exists as this
-          #  job artifact, fetched as a fixed-output derivation so the bytes
-          #  are pinned. Their own flake.nix does not build on current
-          #  nixpkgs (stale dune pin), hence the binary rather than a source
-          #  build for now. Job artifacts can expire upstream: if this fetch
-          #  ever fails, mirror the zip and update the URL (hash stays).
-          #  Nine popop_lib/colibrics files carry a CEA proprietary header
-          #  alongside the LGPL package license -- review before
-          #  redistributing the binary itself.
-          colibri2 =
+          #  Source: Frama-C GitLab project pub/colibri, monthly release bundle
+          #  (ECLiPSe-7 build). Fetched as a fixed-output derivation so the
+          #  bytes are pinned. The bundle is an ELF binary depending only on
+          #  the system glibc plus its COLIBRI/ and ECLIPSE/ runtime trees,
+          #  which it locates relative to itself, so the WHOLE tree is
+          #  installed and bin/colibri is a wrapper. dontFixup keeps the bytes
+          #  as shipped (host glibc; on NixOS add autoPatchelfHook).
+          #  Chosen over the static colibri2 (2026-09-03): gnatprove's stock
+          #  colibri2.drv lacks the integer-power mapping, so colibri2 cannot
+          #  prove the 2**Bits goals without a patched driver; v1 does with
+          #  the stock driver and RecordFlux's own configuration.
+          colibri =
             if system == "x86_64-linux" then
               [
                 (pkgs.stdenvNoCC.mkDerivation {
-                  pname = "colibri2";
-                  version = "0.6";
+                  pname = "colibri";
+                  version = "2026.06";
                   src = pkgs.fetchurl {
-                    name = "colibri2-0.6-generate-static-artifacts.zip";
-                    url = "https://git.frama-c.com/api/v4/projects/879/jobs/1970747/artifacts";
-                    hash = "sha256-VycazpUOjL4LkUU+s+GmzIHz/AE43FuO/1dOeWLMpa4=";
+                    name = "colibri.2026.06-e7.tbz";
+                    url = "https://git.frama-c.com/api/v4/projects/804/packages/generic/colibri/2026.06/colibri.2026.06-e7.tbz";
+                    hash = "sha256-UROzLleQoNMyGf0lvbZnozpF/l2/MlUVFwmnvIBabck=";
                   };
-                  nativeBuildInputs = [ pkgs.unzip ];
-                  unpackPhase = "unzip -q $src";
                   dontBuild = true;
-                  #  static-pie: no patchelf, no strip -- keep the bytes as shipped.
                   dontFixup = true;
-                  installPhase = "install -Dm755 bin/colibri2 $out/bin/colibri2";
+                  dontPatchShebangs = true;
+                  installPhase = ''
+                    mkdir -p $out/opt/colibri $out/bin
+                    cp -r . $out/opt/colibri/
+                    cat > $out/bin/colibri <<EOF
+                    #!${pkgs.runtimeShell}
+                    exec $out/opt/colibri/colibri "\$@"
+                    EOF
+                    chmod +x $out/bin/colibri
+                  '';
                   meta = {
-                    description = "Colibri2 CP-based SMT solver (static binary)";
+                    description = "COLIBRI constraint-programming SMT solver (CEA LIST), release bundle";
                     homepage = "https://colibri.frama-c.com";
                     license = pkgs.lib.licenses.lgpl21Only;
                     platforms = [ "x86_64-linux" ];
@@ -72,7 +79,7 @@
         in
         {
           default = pkgs.mkShell {
-            packages = alirePackages ++ colibri2 ++ (with pkgs; [
+            packages = alirePackages ++ colibri ++ (with pkgs; [
               bash
               coreutils
               curl
