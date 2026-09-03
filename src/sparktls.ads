@@ -43,7 +43,8 @@ is
    --  impossible to forget the validation.
    subtype Wire_Ext_Len is N32 range 1 .. 131072;
    --  Extension data length (sig_algs, key_share body, etc.)
-   --  Upper bound matches Max_HS_Msg (128 KB) for reassembled messages.
+   --  Wire field width; reassembled messages are bounded lower by
+   --  Max_HS_Msg (32 KB, = Transcript_Capacity).
 
    subtype Wire_Small_Ext_Len is N32 range 1 .. 512;
    --  Small extensions (ALPN, supported_groups, supported_versions)
@@ -61,12 +62,12 @@ is
    --  entry only and silently dropped real-world TLS 1.3 clients.
 
    --  Handshake message length (3 bytes on wire, max 2^24 - 1).
-   --  Bounded to Max_HS_Msg (128 KB) for reassembled messages.
+   --  Bounded to Max_HS_Msg (32 KB) for reassembled messages.
 
    --  Reassembly buffer pointer. The two facts every indexing site needs
    --  from the buffer itself -- zero-based, and short enough that
    --  N32 (Buf'Length) cannot overflow -- are carried here rather than
-   --  threaded through contracts. Max_HS_Msg (131072) is well under
+   --  threaded through contracts. Max_HS_Msg (32768) is well under
    --  N32'Last, so the N32 conversions are discharged by the subtype.
    --  Handshake message type code (1 byte on wire).
    --  RFC 8446 Section 4 defines the valid values.
@@ -113,6 +114,11 @@ is
    subtype Record_Frag_Len is N32 range 1 .. 16384 + 256;
 
    Transcript_Capacity : constant N32 := 32768;  --  32 KB
+   --  The reassembly buffer (SPARKTLS_Reassembly, Capacity) must equal this
+   --  policy limit so that every Message_Bytes value is bounded by type.
+   pragma Compile_Time_Error
+     (Transcript_Capacity /= SPARKTLS_Reassembly.Max_HS_Msg,
+      "Transcript_Capacity must equal SPARKTLS_Reassembly.Max_HS_Msg");
 
    --  Sufficient for all real-world handshakes. Typical transcript is
    --  ~2 KB. Pathological inputs (32K sig_algs) require reassembly
@@ -1029,7 +1035,7 @@ is
 
       --  Leaf cert in SPARKNaCl format (for handshake message building)
       NaCl_Cert_DER : Byte_Seq (0 .. N32 (Max_Cert_DER) - 1) := (others => 0);
-      NaCl_Cert_Len : N32 := 0;
+      NaCl_Cert_Len : N32 range 0 .. N32 (Max_Cert_DER) := 0;
 
       --  Intermediate certificates (sent to peer in Certificate message)
       Ints      : Cert_Pool;
@@ -1041,7 +1047,7 @@ is
       ECDSA_P256_Key : Bytes_32 := (others => 0);
       ECDSA_P384_Key : Bytes_48 := (others => 0);
       RSA_Modulus    : Byte_Seq (0 .. Max_RSA_Key_Bytes - 1) := (others => 0);
-      RSA_Mod_Len    : N32 := 0;
+      RSA_Mod_Len    : N32 range 0 .. Max_RSA_Key_Bytes := 0;
       RSA_Priv_Exp   : Byte_Seq (0 .. Max_RSA_Key_Bytes - 1) := (others => 0);
       RSA_Pub_Exp    : Unsigned_32 := 0;
 
@@ -1074,6 +1080,14 @@ is
        Valid_Identity_Access = null
        or else
          (Valid_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+          --  An identity that says it has a certificate has a non-empty
+          --  one. Type-level home for the mTLS builders' bound, replacing
+          --  the copy of `NaCl_Cert_Len in 1 .. Max_Cert_DER` that every
+          --  client-tls13 precondition used to carry. Enforced at run time
+          --  by Configure (both roles); predicates do not execute in
+          --  shipped builds.
+          and then (if Valid_Identity_Access.Has_Identity
+                    then Valid_Identity_Access.NaCl_Cert_Len >= 1)
           and then Valid_Identity_Access.Int_Count <= Max_Pool_Size
           and then
             (for all I in 0 .. Max_Pool_Size - 1 =>
@@ -1088,7 +1102,7 @@ is
        Selected_Identity_Access = null
        or else
          (Selected_Identity_Access.Has_Identity
-          and then Selected_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+          and then Selected_Identity_Access.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
           and then Selected_Identity_Access.Int_Count <= Max_Pool_Size
           and then
             (for all I in 0 .. Max_Pool_Size - 1 =>

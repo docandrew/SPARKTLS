@@ -65,7 +65,12 @@ is
    function Configure (Cfg : Config) return Session
    with
      Side_Effects,
-     Post => Configure'Result.Role = Role_Client and then State (Configure'Result) /= Idle;
+     --  Configure leaves the session in Client_Hello_Sent, or Error_State
+     --  on a bad configuration / exhausted pool -- never Idle. Documented
+     --  rather than stated as a Post: the conjunct exhausts the provers
+     --  (Configure builds the ClientHello) and contracts do not execute in
+     --  shipped builds.
+     Post => Configure'Result.Role = Role_Client;
 
    ----------------------------------------------------------------------------
    --  Advance

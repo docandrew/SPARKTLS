@@ -19,6 +19,11 @@ is
       Content_Change_Cipher_Spec,
       Content_Unknown);
 
+   --  Record-layer fragment length: the parser rejects 0 and anything above
+   --  Max_Fragment (+256 for application data) before storing it, so every
+   --  consumer sees the bound as a type, not as a threaded contract.
+   subtype Fragment_Length is N32 range 0 .. Max_Fragment + 256;
+
    --  RFC 8446 5.1: Parsed TLS record header.
    type Parse_Result is record
       OK           : Boolean := False;
@@ -26,7 +31,10 @@ is
       Bad_Version  : Boolean := False;  --  record version not in {3,1}..{3,4}
       Content      : Record_Content := Content_Unknown;
       Fragment_Pos : N32 := 0;  --  offset of fragment in Data
-      Fragment_Len : N32 := 0;  --  fragment byte count
+      --  Bounded by construction: the parser stores it only after rejecting
+      --  0 and anything above Max_Fragment (+256 for application data),
+      --  so consumers see the record-layer bound as a type, not a contract.
+      Fragment_Len : Fragment_Length := 0;  --  fragment byte count
       Record_Len   : N32 := 0;  --  total record length (header + fragment)
    end record
    with

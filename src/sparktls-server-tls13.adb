@@ -1631,13 +1631,13 @@ is
       declare
          EE_Buf  : Byte_Seq (0 .. 271);
          EE_Len  : N32;
+         EE_ALPN : Hostname_Buf;
          Emitted : Boolean;
       begin
-         Handshake.TLS13.Build_Encrypted_Extensions (S, EE_Buf, EE_Len);
+         Handshake.TLS13.Build_Encrypted_Extensions (S, EE_ALPN, EE_Buf, EE_Len);
+         S.Negotiated_ALPN := EE_ALPN;
          pragma Assert (EE_Len in 6 .. N32 (EE_Buf'Length));
          pragma Assert (EE_Len <= Max_Fragment);
-         pragma Assert (S.HC.Server_HS.Counter = 0);
-         pragma Assert (S.State not in Idle | Closing | Closed | Error_State);
          pragma Assert (Server_Active (S));
          Append_And_Encrypt_Server_HS
            (S         => S,

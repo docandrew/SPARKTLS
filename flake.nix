@@ -24,50 +24,67 @@
               [ pkgs.alire ]
             else
               [ ];
-          #  COLIBRI (CEA LIST, LGPL-2.1): the constraint-programming SMT solver
-          #  RecordFlux routes its 2**N `Fits_Into` arithmetic to, and the one
-          #  SPARK Pro bundles. FSF gnatprove 16.1.0 already ships the why3
-          #  driver (colibri.drv, with the native integer-power mapping) and
-          #  the gnatprove.conf entry for `colibri`; only the binary is missing,
-          #  so putting this on PATH is the whole integration
-          #  (`gnatprove --prover=z3,cvc5,altergo,colibri`).
+          #  COLIBRI for gnatprove: the colibri2 ENGINE behind the COLIBRI v1
+          #  DRIVER. gnatprove ships two why3 drivers: colibri.drv (v1; maps
+          #  integer power to the solver's native colibri_pow_int_int) and
+          #  colibri2.drv (no power mapping, so `2**N` is left axiomatized and
+          #  no solver inducts through it). Measured 2026-09-03 on the RFLX
+          #  generated `Fits_Into (Val, Field_Size ...)` preconditions: the
+          #  real COLIBRI v1 gives up with spurious `sat` on 160/630 goals of
+          #  a unit, while colibri2 fed the v1-dialect goals proves them in
+          #  under a second, and clears the unit through gnatprove (1 -> 0).
+          #  So bin/colibri is a wrapper that translates the v1 arguments
+          #  gnatprove passes (--memlimit MB, --steplimit N) and execs the
+          #  static colibri2 next to it; gnatprove's stock `colibri` entry
+          #  and driver do the rest (`--prover=z3,cvc5,altergo,colibri`).
           #
-          #  Source: Frama-C GitLab project pub/colibri, monthly release bundle
-          #  (ECLiPSe-7 build). Fetched as a fixed-output derivation so the
-          #  bytes are pinned. The bundle is an ELF binary depending only on
-          #  the system glibc plus its COLIBRI/ and ECLIPSE/ runtime trees,
-          #  which it locates relative to itself, so the WHOLE tree is
-          #  installed and bin/colibri is a wrapper. dontFixup keeps the bytes
-          #  as shipped (host glibc; on NixOS add autoPatchelfHook).
-          #  Chosen over the static colibri2 (2026-09-03): gnatprove's stock
-          #  colibri2.drv lacks the integer-power mapping, so colibri2 cannot
-          #  prove the 2**Bits goals without a patched driver; v1 does with
-          #  the stock driver and RecordFlux's own configuration.
+          #  Engine: Colibri2 0.6 (CEA LIST, LGPL-2.1), Frama-C GitLab tag 0.6,
+          #  CI job `generate-static` (pipeline 111937), fetched as a fixed-
+          #  output derivation (release .tbz assets are source tarballs; the
+          #  static-PIE binary only exists as this job artifact - if it ever
+          #  expires, mirror the zip; the hash stays). Nine popop_lib/colibrics
+          #  files carry a CEA proprietary header alongside the LGPL package
+          #  license: review before redistributing the binary. #!/bin/sh on
+          #  purpose: the wrapper also runs inside the ubuntu:24.04 proof
+          #  container, where the Nix bash path does not exist.
           colibri =
             if system == "x86_64-linux" then
               [
                 (pkgs.stdenvNoCC.mkDerivation {
                   pname = "colibri";
-                  version = "2026.06";
+                  version = "colibri2-0.6";
                   src = pkgs.fetchurl {
-                    name = "colibri.2026.06-e7.tbz";
-                    url = "https://git.frama-c.com/api/v4/projects/804/packages/generic/colibri/2026.06/colibri.2026.06-e7.tbz";
-                    hash = "sha256-UROzLleQoNMyGf0lvbZnozpF/l2/MlUVFwmnvIBabck=";
+                    name = "colibri2-0.6-generate-static-artifacts.zip";
+                    url = "https://git.frama-c.com/api/v4/projects/879/jobs/1970747/artifacts";
+                    hash = "sha256-VycazpUOjL4LkUU+s+GmzIHz/AE43FuO/1dOeWLMpa4=";
                   };
+                  nativeBuildInputs = [ pkgs.unzip ];
+                  unpackPhase = "unzip -q $src";
                   dontBuild = true;
                   dontFixup = true;
                   dontPatchShebangs = true;
                   installPhase = ''
-                    mkdir -p $out/opt/colibri $out/bin
-                    cp -r . $out/opt/colibri/
-                    cat > $out/bin/colibri <<EOF
-                    #!${pkgs.runtimeShell}
-                    exec $out/opt/colibri/colibri "\$@"
+                    install -Dm755 bin/colibri2 $out/bin/colibri2
+                    cat > $out/bin/colibri <<'EOF'
+                    #!/bin/sh
+                    # gnatprove's `colibri` prover entry (why3 colibri.drv) driving the colibri2 engine.
+                    # COLIBRI v1 arguments -> colibri2: --memlimit MB => --size <MB>M, --steplimit N => --max-steps N.
+                    args=""
+                    while [ $# -gt 0 ]; do
+                      case "$1" in
+                        --memlimit) shift; args="$args --size ''${1}M" ;;
+                        --steplimit) shift; args="$args --max-steps $1" ;;
+                        --get-steps) args="$args --show-steps" ;;
+                        *) args="$args $1" ;;
+                      esac
+                      shift
+                    done
+                    exec "$(dirname "$0")/colibri2" $args
                     EOF
                     chmod +x $out/bin/colibri
                   '';
                   meta = {
-                    description = "COLIBRI constraint-programming SMT solver (CEA LIST), release bundle";
+                    description = "colibri2 CP-based SMT solver, wrapped as gnatprove's `colibri` prover";
                     homepage = "https://colibri.frama-c.com";
                     license = pkgs.lib.licenses.lgpl21Only;
                     platforms = [ "x86_64-linux" ];

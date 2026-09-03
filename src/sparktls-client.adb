@@ -84,6 +84,10 @@ is
    ----------------------------------------------------------------------------
    function Client_Config_Can_Start (Cfg : Config; Resume_Usable : Boolean) return Boolean
    is (not Is_Sentinel_Random (Cfg.Random)
+       --  mTLS identity, if offered, must carry a certificate: the run-time
+       --  enforcement of the Valid_Identity_Access predicate (mirrors the
+       --  server's Configure check; predicates do not execute in shipped builds).
+       and then (if Cfg.Local.Has_Identity then Cfg.Local.NaCl_Cert_Len >= 1)
        and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
        and then
          (Cfg.Skip_Verify
@@ -171,7 +175,7 @@ is
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
       Rec        : in Records.Parse_Result;
-      Frag_Len   : in N32;
+      Frag_Len   : in Records.Fragment_Length;
       Frag_Start : in N32;
       Result     : out Action)
    with
@@ -369,7 +373,7 @@ is
    procedure Start_Pending_SH_Reassembly
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
-      Frag_Len   : in N32;
+      Frag_Len   : in Records.Fragment_Length;
       Frag_Start : in N32;
       Next_Read  : in Buffer_Size;
       Result     : out Action)
@@ -389,7 +393,7 @@ is
    procedure Start_Pending_SH_Reassembly
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
-      Frag_Len   : in N32;
+      Frag_Len   : in Records.Fragment_Length;
       Frag_Start : in N32;
       Next_Read  : in Buffer_Size;
       Result     : out Action) is
@@ -402,7 +406,7 @@ is
    procedure Start_Spanning_SH_Reassembly
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
-      Frag_Len   : in N32;
+      Frag_Len   : in Records.Fragment_Length;
       Frag_Start : in N32;
       HS_Total   : in N32;
       Next_Read  : in Buffer_Size;
@@ -413,7 +417,7 @@ is
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)
        and then Frag_Len >= 4
        and then HS_Total > Frag_Len
-       and then HS_Total <= 131072
+       and then HS_Total <= Max_HS_Msg
        and then HS_Total <= Transcript_Capacity
        and then Frag_Start <= N32'Last - Frag_Len
        and then Frag_Start + Frag_Len <= IO_Buffer_Capacity
@@ -426,7 +430,7 @@ is
    procedure Start_Spanning_SH_Reassembly
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
-      Frag_Len   : in N32;
+      Frag_Len   : in Records.Fragment_Length;
       Frag_Start : in N32;
       HS_Total   : in N32;
       Next_Read  : in Buffer_Size;
@@ -440,7 +444,7 @@ is
    procedure Start_Complete_SH_Reassembly
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
-      Frag_Len   : in N32;
+      Frag_Len   : in Records.Fragment_Length;
       Frag_Start : in N32;
       HS_Total   : in N32;
       Next_Read  : in Buffer_Size)
@@ -462,7 +466,7 @@ is
    procedure Start_Complete_SH_Reassembly
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
-      Frag_Len   : in N32;
+      Frag_Len   : in Records.Fragment_Length;
       Frag_Start : in N32;
       HS_Total   : in N32;
       Next_Read  : in Buffer_Size) is
@@ -475,7 +479,7 @@ is
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
       Rec        : in Records.Parse_Result;
-      Frag_Len   : in N32;
+      Frag_Len   : in Records.Fragment_Length;
       Frag_Start : in N32;
       Result     : out Action)
    is

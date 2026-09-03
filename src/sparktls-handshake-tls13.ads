@@ -132,15 +132,17 @@ is
 
    --  RFC 8446 Section 4.3.1: EncryptedExtensions, including the
    --  negotiated ALPN and optional server_name acknowledgement.
+   --  S is read-only here: the only session component this builder used
+   --  to update (Negotiated_ALPN) is returned instead, so no frame facts
+   --  need restating in a Post -- the caller stores it.
    procedure Build_Encrypted_Extensions
-     (S : in out Session; Result : out Byte_Seq; Len : out N32)
+     (S               : in Session;
+      Negotiated_ALPN : out Hostname_Buf;
+      Result          : out Byte_Seq;
+      Len             : out N32)
    with
      Pre => Result'First = 0 and then Result'Last in 271 .. N32'Last - 1,
-     Post =>
-       State (S) = State (S)'Old
-       and then Role (S) = Role (S)'Old
-       and then Negotiated_Suite (S) = Negotiated_Suite (S)'Old
-       and then Len in 6 .. N32 (Result'Length);
+     Post => Len in 6 .. N32 (Result'Length);
 
    --  RFC 8446 Section 4.3.2: CertificateRequest with an empty context
    --  and the supported TLS 1.3 signature schemes.

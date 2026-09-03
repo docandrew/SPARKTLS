@@ -378,6 +378,7 @@ is
       end if;
 
       if not S.HC.Cfg.Local.Has_Identity
+        or else S.HC.Cfg.Local.NaCl_Cert_Len = 0
         or else S.HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
         or else S.HC.Cfg.Local.Int_Count > Max_Pool_Size
         or else
@@ -915,7 +916,7 @@ is
                   --  instead of renaming to avoid aliasing between
                   --  the fragment parameter and the in-out Session.
                   declare
-                     Frag : constant Byte_Seq :=
+                     Frag : constant Byte_Seq (0 .. Frag_Len - 1) :=
                        S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1);
                   begin
                      Handshake.Server_Msgs.Parse_Client_Hello

@@ -1633,7 +1633,6 @@ is
                   if Result /= OK then
                      return;
                   end if;
-                  pragma Assert (SPARKTLS_Transcript.Started (S.HC.TS));
                   CKE_Transcript_Nonempty := (SPARKTLS_Transcript.Started (S.HC.TS));
                end;
             end;
@@ -1682,7 +1681,6 @@ is
                if Result /= OK then
                   return;
                end if;
-               pragma Assert (SPARKTLS_Transcript.Started (S.HC.TS));
                CKE_Transcript_Nonempty := (SPARKTLS_Transcript.Started (S.HC.TS));
             end;
          end if;

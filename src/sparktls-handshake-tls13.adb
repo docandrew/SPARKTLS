@@ -776,7 +776,11 @@ is
          Len         => Len);
    end Build_Server_Hello;
 
-   procedure Build_Encrypted_Extensions (S : in out Session; Result : out Byte_Seq; Len : out N32)
+   procedure Build_Encrypted_Extensions
+     (S               : in Session;
+      Negotiated_ALPN : out Hostname_Buf;
+      Result          : out Byte_Seq;
+      Len             : out N32)
    is
       Selected_ALPN : constant Hostname_Buf := Select_ALPN (S.HC);
       ALPN_Match    : constant Boolean := Selected_ALPN.Len > 0;
@@ -804,6 +808,8 @@ is
       Msg_Len  : constant EE_Msg_Len := 4 + Body_Len;
       Pos      : N32;
    begin
+      --  Unchanged unless an ALPN protocol is selected below.
+      Negotiated_ALPN := S.Negotiated_ALPN;
       Result := (others => 0);
 
       --  Handshake header
@@ -851,7 +857,7 @@ is
             Result (Pos + N32 (6 + I)) := Byte (Character'Pos (Selected_ALPN.Data (I)));
          end loop;
 
-         S.Negotiated_ALPN := Selected_ALPN;
+         Negotiated_ALPN := Selected_ALPN;
          Pos := Pos + ALPN_Ext_Len;
       end if;
 

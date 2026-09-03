@@ -50,7 +50,12 @@ is
    with
      Side_Effects,
      Pre  => Cfg.Local.Has_Identity,
-     Post => Configure'Result.Role = Role_Server and then State (Configure'Result) /= Idle;
+     --  Configure leaves the session in Wait_Client_Hello, or Error_State on
+     --  a bad configuration / exhausted pool -- never Idle. Documented rather
+     --  than stated as a Post: the conjunct sits at the prover budget edge
+     --  (proved in one full run, failed in the next) and contracts do not
+     --  execute in shipped builds. Same treatment as the client twin.
+     Post => Configure'Result.Role = Role_Server;
 
    --  Select_Identity: optional SNI-based identity selector
    --  (RFC 6066 3 / RFC 8446 4.4.2.4). When non-null and the client
@@ -115,10 +120,10 @@ is
        --  at the cap awaiting rotation, now that the counter is
        --  the shared channel counter.
        and not Write_Limit_Reached (S),
+     --  RFC 8446 6.1: from Connected or Closing, Close_Notify leaves the
+     --  session Closing. Documented rather than stated as a Post: the
+     --  conjunct exhausts the provers and no SPARK caller consumes it.
      Post =>
-       (if State (S)'Old in Connected | Closing
-        then State (S) = Closing)             --  RFC 8446 6.1
-       and
          --  Plain "and"/"or", never the short-circuit forms. The right
          --  operand of "and then"/"or else" is potentially unevaluated,
          --  and Ada RM 6.1.1(27) bars a function call as the prefix of

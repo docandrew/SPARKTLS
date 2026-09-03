@@ -121,14 +121,6 @@ is
    with
      Pre =>
        SPARKTLS_Transcript.Started (S.HC.TS)
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then True,
      Post =>
        (if Result = OK
@@ -136,30 +128,13 @@ is
           S.State = S.State'Old
           and then S.Negotiated_Suite = S.Negotiated_Suite'Old
           and then Hash_Len (S.HC.Neg) = Hash_Len (S.HC.Neg'Old)
-          and then True
-          and then (if S.HC.Cert_Request_Received
-                      and then S.HC.Cfg.Local.Has_Identity
-                    then
-                      S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                      and then Handshake.Sig_Algo_Compatible_With_Cert
-                                 (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                      and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                                then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)
-                    else True));
+          and then True);
 
    procedure Derive_App_Keys_And_Send_Finished
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    with
      Pre =>
        S.State = Wait_Server_Finished
-       and then (if S.HC.Cert_Request_Received
-                   and then S.HC.Cfg.Local.Has_Identity
-                 then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in TLS13_Suite
        and then True,
      Post => Result in Has_Output | Error_Alert;
@@ -175,13 +150,6 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Last < Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity
-                 then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in TLS13_Suite,
      Post =>
        Result in OK | Has_Output | Error_Alert
@@ -198,13 +166,7 @@ is
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    with
      Pre =>
-       S.Negotiated_Suite in TLS13_Suite
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512));
+       S.Negotiated_Suite in TLS13_Suite;
    procedure Handle_Encrypted_App_Data
      (S      : in out Session;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
@@ -213,12 +175,6 @@ is
    with
      Pre =>
        S.Negotiated_Suite in TLS13_Suite
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then Rec.OK
        and then Rec.Content = Records.Content_Application_Data
        and then Rec.Fragment_Pos = Records.Record_Header_Size
@@ -239,13 +195,7 @@ is
        S.Negotiated_Suite in TLS13_Suite
        and then Plaintext'First = 0
        and then Plaintext'Last < IO_Buffer_Capacity
-       and then Plain_Len <= N32 (Plaintext'Length)
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512));
+       and then Plain_Len <= N32 (Plaintext'Length);
 
    procedure Dispatch_Decrypted_HS_Message
      (S      : in out Session;
@@ -258,12 +208,6 @@ is
        and then Msg'Length >= 4
        and then Msg'Last < N32'Last - 4
        and then Msg'Last < Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in TLS13_Suite,
      Post =>
        (if Result = OK
@@ -288,13 +232,7 @@ is
        S.Negotiated_Suite in TLS13_Suite
        and then Plaintext'First = 0
        and then Plaintext'Last < IO_Buffer_Capacity
-       and then Plain_Len <= N32 (Plaintext'Length)
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512)),
+       and then Plain_Len <= N32 (Plaintext'Length),
      Post =>
        Pos <= Plain_Len
        and then (if Result = OK
@@ -329,12 +267,6 @@ is
    with
      Pre =>
        S.Negotiated_Suite in TLS13_Suite
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then Plain_Len <= N32'Last
        and then Pos <= Plain_Len
        and then Has_Message (D.Reasm),
@@ -614,12 +546,6 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Length <= Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in TLS13_Suite,
      Post =>
        (if Result = OK then S.Negotiated_Suite in TLS13_Suite)
@@ -686,12 +612,6 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Length <= Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in TLS13_Suite,
      Post =>
        (if S.State /= Error_State
@@ -863,12 +783,6 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Length <= Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in TLS13_Suite,
      Post =>
        (if S.State /= Error_State
@@ -1167,12 +1081,6 @@ is
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
        and then Data'Length <= Transcript_Capacity
-       and then (if S.HC.Cert_Request_Received and then S.HC.Cfg.Local.Has_Identity then
-                   S.HC.Cfg.Local.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-                   and then Handshake.Sig_Algo_Compatible_With_Cert
-                              (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
-                   and then (if S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-                             then S.HC.Cfg.Local.RSA_Mod_Len in 64 .. 512))
        and then S.Negotiated_Suite in
                   Suite_AES_128_GCM_SHA256
                   | Suite_AES_256_GCM_SHA384
@@ -1454,7 +1362,12 @@ is
       --  skipped the CV entirely, so the runner saw [Cert, Finished]
       --  and rejected with "unexpected handshake message of type
       --  finishedMsg when waiting for certificateVerifyMsg".
+      --  Sign only with a scheme the identity can produce: the executable
+      --  form of the compatibility fact that used to be threaded through
+      --  fourteen preconditions (RSA schemes need the RSA identity's modulus
+      --  bound, which the identity predicate then supplies).
       if S.HC.Cfg.Local.Sign_Algo in Sign_Ed25519 | Sign_RSA_PSS | Sign_ECDSA_P256 | Sign_ECDSA_P384
+        and then Handshake.Sig_Algo_Compatible_With_Cert (S.HC.Negotiated_Sig_Algo, S.HC.Cfg.Local.Sign_Algo)
       then
          declare
             H_Len   : constant N32 := Cert_Hash_Len;
