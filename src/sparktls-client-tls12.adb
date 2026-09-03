@@ -637,13 +637,13 @@ is
          declare
             PCDL   : constant N32 := N32 (D.Peer_Leaf.DER_Len);
             Cert_X : X509.Byte_Seq (0 .. X509.N32 (PCDL) - 1) := (others => 0);
-            VR     : Validation_Result;
+            Verdict : Chain_Verdict;
          begin
             for I in N32 range 0 .. PCDL - 1 loop
                Cert_X (X509.N32 (I)) := D.Peer_Leaf.DER (X509.N32 (I));
             end loop;
-            VR :=
-              Validate_Chain
+            Verdict :=
+              Validate_Chain_Anchored
                 (Leaf_DER   => Cert_X,
                  Leaf       => D.Peer_Leaf.Cert,
                  Ints       => D.Peer_Ints,
@@ -654,9 +654,26 @@ is
                  Hostname   => S.HC.Cfg.Server_Name.Data (1 .. S.HC.Cfg.Server_Name.Len),
                  Purpose    => S.HC.Cfg.Verify_Purpose,
                  Mode       => S.HC.Cfg.Verify_Mode);
-            if VR /= Valid then
+            --  Application veto (Config.Verify_Peer): consulted only after
+            --  the core accepted the chain, never when Skip_Verify is set.
+            if Verdict.Result /= Valid then
                Reset (D.Reasm);
                Send_Alert_And_Error (S, Bad_Certificate, Result);
+               return;
+            end if;
+            if (S.HC.Cfg.Verify_Peer /= null
+              and then not S.HC.Cfg.Verify_Peer
+                             (Cert_X,
+                              D.Peer_Leaf.Cert,
+                              D.Peer_Ints,
+                              D.Peer_Int_Count,
+                              S.HC.Cfg.Trust.Roots (Verdict.Anchor_Index).DER (0 .. S.HC.Cfg.Trust.Roots (Verdict.Anchor_Index).DER_Len - 1),
+                              S.HC.Cfg.Trust.Roots (Verdict.Anchor_Index).Cert,
+                              S.HC.Cfg.Server_Name.Data (1 .. S.HC.Cfg.Server_Name.Len),
+                              S.HC.Cfg.Verify_Purpose))
+            then
+               Reset (D.Reasm);
+               Send_Alert_And_Error (S, Certificate_Unknown, Result);
                return;
             end if;
          end;
@@ -708,6 +725,11 @@ is
    is
       Body_OK                 : Boolean := False;
       B                       : constant N32 := Frag'First + 4;
+      --  Where the supported_signature_algorithms (SA) and the
+      --  certificate_authorities (CA) lists sit inside Frag, recorded by
+      --  the structural check for the credential selector. 0 = not seen.
+      SA_Pos, SA_Cnt          : N32 := 0;
+      CA_Pos, CA_Cnt          : N32 := 0;
    begin
       Result := OK;
       --  Body-length structural validation.
@@ -736,6 +758,12 @@ is
                                       1 + CT_Len_D + 2 + SA_Len_D + 2 + CA_Len_D;
                                  begin
                                     Body_OK := Msg_Len = Expected;
+                                    if Body_OK then
+                                       SA_Pos := SA_Off_D + 2;
+                                       SA_Cnt := SA_Len_D;
+                                       CA_Pos := CA_Off_D + 2;
+                                       CA_Cnt := CA_Len_D;
+                                    end if;
                                  end;
                               end if;
                            end;
@@ -755,6 +783,32 @@ is
       end if;
       S.HC.Cert_Request_Received := True;
       S.HC.T12.Client_Cert_Allowed := False;
+
+      --  Application credential selection (Config.Select_Client_Identity):
+      --  runs before the signature-algorithm pick below so the chosen
+      --  identity's key type drives it. The slices are clamped to Frag so
+      --  their bounds are local facts; the structural check above already
+      --  made them exact, so the clamp never bites.
+      if S.HC.Cfg.Select_Client_Identity /= null then
+         declare
+            CA_Len    : constant N32 := N32'Min (CA_Cnt, Frag'Last + 1 - CA_Pos);
+            SA_Len    : constant N32 := N32'Min (SA_Cnt, Frag'Last + 1 - SA_Pos);
+            Picked_Id : constant Maybe_Identity_Access :=
+              S.HC.Cfg.Select_Client_Identity
+                (Frag (CA_Pos .. CA_Pos + CA_Len - 1), Frag (SA_Pos .. SA_Pos + SA_Len - 1));
+         begin
+            if Picked_Id = null then
+               --  Decline client authentication: empty Certificate later.
+               S.HC.Cfg.Local := No_Identity'Access;
+            elsif Picked_Id.Has_Identity and then Identity_Valid (Picked_Id.all) then
+               S.HC.Cfg.Local := Valid_Identity_Access (Picked_Id);
+            else
+               Reset (D.Reasm);
+               Send_Alert_And_Error (S, Internal_Error, Result);
+               return;
+            end if;
+         end;
+      end if;
 
       --  Sig-algs selection. Empty sig_algs list is malformed per
       --  RFC 5246 7.4.1.4.1.

@@ -237,6 +237,7 @@ procedure Bogo_Shim is
          when Record_Overflow          => return "Record_Overflow";
          when Handshake_Failure        => return "Handshake_Failure";
          when Bad_Certificate          => return "Bad_Certificate";
+         when Certificate_Unknown      => return "Certificate_Unknown";
          when Certificate_Expired      => return "Certificate_Expired";
          when Certificate_Verify_Failed =>
             return "Certificate_Verify_Failed";

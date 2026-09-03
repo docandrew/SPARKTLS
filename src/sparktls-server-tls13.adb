@@ -2121,6 +2121,7 @@ is
             --  DER is X509.Byte_Seq (#101): validators take it directly.
             Cert_X    : X509.Byte_Seq renames D.Peer_Leaf.DER (0 .. Leaf_Last);
             VR        : Validation_Result;
+            Verdict   : Chain_Verdict;
          begin
 
             pragma Assert (Leaf_Last < X509.N32'Last);
@@ -2149,8 +2150,8 @@ is
                   return;
                end if;
 
-               VR :=
-                 Validate_Chain
+               Verdict :=
+                 Validate_Chain_Anchored
                    (Leaf_DER   => Cert_X (0 .. D.Peer_Leaf.DER_Len - 1),
                     Leaf       => D.Peer_Leaf.Cert,
                     Ints       => D.Peer_Ints,
@@ -2161,8 +2162,26 @@ is
                     Hostname   => "",
                     Purpose    => Purpose_Client,
                     Mode       => Cfg.Verify_Mode);
-               if VR /= Valid then
+               --  Application veto (Config.Verify_Peer): consulted only
+               --  after the core accepted the chain, never when
+               --  Skip_Verify is set.
+               if Verdict.Result /= Valid then
                   Send_Encrypted_Alert (S, Bad_Certificate, Result);
+                  pragma Assert (S.Last_Error /= Unexpected_Message);
+                  return;
+               end if;
+               if Cfg.Verify_Peer /= null
+                 and then not Cfg.Verify_Peer
+                                (Cert_X (0 .. D.Peer_Leaf.DER_Len - 1),
+                                 D.Peer_Leaf.Cert,
+                                 D.Peer_Ints,
+                                 D.Peer_Int_Count,
+                                 Cfg.Trust.Roots (Verdict.Anchor_Index).DER (0 .. Cfg.Trust.Roots (Verdict.Anchor_Index).DER_Len - 1),
+                                 Cfg.Trust.Roots (Verdict.Anchor_Index).Cert,
+                                 "",
+                                 Purpose_Client)
+               then
+                  Send_Encrypted_Alert (S, Certificate_Unknown, Result);
                   pragma Assert (S.Last_Error /= Unexpected_Message);
                   return;
                end if;

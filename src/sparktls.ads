@@ -479,6 +479,7 @@ is
       Record_Overflow,
       Handshake_Failure,
       Bad_Certificate,
+      Certificate_Unknown,         --  RFC 8446 6.2 alert 46: application veto (Config.Verify_Peer)
       Certificate_Expired,
       Certificate_Verify_Failed,
       Certificate_Required,        --  RFC 8446 6 alert 116
@@ -761,6 +762,7 @@ is
          when Record_Overflow           => 22,
          when Handshake_Failure         => 40,
          when Bad_Certificate           => 42,
+         when Certificate_Unknown       => 46,
          when Certificate_Expired       => 45,
          when Illegal_Parameter         => 47,
          when Decode_Error              => 50,
@@ -1074,42 +1076,31 @@ is
    --  demands Has_Identity: a non-null Identity without Has_Identity is a
    --  legal state (the `Local /= null and then Local.Has_Identity` guard
    --  appears throughout the codebase).
-   subtype Valid_Identity_Access is Identity_Access
-   with
-     Dynamic_Predicate =>
-       Valid_Identity_Access = null
-       or else
-         (Valid_Identity_Access.NaCl_Cert_Len <= N32 (Max_Cert_DER)
-          --  An identity that says it has a certificate has a non-empty
-          --  one. Type-level home for the mTLS builders' bound, replacing
-          --  the copy of `NaCl_Cert_Len in 1 .. Max_Cert_DER` that every
-          --  client-tls13 precondition used to carry. Enforced at run time
-          --  by Configure (both roles); predicates do not execute in
-          --  shipped builds.
-          and then (if Valid_Identity_Access.Has_Identity
-                    then Valid_Identity_Access.NaCl_Cert_Len >= 1)
-          and then Valid_Identity_Access.Int_Count <= Max_Pool_Size
-          and then
-            (for all I in 0 .. Max_Pool_Size - 1 =>
-               Valid_Identity_Access.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
-          and then
-            (if Valid_Identity_Access.Sign_Algo = Sign_RSA_PSS
-             then Valid_Identity_Access.RSA_Mod_Len in 64 .. 512));
+   --  The one definition of "this identity is usable": every bound the
+   --  handshake code relies on. It is EXECUTABLE and is evaluated at every
+   --  point an identity enters the library (Configure in both roles, and the
+   --  SNI selector's result), because predicates do not execute in shipped
+   --  builds; the Valid_Identity_Access predicate below reuses it so the
+   --  same facts are known to the prover everywhere without threading.
+   function Identity_Valid (Id : Identity) return Boolean
+   is (Id.NaCl_Cert_Len <= N32 (Max_Cert_DER)
+       --  An identity that says it has a certificate has a non-empty one.
+       and then (if Id.Has_Identity then Id.NaCl_Cert_Len >= 1)
+       and then Id.Int_Count <= Max_Pool_Size
+       and then
+         (for all I in 0 .. Max_Pool_Size - 1 =>
+            Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
+       and then (if Id.Sign_Algo = Sign_RSA_PSS then Id.RSA_Mod_Len in 64 .. 512));
 
-   subtype Selected_Identity_Access is Identity_Access
-   with
-     Dynamic_Predicate =>
-       Selected_Identity_Access = null
-       or else
-         (Selected_Identity_Access.Has_Identity
-          and then Selected_Identity_Access.NaCl_Cert_Len in 1 .. N32 (Max_Cert_DER)
-          and then Selected_Identity_Access.Int_Count <= Max_Pool_Size
-          and then
-            (for all I in 0 .. Max_Pool_Size - 1 =>
-               Selected_Identity_Access.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER))
-          and then
-            (if Selected_Identity_Access.Sign_Algo = Sign_RSA_PSS
-             then Selected_Identity_Access.RSA_Mod_Len in 64 .. 512));
+   subtype Valid_Identity_Access is Identity_Access
+   with Dynamic_Predicate => Identity_Valid (Valid_Identity_Access.all);
+
+   --  Result of an SNI selector: null means "no match, keep the default
+   --  identity" (RFC 6066 3). Nullable on purpose -- Identity_Access is
+   --  not null, so the old Selected_Identity_Access subtype could never
+   --  honour that contract. The server validates a non-null result with
+   --  Identity_Valid before adopting it.
+   type Maybe_Identity_Access is access constant Identity;
 
    ----------------------------------------------------------------------------
    --  SNI-based certificate selection (RFC 6066 3, RFC 8446 4.4.2.4)
@@ -1117,7 +1108,7 @@ is
    --  Servers that host multiple virtual hosts on one listener install
    --  a Select_Identity callback in Config. The callback receives the
    --  hostname from the client's server_name extension and returns the
-   --  matching Identity_Access. Returning null means "no match"
+   --  matching identity, or null. Returning null means "no match"
    --  per RFC 6066, the server MAY proceed with the default identity
    --  (the more permissive choice, matches openssl). Strict-SNI mode
    --  (alert on no-match) is not supported today but can be added by
@@ -1136,7 +1127,32 @@ is
    ----------------------------------------------------------------------------
 
    type SNI_Cert_Selector is
-     access function (Server_Name : in String) return Selected_Identity_Access;
+     access function (Server_Name : in String) return Maybe_Identity_Access;
+
+   ----------------------------------------------------------------------------
+   --  Client credential selection (RFC 8446 4.2.4 / 4.4.2, RFC 5246 7.4.4)
+   --
+   --  A client that holds several identities installs Select_Client_Identity
+   --  in Config. When the server's CertificateRequest arrives the callback
+   --  receives the two lists RFC 8446 says a client should choose by:
+   --  CA_Names is the certificate_authorities list exactly as sent (a
+   --  sequence of 2-byte-length-prefixed DER DistinguishedNames; empty when
+   --  the server sent none) and Sig_Algos is the offered
+   --  signature_algorithms list (2-byte scheme codes). It returns the
+   --  identity to authenticate with, or null to decline: the client then
+   --  sends an empty Certificate (RFC 8446 4.4.2 says it MAY) and the server
+   --  decides per its own Require_Client_Cert policy.
+   --
+   --  A non-null result is checked with Identity_Valid before it is adopted;
+   --  an invalid one aborts the handshake with internal_error. The callback
+   --  runs before the signature scheme is picked, so the chosen identity's
+   --  key type drives that choice. When null, Config.Local is used as
+   --  before. Same rules as the SNI selector: pure, and the identity MUST
+   --  outlive the session.
+   ----------------------------------------------------------------------------
+
+   type Client_Cert_Selector is
+     access function (CA_Names : Byte_Seq; Sig_Algos : Byte_Seq) return Maybe_Identity_Access;
 
    ----------------------------------------------------------------------------
    --  Ticket Store (for session resumption)
@@ -1434,6 +1450,45 @@ is
    procedure Not_Random (Output : out Byte_Seq);
 
    ----------------------------------------------------------------------------
+   --  Application peer-certificate verification hook (veto only)
+   --
+   --  The proven core always runs first: chain building to a configured
+   --  trust anchor, RFC 5280 path validation, RFC 6125 hostname binding and
+   --  EKU enforcement. Only when all of that has PASSED does the library
+   --  consult Config.Verify_Peer, and the hook can only say no. It cannot
+   --  admit a certificate the core rejected, and it is never consulted when
+   --  Skip_Verify is set: loosening stays behind that audited knob.
+   --  Typical uses: revocation (OCSP/CRL) checked out of band, certificate
+   --  or key pinning, authorizing a client certificate by its subject or
+   --  SAN, audit logging of the peer chain.
+   --
+   --  Inputs are the validated leaf (DER and parsed form), the
+   --  intermediates the peer sent (Ints (0 .. Int_Count - 1)), the trust
+   --  anchor the core chained to (Anchor_DER / Anchor, one of Trust.Roots;
+   --  lets the hook pin a CA or apply per-anchor policy), the hostname the
+   --  core matched against (empty on the server side) and the purpose the
+   --  chain was validated for. True = accept, False =
+   --  veto; a veto aborts the handshake with certificate_unknown (alert
+   --  46, Error_Code Certificate_Unknown), distinct from the core's own
+   --  bad_certificate / unknown_ca so audit logs can tell them apart.
+   --
+   --  The hook EXECUTES in every build, -gnatp included: it is the
+   --  application's enforcement point, not a proof aid. It MUST be pure
+   --  with respect to the session and MUST NOT retain its parameters.
+   ----------------------------------------------------------------------------
+
+   type Peer_Verify_Hook is
+     access function
+       (Leaf_DER  : X509.Byte_Seq;
+        Leaf      : X509.Certificate;
+        Ints       : Cert_Pool;
+        Int_Count  : Natural;
+        Anchor_DER : X509.Byte_Seq;
+        Anchor     : X509.Certificate;
+        Hostname   : String;
+        Purpose    : Validation_Purpose) return Boolean;
+
+   ----------------------------------------------------------------------------
    --  Config
    ----------------------------------------------------------------------------
    type Config is record
@@ -1473,6 +1528,11 @@ is
       Verify_Purpose : Validation_Purpose := Purpose_Server;
       Get_Time       : Get_Time_Fn := null;
 
+      --  Application veto hook, consulted only after the core has fully
+      --  validated the peer chain and never when Skip_Verify is set. See
+      --  Peer_Verify_Hook above.
+      Verify_Peer    : Peer_Verify_Hook := null;
+
       --  Trust store for verifying the peer's certificate chain.
       --  Required for verified client handshakes unless Skip_Verify
       --  is explicitly enabled or a valid TLS 1.3 resume ticket is
@@ -1500,6 +1560,10 @@ is
       --  (if non-null) overrides Local for this session. See the
       --  SNI_Cert_Selector type comments above for the contract.
       Select_Identity : SNI_Cert_Selector := null;
+
+      --  Client-side credential selector, consulted when the server sends
+      --  CertificateRequest. See Client_Cert_Selector above.
+      Select_Client_Identity : Client_Cert_Selector := null;
 
       --  ALPN: Application-Layer Protocol Negotiation (RFC 7301).
       --  Set to e.g. "h2" for HTTP/2 or "http/1.1" for HTTP/1.1.

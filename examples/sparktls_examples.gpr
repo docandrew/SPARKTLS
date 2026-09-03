@@ -14,6 +14,8 @@ project SPARKTLS_Examples is
                   "mtls_test_client.adb",
                   "tls_resume_test.adb",
                   "tls12_resume_test.adb",
+                  "tls_verify_hook_client.adb",
+                  "tls_authz_server.adb",
                   "test_prf12.adb");
 
    package Compiler is

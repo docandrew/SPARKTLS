@@ -900,6 +900,11 @@ is
          when Bad_Certificate =>
             return "peer certificate was malformed or could not be parsed " & "(alert 42)";
 
+         when Certificate_Unknown =>
+            return
+              "peer certificate was rejected by the application verification "
+              & "hook, Config.Verify_Peer (alert 46)";
+
          when Certificate_Expired =>
             return "peer certificate is expired or not yet valid (alert 45)";
 
@@ -971,7 +976,7 @@ is
             return Certificate_Expired;         --  certificate_expired
 
          when 46 =>
-            return Bad_Certificate;             --  certificate_unknown
+            return Certificate_Unknown;         --  certificate_unknown
 
          when 47 =>
             return Illegal_Parameter;           --  illegal_parameter

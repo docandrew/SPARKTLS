@@ -87,7 +87,7 @@ is
        --  mTLS identity, if offered, must carry a certificate: the run-time
        --  enforcement of the Valid_Identity_Access predicate (mirrors the
        --  server's Configure check; predicates do not execute in shipped builds).
-       and then (if Cfg.Local.Has_Identity then Cfg.Local.NaCl_Cert_Len >= 1)
+       and then Identity_Valid (Cfg.Local.all)
        and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
        and then
          (Cfg.Skip_Verify

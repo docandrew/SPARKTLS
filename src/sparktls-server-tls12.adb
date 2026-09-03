@@ -1890,11 +1890,16 @@ is
    --  OK requires leaf policy AND (unless Skip_Verify) a full chain to a
    --  configured root; missing Trust/Get_Time callbacks fail closed.
    procedure Validate_Client_Cert_12
-     (Cfg : in Config; D : in SPARKTLS.HS_Pool.HS_Data; OK : out Boolean)
+     (Cfg    : in Config;
+      D      : in SPARKTLS.HS_Pool.HS_Data;
+      OK     : out Boolean;
+      Vetoed : out Boolean)
    is
-      VR : Validation_Result;
+      VR      : Validation_Result;
+      Verdict : Chain_Verdict;
    begin
       OK := False;
+      Vetoed := False;
 
       --  Fail closed: no presented certificate, no valid client cert. The
       --  state machine should make this unreachable (CertVerify follows a
@@ -1937,8 +1942,8 @@ is
             return;
          end if;
 
-         VR :=
-           Validate_Chain
+         Verdict :=
+           Validate_Chain_Anchored
              (Leaf_DER   => Cert_X,
               Leaf       => D.Peer_Leaf.Cert,
               Ints       => D.Peer_Ints,
@@ -1949,7 +1954,23 @@ is
               Hostname   => "",
               Purpose    => Purpose_Client,
               Mode       => Cfg.Verify_Mode);
-         if VR /= Valid then
+         --  Application veto (Config.Verify_Peer): consulted only after
+         --  the core accepted the chain, never when Skip_Verify is set.
+         if Verdict.Result /= Valid then
+            return;
+         end if;
+         if Cfg.Verify_Peer /= null
+           and then not Cfg.Verify_Peer
+                          (Cert_X,
+                           D.Peer_Leaf.Cert,
+                           D.Peer_Ints,
+                           D.Peer_Int_Count,
+                           Cfg.Trust.Roots (Verdict.Anchor_Index).DER (0 .. Cfg.Trust.Roots (Verdict.Anchor_Index).DER_Len - 1),
+                           Cfg.Trust.Roots (Verdict.Anchor_Index).Cert,
+                           "",
+                           Purpose_Client)
+         then
+            Vetoed := True;
             return;
          end if;
       end if;
@@ -2006,6 +2027,7 @@ is
             Msg_Len  : N32;
             Parse_OK : Boolean;
             Cert_OK  : Boolean;
+            Cert_Vetoed : Boolean;
          begin
             Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
 
@@ -2085,10 +2107,11 @@ is
                end if;
             end;
 
-            Validate_Client_Cert_12 (S.HC.Cfg, D, Cert_OK);
+            Validate_Client_Cert_12 (S.HC.Cfg, D, Cert_OK, Cert_Vetoed);
             if not Cert_OK then
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Bad_Certificate, Result);
+               Send_Alert_And_Error
+                 (S, (if Cert_Vetoed then Certificate_Unknown else Bad_Certificate), Result);
                return;
             end if;
 

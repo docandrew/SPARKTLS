@@ -1035,6 +1035,163 @@ else
     fi
 fi
 
+# ===================================================================
+# Application verification hook + credential selection.
+# tls_verify_hook_client installs Config.Verify_Peer (veto-only: it runs
+# only after the proven core accepted the chain) and
+# Config.Select_Client_Identity (picks the client certificate from the
+# server's certificate_authorities list). tls_authz_server requires a
+# client certificate and authorizes it by subject CN / SAN via the hook.
+# ===================================================================
+echo ""
+echo "--- Verify hook: pinning, SAN policy, veto-only ---"
+HOOK_CLIENT="$REPO_ROOT/bin/examples/tls_verify_hook_client"
+AUTHZ_SERVER="$REPO_ROOT/bin/examples/tls_authz_server"
+if [ ! -x "$HOOK_CLIENT" ] || [ ! -x "$AUTHZ_SERVER" ]; then
+    echo "  (skipped - hook examples not built)"
+else
+    RSA_PIN=$(openssl x509 -in "$CERT_DIR/rsa.crt" -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1)
+    BAD_PIN=$(printf '%064d' 0)
+    cleanup
+    "$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" > /tmp/hook_srv.log 2>&1 &
+    wait_for_port
+
+    # 1) matching pin + SAN policy + audit -> accepted, echo round-trip
+    if timeout 15 "$HOOK_CLIENT" --port $PORT --trust-cert "$CERT_DIR/rsa.crt" \
+        --pin-sha256 "$RSA_PIN" --require-san localhost --audit --expect-echo \
+        > /tmp/hook1.log 2>&1 && grep -q "AUDIT leaf sha256=$RSA_PIN" /tmp/hook1.log \
+        && grep -q "AUDIT anchor CN=localhost" /tmp/hook1.log; then
+        pass "Hook: matching pin + SAN accepted (audit line present)"
+    else
+        fail "Hook: matching pin + SAN rejected"
+        head -3 /tmp/hook1.log | sed 's/^/    /'
+    fi
+
+    # 2) pin mismatch -> vetoed (handshake aborted with bad_certificate)
+    if timeout 15 "$HOOK_CLIENT" --port $PORT --trust-cert "$CERT_DIR/rsa.crt" \
+        --pin-sha256 "$BAD_PIN" --expect-fail > /tmp/hook2.log 2>&1 \
+        && grep -q "VETO: pin mismatch" /tmp/hook2.log; then
+        pass "Hook: pin mismatch vetoed"
+    else
+        fail "Hook: pin mismatch NOT vetoed (BYPASS)"
+        head -3 /tmp/hook2.log | sed 's/^/    /'
+    fi
+
+    # 3) SAN policy mismatch -> vetoed
+    if timeout 15 "$HOOK_CLIENT" --port $PORT --trust-cert "$CERT_DIR/rsa.crt" \
+        --require-san not-this-host --expect-fail > /tmp/hook3.log 2>&1 \
+        && grep -q "VETO: leaf has no SAN" /tmp/hook3.log; then
+        pass "Hook: SAN policy mismatch vetoed"
+    else
+        fail "Hook: SAN policy mismatch NOT vetoed (BYPASS)"
+        head -3 /tmp/hook3.log | sed 's/^/    /'
+    fi
+
+    # 4) veto-only: with no trust store the core fails closed BEFORE the
+    #    hook runs; a correct pin cannot admit an unverified chain.
+    if timeout 15 "$HOOK_CLIENT" --port $PORT --pin-sha256 "$RSA_PIN" --audit \
+        --expect-fail > /tmp/hook4.log 2>&1 && ! grep -q "AUDIT peer" /tmp/hook4.log; then
+        pass "Hook: cannot admit an unverified chain (hook never consulted)"
+    else
+        fail "Hook: unverified chain reached the hook or was accepted (BYPASS)"
+        head -3 /tmp/hook4.log | sed 's/^/    /'
+    fi
+    cleanup
+
+    # Client credentials under a throwaway CA: alice is allowed, mallory
+    # is a valid client of the same CA but not on the list.
+    AUTHZ_DIR="${TMPDIR:-/tmp}/sparktls-authz.$$"
+    mkdir -p "$AUTHZ_DIR"
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$AUTHZ_DIR/ca.key" \
+        -out "$AUTHZ_DIR/ca.pem" -days 30 -subj "/CN=sparktls-authz-ca" \
+        -addext "basicConstraints=critical,CA:TRUE" \
+        -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+    gen_authz_client() {
+        openssl req -new -newkey rsa:2048 -nodes -keyout "$AUTHZ_DIR/$1.raw" \
+            -out "$AUTHZ_DIR/$1.csr" -subj "/CN=$1" 2>/dev/null
+        openssl pkcs8 -topk8 -nocrypt -in "$AUTHZ_DIR/$1.raw" \
+            -out "$AUTHZ_DIR/$1.key" 2>/dev/null
+        printf 'subjectAltName=DNS:%s\nextendedKeyUsage=clientAuth\nkeyUsage=digitalSignature\nbasicConstraints=CA:FALSE\n' \
+            "$1" > "$AUTHZ_DIR/$1.ext"
+        openssl x509 -req -in "$AUTHZ_DIR/$1.csr" -CA "$AUTHZ_DIR/ca.pem" \
+            -CAkey "$AUTHZ_DIR/ca.key" -CAcreateserial -out "$AUTHZ_DIR/$1.pem" \
+            -days 30 -extfile "$AUTHZ_DIR/$1.ext" 2>/dev/null
+    }
+    gen_authz_client alice
+    gen_authz_client mallory
+
+    echo ""
+    echo "--- Authz hook: client authorization by CN/SAN ---"
+    cleanup
+    "$AUTHZ_SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" "$AUTHZ_DIR/ca.pem" \
+        --allow alice > /tmp/authz_srv.log 2>&1 &
+    wait_for_port
+    output=$(echo "hello" | timeout 5 openssl s_client -quiet \
+        -connect localhost:$PORT -tls1_3 -CAfile "$CERT_DIR/rsa.crt" \
+        -cert "$AUTHZ_DIR/alice.pem" -key "$AUTHZ_DIR/alice.key" 2>&1 || true)
+    if echo "$output" | grep -qx "hello"; then
+        pass "Authz: allowed client (alice) accepted"
+    else
+        fail "Authz: allowed client (alice) rejected"
+        echo "    $(echo "$output" | head -1)"
+    fi
+    output=$(echo "hello" | timeout 5 openssl s_client -quiet \
+        -connect localhost:$PORT -tls1_3 -CAfile "$CERT_DIR/rsa.crt" \
+        -cert "$AUTHZ_DIR/mallory.pem" -key "$AUTHZ_DIR/mallory.key" 2>&1 || true)
+    if echo "$output" | grep -qx "hello"; then
+        fail "Authz: unlisted client (mallory) accepted (BYPASS)"
+    else
+        pass "Authz: unlisted client (mallory) rejected"
+    fi
+    if grep -q "AUTHZ accept subject CN='alice'" /tmp/authz_srv.log \
+       && grep -q "AUTHZ deny subject CN='mallory'" /tmp/authz_srv.log; then
+        pass "Authz: server logged both decisions"
+    else
+        fail "Authz: decision log missing"
+        grep AUTHZ /tmp/authz_srv.log | sed 's/^/    /' | head -4
+    fi
+    cleanup
+
+    echo ""
+    echo "--- Credential selection by certificate_authorities ---"
+    # openssl s_server names the CA it accepts in CertificateRequest.
+    # -verify_return_error: without it s_server only LOGS a client-cert
+    # verification failure and completes the handshake anyway.
+    # The client holds a self-signed default identity (unacceptable to the
+    # server) and alice as the alternate; the selector must pick alice.
+    cleanup
+    openssl s_server -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" \
+        -accept $PORT -tls1_3 -Verify 1 -verify_return_error -CAfile "$AUTHZ_DIR/ca.pem" \
+        -quiet > /tmp/pick_srv.log 2>&1 &
+    sleep 1
+    if timeout 15 "$HOOK_CLIENT" --port $PORT --trust-cert "$CERT_DIR/rsa.crt" \
+        --cert-file "$CERT_DIR/ed25519.crt" --key-file "$CERT_DIR/ed25519.key" \
+        --alt-cert-file "$AUTHZ_DIR/alice.pem" --alt-key-file "$AUTHZ_DIR/alice.key" \
+        --audit > /tmp/pick1.log 2>&1 \
+        && grep -q "AUDIT selected alternate identity" /tmp/pick1.log; then
+        pass "Selector: picked the identity issued by the CA the server named"
+    else
+        fail "Selector: did not pick the CA-named identity"
+        head -4 /tmp/pick1.log | sed 's/^/    /'
+    fi
+    cleanup
+    openssl s_server -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" \
+        -accept $PORT -tls1_3 -Verify 1 -verify_return_error -CAfile "$AUTHZ_DIR/ca.pem" \
+        -quiet > /tmp/pick_srv2.log 2>&1 &
+    sleep 1
+    # control: no alternate -> the default identity is sent and rejected.
+    if timeout 15 "$HOOK_CLIENT" --port $PORT --trust-cert "$CERT_DIR/rsa.crt" \
+        --cert-file "$CERT_DIR/ed25519.crt" --key-file "$CERT_DIR/ed25519.key" \
+        --expect-fail > /tmp/pick2.log 2>&1; then
+        pass "Selector control: default identity rejected by the server"
+    else
+        fail "Selector control: default identity unexpectedly accepted"
+        head -3 /tmp/pick2.log | sed 's/^/    /'
+    fi
+    cleanup
+    rm -rf "$AUTHZ_DIR"
+fi
+
 # --- Summary ---
 cleanup
 echo ""

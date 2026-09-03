@@ -654,6 +654,11 @@ is
       declare
          Picked    : Maybe_Sig_Scheme := Scheme_None;
          Sig_Found : Boolean := False;
+         --  Where the offered signature_algorithms (SA) and the
+         --  certificate_authorities (CA) lists sit inside Data, for the
+         --  application credential selector below. 0 = not seen.
+         SA_Pos, SA_Cnt : N32 := 0;
+         CA_Pos, CA_Cnt : N32 := 0;
       begin
          if Data'Length >= 7 then
             declare
@@ -671,7 +676,11 @@ is
                         while P + 4 <= Ext_End loop
                            pragma
                              Loop_Invariant
-                               (P >= Ext_Off + 2 and P + 4 <= Ext_End and Ext_End <= Data'Last + 1);
+                               (P >= Ext_Off + 2
+                                and P + 4 <= Ext_End
+                                and Ext_End <= Data'Last + 1
+                                and SA_Pos <= Ext_End
+                                and CA_Pos <= Ext_End);
                            declare
                               Tag   : constant N32 := N32 (Data (P)) * 256 + N32 (Data (P + 1));
                               E_Len : constant N32 := N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
@@ -697,6 +706,8 @@ is
                                  begin
                                     if List_Len + 2 = E_Len and List_Len >= 2 then
                                        Sig_Found := True;
+                                       SA_Pos := P + 6;
+                                       SA_Cnt := List_Len;
                                        Picked :=
                                          Handshake.Pick_Sig_Algo_With_Prefs
                                            (Data (P + 6 .. P + 5 + List_Len),
@@ -740,6 +751,8 @@ is
                                        Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
                                        return;
                                     end if;
+                                    CA_Pos := P + 6;
+                                    CA_Cnt := Outer_Len;
                                  end;
                               end if;
                               P := P + 4 + E_Len;
@@ -747,6 +760,40 @@ is
                         end loop;
                      end if;
                   end;
+               end if;
+            end;
+         end if;
+
+         --  Application credential selection (Config.Select_Client_Identity).
+         --  RFC 8446 4.2.4: the certificate_authorities list and the offered
+         --  signature_algorithms are what a client picks by. The slices are
+         --  clamped to Data so their bounds are local facts; the walk above
+         --  already validated them, so the clamp never bites.
+         if S.HC.Cfg.Select_Client_Identity /= null then
+            declare
+               CA_Len    : constant N32 := N32'Min (CA_Cnt, Data'Last + 1 - CA_Pos);
+               SA_Len    : constant N32 := N32'Min (SA_Cnt, Data'Last + 1 - SA_Pos);
+               Picked_Id : constant Maybe_Identity_Access :=
+                 S.HC.Cfg.Select_Client_Identity
+                   (Data (CA_Pos .. CA_Pos + CA_Len - 1), Data (SA_Pos .. SA_Pos + SA_Len - 1));
+            begin
+               if Picked_Id = null then
+                  --  Decline client authentication: empty Certificate later.
+                  S.HC.Cfg.Local := No_Identity'Access;
+               elsif Picked_Id.Has_Identity and then Identity_Valid (Picked_Id.all) then
+                  S.HC.Cfg.Local := Valid_Identity_Access (Picked_Id);
+               else
+                  Send_HS_Encrypted_Alert (S, D, Internal_Error, Result);
+                  return;
+               end if;
+               --  Re-pick the signature scheme for the chosen identity.
+               if Sig_Found then
+                  Picked :=
+                    Handshake.Pick_Sig_Algo_With_Prefs
+                      (Data (SA_Pos .. SA_Pos + SA_Len - 1),
+                       S.HC.Cfg.Local.Sign_Algo,
+                       S.HC.Cfg.Sign_Sig_Algos,
+                       S.HC.Cfg.Sign_Sig_Algo_Count);
                end if;
             end;
          end if;
@@ -871,13 +918,13 @@ is
             Cert_DER_Len_Const : constant N32 := N32 (D.Peer_Leaf.DER_Len);
             Cert_X             : X509.Byte_Seq (0 .. X509.N32 (Cert_DER_Len_Const) - 1) :=
               (others => 0);
-            VR                 : Validation_Result;
+            Verdict            : Chain_Verdict;
          begin
             for I in N32 range 0 .. Cert_DER_Len_Const - 1 loop
                Cert_X (X509.N32 (I)) := D.Peer_Leaf.DER (X509.N32 (I));
             end loop;
-            VR :=
-              Validate_Chain
+            Verdict :=
+              Validate_Chain_Anchored
                 (Leaf_DER   => Cert_X,
                  Leaf       => D.Peer_Leaf.Cert,
                  Ints       => D.Peer_Ints,
@@ -888,8 +935,26 @@ is
                  Hostname   => S.HC.Cfg.Server_Name.Data (1 .. S.HC.Cfg.Server_Name.Len),
                  Purpose    => S.HC.Cfg.Verify_Purpose,
                  Mode       => S.HC.Cfg.Verify_Mode);
-            if VR /= Valid then
+            --  Application veto (Config.Verify_Peer): consulted only after
+            --  the core accepted the chain, never when Skip_Verify is set.
+            if Verdict.Result /= Valid then
                S.Last_Error := Bad_Certificate;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+               return;
+            end if;
+            if (S.HC.Cfg.Verify_Peer /= null
+              and then not S.HC.Cfg.Verify_Peer
+                             (Cert_X,
+                              D.Peer_Leaf.Cert,
+                              D.Peer_Ints,
+                              D.Peer_Int_Count,
+                              S.HC.Cfg.Trust.Roots (Verdict.Anchor_Index).DER (0 .. S.HC.Cfg.Trust.Roots (Verdict.Anchor_Index).DER_Len - 1),
+                              S.HC.Cfg.Trust.Roots (Verdict.Anchor_Index).Cert,
+                              S.HC.Cfg.Server_Name.Data (1 .. S.HC.Cfg.Server_Name.Len),
+                              S.HC.Cfg.Verify_Purpose))
+            then
+               S.Last_Error := Certificate_Unknown;
                Set_State (S, Error_State);
                Result := Error_Alert;
                return;

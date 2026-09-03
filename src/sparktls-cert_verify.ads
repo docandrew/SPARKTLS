@@ -360,6 +360,38 @@ is
    --  tries roots first, then unused intermediates.  Backtracks on
    --  failure.  Validates each link via Validate_Link (proven).
    --  Budget counter prevents DoS from pathological chains.
+   --  Verdict of Validate_Chain_Anchored: the result plus, when Valid, the
+   --  index in Roots of the trust anchor that closed the chain (so the
+   --  application hook can see which anchor vouched, e.g. for CA pinning).
+   type Chain_Verdict is record
+      Result       : Validation_Result := Err_No_Trust_Anchor;
+      Anchor_Index : Natural := 0;
+   end record;
+
+   function Validate_Chain_Anchored
+     (Leaf_DER   : X509.Byte_Seq;
+      Leaf       : X509.Certificate;
+      Ints       : Cert_Pool;
+      Int_Count  : Natural;
+      Roots      : Root_Pool;
+      Root_Count : Natural;
+      Now        : X509.Date_Time;
+      Hostname   : String;
+      Purpose    : Validation_Purpose := Purpose_Server;
+      Mode       : Validation_Mode := Mode_WebPKI) return Chain_Verdict
+   with
+     Pre  =>
+       Leaf_DER'First = 0
+       and Leaf_DER'Last < X509.N32 (Max_Cert_DER)
+       and Int_Count <= Max_Pool_Size
+       and Root_Count <= Max_Root_Pool_Size
+       and X509.Spans_Valid (Leaf, Leaf_DER'Last),
+     Post =>
+       (if Validate_Chain_Anchored'Result.Result = Valid
+        then
+          Validate_Chain_Anchored'Result.Anchor_Index < Root_Count
+          and then Roots (Validate_Chain_Anchored'Result.Anchor_Index).Present);
+
    function Validate_Chain
      (Leaf_DER   : X509.Byte_Seq;
       Leaf       : X509.Certificate;
@@ -371,6 +403,9 @@ is
       Hostname   : String;
       Purpose    : Validation_Purpose := Purpose_Server;
       Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
+   is (Validate_Chain_Anchored
+         (Leaf_DER, Leaf, Ints, Int_Count, Roots, Root_Count, Now, Hostname, Purpose, Mode)
+         .Result)
    with
      Pre =>
        Leaf_DER'First = 0

@@ -1105,7 +1105,7 @@ is
    --  Chain building and validation
    ----------------------------------------------------------------------------
 
-   function Validate_Chain
+   function Validate_Chain_Anchored
      (Leaf_DER   : X509.Byte_Seq;
       Leaf       : X509.Certificate;
       Ints       : Cert_Pool;
@@ -1115,7 +1115,7 @@ is
       Now        : X509.Date_Time;
       Hostname   : String;
       Purpose    : Validation_Purpose := Purpose_Server;
-      Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
+      Mode       : Validation_Mode := Mode_WebPKI) return Chain_Verdict
    is
       --  Recursive DFS: try to chain Cert to a trust anchor.
       --  Depth = number of intermediates between this cert and the leaf.
@@ -1130,7 +1130,8 @@ is
          PL_Depth : Natural;
          --  non-self-issued CA count for pathlen
          Budget   : in out Natural;
-         Result   : out Validation_Result)
+         Result   : out Validation_Result;
+         Anchor   : out Natural)
       with
         Pre                =>
           Cert_DER'First = 0
@@ -1138,13 +1139,22 @@ is
           and PL_Depth <= Max_Chain_Depth
           and X509.Spans_Valid (Cert, Cert_DER'Last),
         Subprogram_Variant => (Decreases => Budget),
-        Post               => Budget <= Budget'Old
+        Post               =>
+          Budget <= Budget'Old
+          --  Anchor <= Roots'Last is stated explicitly: this nested Post
+          --  cannot see the enclosing Pre that bounds Root_Count.
+          and then (if Result = Valid
+                    then
+                      Anchor < Root_Count
+                      and then Anchor <= Roots'Last
+                      and then Roots (Anchor).Present)
       is
          R            : Validation_Result;
          Saved_Budget : Natural
          with Ghost;
       begin
          Result := Err_No_Trust_Anchor;
+         Anchor := 0;
 
          if Budget = 0 then
             return;
@@ -1190,6 +1200,7 @@ is
                           Mode             => Mode);
                      if R = Valid then
                         Result := Valid;
+                        Anchor := Ri;
                         return;
                      end if;
                   end if;
@@ -1227,8 +1238,9 @@ is
                   --  RFC 5280 4.2.1.9: self-issued certs don't count
                   --  toward pathLenConstraint.
                   declare
-                     Next_Used : Used_Set := Used;
-                     Next_PL   : constant Natural :=
+                     Next_Used  : Used_Set := Used;
+                     Sub_Anchor : Natural;
+                     Next_PL    : constant Natural :=
                        (if X509.Is_Self_Issued
                              (Ints (Ii).Cert, Ints (Ii).DER (0 .. Ints (Ii).DER_Len - 1))
                         then PL_Depth
@@ -1245,9 +1257,11 @@ is
                         Depth + 1,
                         Next_PL,
                         Budget,
-                        R);
+                        R,
+                        Sub_Anchor);
                      if R = Valid then
                         Result := Valid;
+                        Anchor := Sub_Anchor;
                         return;
                      end if;
                      --  Backtrack: try next intermediate
@@ -1258,6 +1272,7 @@ is
       end Try_Build;
 
       R              : Validation_Result;
+      A              : Natural;
       Ignored_Budget : Natural := Max_Build_Calls;
    begin
       --  Build chain from leaf upward
@@ -1268,21 +1283,24 @@ is
          Depth    => 0,
          PL_Depth => 0,
          Budget   => Ignored_Budget,
-         Result   => R);
+         Result   => R,
+         Anchor   => A);
 
       if R /= Valid then
-         return R;
+         return (Result => R, Anchor_Index => 0);
       end if;
 
       --  Chain is valid; check leaf policy
       return
-        Validate_Leaf_Policy
-          (Leaf     => Leaf,
-           Leaf_DER => Leaf_DER,
-           Hostname => Hostname,
-           Purpose  => Purpose,
-           Mode     => Mode);
-   end Validate_Chain;
+        (Result       =>
+           Validate_Leaf_Policy
+             (Leaf     => Leaf,
+              Leaf_DER => Leaf_DER,
+              Hostname => Hostname,
+              Purpose  => Purpose,
+              Mode     => Mode),
+         Anchor_Index => A);
+   end Validate_Chain_Anchored;
 
    ------------------------------------------------------------------
    --  Verify_Signature: verify a raw signature against a cert's pubkey.

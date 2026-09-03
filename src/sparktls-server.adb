@@ -363,13 +363,20 @@ is
       --  default identity already in S.HC.Cfg.Local.
       if S.HC.Cfg.Select_Identity /= null and then S.HC.Peer_SNI.Len > 0 then
          declare
-            Picked : constant Selected_Identity_Access :=
+            Picked : constant Maybe_Identity_Access :=
               S.HC.Cfg.Select_Identity
                 (S.HC.Peer_SNI.Data
                    (S.HC.Peer_SNI.Data'First .. S.HC.Peer_SNI.Data'First + S.HC.Peer_SNI.Len - 1));
          begin
             if Picked /= null then
-               S.HC.Cfg.Local := Picked;
+               --  A selector result is application data: validate it here,
+               --  exactly as Configure validates the default identity.
+               if Picked.Has_Identity and then Identity_Valid (Picked.all) then
+                  S.HC.Cfg.Local := Valid_Identity_Access (Picked);
+               else
+                  Send_Alert_And_Error (S, Handshake_Failure, Result);
+                  return;
+               end if;
             end if;
             pragma Assert (S.HC.Legacy_Session_ID_Len in 0 .. 32);
          end;
@@ -378,15 +385,7 @@ is
       end if;
 
       if not S.HC.Cfg.Local.Has_Identity
-        or else S.HC.Cfg.Local.NaCl_Cert_Len = 0
-        or else S.HC.Cfg.Local.NaCl_Cert_Len > N32 (Max_Cert_DER)
-        or else S.HC.Cfg.Local.Int_Count > Max_Pool_Size
-        or else
-          (for some I in 0 .. Max_Pool_Size - 1 =>
-             S.HC.Cfg.Local.Ints (I).DER_Len > X509.N32 (Max_Cert_DER))
-        or else
-          (S.HC.Cfg.Local.Sign_Algo = Sign_RSA_PSS
-           and then S.HC.Cfg.Local.RSA_Mod_Len not in 64 .. 512)
+        or else not Identity_Valid (S.HC.Cfg.Local.all)
       then
          Send_Alert_And_Error (S, Handshake_Failure, Result);
          return;
