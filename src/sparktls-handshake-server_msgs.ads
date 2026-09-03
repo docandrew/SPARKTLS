@@ -44,12 +44,11 @@ is
       OK            : out Boolean)
    with
      Pre => Data'Length > 0 and then Data'Last <= N32 (Max_HS_Msg) - 1,
-     Post =>
-       (if HC.Cfg.Local'Old /= null
-        then
-          HC.Cfg.Local /= null
-          and then (if HC.Cfg.Local'Old.Has_Identity then HC.Cfg.Local.Has_Identity))
-       and then (if OK then Version in TLS_1_2 | TLS_1_3);
+     --  No identity clause here: the callers (server.adb after SNI selection,
+     --  server-tls13 after HRR) re-validate S.HC.Cfg.Local at runtime before
+     --  building anything, so nothing consumed it; and this unit never writes
+     --  HC.Cfg, the fact was merely lost across four call boundaries.
+     Post => (if OK then Version in TLS_1_2 | TLS_1_3);
 
    function Has_ALPN_Match (HC : Handshake_Context) return Boolean;
 

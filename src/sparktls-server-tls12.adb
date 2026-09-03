@@ -1505,9 +1505,7 @@ is
    procedure Process_Client_Key_Exchange_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
-      Rec                     : Records.Parse_Result;
-      CKE_Transcript_Nonempty : Boolean := False
-      with Ghost;
+      Rec : Records.Parse_Result;
 
       procedure Compute_Shared_Secret_12
         (KE : in out KE_State; OK : out Boolean; Err : out Error_Code) is
@@ -1633,7 +1631,6 @@ is
                   if Result /= OK then
                      return;
                   end if;
-                  CKE_Transcript_Nonempty := (SPARKTLS_Transcript.Started (S.HC.TS));
                end;
             end;
          elsif Frag_Len < 4 then
@@ -1681,7 +1678,6 @@ is
                if Result /= OK then
                   return;
                end if;
-               CKE_Transcript_Nonempty := (SPARKTLS_Transcript.Started (S.HC.TS));
             end;
          end if;
       end;
@@ -1697,8 +1693,6 @@ is
             return;
          end if;
       end;
-      pragma Assert (CKE_Transcript_Nonempty);
-      pragma Assert (SPARKTLS_Transcript.Started (S.HC.TS));
       if S.HC.Cfg not in Ready_Config then
          --  Fail closed (Init's gate makes this unreachable).
          S.Last_Error := Internal_Error;

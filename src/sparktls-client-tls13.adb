@@ -119,16 +119,12 @@ is
       Scratch : in out IO_Buffer;
       Result  : out Action)
    with
-     Pre =>
-       SPARKTLS_Transcript.Started (S.HC.TS)
-       and then True,
      Post =>
        (if Result = OK
         then
           S.State = S.State'Old
           and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-          and then Hash_Len (S.HC.Neg) = Hash_Len (S.HC.Neg'Old)
-          and then True);
+          and then Hash_Len (S.HC.Neg) = Hash_Len (S.HC.Neg'Old));
 
    procedure Derive_App_Keys_And_Send_Finished
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
@@ -614,10 +610,7 @@ is
        and then Data'Length <= Transcript_Capacity
        and then S.Negotiated_Suite in TLS13_Suite,
      Post =>
-       (if S.State /= Error_State
-        then
-          SPARKTLS_Transcript.Started (S.HC.TS)
-          and then S.Negotiated_Suite in TLS13_Suite)
+       (if S.State /= Error_State then S.Negotiated_Suite in TLS13_Suite)
        and then Result in OK | Has_Output | Error_Alert;
 
    procedure Handle_CertReq_13

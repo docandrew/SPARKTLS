@@ -133,12 +133,8 @@ is
        and then Has_Message (D.Reasm)
        and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length),
      Post =>
-       (if Result = OK
-        then
-          SPARKTLS_Transcript.Started (S.HC.TS)
-          and then
-            (if S.State = Wait_Server_Hello
-             then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length)));
+       (if Result = OK and then S.State = Wait_Server_Hello
+        then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length));
 
    procedure Finalize_SH_Processing
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)

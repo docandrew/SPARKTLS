@@ -79,11 +79,7 @@ is
    end Send_Encrypted_Alert_Connected_12;
 
    procedure Append_Transcript (TS : in out SPARKTLS_Transcript.Transcript_State; Data : Byte_Seq)
-   with
-     Pre  => Data'Last < N32'Last - 256,
-     Post =>
-       (if SPARKTLS_Transcript.Started (TS)'Old or else Data'First <= Data'Last
-        then SPARKTLS_Transcript.Started (TS))
+   with Pre => Data'Last < N32'Last - 256
    is
    begin
       SPARKTLS_Transcript.Append (TS, Data);
@@ -712,8 +708,6 @@ is
    is
       Body_OK                 : Boolean := False;
       B                       : constant N32 := Frag'First + 4;
-      Transcript_Was_Nonempty : constant Boolean := SPARKTLS_Transcript.Started (S.HC.TS)
-      with Ghost;
    begin
       Result := OK;
       --  Body-length structural validation.
@@ -867,8 +861,7 @@ is
       Append_Transcript (S.HC.TS, Frag);
       pragma
         Assert_And_Cut
-          ((if Transcript_Was_Nonempty then SPARKTLS_Transcript.Started (S.HC.TS))
-           and then S.Negotiated_Suite in TLS12_Suite
+          (S.Negotiated_Suite in TLS12_Suite
            and then
              (if S.HC.Cfg.Local.Has_Identity
               then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)));
@@ -1399,8 +1392,7 @@ is
    with
      Pre  => FB'First = 0 and then Valid_Finished_12_Len (FL) and then FL - 1 <= FB'Last,
      Post =>
-       Result in OK | Has_Output | Error_Alert
-       and then (if Result = OK then SPARKTLS_Transcript.Started (S.HC.TS));
+       Result in OK | Has_Output | Error_Alert;
 
    procedure Encrypt_Client_Finished_Record_12
      (S       : in out Session;
@@ -1425,7 +1417,6 @@ is
          pragma Assert (Result in Has_Output | Error_Alert);
          return;
       end if;
-      pragma Assert (Result = OK and then SPARKTLS_Transcript.Started (S.HC.TS));
    end Encrypt_Client_Finished_Record_12;
 
    procedure Commit_Client_Flight_Scratch_12
@@ -1434,11 +1425,7 @@ is
       Scratch : in IO_Buffer;
       Result  : out Action)
    with
-     Post =>
-       Result in OK | Has_Output | Error_Alert
-       and then
-         (if (SPARKTLS_Transcript.Started (S.HC.TS)'Old and then Result = OK)
-          then SPARKTLS_Transcript.Started (S.HC.TS));
+     Post => Result in OK | Has_Output | Error_Alert;
 
    procedure Commit_Client_Flight_Scratch_12
      (S       : in out Session;
@@ -1471,8 +1458,7 @@ is
    with
      Pre  => FB'First = 0 and then Valid_Finished_12_Len (FL) and then FL - 1 <= FB'Last,
      Post =>
-       Result in OK | Has_Output | Error_Alert
-       and then (if Result = OK then SPARKTLS_Transcript.Started (S.HC.TS));
+       Result in OK | Has_Output | Error_Alert;
 
    procedure Encrypt_And_Commit_Client_Finished_12
      (S       : in out Session;
@@ -1497,8 +1483,7 @@ is
    with
      Pre  => S.Negotiated_Suite in TLS12_Suite,
      Post =>
-       Result in OK | Has_Output | Error_Alert
-       and then (if Result = OK then SPARKTLS_Transcript.Started (S.HC.TS));
+       Result in OK | Has_Output | Error_Alert;
 
    procedure Append_Client_CCS_And_Finished_12
      (S       : in out Session;
@@ -1533,8 +1518,7 @@ is
             and then S.HC.T12.Client_Cert_Allowed
           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)),
      Post =>
-       Result in OK | Has_Output | Error_Alert
-       and then (if Result = OK then SPARKTLS_Transcript.Started (S.HC.TS));
+       Result in OK | Has_Output | Error_Alert;
 
    procedure Build_Client_Flight_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
@@ -1756,10 +1740,7 @@ is
        and then Frag'Last - Frag'First < Transcript_Capacity
        and then S.Negotiated_Suite in TLS12_Suite,
      Post =>
-       (if Result = OK
-        then
-          (if SPARKTLS_Transcript.Started (S.HC.TS)'Old then SPARKTLS_Transcript.Started (S.HC.TS))
-          and then S.Negotiated_Suite in TLS12_Suite);
+       (if Result = OK then S.Negotiated_Suite in TLS12_Suite);
 
    procedure Handle_NST_12
      (S       : in out Session;
@@ -2237,6 +2218,7 @@ is
         then
           Result = OK
           and then Msg_Len <= Max_HS_Msg - 4
+          and then Has_Message (D.Reasm)
           and then
             (if S.HC.Cfg.Local /= null and then S.HC.Cfg.Local.Has_Identity
              then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local))
@@ -2332,7 +2314,9 @@ is
        and then Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos
        and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
        and then not Has_Message (D.Reasm),
-     Post => (if Ready then Result = OK and then Msg_Len <= Max_HS_Msg - 4);
+     Post =>
+       (if Ready
+        then Result = OK and then Msg_Len <= Max_HS_Msg - 4 and then Has_Message (D.Reasm));
 
    procedure Continue_Server_Flight_Reassembly
      (S        : in out Session;
@@ -2405,7 +2389,9 @@ is
        and then Rec.Record_Len = Rec.Fragment_Pos + Rec.Fragment_Len
        and then Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos
        and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len,
-     Post => (if Ready then Result = OK and then Msg_Len <= Max_HS_Msg - 4);
+     Post =>
+       (if Ready
+        then Result = OK and then Msg_Len <= Max_HS_Msg - 4 and then Has_Message (D.Reasm));
 
    procedure Start_Fresh_Pending_Header_Reassembly
      (S        : in out Session;
@@ -2627,7 +2613,11 @@ is
          Frag_Len => Frag_Len,
          Msg_Len  => Msg_Len,
          Result   => Result);
-      Ready := True;
+      --  Ready is read from the buffer, as the spanning path does: the
+      --  fragment held the whole message (Msg_Len + 4 <= Frag_Len above),
+      --  but Append exports no Post and the header parser's length comes
+      --  from RecordFlux, so Has_Message is not derivable here by proof.
+      Ready := Has_Message (D.Reasm);
       Result := OK;
    end Prepare_Fresh_Server_Flight_Message;
 

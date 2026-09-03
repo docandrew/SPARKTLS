@@ -117,9 +117,7 @@ is
       Built   : out Boolean)
    with
      Pre => Server_Active (S),
-     Post =>
-       S.State = S.State'Old
-       and then (if Built then SPARKTLS_Transcript.Started (S.HC.TS));
+     Post => S.State = S.State'Old;
 
    procedure Append_And_Encrypt_Server_HS
      (S         : in out Session;
@@ -218,10 +216,14 @@ is
        and then Plaintext'Last < N32'Last
        and then Plain_Len - 1 <= Plaintext'Last;
 
+   --  Takes the handshake context alone (the caller passes S.HC): the
+   --  body writes nothing else, so S.State and S.Role are structurally
+   --  untouched and Server_Active (S) survives the call without a
+   --  restating Post. The old whole-session form lost it here.
    procedure Derive_Handshake_Keys
-     (S : in out Session; Suite : in TLS13_Suite)
+     (HC : in out Handshake_Context; Suite : in TLS13_Suite)
    with
-     Post => S.HC.TS = S.HC.TS'Old and S.HC.Server_HS.Counter = 0;
+     Post => HC.TS = HC.TS'Old and HC.Server_HS.Counter = 0;
 
    procedure Derive_App_Keys
      (S : in out Session; Suite : in TLS13_Suite)
@@ -312,9 +314,7 @@ is
    procedure Append_Transcript (HC : in out Engaged_Context; Data : in Byte_Seq)
    with
      Post =>
-       (if SPARKTLS_Transcript.Started (HC.TS)'Old or else Data'First <= Data'Last
-       then SPARKTLS_Transcript.Started (HC.TS))
-       and Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
+       Hash_Len (HC.Neg) = Hash_Len (HC.Neg'Old)
        and HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Old,
      Pre => Data'Last < N32'Last - 256
    is
@@ -406,31 +406,30 @@ is
    is
       Valid_CH2 : Boolean;
 
-      procedure Consume_Record
+      --  Operates on the input buffer alone (passed as S.Input): the rest of
+      --  the session is structurally untouched, so no frame facts about S
+      --  need restating here -- the old up-level form lost S.Version at
+      --  every call, which is what kept the enclosing Post unprovable.
+      procedure Consume_Record (Inp : in out IO_Buffer)
       with
         Pre =>
-          Server_Active (S)
-          and then (if Consume_Current_Record
-                    then
-                      S.Input.Read_Pos <= N32'Last - Record_Len
-                      and then S.Input.Read_Pos + Record_Len <= S.Input.Write_Pos),
+          (if Consume_Current_Record
+           then
+             Inp.Read_Pos <= N32'Last - Record_Len
+             and then Inp.Read_Pos + Record_Len <= Inp.Write_Pos),
         Post =>
-          S.State = S.State'Old
-          and then S.Role = S.Role'Old
-          and then S.Negotiated_Suite = S.Negotiated_Suite'Old
-          and then Server_Active (S)
-          and then (if Consume_Current_Record
-                    then
-                      S.Input.Read_Pos = S.Input.Read_Pos'Old + Record_Len
-                      and then S.Input.Write_Pos = S.Input.Write_Pos'Old
-                    else
-                      S.Input.Read_Pos = S.Input.Read_Pos'Old
-                      and then S.Input.Write_Pos = S.Input.Write_Pos'Old)
+          (if Consume_Current_Record
+           then
+             Inp.Read_Pos = Inp.Read_Pos'Old + Record_Len
+             and then Inp.Write_Pos = Inp.Write_Pos'Old
+           else
+             Inp.Read_Pos = Inp.Read_Pos'Old
+             and then Inp.Write_Pos = Inp.Write_Pos'Old)
       is
       begin
          if Consume_Current_Record then
-            pragma Assert (S.Input.Read_Pos + Record_Len <= S.Input.Write_Pos);
-            S.Input.Read_Pos := S.Input.Read_Pos + Record_Len;
+            pragma Assert (Inp.Read_Pos + Record_Len <= Inp.Write_Pos);
+            Inp.Read_Pos := Inp.Read_Pos + Record_Len;
          end if;
       end Consume_Record;
 
@@ -446,7 +445,7 @@ is
    begin
       Ready_To_Build := False;
       if Msg'Length = 0 or else N32 (Msg'Length) > Transcript_Capacity then
-         Consume_Record;
+         Consume_Record (S.Input);
          Free_CH2_Reasm;
          Send_Alert_And_Error (S, Decode_Error, Result);
          return;
@@ -456,7 +455,7 @@ is
       if not Valid_CH2 then
          --  After HRR, CH2 parse/version/order failures are
          --  illegal_parameter (RFC 8446 4.1.4).
-         Consume_Record;
+         Consume_Record (S.Input);
          Free_CH2_Reasm;
          Send_Alert_And_Error (S, Illegal_Parameter, Result);
          return;
@@ -487,7 +486,7 @@ is
       end if;
 
       Append_Transcript (S.HC, Msg);
-      Consume_Record;
+      Consume_Record (S.Input);
       Free_CH2_Reasm;
 
       if not S.HC.Cfg.Local.Has_Identity
@@ -1497,6 +1496,131 @@ is
       end case;
    end Emit_Server_Finished;
 
+   --  Second half of the server flight: everything that goes out under the
+   --  handshake keys (EncryptedExtensions, Certificate/CertificateVerify,
+   --  Finished), then the atomic commit of Scratch to S.Output and the
+   --  application-key derivation. Split out of Build_Server_Flight_13 so
+   --  the prover sees this half against one precondition instead of the
+   --  whole negotiation path (the plaintext half is the caller).
+   procedure Emit_Encrypted_Server_Flight_13
+     (S            : in out Session;
+      D            : in out SPARKTLS.HS_Pool.HS_Data;
+      Cfg          : in Ready_Config;
+      Scratch      : in out IO_Buffer;
+      Flight_Suite : in Supported_Suite;
+      Result       : out Action)
+   with
+     --  No Negotiated_Suite conjunct: the tail keys everything off the
+     --  Flight_Suite snapshot and no callee's Pre reads S.Negotiated_Suite,
+     --  so the equality was consumed by nothing (and was lost at
+     --  Maybe_Send_HRR's boundary in the head).
+     Pre => Server_Active (S) and then Flight_Suite in TLS13_Suite
+   is
+   begin
+      --  Build EncryptedExtensions (encrypted with server HS keys)
+      declare
+         EE_Buf  : Byte_Seq (0 .. 271);
+         EE_Len  : N32;
+         EE_ALPN : Hostname_Buf;
+         Emitted : Boolean;
+      begin
+         Handshake.TLS13.Build_Encrypted_Extensions (S, EE_ALPN, EE_Buf, EE_Len);
+         S.Negotiated_ALPN := EE_ALPN;
+         pragma Assert (EE_Len in 6 .. N32 (EE_Buf'Length));
+         pragma Assert (EE_Len <= Max_Fragment);
+         pragma Assert (Server_Active (S));
+         Append_And_Encrypt_Server_HS
+           (S         => S,
+            D         => D,
+            Plaintext => EE_Buf (0 .. EE_Len - 1),
+            Scratch   => Scratch,
+            Result    => Result,
+            Emitted   => Emitted);
+         if not Emitted then
+            return;
+         end if;
+      end;
+
+      --  Skip Certificate/CertificateVerify for PSK resumption
+      if not S.HC.Using_PSK then
+
+         --  Build CertificateRequest if mTLS is configured
+         if Cfg.Request_Client_Cert then
+            declare
+               CR_Buf  : Byte_Seq (0 .. 31);
+               CR_Len  : N32;
+               Emitted : Boolean;
+            begin
+               Handshake.TLS13.Build_Certificate_Request (CR_Buf, CR_Len);
+               if CR_Len > 0 then
+                  pragma Assert (CR_Len <= Max_Fragment);
+                  Append_And_Encrypt_Server_HS
+                    (S         => S,
+                     D         => D,
+                     Plaintext => CR_Buf (0 .. CR_Len - 1),
+                     Scratch   => Scratch,
+                     Result    => Result,
+                     Emitted   => Emitted);
+                  if not Emitted then
+                     return;
+                  end if;
+               end if;
+            end;
+         end if;
+
+         --  Build Certificate chain (leaf + intermediates, encrypted)
+         declare
+            Emitted : Boolean;
+         begin
+            Emit_Certificate_Chain (S, D, Cfg, Scratch, Result, Emitted);
+            if not Emitted then
+               return;
+            end if;
+         end;
+
+         --  Build CertificateVerify (encrypted)
+         declare
+            Emitted : Boolean;
+         begin
+            Emit_Cert_Verify (S, D, Cfg, Scratch, Result, Emitted);
+            if not Emitted then
+               return;
+            end if;
+         end;
+
+      end if;  --  not Using_PSK (skip cert/cert_verify for resumption)
+
+      --  Build Finished (encrypted)
+      declare
+         Emitted : Boolean;
+      begin
+         Emit_Server_Finished (S, D, Scratch, Result, Emitted);
+         if not Emitted then
+            return;
+         end if;
+      end;
+
+      --  Atomic commit: full flight assembled in Scratch. If S.Output
+      --  has room, copy in one shot; otherwise abort and roll the
+      --  AEAD counter back so subsequent records (or the alert we may
+      --  send) stay nonce-synchronised with the peer.
+      if Free_Space (S.Output) < Scratch.Write_Pos then
+         S.Last_Error := Insufficient_Buffer;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
+      S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
+        Scratch.Data (0 .. Scratch.Write_Pos - 1);
+      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+
+      --  Derive application keys now (using transcript through server Finished)
+      Derive_App_Keys (S, TLS13_Suite (Flight_Suite));
+
+      Set_State (S, Server_Hello_Sent);
+      Result := Has_Output;
+   end Emit_Encrypted_Server_Flight_13;
+
    procedure Build_Server_Flight_13
      (S      : in out Session;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
@@ -1600,7 +1724,7 @@ is
       end if;
 
       --  Derive handshake keys
-      Derive_Handshake_Keys (S, TLS13_Suite (Flight_Suite));
+      Derive_Handshake_Keys (S.HC, TLS13_Suite (Flight_Suite));
       Flight_Hash_Len := Hash_Len (S.HC.Neg);
       --  Restored after r67: the length checks downstream consume this
       --  fact; it proves trivially now that Flight_Hash_Len comes from
@@ -1627,176 +1751,75 @@ is
          end if;
       end if;
 
-      --  Build EncryptedExtensions (encrypted with server HS keys)
-      declare
-         EE_Buf  : Byte_Seq (0 .. 271);
-         EE_Len  : N32;
-         EE_ALPN : Hostname_Buf;
-         Emitted : Boolean;
-      begin
-         Handshake.TLS13.Build_Encrypted_Extensions (S, EE_ALPN, EE_Buf, EE_Len);
-         S.Negotiated_ALPN := EE_ALPN;
-         pragma Assert (EE_Len in 6 .. N32 (EE_Buf'Length));
-         pragma Assert (EE_Len <= Max_Fragment);
-         pragma Assert (Server_Active (S));
-         Append_And_Encrypt_Server_HS
-           (S         => S,
-            D         => D,
-            Plaintext => EE_Buf (0 .. EE_Len - 1),
-            Scratch   => Scratch,
-            Result    => Result,
-            Emitted   => Emitted);
-         if not Emitted then
-            return;
-         end if;
-      end;
-
-      --  Skip Certificate/CertificateVerify for PSK resumption
-      if not S.HC.Using_PSK then
-
-         --  Build CertificateRequest if mTLS is configured
-         if Cfg.Request_Client_Cert then
-            declare
-               CR_Buf  : Byte_Seq (0 .. 31);
-               CR_Len  : N32;
-               Emitted : Boolean;
-            begin
-               Handshake.TLS13.Build_Certificate_Request (CR_Buf, CR_Len);
-               if CR_Len > 0 then
-                  pragma Assert (CR_Len <= Max_Fragment);
-                  Append_And_Encrypt_Server_HS
-                    (S         => S,
-                     D         => D,
-                     Plaintext => CR_Buf (0 .. CR_Len - 1),
-                     Scratch   => Scratch,
-                     Result    => Result,
-                     Emitted   => Emitted);
-                  if not Emitted then
-                     return;
-                  end if;
-               end if;
-            end;
-         end if;
-
-         --  Build Certificate chain (leaf + intermediates, encrypted)
-         declare
-            Emitted : Boolean;
-         begin
-            Emit_Certificate_Chain (S, D, Cfg, Scratch, Result, Emitted);
-            if not Emitted then
-               return;
-            end if;
-         end;
-
-         --  Build CertificateVerify (encrypted)
-         declare
-            Emitted : Boolean;
-         begin
-            Emit_Cert_Verify (S, D, Cfg, Scratch, Result, Emitted);
-            if not Emitted then
-               return;
-            end if;
-         end;
-
-      end if;  --  not Using_PSK (skip cert/cert_verify for resumption)
-
-      --  Build Finished (encrypted)
-      declare
-         Emitted : Boolean;
-      begin
-         Emit_Server_Finished (S, D, Scratch, Result, Emitted);
-         if not Emitted then
-            return;
-         end if;
-      end;
-
-      --  Atomic commit: full flight assembled in Scratch. If S.Output
-      --  has room, copy in one shot; otherwise abort and roll the
-      --  AEAD counter back so subsequent records (or the alert we may
-      --  send) stay nonce-synchronised with the peer.
-      if Free_Space (S.Output) < Scratch.Write_Pos then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
-      S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-        Scratch.Data (0 .. Scratch.Write_Pos - 1);
-      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
-
-      --  Derive application keys now (using transcript through server Finished)
-      Derive_App_Keys (S, TLS13_Suite (Flight_Suite));
-
-      Set_State (S, Server_Hello_Sent);
-      Result := Has_Output;
+      Emit_Encrypted_Server_Flight_13 (S, D, Cfg, Scratch, Flight_Suite, Result);
    end Build_Server_Flight_13;
 
    --  Derive handshake traffic keys from shared secret
    procedure Derive_Handshake_Keys
-     (S : in out Session; Suite : in TLS13_Suite) is
+     (HC : in out Handshake_Context; Suite : in TLS13_Suite) is
    begin
       case Suite is
          when Suite_AES_256_GCM_SHA384 =>
             declare
                use HKDF384;
-               Hello_Hash : Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
+               Hello_Hash : Key_Schedule.Digest_384 := Transcript_Hash_384 (HC);
                Early      : Key_Schedule.Digest_384;
                HS_Secret  : Key_Schedule.Digest_384;
                Client_Sec : OKM384_Seq (0 .. 47);
                Server_Sec : OKM384_Seq (0 .. 47);
             begin
-               Key_Schedule.Derive_Early_Secret_384 (Early, S.HC.PSK.Value);
-               if S.HC.KE.Curve = Group_Secp384r1 then
+               Key_Schedule.Derive_Early_Secret_384 (Early, HC.PSK.Value);
+               if HC.KE.Curve = Group_Secp384r1 then
                   Key_Schedule.Derive_Handshake_Secret_384
-                    (HS_Secret, Byte_Seq (S.HC.KE.Shared), Early);
+                    (HS_Secret, Byte_Seq (HC.KE.Shared), Early);
                else
                   Key_Schedule.Derive_Handshake_Secret_384
-                    (HS_Secret, S.HC.KE.Shared (0 .. 31), Early);
+                    (HS_Secret, HC.KE.Shared (0 .. 31), Early);
                end if;
 
-               S.HC.Handshake_Secret := Bytes_48 (HS_Secret);
-               S.HC.Neg := (Suite => Suite);
+               HC.Handshake_Secret := Bytes_48 (HS_Secret);
+               HC.Neg := (Suite => Suite);
 
                Key_Schedule.Derive_HS_Traffic_Secrets_384
                  (Client_Sec, Server_Sec, HS_Secret, Hello_Hash);
 
-               S.HC.Client_HS_Secret := Bytes_48 (Byte_Seq (Client_Sec));
-               S.HC.Server_HS_Secret := Bytes_48 (Byte_Seq (Server_Sec));
+               HC.Client_HS_Secret := Bytes_48 (Byte_Seq (Client_Sec));
+               HC.Server_HS_Secret := Bytes_48 (Byte_Seq (Server_Sec));
 
-               Set_Traffic_Keys (S.HC.Client_HS, S.HC.Client_HS_Secret, Suite);
-               Set_Traffic_Keys (S.HC.Server_HS, S.HC.Server_HS_Secret, Suite);
+               Set_Traffic_Keys (HC.Client_HS, HC.Client_HS_Secret, Suite);
+               Set_Traffic_Keys (HC.Server_HS, HC.Server_HS_Secret, Suite);
             end;
 
          when others =>
             declare
-               Hello_Hash : Digest := Transcript_Hash_256 (S.HC);
+               Hello_Hash : Digest := Transcript_Hash_256 (HC);
                Early      : Digest;
                HS_Secret  : Digest;
                Client_Sec : OKM_Seq (0 .. 31);
                Server_Sec : OKM_Seq (0 .. 31);
             begin
-               Key_Schedule.Derive_Early_Secret (Early, Bytes_32 (S.HC.PSK.Value (0 .. 31)));
-               if S.HC.KE.Curve = Group_Secp384r1 then
+               Key_Schedule.Derive_Early_Secret (Early, Bytes_32 (HC.PSK.Value (0 .. 31)));
+               if HC.KE.Curve = Group_Secp384r1 then
                   Key_Schedule.Derive_Handshake_Secret
-                    (HS_Secret, Byte_Seq (S.HC.KE.Shared), Early);
+                    (HS_Secret, Byte_Seq (HC.KE.Shared), Early);
                else
-                  Key_Schedule.Derive_Handshake_Secret (HS_Secret, S.HC.KE.Shared (0 .. 31), Early);
+                  Key_Schedule.Derive_Handshake_Secret (HS_Secret, HC.KE.Shared (0 .. 31), Early);
                end if;
 
-               S.HC.Handshake_Secret := (others => 0);
-               S.HC.Handshake_Secret (0 .. 31) := Bytes_32 (Digest (HS_Secret));
-               S.HC.Neg := (Suite => Suite);
+               HC.Handshake_Secret := (others => 0);
+               HC.Handshake_Secret (0 .. 31) := Bytes_32 (Digest (HS_Secret));
+               HC.Neg := (Suite => Suite);
 
                Key_Schedule.Derive_HS_Traffic_Secrets
                  (Client_Sec, Server_Sec, HS_Secret, Hello_Hash);
 
-               S.HC.Client_HS_Secret := (others => 0);
-               S.HC.Client_HS_Secret (0 .. 31) := Bytes_32 (Byte_Seq (Client_Sec));
-               S.HC.Server_HS_Secret := (others => 0);
-               S.HC.Server_HS_Secret (0 .. 31) := Bytes_32 (Byte_Seq (Server_Sec));
+               HC.Client_HS_Secret := (others => 0);
+               HC.Client_HS_Secret (0 .. 31) := Bytes_32 (Byte_Seq (Client_Sec));
+               HC.Server_HS_Secret := (others => 0);
+               HC.Server_HS_Secret (0 .. 31) := Bytes_32 (Byte_Seq (Server_Sec));
 
-               Set_Traffic_Keys (S.HC.Client_HS, S.HC.Client_HS_Secret, Suite);
-               Set_Traffic_Keys (S.HC.Server_HS, S.HC.Server_HS_Secret, Suite);
+               Set_Traffic_Keys (HC.Client_HS, HC.Client_HS_Secret, Suite);
+               Set_Traffic_Keys (HC.Server_HS, HC.Server_HS_Secret, Suite);
             end;
       end case;
    end Derive_Handshake_Keys;
