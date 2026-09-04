@@ -18,6 +18,10 @@ with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.Tickets_12;
+with SPARKTLS.RFLX_Bridge;
+with Ada.Unchecked_Deallocation;
+with RFLX.RFLX_Builtin_Types;
+with RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
 with SPARKTLS.Cert_Verify;          use SPARKTLS.Cert_Verify;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
@@ -302,32 +306,42 @@ is
         & U16_Bytes (Sig_RSA_PSS_SHA512)
         & U16_Bytes (Sig_Ed25519);
 
-      Certificate_Authorities : constant Byte_Seq (0 .. 1) := (16#00#, 16#00#);
       CR_Body_Len             : constant N32 :=
-        1
-        + N32 (Certificate_Types'Length)
-        + 2
-        + N32 (Signature_Algorithms'Length)
-        + N32 (Certificate_Authorities'Length);
+        1 + N32 (Certificate_Types'Length)
+        + 2 + N32 (Signature_Algorithms'Length)
+        + 2;   --  ct_len(1)+types + sa_len(2)+algs + ca_len(2)+ca(0)
       CR_Buf                  : Byte_Seq (0 .. 4 + CR_Body_Len - 1) := (others => 0);
+
+      package RBT  renames RFLX.RFLX_Builtin_Types;
+      package CR12 renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
+      use SPARKTLS.RFLX_Bridge;
+      procedure CR_Free is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      Buf : RBT.Bytes_Ptr;
+      Ctx : CR12.Context;
    begin
       pragma Assert (CR_Body_Len = 25);
+
+      --  RFC 5246 7.4.4 body via RecordFlux: certificate_types +
+      --  supported_signature_algorithms + empty certificate_authorities.
+      Buf := new RBT.Bytes'(1 .. RBT.Index (CR_Body_Len) => 0);
+      CR12.Initialize (Ctx, Buf);
+      CR12.Set_Certificate_Types_Length
+        (Ctx, RFLX.TLS_Handshake.TLS_1_2_CR_Cert_Types_Length (Certificate_Types'Length));
+      CR12.Set_Certificate_Types (Ctx, To_RFLX (Certificate_Types));
+      CR12.Set_Signature_Algorithms_Length
+        (Ctx, RFLX.TLS_Handshake.TLS_1_2_CR_Sig_Algs_Length (Signature_Algorithms'Length));
+      CR12.Set_Signature_Algorithms (Ctx, To_RFLX (Signature_Algorithms));
+      CR12.Set_Certificate_Authorities_Length (Ctx, 0);
+      CR12.Set_Certificate_Authorities_Empty (Ctx);
+      CR12.Take_Buffer (Ctx, Buf);
+
       CR_Buf (0) := HS_Msg_Wire (HT_Certificate_Request);
       CR_Buf (1) := Byte (CR_Body_Len / 65536);
       CR_Buf (2) := Byte ((CR_Body_Len / 256) mod 256);
       CR_Buf (3) := Byte (CR_Body_Len mod 256);
-
-      --  certificate_types<1..2^8-1>
-      CR_Buf (4) := Byte (Certificate_Types'Length);
-      CR_Buf (5 .. 6) := Certificate_Types;
-
-      --  supported_signature_algorithms<2..2^16-2>
-      CR_Buf (7) := Byte (Signature_Algorithms'Length / 256);
-      CR_Buf (8) := Byte (Signature_Algorithms'Length mod 256);
-      CR_Buf (9 .. 26) := Signature_Algorithms;
-
-      --  certificate_authorities<0..2^16-1>, empty.
-      CR_Buf (27 .. 28) := Certificate_Authorities;
+      CR_Buf (4 .. 4 + CR_Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (CR_Body_Len)));
+      CR_Free (Buf);
 
       Append_Transcript (HC, CR_Buf);
       Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out);

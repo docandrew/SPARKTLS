@@ -553,6 +553,59 @@ is
      Pre =>
        Valid_TLS_1_2_Cert_List_Length (Val);
 
+   type TLS_1_2_CR_Cert_Types_Length is range 1 .. 2**8 - 1
+   with
+     Size =>
+       8;
+
+   function Valid_TLS_1_2_CR_Cert_Types_Length (Val : RFLX.RFLX_Types.Base_Integer) return Boolean is
+     (Val >= 1
+      and Val <= 255);
+
+   function To_Base_Integer (Val : RFLX.TLS_Handshake.TLS_1_2_CR_Cert_Types_Length) return RFLX.RFLX_Types.Base_Integer is
+     (RFLX.RFLX_Types.Base_Integer (Val));
+
+   function To_Actual (Val : RFLX.RFLX_Types.Base_Integer) return RFLX.TLS_Handshake.TLS_1_2_CR_Cert_Types_Length is
+     (RFLX.TLS_Handshake.TLS_1_2_CR_Cert_Types_Length (Val))
+   with
+     Pre =>
+       Valid_TLS_1_2_CR_Cert_Types_Length (Val);
+
+   type TLS_1_2_CR_Sig_Algs_Length is range 2 .. 2**16 - 2
+   with
+     Size =>
+       16;
+
+   function Valid_TLS_1_2_CR_Sig_Algs_Length (Val : RFLX.RFLX_Types.Base_Integer) return Boolean is
+     (Val >= 2
+      and Val <= 65534);
+
+   function To_Base_Integer (Val : RFLX.TLS_Handshake.TLS_1_2_CR_Sig_Algs_Length) return RFLX.RFLX_Types.Base_Integer is
+     (RFLX.RFLX_Types.Base_Integer (Val));
+
+   function To_Actual (Val : RFLX.RFLX_Types.Base_Integer) return RFLX.TLS_Handshake.TLS_1_2_CR_Sig_Algs_Length is
+     (RFLX.TLS_Handshake.TLS_1_2_CR_Sig_Algs_Length (Val))
+   with
+     Pre =>
+       Valid_TLS_1_2_CR_Sig_Algs_Length (Val);
+
+   type TLS_1_2_CR_CA_Length is range 0 .. 2**16 - 1
+   with
+     Size =>
+       16;
+
+   function Valid_TLS_1_2_CR_CA_Length (Val : RFLX.RFLX_Types.Base_Integer) return Boolean is
+     (Val <= 65535);
+
+   function To_Base_Integer (Val : RFLX.TLS_Handshake.TLS_1_2_CR_CA_Length) return RFLX.RFLX_Types.Base_Integer is
+     (RFLX.RFLX_Types.Base_Integer (Val));
+
+   function To_Actual (Val : RFLX.RFLX_Types.Base_Integer) return RFLX.TLS_Handshake.TLS_1_2_CR_CA_Length is
+     (RFLX.TLS_Handshake.TLS_1_2_CR_CA_Length (Val))
+   with
+     Pre =>
+       Valid_TLS_1_2_CR_CA_Length (Val);
+
    type TLS_1_2_CKE_Point_Length is range 1 .. 2**8 - 1
    with
      Size =>

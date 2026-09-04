@@ -851,6 +851,32 @@ package TLS_Handshake is
             with Size => Certificate_List_Length * 8;
       end message;
 
+   -- TLS 1.2 CertificateRequest -- RFC 5246 7.4.4.
+   --   struct {
+   --      ClientCertificateType certificate_types<1..2^8-1>;
+   --      SignatureAndHashAlgorithm
+   --          supported_signature_algorithms<2..2^16-2>;
+   --      DistinguishedName certificate_authorities<0..2^16-1>;
+   --   } CertificateRequest;
+   -- Bodies stay opaque: cert type / signature-scheme selection and the DN
+   -- list are the client's policy, not a parse-time schema.
+   type TLS_1_2_CR_Cert_Types_Length is range 1 .. 2 ** 8 - 1 with Size => 8;
+   type TLS_1_2_CR_Sig_Algs_Length is range 2 .. 2 ** 16 - 2 with Size => 16;
+   type TLS_1_2_CR_CA_Length is unsigned 16;
+
+   type TLS_1_2_Certificate_Request is
+      message
+         Certificate_Types_Length : TLS_1_2_CR_Cert_Types_Length;
+         Certificate_Types : Opaque
+            with Size => Certificate_Types_Length * 8;
+         Signature_Algorithms_Length : TLS_1_2_CR_Sig_Algs_Length;
+         Signature_Algorithms : Opaque
+            with Size => Signature_Algorithms_Length * 8;
+         Certificate_Authorities_Length : TLS_1_2_CR_CA_Length;
+         Certificate_Authorities : Opaque
+            with Size => Certificate_Authorities_Length * 8;
+      end message;
+
    -- TLS 1.2 ClientKeyExchange for ECDHE — RFC 5246 §7.4.7 + RFC 8422 §5.7.
    --
    --   struct {

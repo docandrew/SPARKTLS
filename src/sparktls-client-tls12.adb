@@ -27,6 +27,7 @@ use type X509.Certificate;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate;
+with RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
 
@@ -691,193 +692,126 @@ is
       Frag    : in Byte_Seq;
       Msg_Len : in N32;
       Result  : out Action)
-   with
-     Pre  =>
-       Msg_Len <= Max_HS_Msg - 4
-       and then
-         Frag'First
-         <= Frag'Last
-            --  256, not 4: the transcript-append bound. Callers pass
-            --  Message() slices ('Last <= Max_HS_Msg - 1), so this is
-            --  free to prove there and feeds Append_Transcript here.
-       and then Frag'Last < N32'Last - 256
-       and then Frag'First <= N32'Last - 4
-       and then Msg_Len <= N32'Last - Frag'First - 4
-       and then Msg_Len <= N32 (Frag'Length) - 4
-       and then Frag'First + 3 + Msg_Len <= Frag'Last
-       and then Frag'Last - Frag'First < Transcript_Capacity
-       and then S.Negotiated_Suite in TLS12_Suite
-       and then
-         (if S.HC.Cfg.Local.Has_Identity
-          then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)),
-     Post =>
-       (if Result = OK
-        then
-          (if S.HC.Cfg.Local.Has_Identity
-           then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)));
-
-   procedure Handle_CertReq_12
-     (S       : in out Session;
-      D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Frag    : in Byte_Seq;
-      Msg_Len : in N32;
-      Result  : out Action)
    is
-      Body_OK                 : Boolean := False;
-      B                       : constant N32 := Frag'First + 4;
-      --  Where the supported_signature_algorithms (SA) and the
-      --  certificate_authorities (CA) lists sit inside Frag, recorded by
-      --  the structural check for the credential selector. 0 = not seen.
-      SA_Pos, SA_Cnt          : N32 := 0;
-      CA_Pos, CA_Cnt          : N32 := 0;
+      package CR12 renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
+      use type RBT.Bit_Length;
+      procedure CR_Free is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      Buf : RBT.Bytes_Ptr;
+      Ctx : CR12.Context;
+
+      procedure Fail (Err : Error_Code)
+      with Pre => not CR12.Has_Buffer (Ctx) or else CR12.Has_Buffer (Ctx)
+      is
+      begin
+         if CR12.Has_Buffer (Ctx) then
+            CR12.Take_Buffer (Ctx, Buf);
+         end if;
+         CR_Free (Buf);
+         Reset (D.Reasm);
+         Send_Alert_And_Error (S, Err, Result);
+      end Fail;
    begin
       Result := OK;
-      --  Body-length structural validation.
-      if B < Frag'Last then
-         declare
-            CT_Len_D : constant N32 := N32 (Frag (B));
-         begin
-            if CT_Len_D <= Frag'Last - B - 1 then
-               declare
-                  SA_Off_D : constant N32 := B + 1 + CT_Len_D;
-               begin
-                  if SA_Off_D < Frag'Last then
-                     declare
-                        SA_Len_D : constant N32 :=
-                          N32 (Frag (SA_Off_D)) * 256 + N32 (Frag (SA_Off_D + 1));
-                     begin
-                        if SA_Len_D <= Frag'Last - SA_Off_D - 2 then
-                           declare
-                              CA_Off_D : constant N32 := SA_Off_D + 2 + SA_Len_D;
-                           begin
-                              if CA_Off_D < Frag'Last then
-                                 declare
-                                    CA_Len_D : constant N32 :=
-                                      N32 (Frag (CA_Off_D)) * 256 + N32 (Frag (CA_Off_D + 1));
-                                    Expected : constant N32 :=
-                                      1 + CT_Len_D + 2 + SA_Len_D + 2 + CA_Len_D;
-                                 begin
-                                    Body_OK := Msg_Len = Expected;
-                                    if Body_OK then
-                                       SA_Pos := SA_Off_D + 2;
-                                       SA_Cnt := SA_Len_D;
-                                       CA_Pos := CA_Off_D + 2;
-                                       CA_Cnt := CA_Len_D;
-                                    end if;
-                                 end;
-                              end if;
-                           end;
-                        end if;
-                     end;
-                  end if;
-               end;
-            end if;
-         end;
-      end if;
-      if not Body_OK then
-         Reset (D.Reasm);
-         Send_Alert_And_Error (S, Decode_Error, Result);
-         pragma Assert (Result /= OK);
-         pragma Assert_And_Cut (Result /= OK and then S.State = Error_State);
+
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Msg_Len) => 0);
+      Buf.all :=
+        To_RFLX (Frag (Frag'First + 4 .. Frag'First + 3 + Msg_Len));
+      CR12.Initialize
+        (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Msg_Len) * 8));
+      CR12.Verify_Message (Ctx);
+
+      --  RFC 5246 7.4.4: a malformed CertificateRequest (bad field lengths,
+      --  empty signature_algorithms via the range 2 ..) is decode_error.
+      if not CR12.Well_Formed_Message (Ctx) then
+         Fail (Decode_Error);
          return;
       end if;
-      S.HC.Cert_Request_Received := True;
-      S.HC.T12.Client_Cert_Allowed := False;
 
-      --  Application credential selection (Config.Select_Client_Identity):
-      --  runs before the signature-algorithm pick below so the chosen
-      --  identity's key type drives it. The slices are clamped to Frag so
-      --  their bounds are local facts; the structural check above already
-      --  made them exact, so the clamp never bites.
-      if S.HC.Cfg.Select_Client_Identity /= null then
-         declare
-            CA_Len    : constant N32 := N32'Min (CA_Cnt, Frag'Last + 1 - CA_Pos);
-            SA_Len    : constant N32 := N32'Min (SA_Cnt, Frag'Last + 1 - SA_Pos);
-            Picked_Id : constant Maybe_Identity_Access :=
-              S.HC.Cfg.Select_Client_Identity
-                (Frag (CA_Pos .. CA_Pos + CA_Len - 1), Frag (SA_Pos .. SA_Pos + SA_Len - 1));
-         begin
-            if Picked_Id = null then
-               --  Decline client authentication: empty Certificate later.
-               S.HC.Cfg.Local := No_Identity'Access;
-            elsif Picked_Id.Has_Identity and then Identity_Valid (Picked_Id.all) then
-               S.HC.Cfg.Local := Valid_Identity_Access (Picked_Id);
-            else
-               Reset (D.Reasm);
-               Send_Alert_And_Error (S, Internal_Error, Result);
-               return;
-            end if;
-         end;
+      --  RFC 5246 7.4: the message MUST end exactly at its declared length;
+      --  trailing bytes are decode_error (BoGo
+      --  TrailingMessageData-CertificateRequest-TLS).
+      if CR12.Message_Last (Ctx) /= RBT.Bit_Length (RBT.Length (Msg_Len) * 8) then
+         Fail (Decode_Error);
+         return;
       end if;
 
-      --  Sig-algs selection. Empty sig_algs list is malformed per
-      --  RFC 5246 7.4.1.4.1.
       declare
-         Picked   : Maybe_Sig_Scheme := Scheme_None;
-         SA_Empty : Boolean := True;
-         CT_OK    : Boolean := False;
+         CT_Len : constant N32 := N32 (CR12.Get_Certificate_Types_Length (Ctx));
+         SA_Len : constant N32 := N32 (CR12.Get_Signature_Algorithms_Length (Ctx));
+         CA_Len : constant N32 := N32 (CR12.Get_Certificate_Authorities_Length (Ctx));
+         CTL    : constant RBT.Index := RBT.Index (CT_Len);
+         SAL    : constant RBT.Index := RBT.Index (SA_Len);
+         CT_R   : RBT.Bytes (1 .. CTL);
+         SA_R   : RBT.Bytes (1 .. SAL);
+         CT     : Byte_Seq (0 .. CT_Len - 1);
+         SA     : Byte_Seq (0 .. SA_Len - 1);
       begin
-         if B < Frag'Last then
-            declare
-               CT_Len : constant N32 := N32 (Frag (B));
-            begin
-               if CT_Len <= Frag'Last - B - 1 then
-                  if S.HC.Cfg.Local.Has_Identity and then CT_Len > 0 then
-                     declare
-                        Required_CT : constant Byte :=
-                          (case S.HC.Cfg.Local.Sign_Algo is
-                             when Sign_RSA_PSS                                     =>
-                               1,   --  rsa_sign
-                             when Sign_ECDSA_P256 | Sign_ECDSA_P384 | Sign_Ed25519 =>
-                               64,  --  ecdsa_sign
-                             when Sign_None                                        => 0);
-                     begin
-                        pragma Assert (B + CT_Len < Frag'Last);
-                        CT_OK :=
-                          Required_CT /= 0
-                          and then (for some I in B + 1 .. B + CT_Len => Frag (I) = Required_CT);
-                     end;
-                  end if;
-                  declare
-                     SA_Off : constant N32 := B + 1 + CT_Len;
-                  begin
-                     if SA_Off < Frag'Last then
-                        declare
-                           SA_Len : constant N32 :=
-                             N32 (Frag (SA_Off)) * 256 + N32 (Frag (SA_Off + 1));
-                        begin
-                           if SA_Len >= 2 and then SA_Len <= Frag'Last - SA_Off - 1 then
-                              SA_Empty := False;
+         CR12.Get_Certificate_Types (Ctx, CT_R);
+         CR12.Get_Signature_Algorithms (Ctx, SA_R);
+         CT := To_NaCl (CT_R);
+         SA := To_NaCl (SA_R);
 
-                              declare
-                                 SA_Slice : constant Byte_Seq (0 .. SA_Len - 1) :=
-                                   Frag (SA_Off + 2 .. SA_Off + 1 + SA_Len);
-                              begin
-                                 Picked :=
-                                   Handshake.Pick_Sig_Algo_With_Prefs
-                                     (SA_Slice,
-                                      S.HC.Cfg.Local.Sign_Algo,
-                                      S.HC.Cfg.Sign_Sig_Algos,
-                                      S.HC.Cfg.Sign_Sig_Algo_Count,
-                                      Allow_PKCS1_v1_5 => True);
-                              end;
-                           end if;
-                        end;
-                     end if;
-                  end;
+         S.HC.Cert_Request_Received := True;
+         S.HC.T12.Client_Cert_Allowed := False;
+
+         --  RFC 5246 7.4.4 credential selection: certificate_authorities and
+         --  the offered signature_algorithms are what the client picks by.
+         if S.HC.Cfg.Select_Client_Identity /= null then
+            declare
+               CA_R      : RBT.Bytes (1 .. RBT.Index (if CA_Len = 0 then 1 else CA_Len)) :=
+                 (others => 0);
+               CA        : Byte_Seq (0 .. (if CA_Len = 0 then 0 else CA_Len - 1)) :=
+                 (others => 0);
+               Picked_Id : Maybe_Identity_Access;
+            begin
+               if CA_Len > 0 then
+                  CR12.Get_Certificate_Authorities (Ctx, CA_R (1 .. RBT.Index (CA_Len)));
+                  CA := To_NaCl (CA_R (1 .. RBT.Index (CA_Len)));
+               end if;
+               Picked_Id :=
+                 S.HC.Cfg.Select_Client_Identity
+                   ((if CA_Len = 0 then Byte_Seq'(1 .. 0 => 0) else CA (0 .. CA_Len - 1)), SA);
+               if Picked_Id = null then
+                  S.HC.Cfg.Local := No_Identity'Access;
+               elsif Picked_Id.Has_Identity and then Identity_Valid (Picked_Id.all) then
+                  S.HC.Cfg.Local := Valid_Identity_Access (Picked_Id);
+               else
+                  Fail (Internal_Error);
+                  return;
                end if;
             end;
          end if;
 
-         if SA_Empty then
-            Reset (D.Reasm);
-            Send_Alert_And_Error (S, Decode_Error, Result);
-            pragma Assert (Result /= OK);
-            pragma Assert_And_Cut (Result /= OK and then S.State = Error_State);
-            return;
-         end if;
+         declare
+            Picked : Maybe_Sig_Scheme := Scheme_None;
+            CT_OK  : Boolean := False;
+         begin
+            if S.HC.Cfg.Local.Has_Identity and then CT_Len > 0 then
+               declare
+                  Required_CT : constant Byte :=
+                    (case S.HC.Cfg.Local.Sign_Algo is
+                       when Sign_RSA_PSS                                     => 1,   --  rsa_sign
+                       when Sign_ECDSA_P256 | Sign_ECDSA_P384 | Sign_Ed25519 => 64,  --  ecdsa_sign
+                       when Sign_None                                        => 0);
+               begin
+                  CT_OK :=
+                    Required_CT /= 0
+                    and then (for some I in CT'Range => CT (I) = Required_CT);
+               end;
+            end if;
 
-         if Picked /= Scheme_None then
+            --  RFC 5246 7.4.1.4.1: pick a mutually supported scheme; PKCS#1
+            --  v1.5 is allowed in TLS 1.2 client auth.
+            Picked :=
+              Handshake.Pick_Sig_Algo_With_Prefs
+                (SA,
+                 S.HC.Cfg.Local.Sign_Algo,
+                 S.HC.Cfg.Sign_Sig_Algos,
+                 S.HC.Cfg.Sign_Sig_Algo_Count,
+                 Allow_PKCS1_v1_5 => True);
+
+            if Picked /= Scheme_None then
                S.HC.Negotiated_Sig_Algo := Picked;
                S.HC.T12.Client_Cert_Allowed := CT_OK;
             else
@@ -892,33 +826,25 @@ is
                      S.HC.Negotiated_Sig_Algo := Sig_ECDSA_P384_SHA384;
 
                   when Sign_Ed25519    =>
-                     --  PureEdDSA cannot sign the streamed 1.2
-                     --  transcript (two-pass over raw bytes); Ed25519
-                     --  client auth is TLS 1.3-only. Decline auth --
-                     --  the empty Certificate path is interoperable.
+                     --  PureEdDSA cannot sign the streamed TLS 1.2 transcript;
+                     --  decline (empty Certificate) rather than fail.
                      null;
 
                   when Sign_None       =>
                      null;
                end case;
-         end if;
+            end if;
 
-         if S.HC.Cfg.Local.Has_Identity and then not S.HC.T12.Client_Cert_Allowed
-         then
-            Reset (D.Reasm);
-            Send_Alert_And_Error (S, Illegal_Parameter, Result);
-            pragma Assert (Result /= OK);
-            pragma Assert_And_Cut (Result /= OK and then S.State = Error_State);
-            return;
-         end if;
+            if S.HC.Cfg.Local.Has_Identity and then not S.HC.T12.Client_Cert_Allowed then
+               Fail (Illegal_Parameter);
+               return;
+            end if;
+         end;
       end;
+
+      CR12.Take_Buffer (Ctx, Buf);
+      CR_Free (Buf);
       Append_Transcript (S.HC.TS, Frag);
-      pragma
-        Assert_And_Cut
-          (S.Negotiated_Suite in TLS12_Suite
-           and then
-             (if S.HC.Cfg.Local.Has_Identity
-              then SPARKTLS.Handshake.Server_Msgs.Local_Config_Valid (S.HC.Cfg.Local)));
    end Handle_CertReq_12;
 
    --  RFC 5246 7.4.3 ServerKeyExchange (HS type 0x0C). Length-validates
