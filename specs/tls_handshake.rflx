@@ -242,36 +242,13 @@ package TLS_Handshake is
    -- Extensions for the EE (EncryptedExtensions) message
    type EE_Extension is
       message
-         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values
-            then Data_Length
-               if
-               -- Message type specific constraints
-               (
-                  --
-                  -- Automatically generated condition that selects the enum literals having
-                  -- the following properties:
-                  --
-                  -- tls13 = .*EE.*
-                  --
-                  -- NOTE: Remove or amend this comment when the condition below is modified.
-                  --
-                  Tag = Tls_Extensiontype_Values::Server_Name or
-                  Tag = Tls_Extensiontype_Values::Max_Fragment_Length or
-                  Tag = Tls_Extensiontype_Values::Supported_Groups or
-                  Tag = Tls_Extensiontype_Values::Use_Srtp or
-                  Tag = Tls_Extensiontype_Values::Heartbeat or
-                  Tag = Tls_Extensiontype_Values::Application_Layer_Protocol_Negotiation or
-                  Tag = Tls_Extensiontype_Values::Client_Certificate_Type or
-                  Tag = Tls_Extensiontype_Values::Server_Certificate_Type or
-                  Tag = Tls_Extensiontype_Values::Record_Size_Limit or
-                  Tag = Tls_Extensiontype_Values::Ticket_Pinning or
-                  Tag = Tls_Extensiontype_Values::Supported_Ekt_Ciphers or
-                  Tag = Tls_Extensiontype_Values::Early_Data or
-                  Tag = Tls_Extensiontype_Values::External_Id_Hash or
-                  Tag = Tls_Extensiontype_Values::External_Session_Id or
-                  Tag = Tls_Extensiontype_Values::Quic_Transport_Parameters or
-                  Tag = Tls_Extensiontype_Values::Ticket_Request
-               );
+         -- Tag constraint removed (2026-09-04), as for CH/SH_Extension_TLS: which
+         -- tags are allowed in EncryptedExtensions is the client's policy
+         -- (SPARKTLS.Validate_Server_Ext with E_EE), which answers a forbidden
+         -- tag with the RFC's unsupported_extension alert. A parse-time whitelist
+         -- could only say "malformed", losing that distinction (BoGo
+         -- EncryptedExtensionsWithKeyShare / UnknownExtension / EMS-Forbidden).
+         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values;
          Data_Length : Data_Length;
          Data : Opaque
             with Size => 8 * Data_Length;

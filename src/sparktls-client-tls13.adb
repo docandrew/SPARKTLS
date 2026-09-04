@@ -20,6 +20,14 @@ with SPARKTLSCrypto.P384.ECDSA;
 use SPARKTLSCrypto;
 
 with X509;
+with SPARKTLS.RFLX_Bridge;
+with Ada.Unchecked_Deallocation;
+with RFLX.RFLX_Builtin_Types;
+with RFLX.RFLX_Types;
+with RFLX.TLS_Handshake.Encrypted_Extensions;
+with RFLX.TLS_Handshake.EE_Extensions;
+with RFLX.TLS_Handshake.EE_Extension;
+with RFLX.Tls_Extensiontype_Values;
 
 package body SPARKTLS.Client.TLS13
   with SPARK_Mode => On
@@ -381,6 +389,12 @@ is
    --  past the last extension byte; computed once from the 2-byte
    --  ext_total_len read at fixed offset Body+0..1.
    ----------------------------------------------------------------------------
+   --  RFC 8446 4.3.1 EncryptedExtensions body: extensions<0..2^16-1>.
+   --  Parsed through RecordFlux (Encrypted_Extensions + EE_Extensions).
+   --  Two passes preserve the RFC 8446 4.2 precedence the BoGo tests pin:
+   --  duplicates (decode_error) are detected across the whole block before
+   --  any policy check, then Validate_Server_Ext (E_EE) gates each tag and
+   --  Validate_ALPN_Echo_Body reads the ALPN body.
    procedure Extract_ALPN_From_EE
      (Data : in Byte_Seq;
       D    : in SPARKTLS.HS_Pool.HS_Data;
@@ -388,147 +402,160 @@ is
       OK   : out Boolean;
       Err  : out Error_Code)
    is
-      ALPN_Tag   : constant N32 := 16#0010#;
-      Body_Start : constant N32 := Data'First + 4;
-   begin
-      OK := True;
-      Err := Illegal_Parameter;  --  default for ALPN-shape failures
+      pragma Unreferenced (D);
+      package EE      renames RFLX.TLS_Handshake.Encrypted_Extensions;
+      package EE_Seq  renames RFLX.TLS_Handshake.EE_Extensions;
+      package EE_Elem renames RFLX.TLS_Handshake.EE_Extension;
+      package RBT     renames RFLX.RFLX_Builtin_Types;
+      use type RBT.Length;
+      procedure EE_Free is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
 
-      --  Need at least HS hdr + 2-byte ext_total_len = 6 bytes.
-      if N32 (Data'Length) < 6 then
+      function Tag_Wire
+        (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
+      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
+
+      Body_Len : constant N32 := N32 (Data'Length) - 4;
+      Buf      : RBT.Bytes_Ptr;
+      Ctx      : EE.Context;
+
+      subtype Seen_Range is N32 range 1 .. 32;
+      Seen_Tags  : array (Seen_Range) of Unsigned_16 := (others => 0);
+      Seen_Count : N32 := 0;
+      Dup_Found  : Boolean := False;
+      Pol_Err    : Error_Code := No_Error;
+   begin
+      OK  := True;
+      Err := Illegal_Parameter;
+
+      --  The caller (Handle_EE_13) has already checked Data'Length >= 6 and
+      --  that the declared extensions length fills the body exactly.
+      if Data'Length < 6 then
          return;
       end if;
 
-      declare
-         Ext_Total : constant N32 := N32 (Data (Body_Start)) * 256 + N32 (Data (Body_Start + 1));
-         Ext_End   : constant N32 := Body_Start + 2 + Ext_Total;
-         P         : N32 := Body_Start + 2;
-      begin
-         --  Bound: extensions fit within the EE message.
-         if Ext_End > Data'Last + 1 then
-            return;
-         end if;
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      Buf.all := SPARKTLS.RFLX_Bridge.To_RFLX (Data (Data'First + 4 .. Data'Last));
+      EE.Initialize
+        (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
+      EE.Verify_Message (Ctx);
 
-         --  RFC 8446 4.2 priority: structural checks (duplicates)
-         --  take precedence over semantic checks (matrix policy).
-         --  BoGo DuplicateExtensionClient-* expects decode_error
-         --  even when the duplicated tag is also not in
-         --  Allowed_EE. We must therefore detect ALL duplicates
-         --  before running ANY policy validation  single-pass
-         --  merging would short-circuit on the first instance with
-         --  unsupported_extension before its duplicate is reached.
+      if not EE.Well_Formed_Message (Ctx) then
+         OK  := False;
+         Err := Decode_Error;
+         EE.Take_Buffer (Ctx, Buf);
+         EE_Free (Buf);
+         return;
+      end if;
+
+      --  Pass 1: duplicate detection over the whole block.
+      if EE.Present (Ctx, EE.F_Extensions) then
          declare
-            subtype Seen_Range is N32 range 1 .. 32;
-            Seen_Tags  : array (Seen_Range) of N32 := (others => 0);
-            Seen_Count : N32 := 0;
-            Q          : N32 := P;
+            Exts : EE_Seq.Context;
          begin
-            while Q + 4 <= Ext_End loop
-               pragma
-                 Loop_Invariant
-                   (Q >= Body_Start + 2
-                      and Q <= Ext_End
-                      and Q + 4 <= Ext_End
-                      and Ext_End <= N32'Last - 16#1_0003#
-                      and Ext_End <= Data'Last + 1
-                      and S.State = S.State'Loop_Entry
-                      and S.Client_App = S.Client_App'Loop_Entry
-                      and S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry
-                      and Seen_Count <= 32);
+            EE.Switch_To_Extensions (Ctx, Exts);
+            while EE_Seq.Has_Element (Exts) loop
                declare
-                  T : constant N32 := N32 (Data (Q)) * 256 + N32 (Data (Q + 1));
-                  L : constant N32 := N32 (Data (Q + 2)) * 256 + N32 (Data (Q + 3));
+                  E : EE_Elem.Context;
                begin
-                  pragma Assert (L <= 16#FFFF#);
-                  exit when Q + 4 + L > Ext_End;
-                  for I in N32 range 1 .. Seen_Count loop
-                     pragma Loop_Invariant (Seen_Count <= 32);
-                     if Seen_Tags (I) = T then
-                        OK := False;
-                        Err := Decode_Error;
-                        return;
-                     end if;
-                  end loop;
-                  if Seen_Count < 32 then
-                     Seen_Count := Seen_Count + 1;
-                     Seen_Tags (Seen_Count) := T;
+                  EE_Seq.Switch (Exts, E);
+                  EE_Elem.Verify_Message (E);
+                  if EE_Elem.Well_Formed_Message (E) then
+                     declare
+                        Tg : constant Unsigned_16 := Tag_Wire (EE_Elem.Get_Tag (E));
+                     begin
+                        for I in 1 .. Seen_Count loop
+                           if Seen_Tags (I) = Tg then
+                              Dup_Found := True;
+                           end if;
+                        end loop;
+                        if Seen_Count < 32 then
+                           Seen_Count := Seen_Count + 1;
+                           Seen_Tags (Seen_Count) := Tg;
+                        end if;
+                     end;
                   end if;
-                  Q := Q + 4 + L;
+                  EE_Seq.Update (Exts, E);
                end;
             end loop;
+            EE.Update_Extensions (Ctx, Exts);
          end;
+      end if;
 
-         while P + 4 <= Ext_End loop
-            pragma
-              Loop_Invariant
-                (P >= Body_Start + 2
-                   and P <= Ext_End
-                   and P + 4 <= Ext_End
-                   and Ext_End <= N32'Last - 16#1_0003#
-                   and Ext_End <= Data'Last + 1
-                   and S.State = S.State'Loop_Entry
-                   and S.Client_App = S.Client_App'Loop_Entry
-                   and S.Negotiated_Suite = S.Negotiated_Suite'Loop_Entry);
-            declare
-               Tag   : constant N32 := N32 (Data (P)) * 256 + N32 (Data (P + 1));
-               E_Len : constant N32 := N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
-            begin
-               pragma Assert (E_Len <= 16#FFFF#);
-               --  Skip if extension overflows what's left.
-               exit when P + 4 + E_Len > Ext_End;
+      if Dup_Found then
+         OK  := False;
+         Err := Decode_Error;
+         EE.Take_Buffer (Ctx, Buf);
+         EE_Free (Buf);
+         return;
+      end if;
 
-               --  RFC 8446 4.2 matrix policy: rejects extensions
-               --  not allowed in EE, ones we didn't offer in CH, and
-               --  ones with non-empty body where RFC mandates empty
-               --  (RFC 6066 3 server_name ack). BoGo
-               --  UnknownExtension-Client-TLS13,
-               --  UnofferedExtension-Client-TLS13,
-               --  EncryptedExtensionsWithKeyShare-TLS13,
-               --  UnsolicitedServerNameAck-TLS13,
-               --  ExtensionTrailingData-ServerName-Client-TLS13.
+      --  Pass 2: matrix policy + ALPN echo body.
+      if EE.Present (Ctx, EE.F_Extensions) then
+         declare
+            Exts : EE_Seq.Context;
+         begin
+            EE.Switch_To_Extensions (Ctx, Exts);
+            while Pol_Err = No_Error and then EE_Seq.Has_Element (Exts) loop
                declare
-                  V_OK  : Boolean;
-                  V_Err : Error_Code;
+                  E : EE_Elem.Context;
                begin
-                  Validate_Server_Ext
-                    (Where    => E_EE,
-                     Tag      => Unsigned_16 (Tag),
-                     Body_Len => E_Len,
-                     HC       => S.HC,
-                     OK       => V_OK,
-                     Err      => V_Err);
-                  if not V_OK then
-                     OK := False;
-                     Err := V_Err;
-                     return;
+                  EE_Seq.Switch (Exts, E);
+                  EE_Elem.Verify_Message (E);
+                  if EE_Elem.Well_Formed_Message (E) then
+                     declare
+                        Tg    : constant Unsigned_16 := Tag_Wire (EE_Elem.Get_Tag (E));
+                        DLen  : constant N32 := N32 (EE_Elem.Get_Data_Length (E));
+                        V_OK  : Boolean;
+                        V_Err : Error_Code;
+                     begin
+                        Validate_Server_Ext (E_EE, Tg, DLen, S.HC, V_OK, V_Err);
+                        if not V_OK then
+                           Pol_Err := V_Err;
+                        elsif Tg = 16#0010# then
+                           --  RFC 7301 ALPN echo: shape check + protocol must
+                           --  be one we offered. A body under 4 bytes cannot
+                           --  hold list_len(2)+proto_len(1)+1, so it is
+                           --  decode_error without reading it.
+                           if DLen < 4 then
+                              Pol_Err := Decode_Error;
+                           else
+                              declare
+                                 L : constant RBT.Index := RBT.Index (DLen);
+                                 A : RBT.Bytes (1 .. L);
+                                 A_OK  : Boolean;
+                                 A_Err : Error_Code;
+                              begin
+                                 EE_Elem.Get_Data (E, A);
+                                 Validate_ALPN_Echo_Body
+                                   (Data       => SPARKTLS.RFLX_Bridge.To_NaCl (A),
+                                    Body_Start => 0,
+                                    E_Len      => DLen,
+                                    HC         => S.HC,
+                                    ALPN       => S.Negotiated_ALPN,
+                                    OK         => A_OK,
+                                    Err        => A_Err);
+                                 if not A_OK then
+                                    Pol_Err := A_Err;
+                                 end if;
+                              end;
+                           end if;
+                        end if;
+                     end;
                   end if;
+                  EE_Seq.Update (Exts, E);
                end;
+            end loop;
+            EE.Update_Extensions (Ctx, Exts);
+         end;
+      end if;
 
-               if Tag = ALPN_Tag then
-                  declare
-                     A_OK  : Boolean;
-                     A_Err : Error_Code;
-                  begin
-                     Validate_ALPN_Echo_Body
-                       (Data       => Data,
-                        Body_Start => P + 4,
-                        E_Len      => E_Len,
-                        HC         => S.HC,
-                        ALPN       => S.Negotiated_ALPN,
-                        OK         => A_OK,
-                        Err        => A_Err);
-                     if not A_OK then
-                        OK := False;
-                        Err := A_Err;
-                        return;
-                     end if;
-                  end;
-               end if;
-
-               P := P + 4 + E_Len;
-            end;
-         end loop;
-      end;
+      if Pol_Err /= No_Error then
+         OK  := False;
+         Err := Pol_Err;
+      end if;
+      EE.Take_Buffer (Ctx, Buf);
+      EE_Free (Buf);
    end Extract_ALPN_From_EE;
 
    procedure Handle_EE_13
