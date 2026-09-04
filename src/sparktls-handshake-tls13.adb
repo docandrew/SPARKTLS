@@ -17,7 +17,6 @@ use SPARKTLSCrypto;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with SPARKTLS.Handshake.Server_Msgs; use SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Handshake.Certs; use SPARKTLS.Handshake.Certs;
-with RFLX.TLS_Handshake.Finished;
 with RFLX.TLS_Handshake.Certificate;
 with RFLX.TLS_Handshake.Certificate_Entries;
 with RFLX.TLS_Handshake.Certificate_Entry;
@@ -91,29 +90,20 @@ is
       Result      : out Byte_Seq;
       Len         : out N32)
    is
-      use RFLX.TLS_Handshake.Finished;
       Body_Len : constant N32 := 32;
-      Msg_Len  : constant N32 := 4 + Body_Len;
-      Ctx      : Context;
    begin
+      --  Finished is a bare verify_data (RFC 8446 4.4.4): header plus the
+      --  HMAC, nothing to model. Built directly, exactly like the 48-byte
+      --  SHA-384 form in the client; the former RecordFlux round trip
+      --  (heap context, set, take, copy) added an allocation and six
+      --  unprovable VCs in a generated unit for no structure.
       Result := (others => 0);
-
-      declare
-         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      begin
-         Initialize (Ctx, Buf);
-         Set_Verify_Data (Ctx, To_RFLX (Verify_Data));
-         Take_Buffer (Ctx, Buf);
-
-         Result (0) := HS_Msg_Wire (HT_Finished);
-         Result (1) := 16#00#;
-         Result (2) := 16#00#;
-         Result (3) := Byte (Body_Len);
-         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-         RFLX_Free (Buf);
-      end;
-
-      Len := Msg_Len;
+      Result (0) := HS_Msg_Wire (HT_Finished);
+      Result (1) := 16#00#;
+      Result (2) := 16#00#;
+      Result (3) := Byte (Body_Len);
+      Result (4 .. 4 + Body_Len - 1) := Byte_Seq (Verify_Data);
+      Len := 4 + Body_Len;
    end Build_Finished;
 
    ----------------------------------------------------------------------------

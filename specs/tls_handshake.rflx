@@ -742,18 +742,6 @@ package TLS_Handshake is
    for DTLS_Handshake use (Payload => Certificate_Verify)
       if Tag = Tls_Parameters::Certificate_Verify;
 
-   type Finished is
-      message
-         Verify_Data : Opaque
-            with Size => Message'Size;
-      end message;
-
-   for TLS_Handshake use (Payload => Finished)
-      if Tag = Tls_Parameters::Finished;
-
-   for DTLS_Handshake use (Payload => Finished)
-      if Tag = Tls_Parameters::Finished;
-
    -- End of Early Data
 
    type End_Of_Early_Data is null message;
