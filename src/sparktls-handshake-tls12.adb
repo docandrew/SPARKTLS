@@ -410,7 +410,33 @@ is
       Sig_Len : N32 := 0;
       Sig_OK  : Boolean;
 
-      Pos : N32;
+      package SKE renames RFLX.TLS_Handshake.TLS_1_2_Server_Key_Exchange_ECDHE;
+      procedure SKE_Free is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+
+      --  Our negotiated group / signature scheme as the RecordFlux enum the
+      --  setters take. Codepoints match the wire (see Maybe_Sig_Scheme).
+      function RFLX_Group
+        (G : Maybe_ECDHE_Group) return RFLX.Tls_Parameters.TLS_Supported_Groups_Enum
+      is (case G is
+            when Group_X25519    => RFLX.Tls_Parameters.X25519,
+            when Group_Secp256r1 => RFLX.Tls_Parameters.Secp256r1,
+            when others          => RFLX.Tls_Parameters.Secp384r1)
+      with Pre => G /= Group_None;
+
+      function RFLX_Sig_Scheme
+        (S : Maybe_Sig_Scheme) return RFLX.Tls_Parameters.TLS_SignatureScheme_Enum
+      is (case S is
+            when Sig_RSA_PKCS1_SHA256  => RFLX.Tls_Parameters.Rsa_Pkcs1_Sha256,
+            when Sig_RSA_PKCS1_SHA384  => RFLX.Tls_Parameters.Rsa_Pkcs1_Sha384,
+            when Sig_RSA_PKCS1_SHA512  => RFLX.Tls_Parameters.Rsa_Pkcs1_Sha512,
+            when Sig_ECDSA_P256_SHA256 => RFLX.Tls_Parameters.Ecdsa_Secp256r1_Sha256,
+            when Sig_ECDSA_P384_SHA384 => RFLX.Tls_Parameters.Ecdsa_Secp384r1_Sha384,
+            when Sig_RSA_PSS_SHA256    => RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha256,
+            when Sig_RSA_PSS_SHA384    => RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha384,
+            when Sig_RSA_PSS_SHA512    => RFLX.Tls_Parameters.Rsa_Pss_Rsae_Sha512,
+            when others                => RFLX.Tls_Parameters.Ed25519_0807)
+      with Pre => S /= Scheme_None;
    begin
       Result := (others => 0);
       Len := 0;
@@ -431,17 +457,7 @@ is
       --  Sign using the negotiated signature algorithm
       --  The sig algo wire value is the 2-byte SignatureScheme from
       --  the client's signature_algorithms extension.
-      declare
-         Hash_Algo : Byte;
-         Sig_Algo  : Byte;
       begin
-         --  RFC 5246 7.4.1.4.1 / RFC 8446 4.2.3:
-         --  SignatureAndHashAlgorithm wire form is just the high and
-         --  low bytes of the SignatureScheme code. For modern schemes
-         --  (rsa_pss_*, ed25519, rsa_pkcs1_*, ecdsa_*) this gives the
-         --  correct on-wire encoding directly.
-         Hash_Algo := Byte (Shift_Right (Sig_Scheme_Wire (HC.Negotiated_Sig_Algo), 8));
-         Sig_Algo := Byte (Sig_Scheme_Wire (HC.Negotiated_Sig_Algo) and 16#FF#);
          case HC.Negotiated_Sig_Algo is
             when Sig_RSA_PSS_SHA256 | Sig_RSA_PSS_SHA384 | Sig_RSA_PSS_SHA512 =>
                Sign_SKE_RSA_PSS
@@ -472,15 +488,11 @@ is
 
             when Sig_ECDSA_P256_SHA256 =>
                --  ecdsa_secp256r1_sha256
-               Hash_Algo := 4;
-               Sig_Algo := 3;
                Sign_SKE_ECDSA_P256
                  (Id, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
             when Sig_ECDSA_P384_SHA384 =>
                --  ecdsa_secp384r1_sha384
-               Hash_Algo := 5;
-               Sig_Algo := 3;
                Sign_SKE_ECDSA_P384
                  (Id, Sig_Input (0 .. Sig_Input_Len - 1), Sig, Sig_Len, Sig_OK);
 
@@ -499,30 +511,40 @@ is
          declare
             Body_Len : constant N32 := Params_Len + 2 + 2 + Sig_Len;  --  params + algo + len + sig
             Total    : constant N32 := 4 + Body_Len;
+            Pt_Len   : constant N32 := Params_Len - 4;  --  curve_type(1)+curve(2)+len(1) prefix
+            Buf      : RBT.Bytes_Ptr;
+            Ctx      : SKE.Context;
          begin
-            if Total > Max_Server_Key_Exchange then
+            if Total > Max_Server_Key_Exchange
+              or else Pt_Len not in 1 .. 255
+              or else HC.KE.Curve = Group_None
+              or else HC.Negotiated_Sig_Algo = Scheme_None
+            then
                return;
             end if;
 
-            --  Handshake header
+            --  RFC 4492 5.4 / RFC 5246 7.4.3: ECParams (named_curve) + point,
+            --  then the 2-byte SignatureScheme (= the legacy hash||sig bytes)
+            --  and the signature. The signature was computed above over
+            --  client_random || server_random || ECParams.
+            Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+            SKE.Initialize (Ctx, Buf);
+            SKE.Set_Curve_Type (Ctx, RFLX.Tls_Parameters.Named_Curve);
+            SKE.Set_Named_Curve (Ctx, RFLX_Group (HC.KE.Curve));
+            SKE.Set_Point_Length
+              (Ctx, RFLX.TLS_Handshake.TLS_1_2_SKE_Point_Length (Pt_Len));
+            SKE.Set_Point (Ctx, To_RFLX (Params (4 .. Params_Len - 1)));
+            SKE.Set_Algorithm (Ctx, RFLX_Sig_Scheme (HC.Negotiated_Sig_Algo));
+            SKE.Set_Signature_Length
+              (Ctx, RFLX.TLS_Handshake.TLS_1_2_SKE_Signature_Length (Sig_Len));
+            SKE.Set_Signature (Ctx, To_RFLX (Sig (0 .. Sig_Len - 1)));
+            SKE.Take_Buffer (Ctx, Buf);
+
             Result (0) := HS_Msg_Wire (HT_Server_Key_Exchange);
             Put24 (Result, 1, Body_Len);
-
-            --  EC params + point
-            Pos := 4;
-            Result (Pos .. Pos + Params_Len - 1) := Params (0 .. Params_Len - 1);
-            Pos := Pos + Params_Len;
-
-            --  Signature algorithm (TLS 1.2 split format)
-            Result (Pos) := Hash_Algo;
-            Result (Pos + 1) := Sig_Algo;
-            Pos := Pos + 2;
-
-            --  Signature length + signature
-            Put16 (Result, Pos, Unsigned_16 (Sig_Len));
-            Pos := Pos + 2;
-            Result (Pos .. Pos + Sig_Len - 1) := Sig (0 .. Sig_Len - 1);
-
+            Result (4 .. 4 + Body_Len - 1) :=
+              To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+            SKE_Free (Buf);
             Len := Total;
          end;
       end;
