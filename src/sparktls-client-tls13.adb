@@ -28,6 +28,9 @@ with RFLX.TLS_Handshake.Encrypted_Extensions;
 with RFLX.TLS_Handshake.EE_Extensions;
 with RFLX.TLS_Handshake.EE_Extension;
 with RFLX.Tls_Extensiontype_Values;
+with RFLX.TLS_Handshake.New_Session_Ticket;
+with RFLX.TLS_Handshake.NST_Extensions;
+with RFLX.TLS_Handshake.NST_Extension;
 
 package body SPARKTLS.Client.TLS13
   with SPARK_Mode => On
@@ -2419,138 +2422,11 @@ is
       end case;
    end Process_Encrypted_Handshake;
 
-   --  NST helpers (extracted from Process_Connected/16#16# handler).
-   --  RFC 8446 4.6.1 NewSessionTicket parsing is structurally deep
-   --  (header â fixed prefix â nonce â ticket â extensions); keeping
-   --  it as nested if/declare in the connected-state loop made every
-   --  small RFC nit (zero-length ticket, dup ext, malformed flags ext)
-   --  cost two indent levels. Split into:
-   --   * Walk_NST_Extensions  â iterate ext list, extract max_early_
-   --                            data, detect duplicates / malformed
-   --                            flags ext, return a status enum.
-   --   * Process_NST_Message  â parse fixed prefix + nonce + ticket,
-   --                            derive PSK, then call Walk_NST_Exts.
-   --  The Process_Connected case branch reduces to a single call.
-
-   type NST_Status is (NST_OK, NST_Decode_Err, NST_Illegal_Param);
-   --  NST_Decode_Err  â caller sends Decode_Error alert.
-   --  NST_Illegal_Param â caller sends Illegal_Parameter alert.
-
-   procedure Walk_NST_Extensions
-     (Plaintext               : in Byte_Seq;
-      Plain_Len               : in N32;
-      Start_Off               : in N32;
-      Resumption_Across_Names : out Boolean;
-      Status                  : out NST_Status)
-   with
-     Pre =>
-       Plaintext'First = 0
-       and Plaintext'Last < N32'Last / 2
-       and Plain_Len <= Max_Record_Plaintext
-       and (if Plain_Len > 0 then Plain_Len - 1 <= Plaintext'Last)
-       and Start_Off >= 0
-       and Start_Off <= Plain_Len;
-
-   procedure Walk_NST_Extensions
-     (Plaintext               : in Byte_Seq;
-      Plain_Len               : in N32;
-      Start_Off               : in N32;
-      Resumption_Across_Names : out Boolean;
-      Status                  : out NST_Status)
-   is
-      type Tag_Array is array (1 .. 16) of Unsigned_16;
-      Seen_Tags : Tag_Array := (others => 0);
-      Seen_N    : Natural := 0;
-      EP        : N32 := Start_Off;
-   begin
-      Status := NST_OK;
-      Resumption_Across_Names := False;
-
-      if EP + 2 > Plain_Len then
-         return;
-      end if;
-      pragma Assert (EP <= Plain_Len);
-      pragma Assert (Plain_Len <= Max_Record_Plaintext);
-
-      declare
-         Ext_Total : constant N32 := N32 (Plaintext (EP)) * 256 + N32 (Plaintext (EP + 1));
-         Ext_End   : constant N32 := EP + 2 + Ext_Total;
-      begin
-         if Ext_End > Plain_Len then
-            Status := NST_Decode_Err;
-            return;
-         end if;
-
-         EP := EP + 2;
-         pragma Assert (EP <= Ext_End);
-         pragma Assert (Ext_End <= Plain_Len);
-         while EP + 4 <= Ext_End loop
-            pragma Loop_Invariant (EP <= Ext_End);
-            pragma Loop_Invariant (Ext_End <= Plain_Len);
-            pragma Loop_Invariant (Plain_Len <= Max_Record_Plaintext);
-            pragma Loop_Invariant (Seen_N <= Seen_Tags'Last);
-            declare
-               Tag   : constant Unsigned_16 :=
-                 Unsigned_16 (Plaintext (EP)) * 256 + Unsigned_16 (Plaintext (EP + 1));
-               E_Len : constant N32 := N32 (Plaintext (EP + 2)) * 256 + N32 (Plaintext (EP + 3));
-            begin
-               if E_Len > Ext_End - (EP + 4) then
-                  Status := NST_Decode_Err;
-                  return;
-               end if;
-
-               --  RFC 8446 4.2: duplicate extension types in any HS
-               --  message are forbidden (BoGo TLS13-DuplicateTicket
-               --  EarlyDataSupport).
-               for K in 1 .. Seen_N loop
-                  if Seen_Tags (K) = Tag then
-                     Status := NST_Illegal_Param;
-                     return;
-                  end if;
-               end loop;
-               if Seen_N < Seen_Tags'Last then
-                  Seen_N := Seen_N + 1;
-                  Seen_Tags (Seen_N) := Tag;
-               end if;
-
-               --  draft-ietf-tls-tlsflags: flags ext (0x003E) body is
-               --  `opaque flags<1..2^8-1>`  outer ext_data is
-               --  inner_len(1) + inner_bytes with inner_len >= 1. So
-               --  ext_data_len < 2, or inner_len = 0, is decode_error
-               --  (BoGo TLS13-Client-EmptyTicketFlags).
-               if Tag = 16#003E#
-                 and then (E_Len < 2
-                           or else N32 (Plaintext (EP + 4)) = 0
-                           or else N32 (Plaintext (EP + 4)) /= E_Len - 1)
-               then
-                  Status := NST_Decode_Err;
-                  return;
-               end if;
-
-               if Tag = 16#003E# then
-                  declare
-                     Inner_Len : constant N32 := N32 (Plaintext (EP + 4));
-                  begin
-                     if Inner_Len >= 2 and then (Plaintext (EP + 4 + Inner_Len) and 16#01#) /= 0
-                     then
-                        Resumption_Across_Names := True;
-                     end if;
-                  end;
-               end if;
-
-               --  early_data ext (0x002A) in NST signals server
-               --  willingness to accept 0-RTT on a future resume.
-               --  We never offer 0-RTT (out of scope), so we just
-               --  walk past the body without recording the limit.
-
-               EP := EP + 4 + E_Len;
-            end;
-         end loop;
-         if EP /= Ext_End then
-            Status := NST_Decode_Err;
-         end if;
-      end;
-   end Walk_NST_Extensions;
+   --  RFC 8446 4.6.1 NewSessionTicket parse. Process_NST_Message reads the
+   --  fixed prefix, nonce and ticket through the RecordFlux New_Session_Ticket
+   --  message, derives the PSK, then iterates the NST_Extensions sequence for
+   --  ticket_flags (resumption_across_names). The Process_Connected case
+   --  branch reduces to a single call.
 
    procedure Process_NST_Message
      (S : in out Session; Plaintext : in Byte_Seq; Plain_Len : in N32; Result : out Action)
@@ -2567,57 +2443,85 @@ is
    procedure Process_NST_Message
      (S : in out Session; Plaintext : in Byte_Seq; Plain_Len : in N32; Result : out Action)
    is
-      P : N32 := 4;  --  skip handshake header (type + 3-byte len)
+      package NST_M   renames RFLX.TLS_Handshake.New_Session_Ticket;
+      package NST_Seq renames RFLX.TLS_Handshake.NST_Extensions;
+      package NST_El  renames RFLX.TLS_Handshake.NST_Extension;
+      package RBT     renames RFLX.RFLX_Builtin_Types;
+      use type RBT.Length;
+      procedure NST_Free is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+
+      function Tag_Wire
+        (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
+      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
+
+      Body_Len : constant N32 := Plain_Len - 4;
+      Buf      : RBT.Bytes_Ptr;
+      Ctx      : NST_M.Context;
    begin
       Result := OK;
 
-      --  RFC 8446 4.6.1: NST = type(1)+len(3)+lifetime(4)+age_add(4)
-      --  +nonce_len(1)+nonce(var)+ticket_len(2)+ticket(var)+exts.
-      --  Need at least the fixed prefix: 4+4+1 = 9 past the HS header.
-      if Plain_Len < 4 + 9 then
+      --  Minimum body to reach the ticket_length field: lifetime(4)
+      --  +age_add(4)+nonce_len(1)+ticket_len(2) = 11. Shorter than that is a
+      --  truncated NST; drop it silently, as the former parser did. Longer
+      --  malformed shapes are decode_error via Well_Formed_Message below.
+      if Plain_Len < 4 + 11 then
+         return;
+      end if;
+
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      Buf.all :=
+        SPARKTLS.RFLX_Bridge.To_RFLX
+          (Plaintext (Plaintext'First + 4 .. Plaintext'First + Plain_Len - 1));
+      NST_M.Initialize
+        (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
+      NST_M.Verify_Message (Ctx);
+
+      if not NST_M.Well_Formed_Message (Ctx) then
+         --  Structural failure, including a zero-length ticket
+         --  (Ticket_Length is 1 .. -- BoGo SendEmptySessionTicket-TLS13).
+         NST_M.Take_Buffer (Ctx, Buf);
+         NST_Free (Buf);
+         Send_App_Encrypted_Alert (S, Decode_Error, Result);
          return;
       end if;
 
       declare
-         Lifetime  : constant Unsigned_32 :=
-           Unsigned_32 (Plaintext (P)) * 2 ** 24 + Unsigned_32 (Plaintext (P + 1)) * 2 ** 16
-           + Unsigned_32 (Plaintext (P + 2)) * 2 ** 8
-           + Unsigned_32 (Plaintext (P + 3));
-         Age_Add   : constant Unsigned_32 :=
-           Unsigned_32 (Plaintext (P + 4)) * 2 ** 24 + Unsigned_32 (Plaintext (P + 5)) * 2 ** 16
-           + Unsigned_32 (Plaintext (P + 6)) * 2 ** 8
-           + Unsigned_32 (Plaintext (P + 7));
-         Nonce_Len : constant N32 := N32 (Plaintext (P + 8));
+         Nonce_Len : constant N32 := N32 (NST_M.Get_Ticket_Nonce_Length (Ctx));
+         Tick_Len  : constant N32 := N32 (NST_M.Get_Ticket_Length (Ctx));
       begin
-         P := P + 9;
-         if Nonce_Len = 0 or else P + Nonce_Len + 2 > Plain_Len then
+         --  RFC 8446 4.6.1: ticket is opaque ticket<1..2^16-1>; a zero-length
+         --  ticket is decode_error (BoGo SendEmptySessionTicket-TLS13).
+         if Tick_Len = 0 then
+            NST_M.Take_Buffer (Ctx, Buf);
+            NST_Free (Buf);
+            Send_App_Encrypted_Alert (S, Decode_Error, Result);
+            return;
+         end if;
+
+         --  No nonce -> cannot derive the PSK; over-long ticket -> cannot
+         --  store it. Drop the ticket silently, as the former parser did.
+         if Nonce_Len = 0 or else Tick_Len > Max_Ticket_Len then
+            NST_M.Take_Buffer (Ctx, Buf);
+            NST_Free (Buf);
             return;
          end if;
 
          declare
-            Nonce    : constant Byte_Seq (0 .. Nonce_Len - 1) := Plaintext (P .. P + Nonce_Len - 1);
-            Tick_Len : N32;
+            NL       : constant RBT.Index := RBT.Index (Nonce_Len);
+            TL       : constant RBT.Index := RBT.Index (Tick_Len);
+            Nonce_B  : RBT.Bytes (1 .. NL);
+            Ticket_B : RBT.Bytes (1 .. TL);
+            Nonce    : Byte_Seq (0 .. Nonce_Len - 1);
          begin
-            P := P + Nonce_Len;
-            Tick_Len := N32 (Plaintext (P)) * 256 + N32 (Plaintext (P + 1));
-            P := P + 2;
+            NST_M.Get_Ticket_Nonce (Ctx, Nonce_B);
+            NST_M.Get_Ticket (Ctx, Ticket_B);
+            Nonce := SPARKTLS.RFLX_Bridge.To_NaCl (Nonce_B);
 
-            --  RFC 8446 4.6.1: ticket field is opaque ticket<1..
-            --  2^16-1>; a zero-length ticket is decode_error (BoGo
-            --  SendEmptySessionTicket-TLS13).
-            if Tick_Len = 0 then
-               Send_App_Encrypted_Alert (S, Decode_Error, Result);
-               return;
-            end if;
-
-            if P + Tick_Len > Plain_Len or else Tick_Len > Max_Ticket_Len then
-               return;
-            end if;
-
-            S.Ticket.Ticket (0 .. Tick_Len - 1) := Plaintext (P .. P + Tick_Len - 1);
+            S.Ticket.Ticket (0 .. Tick_Len - 1) := SPARKTLS.RFLX_Bridge.To_NaCl (Ticket_B);
             S.Ticket.Ticket_Len := Tick_Len;
-            S.Ticket.Lifetime := Lifetime;
-            S.Ticket.Age_Add := Age_Add;
+            S.Ticket.Lifetime := Unsigned_32 (NST_M.Get_Ticket_Lifetime (Ctx));
+            S.Ticket.Age_Add := Unsigned_32 (NST_M.Get_Ticket_Age_Add (Ctx));
             S.Ticket.Received_At :=
               (if S.Get_Time /= null then SPARKTLS.Tickets_12.To_Unix_Seconds (S.Get_Time.all)
                else 0);
@@ -2651,36 +2555,92 @@ is
 
             S.Ticket.Valid := True;
 
-            --  Walk the NST extension list (ticket_flags, early_data,
-            --  â¦). Errors (dup ext / malformed flags) un-install the
-            --  ticket and emit the right alert. early_data ext bodies
-            --  are walked-past  we don't offer 0-RTT, so the
-            --  advertised limit is irrelevant.
+            --  NST extensions. A duplicate extension is illegal_parameter (BoGo
+            --  TLS13-DuplicateTicketEarlyDataSupport); a malformed ticket_flags
+            --  body (draft-ietf-tls-tlsflags flags<1..255>) is decode_error
+            --  (TLS13-Client-EmptyTicketFlags). early_data is walked past --
+            --  we never offer 0-RTT. Only ticket_flags is acted on.
             declare
-               Status       : NST_Status;
-               Across_Names : Boolean;
+               Across : Boolean := False;
+               Dup    : Boolean := False;
+               Bad    : Boolean := False;
+               Seen   : array (1 .. 16) of Unsigned_16 := (others => 0);
+               Seen_N : Natural := 0;
             begin
-               Walk_NST_Extensions
-                 (Plaintext               => Plaintext,
-                  Plain_Len               => Plain_Len,
-                  Start_Off               => P + Tick_Len,
-                  Resumption_Across_Names => Across_Names,
-                  Status                  => Status);
-               case Status is
-                  when NST_OK =>
-                     S.Ticket.Resumption_Across_Names := Across_Names;
+               if NST_M.Present (Ctx, NST_M.F_Extensions) then
+                  declare
+                     Exts : NST_Seq.Context;
+                  begin
+                     NST_M.Switch_To_Extensions (Ctx, Exts);
+                     while not Dup and then not Bad and then NST_Seq.Has_Element (Exts) loop
+                        declare
+                           E : NST_El.Context;
+                        begin
+                           NST_Seq.Switch (Exts, E);
+                           NST_El.Verify_Message (E);
+                           if NST_El.Well_Formed_Message (E) then
+                              declare
+                                 Tg   : constant Unsigned_16 := Tag_Wire (NST_El.Get_Tag (E));
+                                 DLen : constant N32 := N32 (NST_El.Get_Data_Length (E));
+                              begin
+                                 for K in 1 .. Seen_N loop
+                                    if Seen (K) = Tg then
+                                       Dup := True;
+                                    end if;
+                                 end loop;
+                                 if not Dup then
+                                    if Seen_N < 16 then
+                                       Seen_N := Seen_N + 1;
+                                       Seen (Seen_N) := Tg;
+                                    end if;
+                                    if Tg = 16#003E# then
+                                       if DLen < 2 then
+                                          Bad := True;
+                                       else
+                                          declare
+                                             FL : constant RBT.Index := RBT.Index (DLen);
+                                             FB : RBT.Bytes (1 .. FL);
+                                          begin
+                                             NST_El.Get_Data (E, FB);
+                                             declare
+                                                Inner : constant N32 := N32 (FB (1));
+                                             begin
+                                                if Inner = 0 or else Inner /= DLen - 1 then
+                                                   Bad := True;
+                                                elsif Inner >= 2
+                                                  and then (Byte (FB (RBT.Index (DLen))) and 16#01#) /= 0
+                                                then
+                                                   Across := True;
+                                                end if;
+                                             end;
+                                          end;
+                                       end if;
+                                    end if;
+                                 end if;
+                              end;
+                           end if;
+                           NST_Seq.Update (Exts, E);
+                        end;
+                     end loop;
+                     NST_M.Update_Extensions (Ctx, Exts);
+                  end;
+               end if;
 
-                  when NST_Decode_Err =>
-                     S.Ticket.Valid := False;
-                     Send_App_Encrypted_Alert (S, Decode_Error, Result);
-
-                  when NST_Illegal_Param =>
-                     S.Ticket.Valid := False;
-                     Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
-               end case;
+               if Dup then
+                  S.Ticket.Valid := False;
+                  Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
+               elsif Bad then
+                  S.Ticket.Valid := False;
+                  Send_App_Encrypted_Alert (S, Decode_Error, Result);
+               else
+                  S.Ticket.Resumption_Across_Names := Across;
+               end if;
             end;
          end;
       end;
+
+      NST_M.Take_Buffer (Ctx, Buf);
+      NST_Free (Buf);
    end Process_NST_Message;
 
    procedure Reset_Post_HS_Reasm (S : in out Session)
