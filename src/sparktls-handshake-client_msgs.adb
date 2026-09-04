@@ -1109,7 +1109,7 @@ is
       --  proof is the only backstop).
 
       --  Set ClientHello fields via RFLX
-      Set_Legacy_Version (Ctx, TLS_1_2);  --  0x0303 per RFC 8446
+      Set_Legacy_Version (Ctx, 16#0303#);  --  RFC 8446 4.1.2: legacy_version = 0x0303
       Set_Random (Ctx, To_RFLX (HC.Client_Random));
       if HC.Cfg.Versions = TLS_1_2_Only then
          Set_Legacy_Session_ID_Length (Ctx, 0);
@@ -2514,7 +2514,10 @@ is
          begin
             if Echoed then
                declare
-                  Srv : RBT.Bytes (1 .. RBT.Index (Sid_Len));
+                  --  SPARK (E0007): the array bound must be a constant, not
+                  --  a variable, so bind it before the object declaration.
+                  SL  : constant RBT.Index := RBT.Index (Sid_Len);
+                  Srv : RBT.Bytes (1 .. SL);
                begin
                   Get_Legacy_Session_ID (Ctx, Srv);
                   Echoed :=
@@ -2529,7 +2532,8 @@ is
          HC.Legacy_Session_ID := (others => 0);
          if Sid_Len > 0 then
             declare
-               Sid : RBT.Bytes (1 .. RBT.Index (Sid_Len));
+               SL  : constant RBT.Index := RBT.Index (Sid_Len);
+               Sid : RBT.Bytes (1 .. SL);
             begin
                Get_Legacy_Session_ID (Ctx, Sid);
                HC.Legacy_Session_ID (0 .. Sid_Len - 1) := To_NaCl (Sid);

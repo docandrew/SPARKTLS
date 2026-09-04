@@ -95,124 +95,6 @@ is
       return Has_Null;
    end Compression_Methods_OK;
 
-   function TLS12_Client_Hello_Omits_Extensions (Data : Byte_Seq) return Boolean
-   with Pre => Data'Length > 0 and then Data'Last <= N32 (Max_HS_Msg) - 1
-   is
-      BS, P                   : N32;
-      Sid_Len, Cs_Len, Cm_Len : N32;
-   begin
-      --  Data includes the 4-byte handshake header. A TLS 1.2
-      --  ClientHello may end immediately after legacy_compression_methods;
-      --  TLS 1.3 cannot, because supported_versions is mandatory.
-      if Data'Length < 4 + 35 then
-         return False;
-      end if;
-
-      if Data (Data'First + 4) /= 16#03# or else Data (Data'First + 5) /= 16#03# then
-         return False;
-      end if;
-
-      BS := Data'First + 4;
-      if BS + 34 > Data'Last then
-         return False;
-      end if;
-
-      Sid_Len := N32 (Data (BS + 34));
-      P := BS + 35;
-      if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
-         return False;
-      end if;
-      pragma Assert (P <= Data'Last);
-      pragma Assert (Sid_Len <= Data'Last - P + 1);
-      pragma Assert (P + Sid_Len <= Data'Last + 1);
-      P := P + Sid_Len;
-
-      if P > Data'Last or else Data'Last - P < 1 then
-         return False;
-      end if;
-      Cs_Len := N32 (Data (P)) * 256 + N32 (Data (P + 1));
-      P := P + 2;
-      if P > Data'Last or else Cs_Len > Data'Last - P + 1 then
-         return False;
-      end if;
-      pragma Assert (P <= Data'Last);
-      pragma Assert (Cs_Len <= Data'Last - P + 1);
-      pragma Assert (P + Cs_Len <= Data'Last + 1);
-      P := P + Cs_Len;
-
-      if P > Data'Last then
-         return False;
-      end if;
-      Cm_Len := N32 (Data (P));
-      P := P + 1;
-      if P > Data'Last or else Cm_Len > Data'Last - P + 1 then
-         return False;
-      end if;
-      pragma Assert (P <= Data'Last);
-      pragma Assert (Cm_Len <= Data'Last - P + 1);
-      pragma Assert (P + Cm_Len <= Data'Last + 1);
-
-      return P + Cm_Len = Data'Last + 1;
-   end TLS12_Client_Hello_Omits_Extensions;
-
-   function TLS12_Client_Hello_Has_Empty_Extensions (Data : Byte_Seq) return Boolean
-   with Pre => Data'Length > 0 and then Data'Last <= N32 (Max_HS_Msg) - 1
-   is
-      BS, P                   : N32;
-      Sid_Len, Cs_Len, Cm_Len : N32;
-   begin
-      if Data'Length < 4 + 37 then
-         return False;
-      end if;
-
-      if Data (Data'First + 4) /= 16#03# or else Data (Data'First + 5) /= 16#03# then
-         return False;
-      end if;
-
-      BS := Data'First + 4;
-      if BS + 34 > Data'Last then
-         return False;
-      end if;
-
-      Sid_Len := N32 (Data (BS + 34));
-      P := BS + 35;
-      if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
-         return False;
-      end if;
-      pragma Assert (P <= Data'Last);
-      pragma Assert (Sid_Len <= Data'Last - P + 1);
-      pragma Assert (P + Sid_Len <= Data'Last + 1);
-      P := P + Sid_Len;
-
-      if P > Data'Last or else Data'Last - P < 1 then
-         return False;
-      end if;
-      Cs_Len := N32 (Data (P)) * 256 + N32 (Data (P + 1));
-      P := P + 2;
-      if P > Data'Last or else Cs_Len > Data'Last - P + 1 then
-         return False;
-      end if;
-      pragma Assert (P <= Data'Last);
-      pragma Assert (Cs_Len <= Data'Last - P + 1);
-      pragma Assert (P + Cs_Len <= Data'Last + 1);
-      P := P + Cs_Len;
-
-      if P > Data'Last then
-         return False;
-      end if;
-      Cm_Len := N32 (Data (P));
-      P := P + 1;
-      if P > Data'Last or else Cm_Len > Data'Last - P + 1 then
-         return False;
-      end if;
-      pragma Assert (P <= Data'Last);
-      pragma Assert (Cm_Len <= Data'Last - P + 1);
-      pragma Assert (P + Cm_Len <= Data'Last + 1);
-      P := P + Cm_Len;
-
-      return P + 1 = Data'Last and then Data (P) = 0 and then Data (P + 1) = 0;
-   end TLS12_Client_Hello_Has_Empty_Extensions;
-
    procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
    with Post => Buf = null;
 
@@ -2380,235 +2262,6 @@ is
       end;
    end Parse_CH_Cipher_Suites;
 
-   procedure Copy_TLS12_No_Ext_Client_Random
-     (Data : in Byte_Seq; BS : in N32; Client_Random : out Bytes_32)
-   with
-     Pre =>
-       Data'Length > 0
-       and then Data'Last <= N32 (Max_HS_Msg) - 1
-       and then Data'Last >= 33
-       and then BS >= Data'First
-       and then BS <= Data'Last - 33;
-
-   procedure Copy_TLS12_No_Ext_Client_Random
-     (Data : in Byte_Seq; BS : in N32; Client_Random : out Bytes_32) is
-   begin
-      for I in N32 range 0 .. 31 loop
-         Client_Random (I) := Data (BS + 2 + I);
-      end loop;
-   end Copy_TLS12_No_Ext_Client_Random;
-
-   procedure Copy_TLS12_No_Ext_Session_ID
-     (Data    : in Byte_Seq;
-      P       : in N32;
-      Sid_Len : in N32;
-      Sid     : out Bytes_32;
-      Sid_Out : in out Session_ID_Length)
-   with
-     Pre =>
-       Data'Length > 0
-       and then Data'Last <= N32 (Max_HS_Msg) - 1
-       and then Sid_Len <= 32
-       and then P >= Data'First
-       and then P <= Data'Last
-       and then Sid_Len <= Data'Last - P + 1,
-     Post => Sid_Out = Sid_Len;
-
-   procedure Copy_TLS12_No_Ext_Session_ID
-     (Data    : in Byte_Seq;
-      P       : in N32;
-      Sid_Len : in N32;
-      Sid     : out Bytes_32;
-      Sid_Out : in out Session_ID_Length) is
-   begin
-      Sid := (others => 0);
-      Sid_Out := Sid_Len;
-      if Sid_Len > 0 then
-         for I in N32 range 0 .. Sid_Len - 1 loop
-            pragma Loop_Invariant (I < Sid_Len);
-            pragma Loop_Invariant (P >= Data'First);
-            pragma Loop_Invariant (P + I <= Data'Last);
-            Sid (I) := Data (P + I);
-         end loop;
-      end if;
-   end Copy_TLS12_No_Ext_Session_ID;
-
-   procedure Parse_TLS12_No_Ext_Cipher_Suites
-     (Data          : in Byte_Seq;
-      P             : in N32;
-      Cs_Len        : in N32;
-      Negotiated    : in out Supported_Suite;
-      Negotiated_12 : in out Supported_Suite;
-      Last_Err      : in out Error_Code;
-      HC            : in out Handshake_Context)
-   with
-     Pre =>
-       Data'Length > 0
-       and then Data'Last <= N32 (Max_HS_Msg) - 1
-       and then Cs_Len > 0
-       and then Cs_Len mod 2 = 0
-       and then P >= Data'First
-       and then P <= Data'Last
-       and then Cs_Len <= Data'Last - P + 1,
-     Post =>
-       HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Old
-       and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-       and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
-                 then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
-       and then (if Local_Config_Valid (HC.Cfg.Local'Old) then Local_Config_Valid (HC.Cfg.Local));
-
-   procedure Parse_TLS12_No_Ext_Cipher_Suites
-     (Data          : in Byte_Seq;
-      P             : in N32;
-      Cs_Len        : in N32;
-      Negotiated    : in out Supported_Suite;
-      Negotiated_12 : in out Supported_Suite;
-      Last_Err      : in out Error_Code;
-      HC            : in out Handshake_Context) is
-   begin
-      Negotiated := Suite_None;
-      Negotiated_12 := Suite_None;
-
-      for J in N32 range 0 .. (Cs_Len / 2) - 1 loop
-         pragma Loop_Invariant (J < Cs_Len / 2);
-         pragma Loop_Invariant (P >= Data'First);
-         pragma Loop_Invariant (J * 2 + 1 < Cs_Len);
-         pragma Loop_Invariant (P + J * 2 + 1 <= Data'Last);
-         pragma Loop_Invariant (HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Loop_Entry);
-         pragma Loop_Invariant (if HC.Cfg.Local'Loop_Entry /= null then HC.Cfg.Local /= null);
-         pragma
-           Loop_Invariant
-             (if HC.Cfg.Local'Loop_Entry /= null and then HC.Cfg.Local'Loop_Entry.Has_Identity
-                then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity);
-         pragma
-           Loop_Invariant
-             (if Local_Config_Valid (HC.Cfg.Local'Loop_Entry)
-                then Local_Config_Valid (HC.Cfg.Local));
-         declare
-            Suite_Pos : constant N32 := P + J * 2;
-            Val       : constant Unsigned_16 :=
-              Unsigned_16 (Data (Suite_Pos)) * 256 + Unsigned_16 (Data (Suite_Pos + 1));
-         begin
-            Apply_Raw_Cipher_Suite (Val, Negotiated, Negotiated_12, Last_Err, HC);
-         end;
-      end loop;
-   end Parse_TLS12_No_Ext_Cipher_Suites;
-
-   procedure Parse_TLS12_Client_Hello_No_Extensions
-     (Negotiated    : in out Supported_Suite;
-      Negotiated_12 : in out Supported_Suite;
-      Last_Err      : in out Error_Code;
-      HC            : in out Handshake_Context;
-      Data          : in Byte_Seq;
-      OK            : out Boolean)
-   with
-     Pre => Data'Length > 0 and then Data'Last <= N32 (Max_HS_Msg) - 1,
-     Post =>
-       (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
-       and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
-                 then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity)
-       and then HC.Legacy_Session_ID_Len in 0 .. 32;
-
-   procedure Parse_TLS12_Client_Hello_No_Extensions
-     (Negotiated    : in out Supported_Suite;
-      Negotiated_12 : in out Supported_Suite;
-      Last_Err      : in out Error_Code;
-      HC            : in out Handshake_Context;
-      Data          : in Byte_Seq;
-      OK            : out Boolean)
-   is
-      BS                      : constant N32 := Data'First + 4;
-      P                       : N32;
-      Sid_Len, Cs_Len, Cm_Len : N32;
-   begin
-      OK := False;
-
-      if Data'Length < 4 + 35 then
-         Last_Err := Decode_Error;
-         return;
-      end if;
-
-      if Data (Data'First + 4) /= 16#03# or else Data (Data'First + 5) /= 16#03# then
-         Last_Err := Protocol_Version;
-         return;
-      end if;
-
-      if not Compression_Methods_OK (Data, Is_TLS13 => False) then
-         Last_Err := Illegal_Parameter;
-         return;
-      end if;
-
-      if Data'Last < 34 or else BS > Data'Last - 34 then
-         Last_Err := Decode_Error;
-         return;
-      end if;
-      pragma Assert (Data'Last >= 33);
-      pragma Assert (BS >= Data'First);
-      pragma Assert (BS <= Data'Last - 33);
-      Copy_TLS12_No_Ext_Client_Random (Data, BS, HC.Client_Random);
-
-      Sid_Len := N32 (Data (BS + 34));
-      if Sid_Len > 32 then
-         Last_Err := Decode_Error;
-         return;
-      end if;
-
-      P := BS + 35;
-      if P > Data'Last or else Sid_Len > Data'Last - P + 1 then
-         Last_Err := Decode_Error;
-         return;
-      end if;
-      pragma Assert (P <= Data'Last);
-      pragma Assert (P >= Data'First);
-      pragma Assert (Sid_Len <= Data'Last - P + 1);
-      pragma Assert (P + Sid_Len <= Data'Last + 1);
-      Copy_TLS12_No_Ext_Session_ID
-        (Data, P, Sid_Len, HC.Legacy_Session_ID, HC.Legacy_Session_ID_Len);
-      P := P + Sid_Len;
-
-      if P > Data'Last or else Data'Last - P < 1 then
-         Last_Err := Decode_Error;
-         return;
-      end if;
-
-      Cs_Len := N32 (Data (P)) * 256 + N32 (Data (P + 1));
-      P := P + 2;
-      if Cs_Len = 0
-        or else Cs_Len mod 2 /= 0
-        or else P > Data'Last
-        or else Cs_Len > Data'Last - P + 1
-      then
-         Last_Err := Decode_Error;
-         return;
-      end if;
-      pragma Assert (P <= Data'Last);
-      pragma Assert (Cs_Len <= Data'Last - P + 1);
-      pragma Assert (P + Cs_Len <= Data'Last + 1);
-      Parse_TLS12_No_Ext_Cipher_Suites (Data, P, Cs_Len, Negotiated, Negotiated_12, Last_Err, HC);
-      P := P + Cs_Len;
-
-      if P > Data'Last then
-         Last_Err := Decode_Error;
-         return;
-      end if;
-      Cm_Len := N32 (Data (P));
-      P := P + 1;
-      if P > Data'Last or else Cm_Len > Data'Last - P + 1 then
-         Last_Err := Decode_Error;
-         return;
-      end if;
-
-      if Negotiated_12 = Suite_None then
-         return;
-      end if;
-
-      HC.Has_TLS_1_3 := False;
-      HC.Saw_Supported_Versions := False;
-      HC.SV_Has_Acceptable := False;
-      HC.Client_Supports_X25519 := True;
-      OK := True;
-   end Parse_TLS12_Client_Hello_No_Extensions;
-
    procedure Parse_Client_Hello
      (Negotiated    : in out Supported_Suite;
       Negotiated_12 : in out Supported_Suite;
@@ -2670,20 +2323,6 @@ is
       --  Skip 4-byte handshake header, pass body to Client_Hello context
       Body_Len := N32 (Data'Length) - 4;
 
-      if TLS12_Client_Hello_Omits_Extensions (Data)
-        or else TLS12_Client_Hello_Has_Empty_Extensions (Data)
-      then
-
-         Parse_TLS12_Client_Hello_No_Extensions (Negotiated, Negotiated_12, Last_Err, HC, Data, OK);
-
-         if OK then
-            Version := TLS_1_2;
-         end if;
-
-         pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
-         return;
-      end if;
-
       Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
       Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
 
@@ -2691,37 +2330,12 @@ is
          Raw_Legacy_Version := N32 (Buf.all (1)) * 256 + N32 (Buf.all (2));
       end if;
 
-      --  RFC 8446 4.1.2: TLS 1.3 clients MUST set CH.legacy_version
-      --  to 0x0303, but TLS 1.3 servers MUST tolerate other values
-      --  (the real version comes from supported_versions). Our RFLX
-      --  TLS_Version enum only accepts 0x0301..0x0304 + DTLS  any
-      --  TLS 1.3-tolerant high value (e.g. 0x0304 from buggy clients
-      --  or 0x0400 from forward-version probes) makes Verify_Message
-      --  fail. Pre-normalise to 0x0303 before parse for any value
-      --  > 0x0303, or any syntactically old 0x03xx value that may be
-      --  superseded by supported_versions. Genuine old-client
-      --  rejection happens after extension parsing if there is no
-      --  acceptable supported_versions override. BoGo
-      --  ClientHelloVersionTooHigh, VersionTolerance-TLS13,
-      --  ConflictingVersionNegotiation-2.
-      --
-      --  ##  WARNING  buffer mutation
-      --
-      --  This rewrites the local RFLX parse buffer. Anyone later
-      --  reading the field via Get_Legacy_Version (Ctx) will see
-      --  0x0303 instead of the wire bytes. Version negotiation
-      --  therefore MUST come from HC.Has_TLS_1_3 (set by the
-      --  supported_versions parse), not from legacy_version. The
-      --  transcript hash is computed over the unmodified `Data`
-      --  parameter (Append_Transcript runs in the caller), so the
-      --  rewrite never leaks into the transcript.
-      if Buf.all'Length >= 2
-        and then (Raw_Legacy_Version > 16#0303#
-                  or else (Raw_Legacy_Version in 16#0301# .. 16#0302#))
-      then
-         Buf.all (1) := 16#03#;
-         Buf.all (2) := 16#03#;
-      end if;
+      --  RFC 8446 4.1.2: legacy_version is now Legacy_Version_Any (any
+      --  16-bit value) in the spec, so RecordFlux tolerates the values a
+      --  TLS 1.3 client may put here; the real version is decided below
+      --  from supported_versions (HC.Has_TLS_1_3) and Raw_Legacy_Version.
+      --  Nothing rewrites the parse buffer, so Get_Legacy_Version and the
+      --  transcript both see the wire bytes.
 
       Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       Verify_Message (Ctx);
@@ -2883,6 +2497,16 @@ is
          end;
       end if;
 
+      --  RFC 4492 5.1: a ClientHello with no extensions block (or an empty
+      --  one) carries no supported_groups, but a TLS 1.2 ECDHE handshake is
+      --  still permitted -- assume the widely-implemented X25519, exactly as
+      --  the former no-extensions parser did. Without this a legacy client
+      --  that omits extensions gets handshake_failure (BoGo
+      --  Empty/OmitExtensions-ClientHello-TLS12).
+      if not Present (Ctx, F_Extensions_TLS) then
+         HC.Client_Supports_X25519 := True;
+      end if;
+
       Take_Buffer (Ctx, Buf);
       RFLX_Free (Buf);
 
@@ -2890,7 +2514,28 @@ is
       --  override named a version we support, reject rather than
       --  silently treating the locally-normalized RFLX parse buffer as
       --  a TLS 1.2 ClientHello.
-      if not HC.Saw_Supported_Versions and then Raw_Legacy_Version in 16#0301# .. 16#0302# then
+      --  RFC 8446 4.1.2 / RFC 5246 E.1: legacy_version MUST be a real TLS
+      --  ProtocolVersion. Below TLS 1.0 (0x0301) it is SSL 3.0 or a bogus
+      --  value we never speak, so reject with protocol_version regardless
+      --  of supported_versions -- the old Protocol_Version enum rejected
+      --  these at parse time, and tlsfuzzer's legacy-version cases expect
+      --  it. Values above 0x0303 are tolerated and treated as TLS 1.2
+      --  (RFC 8446 4.1.2: a TLS 1.3 client sets legacy_version 0x0303 but
+      --  buggy or forward-version clients may send higher).
+      if Raw_Legacy_Version < 16#0301# then
+         Last_Err := Protocol_Version;
+         OK := False;
+
+         pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
+         return;
+      end if;
+
+      --  TLS 1.0 / TLS 1.1 (0x0301 / 0x0302) as the sole offer -- no
+      --  supported_versions naming a version we support -- is a client
+      --  asking only for versions we do not implement.
+      if not HC.Saw_Supported_Versions
+        and then Raw_Legacy_Version in 16#0301# .. 16#0302#
+      then
          Last_Err := Protocol_Version;
          OK := False;
 

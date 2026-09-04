@@ -17,6 +17,7 @@ use RFLX.Tls_Parameters;
 with RFLX.TLS_Handshake.TLS_Handshake;
 with RFLX.TLS_Handshake.Client_Hello;
 with RFLX.TLS_Handshake.DTLS_Handshake;
+with RFLX.TLS_Handshake.Client_Hello_DTLS;
 with RFLX.TLS_Handshake.Server_Hello;
 with RFLX.TLS_Handshake.Server_Hello_DTLS;
 with RFLX.TLS_Handshake.Encrypted_Extensions;
@@ -115,7 +116,7 @@ is
        and TLS_Handshake_Client_Hello_SDU_Context.Buffer_First = TLS_Handshake_Client_Hello_SDU_Context.Buffer_First'Old
        and TLS_Handshake_Client_Hello_SDU_Context.Buffer_Last = TLS_Handshake_Client_Hello_SDU_Context.Buffer_Last'Old;
 
-   function Client_Hello_In_DTLS_Handshake_Payload (Ctx : RFLX.TLS_Handshake.DTLS_Handshake.Context) return Boolean is
+   function Client_Hello_DTLS_In_DTLS_Handshake_Payload (Ctx : RFLX.TLS_Handshake.DTLS_Handshake.Context) return Boolean is
      (RFLX.TLS_Handshake.DTLS_Handshake.Has_Buffer (Ctx)
       and then RFLX.TLS_Handshake.DTLS_Handshake.Present (Ctx, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload)
       and then RFLX.TLS_Handshake.DTLS_Handshake.Valid (Ctx, RFLX.TLS_Handshake.DTLS_Handshake.F_Tag)
@@ -124,46 +125,46 @@ is
 
    use type RFLX.TLS_Handshake.DTLS_Handshake.Field_Cursors;
 
-   procedure Switch_To_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context : in out RFLX.TLS_Handshake.DTLS_Handshake.Context; TLS_Handshake_Client_Hello_SDU_Context : out RFLX.TLS_Handshake.Client_Hello.Context)
+   procedure Switch_To_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context : in out RFLX.TLS_Handshake.DTLS_Handshake.Context; TLS_Handshake_Client_Hello_DTLS_SDU_Context : out RFLX.TLS_Handshake.Client_Hello_DTLS.Context)
    with
      Pre =>
        not TLS_Handshake_DTLS_Handshake_PDU_Context'Constrained
-       and not TLS_Handshake_Client_Hello_SDU_Context'Constrained
-       and RFLX.TLS_Handshake.Contains.Client_Hello_In_DTLS_Handshake_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context),
+       and not TLS_Handshake_Client_Hello_DTLS_SDU_Context'Constrained
+       and RFLX.TLS_Handshake.Contains.Client_Hello_DTLS_In_DTLS_Handshake_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context),
      Post =>
        not RFLX.TLS_Handshake.DTLS_Handshake.Has_Buffer (TLS_Handshake_DTLS_Handshake_PDU_Context)
-       and RFLX.TLS_Handshake.Client_Hello.Has_Buffer (TLS_Handshake_Client_Hello_SDU_Context)
-       and TLS_Handshake_DTLS_Handshake_PDU_Context.Buffer_First = TLS_Handshake_Client_Hello_SDU_Context.Buffer_First
-       and TLS_Handshake_DTLS_Handshake_PDU_Context.Buffer_Last = TLS_Handshake_Client_Hello_SDU_Context.Buffer_Last
-       and TLS_Handshake_Client_Hello_SDU_Context.First = RFLX.TLS_Handshake.DTLS_Handshake.Field_First (TLS_Handshake_DTLS_Handshake_PDU_Context, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload)
-       and TLS_Handshake_Client_Hello_SDU_Context.Last = RFLX.TLS_Handshake.DTLS_Handshake.Field_Last (TLS_Handshake_DTLS_Handshake_PDU_Context, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload)
-       and RFLX.TLS_Handshake.Client_Hello.Initialized (TLS_Handshake_Client_Hello_SDU_Context)
+       and RFLX.TLS_Handshake.Client_Hello_DTLS.Has_Buffer (TLS_Handshake_Client_Hello_DTLS_SDU_Context)
+       and TLS_Handshake_DTLS_Handshake_PDU_Context.Buffer_First = TLS_Handshake_Client_Hello_DTLS_SDU_Context.Buffer_First
+       and TLS_Handshake_DTLS_Handshake_PDU_Context.Buffer_Last = TLS_Handshake_Client_Hello_DTLS_SDU_Context.Buffer_Last
+       and TLS_Handshake_Client_Hello_DTLS_SDU_Context.First = RFLX.TLS_Handshake.DTLS_Handshake.Field_First (TLS_Handshake_DTLS_Handshake_PDU_Context, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload)
+       and TLS_Handshake_Client_Hello_DTLS_SDU_Context.Last = RFLX.TLS_Handshake.DTLS_Handshake.Field_Last (TLS_Handshake_DTLS_Handshake_PDU_Context, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload)
+       and RFLX.TLS_Handshake.Client_Hello_DTLS.Initialized (TLS_Handshake_Client_Hello_DTLS_SDU_Context)
        and TLS_Handshake_DTLS_Handshake_PDU_Context.Buffer_First = TLS_Handshake_DTLS_Handshake_PDU_Context.Buffer_First'Old
        and TLS_Handshake_DTLS_Handshake_PDU_Context.Buffer_Last = TLS_Handshake_DTLS_Handshake_PDU_Context.Buffer_Last'Old
        and TLS_Handshake_DTLS_Handshake_PDU_Context.First = TLS_Handshake_DTLS_Handshake_PDU_Context.First'Old
        and RFLX.TLS_Handshake.DTLS_Handshake.Context_Cursors (TLS_Handshake_DTLS_Handshake_PDU_Context) = RFLX.TLS_Handshake.DTLS_Handshake.Context_Cursors (TLS_Handshake_DTLS_Handshake_PDU_Context)'Old;
 
-   function Sufficient_Space_For_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context : RFLX.TLS_Handshake.DTLS_Handshake.Context; TLS_Handshake_Client_Hello_SDU_Context : RFLX.TLS_Handshake.Client_Hello.Context) return Boolean is
-     (RFLX.TLS_Handshake.Client_Hello.Buffer_Size (TLS_Handshake_Client_Hello_SDU_Context) >= RFLX.TLS_Handshake.DTLS_Handshake.Field_Size (TLS_Handshake_DTLS_Handshake_PDU_Context, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload)
-      and then RFLX_Types.To_First_Bit_Index (TLS_Handshake_Client_Hello_SDU_Context.Buffer_First) + RFLX.TLS_Handshake.DTLS_Handshake.Field_Size (TLS_Handshake_DTLS_Handshake_PDU_Context, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload) - 1 < RFLX_Types.Bit_Index'Last)
+   function Sufficient_Space_For_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context : RFLX.TLS_Handshake.DTLS_Handshake.Context; TLS_Handshake_Client_Hello_DTLS_SDU_Context : RFLX.TLS_Handshake.Client_Hello_DTLS.Context) return Boolean is
+     (RFLX.TLS_Handshake.Client_Hello_DTLS.Buffer_Size (TLS_Handshake_Client_Hello_DTLS_SDU_Context) >= RFLX.TLS_Handshake.DTLS_Handshake.Field_Size (TLS_Handshake_DTLS_Handshake_PDU_Context, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload)
+      and then RFLX_Types.To_First_Bit_Index (TLS_Handshake_Client_Hello_DTLS_SDU_Context.Buffer_First) + RFLX.TLS_Handshake.DTLS_Handshake.Field_Size (TLS_Handshake_DTLS_Handshake_PDU_Context, RFLX.TLS_Handshake.DTLS_Handshake.F_Payload) - 1 < RFLX_Types.Bit_Index'Last)
    with
      Pre =>
-       RFLX.TLS_Handshake.Client_Hello.Has_Buffer (TLS_Handshake_Client_Hello_SDU_Context)
-       and then RFLX.TLS_Handshake.Contains.Client_Hello_In_DTLS_Handshake_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context);
+       RFLX.TLS_Handshake.Client_Hello_DTLS.Has_Buffer (TLS_Handshake_Client_Hello_DTLS_SDU_Context)
+       and then RFLX.TLS_Handshake.Contains.Client_Hello_DTLS_In_DTLS_Handshake_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context);
 
-   procedure Copy_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context : RFLX.TLS_Handshake.DTLS_Handshake.Context; TLS_Handshake_Client_Hello_SDU_Context : in out RFLX.TLS_Handshake.Client_Hello.Context)
+   procedure Copy_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context : RFLX.TLS_Handshake.DTLS_Handshake.Context; TLS_Handshake_Client_Hello_DTLS_SDU_Context : in out RFLX.TLS_Handshake.Client_Hello_DTLS.Context)
    with
      Pre =>
-       not TLS_Handshake_Client_Hello_SDU_Context'Constrained
-       and then RFLX.TLS_Handshake.Client_Hello.Has_Buffer (TLS_Handshake_Client_Hello_SDU_Context)
-       and then RFLX.TLS_Handshake.Contains.Client_Hello_In_DTLS_Handshake_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context)
-       and then Sufficient_Space_For_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context, TLS_Handshake_Client_Hello_SDU_Context),
+       not TLS_Handshake_Client_Hello_DTLS_SDU_Context'Constrained
+       and then RFLX.TLS_Handshake.Client_Hello_DTLS.Has_Buffer (TLS_Handshake_Client_Hello_DTLS_SDU_Context)
+       and then RFLX.TLS_Handshake.Contains.Client_Hello_DTLS_In_DTLS_Handshake_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context)
+       and then Sufficient_Space_For_Payload (TLS_Handshake_DTLS_Handshake_PDU_Context, TLS_Handshake_Client_Hello_DTLS_SDU_Context),
      Post =>
        RFLX.TLS_Handshake.DTLS_Handshake.Has_Buffer (TLS_Handshake_DTLS_Handshake_PDU_Context)
-       and RFLX.TLS_Handshake.Client_Hello.Has_Buffer (TLS_Handshake_Client_Hello_SDU_Context)
-       and RFLX.TLS_Handshake.Client_Hello.Initialized (TLS_Handshake_Client_Hello_SDU_Context)
-       and TLS_Handshake_Client_Hello_SDU_Context.Buffer_First = TLS_Handshake_Client_Hello_SDU_Context.Buffer_First'Old
-       and TLS_Handshake_Client_Hello_SDU_Context.Buffer_Last = TLS_Handshake_Client_Hello_SDU_Context.Buffer_Last'Old;
+       and RFLX.TLS_Handshake.Client_Hello_DTLS.Has_Buffer (TLS_Handshake_Client_Hello_DTLS_SDU_Context)
+       and RFLX.TLS_Handshake.Client_Hello_DTLS.Initialized (TLS_Handshake_Client_Hello_DTLS_SDU_Context)
+       and TLS_Handshake_Client_Hello_DTLS_SDU_Context.Buffer_First = TLS_Handshake_Client_Hello_DTLS_SDU_Context.Buffer_First'Old
+       and TLS_Handshake_Client_Hello_DTLS_SDU_Context.Buffer_Last = TLS_Handshake_Client_Hello_DTLS_SDU_Context.Buffer_Last'Old;
 
    function Server_Hello_In_TLS_Handshake_Payload (Ctx : RFLX.TLS_Handshake.TLS_Handshake.Context) return Boolean is
      (RFLX.TLS_Handshake.TLS_Handshake.Has_Buffer (Ctx)

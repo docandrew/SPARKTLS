@@ -433,95 +433,76 @@ package TLS_Handshake is
 
    type Legacy_Compression_Methods_Length is range 1 .. 255 with Size => 8;
 
-   type Client_Hello_Extensions_Length is range 8 .. 2 ** 16 - 1 with Size => 16;
+   -- 0 .. : a TLS 1.2 ClientHello may carry an empty extensions block; TLS 1.3
+   -- always has at least supported_versions, which the server's policy checks.
+   type Client_Hello_Extensions_Length is unsigned 16;
 
+   -- RFC 8446 4.1.2: servers MUST tolerate any legacy_version (the real
+   -- version comes from supported_versions), so the ClientHello carries it
+   -- as a plain 16-bit value rather than the Protocol_Version enumeration.
+   type Legacy_Version_Any is unsigned 16;
+
+   -- ClientHello, TLS transport (RFC 8446 4.1.2, RFC 5246 7.4.1.2). One
+   -- message per transport, as for Server_Hello: the connection knows its
+   -- transport before parsing, so there is no version fork inside the
+   -- message and no DTLS cookie field here. The extensions block is
+   -- optional: RFC 5246 7.4.1.2 detects it by bytes following
+   -- compression_methods (RecordFlux 0.26 supports the Message'Last
+   -- condition; the upstream spec pre-dates that).
    type Client_Hello is
       message
-         Legacy_Version : TLS_Common::Protocol_Version
-            -- For compatibility reasons both TLS 1.3 and DTLS 1.3 require
-            -- indicating the version 1.2 here.
-            then Random
-               if (Legacy_Version = TLS_Common::TLS_1_2
-                  or Legacy_Version = TLS_Common::DTLS_1_2);
+         Legacy_Version : Legacy_Version_Any;
          Random : Opaque
             with Size => 32 * 8;
          Legacy_Session_ID_Length : Legacy_Session_ID_Length;
          Legacy_Session_ID : Opaque
-            with Size => Legacy_Session_ID_Length * 8
-            -- TLS
-            then Cipher_Suites_Length
-               if Legacy_Version = TLS_Common::TLS_1_0
-                  or Legacy_Version = TLS_Common::TLS_1_1
-                  or Legacy_Version = TLS_Common::TLS_1_2
-                  or Legacy_Version = TLS_Common::TLS_1_3
-            -- DTLS
-            then Legacy_Cookie_Length
-               if Legacy_Version /= TLS_Common::TLS_1_0
-                  and Legacy_Version /= TLS_Common::TLS_1_1
-                  and Legacy_Version /= TLS_Common::TLS_1_2
-                  and Legacy_Version /= TLS_Common::TLS_1_3;
+            with Size => Legacy_Session_ID_Length * 8;
+         Cipher_Suites_Length : Cipher_Suites_Length;
+         Cipher_Suites_TLS : Cipher_Suites_TLS
+            with Size => Cipher_Suites_Length * 8;
+         Legacy_Compression_Methods_Length : Legacy_Compression_Methods_Length;
+         Legacy_Compression_Methods : Opaque
+            with Size => Legacy_Compression_Methods_Length * 8
+            then null
+               if Message'Last = Legacy_Compression_Methods'Last
+            then Extensions_Length
+               if Message'Last /= Legacy_Compression_Methods'Last;
+         Extensions_Length : Client_Hello_Extensions_Length
+            then Extensions_TLS
+               with Size => Extensions_Length * 8;
+         Extensions_TLS : CH_Extensions_TLS;
+      end message;
+
+   -- ClientHello, DTLS transport (kept for the DTLS implementation to come).
+   type Client_Hello_DTLS is
+      message
+         Legacy_Version : TLS_Common::Protocol_Version
+            then Random
+               if Legacy_Version = TLS_Common::DTLS_1_2;
+         Random : Opaque
+            with Size => 32 * 8;
+         Legacy_Session_ID_Length : Legacy_Session_ID_Length;
+         Legacy_Session_ID : Opaque
+            with Size => Legacy_Session_ID_Length * 8;
          Legacy_Cookie_Length : Legacy_Cookie_Length;
          Legacy_Cookie : Opaque
             with Size => Legacy_Cookie_Length * 8;
-         Cipher_Suites_Length : Cipher_Suites_Length
-            -- TLS
-            then Cipher_Suites_TLS
-               if Legacy_Version = TLS_Common::TLS_1_0
-                  or Legacy_Version = TLS_Common::TLS_1_1
-                  or Legacy_Version = TLS_Common::TLS_1_2
-                  or Legacy_Version = TLS_Common::TLS_1_3
-            -- DTLS
-            then Cipher_Suites_DTLS
-               if Legacy_Version /= TLS_Common::TLS_1_0
-                  and Legacy_Version /= TLS_Common::TLS_1_1
-                  and Legacy_Version /= TLS_Common::TLS_1_2
-                  and Legacy_Version /= TLS_Common::TLS_1_3;
-         -- TLS
-         Cipher_Suites_TLS : Cipher_Suites_TLS
-            with Size => Cipher_Suites_Length * 8
-            then Legacy_Compression_Methods_Length;
-         -- DTLS
+         Cipher_Suites_Length : Cipher_Suites_Length;
          Cipher_Suites_DTLS : Cipher_Suites_DTLS
             with Size => Cipher_Suites_Length * 8;
-         -- TLS and DTLS
          Legacy_Compression_Methods_Length : Legacy_Compression_Methods_Length;
          Legacy_Compression_Methods : Opaque
             with Size => Legacy_Compression_Methods_Length * 8;
-            -- TODO(eng/recordflux/RecordFlux#1317): Enhance field conditions
-            -- The following field conditions trigger currently the referenced
-            -- issue. They have been commented out. I.e., Client_Hello messages
-            -- without extensions are not accepted. This is actually fine for
-            -- TLS 1.3 and DTLS 1.3) because they always have at least one
-            -- extension: Supported_Versions.
-            --
-            -- then null
-            --    if Message'Last / 8 = Legacy_Compression_Methods'Last / 8
-            -- then Extensions_Length
-            --    if Message'Last / 8 /= Legacy_Compression_Methods'Last / 8;
          Extensions_Length : Client_Hello_Extensions_Length
-            -- TLS
-            then Extensions_TLS
-               if Legacy_Version = TLS_Common::TLS_1_0
-                  or Legacy_Version = TLS_Common::TLS_1_1
-                  or Legacy_Version = TLS_Common::TLS_1_2
-                  or Legacy_Version = TLS_Common::TLS_1_3
-            -- DTLS
             then Extensions_DTLS
-               if Legacy_Version /= TLS_Common::TLS_1_0
-                  and Legacy_Version /= TLS_Common::TLS_1_1
-                  and Legacy_Version /= TLS_Common::TLS_1_2
-                  and Legacy_Version /= TLS_Common::TLS_1_3;
-         Extensions_TLS : CH_Extensions_TLS
-            with Size => Extensions_Length * 8
-            then null;
-         Extensions_DTLS : CH_Extensions_DTLS
-            with Size => Extensions_Length * 8;
+               with Size => Extensions_Length * 8;
+         Extensions_DTLS : CH_Extensions_DTLS;
       end message;
 
    for TLS_Handshake use (Payload => Client_Hello)
       if Tag = Tls_Parameters::Client_Hello;
 
-   for DTLS_Handshake use (Payload => Client_Hello)
+   for DTLS_Handshake use (Payload => Client_Hello_DTLS)
       if Tag = Tls_Parameters::Client_Hello;
 
    type Legacy_Compression_Method is range 0 .. 0 with Size => 8;

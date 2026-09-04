@@ -806,95 +806,22 @@ is
    end Build_Certificate_Request;
 
    procedure Build_Certificate_Chain (Id : in Identity; Result : out Byte_Seq; Len : out N32) is
-      --  Build the Certificate message manually (simpler than RFLX
-      --  for variable-count entries).
-      --
-      --  Format:
-      --    handshake_header(4)
-      --    certificate_request_context_length(1) = 0
-      --    certificate_list_length(3)
-      --    for each cert:
-      --      cert_data_length(3) + cert_data + extensions_length(2) = 0
+      package C13         renames RFLX.TLS_Handshake.Certificate;
+      package C13_Entries renames RFLX.TLS_Handshake.Certificate_Entries;
+      package C13_Entry   renames RFLX.TLS_Handshake.Certificate_Entry;
 
-      Pos : N32 := 0;
-
-      procedure Put_U8 (V : Byte)
-      with
-        Pre => Result'First = 0 and then Result'Last < N32'Last and then Pos <= Result'Last + 1,
-        Post =>
-          Pos <= Result'Last + 1
-          and then (if Pos'Old <= Result'Last then Pos = Pos'Old + 1 else Pos = Pos'Old)
-      is
-      begin
-         if Pos <= Result'Last then
-            Result (Pos) := V;
-            Pos := Pos + 1;
-         end if;
-      end Put_U8;
-
-      procedure Put_U24 (V : N32)
-      with
-        Pre =>
-          Result'First = 0
-          and then Result'Last < N32'Last
-          and then Pos <= Result'Last + 1
-          and then V <= 16#FFFFFF#,
-        Post =>
-          Pos <= Result'Last + 1
-          and then (if Pos'Old <= Result'Last - 2 then Pos = Pos'Old + 3
-                    else Pos <= Result'Last + 1)
-      is
-      begin
-         Put_U8 (Byte (V / 65536));
-         Put_U8 (Byte ((V / 256) mod 256));
-         Put_U8 (Byte (V mod 256));
-      end Put_U24;
-
-      procedure Put_Cert_Entry (DER : Byte_Seq; DER_Len : N32)
-      with
-        Pre =>
-          DER'First = 0
-          and then DER_Len > 0
-          and then DER_Len <= N32 (Max_Cert_DER)
-          and then DER'Last in 0 .. N32 (Max_Cert_DER) - 1
-          and then DER'Last >= DER_Len - 1
-          and then Result'First = 0
-          and then Result'Last < N32'Last
-          and then Pos <= Result'Last + 1,
-        Post => Pos <= Result'Last + 1
-      is
-      begin
-         Put_U24 (DER_Len);              --  cert_data_length
-         if Pos <= Result'Last and then Result'Last - Pos >= DER_Len - 1 then
-            pragma Assert (Result'First = 0);
-            pragma Assert (Pos >= Result'First);
-            pragma Assert (Pos <= Result'Last - (DER_Len - 1));
-            pragma Assert (Pos + DER_Len - 1 <= Result'Last);
-            pragma Assert (DER_Len - 1 <= DER'Last);
-            Result (Pos .. Pos + DER_Len - 1) := DER (0 .. DER_Len - 1);
-            Pos := Pos + DER_Len;
-         end if;
-         Put_U8 (0);
-         Put_U8 (0);         --  extensions_length = 0
-      end Put_Cert_Entry;
-
-      --  Compute total list length
+      --  certificate_request_context(1)=0 + certificate_list_length(3) + entries.
+      --  Each entry: cert_data_length(3) + cert_data + extensions_length(2)=0.
       List_Len : N32;
    begin
       Result := (others => 0);
       Len := 0;
 
-      if not Id.Has_Identity or Id.NaCl_Cert_Len = 0 then
+      if not Id.Has_Identity or else Id.NaCl_Cert_Len = 0 then
          return;
       end if;
 
-      --  Leaf entry: 3 + cert_len + 2
       List_Len := 3 + Id.NaCl_Cert_Len + 2;
-
-      --  Intermediate entries. Each entry adds at most
-      --  3 + Max_Cert_DER + 2 bytes; with at most Max_Pool_Size
-      --  intermediates, total list â¤ leaf_entry + Max_Pool_Size *
-      --  (Max_Cert_DER + 5), well below N32'Last.
       for I in 0 .. Id.Int_Count - 1 loop
          pragma
            Loop_Invariant
@@ -907,52 +834,68 @@ is
       declare
          Body_Len : constant N32 := 1 + 3 + List_Len;
          Msg_Len  : constant N32 := 4 + Body_Len;
+         Buf      : RBT.Bytes_Ptr;
+         Ctx      : C13.Context;
+         Entries  : C13_Entries.Context;
+
+         --  Append one CertificateEntry (cert_data, empty extensions) to the
+         --  Certificate_List sequence.
+         procedure Put_Entry (DER : in Byte_Seq; DER_Len : in N32)
+         with
+           Pre =>
+             DER'First = 0
+             and then DER_Len in 1 .. N32 (Max_Cert_DER)
+             and then DER'Last >= DER_Len - 1
+         is
+            E : C13_Entry.Context;
+         begin
+            C13_Entries.Switch (Entries, E);
+            C13_Entry.Set_Cert_Data_Length (E, RFLX.TLS_Handshake.Cert_Data_Length (DER_Len));
+            C13_Entry.Set_Cert_Data (E, To_RFLX (DER (0 .. DER_Len - 1)));
+            C13_Entry.Set_Extensions_Length (E, 0);
+            C13_Entry.Set_Extensions_Empty (E);
+            C13_Entries.Update (Entries, E);
+         end Put_Entry;
       begin
          if Msg_Len > N32 (Result'Length) then
             return;
          end if;
 
-         --  Handshake header
-         Put_U8 (HS_Msg_Wire (HT_Certificate));
-         Put_U24 (Body_Len);
+         Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+         C13.Initialize (Ctx, Buf);
+         C13.Set_Certificate_Request_Context_Length (Ctx, 0);
+         C13.Set_Certificate_Request_Context_Empty (Ctx);
+         C13.Set_Certificate_List_Length
+           (Ctx, RFLX.TLS_Handshake.Certificate_List_Length (List_Len));
+         C13.Switch_To_Certificate_List (Ctx, Entries);
 
-         --  certificate_request_context (empty)
-         Put_U8 (0);
-
-         --  certificate_list_length
-         Put_U24 (List_Len);
-
-         --  Leaf certificate entry
-         Put_Cert_Entry (Id.NaCl_Cert_DER, Id.NaCl_Cert_Len);
-
-         --  Intermediate certificate entries
+         --  Leaf, then intermediates in pool order.
+         Put_Entry (Id.NaCl_Cert_DER, Id.NaCl_Cert_Len);
          for I in 0 .. Id.Int_Count - 1 loop
-            pragma Loop_Invariant (Pos <= Result'Last + 1);
             if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
                declare
                   Int_DER : Byte_Seq (0 .. N32 (Id.Ints (I).DER_Len) - 1);
                begin
-                  pragma Assert (Id.Ints (I).DER_Len <= X509.N32 (Max_Cert_DER));
-                  --  Convert X509.Byte_Seq to SPARKNaCl.Byte_Seq
                   for J in Int_DER'Range loop
-                     pragma Assert (J <= N32 (Max_Cert_DER) - 1);
-                     declare
-                        J_Nat : constant Natural := Natural (J);
-                        K     : constant X509.N32 := X509.N32 (J_Nat);
-                     begin
-                        pragma Assert (J_Nat <= Max_Cert_DER - 1);
-                        pragma Assert (K >= Id.Ints (I).DER'First);
-                        pragma Assert (K <= X509.N32 (Max_Cert_DER) - 1);
-                        pragma Assert (K <= Id.Ints (I).DER'Last);
-                        Int_DER (J) := Byte (Id.Ints (I).DER (K));
-                     end;
+                     Int_DER (J) := Byte (Id.Ints (I).DER (X509.N32 (Natural (J))));
                   end loop;
-                  Put_Cert_Entry (Int_DER, N32 (Id.Ints (I).DER_Len));
+                  Put_Entry (Int_DER, N32 (Id.Ints (I).DER_Len));
                end;
             end if;
          end loop;
 
-         Len := Pos;
+         C13.Update_Certificate_List (Ctx, Entries);
+         C13.Take_Buffer (Ctx, Buf);
+
+         --  Handshake header (type + 24-bit length) by hand, as the other
+         --  RecordFlux builders do (task 147: outer TLS_Handshake header).
+         Result (0) := HS_Msg_Wire (HT_Certificate);
+         Result (1) := Byte (Body_Len / 65536);
+         Result (2) := Byte ((Body_Len / 256) mod 256);
+         Result (3) := Byte (Body_Len mod 256);
+         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         RFLX_Free (Buf);
+         Len := Msg_Len;
       end;
    end Build_Certificate_Chain;
 

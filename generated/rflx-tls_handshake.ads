@@ -141,14 +141,13 @@ is
      Pre =>
        Valid_Legacy_Compression_Methods_Length (Val);
 
-   type Client_Hello_Extensions_Length is range 8 .. 2**16 - 1
+   type Client_Hello_Extensions_Length is range 0 .. 2**16 - 1
    with
      Size =>
        16;
 
    function Valid_Client_Hello_Extensions_Length (Val : RFLX.RFLX_Types.Base_Integer) return Boolean is
-     (Val >= 8
-      and Val <= 65535);
+     (Val <= 65535);
 
    function To_Base_Integer (Val : RFLX.TLS_Handshake.Client_Hello_Extensions_Length) return RFLX.RFLX_Types.Base_Integer is
      (RFLX.RFLX_Types.Base_Integer (Val));
@@ -158,6 +157,23 @@ is
    with
      Pre =>
        Valid_Client_Hello_Extensions_Length (Val);
+
+   type Legacy_Version_Any is range 0 .. 2**16 - 1
+   with
+     Size =>
+       16;
+
+   function Valid_Legacy_Version_Any (Val : RFLX.RFLX_Types.Base_Integer) return Boolean is
+     (Val <= 65535);
+
+   function To_Base_Integer (Val : RFLX.TLS_Handshake.Legacy_Version_Any) return RFLX.RFLX_Types.Base_Integer is
+     (RFLX.RFLX_Types.Base_Integer (Val));
+
+   function To_Actual (Val : RFLX.RFLX_Types.Base_Integer) return RFLX.TLS_Handshake.Legacy_Version_Any is
+     (RFLX.TLS_Handshake.Legacy_Version_Any (Val))
+   with
+     Pre =>
+       Valid_Legacy_Version_Any (Val);
 
    type Legacy_Compression_Method is range 0 .. 0
    with
