@@ -7,94 +7,25 @@ Output of `rflx generate -d generated/ specs/*.rflx` against AdaCore's
 Generated with **RecordFlux 0.26.0**. Keep this directory in sync with
 `../specs/` — see "Checking for drift" below.
 
-After regeneration, re-apply these patches:
+The `generated/` directory is **pristine `rflx generate` output — no
+post-generation patches are applied** (confirmed 2026-09-04). Never
+hand-edit generated code, not even to track a spec change: change the
+spec and regenerate (see "Checking for drift" below).
 
-1. **`rflx-rflx_generic_types.ads`**: delete the `with
-   Ada.Unchecked_Deallocation;` line and the `Free` instantiation. We
-   provide `RFLX_Free` in `src/sparktls-handshake-server_msgs.adb` (and
-   similar) instead, in a `SPARK_Mode => Off` body.
+Two patches this file used to require are gone:
 
-   **The old rationale for this was wrong** and is worth re-testing.
-   It used to read "`Unchecked_Deallocation` only takes `access all`, so
-   it stops compiling once `Bytes_Ptr` is pool-specific". That is not
-   true: a pristine 0.26.0 generation contains *both* `type Bytes_Ptr is
-   access Bytes` and `procedure Free is new Ada.Unchecked_Deallocation
-   (Object => Bytes, Name => Bytes_Ptr)`, and passes `gnatprove
-   --mode=check` over 106 units with zero errors. Our own
-   `Free_Byte_Seq` in `src/sparktls.adb` also instantiates
-   `Unchecked_Deallocation` inside a `SPARK_Mode => On` body. So this
-   patch may be unnecessary; dropping it would let us delete the
-   `SPARK_Mode => Off` `RFLX_Free` wrappers, which are real gaps in the
-   verification story. Not yet tested for *proof* impact (only
-   legality/flow), so it stays applied until someone measures it.
+- **`rflx-rflx_generic_types.ads` `Free` deletion — not applied.** The
+  generated `Free` instantiation and its `with Ada.Unchecked_Deallocation`
+  are shipped as-is; `src/` provides its own `RFLX_Free` (a
+  `SPARK_Mode => Off` wrapper) that the code actually calls. Switching
+  those call sites to the generated `Free` would let us drop the Off-mode
+  wrappers and close a small verification gap — a future cleanup, not a
+  patch.
+- **`server_hello.ads` sentinel `Buffer /= null` guards — moot.** The
+  per-transport ServerHello (no HelloRetryRequest fork) no longer emits
+  the sentinel slices those guards protected.
 
-2. **NO LONGER NEEDED (2026-09-04): Server_Hello is now a per-transport message without the HRR fork, so the sentinel slices this patch guarded are not generated; `rflx-tls_handshake-server_hello.ads` is pristine.** Former text:
-
-   **`rflx-tls_handshake-server_hello.ads`**: add a `Buffer /= null and then`
-   guard before each of the 8 `Buffer.all (RFLX_Types.To_Index ...)` slices in
-   the context `Dynamic_Predicate` (around lines 1720, 1729, 1738, 1747, 1829,
-   1836, 1843, 1850 — the HelloRetryRequest sentinel comparisons).
-
-   Apply with:
-
-   ```sh
-   python3 - <<'EOF'
-   import re
-   p = 'generated/rflx-tls_handshake-server_hello.ads'
-   s = open(p, encoding='utf8').read()
-   # NB: exclude "Ctx.Buffer.all" (~line 2195) — that is a Bytes-valued
-   # expression in a function body, not a boolean conjunct; guarding it is a
-   # type error and will not compile.
-   pat = re.compile(r'(?<!Ctx\.)\bBuffer\.all \(RFLX_Types\.To_Index')
-   assert len(pat.findall(s)) == 8
-   open(p, 'w', encoding='utf8').write(pat.sub(
-       "Buffer /= null "
-       "and then RFLX_Types.To_Index (Cursors (F_Random).First) >= Buffer'First "
-       "and then RFLX_Types.To_Index (Cursors (F_Random).Last) <= Buffer'Last "
-       "and then Buffer.all (RFLX_Types.To_Index", s))
-   EOF
-   ```
-
-   The guard covers BOTH problems on those slices. Non-nullness alone fixes the
-   8 pointer-dereference checks; the two bounds conjuncts fix the 8 range
-   checks ("slice bounds must fit in the underlying array"). `Valid_Context`
-   already gives `Buffer'First = Buffer_First` / `Buffer'Last = Buffer_Last`
-   under `Buffer /= null`, but relating the *cursor* positions to those bounds
-   would mean chaining through `Cursors_Invariant`, which the prover does not
-   do. Stating them in the guard discharges them directly. It is a weakening
-   in the safe direction: out-of-range makes the conjunct vacuously true
-   rather than erroneous.
-
-   **Why.** RecordFlux 0.26.0 emits those dereferences with no null guard.
-   After `Take_Buffer` — a legitimate, intended use — `Buffer` is null and the
-   predicate is not merely false but *unevaluable*. Consequences:
-
-   * Any build with assertions on (`-gnata`, i.e. `tests/run_all.sh --checked`)
-     dies with `access check failed` at `server_hello.ads:1729` on the first
-     real ServerHello. Reproduce with `bin/examples/tls_fetch https://github.com/`
-     built `--checked`. Release builds are unaffected: predicates are not
-     evaluated.
-   * GNATprove cannot discharge the 8 pointer-dereference checks, and the
-     failure cascades into the predicate checks at every use of the type.
-
-   **Measured effect** (level 1, same tree before and after):
-   `server_hello` went **80 -> 34** with the null guard alone, then **34 -> 26**
-   once the bounds conjuncts were added; 1262 checks proved. Crucially the
-   composition changed: 8 pointer-dereference and 8 range checks -> **zero
-   native runtime checks remain in this unit**. Everything left (18 predicate,
-   4 precondition, 4 postcondition) is a contract obligation, not AoRTE.
-   Earlier measurement on chungus with the null guard alone: 74 -> 28. All 8 pointer-dereference
-   checks were eliminated; predicate checks fell 26 -> 15 and preconditions
-   27 -> 4. Reproduced qualitatively on the primary box (the exact counts
-   there were taken under contention and are not citable).
-
-   **Still open in this unit:** 18 predicate checks, 4 preconditions,
-   4 postconditions — all contract obligations. Level 3 does not help
-   (74 -> 70 unguarded).
-
-   This is a workaround for an upstream defect. Report it to AdaCore and drop
-   the patch once fixed; `rflx generate` will silently discard it otherwise,
-   and the proofs will regress with no obvious cause.
+The historical notes below record why each was once needed.
 
 ### REJECTED — adding postconditions to expression functions (2026-08-16)
 

@@ -322,21 +322,10 @@ package TLS_Handshake is
    -- Extensions for the NST (NewSessionTicket) message
    type NST_Extension is
       message
-         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values
-            then Data_Length
-               if
-               -- Message type specific constraints
-               (
-                  --
-                  -- Automatically generated condition that selects the enum literals having
-                  -- the following properties:
-                  --
-                  -- tls13 = .*NST.*
-                  --
-                  -- NOTE: Remove or amend this comment when the condition below is modified.
-                  --
-                  Tag = Tls_Extensiontype_Values::Early_Data
-               );
+         -- Tag constraint removed (2026-09-04), as for CH/SH/EE: allowed tags
+         -- are the client's policy, not a parse-time whitelist. The server may
+         -- send GREASE and ticket_flags here.
+         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values;
          Data_Length : Data_Length;
          Data : Opaque
             with Size => 8 * Data_Length;

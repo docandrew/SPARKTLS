@@ -366,6 +366,13 @@ package Tls_Extensiontype_Values is
        -- Ref: draft-pismenny-tls-dtls-plaintext-sequence-number-01
        Sequence_Number_Encryption_Algorithms => 60,
 
+       -- tls13 = NST
+       -- Ref: ticket_flags -- server resumption_across_names signal
+       Ticket_Flags => 62,
+
+       -- RFC 8701 GREASE value we emit in the NewSessionTicket extensions.
+       Grease_0A0A => 2570,
+
        -- tls13 = -
        -- dtls-only = N
        -- rec = Y

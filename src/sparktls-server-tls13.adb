@@ -15,6 +15,13 @@ with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.Key_Update;
 with X509;
+with SPARKTLS.RFLX_Bridge;
+with Ada.Unchecked_Deallocation;
+with RFLX.RFLX_Builtin_Types;
+with RFLX.TLS_Handshake.New_Session_Ticket;
+with RFLX.TLS_Handshake.NST_Extensions;
+with RFLX.TLS_Handshake.NST_Extension;
+with RFLX.Tls_Extensiontype_Values;
 use type X509.Algorithm_ID;
 use type X509.Certificate;
 with SPARKTLSCrypto.HMAC384;
@@ -2491,54 +2498,77 @@ is
             NST_Body_Len  : constant N32 := NST_Total - 4;
             NST_Ext_Len   : constant N32 := (if Include_Flags then 11 else 4);
             NST           : Byte_Seq (0 .. 45) := (others => 0);
+
+            package RBT     renames RFLX.RFLX_Builtin_Types;
+            package NST_M   renames RFLX.TLS_Handshake.New_Session_Ticket;
+            package NST_Seq renames RFLX.TLS_Handshake.NST_Extensions;
+            package NST_El  renames RFLX.TLS_Handshake.NST_Extension;
+            use SPARKTLS.RFLX_Bridge;
+            procedure NST_Free is new
+              Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+            Buf : RBT.Bytes_Ptr;
+            Ctx : NST_M.Context;
          begin
-            --  Handshake type: NewSessionTicket (0x04)
+            --  RFC 8446 4.6.1 body via RecordFlux: fixed fields, then the
+            --  extensions (GREASE + optional ticket_flags).
+            Buf := new RBT.Bytes'(1 .. RBT.Index (NST_Body_Len) => 0);
+            NST_M.Initialize (Ctx, Buf);
+            NST_M.Set_Ticket_Lifetime (Ctx, 3600);
+            NST_M.Set_Ticket_Age_Add
+              (Ctx, RFLX.TLS_Handshake.Ticket_Age_Add (Age_Add));
+            NST_M.Set_Ticket_Nonce_Length (Ctx, 2);
+            NST_M.Set_Ticket_Nonce (Ctx, To_RFLX (Nonce (0 .. 1)));
+            NST_M.Set_Ticket_Length (Ctx, 16);
+            NST_M.Set_Ticket (Ctx, To_RFLX (Byte_Seq (TID)));
+            NST_M.Set_Extensions_Length
+              (Ctx,
+               RFLX.TLS_Handshake.New_Session_Ticket_Extensions_Length (NST_Ext_Len));
+
+            declare
+               Exts : NST_Seq.Context;
+            begin
+               NST_M.Switch_To_Extensions (Ctx, Exts);
+
+               --  GREASE (RFC 8701), empty body.
+               declare
+                  E : NST_El.Context;
+               begin
+                  NST_Seq.Switch (Exts, E);
+                  NST_El.Set_Tag (E, RFLX.Tls_Extensiontype_Values.Grease_0A0A);
+                  NST_El.Set_Data_Length (E, 0);
+                  NST_El.Set_Data_Empty (E);
+                  NST_Seq.Update (Exts, E);
+               end;
+
+               --  ticket_flags (draft-ietf-tls-tlsflags): flags<1..255> body
+               --  02 00 01 sets bit 8 (resumption_across_names).
+               if Include_Flags then
+                  declare
+                     E          : NST_El.Context;
+                     Flags_Body : constant Byte_Seq (0 .. 2) := (2, 0, 1);
+                  begin
+                     NST_Seq.Switch (Exts, E);
+                     NST_El.Set_Tag (E, RFLX.Tls_Extensiontype_Values.Ticket_Flags);
+                     NST_El.Set_Data_Length (E, 3);
+                     NST_El.Set_Data (E, To_RFLX (Flags_Body));
+                     NST_Seq.Update (Exts, E);
+                  end;
+               end if;
+
+               NST_M.Update_Extensions (Ctx, Exts);
+            end;
+
+            NST_M.Take_Buffer (Ctx, Buf);
+
+            --  Handshake header (type 0x04 + 3-byte length) by hand, as the
+            --  other RecordFlux builders do (task 147: outer header).
             NST (0) := 16#04#;
-            --  Length: 35 or 42 bytes
             NST (1) := 0;
             NST (2) := 0;
             NST (3) := Byte (NST_Body_Len);
-            --  ticket_lifetime: 3600 seconds (1 hour)
-            NST (4) := 0;
-            NST (5) := 0;
-            NST (6) := 16#0E#;
-            NST (7) := 16#10#;
-            --  ticket_age_add
-            NST (8) := Byte (Shift_Right (Age_Add, 24));
-            NST (9) := Byte (Shift_Right (Age_Add, 16) and 16#FF#);
-            NST (10) := Byte (Shift_Right (Age_Add, 8) and 16#FF#);
-            NST (11) := Byte (Age_Add and 16#FF#);
-            --  ticket_nonce_length: 2
-            NST (12) := 2;
-            --  ticket_nonce
-            NST (13) := Nonce (0);
-            NST (14) := Nonce (1);
-            --  ticket_length: 16
-            NST (15) := 0;
-            NST (16) := 16;
-            --  ticket (the cache ID)
-            NST (17 .. 32) := TID;
-            --  extensions_length: 4 or 11
-            NST (33) := 0;
-            NST (34) := Byte (NST_Ext_Len);
-            --  GREASE extension 0x0a0a, empty body.
-            NST (35) := 16#0A#;
-            NST (36) := 16#0A#;
-            NST (37) := 0;
-            NST (38) := 0;
-            if Include_Flags then
-               --  ticket_flags extension (0x003E), body
-               --  opaque flags<1..255>. Bit 8
-               --  resumption_across_names is encoded as
-               --  two minimally-encoded flag bytes: 00 01.
-               NST (39) := 0;
-               NST (40) := 16#3E#;
-               NST (41) := 0;
-               NST (42) := 3;
-               NST (43) := 2;
-               NST (44) := 0;
-               NST (45) := 1;
-            end if;
+            NST (4 .. 4 + NST_Body_Len - 1) :=
+              To_NaCl (Buf.all (1 .. RBT.Index (NST_Body_Len)));
+            NST_Free (Buf);
 
             --  NewSessionTicket is a post-handshake
             --  optimisation (RFC 8446 4.6.1); it is
