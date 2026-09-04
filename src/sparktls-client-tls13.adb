@@ -29,6 +29,9 @@ with RFLX.TLS_Handshake.EE_Extensions;
 with RFLX.TLS_Handshake.EE_Extension;
 with RFLX.Tls_Extensiontype_Values;
 with RFLX.TLS_Handshake.New_Session_Ticket;
+with RFLX.TLS_Handshake.Certificate_Request;
+with RFLX.TLS_Handshake.CR_Extensions;
+with RFLX.TLS_Handshake.CR_Extension;
 with RFLX.TLS_Handshake.NST_Extensions;
 with RFLX.TLS_Handshake.NST_Extension;
 
@@ -632,209 +635,213 @@ is
       D      : in out SPARKTLS.HS_Pool.HS_Data;
       Data   : in Byte_Seq;
       Result : out Action)
-   with
-     Pre =>
-       Data'First = 0
-       and then Data'Length >= 4
-       and then Data'Last < N32'Last - 4
-       and then Data'Length <= Transcript_Capacity
-       and then S.Negotiated_Suite in TLS13_Suite,
-     Post =>
-       (if S.State /= Error_State then S.Negotiated_Suite in TLS13_Suite)
-       and then Result in OK | Has_Output | Error_Alert;
+   is
+      package CR_M   renames RFLX.TLS_Handshake.Certificate_Request;
+      package CR_Seq renames RFLX.TLS_Handshake.CR_Extensions;
+      package CR_El  renames RFLX.TLS_Handshake.CR_Extension;
+      package RBT    renames RFLX.RFLX_Builtin_Types;
+      use type RBT.Length;
+      use type RBT.Bit_Length;
+      procedure CR_Free is new
+        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
 
-   procedure Handle_CertReq_13
-     (S      : in out Session;
-      D      : in out SPARKTLS.HS_Pool.HS_Data;
-      Data   : in Byte_Seq;
-      Result : out Action) is
+      function Tag_Wire
+        (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
+      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
+
+      Body_Len : constant N32 := N32 (Data'Length) - 4;
+      Buf      : RBT.Bytes_Ptr;
+      Ctx      : CR_M.Context;
+
+      Picked    : Maybe_Sig_Scheme := Scheme_None;
+      Sig_Found : Boolean := False;
+      Fail_Err  : Error_Code := No_Error;
+      --  Offsets (into Data) of the signature_algorithms (SA) and
+      --  certificate_authorities (CA) list bodies, for the selector. 0 = none.
+      SA_Pos, SA_Cnt : N32 := 0;
+      CA_Pos, CA_Cnt : N32 := 0;
    begin
       Result := OK;
       if S.HC.Using_PSK then
          Send_HS_Encrypted_Alert (S, D, Unexpected_Message, Result);
          return;
       end if;
-      if Data'Length >= 7 then
+
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      Buf.all := SPARKTLS.RFLX_Bridge.To_RFLX (Data (Data'First + 4 .. Data'Last));
+      CR_M.Initialize
+        (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
+      CR_M.Verify_Message (Ctx);
+
+      if not CR_M.Well_Formed_Message (Ctx)
+        or else CR_M.Message_Last (Ctx) /= RBT.Bit_Length (RBT.Length (Body_Len) * 8)
+      then
+         CR_M.Take_Buffer (Ctx, Buf);
+         CR_Free (Buf);
+         Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
+         return;
+      end if;
+
+      --  RFC 8446 4.3.2: in a handshake CertificateRequest the
+      --  certificate_request_context MUST be empty.
+      if N32 (CR_M.Get_Certificate_Request_Context_Length (Ctx)) /= 0 then
+         CR_M.Take_Buffer (Ctx, Buf);
+         CR_Free (Buf);
+         Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
+         return;
+      end if;
+
+      SPARKTLS_Transcript.Append (S.HC.TS, Data);
+      S.HC.Cert_Request_Received := True;
+
+      --  Iterate the extensions through RecordFlux; P tracks the same
+      --  extension's offset in Data (they are contiguous after the
+      --  4-byte header, 1-byte empty context and 2-byte ext-list length),
+      --  so the opaque sig_algs / CA bodies stay Data slices.
+      declare
+         P : N32 := Data'First + 7;
+      begin
+         if CR_M.Present (Ctx, CR_M.F_Extensions) then
+            declare
+               Exts : CR_Seq.Context;
+            begin
+               CR_M.Switch_To_Extensions (Ctx, Exts);
+               while Fail_Err = No_Error and then CR_Seq.Has_Element (Exts) loop
+                  declare
+                     E : CR_El.Context;
+                  begin
+                     CR_Seq.Switch (Exts, E);
+                     CR_El.Verify_Message (E);
+                     if CR_El.Well_Formed_Message (E)
+                       and then P + 4 <= Data'Last + 1
+                     then
+                        declare
+                           Tag   : constant Unsigned_16 := Tag_Wire (CR_El.Get_Tag (E));
+                           E_Len : constant N32 := N32 (CR_El.Get_Data_Length (E));
+                           V_OK  : Boolean;
+                           V_Err : Error_Code;
+                        begin
+                           Validate_Server_Ext (E_CR, Tag, E_Len, S.HC, V_OK, V_Err);
+                           if not V_OK then
+                              Fail_Err := V_Err;
+                           elsif Tag = 16#000D#
+                             and then E_Len >= 4
+                             and then P + 4 + E_Len <= Data'Last + 1
+                           then
+                              declare
+                                 List_Len : constant N32 :=
+                                   N32 (Data (P + 4)) * 256 + N32 (Data (P + 5));
+                              begin
+                                 if List_Len + 2 = E_Len and then List_Len >= 2 then
+                                    Sig_Found := True;
+                                    SA_Pos := P + 6;
+                                    SA_Cnt := List_Len;
+                                    Picked :=
+                                      Handshake.Pick_Sig_Algo_With_Prefs
+                                        (Data (P + 6 .. P + 5 + List_Len),
+                                         S.HC.Cfg.Local.Sign_Algo,
+                                         S.HC.Cfg.Sign_Sig_Algos,
+                                         S.HC.Cfg.Sign_Sig_Algo_Count);
+                                 end if;
+                              end;
+                           elsif Tag = 16#002F#
+                             and then E_Len >= 2
+                             and then P + 4 + E_Len <= Data'Last + 1
+                           then
+                              declare
+                                 Outer_Len : constant N32 :=
+                                   N32 (Data (P + 4)) * 256 + N32 (Data (P + 5));
+                                 DN_P      : N32 := P + 6;
+                                 DN_End    : constant N32 := P + 6 + Outer_Len;
+                                 Bad       : Boolean := False;
+                              begin
+                                 if 2 + Outer_Len /= E_Len
+                                   or else DN_End > P + 4 + E_Len
+                                   or else Outer_Len = 0
+                                 then
+                                    Bad := True;
+                                 else
+                                    while not Bad and then DN_P < DN_End loop
+                                       pragma Loop_Invariant (DN_P <= DN_End);
+                                       pragma Loop_Variant (Increases => DN_P);
+                                       if DN_P + 2 > DN_End then
+                                          Bad := True;
+                                       else
+                                          declare
+                                             DN_Len : constant N32 :=
+                                               N32 (Data (DN_P)) * 256 + N32 (Data (DN_P + 1));
+                                          begin
+                                             if DN_P + 2 + DN_Len > DN_End or else DN_Len = 0 then
+                                                Bad := True;
+                                             else
+                                                DN_P := DN_P + 2 + DN_Len;
+                                             end if;
+                                          end;
+                                       end if;
+                                    end loop;
+                                 end if;
+                                 if Bad then
+                                    Fail_Err := Decode_Error;
+                                 else
+                                    CA_Pos := P + 6;
+                                    CA_Cnt := Outer_Len;
+                                 end if;
+                              end;
+                           end if;
+                           P := P + 4 + E_Len;
+                        end;
+                     end if;
+                     CR_Seq.Update (Exts, E);
+                  end;
+               end loop;
+               CR_M.Update_Extensions (Ctx, Exts);
+            end;
+         end if;
+      end;
+
+      CR_M.Take_Buffer (Ctx, Buf);
+      CR_Free (Buf);
+
+      if Fail_Err /= No_Error then
+         Send_HS_Encrypted_Alert (S, D, Fail_Err, Result);
+         return;
+      end if;
+
+      --  Application credential selection (RFC 8446 4.2.4). Slices clamped to
+      --  Data so their bounds are local facts; the walk above validated them.
+      if S.HC.Cfg.Select_Client_Identity /= null then
          declare
-            Ctx_Len_Decl : constant N32 := N32 (Data (Data'First + 4));
-            Ext_Off_Decl : constant N32 := Data'First + 5 + Ctx_Len_Decl;
-            Body_OK      : Boolean := False;
+            CA_Len    : constant N32 := N32'Min (CA_Cnt, Data'Last + 1 - CA_Pos);
+            SA_Len    : constant N32 := N32'Min (SA_Cnt, Data'Last + 1 - SA_Pos);
+            Picked_Id : constant Maybe_Identity_Access :=
+              S.HC.Cfg.Select_Client_Identity
+                (Data (CA_Pos .. CA_Pos + CA_Len - 1), Data (SA_Pos .. SA_Pos + SA_Len - 1));
          begin
-            if Ctx_Len_Decl /= 0 then
-               Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
+            if Picked_Id = null then
+               S.HC.Cfg.Local := No_Identity'Access;
+            elsif Picked_Id.Has_Identity and then Identity_Valid (Picked_Id.all) then
+               S.HC.Cfg.Local := Valid_Identity_Access (Picked_Id);
+            else
+               Send_HS_Encrypted_Alert (S, D, Internal_Error, Result);
                return;
             end if;
-            if Ext_Off_Decl + 1 <= Data'Last then
-               declare
-                  Ext_Tot  : constant N32 :=
-                    N32 (Data (Ext_Off_Decl)) * 256 + N32 (Data (Ext_Off_Decl + 1));
-                  Expected : constant N32 := 1 + Ctx_Len_Decl + 2 + Ext_Tot;
-               begin
-                  Body_OK := N32 (Data'Length) - 4 = Expected;
-               end;
-            end if;
-            if not Body_OK then
-               Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
-               return;
+            if Sig_Found then
+               Picked :=
+                 Handshake.Pick_Sig_Algo_With_Prefs
+                   (Data (SA_Pos .. SA_Pos + SA_Len - 1),
+                    S.HC.Cfg.Local.Sign_Algo,
+                    S.HC.Cfg.Sign_Sig_Algos,
+                    S.HC.Cfg.Sign_Sig_Algo_Count);
             end if;
          end;
       end if;
-      SPARKTLS_Transcript.Append (S.HC.TS, Data);
-      S.HC.Cert_Request_Received := True;
-      declare
-         Picked    : Maybe_Sig_Scheme := Scheme_None;
-         Sig_Found : Boolean := False;
-         --  Where the offered signature_algorithms (SA) and the
-         --  certificate_authorities (CA) lists sit inside Data, for the
-         --  application credential selector below. 0 = not seen.
-         SA_Pos, SA_Cnt : N32 := 0;
-         CA_Pos, CA_Cnt : N32 := 0;
-      begin
-         if Data'Length >= 7 then
-            declare
-               Ctx_Len : constant N32 := N32 (Data (Data'First + 4));
-               Ext_Off : constant N32 := Data'First + 5 + Ctx_Len;
-            begin
-               if Ext_Off + 1 <= Data'Last then
-                  declare
-                     Ext_Tot : constant N32 :=
-                       N32 (Data (Ext_Off)) * 256 + N32 (Data (Ext_Off + 1));
-                     Ext_End : constant N32 := Ext_Off + 2 + Ext_Tot;
-                     P       : N32 := Ext_Off + 2;
-                  begin
-                     if Ext_End <= Data'Last + 1 then
-                        while P + 4 <= Ext_End loop
-                           pragma
-                             Loop_Invariant
-                               (P >= Ext_Off + 2
-                                and P + 4 <= Ext_End
-                                and Ext_End <= Data'Last + 1
-                                and SA_Pos <= Ext_End
-                                and CA_Pos <= Ext_End);
-                           declare
-                              Tag   : constant N32 := N32 (Data (P)) * 256 + N32 (Data (P + 1));
-                              E_Len : constant N32 := N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
-                              V_OK  : Boolean;
-                              V_Err : Error_Code;
-                           begin
-                              exit when P + 4 + E_Len > Ext_End;
-                              Validate_Server_Ext
-                                (Where    => E_CR,
-                                 Tag      => Unsigned_16 (Tag),
-                                 Body_Len => E_Len,
-                                 HC       => S.HC,
-                                 OK       => V_OK,
-                                 Err      => V_Err);
-                              if not V_OK then
-                                 Send_HS_Encrypted_Alert (S, D, V_Err, Result);
-                                 return;
-                              end if;
-                              if Tag = 16#000D# and E_Len >= 4 then
-                                 declare
-                                    List_Len : constant N32 :=
-                                      N32 (Data (P + 4)) * 256 + N32 (Data (P + 5));
-                                 begin
-                                    if List_Len + 2 = E_Len and List_Len >= 2 then
-                                       Sig_Found := True;
-                                       SA_Pos := P + 6;
-                                       SA_Cnt := List_Len;
-                                       Picked :=
-                                         Handshake.Pick_Sig_Algo_With_Prefs
-                                           (Data (P + 6 .. P + 5 + List_Len),
-                                            S.HC.Cfg.Local.Sign_Algo,
-                                            S.HC.Cfg.Sign_Sig_Algos,
-                                            S.HC.Cfg.Sign_Sig_Algo_Count);
-                                    end if;
-                                 end;
-                              elsif Tag = 16#002F# and E_Len >= 2 then
-                                 declare
-                                    Outer_Len : constant N32 :=
-                                      N32 (Data (P + 4)) * 256 + N32 (Data (P + 5));
-                                    DN_P      : N32 := P + 6;
-                                    DN_End    : constant N32 := P + 6 + Outer_Len;
-                                    Bad       : Boolean := False;
-                                 begin
-                                    if 2 + Outer_Len /= E_Len or DN_End > Ext_End or Outer_Len = 0
-                                    then
-                                       Bad := True;
-                                    else
-                                       while not Bad and then DN_P < DN_End loop
-                                          pragma Loop_Invariant (DN_P <= DN_End);
-                                          pragma Loop_Variant (Increases => DN_P);
-                                          if DN_P + 2 > DN_End then
-                                             Bad := True;
-                                          else
-                                             declare
-                                                DN_Len : constant N32 :=
-                                                  N32 (Data (DN_P)) * 256 + N32 (Data (DN_P + 1));
-                                             begin
-                                                if DN_P + 2 + DN_Len > DN_End or DN_Len = 0 then
-                                                   Bad := True;
-                                                else
-                                                   DN_P := DN_P + 2 + DN_Len;
-                                                end if;
-                                             end;
-                                          end if;
-                                       end loop;
-                                    end if;
-                                    if Bad then
-                                       Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
-                                       return;
-                                    end if;
-                                    CA_Pos := P + 6;
-                                    CA_Cnt := Outer_Len;
-                                 end;
-                              end if;
-                              P := P + 4 + E_Len;
-                           end;
-                        end loop;
-                     end if;
-                  end;
-               end if;
-            end;
-         end if;
 
-         --  Application credential selection (Config.Select_Client_Identity).
-         --  RFC 8446 4.2.4: the certificate_authorities list and the offered
-         --  signature_algorithms are what a client picks by. The slices are
-         --  clamped to Data so their bounds are local facts; the walk above
-         --  already validated them, so the clamp never bites.
-         if S.HC.Cfg.Select_Client_Identity /= null then
-            declare
-               CA_Len    : constant N32 := N32'Min (CA_Cnt, Data'Last + 1 - CA_Pos);
-               SA_Len    : constant N32 := N32'Min (SA_Cnt, Data'Last + 1 - SA_Pos);
-               Picked_Id : constant Maybe_Identity_Access :=
-                 S.HC.Cfg.Select_Client_Identity
-                   (Data (CA_Pos .. CA_Pos + CA_Len - 1), Data (SA_Pos .. SA_Pos + SA_Len - 1));
-            begin
-               if Picked_Id = null then
-                  --  Decline client authentication: empty Certificate later.
-                  S.HC.Cfg.Local := No_Identity'Access;
-               elsif Picked_Id.Has_Identity and then Identity_Valid (Picked_Id.all) then
-                  S.HC.Cfg.Local := Valid_Identity_Access (Picked_Id);
-               else
-                  Send_HS_Encrypted_Alert (S, D, Internal_Error, Result);
-                  return;
-               end if;
-               --  Re-pick the signature scheme for the chosen identity.
-               if Sig_Found then
-                  Picked :=
-                    Handshake.Pick_Sig_Algo_With_Prefs
-                      (Data (SA_Pos .. SA_Pos + SA_Len - 1),
-                       S.HC.Cfg.Local.Sign_Algo,
-                       S.HC.Cfg.Sign_Sig_Algos,
-                       S.HC.Cfg.Sign_Sig_Algo_Count);
-               end if;
-            end;
-         end if;
+      if not Sig_Found then
+         Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
+         return;
+      end if;
 
-         if not Sig_Found then
-            Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
-            return;
-         end if;
-
-         S.HC.Negotiated_Sig_Algo := Picked;
-      end;
+      S.HC.Negotiated_Sig_Algo := Picked;
    end Handle_CertReq_13;
 
    --  RFC 8446 4.4.2 client-side Certificate handler. Parses chain
