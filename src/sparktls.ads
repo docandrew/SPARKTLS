@@ -1821,6 +1821,7 @@ is
       Client_Cert_Allowed   : Boolean := False;
       Sent_Ticket_Ext       : Boolean := False;
       Server_Will_Issue     : Boolean := False;
+      Server_Echoed_SID     : Boolean := False;
       Resuming              : Boolean := False;
       Ticket_Offered        : Boolean := False;
       Ticket_Resume_OK      : Boolean := False;

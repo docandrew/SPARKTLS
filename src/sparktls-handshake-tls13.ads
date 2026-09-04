@@ -13,6 +13,16 @@ is
    pragma Unevaluated_Use_Of_Old (Allow);
 
    Max_Server_Hello : constant := 256;
+
+   --  RFC 8446 4.1.3: SHA-256 ("HelloRetryRequest"), the Random value that
+   --  marks a HelloRetryRequest. One definition for the server (the HRR
+   --  builder, and the rule that a real ServerHello.Random must differ)
+   --  and the client (detection).
+   HRR_Sentinel : constant Bytes_32 :=
+     (16#CF#, 16#21#, 16#AD#, 16#74#, 16#E5#, 16#9A#, 16#61#, 16#11#,
+      16#BE#, 16#1D#, 16#8C#, 16#02#, 16#1E#, 16#65#, 16#B8#, 16#91#,
+      16#C2#, 16#A2#, 16#11#, 16#16#, 16#7A#, 16#BB#, 16#8C#, 16#5E#,
+      16#07#, 16#9E#, 16#09#, 16#E2#, 16#C8#, 16#A8#, 16#33#, 16#9C#);
    Max_Cert_Msg     : constant := SPARKTLS.Handshake.Certs.Max_Cert_Msg;
 
    --  Build a Certificate message with leaf + intermediates from an Identity.
@@ -129,6 +139,22 @@ is
        and then (if HC.Cfg.Local'Old /= null then HC.Cfg.Local /= null)
        and then (if HC.Cfg.Local'Old /= null and then HC.Cfg.Local'Old.Has_Identity
                  then HC.Cfg.Local /= null and then HC.Cfg.Local.Has_Identity);
+
+   --  RFC 8446 Section 4.1.4: HelloRetryRequest. ServerHello layout with the
+   --  sentinel Random, the negotiated suite, the echoed legacy_session_id
+   --  (its real length) and exactly two extensions: key_share carrying the
+   --  selected group and supported_versions naming TLS 1.3. Built through
+   --  RecordFlux's Hello_Retry_Request message. Len = 0 when Negotiated is
+   --  not a TLS 1.3 suite (a HelloRetryRequest exists only in TLS 1.3).
+   procedure Build_HRR_Message
+     (Negotiated : in Supported_Suite;
+      Group      : in ECDHE_Group;
+      HC         : in Engaged_Context;
+      Result     : out Byte_Seq;
+      Len        : out N32)
+   with
+     Pre  => Result'First = 0 and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1,
+     Post => Len <= Max_Server_Hello and then (if Len > 0 then Len >= 4);
 
    --  RFC 8446 Section 4.3.1: EncryptedExtensions, including the
    --  negotiated ALPN and optional server_name acknowledgement.

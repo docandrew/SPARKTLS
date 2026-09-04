@@ -17,6 +17,14 @@ with RFLX.TLS_Handshake.SH_Extension_TLS;
 with RFLX.TLS_Handshake.CH_Extensions_TLS;
 with RFLX.TLS_Handshake.CH_Extension_TLS;
 with RFLX.TLS_Handshake.Key_Share_SH;
+with RFLX.TLS_Handshake.Key_Share_HRR;
+with RFLX.TLS_Handshake.Hello_Retry_Request;
+with RFLX.TLS_Handshake.HRR_Extensions_TLS;
+with RFLX.TLS_Handshake.HRR_Extension_TLS;
+with RFLX.TLS_Handshake.Cookie;
+with RFLX.TLS_Handshake.Supported_Version;
+with RFLX.TLS_Handshake.Pre_Shared_Key_SH;
+with RFLX.TLS_Handshake.Contains;
 with RFLX.TLS_Handshake.Cipher_Suites_TLS;
 with RFLX.TLS_Handshake.Cipher_Suite_TLS;
 with RFLX.TLS_Common;
@@ -27,6 +35,8 @@ with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
 with SPARKTLS_Transcript;
 use type SPARKTLS_Transcript.Transcript_State;
+use type RFLX.TLS_Common.Protocol_Version;
+use type RFLX.TLS_Handshake.Identity_Index;
 use SPARKTLSCrypto;
 
 package body SPARKTLS.Handshake.Client_Msgs
@@ -1486,173 +1496,68 @@ is
    --  Parse procedures (using RecordFlux-generated parsers)
    ----------------------------------------------------------------------------
 
-   --  E2 (#131): ServerHello extension pre-scan collection. Entry
-   --  record and array live at package-body level so the collector's
-   --  Post and the pass-2 driver can name the same fact.
-   type SH_Ext_Entry is record
-      Tag    : Unsigned_16;
-      E_Len  : N32;
-      Offset : N32;          --  start of body bytes in Data
-   end record;
-   subtype SH_Ext_Index is Positive range 1 .. 32;
-   type SH_Ext_Array is array (SH_Ext_Index) of SH_Ext_Entry;
+   ----------------------------------------------------------------------------
+   --  ServerHello and HelloRetryRequest (RFC 8446 4.1.3 / 4.1.4, RFC 5246
+   --  7.4.1.3). Each is parsed with its RecordFlux message: Server_Hello for
+   --  the ServerHello of either version, Hello_Retry_Request when Random is
+   --  the HRR sentinel. Extension policy -- which tags may appear where,
+   --  whether they were offered, empty echoes -- is Validate_Server_Ext; the
+   --  spec accepts any tag so that a violation gets the RFC's
+   --  unsupported_extension alert instead of a parse failure. Extension
+   --  bodies are read through the spec's refinements: Copy_Data into one
+   --  scratch buffer per parse, so the element sequence keeps its buffer
+   --  and the walk continues (Switch_To_Data would hand it over).
+   ----------------------------------------------------------------------------
 
-   --  Every collected entry's body window lies inside First .. Last.
-   function Exts_Well_Formed
-     (Exts  : SH_Ext_Array;
-      N_Ext : Natural;
-      First : N32;
-      Last  : N32) return Boolean
-   is (N_Ext <= Exts'Last
-       and then (for all J in 1 .. N_Ext
-                 => Exts (J).Offset >= First
-                 and then Exts (J).Offset <= Last + 1
-                 and then Exts (J).E_Len <= Last + 1 - Exts (J).Offset))
-   with Ghost, Pre => Last < N32'Last;
+   --  RFC 8446 4.2: an extension MUST NOT appear twice in one block. Tags
+   --  are compared on the wire value. More than 32 extensions in a
+   --  ServerHello is not a message any server sends; fail closed.
+   subtype Seen_Index is Positive range 1 .. 32;
+   type Seen_Tags is array (Seen_Index) of Unsigned_16;
 
-   --  Pass 1 of the pre-scan: byte-walk the extensions block
-   --  (Ext_Start .. Data'Last), reject oversize or duplicate
-   --  extensions, collect (tag, len, off) into Exts, and detect the
-   --  RFC 8446 4.2.1 supported_versions TLS 1.3 marker. No HC formal:
-   --  the TLS 1.3 marker is an out Boolean the caller applies.
-   procedure Collect_SH_Extensions
-     (Data       : in Byte_Seq;
-      Ext_Start  : in N32;
-      Is_HRR_Msg : in Boolean;
-      Exts       : out SH_Ext_Array;
-      N_Ext      : out Natural;
-      Has_TLS13  : out Boolean;
-      OK         : out Boolean;
-      Err        : out Error_Code)
+   procedure Note_Tag
+     (Seen   : in out Seen_Tags;
+      N_Seen : in out Natural;
+      Tag    : in Unsigned_16;
+      Dup    : out Boolean;
+      Full   : out Boolean)
    with
-     Pre  =>
-       Data'Length in 39 .. Max_HS_Msg
-       and then Data'Last < N32 (Natural'Last)
-       and then Ext_Start >= Data'First
-       and then Ext_Start <= Data'Last + 1,
-     Post =>
-       (if OK then Exts_Well_Formed (Exts, N_Ext, Data'First, Data'Last))
+     Pre  => N_Seen <= Seen'Last,
+     Post => N_Seen <= Seen'Last
    is
-      Ext_End : constant N32 := Data'Last + 1;
-      P       : N32 := Ext_Start;
    begin
-      Exts      := (others => (0, 0, 0));
-      N_Ext     := 0;
-      Has_TLS13 := False;
-      OK        := True;
-      Err       := No_Error;
-
-      while P <= Ext_End - 4 loop
-         pragma Loop_Invariant (N_Ext <= Exts'Last);
-         pragma Loop_Invariant (P >= Data'First);
-         pragma Loop_Invariant (P <= Ext_End);
-         pragma
-           Loop_Invariant
-             (for all J in 1 .. N_Ext
-              => Exts (J).Offset >= Data'First
-              and then Exts (J).Offset <= Data'Last + 1
-              and then Exts (J).E_Len <= Data'Last + 1 - Exts (J).Offset);
-         declare
-            pragma Assert (P <= Data'Last - 3);
-            Tag_U16 : constant Unsigned_16 :=
-              Unsigned_16 (Data (P)) * 256 + Unsigned_16 (Data (P + 1));
-            E_Len   : constant N32 := N32 (Data (P + 2)) * 256 + N32 (Data (P + 3));
-         begin
-            if E_Len > Ext_End - P - 4 then
-               Err := Decode_Error;
-               OK := False;
-               return;
-            end if;
-            for I in 1 .. N_Ext loop
-               if Exts (I).Tag = Tag_U16 then
-                  --  RFC 8446 4.2: duplicate ext in SH/EE ->
-                  --  decode_error. In HRR specifically BoringSSL
-                  --  expects illegal_parameter
-                  --  (HelloRetryRequest-DuplicateCookie /
-                  --  DuplicateCurve).
-                  Err := (if Is_HRR_Msg then Illegal_Parameter else Decode_Error);
-                  OK := False;
-                  return;
-               end if;
-            end loop;
-            if N_Ext < Exts'Last then
-               N_Ext := N_Ext + 1;
-               Exts (N_Ext) := (Tag_U16, E_Len, P + 4);
-            end if;
-            if Tag_U16 = 16#002B# then
-               --  RFC 8446 4.2.1: in SH/HRR, body is exactly the
-               --  selected_version (2 bytes), MUST be 0x0304 for
-               --  TLS 1.3. Accept only that exact value as the
-               --  TLS 1.3 marker so a corrupted body (BoGo
-               --  SecondServerHelloWrongVersion-TLS13 sends 0x1234)
-               --  doesn't get classified as TLS 1.3.
-               if E_Len = 2
-                 and then P + 5 <= Ext_End
-                 and then Data (P + 4) = 16#03#
-                 and then Data (P + 5) = 16#04#
-               then
-                  Has_TLS13 := True;
-               end if;
-            end if;
-            P := P + 4 + E_Len;
-         end;
+      Dup  := False;
+      Full := False;
+      for I in 1 .. N_Seen loop
+         if Seen (I) = Tag then
+            Dup := True;
+            return;
+         end if;
       end loop;
-   end Collect_SH_Extensions;
-
-   --  E3a (#131): HRR cookie extension body (RFC 8446 4.2.2), wire
-   --  shape cookie<1..2^16-1>. The caller guards tag, E_Len >= 2 and
-   --  the Data window; this owns length parse, the empty-cookie
-   --  rejection (illegal_parameter; BoGo
-   --  HelloRetryRequest-EmptyCookie-TLS13) and the byte copy. An
-   --  oversize cookie is ignored (Cookie and Cookie_Len unchanged),
-   --  matching the inline original. Cookie/Cookie_Len are the
-   --  caller's HC fields passed as formals, so the cookie invariant
-   --  that used to thread the whole 420-line body is now this Post.
-   procedure Extract_HRR_Cookie
-     (Data       : in Byte_Seq;
-      Off        : in N32;
-      E_Len      : in N32;
-      Cookie     : in out Byte_Seq;
-      Cookie_Len : in out N32;
-      OK         : out Boolean;
-      Err        : out Error_Code)
-   with
-     Pre  =>
-       Data'Last < N32 (Natural'Last)
-       and then E_Len >= 2
-       and then Off >= Data'First
-       and then Off + E_Len <= Data'Last + 1
-       and then Cookie'First = 0
-       and then Cookie'Length = 1024
-       and then Cookie_Len <= N32 (Cookie'Length),
-     Post =>
-       Cookie_Len <= N32 (Cookie'Length)
-   is
-      C_Len : constant N32 :=
-        N32 (Data (Off)) * 256 + N32 (Data (Off + 1));
-   begin
-      OK  := True;
-      Err := No_Error;
-      if C_Len = 0 or else 2 + C_Len /= E_Len then
-         Err := Illegal_Parameter;
-         OK := False;
+      if N_Seen = Seen'Last then
+         Full := True;
          return;
       end if;
-      if C_Len <= N32 (Cookie'Length) then
-         Cookie_Len := C_Len;
-         for K in 0 .. C_Len - 1 loop
-            pragma Loop_Invariant (Cookie_Len <= N32 (Cookie'Length));
-            Cookie (K) := Data (Off + 2 + K);
-         end loop;
-      end if;
-   end Extract_HRR_Cookie;
+      N_Seen := N_Seen + 1;
+      Seen (N_Seen) := Tag;
+   end Note_Tag;
 
-   --  E3b (#131): TLS 1.2 ec_point_formats extension body, RFC 8422
-   --  5.1.2: the vector must be well-formed and include
-   --  uncompressed(0), the only point format this implementation
-   --  accepts. The caller guards Where = E_SH12, the tag and the Data
-   --  window; empty body, bad list length or an unacceptable list ->
-   --  decode_error. Pure function of Data.
+   --  One scratch buffer per parse for the refinement copies. The largest
+   --  body read here is a cookie: 2 + the 1024 bytes HC.HRR_Cookie keeps.
+   Body_Scratch_Len : constant := 1100;
+
+   function Tag_Wire
+     (T : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
+   is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (T)));
+
+   function Group_Wire
+     (G : RFLX.Tls_Parameters.TLS_Supported_Groups) return Unsigned_16
+   is (Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (G)));
+
+   function Suite_Wire
+     (S : RFLX.Tls_Parameters.TLS_Cipher_Suites) return Unsigned_16
+   is (Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (S)));
+
    procedure Check_EC_Point_Formats_Body
      (Data  : in Byte_Seq;
       Off   : in N32;
@@ -1691,940 +1596,21 @@ is
       end;
    end Check_EC_Point_Formats_Body;
 
-   --  E3c (#131): HRR key_share body -- in HRR it is just
-   --  `selected_group(2)`, no key_exchange (RFC 8446 4.1.4). The
-   --  HRR's selected_group MUST be one the client offered -- and we
-   --  only ever offer the three in Maybe_ECDHE_Group. Unknown wire
-   --  values map to Group_None; the caller rejects those with
-   --  illegal_parameter HERE rather than at the CH2-rebuild step,
-   --  which is the earlier RFC-correct alert. Pure function of Data;
-   --  the caller guards tag, E_Len = 2 and the window, and owns the
-   --  HC writes.
-   function Extract_HRR_Key_Share
-     (Data : Byte_Seq;
-      Off  : N32) return Maybe_ECDHE_Group
-   is (Group_From_Wire
-         (Unsigned_16 (Data (Off)) * 256 + Unsigned_16 (Data (Off + 1))))
-   with
-     Pre => Off >= Data'First and then Off <= Data'Last - 1;
-
-   --  E3d (#131): SH pre_shared_key body check. RFC 8446 4.2.11: in
-   --  SH (not HRR) the body is `selected_identity` (uint16). We offer
-   --  exactly one PSK identity (Ticket), so the only valid value is
-   --  0; the caller rejects anything else with illegal_parameter and
-   --  latches Using_PSK on success. The matrix has already rejected
-   --  pre_shared_key in SH if we did not offer it
-   --  (Requires_Offer => True). Caller guards tag, E_Len = 2 and the
-   --  window.
-   function PSK_Selected_Identity_Is_Zero
-     (Data : Byte_Seq;
-      Off  : N32) return Boolean
-   is (Unsigned_16 (Data (Off)) * 256 + Unsigned_16 (Data (Off + 1)) = 0)
-   with
-     Pre => Off >= Data'First and then Off <= Data'Last - 1;
-
-   --  E4b (#131): pass 2 of the pre-scan -- matrix policy plus
-   --  per-tag body validation over the collected entries. The only
-   --  pre-scan constituent with an HC formal; its writes are the
-   --  single-field latches (Use_EMS, Using_PSK, HRR_Selected_Group,
-   --  Ext_Parse_Err) plus the cookie stash via Extract_HRR_Cookie,
-   --  which is what makes the frame Post a 4-write argument instead
-   --  of a 400-line path analysis.
-   procedure Apply_SH_Extension_Bodies
-     (Data       : in Byte_Seq;
-      Exts       : in SH_Ext_Array;
-      N_Ext      : in Natural;
-      Is_HRR_Msg : in Boolean;
-      HC         : in out Engaged_Context;
-      ALPN       : in out Hostname_Buf;
-      OK         : out Boolean;
-      Err        : out Error_Code)
-   with
-     Pre  =>
-       Data'Length in 39 .. Max_HS_Msg
-       and then Data'Last < N32 (Natural'Last)
-       and then Exts_Well_Formed (Exts, N_Ext, Data'First, Data'Last)
-       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
-     Post =>
-       HC.TS = HC.TS'Old
-       and then (if HC.Got_HRR'Old then HC.Got_HRR)
-       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-   is
-      Saved_TS      : constant SPARKTLS_Transcript.Transcript_State := HC.TS
-      with Ghost;
-      Saved_Got_HRR : constant Boolean := HC.Got_HRR
-      with Ghost;
+   function Downgrade_Sentinel_Present (R : Bytes_32) return Boolean is
+      type Sentinel_T is array (N32 range 0 .. 7) of Byte;
+      S13   : constant Sentinel_T :=
+        (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#01#);
+      S12   : constant Sentinel_T :=
+        (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#00#);
+      S_JDK : constant Sentinel_T :=
+        (16#ED#, 16#BF#, 16#B4#, 16#A8#, 16#C2#, 16#47#, 16#10#, 16#FF#);
    begin
-      OK  := True;
-      Err := No_Error;
+      return
+        (for all I in N32 range 0 .. 7 => R (24 + I) = S13 (I))
+        or else (for all I in N32 range 0 .. 7 => R (24 + I) = S12 (I))
+        or else (for all I in N32 range 0 .. 7 => R (24 + I) = S_JDK (I));
+   end Downgrade_Sentinel_Present;
 
-      --  Pass 2: matrix policy + per-tag body validation. Single
-      --  loop over the collected Exts. Matrix runs first
-      --  (unsupported_extension / decode_error for empty-echo
-      --  violations); body validators run only on matrix-OK entries.
-      declare
-         Where : constant Ext_Where :=
-           (if Is_HRR_Msg then E_HRR elsif HC.Has_TLS_1_3 then E_SH13 else E_SH12);
-      begin
-         pragma Assert (N_Ext <= Exts'Last);
-         for I in 1 .. N_Ext loop
-            pragma Loop_Invariant (N_Ext <= Exts'Last);
-            pragma Loop_Invariant (HC.TS = HC.TS'Loop_Entry);
-            pragma Loop_Invariant (if Saved_Got_HRR then HC.Got_HRR);
-            pragma Loop_Invariant (HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-
-            pragma
-              Loop_Invariant
-                (for all J in 1 .. N_Ext
-                 => Exts (J).Offset >= Data'First
-                 and then Exts (J).Offset <= Data'Last + 1
-                 and then Exts (J).E_Len <= Data'Last + 1 - Exts (J).Offset);
-            declare
-               V_OK  : Boolean;
-               V_Err : Error_Code;
-            begin
-               Validate_Server_Ext
-                 (Where    => Where,
-                  Tag      => Exts (I).Tag,
-                  Body_Len => Exts (I).E_Len,
-                  HC       => HC,
-                  OK       => V_OK,
-                  Err      => V_Err);
-               if not V_OK then
-                  Err := V_Err;
-                  OK := False;
-                  pragma
-                    Assert
-                      (HC.TS = Saved_TS
-                       and then (if Saved_Got_HRR then HC.Got_HRR));
-                  return;
-               end if;
-
-               --  Per-tag body validation (RFC 7301 ALPN  shared
-               --  helper, same wire shape used in TLS 1.3 EE).
-               if Exts (I).Tag = 16#0010# and then Exts (I).Offset + Exts (I).E_Len <= Data'Last + 1
-               then
-                  Validate_ALPN_Echo_Body
-                    (Data       => Data,
-                     Body_Start => Exts (I).Offset,
-                     E_Len      => Exts (I).E_Len,
-                     HC         => HC,
-                     ALPN       => ALPN,
-                     OK         => V_OK,
-                     Err        => V_Err);
-                  if not V_OK then
-                     Err := V_Err;
-                     OK := False;
-                     pragma
-                       Assert
-                         (HC.TS = Saved_TS
-                          and then (if Saved_Got_HRR then HC.Got_HRR));
-                     return;
-                  end if;
-               end if;
-
-               --  RFC 8422 5.1.2: if a TLS 1.2 server sends
-               --  ec_point_formats, the vector must be well-formed and
-               --  include uncompressed(0), the only point format this
-               --  implementation accepts.
-               if Where = E_SH12
-                 and then Exts (I).Tag = 16#000B#
-                 and then Exts (I).Offset + Exts (I).E_Len <= Data'Last + 1
-               then
-                  Check_EC_Point_Formats_Body
-                    (Data  => Data,
-                     Off   => Exts (I).Offset,
-                     E_Len => Exts (I).E_Len,
-                     OK    => V_OK,
-                     Err   => V_Err);
-                  if not V_OK then
-                     Err := V_Err;
-                     OK := False;
-                     pragma
-                       Assert
-                         (HC.TS = Saved_TS
-                          and then (if Saved_Got_HRR then HC.Got_HRR));
-                     return;
-                  end if;
-               end if;
-
-               --  RFC 8446 4.1.4 HRR-specific body extraction.
-               --  In HRR, key_share body is just `selected_group(2)`
-               --  (no key_exchange); cookie body is `cookie_len(2) +
-               --  cookie<cookie_len>` (RFC 8446 4.2.2). Stash both
-               --  in HC for the caller's CH2-rebuild step.
-               if Is_HRR_Msg
-                 and then Exts (I).Tag = 16#0033#  --  key_share
-                 and then Exts (I).Offset <= Data'Last - 1
-                 and then Exts (I).E_Len = 2
-               then
-                  declare
-                     KS_Group : constant Maybe_ECDHE_Group :=
-                       Extract_HRR_Key_Share (Data, Exts (I).Offset);
-                  begin
-                     if KS_Group /= Group_None then
-                        HC.HRR_Selected_Group := KS_Group;
-                     else
-                        HC.Ext_Parse_Err := Illegal_Parameter;
-                     end if;
-                  end;
-               end if;
-               --  RFC 8446 4.2.11: pre_shared_key in SH (not HRR)
-               --  carries `selected_identity` (uint16). We offer
-               --  exactly one PSK identity (Ticket), so the only
-               --  valid selected_identity value is 0; anything else
-               --  is illegal_parameter. The matrix has already
-               --  rejected pre_shared_key in SH if we did not
-               --  offer it (Requires_Offer => True).
-               if not Is_HRR_Msg
-                 and then Exts (I).Tag = 16#0029#  --  pre_shared_key
-                 and then Exts (I).Offset <= Data'Last - 1
-                 and then Exts (I).E_Len = 2
-               then
-                  if PSK_Selected_Identity_Is_Zero (Data, Exts (I).Offset) then
-                     HC.Using_PSK := True;
-                  else
-                     Err := Illegal_Parameter;
-                     OK := False;
-                     pragma
-                       Assert
-                         (HC.TS = Saved_TS
-                          and then (if Saved_Got_HRR then HC.Got_HRR));
-                     return;
-                  end if;
-               end if;
-               if Is_HRR_Msg
-                 and then Exts (I).Tag = 16#002C#  --  cookie
-                 and then Exts (I).E_Len >= 2
-                 and then Exts (I).Offset + Exts (I).E_Len <= Data'Last + 1
-               then
-                  Extract_HRR_Cookie
-                    (Data       => Data,
-                     Off        => Exts (I).Offset,
-                     E_Len      => Exts (I).E_Len,
-                     Cookie     => HC.HRR_Cookie,
-                     Cookie_Len => HC.HRR_Cookie_Len,
-                     OK         => V_OK,
-                     Err        => V_Err);
-                  if not V_OK then
-                     Err := V_Err;
-                     OK := False;
-                     pragma
-                       Assert
-                         (HC.TS = Saved_TS
-                          and then (if Saved_Got_HRR then HC.Got_HRR));
-                     return;
-                  end if;
-               end if;
-               --  RFC 7627 s5.1: record the server's
-               --  extended_master_secret echo. BOTH this and the
-               --  Tag_Is_Offered arm for 16#0017# (sparktls.ads) are
-               --  required, and neither alone is enough:
-               --    * without the Tag_Is_Offered arm, Requires_Offer
-               --      rejects the server's legitimate echo with
-               --      unsupported_extension and the handshake dies
-               --      before this flag matters;
-               --    * without this scan, the handshake completes but
-               --      HC.Use_EMS stays False, so the client derives
-               --      with the legacy label while the server used
-               --      "extended master secret", and Finished
-               --      verification fails.
-               --  Handshake.TLS12.Parse_Server_Hello_12 also sets
-               --  Use_EMS, but it runs only as a fallback when this
-               --  parser fails (sparktls-client.adb ~4015), so it
-               --  cannot be relied on.
-               --  Verified by BoGo ExtendedMasterSecret-TLS12-Client:
-               --  reverting either change alone puts that test back in
-               --  the failing set.
-               --  E4a (#131): folded here from the former third loop;
-               --  per-entry setting is equivalent because any pass-2
-               --  failure sets OK False and the caller aborts the
-               --  handshake, so Use_EMS ordering on failure paths is
-               --  moot.
-               if Exts (I).Tag = 16#0017# then
-                  HC.Use_EMS := True;
-               end if;
-            end;
-         end loop;
-      end;
-   end Apply_SH_Extension_Bodies;
-
-   --  E1 (#131): P0 of the ServerHello extension pre-scan -- the
-   --  fixed-header walk. Pure function of Data (no HC formal), so
-   --  every early exit leaves the caller's frame facts trivially
-   --  intact; the seven exit-fact frames the inline version
-   --  carried become plain returns.
-   --  Outcomes: Scan_OK -> extensions block is Ext_Start .. Data'Last
-   --            and ends exactly at the declared length;
-   --            not Scan_OK and Malformed -> reject, decode_error;
-   --            not Scan_OK and not Malformed -> skip the pre-scan
-   --            without error (defensive shapes the strict RFLX parse
-   --            adjudicates on its own, as before the extraction).
-   procedure Scan_SH_Fixed_Header
-     (Data       : in Byte_Seq;
-      Is_HRR_Msg : in Boolean;
-      Ext_Start  : out N32;
-      Scan_OK    : out Boolean;
-      Malformed  : out Boolean)
-   with
-     Pre  =>
-       Data'Length in 39 .. Max_HS_Msg
-       and then Data'Last < N32 (Natural'Last),
-     Post =>
-       (if Scan_OK then
-          Ext_Start >= Data'First + 44
-          and then Ext_Start <= Data'Last + 1)
-   is
-      B                  : constant N32 := Data'First + 4;  --  body start
-      P                  : N32;
-      Sid_Len, Ext_Total : N32;
-   begin
-      Ext_Start := Data'First;
-      Scan_OK   := False;
-      Malformed := False;
-
-      --  Caller has already verified Data'Length >= 39. SH body
-      --  minimum is version(2)+random(32)+sid_len(1) = 35 bytes
-      --  past the 4-byte handshake header.
-      if N32 (Data'Length) - 4 < 35 then
-         return;
-      end if;
-
-      Sid_Len := N32 (Data (B + 34));
-      if Sid_Len > 32 then
-         Malformed := True;
-         return;
-      end if;
-      pragma Assert (Sid_Len <= 32);
-      if B > N32'Last - 38 or else Sid_Len > N32'Last - B - 38 then
-         return;
-      end if;
-      P := B + 38 + Sid_Len;  --  past sid + cipher + comp
-      if P > Data'Last - 2 then
-         return;
-      end if;
-
-      --  RFC 8446 4.1.4 / 4.1.3: in TLS 1.3 ServerHello + HRR,
-      --  legacy_compression_method MUST be 0. The TLS 1.2 parser
-      --  enforces this for SH12 with `illegal_parameter`. For HRR we
-      --  need decode_error per BoGo
-      --  TLS13-HRR-InvalidCompressionMethod. We only have the
-      --  Is_HRR_Msg signal here; the SH13/SH12 dispatch happens
-      --  later, so apply the HRR check up-front and let TLS 1.2
-      --  handle SH compression as before.
-      if Is_HRR_Msg and then Data (B + 35 + Sid_Len + 2) /= 0 then
-         Malformed := True;
-         return;
-      end if;
-
-      Ext_Total := N32 (Data (P)) * 256 + N32 (Data (P + 1));
-      P := P + 2;
-      if Ext_Total > Data'Last - P + 1 then
-         Malformed := True;
-         return;
-      end if;
-
-      --  RFC 8446 4: HS message MUST end exactly at its declared
-      --  length. BoGo TrailingMessageData-ServerHello.
-      if P + Ext_Total /= Data'Last + 1 then
-         Malformed := True;
-         return;
-      end if;
-
-      Ext_Start := P;
-      Scan_OK   := True;
-   end Scan_SH_Fixed_Header;
-
-   --  Pre-RFLX byte walk of the SH extensions block. Detects
-   --  duplicates, unsolicited extensions, and malformed SNI / ALPN
-   --  bodies that RFLX's strict TLS-1.3 schema either silently
-   --  rejects (Saw_Rflx_Rejected branch, never escalated for TLS 1.2)
-   --  or accepts without per-RFC body validation.
-   --
-   --  Sets Last_Err and OK := False on rejection; OK := True
-   --  means the caller may continue with the RFLX parse.
-   --
-   --  RFC anchors:
-   --    RFC 8446 4.2    duplicate extensions -> decode_error
-   --    RFC 5246 7.4.1.4 / RFC 8446 4.2 SH may only echo offered
-   --    RFC 6066 3      SNI ack body MUST be empty
-   --    RFC 8446 4.2.11 pre_shared_key in SH iff client offered PSK
-   --    RFC 7301 3.1    ALPN body = list_len(2)+proto_len(1)+proto
-   --  Is_HRR_Msg: True when the SH currently being parsed is itself
-   --  an HelloRetryRequest (sentinel matches). Distinct from
-   --  HC.Got_HRR which latches across the SH1+SH2 pair (used only for
-   --  double-HRR rejection in the second SH). Pre_Scan uses
-   --  Is_HRR_Msg for: extension-Where dispatch (E_HRR vs E_SH13),
-   --  duplicate-ext error (illegal_parameter vs decode_error), and
-   --  HRR-specific body extraction (selected_group / cookie).
-   procedure Pre_Scan_SH_Extensions
-     (Data       : in Byte_Seq;
-      HC         : in out Engaged_Context;
-      Last_Err   : in out Error_Code;
-      ALPN       : in out Hostname_Buf;
-      Is_HRR_Msg : in Boolean;
-      OK         : out Boolean)
-   with
-     Pre =>
-       Data'Length in 39 .. Max_HS_Msg
-       and then Data'Last < N32 (Natural'Last)
-       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
-     Post =>
-       HC.TS = HC.TS'Old
-       and then (if HC.Got_HRR'Old then HC.Got_HRR)
-       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length);
-
-   procedure Pre_Scan_SH_Extensions
-     (Data       : in Byte_Seq;
-      HC         : in out Engaged_Context;
-      Last_Err   : in out Error_Code;
-      ALPN       : in out Hostname_Buf;
-      Is_HRR_Msg : in Boolean;
-      OK         : out Boolean)
-   is
-      P                  : N32;
-      Scan_OK, Malformed : Boolean;
-      Exts               : SH_Ext_Array;
-      N_Ext              : Natural;
-      Found_TLS13        : Boolean;
-      Coll_OK, Drv_OK    : Boolean;
-      Coll_Err, Drv_Err  : Error_Code;
-
-      Saved_TS           : constant SPARKTLS_Transcript.Transcript_State := HC.TS
-      with Ghost;
-      Saved_Got_HRR      : constant Boolean := HC.Got_HRR
-      with Ghost;
-   begin
-      OK := True;
-
-      Scan_SH_Fixed_Header (Data, Is_HRR_Msg, P, Scan_OK, Malformed);
-      if not Scan_OK then
-         --  HC untouched: the Post frame facts hold trivially here.
-         if Malformed then
-            Last_Err := Decode_Error;
-            OK := False;
-         end if;
-         return;
-      end if;
-
-      --  Pass 1 (E2, #131): collect (tag, len, off) into Exts with
-      --  duplicate detection; the TLS-1.3 marker comes back as a
-      --  Boolean so the collector needs no HC formal.
-      Collect_SH_Extensions
-        (Data, P, Is_HRR_Msg, Exts, N_Ext, Found_TLS13, Coll_OK, Coll_Err);
-      if not Coll_OK then
-         --  HC untouched so far: the Post frame facts hold trivially.
-         Last_Err := Coll_Err;
-         OK := False;
-         return;
-      end if;
-      if Found_TLS13 then
-         HC.Has_TLS_1_3 := True;
-      end if;
-
-      --  Pass 2 (E4b, #131): matrix + per-tag body validation.
-      Apply_SH_Extension_Bodies
-        (Data, Exts, N_Ext, Is_HRR_Msg, HC, ALPN, Drv_OK, Drv_Err);
-      if not Drv_OK then
-         Last_Err := Drv_Err;
-         OK := False;
-         pragma
-           Assert
-             (HC.TS = Saved_TS
-              and then (if Saved_Got_HRR then HC.Got_HRR));
-         return;
-      end if;
-
-
-
-
-      pragma
-        Assert
-          (HC.TS = Saved_TS
-           and then (if Saved_Got_HRR then HC.Got_HRR)
-           and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-   end Pre_Scan_SH_Extensions;
-
-   --  RFC 8446 4.2.8 ServerHello key_share: a single KeyShareEntry
-   --     group(2) + key_exchange_length(2) + key_exchange(key_exchange_length)
-   --  Allocates a scratch buffer, copies the SH_Extension_TLS body,
-   --  validates the wire-length, runs RFLX Verify_Message, dispatches
-   --  on group to populate HC.KE.Peer_PK / HC.KE.P256_PK / HC.KE.P384_PK
-   --  and the Use_*_KE flags. On length mismatch the routine sets
-   --  HC.Ext_Parse_Err := Decode_Error.
-   --
-   --  BoGo TrailingKeyShareData / unknown-group cases are exercised
-   --  through this path.
-   procedure Apply_SH_Key_Share
-     (Ext_Ctx : in RFLX.TLS_Handshake.SH_Extension_TLS.Context; HC : in out Engaged_Context)
-   with
-     Pre =>
-       RFLX.TLS_Handshake.SH_Extension_TLS.Has_Buffer (Ext_Ctx)
-       and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid
-                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data_Length)
-       and then RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed
-                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data)
-       and then RFLX.TLS_Handshake.SH_Extension_TLS.Valid_Next
-                  (Ext_Ctx, RFLX.TLS_Handshake.SH_Extension_TLS.F_Data),
-     Post =>
-       HC.TS = HC.TS'Old
-       and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old;
-
-   procedure Apply_SH_Key_Share
-     (Ext_Ctx : in RFLX.TLS_Handshake.SH_Extension_TLS.Context; HC : in out Engaged_Context)
-   is
-      DLen   : constant N32 := N32 (RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data_Length (Ext_Ctx));
-      KS_Buf : RBT.Bytes_Ptr;
-      KS_Ctx : RFLX.TLS_Handshake.Key_Share_SH.Context;
-   begin
-      if DLen not in Wire_Key_Share_Len then
-         return;  --  silently skip malformed; never fatal
-
-      end if;
-
-      declare
-         VLen : constant Wire_Key_Share_Len := DLen;
-      begin
-         KS_Buf := new RBT.Bytes'(1 .. RBT.Index (VLen) => 0);
-         RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data (Ext_Ctx, KS_Buf.all);
-
-         --  Reject trailing bytes after the key_exchange field. RFC
-         --  8446 4.2.8: extension_data == 4 + key_exchange_length.
-         if VLen >= 4 then
-            declare
-               KL : constant N32 := N32 (KS_Buf (3)) * 256 + N32 (KS_Buf (4));
-            begin
-               if 4 + KL /= N32 (VLen) then
-                  HC.Ext_Parse_Err := Decode_Error;
-               end if;
-            end;
-         end if;
-
-         RFLX.TLS_Handshake.Key_Share_SH.Initialize
-           (KS_Ctx, KS_Buf, Written_Last => RBT.Bit_Length (RBT.Length (DLen) * 8));
-         RFLX.TLS_Handshake.Key_Share_SH.Verify_Message (KS_Ctx);
-
-         if HC.Ext_Parse_Err = No_Error
-           and then RFLX.TLS_Handshake.Key_Share_SH.Well_Formed_Message (KS_Ctx)
-         then
-            declare
-               Grp : constant RFLX.Tls_Parameters.TLS_Supported_Groups :=
-                 RFLX.TLS_Handshake.Key_Share_SH.Get_Group (KS_Ctx);
-            begin
-               if Grp.Known
-                 and then Grp.Enum = RFLX.Tls_Parameters.X25519
-                 and then RFLX.RFLX_Types.To_Length
-                            (RFLX.TLS_Handshake.Key_Share_SH.Field_Size
-                               (KS_Ctx, RFLX.TLS_Handshake.Key_Share_SH.F_Key_Exchange))
-                          = 32
-               then
-                  declare
-                     KB : RBT.Bytes (1 .. 32);
-                  begin
-                     RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange (KS_Ctx, KB);
-                     HC.KE.Peer_PK := To_NaCl (KB);
-                     HC.KE.Curve := Group_X25519;
-                     HC.KE.Negotiated := True;
-                  end;
-               elsif Grp.Known
-                 and then Grp.Enum = RFLX.Tls_Parameters.Secp256r1
-                 and then RFLX.RFLX_Types.To_Length
-                            (RFLX.TLS_Handshake.Key_Share_SH.Field_Size
-                               (KS_Ctx, RFLX.TLS_Handshake.Key_Share_SH.F_Key_Exchange))
-                          = 65
-               then
-                  declare
-                     KB : RBT.Bytes (1 .. 65);
-                  begin
-                     RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange (KS_Ctx, KB);
-                     for I in 0 .. 64 loop
-                        HC.KE.P256_PK (N32 (I)) := Byte (KB (RBT.Index (I + 1)));
-                     end loop;
-                     HC.KE.Curve := Group_Secp256r1;
-                     HC.KE.Negotiated := True;
-                  end;
-               elsif Grp.Known
-                 and then Grp.Enum = RFLX.Tls_Parameters.Secp384r1
-                 and then RFLX.RFLX_Types.To_Length
-                            (RFLX.TLS_Handshake.Key_Share_SH.Field_Size
-                               (KS_Ctx, RFLX.TLS_Handshake.Key_Share_SH.F_Key_Exchange))
-                          = 97
-               then
-                  declare
-                     KB : RBT.Bytes (1 .. 97);
-                  begin
-                     RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange (KS_Ctx, KB);
-                     for I in 0 .. 96 loop
-                        HC.KE.P384_PK (N32 (I)) := Byte (KB (RBT.Index (I + 1)));
-                     end loop;
-                     HC.KE.Curve := Group_Secp384r1;
-                     HC.KE.Negotiated := True;
-                  end;
-               end if;
-            end;
-         end if;
-
-         RFLX.TLS_Handshake.Key_Share_SH.Take_Buffer (KS_Ctx, KS_Buf);
-         RFLX_Free (KS_Buf);
-      end;
-   end Apply_SH_Key_Share;
-
-   --  R1 (#131): the ONLY RFLX-buffer-owning step of the ServerHello
-   --  parse -- allocate, verify, extract (server random, cipher suite,
-   --  key_share), release. The buffer's lifetime begins and ends here,
-   --  which is what turned Parse_Server_Hello's goto-Cleanup lattice
-   --  into plain returns: nothing after this call touches the buffer.
-   --  Outcomes: OK False, Err No_Error   -> not well-formed (caller falls
-   --            back to the TLS 1.2 parser); OK False, Err /= No_Error ->
-   --            protocol error to alert;   OK True -> Negotiated + HC set.
-   procedure Parse_SH_RFLX_Core
-     (Negotiated : in out Supported_Suite;
-      Err        : out Error_Code;
-      HC         : in out Engaged_Context;
-      Data       : in Byte_Seq;
-      OK         : out Boolean)
-   with
-     Pre  =>
-       Data'Length in 39 .. Max_HS_Msg
-       and then Data'Last < N32 (Natural'Last),
-     Post =>
-       HC.TS = HC.TS'Old
-       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-   is
-      use RFLX.TLS_Handshake.Server_Hello;
-      Body_Len : constant N32 := N32 (Data'Length) - 4;
-      Buf      : RBT.Bytes_Ptr;
-      Ctx      : Context;
-      Suite_OK : Boolean := False;
-   begin
-      Err := No_Error;
-      OK := False;
-
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
-      Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
-      Verify_Message (Ctx);
-
-      if Well_Formed_Message (Ctx) then
-         --  Extract server random (32 bytes)
-         declare
-            Random_Bytes : RBT.Bytes (1 .. 32);
-         begin
-            Get_Random (Ctx, Random_Bytes);
-            HC.Server_Random := To_NaCl (Random_Bytes);
-         end;
-
-         --  Extract and validate cipher suite: TLS 1.3 + TLS 1.2 AEAD only
-         if Well_Formed (Ctx, F_Cipher_Suite_TLS_Suite) then
-            declare
-               Suite     : constant RFLX.Tls_Parameters.TLS_Cipher_Suites :=
-                 Get_Cipher_Suite_TLS_Suite (Ctx);
-               Suite_Val : constant Unsigned_16 :=
-                 Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (Suite));
-            begin
-               --  Single source of truth: To_Suite is TOTAL (unknown wire
-               --  values map to Suite_None), so its domain IS the supported
-               --  set -- no second hand-maintained wire-literal list.
-               declare
-                  Candidate : constant Supported_Suite := To_Suite (Suite_Val);
-               begin
-                  if Candidate /= Suite_None then
-                     --  RFC 8446 4.1.4: after HRR, the cipher_suite in SH2
-                     --  MUST match the HRR's choice. BoGo
-                     --  HelloRetryRequest-CipherChange-TLS13.
-                     if HC.Got_HRR
-                       and then HC.HRR_Cipher_Suite /= 0
-                       and then Suite_Val /= HC.HRR_Cipher_Suite
-                     then
-                        Err := Illegal_Parameter;
-                     else
-                        Negotiated := Candidate;
-                        Suite_OK := True;
-                     end if;
-                  end if;
-               end;
-            end;
-         end if;
-
-         if Suite_OK then
-         --  Iterate extensions to find key_share
-         if Present (Ctx, F_Extensions_TLS) and then Well_Formed (Ctx, F_Extensions_TLS) then
-            pragma Assert (Present (Ctx, F_Extensions_TLS));
-            pragma Assert (Well_Formed (Ctx, F_Extensions_TLS));
-            declare
-               Exts_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
-            begin
-               Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
-
-               declare
-                  Ctx_First  : constant RFLX.RFLX_Types.Index := Ctx.Buffer_First;
-                  Ctx_Last   : constant RFLX.RFLX_Types.Index := Ctx.Buffer_Last;
-                  Exts_First : constant RFLX.RFLX_Types.Bit_Index := Exts_Ctx.First;
-                  Exts_Last  : constant RFLX.RFLX_Types.Bit_Length := Exts_Ctx.Last;
-               begin
-                  while RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element (Exts_Ctx) loop
-                     pragma Loop_Invariant (not RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx));
-                     pragma
-                       Loop_Invariant
-                         (RFLX.TLS_Handshake.Server_Hello.Present (Ctx, F_Extensions_TLS));
-                     pragma
-                       Loop_Invariant (RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer (Exts_Ctx));
-                     pragma Loop_Invariant (RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Exts_Ctx));
-                     pragma
-                       Loop_Invariant
-                         (Exts_Ctx.First = Exts_First and then Exts_Ctx.Last = Exts_Last);
-                     pragma
-                       Loop_Invariant
-                         (Ctx.Buffer_First = Ctx_First
-                            and then Ctx.Buffer_Last = Ctx_Last
-                            and then Exts_Ctx.Buffer_First = Ctx_First
-                            and then Exts_Ctx.Buffer_Last = Ctx_Last);
-
-                     pragma Loop_Invariant (HC.TS = HC.TS'Loop_Entry);
-                     pragma Loop_Invariant (HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Loop_Entry);
-                     declare
-                        Ext_Ctx : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
-                     begin
-                        RFLX.TLS_Handshake.SH_Extensions_TLS.Switch (Exts_Ctx, Ext_Ctx);
-                        RFLX.TLS_Handshake.SH_Extension_TLS.Verify_Message (Ext_Ctx);
-
-                        --  Policy (Where_Allowed, Requires_Offer, body
-                        --  empty) and structural checks (duplicates, ALPN
-                        --  body shape + proto match, SNI body empty,
-                        --  Has_TLS_1_3 detection, Negotiated_ALPN copy) all
-                        --  ran in Pre_Scan_SH_Extensions. This loop is the
-                        --  only RFLX-backed step that remains: key_share
-                        --  body decoding (group dispatch +
-                        --  Get_Key_Exchange). ALPN body extraction stays in
-                        --  Pre_Scan (TLS 1.2) / Extract_ALPN_From_EE (TLS
-                        --  1.3 EE); the TLS 1.3 SH itself carries no ALPN.
-                        if RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message (Ext_Ctx)
-                          and then RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag (Ext_Ctx).Known
-                          and then RFLX.TLS_Handshake.SH_Extension_TLS.Get_Tag (Ext_Ctx).Enum
-                                   = RFLX.Tls_Extensiontype_Values.Key_Share
-                        then
-                           Apply_SH_Key_Share (Ext_Ctx, HC);
-                        end if;
-
-                        RFLX.TLS_Handshake.SH_Extensions_TLS.Update (Exts_Ctx, Ext_Ctx);
-                     end;
-                  end loop;
-
-                  Update_Extensions_TLS (Ctx, Exts_Ctx);
-               end;
-
-               --  All dup / unsolicited / body-empty / ALPN-shape checks
-               --  ran in Pre_Scan_SH_Extensions above; any failure there
-               --  short-circuited the parse. Nothing else to do here.
-            end;
-         end if;
-            OK := True;
-         end if;
-      end if;
-
-      --  Single release point: every path converges here. Buf goes null
-      --  at Initialize (ownership moves into Ctx); the extensions loop
-      --  borrows and returns the buffer, so Ctx owns it again on exit.
-      if Buf /= null then
-         RFLX_Free (Buf);
-      end if;
-      if Has_Buffer (Ctx) then
-         Take_Buffer (Ctx, Buf);
-         RFLX_Free (Buf);
-      end if;
-   end Parse_SH_RFLX_Core;
-
-   --  R4 (#131): HelloRetryRequest arm. RFC 8446 4.1.4. Bundles the
-   --  three HRR-specific checks the caller ran inline: (1) a valid HRR
-   --  must carry key_share or cookie (empty -> illegal_parameter; BoGo
-   --  HelloRetryRequest-Empty-TLS13); (2) it MUST change the
-   --  ClientHello, so an HRR naming a group we already offered is
-   --  unnecessary -> illegal_parameter (UnnecessaryHelloRetryRequest-
-   --  TLS13); (3) stash the HRR cipher suite (which MUST be a TLS 1.3
-   --  suite) for the CH2 transcript and the SH2 cipher-match check.
-   --  The Post carries the strong exit facts the inline 6-conjunct cut
-   --  stated: TS and Got_HRR untouched, cookie bound preserved, and
-   --  Version pinned to TLS 1.3 on success.
-   procedure Parse_HRR
-     (Data       : in     Byte_Seq;
-      HC         : in out Engaged_Context;
-      Negotiated : in out Supported_Suite;
-      Version    : in out TLS_Version;
-      OK         :    out Boolean;
-      Err        :    out Error_Code)
-   with
-     Pre  => Data'Length in 39 .. Max_HS_Msg
-             and then Data'Last < N32 (Natural'Last)
-             and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
-     Post => HC.TS = HC.TS'Old
-             and then HC.Got_HRR = HC.Got_HRR'Old
-             and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
-             and then (if OK then Version = TLS_1_3)
-   is
-   begin
-      OK  := True;
-      Err := No_Error;
-
-      --  (1) empty HRR (neither key_share nor cookie).
-      if HC.HRR_Selected_Group = Group_None and then HC.HRR_Cookie_Len = 0 then
-         Err := Illegal_Parameter;
-         OK  := False;
-         return;
-      end if;
-
-      --  (2) unnecessary HRR. In the default profile CH1 carries only
-      --  X25519; when Client_Key_Share_Group is set, CH1 carries only
-      --  that configured group, so any HRR is a real change.
-      if (if HC.Cfg.Client_Key_Share_Group /= Group_None then True
-          else HC.HRR_Selected_Group = Group_X25519)
-      then
-         Err := Illegal_Parameter;
-         OK  := False;
-         return;
-      end if;
-
-      --  (3) stash HRR cipher suite (RFC 8446 4.1.4: HRR and SH2
-      --  cipher_suite MUST match; the suite MUST be a TLS 1.3 suite).
-      declare
-         Sid_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
-      begin
-         if N32 (Data'Length) < 41 + Sid_Len then
-            Err := Decode_Error;
-            OK  := False;
-            return;
-         end if;
-         declare
-            Cs_Off    : constant N32 := Data'First + 39 + Sid_Len;
-            Suite_Val : constant Unsigned_16 :=
-              Unsigned_16 (Data (Cs_Off)) * 256 + Unsigned_16 (Data (Cs_Off + 1));
-         begin
-            pragma Assert (Cs_Off + 1 <= Data'Last);
-            --  Enum-subtype membership, not wire literals: To_Suite is
-            --  total and TLS13_Suite is the type-level fact (#121).
-            if To_Suite (Suite_Val) not in TLS13_Suite then
-               Err := Illegal_Parameter;
-               OK  := False;
-               return;
-            end if;
-            HC.HRR_Cipher_Suite := Suite_Val;
-            Negotiated := To_Suite (Suite_Val);
-            Version := TLS_1_3;
-         end;
-      end;
-   end Parse_HRR;
-
-   --  R5 (#131): ServerHello version selection and policy checks.
-   --  Pure over narrow formals (no HC): picks Version from the
-   --  supported_versions signal, then enforces the TLS 1.3 suite set,
-   --  the legacy_session_id_echo match (RFC 8446 4.1.3), the
-   --  post-HRR same-version rule (4.1.4) and the Cfg.Versions policy
-   --  (4.2.1). The Post pins Version to a real version on success --
-   --  this is where Parse_Server_Hello's own Version Post is earned.
-   procedure Check_SH_Policy
-     (Data              : in Byte_Seq;
-      Has_TLS_1_3       : in Boolean;
-      Got_HRR           : in Boolean;
-      Cfg_Versions      : in Version_Policy;
-      Legacy_Session_ID : in Bytes_32;
-      Negotiated        : in Supported_Suite;
-      Version           : out TLS_Version;
-      OK                : out Boolean;
-      Err               : out Error_Code)
-   with
-     Pre  => Data'Length in 39 .. Max_HS_Msg,
-     Post => (if OK then Version in TLS_1_2 | TLS_1_3)
-   is
-   begin
-      OK  := True;
-      Err := No_Error;
-
-      --  Select version based on supported_versions extension.
-      if Has_TLS_1_3 then
-         Version := TLS_1_3;
-      else
-         Version := TLS_1_2;
-      end if;
-      if Version = TLS_1_3
-        and then Negotiated not in
-                   Suite_AES_128_GCM_SHA256
-                   | Suite_AES_256_GCM_SHA384
-                   | Suite_CHACHA20_POLY1305_SHA256
-      then
-         Err := Illegal_Parameter;
-         OK := False;
-         return;
-      end if;
-
-      --  RFC 8446 4.1.3: TLS 1.3 server's legacy_session_id_echo
-      --  MUST be byte-for-byte equal to the client's
-      --  legacy_session_id. We always send a 32-byte SID (unless
-      --  TLS_1_2_Only), so when the server picked TLS 1.3 the echo
-      --  must also be 32 bytes and match. In TLS 1.2, by contrast,
-      --  the server may assign a new SID for a full handshake, so
-      --  this check is gated on Has_TLS_1_3. BoGo
-      --  EchoTLS13CompatibilitySessionID-style mismatches that
-      --  reach a TLS 1.3 SH (e.g. via supported_versions).
-      if Has_TLS_1_3
-        and then Cfg_Versions /= TLS_1_2_Only
-        and then Data'Length >= 4 + 35 + 32
-      then
-         declare
-            SH_SID_Off : constant N32 := Data'First + 4 + 35;
-            SH_SID_Len : constant N32 := N32 (Data (Data'First + 4 + 34));
-            Mismatch   : Boolean := SH_SID_Len /= 32;
-         begin
-            if not Mismatch then
-               for I in N32 range 0 .. 31 loop
-                  if Data (SH_SID_Off + I) /= Legacy_Session_ID (I) then
-                     Mismatch := True;
-                  end if;
-               end loop;
-            end if;
-            if Mismatch then
-               Err := Illegal_Parameter;
-               OK := False;
-               return;
-            end if;
-         end;
-      end if;
-
-      --  RFC 8446 4.1.4: after a HelloRetryRequest, the second SH
-      --  MUST select the same version as the HRR (TLS 1.3, indicated
-      --  by supported_versions). A 2nd SH without TLS 1.3 in supported
-      --  _versions is a SECOND_SERVERHELLO_VERSION_MISMATCH and MUST
-      --  trigger an illegal_parameter alert. BoGo
-      --  SecondServerHelloWrongVersion-TLS13.
-      if Got_HRR and then not Has_TLS_1_3 then
-         Err := Illegal_Parameter;
-         OK := False;
-         return;
-      end if;
-
-      --  RFC 8446 4.2.1: enforce our Cfg.Versions policy on the
-      --  server's choice. -min-version / -max-version / -no-tlsN may
-      --  have constrained the policy below what's in the supported_
-      --  versions extension we sent; if the server still picks a
-      --  version outside our allowed set, reject with
-      --  protocol_version (alert 70). BoGo's MinimumVersion-Client2-
-      --  TLS13-TLS12 / -Server2-TLS13-TLS12 exercise this.
-      if (Version = TLS_1_2 and Cfg_Versions = TLS_1_3_Only)
-        or else (Version = TLS_1_3 and Cfg_Versions = TLS_1_2_Only)
-      then
-         Err := Protocol_Version;
-         OK := False;
-         return;
-      end if;
-
-   end Check_SH_Policy;
-
-   --  R7 (#131): TLS 1.3 ECDHE shared-secret computation. Takes KE
-   --  only, so the transcript (HC.TS) frame is not implicated and the
-   --  two SH_Parse_Frame probes bracketing the P-384 call are gone.
-   --  Dispatches on the negotiated curve (P-384 / P-256 / X25519) and
-   --  writes KE.Shared. Failure: OK False; Err carries the alert
-   --  (RFC 8446 6.2 invalid peer share -> illegal_parameter for
-   --  X25519; the P-256/P-384 decode failures leave Err No_Error so
-   --  the caller picks the generic alert, as before).
    procedure Compute_SH_Shared_Secret
      (KE  : in out KE_State;
       OK  : out Boolean;
@@ -2695,36 +1681,9 @@ is
       end if;
    end Compute_SH_Shared_Secret;
 
-   --  R6 (#131): RFC 8446 4.1.3 downgrade-sentinel detection over the
-   --  last 8 bytes of ServerRandom, independent of negotiated version
-   --  (a server MUST NOT set these markers when negotiating TLS 1.3,
-   --  so a marker on a TLS 1.3 SH is itself an abort signal --
-   --  BoringSSL convention). Three sentinels:
-   --    * "DOWNGRD" + 0x01  TLS 1.3 -> TLS 1.2 (RFC 8446 4.1.3)
-   --    * "DOWNGRD" + 0x00  TLS 1.3 -> TLS 1.0/1.1 (same RFC)
-   --    * 0xED 0xBF 0xB4 0xA8 0xC2 0x47 0x10 0xFF  JDK 11 marker.
-   --  BoGo Client-RejectJDK11DowngradeRandom.
-   function Downgrade_Sentinel_Present (R : Bytes_32) return Boolean is
-      type Sentinel_T is array (N32 range 0 .. 7) of Byte;
-      S13   : constant Sentinel_T :=
-        (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#01#);
-      S12   : constant Sentinel_T :=
-        (16#44#, 16#4F#, 16#57#, 16#4E#, 16#47#, 16#52#, 16#44#, 16#00#);
-      S_JDK : constant Sentinel_T :=
-        (16#ED#, 16#BF#, 16#B4#, 16#A8#, 16#C2#, 16#47#, 16#10#, 16#FF#);
-   begin
-      return
-        (for all I in N32 range 0 .. 7 => R (24 + I) = S13 (I))
-        or else (for all I in N32 range 0 .. 7 => R (24 + I) = S12 (I))
-        or else (for all I in N32 range 0 .. 7 => R (24 + I) = S_JDK (I));
-   end Downgrade_Sentinel_Present;
-
-   --  R3 (#131): HelloRetryRequest detection. RFC 8446 4.1.4: an HRR
-   --  is on-wire a ServerHello whose random equals the magic
-   --  HRR_Sentinel. Random is at offset 6 .. 37 in Data (4-byte HS
-   --  header + 2-byte legacy_version). Pure function of Data; the
-   --  caller guards Data'Length >= 38 and owns the Got_HRR/Curr_Is_HRR
-   --  writes and the double-HRR (unexpected_message) rejection.
+   --  RFC 8446 4.1.4: a HelloRetryRequest is on the wire a ServerHello whose
+   --  Random is HRR_Sentinel. Random is at offset 6 .. 37 (4-byte handshake
+   --  header + 2-byte legacy_version). The caller guards the length.
    function Is_HRR_Random (Data : Byte_Seq) return Boolean
    is (for all I in N32 range 0 .. 31 =>
          Data (Data'First + 6 + I) = HRR_Sentinel (I))
@@ -2732,50 +1691,908 @@ is
      Pre => Data'Length in 39 .. Max_HS_Msg
             and then Data'Last < N32 (Natural'Last);
 
-   --  R2 (#131): ServerHello preliminaries -- the shape checks that
-   --  must pass before any parsing. Pure function of Data. Outcomes:
-   --  OK -> proceed (Post carries the bounds every downstream Pre
-   --  needs); not OK and Err = No_Error -> silent no-parse (caller
-   --  falls back to the TLS 1.2 parser as before); not OK and
-   --  Err /= No_Error -> reject.
-   procedure Check_SH_Preliminaries
-     (Data : in Byte_Seq;
-      OK   : out Boolean;
-      Err  : out Error_Code)
+
+   ----------------------------------------------------------------------------
+   --  HelloRetryRequest
+   ----------------------------------------------------------------------------
+
+   --  One HRR extension element: duplicate check, E_HRR policy, then the
+   --  body through its refinement. key_share carries only selected_group
+   --  (RFC 8446 4.1.4), cookie is cookie<1..2^16-1> (4.2.2), and
+   --  supported_versions is the selected version (4.2.1). Fail /= No_Error
+   --  aborts the message with that alert; HC.Ext_Parse_Err carries the
+   --  softer verdicts the caller reads after the retry flow.
+   procedure Process_HRR_Extension
+     (E         : in RFLX.TLS_Handshake.HRR_Extension_TLS.Context;
+      HC        : in out Engaged_Context;
+      Scratch   : in out RBT.Bytes_Ptr;
+      Seen      : in out Seen_Tags;
+      N_Seen    : in out Natural;
+      Has_TLS13 : in out Boolean;
+      Fail      : out Error_Code)
    with
+     Pre  =>
+       RFLX.TLS_Handshake.HRR_Extension_TLS.Has_Buffer (E)
+       and then RFLX.TLS_Handshake.HRR_Extension_TLS.Well_Formed_Message (E)
+       and then Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len
+       and then N_Seen <= Seen'Last
+       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
      Post =>
-       (if OK then
-          Data'Length in 39 .. Max_HS_Msg
-          and then Data'Last < N32 (Natural'Last))
+       Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len
+       and then N_Seen <= Seen'Last
+       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
    is
+      use RFLX.TLS_Handshake.HRR_Extension_TLS;
+      Tag  : constant Unsigned_16 := Tag_Wire (Get_Tag (E));
+      DLen : constant N32 := N32 (Get_Data_Length (E));
+      Dup, Full, V_OK : Boolean;
+   begin
+      Fail := No_Error;
+
+      --  Duplicates in an HRR are illegal_parameter (BoGo
+      --  HelloRetryRequest-DuplicateCookie / -DuplicateCurve).
+      Note_Tag (Seen, N_Seen, Tag, Dup, Full);
+      if Dup then
+         Fail := Illegal_Parameter;
+         return;
+      end if;
+      if Full then
+         Fail := Decode_Error;
+         return;
+      end if;
+
+      Validate_Server_Ext (E_HRR, Tag, DLen, HC, V_OK, Fail);
+      if not V_OK then
+         return;
+      end if;
+      Fail := No_Error;
+
+      if DLen > Body_Scratch_Len then
+         --  No HRR extension body we read is that large.
+         Fail := Decode_Error;
+         return;
+      end if;
+
+      if RFLX.TLS_Handshake.Contains.Key_Share_HRR_In_HRR_Extension_TLS_Data (E) then
+         declare
+            KS : RFLX.TLS_Handshake.Key_Share_HRR.Context;
+         begin
+            RFLX.TLS_Handshake.Key_Share_HRR.Initialize (KS, Scratch);
+            RFLX.TLS_Handshake.Contains.Copy_Data (E, KS);
+            RFLX.TLS_Handshake.Key_Share_HRR.Verify_Message (KS);
+            if DLen = 2
+              and then RFLX.TLS_Handshake.Key_Share_HRR.Well_Formed_Message (KS)
+            then
+               declare
+                  G : constant Maybe_ECDHE_Group :=
+                    Group_From_Wire
+                      (Group_Wire (RFLX.TLS_Handshake.Key_Share_HRR.Get_Selected_Group (KS)));
+               begin
+                  if G /= Group_None then
+                     HC.HRR_Selected_Group := G;
+                  else
+                     --  A group we never offered: illegal_parameter, decided
+                     --  here rather than at the CH2 rebuild.
+                     HC.Ext_Parse_Err := Illegal_Parameter;
+                  end if;
+               end;
+            else
+               Fail := Decode_Error;
+            end if;
+            RFLX.TLS_Handshake.Key_Share_HRR.Take_Buffer (KS, Scratch);
+         end;
+
+      elsif RFLX.TLS_Handshake.Contains.Cookie_In_HRR_Extension_TLS_Data (E) then
+         declare
+            CK : RFLX.TLS_Handshake.Cookie.Context;
+         begin
+            RFLX.TLS_Handshake.Cookie.Initialize (CK, Scratch);
+            RFLX.TLS_Handshake.Contains.Copy_Data (E, CK);
+            RFLX.TLS_Handshake.Cookie.Verify_Message (CK);
+            if RFLX.TLS_Handshake.Cookie.Well_Formed_Message (CK)
+              and then 2 + N32 (RFLX.TLS_Handshake.Cookie.Get_Length (CK)) = DLen
+            then
+               declare
+                  C_Len : constant N32 := N32 (RFLX.TLS_Handshake.Cookie.Get_Length (CK));
+               begin
+                  if C_Len <= N32 (HC.HRR_Cookie'Length) then
+                     declare
+                        CB : RBT.Bytes (1 .. RBT.Index (C_Len));
+                     begin
+                        RFLX.TLS_Handshake.Cookie.Get_Cookie (CK, CB);
+                        HC.HRR_Cookie (0 .. C_Len - 1) := To_NaCl (CB);
+                        HC.HRR_Cookie_Len := C_Len;
+                     end;
+                  end if;
+               end;
+            else
+               --  An empty cookie (0 is outside Cookie_Length) or a length
+               --  that does not fill the body: illegal_parameter (BoGo
+               --  HelloRetryRequest-EmptyCookie-TLS13).
+               Fail := Illegal_Parameter;
+            end if;
+            RFLX.TLS_Handshake.Cookie.Take_Buffer (CK, Scratch);
+         end;
+
+      elsif RFLX.TLS_Handshake.Contains.Supported_Version_In_HRR_Extension_TLS_Data (E) then
+         declare
+            SV : RFLX.TLS_Handshake.Supported_Version.Context;
+         begin
+            RFLX.TLS_Handshake.Supported_Version.Initialize (SV, Scratch);
+            RFLX.TLS_Handshake.Contains.Copy_Data (E, SV);
+            RFLX.TLS_Handshake.Supported_Version.Verify_Message (SV);
+            --  Only the exact value 0x0304 is the TLS 1.3 marker.
+            if DLen = 2
+              and then RFLX.TLS_Handshake.Supported_Version.Well_Formed_Message (SV)
+              and then RFLX.TLS_Handshake.Supported_Version.Get_Version (SV) = RFLX.TLS_Common.TLS_1_3
+            then
+               Has_TLS13 := True;
+            end if;
+            RFLX.TLS_Handshake.Supported_Version.Take_Buffer (SV, Scratch);
+         end;
+      end if;
+   end Process_HRR_Extension;
+
+   --  Everything between Initialize and Take_Buffer of the HRR context.
+   --  Failures set Err and return; the extension walk itself never returns
+   --  early, so the sequence buffer always comes back to Ctx.
+   procedure Check_HRR
+     (Ctx        : in out RFLX.TLS_Handshake.Hello_Retry_Request.Context;
+      Scratch    : in out RBT.Bytes_Ptr;
+      HC         : in out Engaged_Context;
+      Negotiated : in out Supported_Suite;
+      Version    : in out TLS_Version;
+      OK         : out Boolean;
+      Err        : out Error_Code)
+   with
+     Pre  =>
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len
+       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
+     Post =>
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then Scratch /= null
+       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+       and then (if OK then Version = TLS_1_3)
+   is
+      use RFLX.TLS_Handshake.Hello_Retry_Request;
+      Seen      : Seen_Tags := (others => 0);
+      N_Seen    : Natural := 0;
+      Has_TLS13 : Boolean := False;
+      Sid_Len   : N32;
    begin
       OK  := False;
       Err := No_Error;
 
-      --  Shape checks -- silent no-parse on any failure: the caller
-      --  falls back to the TLS 1.2 parser exactly as before.
-      if Data'Length < 39
-        or else Data'Last >= N32 (Natural'Last)
-        or else Data'Length > Max_HS_Msg
-        or else Data (Data'First) /= HS_Msg_Wire (HT_Server_Hello)  --  not a ServerHello
-      then
-         return;
-      end if;
-
-      --  RFC 5246 7.4.1.2 / RFC 8446 4.1.3: legacy_session_id
-      --  length field is 0..32. The full ServerHello body is
-      --  version(2) + random(32) + sid_len(1) + sid(0..32) + ...
-      --  Catch over-long sid early  RFLX rejects the message but
-      --  we'd otherwise fall through to the TLS 1.2 parser and emit
-      --  Handshake_Failure instead of the correct Decode_Error
-      --  (BoGo's Client-TooLongSessionID test).
-      if N32 (Data'Length) - 4 >= 35 and then N32 (Data (Data'First + 4 + 34)) > 32 then
+      if not Well_Formed_Message (Ctx) then
+         --  Including legacy_compression_method /= 0 (the spec's range is
+         --  0 .. 0): decode_error, BoGo TLS13-HRR-InvalidCompressionMethod.
          Err := Decode_Error;
          return;
       end if;
 
+      --  RFC 8446 4.1.4 -> 4.1.3: legacy_session_id_echo MUST equal the
+      --  session_id we sent (32 bytes unless TLS_1_2_Only, which never
+      --  reaches an HRR).
+      Sid_Len := N32 (Get_Legacy_Session_ID_Length (Ctx));
+      if HC.Cfg.Versions /= TLS_1_2_Only then
+         if Sid_Len /= 32 then
+            Err := Illegal_Parameter;
+            return;
+         end if;
+         declare
+            Echo : RBT.Bytes (1 .. 32);
+         begin
+            Get_Legacy_Session_ID (Ctx, Echo);
+            if To_NaCl (Echo) /= Byte_Seq (HC.Legacy_Session_ID) then
+               Err := Illegal_Parameter;
+               return;
+            end if;
+         end;
+      end if;
+
+      --  RFC 8446 4.1.4: cipher_suite MUST be a TLS 1.3 suite; kept for the
+      --  SH2 match (BoGo HelloRetryRequest-CipherChange-TLS13).
+      declare
+         Wire : constant Unsigned_16 := Suite_Wire (Get_Cipher_Suite_TLS_Suite (Ctx));
+      begin
+         if To_Suite (Wire) not in TLS13_Suite then
+            Err := Illegal_Parameter;
+            return;
+         end if;
+         HC.HRR_Cipher_Suite := Wire;
+         Negotiated := To_Suite (Wire);
+      end;
+
+      declare
+         Exts : RFLX.TLS_Handshake.HRR_Extensions_TLS.Context;
+         Fail : Error_Code := No_Error;
+      begin
+         Switch_To_Extensions_TLS (Ctx, Exts);
+         while Fail = No_Error
+           and then RFLX.TLS_Handshake.HRR_Extensions_TLS.Has_Element (Exts)
+         loop
+            declare
+               E : RFLX.TLS_Handshake.HRR_Extension_TLS.Context;
+            begin
+               RFLX.TLS_Handshake.HRR_Extensions_TLS.Switch (Exts, E);
+               RFLX.TLS_Handshake.HRR_Extension_TLS.Verify_Message (E);
+               if RFLX.TLS_Handshake.HRR_Extension_TLS.Well_Formed_Message (E) then
+                  Process_HRR_Extension (E, HC, Scratch, Seen, N_Seen, Has_TLS13, Fail);
+               else
+                  Fail := Decode_Error;
+               end if;
+               RFLX.TLS_Handshake.HRR_Extensions_TLS.Update (Exts, E);
+            end;
+         end loop;
+         Update_Extensions_TLS (Ctx, Exts);
+         if Fail /= No_Error then
+            Err := Fail;
+            return;
+         end if;
+      end;
+
+      if Has_TLS13 then
+         HC.Has_TLS_1_3 := True;
+      end if;
+
+      --  RFC 8446 4.1.4: an HRR must ask for a change -- key_share or
+      --  cookie (BoGo HelloRetryRequest-Empty-TLS13) ...
+      if HC.HRR_Selected_Group = Group_None and then HC.HRR_Cookie_Len = 0 then
+         Err := Illegal_Parameter;
+         return;
+      end if;
+      --  ... and the change must be real: CH1 already offered X25519 in
+      --  the default profile, or exactly the configured group.
+      if (if HC.Cfg.Client_Key_Share_Group /= Group_None then True
+          else HC.HRR_Selected_Group = Group_X25519)
+      then
+         Err := Illegal_Parameter;
+         return;
+      end if;
+
+      Version := TLS_1_3;
       OK := True;
-   end Check_SH_Preliminaries;
+   end Check_HRR;
+
+   procedure Parse_HRR_Message
+     (Data       : in Byte_Seq;
+      HC         : in out Engaged_Context;
+      Negotiated : in out Supported_Suite;
+      Version    : in out TLS_Version;
+      OK         : out Boolean;
+      Err        : out Error_Code)
+   with
+     Pre  =>
+       Data'Length in 42 .. Max_HS_Msg
+       and then Data'Last < N32 (Natural'Last)
+       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
+     Post =>
+       HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+       and then (if OK then Version = TLS_1_3)
+   is
+      use RFLX.TLS_Handshake.Hello_Retry_Request;
+      Body_Len : constant N32 := N32 (Data'Length) - 4;
+      Buf      : RBT.Bytes_Ptr;
+      Scratch  : RBT.Bytes_Ptr;
+      Ctx      : Context;
+   begin
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
+      Scratch := new RBT.Bytes'(1 .. Body_Scratch_Len => 0);
+      Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
+      Verify_Message (Ctx);
+      Check_HRR (Ctx, Scratch, HC, Negotiated, Version, OK, Err);
+      Take_Buffer (Ctx, Buf);
+      RFLX_Free (Buf);
+      RFLX_Free (Scratch);
+   end Parse_HRR_Message;
+
+   ----------------------------------------------------------------------------
+   --  ServerHello
+   ----------------------------------------------------------------------------
+
+   --  Pass 1 over one element: duplicates (decode_error in a ServerHello)
+   --  and the supported_versions marker. RFC 8446 4.2.1: the extension,
+   --  not legacy_version, says the server selected TLS 1.3, and only the
+   --  exact value 0x0304 counts (BoGo SecondServerHelloWrongVersion-TLS13
+   --  sends 0x1234).
+   procedure Scan_SH_Extension
+     (E         : in RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+      Scratch   : in out RBT.Bytes_Ptr;
+      Seen      : in out Seen_Tags;
+      N_Seen    : in out Natural;
+      Has_TLS13 : in out Boolean;
+      Fail      : out Error_Code)
+   with
+     Pre  =>
+       RFLX.TLS_Handshake.SH_Extension_TLS.Has_Buffer (E)
+       and then RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message (E)
+       and then Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len
+       and then N_Seen <= Seen'Last,
+     Post =>
+       Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len
+       and then N_Seen <= Seen'Last
+   is
+      use RFLX.TLS_Handshake.SH_Extension_TLS;
+      Tag  : constant Unsigned_16 := Tag_Wire (Get_Tag (E));
+      DLen : constant N32 := N32 (Get_Data_Length (E));
+      Dup, Full : Boolean;
+   begin
+      Fail := No_Error;
+      Note_Tag (Seen, N_Seen, Tag, Dup, Full);
+      if Dup or else Full then
+         Fail := Decode_Error;
+         return;
+      end if;
+      if DLen = 2
+        and then RFLX.TLS_Handshake.Contains.Supported_Version_In_SH_Extension_TLS_Data (E)
+      then
+         declare
+            SV : RFLX.TLS_Handshake.Supported_Version.Context;
+         begin
+            RFLX.TLS_Handshake.Supported_Version.Initialize (SV, Scratch);
+            RFLX.TLS_Handshake.Contains.Copy_Data (E, SV);
+            RFLX.TLS_Handshake.Supported_Version.Verify_Message (SV);
+            if RFLX.TLS_Handshake.Supported_Version.Well_Formed_Message (SV)
+              and then RFLX.TLS_Handshake.Supported_Version.Get_Version (SV) = RFLX.TLS_Common.TLS_1_3
+            then
+               Has_TLS13 := True;
+            end if;
+            RFLX.TLS_Handshake.Supported_Version.Take_Buffer (SV, Scratch);
+         end;
+      end if;
+   end Scan_SH_Extension;
+
+   --  RFC 8446 4.2.8 ServerHello key_share: one KeyShareEntry, group +
+   --  key_exchange. Dispatches on the group to HC.KE. A key_exchange that
+   --  does not fill the body (BoGo TrailingKeyShareData) or a malformed
+   --  entry is decode_error through HC.Ext_Parse_Err; a group or length
+   --  we do not know leaves KE un-negotiated and the shared-secret step
+   --  answers illegal_parameter, as before.
+   procedure Apply_SH_Key_Share
+     (E       : in RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+      Scratch : in out RBT.Bytes_Ptr;
+      HC      : in out Engaged_Context)
+   with
+     Pre  =>
+       RFLX.TLS_Handshake.SH_Extension_TLS.Has_Buffer (E)
+       and then RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message (E)
+       and then RFLX.TLS_Handshake.Contains.Key_Share_SH_In_SH_Extension_TLS_Data (E)
+       and then N32 (RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data_Length (E)) <= Body_Scratch_Len
+       and then Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len,
+     Post =>
+       Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len
+       and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+   is
+      DLen : constant N32 := N32 (RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data_Length (E));
+      KS   : RFLX.TLS_Handshake.Key_Share_SH.Context;
+   begin
+      RFLX.TLS_Handshake.Key_Share_SH.Initialize (KS, Scratch);
+      RFLX.TLS_Handshake.Contains.Copy_Data (E, KS);
+      RFLX.TLS_Handshake.Key_Share_SH.Verify_Message (KS);
+
+      if not RFLX.TLS_Handshake.Key_Share_SH.Well_Formed_Message (KS)
+        or else 4 + N32 (RFLX.TLS_Handshake.Key_Share_SH.Get_Length (KS)) /= DLen
+      then
+         HC.Ext_Parse_Err := Decode_Error;
+      else
+         declare
+            Grp    : constant RFLX.Tls_Parameters.TLS_Supported_Groups :=
+              RFLX.TLS_Handshake.Key_Share_SH.Get_Group (KS);
+            KX_Len : constant N32 := N32 (RFLX.TLS_Handshake.Key_Share_SH.Get_Length (KS));
+         begin
+            if Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.X25519 and then KX_Len = 32 then
+               declare
+                  KB : RBT.Bytes (1 .. 32);
+               begin
+                  RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange (KS, KB);
+                  HC.KE.Peer_PK := To_NaCl (KB);
+                  HC.KE.Curve := Group_X25519;
+                  HC.KE.Negotiated := True;
+               end;
+            elsif Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.Secp256r1 and then KX_Len = 65 then
+               declare
+                  KB : RBT.Bytes (1 .. 65);
+               begin
+                  RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange (KS, KB);
+                  for I in 0 .. 64 loop
+                     HC.KE.P256_PK (N32 (I)) := Byte (KB (RBT.Index (I + 1)));
+                  end loop;
+                  HC.KE.Curve := Group_Secp256r1;
+                  HC.KE.Negotiated := True;
+               end;
+            elsif Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.Secp384r1 and then KX_Len = 97 then
+               declare
+                  KB : RBT.Bytes (1 .. 97);
+               begin
+                  RFLX.TLS_Handshake.Key_Share_SH.Get_Key_Exchange (KS, KB);
+                  for I in 0 .. 96 loop
+                     HC.KE.P384_PK (N32 (I)) := Byte (KB (RBT.Index (I + 1)));
+                  end loop;
+                  HC.KE.Curve := Group_Secp384r1;
+                  HC.KE.Negotiated := True;
+               end;
+            end if;
+         end;
+      end if;
+
+      RFLX.TLS_Handshake.Key_Share_SH.Take_Buffer (KS, Scratch);
+   end Apply_SH_Key_Share;
+
+   --  Pass 2 over one element, with the version known: the policy matrix,
+   --  then the body checks each tag needs.
+   --    key_share (SH13)         RFC 8446 4.2.8   -> Apply_SH_Key_Share
+   --    pre_shared_key (SH13)    RFC 8446 4.2.11  selected_identity must be 0,
+   --                             the only identity we offer
+   --    ALPN (SH12)              RFC 7301 3.1     shape + must be one we offered
+   --    ec_point_formats (SH12)  RFC 8422 5.1.2   must include uncompressed(0)
+   --    extended_master_secret   RFC 7627 5.1     latch HC.Use_EMS
+   --    session_ticket (SH12)    RFC 5077 3.3     empty body: a ticket follows
+   --  supported_versions was read in pass 1; everything else is policy only.
+   procedure Apply_SH_Extension
+     (E       : in RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+      Where   : in Ext_Where;
+      HC      : in out Engaged_Context;
+      ALPN    : in out Hostname_Buf;
+      Scratch : in out RBT.Bytes_Ptr;
+      Fail    : out Error_Code)
+   with
+     Pre  =>
+       RFLX.TLS_Handshake.SH_Extension_TLS.Has_Buffer (E)
+       and then RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message (E)
+       and then Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len,
+     Post =>
+       Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len
+       and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
+   is
+      use RFLX.TLS_Handshake.SH_Extension_TLS;
+      Tag  : constant Unsigned_16 := Tag_Wire (Get_Tag (E));
+      DLen : constant N32 := N32 (Get_Data_Length (E));
+      V_OK : Boolean;
+   begin
+      Validate_Server_Ext (Where, Tag, DLen, HC, V_OK, Fail);
+      if not V_OK then
+         return;
+      end if;
+      Fail := No_Error;
+
+      if RFLX.TLS_Handshake.Contains.Key_Share_SH_In_SH_Extension_TLS_Data (E) then
+         if DLen > Body_Scratch_Len then
+            Fail := Decode_Error;
+            return;
+         end if;
+         Apply_SH_Key_Share (E, Scratch, HC);
+
+      elsif RFLX.TLS_Handshake.Contains.Pre_Shared_Key_SH_In_SH_Extension_TLS_Data (E) then
+         if DLen /= 2 then
+            Fail := Decode_Error;
+            return;
+         end if;
+         declare
+            PS : RFLX.TLS_Handshake.Pre_Shared_Key_SH.Context;
+            Identity_OK : Boolean := False;
+         begin
+            RFLX.TLS_Handshake.Pre_Shared_Key_SH.Initialize (PS, Scratch);
+            RFLX.TLS_Handshake.Contains.Copy_Data (E, PS);
+            RFLX.TLS_Handshake.Pre_Shared_Key_SH.Verify_Message (PS);
+            if RFLX.TLS_Handshake.Pre_Shared_Key_SH.Well_Formed_Message (PS)
+              and then RFLX.TLS_Handshake.Pre_Shared_Key_SH.Get_Selected_Identity (PS) = 0
+            then
+               Identity_OK := True;
+            end if;
+            RFLX.TLS_Handshake.Pre_Shared_Key_SH.Take_Buffer (PS, Scratch);
+            if Identity_OK then
+               HC.Using_PSK := True;
+            else
+               Fail := Illegal_Parameter;
+               return;
+            end if;
+         end;
+
+      elsif Tag = 16#0010# then
+         --  RFC 7301: list_len(2) + proto_len(1) + proto, one protocol.
+         if DLen < 4 or else DLen > 258 then
+            Fail := Decode_Error;
+            return;
+         end if;
+         declare
+            Raw : RBT.Bytes (1 .. RBT.Index (DLen));
+         begin
+            Get_Data (E, Raw);
+            Validate_ALPN_Echo_Body
+              (Data       => To_NaCl (Raw),
+               Body_Start => 0,
+               E_Len      => DLen,
+               HC         => HC,
+               ALPN       => ALPN,
+               OK         => V_OK,
+               Err        => Fail);
+            if not V_OK then
+               return;
+            end if;
+            Fail := No_Error;
+         end;
+
+      elsif Where = E_SH12 and then Tag = 16#000B# then
+         --  RFC 8422 5.1.2: list_len(1) + formats.
+         if DLen = 0 or else DLen > 256 then
+            Fail := Decode_Error;
+            return;
+         end if;
+         declare
+            Raw : RBT.Bytes (1 .. RBT.Index (DLen));
+         begin
+            Get_Data (E, Raw);
+            Check_EC_Point_Formats_Body
+              (Data  => To_NaCl (Raw),
+               Off   => 0,
+               E_Len => DLen,
+               OK    => V_OK,
+               Err   => Fail);
+            if not V_OK then
+               return;
+            end if;
+            Fail := No_Error;
+         end;
+
+      elsif Tag = 16#0017# then
+         --  RFC 7627 5.1: the server agreed to the extended master secret.
+         --  Both this latch and the Tag_Is_Offered arm for 0x0017 are
+         --  needed (BoGo ExtendedMasterSecret-TLS12-Client).
+         HC.Use_EMS := True;
+
+      elsif Where = E_SH12 and then Tag = 16#0023# and then DLen = 0 then
+         --  RFC 5077 3.3: the server will send NewSessionTicket.
+         HC.T12.Server_Will_Issue := True;
+      end if;
+   end Apply_SH_Extension;
+
+   --  Everything between Initialize and Take_Buffer of the ServerHello
+   --  context. Two walks over the extensions: the first finds the version
+   --  (and duplicates), the second applies that version's policy and reads
+   --  the bodies. Failures set Err and return; the walks never return
+   --  early, so the sequence buffer always comes back to Ctx.
+   --  Classify a ServerHello that RFLX would not accept, from the raw
+   --  bytes, exactly as the former hand parser did. This is the only alert
+   --  selection the RFLX Well_Formed_Message verdict cannot make on its
+   --  own, because it does not distinguish the reasons for rejection.
+   --    legacy_version /= 0x0303       -> No_Error (caller: handshake_failure)
+   --    legacy_compression_method /= 0 -> Illegal_Parameter (RFC 5246 6.2.2,
+   --                                      BoGo InvalidCompressionMethod)
+   --    anything else                  -> Decode_Error (truncated fields,
+   --                                      over-long session_id, ...)
+   function Classify_Bad_SH (Data : Byte_Seq) return Error_Code
+   with
+     Pre => Data'Length in 42 .. Max_HS_Msg and then Data'Last < N32 (Natural'Last)
+   is
+      BS      : constant N32 := Data'First + 4;
+      Sid_Len : N32;
+      P       : N32;
+   begin
+      if Data (BS) /= 16#03# or else Data (BS + 1) /= 16#03# then
+         return No_Error;
+      end if;
+      Sid_Len := N32 (Data (BS + 34));
+      if Sid_Len > 32 then
+         return Decode_Error;
+      end if;
+      --  version(2)+random(32)+sid_len(1)+sid+suite(2) -> compression byte.
+      P := BS + 35 + Sid_Len + 2;
+      if P <= Data'Last and then Data (P) /= 0 then
+         return Illegal_Parameter;
+      end if;
+      return Decode_Error;
+   end Classify_Bad_SH;
+
+   procedure Check_SH
+     (Ctx        : in out RFLX.TLS_Handshake.Server_Hello.Context;
+      Data       : in Byte_Seq;
+      Scratch    : in out RBT.Bytes_Ptr;
+      HC         : in out Engaged_Context;
+      ALPN       : in out Hostname_Buf;
+      Negotiated : in out Supported_Suite;
+      Version    : out TLS_Version;
+      OK         : out Boolean;
+      Err        : out Error_Code)
+   with
+     Pre  =>
+       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
+       and then Data'Length in 42 .. Max_HS_Msg
+       and then Data'Last < N32 (Natural'Last)
+       and then Scratch /= null
+       and then Scratch'First = 1
+       and then Scratch'Last = Body_Scratch_Len
+       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
+     Post =>
+       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
+       and then Scratch /= null
+       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+       and then (if OK then Version in TLS_1_2 | TLS_1_3)
+   is
+      use RFLX.TLS_Handshake.Server_Hello;
+      Seen      : Seen_Tags := (others => 0);
+      N_Seen    : Natural := 0;
+      Has_TLS13 : Boolean := False;
+      Sid_Len   : N32;
+      Where     : Ext_Where;
+   begin
+      Version := TLS_Undetermined;
+      OK  := False;
+      Err := No_Error;
+
+      if not Well_Formed_Message (Ctx) then
+         Err := Classify_Bad_SH (Data);
+         return;
+      end if;
+
+      --  RFC 8446 4 / RFC 5246 7.4: the message MUST end exactly at its
+      --  declared length. A ServerHello that parses but leaves trailing
+      --  bytes is decode_error (BoGo TrailingMessageData-ServerHello).
+      if Message_Last (Ctx) /= RBT.Bit_Length (RBT.Length (N32 (Data'Length) - 4) * 8) then
+         Err := Decode_Error;
+         return;
+      end if;
+
+      declare
+         Random_Bytes : RBT.Bytes (1 .. 32);
+      begin
+         Get_Random (Ctx, Random_Bytes);
+         HC.Server_Random := To_NaCl (Random_Bytes);
+      end;
+
+      --  Cipher suite: To_Suite is total (unknown -> Suite_None), so its
+      --  domain is the supported set. RFC 8446 4.1.4: after an HRR the
+      --  suite MUST match (BoGo HelloRetryRequest-CipherChange-TLS13).
+      declare
+         Wire      : constant Unsigned_16 := Suite_Wire (Get_Cipher_Suite_TLS_Suite (Ctx));
+         Candidate : constant Supported_Suite := To_Suite (Wire);
+      begin
+         if Candidate = Suite_None then
+            return;
+         end if;
+         if HC.Got_HRR and then HC.HRR_Cipher_Suite /= 0 and then Wire /= HC.HRR_Cipher_Suite then
+            Err := Illegal_Parameter;
+            return;
+         end if;
+         Negotiated := Candidate;
+      end;
+
+      --  Pass 1: duplicates and the version marker.
+      if Present (Ctx, F_Extensions_TLS) then
+         declare
+            Exts : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
+            Fail : Error_Code := No_Error;
+         begin
+            Switch_To_Extensions_TLS (Ctx, Exts);
+            while Fail = No_Error
+              and then RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element (Exts)
+            loop
+               declare
+                  E : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+               begin
+                  RFLX.TLS_Handshake.SH_Extensions_TLS.Switch (Exts, E);
+                  RFLX.TLS_Handshake.SH_Extension_TLS.Verify_Message (E);
+                  if RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message (E) then
+                     Scan_SH_Extension (E, Scratch, Seen, N_Seen, Has_TLS13, Fail);
+                  else
+                     Fail := Decode_Error;
+                  end if;
+                  RFLX.TLS_Handshake.SH_Extensions_TLS.Update (Exts, E);
+               end;
+            end loop;
+            Update_Extensions_TLS (Ctx, Exts);
+            if Fail /= No_Error then
+               Err := Fail;
+               return;
+            end if;
+         end;
+      end if;
+
+      if Has_TLS13 then
+         HC.Has_TLS_1_3 := True;
+         Version := TLS_1_3;
+         Where := E_SH13;
+      else
+         HC.Has_TLS_1_3 := False;
+         Version := TLS_1_2;
+         Where := E_SH12;
+      end if;
+
+      --  RFC 8446 4.1.4: after an HRR the ServerHello MUST select TLS 1.3
+      --  too (BoGo SecondServerHelloWrongVersion-TLS13).
+      if HC.Got_HRR and then Version /= TLS_1_3 then
+         Err := Illegal_Parameter;
+         return;
+      end if;
+      --  The suite must belong to the selected version.
+      if Version = TLS_1_3 and then Negotiated not in TLS13_Suite then
+         Err := Illegal_Parameter;
+         return;
+      end if;
+      if Version = TLS_1_2 and then Negotiated not in TLS12_Suite then
+         return;
+      end if;
+
+      --  RFC 8446 4.1.3: the TLS 1.3 legacy_session_id_echo MUST equal our
+      --  session_id, 32 bytes unless TLS_1_2_Only.
+      Sid_Len := N32 (Get_Legacy_Session_ID_Length (Ctx));
+      if Version = TLS_1_3 and then HC.Cfg.Versions /= TLS_1_2_Only then
+         if Sid_Len /= 32 then
+            Err := Illegal_Parameter;
+            return;
+         end if;
+         declare
+            Echo : RBT.Bytes (1 .. 32);
+         begin
+            Get_Legacy_Session_ID (Ctx, Echo);
+            if To_NaCl (Echo) /= Byte_Seq (HC.Legacy_Session_ID) then
+               Err := Illegal_Parameter;
+               return;
+            end if;
+         end;
+      end if;
+
+      --  RFC 8446 4.2.1: our own version policy (BoGo MinimumVersion-*).
+      if (Version = TLS_1_2 and then HC.Cfg.Versions = TLS_1_3_Only)
+        or else (Version = TLS_1_3 and then HC.Cfg.Versions = TLS_1_2_Only)
+      then
+         Err := Protocol_Version;
+         return;
+      end if;
+
+      --  RFC 8446 4.1.3 downgrade sentinels, for a client that offered
+      --  TLS 1.3 (a TLS_1_2_Only client did not, so the JDK 11 marker is
+      --  not a signal for it).
+      if HC.Cfg.Versions /= TLS_1_2_Only
+        and then Downgrade_Sentinel_Present (HC.Server_Random)
+      then
+         Err := Illegal_Parameter;
+         return;
+      end if;
+
+      --  Pass 2: policy and bodies.
+      if Present (Ctx, F_Extensions_TLS) then
+         declare
+            Exts : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
+            Fail : Error_Code := No_Error;
+         begin
+            Switch_To_Extensions_TLS (Ctx, Exts);
+            while Fail = No_Error
+              and then RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element (Exts)
+            loop
+               declare
+                  E : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+               begin
+                  RFLX.TLS_Handshake.SH_Extensions_TLS.Switch (Exts, E);
+                  RFLX.TLS_Handshake.SH_Extension_TLS.Verify_Message (E);
+                  if RFLX.TLS_Handshake.SH_Extension_TLS.Well_Formed_Message (E) then
+                     Apply_SH_Extension (E, Where, HC, ALPN, Scratch, Fail);
+                  else
+                     Fail := Decode_Error;
+                  end if;
+                  RFLX.TLS_Handshake.SH_Extensions_TLS.Update (Exts, E);
+               end;
+            end loop;
+            Update_Extensions_TLS (Ctx, Exts);
+            if Fail /= No_Error then
+               Err := Fail;
+               return;
+            end if;
+         end;
+      end if;
+
+      if Version = TLS_1_2 then
+         --  RFC 5077 3.4: a server accepts ticket resumption by echoing the
+         --  exact session_id the client sent. A different or empty echo means
+         --  a full handshake, even when the server will issue a fresh ticket
+         --  (Server_Will_Issue). The caller keys the abbreviated-flight
+         --  decision off this flag; without it, Server_Will_Issue alone would
+         --  mistake a resume-rejected full handshake for resumption
+         --  (BoGo Resume-Client-NoResume-TLS12).
+         declare
+            Client_Sid_Len : constant N32 := N32 (HC.Legacy_Session_ID_Len);
+            Echoed         : Boolean := Sid_Len > 0 and then Sid_Len = Client_Sid_Len;
+         begin
+            if Echoed then
+               declare
+                  Srv : RBT.Bytes (1 .. RBT.Index (Sid_Len));
+               begin
+                  Get_Legacy_Session_ID (Ctx, Srv);
+                  Echoed :=
+                    To_NaCl (Srv) = Byte_Seq (HC.Legacy_Session_ID (0 .. Sid_Len - 1));
+               end;
+            end if;
+            HC.T12.Server_Echoed_SID := Echoed;
+         end;
+
+         --  RFC 5246 7.4.1.3: in TLS 1.2 the server may assign a new
+         --  session_id; keep it, as the TLS 1.2 parser always did.
+         HC.Legacy_Session_ID := (others => 0);
+         if Sid_Len > 0 then
+            declare
+               Sid : RBT.Bytes (1 .. RBT.Index (Sid_Len));
+            begin
+               Get_Legacy_Session_ID (Ctx, Sid);
+               HC.Legacy_Session_ID (0 .. Sid_Len - 1) := To_NaCl (Sid);
+            end;
+         end if;
+         OK := True;
+         return;
+      end if;
+
+      --  TLS 1.3: ECDHE shared secret from the key_share.
+      declare
+         SS_OK  : Boolean;
+         SS_Err : Error_Code;
+      begin
+         Compute_SH_Shared_Secret (HC.KE, SS_OK, SS_Err);
+         if not SS_OK then
+            Err := SS_Err;
+            return;
+         end if;
+      end;
+
+      --  Body verdicts recorded on the way (key_share shape, ...).
+      if HC.Ext_Parse_Err /= No_Error then
+         Err := HC.Ext_Parse_Err;
+         return;
+      end if;
+
+      OK := True;
+   end Check_SH;
+
+   procedure Parse_SH_Message
+     (Data       : in Byte_Seq;
+      HC         : in out Engaged_Context;
+      ALPN       : in out Hostname_Buf;
+      Negotiated : in out Supported_Suite;
+      Version    : out TLS_Version;
+      OK         : out Boolean;
+      Err        : out Error_Code)
+   with
+     Pre  =>
+       Data'Length in 42 .. Max_HS_Msg
+       and then Data'Last < N32 (Natural'Last)
+       and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length),
+     Post =>
+       HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)
+       and then (if OK then Version in TLS_1_2 | TLS_1_3)
+   is
+      use RFLX.TLS_Handshake.Server_Hello;
+      Body_Len : constant N32 := N32 (Data'Length) - 4;
+      Buf      : RBT.Bytes_Ptr;
+      Scratch  : RBT.Bytes_Ptr;
+      Ctx      : Context;
+   begin
+      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
+      Scratch := new RBT.Bytes'(1 .. Body_Scratch_Len => 0);
+      Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
+      Verify_Message (Ctx);
+      Check_SH (Ctx, Data, Scratch, HC, ALPN, Negotiated, Version, OK, Err);
+      Take_Buffer (Ctx, Buf);
+      RFLX_Free (Buf);
+      RFLX_Free (Scratch);
+   end Parse_SH_Message;
 
    procedure Parse_Server_Hello
      (Negotiated : in out Supported_Suite;
@@ -2786,179 +2603,38 @@ is
       Version    : out TLS_Version;
       OK         : out Boolean)
    is
-      use RFLX.TLS_Handshake.Server_Hello;
-      --  True iff the SH currently being parsed has the HRR sentinel
-      --  random. Distinct from HC.Got_HRR, which latches across the
-      --  CH1/HRR/CH2/SH2 pair. Used to gate HRR-specific code paths
-      --  in this single call (Pre_Scan dispatch, body extraction,
-      --  early return) so the same Parse_Server_Hello body handles
-      --  both HRR and the post-HRR SH2 correctly.
-      Curr_Is_HRR      : Boolean := False;
-      Prelim_OK        : Boolean;
-      Prelim_Err       : Error_Code;
-      Pol_OK           : Boolean;
-      Pol_Err          : Error_Code;
-      HRR_OK           : Boolean;
-      HRR_Err          : Error_Code;
-      TS_At_Entry      : constant SPARKTLS_Transcript.Transcript_State := HC.TS with Ghost;
-      Got_HRR_At_Entry : constant Boolean := HC.Got_HRR with Ghost;
-
-      function SH_Parse_Frame return Boolean
-      is (HC.TS = TS_At_Entry and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length)) with Ghost;
+      Err : Error_Code := No_Error;
    begin
       Version := TLS_Undetermined;
       OK := False;
 
-      --  R2 (#131): Q0 preliminaries.
-      Check_SH_Preliminaries (Data, Prelim_OK, Prelim_Err);
-      if not Prelim_OK then
-         if Prelim_Err /= No_Error then
-            Last_Err := Prelim_Err;
-         end if;
-         --  HC untouched on every preliminary exit.
-         pragma Assert (SH_Parse_Frame);
+      --  Shape: a ServerHello handshake message with at least the fixed
+      --  fields (RFC 5246 7.4.1.3: 38 body bytes with an empty
+      --  session_id). Anything else is not parsed here and the caller
+      --  answers handshake_failure, as before.
+      if Data'Length < 42
+        or else Data'Length > Max_HS_Msg
+        or else Data'Last >= N32 (Natural'Last)
+        or else Data (Data'First) /= HS_Msg_Wire (HT_Server_Hello)
+      then
          return;
       end if;
 
-      --  RFC 8446 4.1.4: HelloRetryRequest is on-wire a ServerHello
-      --  with a magic random value. Compare here so the SH parser
-      --  can apply HRR-specific extension policy
-      --  (Where_Allowed = E_HRR, dup -> illegal_parameter not
-      --  decode_error, must contain key_share or cookie). Random is
-      --  at offset 6..37 in Data (4-byte HS hdr + 2-byte
-      --  legacy_version).
-      if N32 (Data'Length) >= 38 and then Is_HRR_Random (Data) then
-         --  RFC 8446 4.1.4: a server MUST send at most one HRR. A
-         --  second HRR is unexpected_message.
+      if Is_HRR_Random (Data) then
+         --  RFC 8446 4.1.4: a server MUST send at most one HRR.
          if HC.Got_HRR then
             Last_Err := Unexpected_Message;
-            pragma Assert (if OK or else Last_Err = No_Error then SH_Parse_Frame);
             return;
          end if;
          HC.Got_HRR := True;
-         Curr_Is_HRR := True;
-         pragma Assert (not Got_HRR_At_Entry);
+         Parse_HRR_Message (Data, HC, Negotiated, Version, OK, Err);
+      else
+         Parse_SH_Message (Data, HC, ALPN, Negotiated, Version, OK, Err);
       end if;
 
-      declare
-         Pre_OK : Boolean;
-      begin
-         Pre_Scan_SH_Extensions (Data, HC, Last_Err, ALPN, Is_HRR_Msg => Curr_Is_HRR, OK => Pre_OK);
-         if not Pre_OK then
-            pragma Assert (if OK or else Last_Err = No_Error then SH_Parse_Frame);
-            return;
-         end if;
-      end;
-
-      if Curr_Is_HRR then
-         --  HRR arm (R4, #131): empty/unnecessary checks + cipher
-         --  stash. On success the caller sees HC.Got_HRR and runs the
-         --  retry flow (transcript message_hash replacement -> CH2
-         --  build -> send -> wait for the real ServerHello).
-         Parse_HRR (Data, HC, Negotiated, Version, HRR_OK, HRR_Err);
-         if not HRR_OK then
-            Last_Err := HRR_Err;
-            pragma Assert (if OK or else Last_Err = No_Error then SH_Parse_Frame);
-            return;
-         end if;
-         OK := True;
-         pragma Assert (HC.Got_HRR);
-         pragma Assert (not Got_HRR_At_Entry);
-         pragma
-           Assert
-             (OK
-                and then HC.Got_HRR
-                and then not Got_HRR_At_Entry
-                and then Version = TLS_1_3
-                and then HC.TS = TS_At_Entry
-                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-         return;
+      if not OK and then Err /= No_Error then
+         Last_Err := Err;
       end if;
-
-      --  RFLX-owning core (R1, #131): the parse buffer's entire lifetime
-      --  is inside this call; nothing below touches it, so every failure
-      --  from here on is a plain return.
-      declare
-         Core_OK  : Boolean;
-         Core_Err : Error_Code;
-      begin
-         Parse_SH_RFLX_Core (Negotiated, Core_Err, HC, Data, Core_OK);
-         if not Core_OK then
-            if Core_Err /= No_Error then
-               Last_Err := Core_Err;
-            end if;
-            pragma Assert (if OK or else Last_Err = No_Error then SH_Parse_Frame);
-            return;
-         end if;
-      end;
-
-         --  Version selection + policy (R5, #131).
-         Check_SH_Policy
-           (Data              => Data,
-            Has_TLS_1_3       => HC.Has_TLS_1_3,
-            Got_HRR           => HC.Got_HRR,
-            Cfg_Versions      => HC.Cfg.Versions,
-            Legacy_Session_ID => HC.Legacy_Session_ID,
-            Negotiated        => Negotiated,
-            Version           => Version,
-            OK                => Pol_OK,
-            Err               => Pol_Err);
-         if not Pol_OK then
-            Last_Err := Pol_Err;
-            OK := False;
-            return;
-         end if;
-
-         --  RFC 8446 4.1.3: downgrade-sentinel check (see
-         --  Downgrade_Sentinel_Present). Independent of the negotiated
-         --  version; on a TLS 1.2 SH the marker is the canonical RFC
-         --  8446 downgrade indicator, on a TLS 1.3 SH it is an abort
-         --  signal in its own right.
-         if Downgrade_Sentinel_Present (HC.Server_Random) then
-            Last_Err := Illegal_Parameter;
-            return;
-         end if;
-
-         --  For TLS 1.2, skip ECDHE shared secret here
-         --  (it's computed after ServerKeyExchange)
-         if Version = TLS_1_2 then
-            pragma
-              Assert
-                (HC.TS = TS_At_Entry
-                   and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-            OK := True;
-            return;
-         end if;
-
-         --  Compute shared secret (TLS 1.3 only) -- R7 (#131).
-         declare
-            SS_OK  : Boolean;
-            SS_Err : Error_Code;
-         begin
-            Compute_SH_Shared_Secret (HC.KE, SS_OK, SS_Err);
-            if not SS_OK then
-               if SS_Err /= No_Error then
-                  Last_Err := SS_Err;
-               end if;
-               OK := False;
-               return;
-            end if;
-         end;
-
-         --  Bubble up extension-specific protocol errors (e.g. RFC 7301
-         --  empty ALPN name -> illegal_parameter). The caller's `if not
-         --  Parse_OK` arm reads Last_Err to pick the alert.
-         if HC.Ext_Parse_Err /= No_Error then
-            Last_Err := HC.Ext_Parse_Err;
-            OK := False;
-            return;
-         end if;
-
-         pragma
-           Assert
-             (HC.TS = TS_At_Entry
-                and then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-         OK := True;
    end Parse_Server_Hello;
 
 end SPARKTLS.Handshake.Client_Msgs;

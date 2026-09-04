@@ -173,6 +173,16 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # TLS 1.2 ServerHello builder: server_name ack iff Ack_Server_Name (task 146)
+    if [ -f bin/tests/test_build_server_hello_12 ]; then
+        output=$(bin/tests/test_build_server_hello_12 2>&1 || true)
+        pass=$(echo "$output" | grep -c "PASS" || true)
+        fail=$(echo "$output" | grep -c "FAIL" || true)
+        echo "  test_build_server_hello_12: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # RSA PKCS#1 v1.5 KAT (verifies the new EMSA-PKCS1-v1_5 path)
     if [ -f bin/tests/test_rsa_pkcs1_kat ]; then
         output=$(bin/tests/test_rsa_pkcs1_kat 2>&1 || true)

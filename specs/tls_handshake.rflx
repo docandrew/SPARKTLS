@@ -152,26 +152,15 @@ package TLS_Handshake is
    -- Extensions for the SH (ServerHello) message
    type SH_Extension_TLS is
       message
-         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values
-            then Data_Length
-               if
-               -- Message type specific constraints
-               (
-                  --
-                  -- Automatically generated condition that selects the enum literals having
-                  -- the following properties:
-                  --
-                  -- dtls-only = N
-                  -- tls13 = .*SH.*
-                  --
-                  -- NOTE: Remove or amend this comment when the condition below is modified.
-                  --
-                  Tag = Tls_Extensiontype_Values::Password_Salt or
-                  Tag = Tls_Extensiontype_Values::Tls_Cert_With_Extern_Psk or
-                  Tag = Tls_Extensiontype_Values::Pre_Shared_Key or
-                  Tag = Tls_Extensiontype_Values::Supported_Versions or
-                  Tag = Tls_Extensiontype_Values::Key_Share
-               );
+         -- Tag constraint removed (2026-09-04), as for CH_Extension_TLS: the
+         -- same message carries a TLS 1.2 ServerHello (renegotiation_info,
+         -- extended_master_secret, server_name, ALPN, session_ticket,
+         -- ec_point_formats ...) and a TLS 1.3 one. Which tags are allowed
+         -- where, and whether they were offered, is the client's policy
+         -- (SPARKTLS.Validate_Server_Ext), which answers with the RFC's
+         -- unsupported_extension alert; a parse-time whitelist could only say
+         -- "malformed".
+         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values;
          Data_Length : Data_Length;
          Data : Opaque
             with Size => 8 * Data_Length;
@@ -212,25 +201,9 @@ package TLS_Handshake is
    -- Extensions for the HRR (HelloRetryRequest) message
    type HRR_Extension_TLS is
       message
-         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values
-            then Data_Length
-               if
-               -- Message type specific constraints
-               (
-                  --
-                  -- Automatically generated condition that selects the enum literals having
-                  -- the following properties:
-                  --
-                  -- dtls-only = N
-                  -- tls13 = .*HRR.*
-                  --
-                  -- NOTE: Remove or amend this comment when the condition below is modified.
-                  --
-                  Tag = Tls_Extensiontype_Values::Password_Salt or
-                  Tag = Tls_Extensiontype_Values::Supported_Versions or
-                  Tag = Tls_Extensiontype_Values::Cookie or
-                  Tag = Tls_Extensiontype_Values::Key_Share
-               );
+         -- Tag constraint removed (2026-09-04): allowed tags are the client's
+         -- policy (Validate_Server_Ext with E_HRR), see SH_Extension_TLS.
+         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values;
          Data_Length : Data_Length;
          Data : Opaque
             with Size => 8 * Data_Length;
@@ -552,107 +525,105 @@ package TLS_Handshake is
       if Tag = Tls_Parameters::Client_Hello;
 
    type Legacy_Compression_Method is range 0 .. 0 with Size => 8;
-   type Server_Hello_Extensions_Length is range 6 .. 2 ** 16 - 1 with Size => 16;
+   -- 0 .. : a TLS 1.2 server may send an empty extensions block; TLS 1.3's
+   -- minimum of 6 (RFC 8446 4.1.3) is enforced by the client's policy.
+   type Server_Hello_Extensions_Length is unsigned 16;
 
+   -- ServerHello, TLS transport (RFC 8446 4.1.3). One message per transport: the
+   -- connection knows whether it is TLS or DTLS before parsing, so the version
+   -- fork that used to live inside this message is gone; the DTLS form is
+   -- Server_Hello_DTLS. No conditional fields beyond the RFC's legacy_version
+   -- check, so the generated field graph is a straight line. A HelloRetryRequest
+   -- shares Tag 2 and this layout with Random set to a fixed sentinel; the
+   -- client recognises the sentinel and parses with Hello_Retry_Request instead.
    type Server_Hello is
       message
          Legacy_Version : TLS_Common::Protocol_Version
-            -- For compatibility reasons both TLS 1.3 and DTLS 1.3 require
-            -- indicating the version 1.2 here.
             then Random
-               if (Legacy_Version = TLS_Common::TLS_1_2
-                  or Legacy_Version = TLS_Common::DTLS_1_2);
+               if Legacy_Version = TLS_Common::TLS_1_2;
          Random : Opaque
             with Size => 32 * 8;
          Legacy_Session_ID_Length : Legacy_Session_ID_Length;
          Legacy_Session_ID : Opaque
-            with Size => Legacy_Session_ID_Length * 8
-            -- TLS
-            then Cipher_Suite_TLS
-               if Legacy_Version = TLS_Common::TLS_1_0
-                  or Legacy_Version = TLS_Common::TLS_1_1
-                  or Legacy_Version = TLS_Common::TLS_1_2
-                  or Legacy_Version = TLS_Common::TLS_1_3
-            -- DTLS
-            then Cipher_Suite_DTLS
-               if Legacy_Version /= TLS_Common::TLS_1_0
-                  and Legacy_Version /= TLS_Common::TLS_1_1
-                  and Legacy_Version /= TLS_Common::TLS_1_2
-                  and Legacy_Version /= TLS_Common::TLS_1_3;
-         -- TLS
-         Cipher_Suite_TLS : Cipher_Suite_TLS
-            then Legacy_Compression_Method;
-         -- DTLS
+            with Size => Legacy_Session_ID_Length * 8;
+         Cipher_Suite_TLS : Cipher_Suite_TLS;
+         -- RFC 5246 7.4.1.4: a TLS 1.2 ServerHello may end right after
+         -- compression_method; the extensions block is present iff bytes
+         -- follow. TLS 1.3 always has one (the client's policy checks that).
+         Legacy_Compression_Method : Legacy_Compression_Method
+            then null
+               if Message'Last = Legacy_Compression_Method'Last
+            then Extensions_Length
+               if Message'Last /= Legacy_Compression_Method'Last;
+         Extensions_Length : Server_Hello_Extensions_Length
+            then Extensions_TLS
+               with Size => Extensions_Length * 8;
+         Extensions_TLS : SH_Extensions_TLS;
+      end message;
+
+   -- ServerHello, DTLS transport (kept for the DTLS implementation to come).
+   type Server_Hello_DTLS is
+      message
+         Legacy_Version : TLS_Common::Protocol_Version
+            then Random
+               if Legacy_Version = TLS_Common::DTLS_1_2;
+         Random : Opaque
+            with Size => 32 * 8;
+         Legacy_Session_ID_Length : Legacy_Session_ID_Length;
+         Legacy_Session_ID : Opaque
+            with Size => Legacy_Session_ID_Length * 8;
          Cipher_Suite_DTLS : Cipher_Suite_DTLS;
-         -- TLS and DTLS
          Legacy_Compression_Method : Legacy_Compression_Method;
          Extensions_Length : Server_Hello_Extensions_Length
-            -- Per RFC 8446 section 4.1.3 the HelloRetryRequest message uses the
-            -- same structure as the ServerHello, but with Random set to the
-            -- special value below.
-            then Extensions_TLS
-               with Size => Extensions_Length * 8
-               if (Random /= [16#CF#, 16#21#, 16#AD#, 16#74#, 16#E5#, 16#9A#, 16#61#, 16#11#, 16#BE#,
-                             16#1D#, 16#8C#, 16#02#, 16#1E#, 16#65#, 16#B8#, 16#91#, 16#C2#, 16#A2#,
-                             16#11#, 16#16#, 16#7A#, 16#BB#, 16#8C#, 16#5E#, 16#07#, 16#9E#, 16#09#,
-                             16#E2#, 16#C8#, 16#A8#, 16#33#, 16#9C#])
-                  and
-                  -- TLS
-                  (Legacy_Version = TLS_Common::TLS_1_0
-                  or Legacy_Version = TLS_Common::TLS_1_1
-                  or Legacy_Version = TLS_Common::TLS_1_2
-                  or Legacy_Version = TLS_Common::TLS_1_3)
             then Extensions_DTLS
-               with Size => Extensions_Length * 8
-               if (Random /= [16#CF#, 16#21#, 16#AD#, 16#74#, 16#E5#, 16#9A#, 16#61#, 16#11#, 16#BE#,
-                             16#1D#, 16#8C#, 16#02#, 16#1E#, 16#65#, 16#B8#, 16#91#, 16#C2#, 16#A2#,
-                             16#11#, 16#16#, 16#7A#, 16#BB#, 16#8C#, 16#5E#, 16#07#, 16#9E#, 16#09#,
-                             16#E2#, 16#C8#, 16#A8#, 16#33#, 16#9C#])
-                  and
-                  -- DTLS
-                  (Legacy_Version /= TLS_Common::TLS_1_0
-                  and Legacy_Version /= TLS_Common::TLS_1_1
-                  and Legacy_Version /= TLS_Common::TLS_1_2
-                  and Legacy_Version /= TLS_Common::TLS_1_3)
+               with Size => Extensions_Length * 8;
+         Extensions_DTLS : SH_Extensions_DTLS;
+      end message;
 
-            then HRR_Extensions_TLS
-               with Size => Extensions_Length * 8
-               if (Random = [16#CF#, 16#21#, 16#AD#, 16#74#, 16#E5#, 16#9A#, 16#61#, 16#11#, 16#BE#,
-                             16#1D#, 16#8C#, 16#02#, 16#1E#, 16#65#, 16#B8#, 16#91#, 16#C2#, 16#A2#,
-                             16#11#, 16#16#, 16#7A#, 16#BB#, 16#8C#, 16#5E#, 16#07#, 16#9E#, 16#09#,
-                             16#E2#, 16#C8#, 16#A8#, 16#33#, 16#9C#])
-                  and
-                  -- TLS
-                  (Legacy_Version = TLS_Common::TLS_1_0
-                  or Legacy_Version = TLS_Common::TLS_1_1
-                  or Legacy_Version = TLS_Common::TLS_1_2
-                  or Legacy_Version = TLS_Common::TLS_1_3)
+   -- HelloRetryRequest, TLS transport (RFC 8446 4.1.4): ServerHello layout, HRR
+   -- extension set. Not a refinement target (same Tag as ServerHello); the client
+   -- initialises this context on the payload after matching the Random sentinel.
+   type Hello_Retry_Request is
+      message
+         Legacy_Version : TLS_Common::Protocol_Version
+            then Random
+               if Legacy_Version = TLS_Common::TLS_1_2;
+         Random : Opaque
+            with Size => 32 * 8;
+         Legacy_Session_ID_Length : Legacy_Session_ID_Length;
+         Legacy_Session_ID : Opaque
+            with Size => Legacy_Session_ID_Length * 8;
+         Cipher_Suite_TLS : Cipher_Suite_TLS;
+         Legacy_Compression_Method : Legacy_Compression_Method;
+         Extensions_Length : Server_Hello_Extensions_Length
+            then Extensions_TLS
+               with Size => Extensions_Length * 8;
+         Extensions_TLS : HRR_Extensions_TLS;
+      end message;
 
-            then HRR_Extensions_DTLS
-               with Size => Extensions_Length * 8
-               if (Random = [16#CF#, 16#21#, 16#AD#, 16#74#, 16#E5#, 16#9A#, 16#61#, 16#11#, 16#BE#,
-                            16#1D#, 16#8C#, 16#02#, 16#1E#, 16#65#, 16#B8#, 16#91#, 16#C2#, 16#A2#,
-                            16#11#, 16#16#, 16#7A#, 16#BB#, 16#8C#, 16#5E#, 16#07#, 16#9E#, 16#09#,
-                            16#E2#, 16#C8#, 16#A8#, 16#33#, 16#9C#])
-                  and
-                  -- DTLS
-                  (Legacy_Version /= TLS_Common::TLS_1_0
-                  and Legacy_Version /= TLS_Common::TLS_1_1
-                  and Legacy_Version /= TLS_Common::TLS_1_2
-                  and Legacy_Version /= TLS_Common::TLS_1_3);
-         Extensions_TLS : SH_Extensions_TLS
-            then null;
-         Extensions_DTLS : SH_Extensions_DTLS
-            then null;
-         HRR_Extensions_TLS : HRR_Extensions_TLS
-            then null;
-         HRR_Extensions_DTLS : HRR_Extensions_DTLS;
+   -- HelloRetryRequest, DTLS transport (kept for DTLS).
+   type Hello_Retry_Request_DTLS is
+      message
+         Legacy_Version : TLS_Common::Protocol_Version
+            then Random
+               if Legacy_Version = TLS_Common::DTLS_1_2;
+         Random : Opaque
+            with Size => 32 * 8;
+         Legacy_Session_ID_Length : Legacy_Session_ID_Length;
+         Legacy_Session_ID : Opaque
+            with Size => Legacy_Session_ID_Length * 8;
+         Cipher_Suite_DTLS : Cipher_Suite_DTLS;
+         Legacy_Compression_Method : Legacy_Compression_Method;
+         Extensions_Length : Server_Hello_Extensions_Length
+            then Extensions_DTLS
+               with Size => Extensions_Length * 8;
+         Extensions_DTLS : HRR_Extensions_DTLS;
       end message;
 
    for TLS_Handshake use (Payload => Server_Hello)
       if Tag = Tls_Parameters::Server_Hello;
 
-   for DTLS_Handshake use (Payload => Server_Hello)
+   for DTLS_Handshake use (Payload => Server_Hello_DTLS)
       if Tag = Tls_Parameters::Server_Hello;
 
    -- Server Parameters

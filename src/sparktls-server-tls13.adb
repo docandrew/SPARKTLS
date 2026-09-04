@@ -717,124 +717,19 @@ is
       Group   : in ECDHE_Group;
       Built   : out Boolean)
    is
-      use SPARKTLSCrypto.Hashing.SHA256;
-
-      --  RFC 8446 4.1.3: SHA-256("HelloRetryRequest")
-      HRR_Random : constant Bytes_32 :=
-        (16#CF#,
-         16#21#,
-         16#AD#,
-         16#74#,
-         16#E5#,
-         16#9A#,
-         16#61#,
-         16#11#,
-         16#BE#,
-         16#1D#,
-         16#8C#,
-         16#02#,
-         16#1E#,
-         16#65#,
-         16#B8#,
-         16#91#,
-         16#C2#,
-         16#A2#,
-         16#11#,
-         16#16#,
-         16#7A#,
-         16#BB#,
-         16#8C#,
-         16#5E#,
-         16#07#,
-         16#9E#,
-         16#09#,
-         16#E2#,
-         16#C8#,
-         16#A8#,
-         16#33#,
-         16#9C#);
-
-      --  Build a minimal ServerHello-shaped message manually.
-      --  Format: type(1) + length(3) + body
-      --  Body: version(2) + random(32) + session_id_len(1) + session_id(32)
-      --        + cipher_suite(2) + compression(1) + extensions_len(2)
-      --        + key_share_ext(6) + supported_versions_ext(5)
-      --  Total body: 2+32+1+32+2+1+2+6+5 = 83
-      --  Total message: 4 + 83 = 87
-
-      Ext_Len  : constant N32 := 12;  --  key_share(6) + supported_versions(6)
-      Body_Len : constant N32 := 2 + 32 + 1 + 32 + 2 + 1 + 2 + Ext_Len;
-      --  version(2) + random(32) + sid_len(1) + sid(32) + suite(2)
-      --  + compression(1) + ext_len(2) + extensions(12) = 84
-      Msg_Len  : constant N32 := 4 + Body_Len;
-
       HRR_Buf : Byte_Seq (0 .. Handshake.TLS13.Max_Server_Hello - 1);
+      Msg_Len : N32;
       Rec_Out : N32;
-      P       : N32;
    begin
-      HRR_Buf := (others => 0);
       Rec_Out := 0;
       Built := False;
-
-      pragma Assert (HRR_Buf'First = 0);
-      pragma Assert (HRR_Buf'Last >= Msg_Len - 1);
-
-      --  Handshake header: type=ServerHello(0x02) + length(3)
-      HRR_Buf (0) := 16#02#;
-      HRR_Buf (1) := 0;
-      HRR_Buf (2) := 0;
-      HRR_Buf (3) := Byte (Body_Len);
-      P := 4;
-
-      --  legacy_version = 0x0303
-      HRR_Buf (P) := 16#03#;
-      HRR_Buf (P + 1) := 16#03#;
-      P := P + 2;
-
-      --  random = HRR magic constant
-      HRR_Buf (P .. P + 31) := HRR_Random;
-      P := P + 32;
-
-      --  legacy_session_id echo (must match CH1)
-      HRR_Buf (P) := 32;
-      P := P + 1;
-      HRR_Buf (P .. P + 31) := S.HC.Legacy_Session_ID;
-      P := P + 32;
-
-      --  cipher_suite (use negotiated suite)
-      HRR_Buf (P) := Byte (Wire_Of (S.Negotiated_Suite) / 256);
-      HRR_Buf (P + 1) := Byte (Wire_Of (S.Negotiated_Suite) mod 256);
-      P := P + 2;
-
-      --  legacy_compression_method = 0
-      HRR_Buf (P) := 0;
-      P := P + 1;
-
-      --  extensions_length
-      HRR_Buf (P) := Byte (Ext_Len / 256);
-      HRR_Buf (P + 1) := Byte (Ext_Len mod 256);
-      P := P + 2;
-
-      --  key_share extension: type(2) + length(2) + group(2)
-      HRR_Buf (P) := 16#00#;
-      HRR_Buf (P + 1) := 16#33#;  --  key_share
-      HRR_Buf (P + 2) := 16#00#;
-      HRR_Buf (P + 3) := 16#02#;  --  2 bytes data
-      HRR_Buf (P + 4) := Byte (ECDHE_Group_Wire (Group) / 256);
-      HRR_Buf (P + 5) := Byte (ECDHE_Group_Wire (Group) mod 256);
-      P := P + 6;
-
-      --  supported_versions extension: type(2) + length(2) + version(2)
-      --  but ServerHello format uses 2-byte version (not list)
-      HRR_Buf (P) := 16#00#;
-      HRR_Buf (P + 1) := 16#2B#;  --  supported_versions
-      HRR_Buf (P + 2) := 16#00#;
-      HRR_Buf (P + 3) := 16#02#;  --  2 bytes data
-      HRR_Buf (P + 4) := 16#03#;
-      HRR_Buf (P + 5) := 16#04#;  --  TLS 1.3
-      P := P + 6;
-
-      pragma Assert (P = Msg_Len);
+      --  RFC 8446 4.1.4: the HelloRetryRequest itself is built through
+      --  RecordFlux; Msg_Len = 0 means the negotiated suite was not TLS 1.3,
+      --  which this path never produces -- nothing is built in that case.
+      Handshake.TLS13.Build_HRR_Message (S.Negotiated_Suite, Group, S.HC, HRR_Buf, Msg_Len);
+      if Msg_Len = 0 then
+         return;
+      end if;
 
       --  RFC 8446 4.4.1 via the streaming ADT: select the digest the
       --  HRR names, then replace the transcript with the synthetic

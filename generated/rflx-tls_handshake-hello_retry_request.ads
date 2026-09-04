@@ -16,9 +16,9 @@ with RFLX.TLS_Common;
 use RFLX.TLS_Common;
 with RFLX.Tls_Parameters;
 use RFLX.Tls_Parameters;
-with RFLX.TLS_Handshake.SH_Extensions_TLS;
+with RFLX.TLS_Handshake.HRR_Extensions_TLS;
 
-package RFLX.TLS_Handshake.Server_Hello
+package RFLX.TLS_Handshake.Hello_Retry_Request
 with
   SPARK_Mode,
   Always_Terminates
@@ -140,7 +140,7 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx),
+       and RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx),
      Post =>
        Has_Buffer (Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
@@ -153,7 +153,7 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
+       and RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
        and RFLX_Types.To_Index (First) >= Ctx.Buffer_First
        and RFLX_Types.To_Index (Last) <= Ctx.Buffer_Last
        and First <= Last + 1
@@ -171,7 +171,7 @@ is
    procedure Take_Buffer (Ctx : in out Context; Buffer : out RFLX_Types.Bytes_Ptr)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx),
      Post =>
        not Has_Buffer (Ctx)
        and then Buffer /= null
@@ -190,16 +190,16 @@ is
    procedure Copy (Ctx : Context; Buffer : out RFLX_Types.Bytes)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Well_Formed_Message (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Byte_Size (Ctx) = Buffer'Length;
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Well_Formed_Message (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Byte_Size (Ctx) = Buffer'Length;
 
    function Read (Ctx : Context) return RFLX_Types.Bytes
    with
      Ghost,
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Well_Formed_Message (Ctx);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Well_Formed_Message (Ctx);
 
    pragma Warnings (Off, "formal parameter ""*"" is not referenced");
 
@@ -218,8 +218,8 @@ is
    procedure Generic_Read (Ctx : Context)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Well_Formed_Message (Ctx)
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Well_Formed_Message (Ctx)
        and then Pre (Read (Ctx));
 
    pragma Warnings (Off, "formal parameter ""*"" is not referenced");
@@ -240,9 +240,9 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then Offset < RFLX.TLS_Handshake.Server_Hello.Buffer_Length (Ctx)
-       and then Pre (RFLX.TLS_Handshake.Server_Hello.Buffer_Length (Ctx), Offset),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then Offset < RFLX.TLS_Handshake.Hello_Retry_Request.Buffer_Length (Ctx)
+       and then Pre (RFLX.TLS_Handshake.Hello_Retry_Request.Buffer_Length (Ctx), Offset),
      Post =>
        Has_Buffer (Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
@@ -255,12 +255,12 @@ is
    function Buffer_Length (Ctx : Context) return RFLX_Types.Length
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx);
 
    function Buffer_Size (Ctx : Context) return RFLX_Types.Bit_Length
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx);
 
    function Size (Ctx : Context) return RFLX_Types.Bit_Length
    with
@@ -276,9 +276,9 @@ is
    procedure Data (Ctx : Context; Data : out RFLX_Types.Bytes)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Well_Formed_Message (Ctx)
-       and then Data'Length = RFLX.TLS_Handshake.Server_Hello.Byte_Size (Ctx);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Well_Formed_Message (Ctx)
+       and then Data'Length = RFLX.TLS_Handshake.Hello_Retry_Request.Byte_Size (Ctx);
 
    pragma Warnings (Off, "postcondition does not mention function result");
 
@@ -294,10 +294,10 @@ is
    function Field_Condition (Ctx : Context; Fld : Field; Val : RFLX_Types.Base_Integer) return Boolean
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Value (Fld, Val)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld)
-       and then RFLX.TLS_Handshake.Server_Hello.Sufficient_Space (Ctx, Fld),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Value (Fld, Val)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Sufficient_Space (Ctx, Fld),
      Post =>
        True;
 
@@ -306,7 +306,7 @@ is
    function Field_Size (Ctx : Context; Fld : Field) return RFLX_Types.Bit_Length
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld),
      Post =>
        (case Fld is
            when F_Random | F_Legacy_Session_ID | F_Extensions_TLS =>
@@ -319,7 +319,7 @@ is
    function Field_First (Ctx : Context; Fld : Field) return RFLX_Types.Bit_Index
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld),
      Post =>
        True;
 
@@ -328,8 +328,8 @@ is
    function Field_Last (Ctx : Context; Fld : Field) return RFLX_Types.Bit_Length
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld)
-       and then RFLX.TLS_Handshake.Server_Hello.Sufficient_Space (Ctx, Fld),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Sufficient_Space (Ctx, Fld),
      Post =>
        (case Fld is
            when F_Random | F_Legacy_Session_ID | F_Extensions_TLS =>
@@ -342,23 +342,23 @@ is
    function Available_Space (Ctx : Context; Fld : Field) return RFLX_Types.Bit_Length
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld);
 
    function Sufficient_Space (Ctx : Context; Fld : Field) return Boolean
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld);
 
    function Equal (Ctx : Context; Fld : Field; Data : RFLX_Types.Bytes) return Boolean
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld);
 
    procedure Verify (Ctx : in out Context; Fld : Field)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx),
      Post =>
        Has_Buffer (Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
@@ -369,7 +369,7 @@ is
    procedure Verify_Message (Ctx : in out Context)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx),
      Post =>
        Has_Buffer (Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
@@ -393,12 +393,12 @@ is
    function Well_Formed_Message (Ctx : Context) return Boolean
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx);
 
    function Valid_Message (Ctx : Context) return Boolean
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx);
 
    pragma Warnings (Off, "postcondition does not mention function result");
 
@@ -414,27 +414,27 @@ is
    function Get_Legacy_Version (Ctx : Context) return RFLX.TLS_Common.Protocol_Version
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Version);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Version);
 
    function Get_Legacy_Session_ID_Length (Ctx : Context) return RFLX.TLS_Handshake.Legacy_Session_ID_Length
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID_Length);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID_Length);
 
    function Get_Cipher_Suite_TLS_Suite (Ctx : Context) return RFLX.Tls_Parameters.TLS_Cipher_Suites
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Cipher_Suite_TLS_Suite);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Cipher_Suite_TLS_Suite);
 
    function Get_Legacy_Compression_Method (Ctx : Context) return RFLX.TLS_Handshake.Legacy_Compression_Method
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Compression_Method);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Compression_Method);
 
    function Get_Extensions_Length (Ctx : Context) return RFLX.TLS_Handshake.Server_Hello_Extensions_Length
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_Length);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_Length);
 
    pragma Warnings (On, "precondition is always False");
 
@@ -442,9 +442,9 @@ is
    with
      Ghost,
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Well_Formed (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Well_Formed (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random),
      Post =>
        Get_Random'Result'Length = RFLX_Types.To_Length (Field_Size (Ctx, F_Random));
 
@@ -452,29 +452,29 @@ is
    with
      Ghost,
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Well_Formed (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Well_Formed (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID),
      Post =>
        Get_Legacy_Session_ID'Result'Length = RFLX_Types.To_Length (Field_Size (Ctx, F_Legacy_Session_ID));
 
    procedure Get_Random (Ctx : Context; Data : out RFLX_Types.Bytes)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Well_Formed (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then Data'Length = RFLX_Types.To_Length (RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Well_Formed (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)
+       and then Data'Length = RFLX_Types.To_Length (RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)),
      Post =>
        Equal (Ctx, F_Random, Data);
 
    procedure Get_Legacy_Session_ID (Ctx : Context; Data : out RFLX_Types.Bytes)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Well_Formed (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then Data'Length = RFLX_Types.To_Length (RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Well_Formed (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then Data'Length = RFLX_Types.To_Length (RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)),
      Post =>
        Equal (Ctx, F_Legacy_Session_ID, Data);
 
@@ -483,23 +483,23 @@ is
    procedure Generic_Get_Random (Ctx : Context)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and RFLX.TLS_Handshake.Server_Hello.Present (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and RFLX.TLS_Handshake.Hello_Retry_Request.Present (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random);
 
    generic
       with procedure Process_Legacy_Session_ID (Legacy_Session_ID : RFLX_Types.Bytes);
    procedure Generic_Get_Legacy_Session_ID (Ctx : Context)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and RFLX.TLS_Handshake.Server_Hello.Present (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and RFLX.TLS_Handshake.Hello_Retry_Request.Present (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID);
 
    pragma Warnings (Off, "postcondition does not mention function result");
 
    function Valid_Length (Ctx : Context; Fld : Field; Length : RFLX_Types.Length) return Boolean
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld),
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld),
      Post =>
        True;
 
@@ -512,11 +512,11 @@ is
      Inline_Always,
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Version)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Version)
        and then RFLX.TLS_Common.Valid_Protocol_Version (RFLX.TLS_Common.To_Base_Integer (Val))
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Version) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Version)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Version, RFLX.TLS_Common.To_Base_Integer (Val)),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Version) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Version)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Version, RFLX.TLS_Common.To_Base_Integer (Val)),
      Post =>
        Has_Buffer (Ctx)
        and Valid (Ctx, F_Legacy_Version)
@@ -544,11 +544,11 @@ is
      Inline_Always,
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID_Length)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID_Length)
        and then RFLX.TLS_Handshake.Valid_Legacy_Session_ID_Length (RFLX.TLS_Handshake.To_Base_Integer (Val))
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID_Length) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID_Length)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID_Length, RFLX.TLS_Handshake.To_Base_Integer (Val)),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID_Length) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID_Length)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID_Length, RFLX.TLS_Handshake.To_Base_Integer (Val)),
      Post =>
        Has_Buffer (Ctx)
        and Valid (Ctx, F_Legacy_Session_ID_Length)
@@ -574,11 +574,11 @@ is
      Inline_Always,
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Cipher_Suite_TLS_Suite)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Cipher_Suite_TLS_Suite)
        and then RFLX.Tls_Parameters.Valid_TLS_Cipher_Suites (RFLX.Tls_Parameters.To_Base_Integer (Val))
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Cipher_Suite_TLS_Suite) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Cipher_Suite_TLS_Suite)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Cipher_Suite_TLS_Suite, RFLX.Tls_Parameters.To_Base_Integer (Val)),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Cipher_Suite_TLS_Suite) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Cipher_Suite_TLS_Suite)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Cipher_Suite_TLS_Suite, RFLX.Tls_Parameters.To_Base_Integer (Val)),
      Post =>
        Has_Buffer (Ctx)
        and Valid (Ctx, F_Cipher_Suite_TLS_Suite)
@@ -603,21 +603,17 @@ is
      Inline_Always,
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Compression_Method)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Compression_Method)
        and then RFLX.TLS_Handshake.Valid_Legacy_Compression_Method (RFLX.TLS_Handshake.To_Base_Integer (Val))
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Compression_Method) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Compression_Method)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Compression_Method, RFLX.TLS_Handshake.To_Base_Integer (Val)),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Compression_Method) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Compression_Method)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Compression_Method, RFLX.TLS_Handshake.To_Base_Integer (Val)),
      Post =>
        Has_Buffer (Ctx)
        and Valid (Ctx, F_Legacy_Compression_Method)
-       and (if Well_Formed_Message (Ctx) then Message_Last (Ctx) = Field_Last (Ctx, F_Legacy_Compression_Method))
        and Invalid (Ctx, F_Extensions_Length)
        and Invalid (Ctx, F_Extensions_TLS)
-       and (if
-               RFLX_Types.Base_Integer (Written_Last (Ctx)) /= RFLX_Types.Base_Integer (Field_Last (Ctx, F_Legacy_Compression_Method))
-            then
-               Valid_Next (Ctx, F_Extensions_Length))
+       and Valid_Next (Ctx, F_Extensions_Length)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
        and Ctx.Buffer_Last = Ctx.Buffer_Last'Old
        and Ctx.First = Ctx.First'Old
@@ -635,11 +631,11 @@ is
      Inline_Always,
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_Length)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_Length)
        and then RFLX.TLS_Handshake.Valid_Server_Hello_Extensions_Length (RFLX.TLS_Handshake.To_Base_Integer (Val))
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_Length) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_Length)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_Length, RFLX.TLS_Handshake.To_Base_Integer (Val)),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_Length) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_Length)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_Length, RFLX.TLS_Handshake.To_Base_Integer (Val)),
      Post =>
        Has_Buffer (Ctx)
        and Valid (Ctx, F_Extensions_Length)
@@ -664,11 +660,11 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID, 0)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID) = 0,
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID, 0)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID) = 0,
      Post =>
        Has_Buffer (Ctx)
        and Well_Formed (Ctx, F_Legacy_Session_ID)
@@ -690,11 +686,11 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS, 0)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS) = 0,
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS, 0)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS) = 0,
      Post =>
        Has_Buffer (Ctx)
        and Well_Formed (Ctx, F_Extensions_TLS)
@@ -710,17 +706,17 @@ is
        and Get_Extensions_Length (Ctx) = Get_Extensions_Length (Ctx)'Old
        and Field_First (Ctx, F_Extensions_TLS) = Field_First (Ctx, F_Extensions_TLS)'Old;
 
-   procedure Set_Extensions_TLS (Ctx : in out Context; Seq_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context)
+   procedure Set_Extensions_TLS (Ctx : in out Context; Seq_Ctx : RFLX.TLS_Handshake.HRR_Extensions_TLS.Context)
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS, 0)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS, RFLX.TLS_Handshake.SH_Extensions_TLS.Byte_Size (Seq_Ctx))
-       and then RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer (Seq_Ctx)
-       and then RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Seq_Ctx),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS, 0)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS, RFLX.TLS_Handshake.HRR_Extensions_TLS.Byte_Size (Seq_Ctx))
+       and then RFLX.TLS_Handshake.HRR_Extensions_TLS.Has_Buffer (Seq_Ctx)
+       and then RFLX.TLS_Handshake.HRR_Extensions_TLS.Valid (Seq_Ctx),
      Post =>
        Has_Buffer (Ctx)
        and Well_Formed (Ctx, F_Extensions_TLS)
@@ -741,9 +737,9 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random),
      Post =>
        Has_Buffer (Ctx)
        and then Well_Formed (Ctx, F_Random)
@@ -766,9 +762,9 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID),
      Post =>
        Has_Buffer (Ctx)
        and then Well_Formed (Ctx, F_Legacy_Session_ID)
@@ -790,9 +786,9 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS),
      Post =>
        Has_Buffer (Ctx)
        and then Well_Formed (Ctx, F_Extensions_TLS)
@@ -812,12 +808,12 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random, Data'Length)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random) >= Data'Length * RFLX_Types.Byte'Size
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random, 0),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random, Data'Length)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random) >= Data'Length * RFLX_Types.Byte'Size
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random, 0),
      Post =>
        Has_Buffer (Ctx)
        and Well_Formed (Ctx, F_Random)
@@ -841,12 +837,12 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID, Data'Length)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID) >= Data'Length * RFLX_Types.Byte'Size
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID, 0),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID, Data'Length)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID) >= Data'Length * RFLX_Types.Byte'Size
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID, 0),
      Post =>
        Has_Buffer (Ctx)
        and Well_Formed (Ctx, F_Legacy_Session_ID)
@@ -872,11 +868,11 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random, Length)
-       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)) >= Length
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random, Length)
+       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Random)) >= Length
        and then Process_Data_Pre (Length),
      Post =>
        Has_Buffer (Ctx)
@@ -903,11 +899,11 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID, Length)
-       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)) >= Length
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID, Length)
+       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Session_ID)) >= Length
        and then Process_Data_Pre (Length),
      Post =>
        Has_Buffer (Ctx)
@@ -926,26 +922,26 @@ is
        and Get_Legacy_Session_ID_Length (Ctx) = Get_Legacy_Session_ID_Length (Ctx)'Old
        and Field_First (Ctx, F_Legacy_Session_ID) = Field_First (Ctx, F_Legacy_Session_ID)'Old;
 
-   procedure Switch_To_Extensions_TLS (Ctx : in out Context; Seq_Ctx : out RFLX.TLS_Handshake.SH_Extensions_TLS.Context)
+   procedure Switch_To_Extensions_TLS (Ctx : in out Context; Seq_Ctx : out RFLX.TLS_Handshake.HRR_Extensions_TLS.Context)
    with
      Pre =>
        not Ctx'Constrained
        and then not Seq_Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS) > 0
-       and then RFLX.TLS_Handshake.Server_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS) rem RFLX_Types.Byte'Size = 1
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Condition (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS, 0),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS) > 0
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_First (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS) rem RFLX_Types.Byte'Size = 1
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS) >= RFLX.TLS_Handshake.Hello_Retry_Request.Field_Size (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_Condition (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS, 0),
      Post =>
-       not RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer (Seq_Ctx)
+       not RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and RFLX.TLS_Handshake.HRR_Extensions_TLS.Has_Buffer (Seq_Ctx)
        and Ctx.Buffer_First = Seq_Ctx.Buffer_First
        and Ctx.Buffer_Last = Seq_Ctx.Buffer_Last
        and Seq_Ctx.First = Field_First (Ctx, F_Extensions_TLS)
        and Seq_Ctx.Last = Field_Last (Ctx, F_Extensions_TLS)
-       and RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Seq_Ctx)
-       and RFLX.TLS_Handshake.SH_Extensions_TLS.Sequence_Last (Seq_Ctx) = Seq_Ctx.First - 1
+       and RFLX.TLS_Handshake.HRR_Extensions_TLS.Valid (Seq_Ctx)
+       and RFLX.TLS_Handshake.HRR_Extensions_TLS.Sequence_Last (Seq_Ctx) = Seq_Ctx.First - 1
        and Present (Ctx, F_Extensions_TLS)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
        and Ctx.Buffer_Last = Ctx.Buffer_Last'Old
@@ -960,38 +956,38 @@ is
         others =>
            True);
 
-   function Complete_Extensions_TLS (Ctx : Context; Seq_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context) return Boolean
+   function Complete_Extensions_TLS (Ctx : Context; Seq_Ctx : RFLX.TLS_Handshake.HRR_Extensions_TLS.Context) return Boolean
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS);
 
-   procedure Update_Extensions_TLS (Ctx : in out Context; Seq_Ctx : in out RFLX.TLS_Handshake.SH_Extensions_TLS.Context)
+   procedure Update_Extensions_TLS (Ctx : in out Context; Seq_Ctx : in out RFLX.TLS_Handshake.HRR_Extensions_TLS.Context)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Present (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then not RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer (Seq_Ctx)
+       RFLX.TLS_Handshake.Hello_Retry_Request.Present (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS)
+       and then not RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.HRR_Extensions_TLS.Has_Buffer (Seq_Ctx)
        and then Ctx.Buffer_First = Seq_Ctx.Buffer_First
        and then Ctx.Buffer_Last = Seq_Ctx.Buffer_Last
        and then Seq_Ctx.First = Field_First (Ctx, F_Extensions_TLS)
        and then Seq_Ctx.Last = Field_Last (Ctx, F_Extensions_TLS),
      Post =>
        (if
-           RFLX.TLS_Handshake.Server_Hello.Complete_Extensions_TLS (Ctx, Seq_Ctx)
+           RFLX.TLS_Handshake.Hello_Retry_Request.Complete_Extensions_TLS (Ctx, Seq_Ctx)
         then
            Present (Ctx, F_Extensions_TLS)
         else
            Invalid (Ctx, F_Extensions_TLS))
        and Has_Buffer (Ctx)
-       and not RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer (Seq_Ctx)
+       and not RFLX.TLS_Handshake.HRR_Extensions_TLS.Has_Buffer (Seq_Ctx)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
        and Ctx.Buffer_Last = Ctx.Buffer_Last'Old
        and Ctx.First = Ctx.First'Old
        and Ctx.Last = Ctx.Last'Old
        and Seq_Ctx.First = Seq_Ctx.First'Old
        and Seq_Ctx.Last = Seq_Ctx.Last'Old
-       and RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Seq_Ctx) = RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Seq_Ctx)'Old
-       and RFLX.TLS_Handshake.SH_Extensions_TLS.Size (Seq_Ctx) = RFLX.TLS_Handshake.SH_Extensions_TLS.Size (Seq_Ctx)'Old
+       and RFLX.TLS_Handshake.HRR_Extensions_TLS.Valid (Seq_Ctx) = RFLX.TLS_Handshake.HRR_Extensions_TLS.Valid (Seq_Ctx)'Old
+       and RFLX.TLS_Handshake.HRR_Extensions_TLS.Size (Seq_Ctx) = RFLX.TLS_Handshake.HRR_Extensions_TLS.Size (Seq_Ctx)'Old
        and Field_First (Ctx, F_Extensions_TLS) = Field_First (Ctx, F_Extensions_TLS)'Old
        and Field_Size (Ctx, F_Extensions_TLS) = Field_Size (Ctx, F_Extensions_TLS)'Old
        and Context_Cursor (Ctx, F_Legacy_Version) = Context_Cursor (Ctx, F_Legacy_Version)'Old
@@ -1084,11 +1080,7 @@ private
                    Well_Formed (Cursors (F_Legacy_Compression_Method))
                 then
                    Valid (Cursors (F_Cipher_Suite_TLS_Suite)))
-      and then (if
-                   Well_Formed (Cursors (F_Extensions_Length))
-                then
-                   (Valid (Cursors (F_Legacy_Compression_Method))
-                    and then RFLX_Types.Base_Integer (Written_Last) /= RFLX_Types.Base_Integer (Cursors (F_Legacy_Compression_Method).Last)))
+      and then (if Well_Formed (Cursors (F_Extensions_Length)) then Valid (Cursors (F_Legacy_Compression_Method)))
       and then (if Well_Formed (Cursors (F_Extensions_TLS)) then Valid (Cursors (F_Extensions_Length))))
    with
      Pre =>
@@ -1125,7 +1117,7 @@ private
               and then True),
           when F_Extensions_Length =>
              (Valid (Cursors (F_Legacy_Compression_Method))
-              and then RFLX_Types.Base_Integer (Written_Last) /= RFLX_Types.Base_Integer (Cursors (F_Legacy_Compression_Method).Last)),
+              and then True),
           when F_Extensions_TLS =>
              (Valid (Cursors (F_Extensions_Length))
               and then True))
@@ -1366,7 +1358,7 @@ private
    function Initialized (Ctx : Context) return Boolean is
      (Ctx.Verified_Last = Ctx.First - 1
       and then Valid_Next (Ctx, F_Legacy_Version)
-      and then RFLX.TLS_Handshake.Server_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Version) rem RFLX_Types.Byte'Size = 1
+      and then RFLX.TLS_Handshake.Hello_Retry_Request.Field_First (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Legacy_Version) rem RFLX_Types.Byte'Size = 1
       and then Available_Space (Ctx, F_Legacy_Version) = Ctx.Last - Ctx.First + 1
       and then (for all F in Field =>
                    Invalid (Ctx, F)));
@@ -1459,14 +1451,10 @@ private
       or Ctx.Cursors (Fld).State = S_Incomplete);
 
    function Well_Formed_Message (Ctx : Context) return Boolean is
-     (Well_Formed (Ctx, F_Extensions_TLS)
-      or else (Valid (Ctx, F_Legacy_Compression_Method)
-               and then RFLX_Types.Base_Integer (Ctx.Written_Last) = RFLX_Types.Base_Integer (Ctx.Cursors (F_Legacy_Compression_Method).Last)));
+     (Well_Formed (Ctx, F_Extensions_TLS));
 
    function Valid_Message (Ctx : Context) return Boolean is
-     (Valid (Ctx, F_Extensions_TLS)
-      or else (Valid (Ctx, F_Legacy_Compression_Method)
-               and then RFLX_Types.Base_Integer (Ctx.Written_Last) = RFLX_Types.Base_Integer (Ctx.Cursors (F_Legacy_Compression_Method).Last)));
+     (Valid (Ctx, F_Extensions_TLS));
 
    function Incomplete_Message (Ctx : Context) return Boolean is
      ((for some F in Field =>
@@ -1491,14 +1479,14 @@ private
      (Size = Field_Size (Ctx, Fld))
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld);
+       RFLX.TLS_Handshake.Hello_Retry_Request.Valid_Next (Ctx, Fld);
 
    function Valid_Length (Ctx : Context; Fld : Field; Length : RFLX_Types.Length) return Boolean is
      (Valid_Size (Ctx, Fld, RFLX_Types.To_Bit_Length (Length)));
 
-   function Complete_Extensions_TLS (Ctx : Context; Seq_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context) return Boolean is
-     (RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Seq_Ctx)
-      and RFLX.TLS_Handshake.SH_Extensions_TLS.Size (Seq_Ctx) = Field_Size (Ctx, F_Extensions_TLS));
+   function Complete_Extensions_TLS (Ctx : Context; Seq_Ctx : RFLX.TLS_Handshake.HRR_Extensions_TLS.Context) return Boolean is
+     (RFLX.TLS_Handshake.HRR_Extensions_TLS.Valid (Seq_Ctx)
+      and RFLX.TLS_Handshake.HRR_Extensions_TLS.Size (Seq_Ctx) = Field_Size (Ctx, F_Extensions_TLS));
 
    function Context_Cursor (Ctx : Context; Fld : Field) return Field_Cursor is
      (Ctx.Cursors (Fld));
@@ -1509,4 +1497,4 @@ private
    function Context_Cursors_Index (Cursors : Field_Cursors; Fld : Field) return Field_Cursor is
      (Cursors (Fld));
 
-end RFLX.TLS_Handshake.Server_Hello;
+end RFLX.TLS_Handshake.Hello_Retry_Request;

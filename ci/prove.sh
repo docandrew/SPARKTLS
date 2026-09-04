@@ -16,6 +16,15 @@
 #   PROVE_MEM=32G ci/prove.sh            # override the cap
 #   PROVE_JOBS=24 ci/prove.sh            # override parallelism
 #   PROVE_TEE=findings_x.txt ci/prove.sh # tee output to a file
+#   PROVE_TIMEOUT=600 PROVE_MEMLIMIT=8000 ci/prove.sh   # the long-budget lane
+#
+# Budget lanes (decision 2026-09-04): the default 60 s / 4000 MB is the
+# developer loop -- a slow proof there means a statement, placement or
+# design problem worth finding. The full run on the proof box uses the
+# long lane (600 s / 8000 MB): RecordFlux proves its generated code at
+# up to 420 s / 5000 MB, and nothing about the box argues for less. Both
+# are explicit command-line switches, so a session proved at one budget
+# is never silently replayed as the other's verdict by accident.
 #
 # Any extra arguments are passed through to gnatprove unchanged.
 #
@@ -57,7 +66,12 @@ PROVE_LEVEL_ARGS=()
 # prove (measured 2026-09-02, cold sessions). 4000 MB x PROVE_JOBS=8 = 32 GB,
 # well inside PROVE_MEM. Set explicitly here so it no longer depends on any
 # dependency project's Prove package. Timeout and level are unchanged.
-[[ "$*" == *"--memlimit"* ]] || PROVE_LEVEL_ARGS+=(--memlimit=4000)
+PROVE_MEMLIMIT="${PROVE_MEMLIMIT:-4000}"
+PROVE_TIMEOUT="${PROVE_TIMEOUT:-60}"
+[[ "$*" == *"--memlimit"* ]] || PROVE_LEVEL_ARGS+=(--memlimit="${PROVE_MEMLIMIT}")
+# The 60 s default used to arrive implicitly through sparknacl.gpr's Prove
+# package; stating it here makes the budget visible in every log line.
+[[ "$*" == *"--timeout"*  ]] || PROVE_LEVEL_ARGS+=(--timeout="${PROVE_TIMEOUT}")
 # Prover set. COLIBRI (CEA LIST, LGPL-2.1) is the solver RecordFlux routes its
 # 2**N Fits_Into arithmetic to and the one SPARK Pro bundles; FSF gnatprove ships
 # its driver (colibri.drv, with the native integer-power mapping) and config

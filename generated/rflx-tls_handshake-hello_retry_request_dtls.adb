@@ -13,7 +13,7 @@ pragma Style_Checks ("N3aAbCdefhiIklnOprStux");
 pragma Warnings (Off, "redundant conversion");
 with RFLX.RFLX_Types.Operations;
 
-package body RFLX.TLS_Handshake.Server_Hello
+package body RFLX.TLS_Handshake.Hello_Retry_Request_DTLS
 with
   SPARK_Mode
 is
@@ -86,14 +86,14 @@ is
           when F_Legacy_Session_ID_Length =>
              Invalid (Ctx.Cursors (F_Legacy_Session_ID)),
           when F_Legacy_Session_ID =>
-             Invalid (Ctx.Cursors (F_Cipher_Suite_TLS_Suite)),
-          when F_Cipher_Suite_TLS_Suite =>
+             Invalid (Ctx.Cursors (F_Cipher_Suite_DTLS_Suite)),
+          when F_Cipher_Suite_DTLS_Suite =>
              Invalid (Ctx.Cursors (F_Legacy_Compression_Method)),
           when F_Legacy_Compression_Method =>
              Invalid (Ctx.Cursors (F_Extensions_Length)),
           when F_Extensions_Length =>
-             Invalid (Ctx.Cursors (F_Extensions_TLS)),
-          when F_Extensions_TLS =>
+             Invalid (Ctx.Cursors (F_Extensions_DTLS)),
+          when F_Extensions_DTLS =>
              True);
 
    function Sufficient_Buffer_Length (Ctx : Context; Fld : Field) return Boolean is
@@ -103,13 +103,13 @@ is
       and Field_First (Ctx, Fld) + Field_Size (Ctx, Fld) - 1 <= Ctx.Written_Last)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld);
+       RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Has_Buffer (Ctx)
+       and RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Next (Ctx, Fld);
 
    function Equal (Ctx : Context; Fld : Field; Data : RFLX_Types.Bytes) return Boolean is
      (Sufficient_Buffer_Length (Ctx, Fld)
       and then (case Fld is
-                   when F_Random | F_Legacy_Session_ID | F_Extensions_TLS =>
+                   when F_Random | F_Legacy_Session_ID | F_Extensions_DTLS =>
                       Data'Length = RFLX_Types.To_Index (Field_Last (Ctx, Fld)) - RFLX_Types.To_Index (Field_First (Ctx, Fld)) + 1
                       and then (for all I in RFLX_Types.Index range RFLX_Types.To_Index (Field_First (Ctx, Fld)) .. RFLX_Types.To_Index (Field_Last (Ctx, Fld)) =>
                                    Ctx.Buffer.all (I) = Data (Data'First + (I - RFLX_Types.To_Index (Field_First (Ctx, Fld))))),
@@ -119,7 +119,7 @@ is
    procedure Reset_Dependent_Fields (Ctx : in out Context; Fld : Field)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld),
+       RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Next (Ctx, Fld),
      Post =>
        Valid_Next (Ctx, Fld)
        and Ctx.Buffer_First = Ctx.Buffer_First'Old
@@ -143,15 +143,15 @@ is
    end Reset_Dependent_Fields;
 
    function Composite_Field (Fld : Field) return Boolean is
-     (Fld in F_Random | F_Legacy_Session_ID | F_Extensions_TLS);
+     (Fld in F_Random | F_Legacy_Session_ID | F_Extensions_DTLS);
 
    function Get (Ctx : Context; Fld : Field) return RFLX_Types.Base_Integer
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld)
-       and then RFLX.TLS_Handshake.Server_Hello.Sufficient_Buffer_Length (Ctx, Fld)
-       and then not RFLX.TLS_Handshake.Server_Hello.Composite_Field (Fld)
+       RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Next (Ctx, Fld)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Sufficient_Buffer_Length (Ctx, Fld)
+       and then not RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Composite_Field (Fld)
    is
       First : constant RFLX_Types.Bit_Index := Field_First (Ctx, Fld);
       Last : constant RFLX_Types.Bit_Index := Field_Last (Ctx, Fld);
@@ -163,7 +163,7 @@ is
              16,
           when F_Legacy_Session_ID_Length =>
              8,
-          when F_Cipher_Suite_TLS_Suite =>
+          when F_Cipher_Suite_DTLS_Suite =>
              16,
           when F_Legacy_Compression_Method =>
              8,
@@ -189,11 +189,7 @@ is
                Valid_Value (Fld, Value)
                and then Field_Condition (Ctx, Fld, Value)
             then
-               pragma Assert (if
-                                  Fld = F_Extensions_TLS
-                                  or Fld = F_Legacy_Compression_Method
-                               then
-                                  Field_Last (Ctx, Fld) mod RFLX_Types.Byte'Size = 0);
+               pragma Assert (if Fld = F_Extensions_DTLS then Field_Last (Ctx, Fld) mod RFLX_Types.Byte'Size = 0);
                pragma Assert ((((Field_Last (Ctx, Fld) + RFLX_Types.Byte'Size - 1) / RFLX_Types.Byte'Size) * RFLX_Types.Byte'Size) mod RFLX_Types.Byte'Size = 0);
                Ctx.Verified_Last := ((Field_Last (Ctx, Fld) + RFLX_Types.Byte'Size - 1) / RFLX_Types.Byte'Size) * RFLX_Types.Byte'Size;
                pragma Assert (Field_Last (Ctx, Fld) <= Ctx.Verified_Last);
@@ -270,13 +266,13 @@ is
    procedure Set (Ctx : in out Context; Fld : Field; Val : RFLX_Types.Base_Integer; Size : RFLX_Types.Bit_Length; State_Valid : Boolean; Buffer_First : out RFLX_Types.Index; Buffer_Last : out RFLX_Types.Index; Offset : out RFLX_Types.Offset)
    with
      Pre =>
-       RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Value (Fld, Val)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Size (Ctx, Fld, Size)
-       and then Size <= RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, Fld)
+       RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Next (Ctx, Fld)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Value (Fld, Val)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Size (Ctx, Fld, Size)
+       and then Size <= RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Available_Space (Ctx, Fld)
        and then (if
-                    RFLX.TLS_Handshake.Server_Hello.Composite_Field (Fld)
+                    RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Composite_Field (Fld)
                  then
                     Size mod RFLX_Types.Byte'Size = 0
                  else
@@ -301,7 +297,7 @@ is
        and then (if State_Valid and Size > 0 then Valid (Ctx, Fld) else Well_Formed (Ctx, Fld))
        and then (Ctx.Cursors (Fld).Value = Val
                  and then (if
-                              Fld in F_Extensions_TLS | F_Legacy_Compression_Method
+                              Fld in F_Extensions_DTLS
                               and then Well_Formed_Message (Ctx)
                            then
                               Message_Last (Ctx) = Field_Last (Ctx, Fld)))
@@ -333,21 +329,21 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, Fld)
-       and then Fld in F_Legacy_Version | F_Legacy_Session_ID_Length | F_Cipher_Suite_TLS_Suite | F_Legacy_Compression_Method | F_Extensions_Length
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Value (Fld, Val)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Size (Ctx, Fld, RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, Fld))
-       and then RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, Fld) >= RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, Fld)
-       and then RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, Fld) in 1 .. RFLX_Types.Base_Integer'Size
-       and then RFLX_Types.Fits_Into (Val, Natural (RFLX.TLS_Handshake.Server_Hello.Field_Size (Ctx, Fld))),
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Next (Ctx, Fld)
+       and then Fld in F_Legacy_Version | F_Legacy_Session_ID_Length | F_Cipher_Suite_DTLS_Suite | F_Legacy_Compression_Method | F_Extensions_Length
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Value (Fld, Val)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Size (Ctx, Fld, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Field_Size (Ctx, Fld))
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Available_Space (Ctx, Fld) >= RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Field_Size (Ctx, Fld)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Field_Size (Ctx, Fld) in 1 .. RFLX_Types.Base_Integer'Size
+       and then RFLX_Types.Fits_Into (Val, Natural (RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Field_Size (Ctx, Fld))),
      Post =>
        Has_Buffer (Ctx)
        and Valid (Ctx, Fld)
        and Invalid_Successor (Ctx, Fld)
        and (Ctx.Cursors (Fld).Value = Val
             and then (if
-                         Fld in F_Extensions_TLS | F_Legacy_Compression_Method
+                         Fld in F_Extensions_DTLS
                          and then Well_Formed_Message (Ctx)
                       then
                          Message_Last (Ctx) = Field_Last (Ctx, Fld)))
@@ -379,10 +375,10 @@ is
       Set_Scalar (Ctx, F_Legacy_Session_ID_Length, RFLX.TLS_Handshake.To_Base_Integer (Val));
    end Set_Legacy_Session_ID_Length;
 
-   procedure Set_Cipher_Suite_TLS_Suite (Ctx : in out Context; Val : RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum) is
+   procedure Set_Cipher_Suite_DTLS_Suite (Ctx : in out Context; Val : RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum) is
    begin
-      Set_Scalar (Ctx, F_Cipher_Suite_TLS_Suite, RFLX.Tls_Parameters.To_Base_Integer (Val));
-   end Set_Cipher_Suite_TLS_Suite;
+      Set_Scalar (Ctx, F_Cipher_Suite_DTLS_Suite, RFLX.Tls_Parameters.To_Base_Integer (Val));
+   end Set_Cipher_Suite_DTLS_Suite;
 
    procedure Set_Legacy_Compression_Method (Ctx : in out Context; Val : RFLX.TLS_Handshake.Legacy_Compression_Method) is
    begin
@@ -401,31 +397,31 @@ is
       Set (Ctx, F_Legacy_Session_ID, 0, 0, True, Unused_Buffer_First, Unused_Buffer_Last, Unused_Offset);
    end Set_Legacy_Session_ID_Empty;
 
-   procedure Set_Extensions_TLS_Empty (Ctx : in out Context) is
+   procedure Set_Extensions_DTLS_Empty (Ctx : in out Context) is
       Unused_Buffer_First, Unused_Buffer_Last : RFLX_Types.Index;
       Unused_Offset : RFLX_Types.Offset;
    begin
-      Set (Ctx, F_Extensions_TLS, 0, 0, True, Unused_Buffer_First, Unused_Buffer_Last, Unused_Offset);
-   end Set_Extensions_TLS_Empty;
+      Set (Ctx, F_Extensions_DTLS, 0, 0, True, Unused_Buffer_First, Unused_Buffer_Last, Unused_Offset);
+   end Set_Extensions_DTLS_Empty;
 
-   procedure Set_Extensions_TLS (Ctx : in out Context; Seq_Ctx : RFLX.TLS_Handshake.SH_Extensions_TLS.Context) is
-      Size : constant RFLX_Types.Bit_Length := RFLX_Types.To_Bit_Length (RFLX.TLS_Handshake.SH_Extensions_TLS.Byte_Size (Seq_Ctx));
+   procedure Set_Extensions_DTLS (Ctx : in out Context; Seq_Ctx : RFLX.TLS_Handshake.HRR_Extensions_DTLS.Context) is
+      Size : constant RFLX_Types.Bit_Length := RFLX_Types.To_Bit_Length (RFLX.TLS_Handshake.HRR_Extensions_DTLS.Byte_Size (Seq_Ctx));
       Unused_First, Unused_Last : RFLX_Types.Bit_Index;
       Buffer_First, Buffer_Last : RFLX_Types.Index;
       Unused_Offset : RFLX_Types.Offset;
    begin
-      Set (Ctx, F_Extensions_TLS, 0, Size, True, Buffer_First, Buffer_Last, Unused_Offset);
-      RFLX.TLS_Handshake.SH_Extensions_TLS.Copy (Seq_Ctx, Ctx.Buffer.all (Buffer_First .. Buffer_Last));
-   end Set_Extensions_TLS;
+      Set (Ctx, F_Extensions_DTLS, 0, Size, True, Buffer_First, Buffer_Last, Unused_Offset);
+      RFLX.TLS_Handshake.HRR_Extensions_DTLS.Copy (Seq_Ctx, Ctx.Buffer.all (Buffer_First .. Buffer_Last));
+   end Set_Extensions_DTLS;
 
    procedure Initialize_Random_Private (Ctx : in out Context; Length : RFLX_Types.Length)
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random, Length)
-       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random)) >= Length,
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Random)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Random, Length)
+       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Random)) >= Length,
      Post =>
        Has_Buffer (Ctx)
        and then Well_Formed (Ctx, F_Random)
@@ -433,10 +429,10 @@ is
        and then Ctx.Verified_Last = Field_Last (Ctx, F_Random)
        and then Invalid (Ctx, F_Legacy_Session_ID_Length)
        and then Invalid (Ctx, F_Legacy_Session_ID)
-       and then Invalid (Ctx, F_Cipher_Suite_TLS_Suite)
+       and then Invalid (Ctx, F_Cipher_Suite_DTLS_Suite)
        and then Invalid (Ctx, F_Legacy_Compression_Method)
        and then Invalid (Ctx, F_Extensions_Length)
-       and then Invalid (Ctx, F_Extensions_TLS)
+       and then Invalid (Ctx, F_Extensions_DTLS)
        and then Valid_Next (Ctx, F_Legacy_Session_ID_Length)
        and then Ctx.Buffer_First = Ctx.Buffer_First'Old
        and then Ctx.Buffer_Last = Ctx.Buffer_Last'Old
@@ -466,20 +462,20 @@ is
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID, Length)
-       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID)) >= Length,
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Legacy_Session_ID)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Legacy_Session_ID, Length)
+       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Legacy_Session_ID)) >= Length,
      Post =>
        Has_Buffer (Ctx)
        and then Well_Formed (Ctx, F_Legacy_Session_ID)
        and then Field_Size (Ctx, F_Legacy_Session_ID) = RFLX_Types.To_Bit_Length (Length)
        and then Ctx.Verified_Last = Field_Last (Ctx, F_Legacy_Session_ID)
-       and then Invalid (Ctx, F_Cipher_Suite_TLS_Suite)
+       and then Invalid (Ctx, F_Cipher_Suite_DTLS_Suite)
        and then Invalid (Ctx, F_Legacy_Compression_Method)
        and then Invalid (Ctx, F_Extensions_Length)
-       and then Invalid (Ctx, F_Extensions_TLS)
-       and then Valid_Next (Ctx, F_Cipher_Suite_TLS_Suite)
+       and then Invalid (Ctx, F_Extensions_DTLS)
+       and then Valid_Next (Ctx, F_Cipher_Suite_DTLS_Suite)
        and then Ctx.Buffer_First = Ctx.Buffer_First'Old
        and then Ctx.Buffer_Last = Ctx.Buffer_Last'Old
        and then Ctx.First = Ctx.First'Old
@@ -505,45 +501,45 @@ is
       Initialize_Legacy_Session_ID_Private (Ctx, RFLX_Types.To_Length (Field_Size (Ctx, F_Legacy_Session_ID)));
    end Initialize_Legacy_Session_ID;
 
-   procedure Initialize_Extensions_TLS_Private (Ctx : in out Context; Length : RFLX_Types.Length)
+   procedure Initialize_Extensions_DTLS_Private (Ctx : in out Context; Length : RFLX_Types.Length)
    with
      Pre =>
        not Ctx'Constrained
-       and then RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Next (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)
-       and then RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS, Length)
-       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Server_Hello.Available_Space (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS)) >= Length,
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Has_Buffer (Ctx)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Next (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Extensions_DTLS)
+       and then RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Extensions_DTLS, Length)
+       and then RFLX_Types.To_Length (RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Available_Space (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Extensions_DTLS)) >= Length,
      Post =>
        Has_Buffer (Ctx)
-       and then Well_Formed (Ctx, F_Extensions_TLS)
-       and then Field_Size (Ctx, F_Extensions_TLS) = RFLX_Types.To_Bit_Length (Length)
-       and then Ctx.Verified_Last = Field_Last (Ctx, F_Extensions_TLS)
+       and then Well_Formed (Ctx, F_Extensions_DTLS)
+       and then Field_Size (Ctx, F_Extensions_DTLS) = RFLX_Types.To_Bit_Length (Length)
+       and then Ctx.Verified_Last = Field_Last (Ctx, F_Extensions_DTLS)
        and then Ctx.Buffer_First = Ctx.Buffer_First'Old
        and then Ctx.Buffer_Last = Ctx.Buffer_Last'Old
        and then Ctx.First = Ctx.First'Old
        and then Ctx.Last = Ctx.Last'Old
-       and then Valid_Next (Ctx, F_Extensions_TLS) = Valid_Next (Ctx, F_Extensions_TLS)'Old
+       and then Valid_Next (Ctx, F_Extensions_DTLS) = Valid_Next (Ctx, F_Extensions_DTLS)'Old
        and then Get_Legacy_Version (Ctx) = Get_Legacy_Version (Ctx)'Old
        and then Get_Legacy_Session_ID_Length (Ctx) = Get_Legacy_Session_ID_Length (Ctx)'Old
-       and then Get_Cipher_Suite_TLS_Suite (Ctx) = Get_Cipher_Suite_TLS_Suite (Ctx)'Old
+       and then Get_Cipher_Suite_DTLS_Suite (Ctx) = Get_Cipher_Suite_DTLS_Suite (Ctx)'Old
        and then Get_Extensions_Length (Ctx) = Get_Extensions_Length (Ctx)'Old
-       and then Field_First (Ctx, F_Extensions_TLS) = Field_First (Ctx, F_Extensions_TLS)'Old
+       and then Field_First (Ctx, F_Extensions_DTLS) = Field_First (Ctx, F_Extensions_DTLS)'Old
    is
-      First : constant RFLX_Types.Bit_Index := Field_First (Ctx, F_Extensions_TLS);
-      Last : constant RFLX_Types.Bit_Index := Field_First (Ctx, F_Extensions_TLS) + RFLX_Types.Bit_Length (Length) * RFLX_Types.Byte'Size - 1;
+      First : constant RFLX_Types.Bit_Index := Field_First (Ctx, F_Extensions_DTLS);
+      Last : constant RFLX_Types.Bit_Index := Field_First (Ctx, F_Extensions_DTLS) + RFLX_Types.Bit_Length (Length) * RFLX_Types.Byte'Size - 1;
    begin
       pragma Assert (Last mod RFLX_Types.Byte'Size = 0);
-      Reset_Dependent_Fields (Ctx, F_Extensions_TLS);
+      Reset_Dependent_Fields (Ctx, F_Extensions_DTLS);
       pragma Warnings (Off, "attribute Update is an obsolescent feature");
       Ctx := Ctx'Update (Verified_Last => Last, Written_Last => Last);
       pragma Warnings (On, "attribute Update is an obsolescent feature");
-      Ctx.Cursors (F_Extensions_TLS) := (State => S_Well_Formed, First => First, Last => Last, Value => 0);
-   end Initialize_Extensions_TLS_Private;
+      Ctx.Cursors (F_Extensions_DTLS) := (State => S_Well_Formed, First => First, Last => Last, Value => 0);
+   end Initialize_Extensions_DTLS_Private;
 
-   procedure Initialize_Extensions_TLS (Ctx : in out Context) is
+   procedure Initialize_Extensions_DTLS (Ctx : in out Context) is
    begin
-      Initialize_Extensions_TLS_Private (Ctx, RFLX_Types.To_Length (Field_Size (Ctx, F_Extensions_TLS)));
-   end Initialize_Extensions_TLS;
+      Initialize_Extensions_DTLS_Private (Ctx, RFLX_Types.To_Length (Field_Size (Ctx, F_Extensions_DTLS)));
+   end Initialize_Extensions_DTLS;
 
    procedure Set_Random (Ctx : in out Context; Data : RFLX_Types.Bytes) is
       Buffer_First : constant RFLX_Types.Index := RFLX_Types.To_Index (Field_First (Ctx, F_Random));
@@ -571,7 +567,7 @@ is
       if Length > 0 then
          Process_Random (Ctx.Buffer.all (First .. First + RFLX_Types.Index (Length) - 1));
       end if;
-      pragma Assert (RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Random, Length));
+      pragma Assert (RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Random, Length));
       Initialize_Random_Private (Ctx, Length);
    end Generic_Set_Random;
 
@@ -581,40 +577,40 @@ is
       if Length > 0 then
          Process_Legacy_Session_ID (Ctx.Buffer.all (First .. First + RFLX_Types.Index (Length) - 1));
       end if;
-      pragma Assert (RFLX.TLS_Handshake.Server_Hello.Valid_Length (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID, Length));
+      pragma Assert (RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Valid_Length (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.F_Legacy_Session_ID, Length));
       Initialize_Legacy_Session_ID_Private (Ctx, Length);
    end Generic_Set_Legacy_Session_ID;
 
-   procedure Switch_To_Extensions_TLS (Ctx : in out Context; Seq_Ctx : out RFLX.TLS_Handshake.SH_Extensions_TLS.Context) is
-      First : constant RFLX_Types.Bit_Index := Field_First (Ctx, F_Extensions_TLS);
-      Last : constant RFLX_Types.Bit_Index := Field_Last (Ctx, F_Extensions_TLS);
+   procedure Switch_To_Extensions_DTLS (Ctx : in out Context; Seq_Ctx : out RFLX.TLS_Handshake.HRR_Extensions_DTLS.Context) is
+      First : constant RFLX_Types.Bit_Index := Field_First (Ctx, F_Extensions_DTLS);
+      Last : constant RFLX_Types.Bit_Index := Field_Last (Ctx, F_Extensions_DTLS);
       Buffer : RFLX_Types.Bytes_Ptr;
    begin
-      if Invalid (Ctx, F_Extensions_TLS) then
-         Reset_Dependent_Fields (Ctx, F_Extensions_TLS);
+      if Invalid (Ctx, F_Extensions_DTLS) then
+         Reset_Dependent_Fields (Ctx, F_Extensions_DTLS);
          pragma Warnings (Off, "attribute Update is an obsolescent feature");
          Ctx := Ctx'Update (Verified_Last => Last, Written_Last => RFLX_Types.Bit_Length'Max (Ctx.Written_Last, Last));
          pragma Warnings (On, "attribute Update is an obsolescent feature");
-         Ctx.Cursors (F_Extensions_TLS) := (State => S_Well_Formed, First => First, Last => Last, Value => 0);
+         Ctx.Cursors (F_Extensions_DTLS) := (State => S_Well_Formed, First => First, Last => Last, Value => 0);
       end if;
       Take_Buffer (Ctx, Buffer);
       pragma Warnings (Off, "unused assignment to ""Buffer""");
-      RFLX.TLS_Handshake.SH_Extensions_TLS.Initialize (Seq_Ctx, Buffer, First, Last);
+      RFLX.TLS_Handshake.HRR_Extensions_DTLS.Initialize (Seq_Ctx, Buffer, First, Last);
       pragma Warnings (On, "unused assignment to ""Buffer""");
-   end Switch_To_Extensions_TLS;
+   end Switch_To_Extensions_DTLS;
 
-   procedure Update_Extensions_TLS (Ctx : in out Context; Seq_Ctx : in out RFLX.TLS_Handshake.SH_Extensions_TLS.Context) is
-      Valid_Sequence : constant Boolean := RFLX.TLS_Handshake.Server_Hello.Complete_Extensions_TLS (Ctx, Seq_Ctx);
+   procedure Update_Extensions_DTLS (Ctx : in out Context; Seq_Ctx : in out RFLX.TLS_Handshake.HRR_Extensions_DTLS.Context) is
+      Valid_Sequence : constant Boolean := RFLX.TLS_Handshake.Hello_Retry_Request_DTLS.Complete_Extensions_DTLS (Ctx, Seq_Ctx);
       Buffer : RFLX_Types.Bytes_Ptr;
    begin
-      RFLX.TLS_Handshake.SH_Extensions_TLS.Take_Buffer (Seq_Ctx, Buffer);
+      RFLX.TLS_Handshake.HRR_Extensions_DTLS.Take_Buffer (Seq_Ctx, Buffer);
       Ctx.Buffer := Buffer;
       if Valid_Sequence then
-         Ctx.Cursors (F_Extensions_TLS) := (State => S_Valid, First => Ctx.Cursors (F_Extensions_TLS).First, Last => Ctx.Cursors (F_Extensions_TLS).Last, Value => Ctx.Cursors (F_Extensions_TLS).Value);
+         Ctx.Cursors (F_Extensions_DTLS) := (State => S_Valid, First => Ctx.Cursors (F_Extensions_DTLS).First, Last => Ctx.Cursors (F_Extensions_DTLS).Last, Value => Ctx.Cursors (F_Extensions_DTLS).Value);
       else
-         Reset_Dependent_Fields (Ctx, F_Extensions_TLS);
-         Ctx.Cursors (F_Extensions_TLS) := (others => <>);
+         Reset_Dependent_Fields (Ctx, F_Extensions_DTLS);
+         Ctx.Cursors (F_Extensions_DTLS) := (others => <>);
       end if;
-   end Update_Extensions_TLS;
+   end Update_Extensions_DTLS;
 
-end RFLX.TLS_Handshake.Server_Hello;
+end RFLX.TLS_Handshake.Hello_Retry_Request_DTLS;

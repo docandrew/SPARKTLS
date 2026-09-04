@@ -28,7 +28,9 @@ After regeneration, re-apply these patches:
    verification story. Not yet tested for *proof* impact (only
    legality/flow), so it stays applied until someone measures it.
 
-2. **`rflx-tls_handshake-server_hello.ads`**: add a `Buffer /= null and then`
+2. **NO LONGER NEEDED (2026-09-04): Server_Hello is now a per-transport message without the HRR fork, so the sentinel slices this patch guarded are not generated; `rflx-tls_handshake-server_hello.ads` is pristine.** Former text:
+
+   **`rflx-tls_handshake-server_hello.ads`**: add a `Buffer /= null and then`
    guard before each of the 8 `Buffer.all (RFLX_Types.To_Index ...)` slices in
    the context `Dynamic_Predicate` (around lines 1720, 1729, 1738, 1747, 1829,
    1836, 1843, 1850 — the HelloRetryRequest sentinel comparisons).

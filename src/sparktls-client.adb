@@ -623,6 +623,7 @@ is
          --  CCS+Finished â our CCS+Finished.
          if S.HC.T12.Sent_Ticket_Ext
            and then S.HC.T12.Server_Will_Issue
+           and then S.HC.T12.Server_Echoed_SID
            and then S.HC.Cfg.TLS12_Resume_Ticket.Valid
            and then S.HC.Cfg.TLS12_Resume_Ticket.Suite = Wire_Of (S.Negotiated_Suite)
          then
@@ -661,14 +662,6 @@ is
             Byte_Seq (Frag),
             Candidate,
             Parse_OK);
-
-         if not Parse_OK and then S.Last_Error = No_Error then
-            Handshake.TLS12.Parse_Server_Hello_12
-              (S.Negotiated_Suite, S.Last_Error, S.HC, Byte_Seq (Frag), Parse_OK);
-            if Parse_OK then
-               Candidate := TLS_1_2;
-            end if;
-         end if;
 
          if not Parse_OK then
             if S.Last_Error = No_Error then

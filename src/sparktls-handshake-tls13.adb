@@ -24,6 +24,13 @@ with RFLX.TLS_Handshake.Certificate_Verify;
 with RFLX.TLS_Handshake.Certificate_Request;
 with RFLX.TLS_Handshake.CR_Extensions;
 with RFLX.TLS_Handshake.CR_Extension;
+with RFLX.TLS_Handshake.Server_Hello;
+with RFLX.TLS_Handshake.SH_Extensions_TLS;
+with RFLX.TLS_Handshake.SH_Extension_TLS;
+with RFLX.TLS_Handshake.Hello_Retry_Request;
+with RFLX.TLS_Handshake.HRR_Extensions_TLS;
+with RFLX.TLS_Handshake.HRR_Extension_TLS;
+with RFLX.TLS_Common;
 with RFLX.Tls_Parameters;
 with RFLX.Tls_Extensiontype_Values;
 with RFLX.RFLX_Types;
@@ -41,42 +48,6 @@ is
 
    procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
    with Post => Buf = null;
-
-   --  RFC 8446 Section 4.1.3: a real ServerHello.Random must not equal
-   --  the HelloRetryRequest sentinel.
-   HRR_Sentinel : constant Bytes_32 :=
-     (16#CF#,
-      16#21#,
-      16#AD#,
-      16#74#,
-      16#E5#,
-      16#9A#,
-      16#61#,
-      16#11#,
-      16#BE#,
-      16#1D#,
-      16#8C#,
-      16#02#,
-      16#1E#,
-      16#65#,
-      16#B8#,
-      16#91#,
-      16#C2#,
-      16#A2#,
-      16#11#,
-      16#16#,
-      16#7A#,
-      16#BB#,
-      16#8C#,
-      16#5E#,
-      16#07#,
-      16#9E#,
-      16#09#,
-      16#E2#,
-      16#C8#,
-      16#A8#,
-      16#33#,
-      16#9C#);
 
    procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr) with SPARK_Mode => Off is
       procedure Dealloc is new
@@ -295,267 +266,6 @@ is
       OK := True;
    end Generate_KS_P384;
 
-   procedure SH_Put16 (Buf : in out Byte_Seq; Pos : in N32; V : in Unsigned_16)
-   with Pre => Buf'First = 0 and then Pos < Buf'Last;
-
-   procedure SH_Put16 (Buf : in out Byte_Seq; Pos : in N32; V : in Unsigned_16) is
-   begin
-      Buf (Pos) := Byte (V / 256);
-      Buf (Pos + 1) := Byte (V mod 256);
-   end SH_Put16;
-
-   procedure Serialize_Server_Hello
-     (Negotiated  : in TLS13_Suite;
-      HC          : in Handshake_Context;
-      KS_Raw      : in KS_Raw_Buffer;
-      KS_Data_Len : in N32;
-      Ext_Total   : in N32;
-      SID_Echo    : in N32;
-      SH_Body_Len : in N32;
-      SH_Msg_Len  : in N32;
-      Result      : in out Byte_Seq;
-      Len         : out N32)
-   with
-     Pre =>
-       Result'First = 0
-       and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
-       and then KS_Data_Len in 36 | 69 | 101
-       and then Ext_Total in 46 .. 117
-       and then Ext_Total = 10 + KS_Data_Len + (if HC.Using_PSK then 6 else 0)
-       and then SID_Echo <= 32
-       and then SH_Body_Len <= 189
-       and then SH_Msg_Len <= Max_Server_Hello
-       and then SH_Msg_Len = 4 + SH_Body_Len
-       and then SH_Body_Len = 40 + SID_Echo + Ext_Total
-       and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
-       and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
-     Post => Len = SH_Msg_Len;
-
-   procedure Serialize_Server_Hello_Prefix
-     (Negotiated  : in TLS13_Suite;
-      HC          : in Handshake_Context;
-      Ext_Total   : in N32;
-      SID_Echo    : in N32;
-      SH_Body_Len : in N32;
-      Result      : in out Byte_Seq;
-      Pos         : out N32)
-   with
-     Pre =>
-       Result'First = 0
-       and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
-       and then Ext_Total in 46 .. 117
-       and then SID_Echo <= 32
-       and then SH_Body_Len <= 189
-       and then SH_Body_Len = 40 + SID_Echo + Ext_Total
-       and then Session_ID_Echo_RFC_8446_4_1_3 (HC)
-       and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
-     Post => Pos = 44 + SID_Echo;
-
-   procedure Serialize_Server_Hello_Fixed_Prefix
-     (HC : in Handshake_Context; SH_Body_Len : in N32; Result : in out Byte_Seq; Pos : out N32)
-   with
-     Pre =>
-       Result'First = 0
-       and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
-       and then SH_Body_Len <= 189
-       and then Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random),
-     Post => Pos = 38;
-
-   procedure Serialize_Server_Hello_Fixed_Prefix
-     (HC : in Handshake_Context; SH_Body_Len : in N32; Result : in out Byte_Seq; Pos : out N32) is
-   begin
-      --  Handshake header.
-      Result (0) := HS_Msg_Wire (HT_Server_Hello);
-      Result (1) := Byte (SH_Body_Len / 65536);
-      Result (2) := Byte ((SH_Body_Len / 256) mod 256);
-      Result (3) := Byte (SH_Body_Len mod 256);
-      Pos := 4;
-
-      --  RFC 8446 4.1.3: legacy_version = 0x0303 even for TLS 1.3.
-      pragma Assert (ServerHello_Legacy_Version_RFC_8446_4_1_3 (TLS_1_2));
-      pragma Assert (Pos + 1 <= Result'Last);
-      Result (Pos) := 16#03#;
-      Result (Pos + 1) := 16#03#;
-      Pos := Pos + 2;
-
-      pragma Assert (Random_Length_RFC_5246_7_4_1_2 (HC.Server_Random));
-      pragma Assert (Pos + 31 <= Result'Last);
-      Result (Pos .. Pos + 31) := Byte_Seq (HC.Server_Random);
-      Pos := Pos + 32;
-   end Serialize_Server_Hello_Fixed_Prefix;
-
-   procedure Serialize_Server_Hello_Variable_Prefix
-     (Negotiated : in TLS13_Suite;
-      HC         : in Handshake_Context;
-      Ext_Total  : in N32;
-      SID_Echo   : in N32;
-      Result     : in out Byte_Seq;
-      Pos        : in out N32)
-   with
-     Pre =>
-       Result'First = 0
-       and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
-       and then Ext_Total in 46 .. 117
-       and then SID_Echo <= 32
-       and then Pos = 38
-       and then Session_ID_Echo_RFC_8446_4_1_3 (HC),
-     Post => Pos = 44 + SID_Echo;
-
-   procedure Serialize_Server_Hello_Variable_Prefix
-     (Negotiated : in TLS13_Suite;
-      HC         : in Handshake_Context;
-      Ext_Total  : in N32;
-      SID_Echo   : in N32;
-      Result     : in out Byte_Seq;
-      Pos        : in out N32) is
-   begin
-      --  RFC 8446 4.1.3: echo the client's exact session_id.
-      pragma Assert (Session_ID_Echo_RFC_8446_4_1_3 (HC));
-      pragma Assert (Pos <= Result'Last);
-      Result (Pos) := Byte (SID_Echo);
-      Pos := Pos + 1;
-      if SID_Echo > 0 then
-         pragma Assert (Pos + SID_Echo - 1 <= Result'Last);
-         Result (Pos .. Pos + SID_Echo - 1) := Byte_Seq (HC.Legacy_Session_ID (0 .. SID_Echo - 1));
-      end if;
-      Pos := Pos + SID_Echo;
-
-      pragma Assert (Pos + 1 <= Result'Last);
-      SH_Put16 (Result, Pos, Wire_Of (Negotiated));
-      Pos := Pos + 2;
-
-      pragma Assert (Compression_Method_None_RFC_5246_6_2_2 (0));
-      pragma Assert (Pos <= Result'Last);
-      Result (Pos) := 0;
-      Pos := Pos + 1;
-
-      pragma Assert (Pos + 1 <= Result'Last);
-      SH_Put16 (Result, Pos, Unsigned_16 (Ext_Total));
-      Pos := Pos + 2;
-   end Serialize_Server_Hello_Variable_Prefix;
-
-   procedure Serialize_Server_Hello_Prefix
-     (Negotiated  : in TLS13_Suite;
-      HC          : in Handshake_Context;
-      Ext_Total   : in N32;
-      SID_Echo    : in N32;
-      SH_Body_Len : in N32;
-      Result      : in out Byte_Seq;
-      Pos         : out N32) is
-   begin
-      Serialize_Server_Hello_Fixed_Prefix
-        (HC => HC, SH_Body_Len => SH_Body_Len, Result => Result, Pos => Pos);
-      Serialize_Server_Hello_Variable_Prefix
-        (Negotiated => Negotiated,
-         HC         => HC,
-         Ext_Total  => Ext_Total,
-         SID_Echo   => SID_Echo,
-         Result     => Result,
-         Pos        => Pos);
-   end Serialize_Server_Hello_Prefix;
-
-   procedure Serialize_Server_Hello_Extensions
-     (HC          : in Handshake_Context;
-      KS_Raw      : in KS_Raw_Buffer;
-      KS_Data_Len : in N32;
-      Ext_Total   : in N32;
-      Pos         : in out N32;
-      Result      : in out Byte_Seq)
-   with
-     Pre =>
-       Result'First = 0
-       and then Result'Last in Max_Server_Hello - 1 .. N32'Last - 1
-       and then KS_Data_Len in 36 | 69 | 101
-       and then Ext_Total in 46 .. 117
-       and then Ext_Total = 10 + KS_Data_Len + (if HC.Using_PSK then 6 else 0)
-       and then Pos in 44 .. 76
-       and then Pos + Ext_Total - 1 <= Result'Last,
-     Post => Pos = Pos'Old + Ext_Total;
-
-   procedure Serialize_Server_Hello_Extensions
-     (HC          : in Handshake_Context;
-      KS_Raw      : in KS_Raw_Buffer;
-      KS_Data_Len : in N32;
-      Ext_Total   : in N32;
-      Pos         : in out N32;
-      Result      : in out Byte_Seq)
-   is
-      SV_Data_Len : constant := 2;
-      SV_Ext_Len : constant := 4 + SV_Data_Len;
-      PSK_Ext_Len : constant := 6;
-      Start_Pos : constant N32 := Pos;
-   begin
-
-      --  Extension 1: key_share (0x0033).
-      pragma Assert (Pos + 4 + KS_Data_Len - 1 <= Result'Last);
-      SH_Put16 (Result, Pos, 16#0033#);
-      SH_Put16 (Result, Pos + 2, Unsigned_16 (KS_Data_Len));
-      Result (Pos + 4 .. Pos + 4 + KS_Data_Len - 1) := KS_Raw (0 .. KS_Data_Len - 1);
-      Pos := Pos + 4 + KS_Data_Len;
-
-      --  Extension 2: supported_versions (0x002B), selected TLS 1.3.
-      declare
-         SV_Raw : constant Byte_Seq (0 .. SV_Data_Len - 1) := (16#03#, 16#04#);
-      begin
-         pragma Assert (Supported_Versions_Server_TLS13_RFC_8446_4_2_1 (SV_Raw));
-         pragma Assert (Pos + SV_Ext_Len - 1 <= Result'Last);
-         SH_Put16 (Result, Pos, 16#002B#);
-         SH_Put16 (Result, Pos + 2, Unsigned_16 (SV_Data_Len));
-         Result (Pos + 4 .. Pos + 5) := SV_Raw;
-         Pos := Pos + SV_Ext_Len;
-      end;
-
-      --  Optional pre_shared_key extension. Format: tag(2) +
-      --  data_len(2) + selected_identity(2).
-      if HC.Using_PSK then
-         pragma Assert (Pos + PSK_Ext_Len - 1 <= Result'Last);
-         SH_Put16 (Result, Pos, 16#0029#);
-         SH_Put16 (Result, Pos + 2, 2);
-         SH_Put16 (Result, Pos + 4, 0);
-         Pos := Pos + PSK_Ext_Len;
-      end if;
-
-      pragma Assert (Pos = Start_Pos + 10 + KS_Data_Len + (if HC.Using_PSK then 6 else 0));
-      pragma Assert (Pos = Start_Pos + Ext_Total);
-   end Serialize_Server_Hello_Extensions;
-
-   procedure Serialize_Server_Hello
-     (Negotiated  : in TLS13_Suite;
-      HC          : in Handshake_Context;
-      KS_Raw      : in KS_Raw_Buffer;
-      KS_Data_Len : in N32;
-      Ext_Total   : in N32;
-      SID_Echo    : in N32;
-      SH_Body_Len : in N32;
-      SH_Msg_Len  : in N32;
-      Result      : in out Byte_Seq;
-      Len         : out N32)
-   is
-      Pos : N32;
-   begin
-      Serialize_Server_Hello_Prefix
-        (Negotiated  => Negotiated,
-         HC          => HC,
-         Ext_Total   => Ext_Total,
-         SID_Echo    => SID_Echo,
-         SH_Body_Len => SH_Body_Len,
-         Result      => Result,
-         Pos         => Pos);
-
-      pragma Assert (Pos + Ext_Total - 1 <= Result'Last);
-      Serialize_Server_Hello_Extensions
-        (HC          => HC,
-         KS_Raw      => KS_Raw,
-         KS_Data_Len => KS_Data_Len,
-         Ext_Total   => Ext_Total,
-         Pos         => Pos,
-         Result      => Result);
-
-      pragma Assert (Pos = 44 + SID_Echo + Ext_Total);
-      pragma Assert (Pos = SH_Msg_Len);
-      Len := SH_Msg_Len;
-   end Serialize_Server_Hello;
-
    procedure Select_Server_Key_Share
      (HC         : in out Handshake_Context;
       KS_Raw     : out KS_Raw_Buffer;
@@ -668,35 +378,130 @@ is
       end if;
    end Select_Server_Key_Share;
 
+   --  The RecordFlux literal for a TLS 1.3 suite: Wire_Of gives the two
+   --  bytes, the generated setters want the enumeration.
+   function RFLX_Suite (S : TLS13_Suite) return RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum
+   is (case S is
+         when Suite_AES_128_GCM_SHA256       => RFLX.Tls_Parameters.TLS_AES_128_GCM_SHA256,
+         when Suite_AES_256_GCM_SHA384       => RFLX.Tls_Parameters.TLS_AES_256_GCM_SHA384,
+         when Suite_CHACHA20_POLY1305_SHA256 => RFLX.Tls_Parameters.TLS_CHACHA20_POLY1305_SHA256);
+
+   procedure Build_HRR_Message
+     (Negotiated : in Supported_Suite;
+      Group      : in ECDHE_Group;
+      HC         : in Engaged_Context;
+      Result     : out Byte_Seq;
+      Len        : out N32)
+   is
+      use RFLX.TLS_Handshake.Hello_Retry_Request;
+      --  Generous buffer, as the ClientHello builder learned: the message body
+      --  is 52 .. 84 bytes; sizing the buffer to it would only buy the
+      --  Available_Space accounting chain back.
+      HRR_Buf_Len : constant := 128;
+      Sid_Len     : constant N32 := N32 (HC.Legacy_Session_ID_Len);
+      Sid         : constant Byte_Seq := Byte_Seq (HC.Legacy_Session_ID);
+      Body_Len    : constant N32 := 2 + 32 + 1 + Sid_Len + 2 + 1 + 2 + 12;
+      Suite       : RFLX.Tls_Parameters.TLS_Cipher_Suites_Enum;
+      Ctx         : Context;
+   begin
+      Result := (others => 0);
+      Len := 0;
+      if Negotiated not in TLS13_Suite then
+         return;
+      end if;
+      Suite := RFLX_Suite (Negotiated);
+
+      declare
+         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. HRR_Buf_Len => 0);
+      begin
+         Initialize (Ctx, Buf);
+         Set_Legacy_Version (Ctx, RFLX.TLS_Common.TLS_1_2);
+         Set_Random (Ctx, To_RFLX (Byte_Seq (HRR_Sentinel)));
+         Set_Legacy_Session_ID_Length
+           (Ctx, RFLX.TLS_Handshake.Legacy_Session_ID_Length (Sid_Len));
+         if Sid_Len = 0 then
+            Set_Legacy_Session_ID_Empty (Ctx);
+         else
+            Set_Legacy_Session_ID (Ctx, To_RFLX (Sid (0 .. Sid_Len - 1)));
+         end if;
+         Set_Cipher_Suite_TLS_Suite (Ctx, Suite);
+         Set_Legacy_Compression_Method (Ctx, 0);
+         Set_Extensions_Length (Ctx, 12);
+
+         declare
+            Exts : RFLX.TLS_Handshake.HRR_Extensions_TLS.Context;
+         begin
+            Switch_To_Extensions_TLS (Ctx, Exts);
+
+            --  key_share (RFC 8446 4.2.8): in a HelloRetryRequest only the
+            --  selected group, no key exchange.
+            declare
+               E : RFLX.TLS_Handshake.HRR_Extension_TLS.Context;
+               G : constant Unsigned_16 := ECDHE_Group_Wire (Group);
+            begin
+               RFLX.TLS_Handshake.HRR_Extensions_TLS.Switch (Exts, E);
+               RFLX.TLS_Handshake.HRR_Extension_TLS.Set_Tag
+                 (E, RFLX.Tls_Extensiontype_Values.Key_Share);
+               RFLX.TLS_Handshake.HRR_Extension_TLS.Set_Data_Length (E, 2);
+               RFLX.TLS_Handshake.HRR_Extension_TLS.Set_Data
+                 (E, (RBT.Byte (G / 256), RBT.Byte (G mod 256)));
+               RFLX.TLS_Handshake.HRR_Extensions_TLS.Update (Exts, E);
+            end;
+
+            --  supported_versions (RFC 8446 4.2.1): the selected version.
+            declare
+               E : RFLX.TLS_Handshake.HRR_Extension_TLS.Context;
+            begin
+               RFLX.TLS_Handshake.HRR_Extensions_TLS.Switch (Exts, E);
+               RFLX.TLS_Handshake.HRR_Extension_TLS.Set_Tag
+                 (E, RFLX.Tls_Extensiontype_Values.Supported_Versions);
+               RFLX.TLS_Handshake.HRR_Extension_TLS.Set_Data_Length (E, 2);
+               RFLX.TLS_Handshake.HRR_Extension_TLS.Set_Data (E, (16#03#, 16#04#));
+               RFLX.TLS_Handshake.HRR_Extensions_TLS.Update (Exts, E);
+            end;
+
+            Update_Extensions_TLS (Ctx, Exts);
+         end;
+
+         Take_Buffer (Ctx, Buf);
+         --  Handshake header by hand for now (type + 3-byte length), as the
+         --  other RecordFlux builders do; the outer TLS_Handshake context is
+         --  the remaining half-step (task 147).
+         Result (0) := HS_Msg_Wire (HT_Server_Hello);
+         Result (1) := 0;
+         Result (2) := 0;
+         Result (3) := Byte (Body_Len);
+         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         RFLX_Free (Buf);
+      end;
+      Len := 4 + Body_Len;
+   end Build_HRR_Message;
+
    procedure Build_Server_Hello
      (Negotiated : in TLS13_Suite;
       HC         : in out Engaged_Context;
       Result     : out Byte_Seq;
       Len        : out N32)
    is
+      use RFLX.TLS_Handshake.Server_Hello;
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
-      SV_Data_Len : constant := 2;
-      SV_Ext_Len : constant := 4 + SV_Data_Len;
-      PSK_Ext_Len : constant := 6;
-
-      --  Key share data: varies by selected group
+      --  Generous buffer, as the ClientHello and HelloRetryRequest builders:
+      --  the body is at most 40 + 32 + 117 = 189 bytes.
+      SH_Buf_Len : constant := 256;
+      Sid_Len    : constant N32 := N32 (HC.Legacy_Session_ID_Len);
+      Sid        : constant Byte_Seq := Byte_Seq (HC.Legacy_Session_ID);
       KS_Raw     : KS_Raw_Buffer;
       KS_Raw_Len : N32;
-
-      KS_Data_Len : N32;
-      Ext_Total   : N32;
-      SH_Body_Len : N32;
-      SH_Msg_Len  : N32;
-      SID_Echo    : N32;
+      Ext_Total  : N32;
+      Body_Len   : N32;
+      Ctx        : Context;
    begin
       Result := (others => 0);
       Len := 0;
 
-      --  Generate server random (use temp to avoid SPARK aliasing).
-      --  RFC 8446 4.1.3: regenerate on the astronomical collision with
-      --  the HRR sentinel; RFLX's Field_Condition for F_Extensions_TLS
-      --  requires Random /= HRR_Sentinel.
+      --  Server random. RFC 8446 4.1.3 reserves the HelloRetryRequest
+      --  sentinel, so regenerate on that astronomical collision.
       declare
          Tmp_SR : Bytes_32;
       begin
@@ -704,7 +509,6 @@ is
             Gen_Random (Byte_Seq (Tmp_SR));
             exit when Tmp_SR /= HRR_Sentinel;
          end loop;
-         pragma Assert (Tmp_SR /= HRR_Sentinel);
          HC.Server_Random := Tmp_SR;
       end;
 
@@ -713,57 +517,102 @@ is
       begin
          Select_Server_Key_Share (HC, KS_Raw, KS_Raw_Len, KS_OK);
          if not KS_OK then
-            --  No common key exchange group or invalid peer share.
-            --  Set Len = 0; caller will send handshake_failure unless a
-            --  more specific HC.Ext_Parse_Err was set.
-            Len := 0;
+            --  No common group or an invalid peer share: Len = 0 and the
+            --  caller sends handshake_failure unless HC.Ext_Parse_Err says
+            --  something more specific.
             return;
          end if;
       end;
-
       if KS_Raw_Len not in 36 | 69 | 101 then
-         Len := 0;
          return;
       end if;
 
-      KS_Data_Len := KS_Raw_Len;
-      pragma Assert (KS_Data_Len in 36 | 69 | 101);
-      Ext_Total := (4 + KS_Data_Len) + SV_Ext_Len;
-      if HC.Using_PSK then
-         Ext_Total := Ext_Total + PSK_Ext_Len;
-      end if;
-      pragma Assert (Ext_Total in 46 .. 117);
-      --  Actual body bytes RFLX will encode depend on the echoed
-      --  session_id length. ver(2)+random(32)+sid_len(1)+sid(N)+
-      --  suite(2)+comp(1)+ext_len(2) = 40 + N. Was hardcoded to
-      --  72 (assuming N=32); when the client sent a shorter SID
-      --  (BoGo Resume-Server-TLS13 with SendBothTickets sends 16),
-      --  the HS header overstated the body length, causing the
-      --  peer to fail SH parse with trailing-garbage bytes.
-      SID_Echo := HC.Legacy_Session_ID_Len;
-      SH_Body_Len := 40 + SID_Echo + Ext_Total;
-      SH_Msg_Len := 4 + SH_Body_Len;
+      --  key_share (4 + entry) + supported_versions (6) [+ pre_shared_key (6)]
+      Ext_Total := 4 + KS_Raw_Len + 6 + (if HC.Using_PSK then 6 else 0);
+      --  version(2) + random(32) + sid_len(1) + sid + suite(2) + comp(1) + ext_len(2)
+      Body_Len := 40 + Sid_Len + Ext_Total;
 
-      if SH_Msg_Len - 1 > Result'Last then
-         return;
-      end if;
+      declare
+         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. SH_Buf_Len => 0);
+      begin
+         Initialize (Ctx, Buf);
+         Set_Legacy_Version (Ctx, RFLX.TLS_Common.TLS_1_2);
+         Set_Random (Ctx, To_RFLX (Byte_Seq (HC.Server_Random)));
+         --  RFC 8446 4.1.3: echo the client's session_id at its real length.
+         Set_Legacy_Session_ID_Length
+           (Ctx, RFLX.TLS_Handshake.Legacy_Session_ID_Length (Sid_Len));
+         if Sid_Len = 0 then
+            Set_Legacy_Session_ID_Empty (Ctx);
+         else
+            Set_Legacy_Session_ID (Ctx, To_RFLX (Sid (0 .. Sid_Len - 1)));
+         end if;
+         Set_Cipher_Suite_TLS_Suite (Ctx, RFLX_Suite (Negotiated));
+         Set_Legacy_Compression_Method (Ctx, 0);
+         Set_Extensions_Length
+           (Ctx, RFLX.TLS_Handshake.Server_Hello_Extensions_Length (Ext_Total));
 
-      pragma Assert (SID_Echo <= 32);
-      pragma Assert (Ext_Total <= 117);
-      pragma Assert (SH_Body_Len <= 189);
-      pragma Assert (SH_Msg_Len <= Max_Server_Hello);
+         declare
+            Exts : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
+         begin
+            Switch_To_Extensions_TLS (Ctx, Exts);
 
-      Serialize_Server_Hello
-        (Negotiated  => Negotiated,
-         HC          => HC,
-         KS_Raw      => KS_Raw,
-         KS_Data_Len => KS_Data_Len,
-         Ext_Total   => Ext_Total,
-         SID_Echo    => SID_Echo,
-         SH_Body_Len => SH_Body_Len,
-         SH_Msg_Len  => SH_Msg_Len,
-         Result      => Result,
-         Len         => Len);
+            --  key_share (RFC 8446 4.2.8): the selected group and our share,
+            --  already in KeyShareEntry wire form from Select_Server_Key_Share.
+            declare
+               E : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+            begin
+               RFLX.TLS_Handshake.SH_Extensions_TLS.Switch (Exts, E);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
+                 (E, RFLX.Tls_Extensiontype_Values.Key_Share);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length
+                 (E, RFLX.TLS_Handshake.Data_Length (KS_Raw_Len));
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data
+                 (E, To_RFLX (KS_Raw (0 .. KS_Raw_Len - 1)));
+               RFLX.TLS_Handshake.SH_Extensions_TLS.Update (Exts, E);
+            end;
+
+            --  supported_versions (RFC 8446 4.2.1): the selected version.
+            declare
+               E : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+            begin
+               RFLX.TLS_Handshake.SH_Extensions_TLS.Switch (Exts, E);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
+                 (E, RFLX.Tls_Extensiontype_Values.Supported_Versions);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length (E, 2);
+               RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data (E, (16#03#, 16#04#));
+               RFLX.TLS_Handshake.SH_Extensions_TLS.Update (Exts, E);
+            end;
+
+            --  pre_shared_key (RFC 8446 4.2.11): selected_identity 0, the
+            --  only identity this server ever accepts.
+            if HC.Using_PSK then
+               declare
+                  E : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
+               begin
+                  RFLX.TLS_Handshake.SH_Extensions_TLS.Switch (Exts, E);
+                  RFLX.TLS_Handshake.SH_Extension_TLS.Set_Tag
+                    (E, RFLX.Tls_Extensiontype_Values.Pre_Shared_Key);
+                  RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data_Length (E, 2);
+                  RFLX.TLS_Handshake.SH_Extension_TLS.Set_Data (E, (0, 0));
+                  RFLX.TLS_Handshake.SH_Extensions_TLS.Update (Exts, E);
+               end;
+            end if;
+
+            Update_Extensions_TLS (Ctx, Exts);
+         end;
+
+         Take_Buffer (Ctx, Buf);
+         --  Handshake header by hand for now (type + 3-byte length), as the
+         --  other RecordFlux builders do; the outer TLS_Handshake context is
+         --  the remaining half-step (task 147).
+         Result (0) := HS_Msg_Wire (HT_Server_Hello);
+         Result (1) := 0;
+         Result (2) := 0;
+         Result (3) := Byte (Body_Len);
+         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         RFLX_Free (Buf);
+      end;
+      Len := 4 + Body_Len;
    end Build_Server_Hello;
 
    procedure Build_Encrypted_Extensions

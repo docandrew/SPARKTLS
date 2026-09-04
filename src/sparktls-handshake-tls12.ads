@@ -416,36 +416,6 @@ is
        and HC.KE = HC.KE'Old;
 
 
-   --  RFC 5246 7.4.1.2: Parse TLS 1.2 ServerHello.
-   --
-   --  Validates:
-   --    - server_version = 0x0303
-   --    - cipher_suite is one we offered and support
-   --    - compression_method = 0x00 (we don't support compression)
-   --    - Extracts server_random
-   --    - Extracts session_id (for resumption)
-   --
-   --  RFC 5246 7.4.3: "The cipher suite list ... contains the
-   --  cipher suites in the order of the client's preference."
-   --  The server MUST select a suite from the client's list.
-   procedure Parse_Server_Hello_12
-     (Negotiated : in out Supported_Suite;
-      Last_Err   : in out Error_Code;
-      HC         : in out Engaged_Context;
-      Data       : in Byte_Seq;
-      OK         : out Boolean)
-   with
-     Pre =>
-       Data'First = 0
-       and then Data'Length > 0
-       and then Data'Last < N32'Last,
-     Post =>
-       (if OK then Valid_TLS12_Suite (Negotiated))
-       and then HC.TS = HC.TS'Old
-       and then HC.HRR_Cookie_Len = HC.HRR_Cookie_Len'Old
-       and then (if HC.HRR_Cookie_Len'Old <= N32 (HC.HRR_Cookie'Length)
-                 then HC.HRR_Cookie_Len <= N32 (HC.HRR_Cookie'Length));
-
    --  RFC 5077 3.3 TLS 1.2 NewSessionTicket builder.
    --
    --  Wire format (body, after the 4-byte HS header):
