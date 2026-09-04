@@ -21,6 +21,9 @@ with RFLX.TLS_Handshake.Certificate;
 with RFLX.TLS_Handshake.Certificate_Entries;
 with RFLX.TLS_Handshake.Certificate_Entry;
 with RFLX.TLS_Handshake.Certificate_Verify;
+with RFLX.TLS_Handshake.Encrypted_Extensions;
+with RFLX.TLS_Handshake.EE_Extensions;
+with RFLX.TLS_Handshake.EE_Extension;
 with RFLX.TLS_Handshake.Certificate_Request;
 with RFLX.TLS_Handshake.CR_Extensions;
 with RFLX.TLS_Handshake.CR_Extension;
@@ -645,63 +648,83 @@ is
       Ext_Len  : constant EE_Ext_List_Len := SNI_Ext_Len + ALPN_Ext_Len;
       Body_Len : constant EE_Body_Len := 2 + Ext_Len;  --  ext_list_len(2) + exts
       Msg_Len  : constant EE_Msg_Len := 4 + Body_Len;
-      Pos      : N32;
    begin
       --  Unchanged unless an ALPN protocol is selected below.
       Negotiated_ALPN := S.Negotiated_ALPN;
       Result := (others => 0);
 
-      --  Handshake header
-      Result (0) := HS_Msg_Wire (HT_Encrypted_Extensions);
-      Result (1) := Byte (Body_Len / 65536);
-      Result (2) := Byte ((Body_Len / 256) mod 256);
-      Result (3) := Byte (Body_Len mod 256);
+      declare
+         package EE      renames RFLX.TLS_Handshake.Encrypted_Extensions;
+         package EE_Seq  renames RFLX.TLS_Handshake.EE_Extensions;
+         package EE_Elem renames RFLX.TLS_Handshake.EE_Extension;
+         procedure EE_Free is new
+           Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+         Buf : RBT.Bytes_Ptr;
+         Ctx : EE.Context;
+      begin
+         if Msg_Len > N32 (Result'Length) then
+            return;
+         end if;
 
-      --  Extensions list length
-      Result (4) := Byte (Ext_Len / 256);
-      Result (5) := Byte (Ext_Len mod 256);
+         Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+         EE.Initialize (Ctx, Buf);
+         EE.Set_Length (Ctx, RFLX.TLS_Handshake.Encrypted_Extensions_Length (Ext_Len));
 
-      Pos := 6;
-
-      --  server_name acknowledgement (if client sent SNI and this is not
-      --  a PSK resumption)
-      if SNI_Ext_Len > 0 then
-         Result (Pos) := 0;
-         Result (Pos + 1) := 0;
-         Result (Pos + 2) := 0;
-         Result (Pos + 3) := 0;
-         Pos := Pos + SNI_Ext_Len;
-      end if;
-
-      --  ALPN extension (if matched)
-      if ALPN_Match then
-         --  Extension type (0x0010)
-         Result (Pos) := 0;
-         Result (Pos + 1) := 16#10#;
-         --  Extension data length
          declare
-            DL : constant N32 := N32 (3 + ALPN_PL);
+            Exts : EE_Seq.Context;
          begin
-            Result (Pos + 2) := Byte (DL / 256);
-            Result (Pos + 3) := Byte (DL mod 256);
+            EE.Switch_To_Extensions (Ctx, Exts);
+
+            --  RFC 6066 3 / RFC 8446 4.4.1: server_name acknowledgement, empty body.
+            if SNI_Ext_Len > 0 then
+               declare
+                  E : EE_Elem.Context;
+               begin
+                  EE_Seq.Switch (Exts, E);
+                  EE_Elem.Set_Tag (E, RFLX.Tls_Extensiontype_Values.Server_Name);
+                  EE_Elem.Set_Data_Length (E, 0);
+                  EE_Elem.Set_Data_Empty (E);
+                  EE_Seq.Update (Exts, E);
+               end;
+            end if;
+
+            --  RFC 7301: application_layer_protocol_negotiation, the selected
+            --  protocol. Body = protocol_name_list<1..>: list_len(2) +
+            --  proto_len(1) + proto, laid down as the extension's opaque data.
+            if ALPN_Match then
+               declare
+                  E     : EE_Elem.Context;
+                  A_Len : constant N32 := N32 (ALPN_PL);
+                  A_Body : Byte_Seq (0 .. 2 + A_Len) := (others => 0);
+               begin
+                  A_Body (0) := Byte ((A_Len + 1) / 256);
+                  A_Body (1) := Byte ((A_Len + 1) mod 256);
+                  A_Body (2) := Byte (A_Len);
+                  for I in 1 .. ALPN_PL loop
+                     A_Body (2 + N32 (I)) := Byte (Character'Pos (Selected_ALPN.Data (I)));
+                  end loop;
+                  EE_Seq.Switch (Exts, E);
+                  EE_Elem.Set_Tag
+                    (E, RFLX.Tls_Extensiontype_Values.Application_Layer_Protocol_Negotiation);
+                  EE_Elem.Set_Data_Length (E, RFLX.TLS_Handshake.Data_Length (3 + A_Len));
+                  EE_Elem.Set_Data (E, To_RFLX (A_Body));
+                  EE_Seq.Update (Exts, E);
+                  Negotiated_ALPN := Selected_ALPN;
+               end;
+            end if;
+
+            EE.Update_Extensions (Ctx, Exts);
          end;
-         --  Protocol list length
-         Result (Pos + 4) := Byte ((ALPN_PL + 1) / 256);
-         Result (Pos + 5) := Byte ((ALPN_PL + 1) mod 256);
-         --  Protocol name length
-         Result (Pos + 6) := Byte (ALPN_PL);
-         --  Protocol name
-         for I in 1 .. ALPN_PL loop
-            pragma Assert (Pos + N32 (6 + I) <= Result'Last);
-            Result (Pos + N32 (6 + I)) := Byte (Character'Pos (Selected_ALPN.Data (I)));
-         end loop;
 
-         Negotiated_ALPN := Selected_ALPN;
-         Pos := Pos + ALPN_Ext_Len;
-      end if;
-
-      pragma Unreferenced (Pos);
-      Len := Msg_Len;
+         EE.Take_Buffer (Ctx, Buf);
+         Result (0) := HS_Msg_Wire (HT_Encrypted_Extensions);
+         Result (1) := Byte (Body_Len / 65536);
+         Result (2) := Byte ((Body_Len / 256) mod 256);
+         Result (3) := Byte (Body_Len mod 256);
+         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         EE_Free (Buf);
+         Len := Msg_Len;
+      end;
    end Build_Encrypted_Extensions;
 
    procedure Build_Certificate_Request (Result : out Byte_Seq; Len : out N32) is
