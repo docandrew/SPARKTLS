@@ -270,8 +270,7 @@ is
         (Level     => 2,  --  fatal
          Desc      => Alert_Desc (Err),
          Output    => S.Output,
-         Bytes_Out => Dummy,
-         Hdr_Buf   => S.Rec_Hdr);
+         Bytes_Out => Dummy);
       --  Let caller drain the alert before seeing Error_Alert
       if Output_Pending (S) > 0 then
          Result := Has_Output;
@@ -308,8 +307,7 @@ is
          Desc      => Alert_Desc (Err),
          Keys      => S.Server_App,
          Output    => S.Output,
-         Bytes_Out => Dummy,
-         Hdr_Buf   => S.Rec_Hdr);
+         Bytes_Out => Dummy);
       if Output_Pending (S) > 0 then
          Result := Has_Output;
       else
@@ -542,8 +540,7 @@ is
          Records.Parse_Record_Header
            (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
             Avail  => Available (S.Input),
-            Result => Rec,
-            Hdr    => S.Rec_Hdr);
+            Result => Rec);
 
          if Rec.Overflow then
             Send_Alert_And_Error (S, Record_Overflow, Result);
@@ -1042,8 +1039,7 @@ is
          Inner_Type => 16#16#,
          Keys       => S.HC.Server_HS,
          Output     => S.Output,
-         Bytes_Out  => Enc_Out,
-         Hdr_Buf    => S.Rec_Hdr);
+         Bytes_Out  => Enc_Out);
 
       if Enc_Out = 0 then
          S.Last_Error := Insufficient_Buffer;
@@ -1073,8 +1069,7 @@ is
             Inner_Type => 16#16#,
             Keys       => S.HC.Server_HS,
             Output     => S.Output,
-            Bytes_Out  => Enc_Out,
-            Hdr_Buf    => S.Rec_Hdr);
+            Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
@@ -1092,8 +1087,7 @@ is
             Inner_Type => 16#16#,
             Keys       => S.HC.Server_HS,
             Output     => S.Output,
-            Bytes_Out  => Enc_Out,
-            Hdr_Buf    => S.Rec_Hdr);
+            Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
@@ -1109,8 +1103,7 @@ is
             Inner_Type => 16#16#,
             Keys       => S.HC.Server_HS,
             Output     => S.Output,
-            Bytes_Out  => Enc_Out,
-            Hdr_Buf    => S.Rec_Hdr);
+            Bytes_Out  => Enc_Out);
 
          if Enc_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
@@ -2110,8 +2103,7 @@ is
       Records.Parse_Record_Header
         (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
-         Result => Rec,
-         Hdr    => S.Rec_Hdr);
+         Result => Rec);
 
       if Rec.Overflow then
          Send_Encrypted_Alert (S, Record_Overflow, Result);
@@ -2139,8 +2131,7 @@ is
                   Ignored_A : N32;
                begin
                   Abort_Flight (S);
-                  Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
-                                              S.Rec_Hdr);
+                  Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                end;
                S.Last_Error := Unexpected_Message;
                Set_State (S, Error_State);
@@ -2177,8 +2168,7 @@ is
                      Ignored_A : N32;
                   begin
                      Abort_Flight (S);
-                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
-                                                 S.Rec_Hdr);
+                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Decode_Error;
                   Set_State (S, Error_State);
@@ -2206,8 +2196,7 @@ is
                      Ignored_A : N32;
                   begin
                      Abort_Flight (S);
-                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
-                                                 S.Rec_Hdr);
+                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
@@ -2224,8 +2213,7 @@ is
                      Ignored_A : N32;
                   begin
                      Abort_Flight (S);
-                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
-                                                 S.Rec_Hdr);
+                     Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Unexpected_Message;
                   Set_State (S, Error_State);
@@ -2339,7 +2327,7 @@ is
       Ignored_A : N32;
    begin
       Abort_Flight (S);
-      Records.Build_Alert_Record (2, Desc, S.Server_App, S.Output, Ignored_A, S.Rec_Hdr);
+      Records.Build_Alert_Record (2, Desc, S.Server_App, S.Output, Ignored_A);
       S.Last_Error := Err;
       Set_State (S, Error_State);
       if Output_Pending (S) > 0 then
@@ -2590,8 +2578,7 @@ is
                Inner_Type => 16#16#,  --  handshake
                Keys       => S.Server_App,
                Output     => S.Output,
-               Bytes_Out  => Enc_Out,
-               Hdr_Buf    => S.Rec_Hdr);
+               Bytes_Out  => Enc_Out);
          end;
       end if;
    end Send_New_Session_Ticket_13;
@@ -2732,7 +2719,7 @@ is
             begin
                Abort_Flight (S);
                Records.Build_Alert_Record
-                 (2, (if Is_Known then 50 else 10), S.Server_App, S.Output, Ignored_A, S.Rec_Hdr);
+                 (2, (if Is_Known then 50 else 10), S.Server_App, S.Output, Ignored_A);
                S.Last_Error := (if Is_Known then Decode_Error else Unexpected_Message);
             end;
             Set_State (S, Error_State);
@@ -2749,8 +2736,7 @@ is
                Ignored_A : N32;
             begin
                Abort_Flight (S);
-               Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
-                                           S.Rec_Hdr);
+               Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
             end;
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
@@ -2833,8 +2819,7 @@ is
                Ignored_A : N32;
             begin
                Abort_Flight (S);
-               Records.Build_Alert_Record (2, AD_Bad_Record_MAC, S.Server_App, S.Output, Ignored_A,
-                                           S.Rec_Hdr);
+               Records.Build_Alert_Record (2, AD_Bad_Record_MAC, S.Server_App, S.Output, Ignored_A);
             end;
             S.Last_Error := Bad_Record_MAC;
             Set_State (S, Error_State);
@@ -2860,8 +2845,7 @@ is
                Ignored_A : N32;
             begin
                Abort_Flight (S);
-               Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
-                                           S.Rec_Hdr);
+               Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
             end;
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
@@ -2972,8 +2956,7 @@ is
       Records.Parse_Record_Header
         (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
-         Result => Rec,
-         Hdr    => S.Rec_Hdr);
+         Result => Rec);
 
       if Rec.Overflow then
          Send_Encrypted_Alert (S, Record_Overflow, Result);
@@ -3005,8 +2988,7 @@ is
                   Ignored_A : N32;
                begin
                   Abort_Flight (S);
-                  Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
-                                              S.Rec_Hdr);
+                  Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                end;
                S.Last_Error := Unexpected_Message;
                Set_State (S, Error_State);
@@ -3246,8 +3228,7 @@ is
       Records.Parse_Record_Header
         (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
-         Result => Rec,
-         Hdr    => S.Rec_Hdr);
+         Result => Rec);
 
       if Rec.Overflow then
          Send_Encrypted_Alert (S, Record_Overflow, Result);
@@ -3316,8 +3297,7 @@ is
                   Desc      => 10,  --  unexpected_message
                   Keys      => S.Server_App,
                   Output    => S.Output,
-                  Bytes_Out => Ignored_Alert_Out,
-                  Hdr_Buf   => S.Rec_Hdr);
+                  Bytes_Out => Ignored_Alert_Out);
             end;
             S.Last_Error := Unexpected_Message;
             Set_State (S, Error_State);
@@ -3342,8 +3322,7 @@ is
                   Desc      => 22,  --  record_overflow
                   Keys      => S.Server_App,
                   Output    => S.Output,
-                  Bytes_Out => Ignored_Alert_Out,
-                  Hdr_Buf   => S.Rec_Hdr);
+                  Bytes_Out => Ignored_Alert_Out);
             end;
             S.Last_Error := Record_Overflow;
             Set_State (S, Error_State);
@@ -3378,8 +3357,7 @@ is
                   Desc      => 20,      --  bad_record_mac
                   Keys      => S.Server_App,
                   Output    => S.Output,
-                  Bytes_Out => Ignored_Alert_Out,
-                  Hdr_Buf   => S.Rec_Hdr);
+                  Bytes_Out => Ignored_Alert_Out);
             end;
             Set_State (S, Error_State);
             S.Last_Error := Bad_Record_MAC;
@@ -3427,8 +3405,7 @@ is
                         Ignored_A : N32;
                      begin
                         Abort_Flight (S);
-                        Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
-                                                    S.Rec_Hdr);
+                        Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A);
                      end;
                      S.Last_Error := Unexpected_Message;
                      Set_State (S, Error_State);
@@ -3468,8 +3445,7 @@ is
                      Ignored_A : N32;
                   begin
                      Abort_Flight (S);
-                     Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A,
-                                                 S.Rec_Hdr);
+                     Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Decode_Error;
                   Set_State (S, Error_State);
@@ -3480,8 +3456,7 @@ is
                      Ignored_A : N32;
                   begin
                      Abort_Flight (S);
-                     Records.Build_Alert_Record (2, AD_Illegal_Parameter, S.Server_App, S.Output, Ignored_A,
-                                                 S.Rec_Hdr);
+                     Records.Build_Alert_Record (2, AD_Illegal_Parameter, S.Server_App, S.Output, Ignored_A);
                   end;
                   S.Last_Error := Illegal_Parameter;
                   Set_State (S, Error_State);
@@ -3502,8 +3477,7 @@ is
                         Desc      => 0,
                         Keys      => S.Server_App,
                         Output    => S.Output,
-                        Bytes_Out => Ignored_A,
-                        Hdr_Buf   => S.Rec_Hdr);
+                        Bytes_Out => Ignored_A);
                   end;
                   if S.State = Connected then
                      Set_State (S, Closing);
@@ -3528,8 +3502,7 @@ is
                            Ignored_A : N32;
                         begin
                            Abort_Flight (S);
-                           Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A,
-                                                       S.Rec_Hdr);
+                           Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                         end;
                         S.Last_Error := Decode_Error;
                         Set_State (S, Error_State);
@@ -3543,8 +3516,7 @@ is
                         Ignored_A : N32;
                      begin
                         Abort_Flight (S);
-                        Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A,
-                                                    S.Rec_Hdr);
+                        Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A);
                      end;
                      S.Last_Error := Decode_Error;
                      Set_State (S, Error_State);

@@ -58,7 +58,7 @@ is
       Abort_Flight (S);
       S.Last_Error := Err;
       Set_State (S, Error_State);
-      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy, S.Rec_Hdr);
+      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
       --  When the output buffer is full, no alert byte hit the wire;
       --  collapse the recorded error to Unexpected_Message so the
       --  Error_Has_Alert ghost remains satisfied (RFC 8446 6 lets
@@ -100,8 +100,7 @@ is
          Keys        => S.Server_App,
          Implicit_IV => S.HC.Server_Write_IV_12,
          Output      => S.Output,
-         Bytes_Out   => Dummy,
-         Hdr_Buf     => S.Rec_Hdr);
+         Bytes_Out   => Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_12;
 
@@ -127,8 +126,7 @@ is
          Keys        => S.Server_App,
          Implicit_IV => S.Server_IV_12,
          Output      => S.Output,
-         Bytes_Out   => Dummy,
-         Hdr_Buf     => S.Rec_Hdr);
+         Bytes_Out   => Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_Connected_12;
 
@@ -281,8 +279,7 @@ is
    procedure Append_Cert_Request_12
      (HC      : in out Handshake_Context;
       Scratch : in out IO_Buffer;
-      OK      : out Boolean;
-      Hdr_Buf : in out RBT_A.Bytes_Ptr)
+      OK      : out Boolean)
    is
       Rec_Out              : N32;
       Cert_Type_RSA_Sign   : constant Byte := 16#01#;
@@ -675,7 +672,7 @@ is
 
          --  4. CertificateRequest (optional client auth)
          if Cfg.Request_Client_Cert then
-            Append_Cert_Request_12 (S.HC, S.Output, CR_OK, S.Rec_Hdr);
+            Append_Cert_Request_12 (S.HC, S.Output, CR_OK);
             if not CR_OK then
                Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                return;
@@ -1018,7 +1015,7 @@ is
             Append_Transcript (S.HC, FB (0 .. FL - 1));
 
             Records.TLS12.Build_Encrypted_Record_12
-              (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, S.Output, EO, S.Rec_Hdr);
+              (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, S.Output, EO);
             --  No counter rewind on the failure paths below: both are fatal
             --  (Error_State), so the advanced counter is never used again --
             --  and a burned nonce STAYS burned, rather than relying on the
@@ -1454,8 +1451,7 @@ is
          begin
             Abort_Flight (S);
             Records.Build_Plaintext_Alert
-              (Level => 1, Desc => 0, Output => S.Output, Bytes_Out => A,
-              Hdr_Buf=> S.Rec_Hdr);
+              (Level => 1, Desc => 0, Output => S.Output, Bytes_Out => A);
             pragma Assert (A in 0 | 7);
          end;
          Set_State (S, Closing);
@@ -1555,7 +1551,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -1749,7 +1745,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -2014,7 +2010,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -2418,7 +2414,7 @@ is
          pragma Assert (S.HC.Server_Write_IV_12'Length = Records.TLS12.Implicit_IV_Len);
 
          Records.TLS12.Build_Encrypted_Record_12
-           (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, S.Output, EO, S.Rec_Hdr);
+           (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, S.Output, EO);
 
          if EO = 0 then
             --  Fatal path: no rewind, the burned nonce stays
@@ -2455,7 +2451,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
       if not Rec.OK then
          --  RFC 5246 7.2.1: alerts are under the current write
          --  state. We're past the client's CCS (READ side encrypted)
@@ -2693,7 +2689,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       --  RFC 5246 7.2.1 / 7.2.2: post-Finished alerts MUST be
       --  encrypted under the app keys; a plaintext alert lands as a
@@ -2744,8 +2740,7 @@ is
                Keys        => S.Server_App,
                Implicit_IV => S.Server_IV_12,
                Output      => S.Output,
-               Bytes_Out   => A,
-               Hdr_Buf     => S.Rec_Hdr);
+               Bytes_Out   => A);
             pragma Assert (A <= N32 (S.Output.Storage'Length));
          end;
          Result := (if Output_Pending (S) > 0 then Has_Output else OK);
@@ -2863,8 +2858,7 @@ is
                            Keys        => S.Server_App,
                            Implicit_IV => S.Server_IV_12,
                            Output      => S.Output,
-                           Bytes_Out   => A,
-                           Hdr_Buf     => S.Rec_Hdr);
+                           Bytes_Out   => A);
                         pragma Assert (A <= N32 (S.Output.Storage'Length));
                      end;
                      if S.State = Connected then

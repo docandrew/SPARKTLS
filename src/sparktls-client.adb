@@ -679,8 +679,7 @@ is
                  (Level     => 2,
                   Desc      => Alert_Desc (S.Last_Error),
                   Output    => S.Output,
-                  Bytes_Out => Ignored_A,
-                  Hdr_Buf   => S.Rec_Hdr);
+                  Bytes_Out => Ignored_A);
             end;
             S.State := Error_State;
             Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
@@ -721,8 +720,7 @@ is
                     (Level     => 2,
                      Desc      => Alert_Desc (Unexpected_Message),
                      Output    => S.Output,
-                     Bytes_Out => Ignored_A,
-                     Hdr_Buf   => S.Rec_Hdr);
+                     Bytes_Out => Ignored_A);
                end;
                S.Last_Error := Unexpected_Message;
                S.State := Error_State;
@@ -850,8 +848,7 @@ is
          Records.Parse_Record_Header
            (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
             Avail  => Available (S.Input),
-            Result => Rec,
-            Hdr    => S.Rec_Hdr);
+            Result => Rec);
 
          if Rec.Bad_Version then
             S.Last_Error := Protocol_Version;
@@ -909,8 +906,7 @@ is
                           (Level     => 2,
                            Desc      => Alert_Desc (Unexpected_Message),
                            Output    => S.Output,
-                           Bytes_Out => A,
-                           Hdr_Buf   => S.Rec_Hdr);
+                           Bytes_Out => A);
                         pragma Assert (A <= N32 (S.Output.Storage'Length));
                      end;
                      S.Last_Error := Unexpected_Message;
@@ -1252,8 +1248,7 @@ is
                Keys        => S.Client_App,
                Implicit_IV => S.Client_IV_12,
                Output      => S.Output,
-               Bytes_Out   => Ignored_Alert_Out,
-               Hdr_Buf     => S.Rec_Hdr);
+               Bytes_Out   => Ignored_Alert_Out);
 
          when TLS_1_3          =>
             Abort_Flight (S);
@@ -1262,8 +1257,7 @@ is
                Desc      => 0,
                Keys      => S.Client_App,
                Output    => S.Output,
-               Bytes_Out => Ignored_Alert_Out,
-               Hdr_Buf   => S.Rec_Hdr);
+               Bytes_Out => Ignored_Alert_Out);
 
          when TLS_Undetermined =>
             null;

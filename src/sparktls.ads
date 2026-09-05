@@ -2871,11 +2871,6 @@ private
       Input  : IO_Buffer;
       Output : IO_Buffer;
 
-      --  Per-connection RecordFlux buffer for the 5-byte TLS record header
-      --  (Records.Parse_Record_Header). Records outlive the handshake slot,
-      --  so this cannot live in HS_Pool; allocated lazily on the first
-      --  record and reused for every record of the connection.
-      Rec_Hdr : RBT_A.Bytes_Ptr := null;
 
       --  Flight protocol (Begin_Flight / Abort_Flight / End_Flight): a
       --  handshake flight is built straight into Output; on failure the

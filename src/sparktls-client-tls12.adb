@@ -58,7 +58,7 @@ is
       Abort_Flight (S);
       S.Last_Error := Err;
       Set_State (S, Error_State);
-      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy, S.Rec_Hdr);
+      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
 
@@ -77,8 +77,7 @@ is
          Keys        => S.Client_App,
          Implicit_IV => S.Client_IV_12,
          Output      => S.Output,
-         Bytes_Out   => Dummy,
-         Hdr_Buf     => S.Rec_Hdr);
+         Bytes_Out   => Dummy);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_Connected_12;
 
@@ -1382,7 +1381,7 @@ is
       Append_Transcript (S.HC.TS, FB (0 .. FL - 1));
 
       Build_Encrypted_Record_12
-        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, S.Output, EO, S.Rec_Hdr);
+        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, S.Output, EO);
       if EO = 0 then
          --  Fatal path -- no counter rewind; the burned nonce stays
          --  burned and the connection dies here.
@@ -2058,7 +2057,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -2814,7 +2813,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -2919,8 +2918,7 @@ is
          Keys        => S.Client_App,
          Implicit_IV => S.HC.Client_Write_IV_12,
          Output      => S.Output,
-         Bytes_Out   => Dummy,
-         Hdr_Buf     => S.Rec_Hdr);
+         Bytes_Out   => Dummy);
       --  No rewind on Dummy = 0: this path sets Error_State below
       --  unconditionally, so the advanced counter is never used again.
 
@@ -3069,7 +3067,7 @@ is
               (S.HC.Master_Secret_12, Label_Client_Finished, Byte_Seq (TH), False, FB, FL);
          end if;
          Build_Encrypted_Record_12
-           (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, S.Output, EO, S.Rec_Hdr);
+           (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, S.Output, EO);
          --  Both failure paths below are fatal (Error_State): no counter
          --  rewind, the burned nonce stays burned.
          if EO = 0 then
@@ -3100,7 +3098,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -3345,7 +3343,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;

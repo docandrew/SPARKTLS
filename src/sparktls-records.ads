@@ -63,12 +63,6 @@ is
    --  very first ClientHello  BoGo LooseInitialRecordVersion. All
    --  other call sites leave the default False so mid-handshake junk
    --  versions still trip Bad_Version (BoGo CheckRecordVersion).
-   --  The connection's RecordFlux record-layer scratch buffer (Session.Rec_Hdr):
-   --  five bytes, enough for a record header or an alert body. Allocated on
-   --  first use, then borrowed and returned by every header parse and build.
-   procedure Ensure_Header_Buffer (Hdr : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
-   with Post => Hdr /= null;
-
    --  Build the 5-byte record header directly into Output at the write
    --  position, in place (no scratch, no copy), via SPARKTLS.RFLX_Borrow.
    --  OK is False iff there was no room; then Output is unchanged.
@@ -89,7 +83,6 @@ is
      (Data          : in Byte_Seq;
       Avail         : in N32;
       Result        : out Parse_Result;
-      Hdr           : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr;
       Loose_Initial : in Boolean := False)
       --  Hdr is the connection's 5-byte RecordFlux header buffer (allocated
       --  here on first use, then borrowed and returned on every call).
@@ -163,8 +156,7 @@ is
       Inner_Type : in Byte;
       Keys       : in out Traffic_Keys;
       Output     : in out IO_Buffer;
-      Bytes_Out  : out N32;
-      Hdr_Buf    : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      Bytes_Out  : out N32)
       --  Relaxed 2026-04-29: the body uses Ada slide-assignment to copy
       --  Plaintext into a 0-based local Inner buffer, so any First works.
       --  Length-based bound replaces the prior absolute-Last bound so a
@@ -249,8 +241,7 @@ is
       Desc      : in Byte;
       Keys      : in out Traffic_Keys;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32;
-      Hdr_Buf   : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      Bytes_Out : out N32)
    with
      Pre => SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
      Post =>
@@ -272,8 +263,7 @@ is
       Desc      : in Byte;
       --  TLS alert description
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32;
-      Hdr_Buf   : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      Bytes_Out : out N32)
    with
      Pre => SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
      Post =>

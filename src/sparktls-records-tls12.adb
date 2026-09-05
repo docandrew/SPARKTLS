@@ -190,10 +190,8 @@ is
       Keys         : in out Traffic_Keys;
       Implicit_IV  : in Byte_Seq;
       Output       : in out IO_Buffer;
-      Bytes_Out    : out N32;
-      Hdr_Buf      : in out RBT.Bytes_Ptr)
+      Bytes_Out    : out N32)
    is
-      pragma Unreferenced (Hdr_Buf);  --  removed with Rec_Hdr in the parse-side step
       pragma Assert (Plaintext'Last < Max_Record_Plaintext);
       PT_Len : constant N32 := N32 (Plaintext'Length);
 
@@ -526,8 +524,7 @@ is
       Keys        : in out Traffic_Keys;
       Implicit_IV : in Byte_Seq;
       Output      : in out IO_Buffer;
-      Bytes_Out   : out N32;
-      Hdr_Buf     : in out RBT.Bytes_Ptr)
+      Bytes_Out   : out N32)
    is
       --  Alert payload: level[1] || description[1] = 2 bytes
       Alert : constant Byte_Seq (0 .. 1) := (0 => Level, 1 => Desc);
@@ -542,8 +539,7 @@ is
          Keys         => Keys,
          Implicit_IV  => Implicit_IV,
          Output       => Output,
-         Bytes_Out    => Bytes_Out,
-         Hdr_Buf      => Hdr_Buf);
+         Bytes_Out    => Bytes_Out);
    end Build_Alert_Record_12;
 
 end SPARKTLS.Records.TLS12;

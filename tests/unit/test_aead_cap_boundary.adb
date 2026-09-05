@@ -19,10 +19,6 @@ with SPARKTLS.Records.TLS12;
 with RFLX.RFLX_Builtin_Types;
 
 procedure Test_AEAD_Cap_Boundary is
-   --  Record-layer RecordFlux scratch buffer, threaded through every record
-   --  builder below exactly as Session.Rec_Hdr is in production.
-   Hdr_Buf : RFLX.RFLX_Builtin_Types.Bytes_Ptr := null;
-
    Pass : Natural := 0;
    Fail : Natural := 0;
 
@@ -73,8 +69,7 @@ begin
          Keys         => Keys,
          Implicit_IV  => IV,
          Output       => Output,
-         Bytes_Out    => Bytes_Out,
-         Hdr_Buf      => Hdr_Buf);
+         Bytes_Out    => Bytes_Out);
       Check ("final in-budget record is emitted", Bytes_Out > 0);
       Check ("counter lands exactly on the cap",
              Unsigned_64 (Keys.Counter) = Cap);
@@ -91,8 +86,7 @@ begin
          Keys        => Keys,
          Implicit_IV => IV,
          Output      => Output,
-         Bytes_Out   => Bytes_Out,
-         Hdr_Buf     => Hdr_Buf);
+         Bytes_Out   => Bytes_Out);
       Check ("exhausted channel refuses the alert", Bytes_Out = 0);
       Check ("refusal does not advance the counter",
              Unsigned_64 (Keys.Counter) = Cap);
@@ -106,8 +100,7 @@ begin
          Keys         => Keys,
          Implicit_IV  => IV,
          Output       => Output,
-         Bytes_Out    => Bytes_Out,
-         Hdr_Buf      => Hdr_Buf);
+         Bytes_Out    => Bytes_Out);
       Check ("exhausted channel refuses app data", Bytes_Out = 0);
       Check ("refused app data does not advance the counter",
              Unsigned_64 (Keys.Counter) = Cap);

@@ -65,8 +65,7 @@ is
         (Level     => 2,  --  fatal
          Desc      => Alert_Desc (Err),
          Output    => S.Output,
-         Bytes_Out => Dummy,
-         Hdr_Buf   => S.Rec_Hdr);
+         Bytes_Out => Dummy);
       --  Let caller drain the alert before seeing Error_Alert
       if Output_Pending (S) > 0 then
          Result := Has_Output;
@@ -515,7 +514,6 @@ is
            (Data          => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
             Avail         => Available (S.Input),
             Result        => Rec,
-            Hdr           => S.Rec_Hdr,
             Loose_Initial => True);
 
          if Rec.Overflow then
@@ -1205,8 +1203,7 @@ is
                Keys        => S.Server_App,
                Implicit_IV => S.Server_IV_12,
                Output      => S.Output,
-               Bytes_Out   => Ignored_Alert_Out,
-               Hdr_Buf     => S.Rec_Hdr);
+               Bytes_Out   => Ignored_Alert_Out);
 
          when TLS_1_3          =>
             Abort_Flight (S);
@@ -1215,8 +1212,7 @@ is
                Desc      => 0,
                Keys      => S.Server_App,
                Output    => S.Output,
-               Bytes_Out => Ignored_Alert_Out,
-               Hdr_Buf   => S.Rec_Hdr);
+               Bytes_Out => Ignored_Alert_Out);
 
          when TLS_Undetermined =>
             return;

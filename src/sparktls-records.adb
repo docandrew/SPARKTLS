@@ -76,13 +76,6 @@ is
       end;
    end Write_To_Output;
 
-   procedure Ensure_Header_Buffer (Hdr : in out RBT.Bytes_Ptr) is
-   begin
-      if Hdr = null then
-         Hdr := new RBT.Bytes'(1 .. RBT.Index (Record_Header_Size) => 0);
-      end if;
-   end Ensure_Header_Buffer;
-
 
    --  Build a 5-byte record header directly into Output.Storage at byte
    --  position Pos (a 0-based count), in place via Borrow. Does NOT advance
@@ -124,7 +117,6 @@ is
      (Data          : in Byte_Seq;
       Avail         : in N32;
       Result        : out Parse_Result;
-      Hdr           : in out RBT.Bytes_Ptr;
       Loose_Initial : in Boolean := False)
    is
       --  TLS record header: content_type(1) + version(2) + length(2) = 5
@@ -134,7 +126,6 @@ is
       --  fields are tolerant in the spec, so the RFC policy below runs in the
       --  RFC-mandated order and each fault keeps its alert: version, then
       --  length, then type.
-      pragma Unreferenced (Hdr);  --  removed with Rec_Hdr in the sweep step
       package RH renames RFLX.TLS_Record.TLS_Record_Header;
       Ctx      : RH.Context;
       P        : RBT.Bytes_Ptr;
@@ -308,10 +299,8 @@ is
       Inner_Type : in Byte;
       Keys       : in out Traffic_Keys;
       Output     : in out IO_Buffer;
-      Bytes_Out  : out N32;
-      Hdr_Buf    : in out RBT.Bytes_Ptr)
+      Bytes_Out  : out N32)
    is
-      pragma Unreferenced (Hdr_Buf);  --  removed with Rec_Hdr in the parse-side step
       Inner_Len : constant N32 := N32 (Plaintext'Length) + 1;
       Enc_Len   : constant N32 := Inner_Len + Tag_Size;
       Total     : constant N32 := Record_Header_Size + Enc_Len;
@@ -616,8 +605,7 @@ is
       Desc      : in Byte;
       Keys      : in out Traffic_Keys;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32;
-      Hdr_Buf   : in out RBT.Bytes_Ptr)
+      Bytes_Out : out N32)
    is
       Alert_Plaintext : Byte_Seq (0 .. 1) := (Level, Desc);
    begin
@@ -626,22 +614,18 @@ is
          Inner_Type => 16#15#,
          Keys       => Keys,
          Output     => Output,
-         Bytes_Out  => Bytes_Out,
-         Hdr_Buf    => Hdr_Buf);
+         Bytes_Out  => Bytes_Out);
    end Build_Alert_Record;
 
    procedure Build_Plaintext_Alert
      (Level     : in Byte;
       Desc      : in Byte;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32;
-      Hdr_Buf   : in out RBT.Bytes_Ptr)
+      Bytes_Out : out N32)
    is
       use RFLX.TLS_Alert;
       use RFLX.TLS_Alert.Alert;
       use RFLX.Tls_Parameters;
-
-      pragma Unreferenced (Hdr_Buf);  --  removed with Rec_Hdr in the parse-side step
 
       Alert_Lvl  : RFLX.TLS_Alert.Alert_Level;
       Alert_Desc : RFLX.Tls_Parameters.TLS_Alerts_Enum;

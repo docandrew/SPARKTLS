@@ -96,8 +96,7 @@ is
       Keys         : in out Traffic_Keys;
       Implicit_IV  : in Byte_Seq;
       Output       : in out IO_Buffer;
-      Bytes_Out    : out N32;
-      Hdr_Buf      : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      Bytes_Out    : out N32)
       --  BEST-EFFORT (user decision 2026-08-24, unifying on the alert
       --  builder's discipline): no Space_Left precondition. The body
       --  refuses an exhausted channel itself -- Bytes_Out = 0, counter
@@ -188,8 +187,7 @@ is
       Keys        : in out Traffic_Keys;
       Implicit_IV : in Byte_Seq;
       Output      : in out IO_Buffer;
-      Bytes_Out   : out N32;
-      Hdr_Buf     : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      Bytes_Out   : out N32)
    with
      Pre => Level in 1 .. 2 and Implicit_IV'First = 0 and Implicit_IV'Length = Implicit_IV_Len,
      --  NO Space_Left Pre: alerts fire from ERROR paths, where

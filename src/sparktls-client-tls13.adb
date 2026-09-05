@@ -70,8 +70,7 @@ is
          Desc      => Alert_Desc (Err),
          Keys      => S.HC.Client_HS,
          Output    => S.Output,
-         Bytes_Out => A2,
-         Hdr_Buf   => S.Rec_Hdr);
+         Bytes_Out => A2);
       S.Last_Error := Err;
       S.State := Error_State;
       Result :=
@@ -96,8 +95,7 @@ is
          Desc      => Alert_Desc (Err),
          Keys      => S.Client_App,
          Output    => S.Output,
-         Bytes_Out => A,
-         Hdr_Buf   => S.Rec_Hdr);
+         Bytes_Out => A);
       S.Last_Error := Err;
       S.State := Error_State;
       Result := (if A > 0 or else Output_Pending (S) > 0 then Has_Output else Error_Alert);
@@ -1403,8 +1401,7 @@ is
                Inner_Type => 16#16#,
                Keys       => S.HC.Client_HS,
                Output     => S.Output,
-               Bytes_Out  => Enc_Out,
-               Hdr_Buf    => S.Rec_Hdr);
+               Bytes_Out  => Enc_Out);
             if Enc_Out = 0 then
                Result := Error_Alert;
             end if;
@@ -1448,8 +1445,7 @@ is
                Inner_Type => 16#16#,
                Keys       => S.HC.Client_HS,
                Output     => S.Output,
-               Bytes_Out  => Enc_Out,
-               Hdr_Buf    => S.Rec_Hdr);
+               Bytes_Out  => Enc_Out);
             if Enc_Out = 0 then
                Result := Error_Alert;
                return;
@@ -1504,8 +1500,7 @@ is
                      Inner_Type => 16#16#,
                      Keys       => S.HC.Client_HS,
                      Output     => S.Output,
-                     Bytes_Out  => Enc_Out,
-                     Hdr_Buf    => S.Rec_Hdr);
+                     Bytes_Out  => Enc_Out);
                   if Enc_Out = 0 then
                      Result := Error_Alert;
                      return;
@@ -1563,8 +1558,7 @@ is
             Inner_Type => 16#16#,
             Keys       => S.HC.Client_HS,
             Output     => S.Output,
-            Bytes_Out  => Enc_Out,
-            Hdr_Buf    => S.Rec_Hdr);
+            Bytes_Out  => Enc_Out);
       end;
 
       if Enc_Out = 0 then
@@ -1638,8 +1632,7 @@ is
          Inner_Type => 16#16#,
          Keys       => S.HC.Client_HS,
          Output     => S.Output,
-         Bytes_Out  => Enc_Out,
-         Hdr_Buf    => S.Rec_Hdr);
+         Bytes_Out  => Enc_Out);
 
       if Enc_Out = 0 then
          S.Last_Error := Insufficient_Buffer;
@@ -2375,8 +2368,7 @@ is
       Records.Parse_Record_Header
         (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
-         Result => Rec,
-         Hdr    => S.Rec_Hdr);
+         Result => Rec);
 
       if Rec.Bad_Version then
          --  RFC 8446 5.1 / RFC 5246 6.2.1: legacy_record_version
@@ -2997,8 +2989,7 @@ is
                         Desc      => 0,
                         Keys      => S.Client_App,
                         Output    => S.Output,
-                        Bytes_Out => A,
-                        Hdr_Buf   => S.Rec_Hdr);
+                        Bytes_Out => A);
                   end;
                   if S.State = Connected then
                      Set_State (S, Closing);
@@ -3070,8 +3061,7 @@ is
       Records.Parse_Record_Header
         (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
-         Result => Rec,
-         Hdr    => S.Rec_Hdr);
+         Result => Rec);
 
       if Rec.Bad_Version then
          --  RFC 8446 5.1 / RFC 5246 6.2.1: legacy_record_version
