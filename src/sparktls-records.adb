@@ -4,7 +4,6 @@ with SPARKTLSCrypto.AES_GCM;
 with SPARKTLSCrypto.ChaCha20_Poly1305;
 use SPARKTLSCrypto;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
-with Ada.Unchecked_Deallocation;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.RFLX_Types;
 with RFLX.TLS_Alert;
@@ -75,6 +74,34 @@ is
       end;
    end Write_To_Output;
 
+   procedure Ensure_Header_Buffer (Hdr : in out RBT.Bytes_Ptr) is
+   begin
+      if Hdr = null then
+         Hdr := new RBT.Bytes'(1 .. RBT.Index (Record_Header_Size) => 0);
+      end if;
+   end Ensure_Header_Buffer;
+
+   procedure Build_Record_Header
+     (Hdr_Buf      : in out RBT.Bytes_Ptr;
+      Content_Type : in Byte;
+      Version      : in N32;
+      Length       : in N32;
+      Hdr          : out Byte_Seq)
+   is
+      package RH renames RFLX.TLS_Record.TLS_Record_Header;
+      Ctx : RH.Context;
+   begin
+      Ensure_Header_Buffer (Hdr_Buf);
+      --  A build starts from an empty context: the default Written_Last is
+      --  exactly right here (a parse must pass it explicitly).
+      RH.Initialize (Ctx, Hdr_Buf);
+      RH.Set_Content_Type (Ctx, RFLX.TLS_Record.Record_Content_Type_Any (Content_Type));
+      RH.Set_Legacy_Record_Version (Ctx, RFLX.TLS_Record.Record_Version_Any (Version));
+      RH.Set_Length (Ctx, RFLX.TLS_Record.Record_Length_Any (Length));
+      RH.Take_Buffer (Ctx, Hdr_Buf);
+      Hdr := To_NaCl (Hdr_Buf.all (1 .. RBT.Index (Record_Header_Size)));
+   end Build_Record_Header;
+
    procedure Parse_Record_Header
      (Data          : in Byte_Seq;
       Avail         : in N32;
@@ -90,7 +117,6 @@ is
       --  the spec, so the RFC policy below runs in the RFC-mandated order and
       --  each fault keeps its alert: version, then length, then type.
       package RH renames RFLX.TLS_Record.TLS_Record_Header;
-      use type RBT.Bytes_Ptr;
       Ctx      : RH.Context;
       B        : N32;
       V        : N32;
@@ -107,10 +133,7 @@ is
 
       B := Data'First;
 
-      --  Per-connection header buffer: allocated once, reused every record.
-      if Hdr = null then
-         Hdr := new RBT.Bytes'(1 .. RBT.Index (Record_Header_Size) => 0);
-      end if;
+      Ensure_Header_Buffer (Hdr);
       Hdr.all (1 .. RBT.Index (Record_Header_Size)) :=
         To_RFLX (Data (B .. B + Record_Header_Size - 1));
 
@@ -205,7 +228,10 @@ is
    end Parse_Record_Header;
 
    procedure Build_Handshake_Record
-     (Fragment : in Byte_Seq; Output : in out IO_Buffer; Bytes_Out : out N32)
+     (Fragment  : in Byte_Seq;
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32;
+      Hdr_Buf   : in out RBT.Bytes_Ptr)
    is
       --  TLS record: type(1) + version(2) + length(2) + fragment
       --  Manual construction replaces RFLX to eliminate 'Unrestricted_Access.
@@ -218,12 +244,8 @@ is
       --  Build 5-byte header: Handshake (0x16) + TLS 1.2 (0x0303) + length
       --  RFC 8446 5.1: SHOULD be 0x0303 for all records after ClientHello.
       --  RFC 5246 6.2.1: record version = negotiated version (0x0303).
-      Hdr (0) := 16#16#;  --  handshake
-      Hdr (1) := 16#03#;
-      Hdr (2) := 16#03#;  --  TLS 1.2 / 1.3 record layer version
-      pragma Assert (Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
-      Hdr (3) := Byte (Frag_Len / 256);
-      Hdr (4) := Byte (Frag_Len mod 256);
+      Build_Record_Header (Hdr_Buf, 16#16#, 16#0303#, Frag_Len, Hdr);
+      pragma Assert (Record_Version_RFC_8446_5_1 (16#03#, 16#03#));
 
       Write_To_Output (Output, Hdr, OK);
       if not OK then
@@ -239,7 +261,10 @@ is
    end Build_Handshake_Record;
 
    procedure Build_Initial_ClientHello_Record
-     (Fragment : in Byte_Seq; Output : in out IO_Buffer; Bytes_Out : out N32)
+     (Fragment  : in Byte_Seq;
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32;
+      Hdr_Buf   : in out RBT.Bytes_Ptr)
    is
       Frag_Len : constant N32 := N32 (Fragment'Length);
       Hdr      : Byte_Seq (0 .. 4) := (others => 0);
@@ -250,11 +275,7 @@ is
       --  RFC 8446 5.1: legacy_record_version = 0x0301 (TLS 1.0) for
       --  the initial ClientHello. Middleboxes more reliably forward
       --  the record when it claims TLS 1.0 than TLS 1.2.
-      Hdr (0) := 16#16#;  --  handshake
-      Hdr (1) := 16#03#;
-      Hdr (2) := 16#01#;  --  TLS 1.0 record version (compat)
-      Hdr (3) := Byte (Frag_Len / 256);
-      Hdr (4) := Byte (Frag_Len mod 256);
+      Build_Record_Header (Hdr_Buf, 16#16#, 16#0301#, Frag_Len, Hdr);
 
       Write_To_Output (Output, Hdr, OK);
       if not OK then
@@ -274,7 +295,8 @@ is
       Inner_Type : in Byte;
       Keys       : in out Traffic_Keys;
       Output     : in out IO_Buffer;
-      Bytes_Out  : out N32)
+      Bytes_Out  : out N32;
+      Hdr_Buf    : in out RBT.Bytes_Ptr)
    is
       Inner_Len : constant N32 := N32 (Plaintext'Length) + 1;
       Enc_Len   : constant N32 := Inner_Len + Tag_Size;
@@ -293,11 +315,8 @@ is
       end if;
 
       --  Build TLS record header (5 bytes: type + version + length).
-      Hdr (0) := 16#17#;  --  application_data outer type
-      Hdr (1) := 16#03#;
-      Hdr (2) := 16#03#;
-      pragma Assert (Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
-      Hdr (3 .. 4) := TS16 (Unsigned_16 (Enc_Len));
+      Build_Record_Header (Hdr_Buf, 16#17#, 16#0303#, Enc_Len, Hdr);
+      pragma Assert (Record_Version_RFC_8446_5_1 (16#03#, 16#03#));
 
       --  RFC 8446 5.3: nonce = IV xor sequence number. Fail closed at the
       --  end of the sequence space rather than wrap. Unsigned_64 is
@@ -538,10 +557,18 @@ is
       end;
    end Decrypt_Record;
 
-   procedure Build_CCS_Record (Output : in out IO_Buffer; Bytes_Out : out N32) is
-      CCS : constant Byte_Seq (0 .. 5) := (16#14#, 16#03#, 16#03#, 16#00#, 16#01#, 16#01#);
+   procedure Build_CCS_Record
+     (Output : in out IO_Buffer; Bytes_Out : out N32; Hdr_Buf : in out RBT.Bytes_Ptr)
+   is
+      CCS : Byte_Seq (0 .. 5) := (others => 0);
+      Hdr : Byte_Seq (0 .. 4) := (others => 0);
       OK  : Boolean;
    begin
+      --  Header through RecordFlux; the body is the single fixed octet 0x01
+      --  (RFC 5246 7.1), the same one-byte class as KeyUpdate.
+      Build_Record_Header (Hdr_Buf, 16#14#, 16#0303#, 1, Hdr);
+      CCS (0 .. 4) := Hdr;
+      CCS (5) := 16#01#;
       Write_To_Output (Output, CCS, OK);
       if OK then
          Bytes_Out := 6;
@@ -555,7 +582,8 @@ is
       Desc      : in Byte;
       Keys      : in out Traffic_Keys;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32)
+      Bytes_Out : out N32;
+      Hdr_Buf   : in out RBT.Bytes_Ptr)
    is
       Alert_Plaintext : Byte_Seq (0 .. 1) := (Level, Desc);
    begin
@@ -564,11 +592,16 @@ is
          Inner_Type => 16#15#,
          Keys       => Keys,
          Output     => Output,
-         Bytes_Out  => Bytes_Out);
+         Bytes_Out  => Bytes_Out,
+         Hdr_Buf    => Hdr_Buf);
    end Build_Alert_Record;
 
    procedure Build_Plaintext_Alert
-     (Level : in Byte; Desc : in Byte; Output : in out IO_Buffer; Bytes_Out : out N32)
+     (Level     : in Byte;
+      Desc      : in Byte;
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32;
+      Hdr_Buf   : in out RBT.Bytes_Ptr)
    is
       use RFLX.TLS_Alert;
       use RFLX.TLS_Alert.Alert;
@@ -578,22 +611,11 @@ is
 
       use type RFLX.RFLX_Builtin_Types.Bytes_Ptr;
 
-      procedure RFLX_Free_Alert (Buf : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
-      with Post => Buf = null;
-
-      procedure RFLX_Free_Alert (Buf : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
-      with SPARK_Mode => Off
-      is
-         procedure Dealloc is new
-           Ada.Unchecked_Deallocation
-             (Object => RFLX.RFLX_Builtin_Types.Bytes,
-              Name   => RFLX.RFLX_Builtin_Types.Bytes_Ptr);
-      begin
-         Dealloc (Buf);
-      end RFLX_Free_Alert;
-
-      Buf_Ptr    : RFLX.RFLX_Builtin_Types.Bytes_Ptr :=
-        new RFLX.RFLX_Builtin_Types.Bytes'(1 .. 2 => 0);
+      --  The alert body and the record header both go through RecordFlux
+      --  using the connection's scratch buffer (Hdr_Buf), so this path has no
+      --  allocation of its own; the former per-call new/Unchecked_Deallocation
+      --  (a SPARK_Mode Off body) is gone.
+      Hdr        : Byte_Seq (0 .. 4) := (others => 0);
       Ctx        : RFLX.TLS_Alert.Alert.Context;
       Alert_Lvl  : RFLX.TLS_Alert.Alert_Level;
       Alert_Desc : RFLX.Tls_Parameters.TLS_Alerts_Enum;
@@ -628,28 +650,27 @@ is
       end;
 
       --  Build alert payload via RFLX
-      Initialize (Ctx, Buf_Ptr);
+      Ensure_Header_Buffer (Hdr_Buf);
+      Initialize (Ctx, Hdr_Buf);
       Set_Level (Ctx, Alert_Lvl);
       pragma
         Assert
           (RFLX.Tls_Parameters.Valid_TLS_Alerts (RFLX.Tls_Parameters.To_Base_Integer (Alert_Desc)));
       Set_Description (Ctx, Alert_Desc);
-      Take_Buffer (Ctx, Buf_Ptr);
+      Take_Buffer (Ctx, Hdr_Buf);
 
       --  Wrap in plaintext TLS record: type(1) + version(2) + length(2) + alert(2)
-      if Free_Space (Output) >= 7 and then Buf_Ptr /= null then
-         Output.Data (Output.Write_Pos) := 16#15#;        --  alert
-         Output.Data (Output.Write_Pos + 1) := 16#03#;        --  TLS 1.2
-         Output.Data (Output.Write_Pos + 2) := 16#03#;
-         Output.Data (Output.Write_Pos + 3) := 16#00#;        --  length=2
-         Output.Data (Output.Write_Pos + 4) := 16#02#;
-         Output.Data (Output.Write_Pos + 5) := Byte (Buf_Ptr.all (1));  --  level
-         Output.Data (Output.Write_Pos + 6) := Byte (Buf_Ptr.all (2));  --  description
+      if Free_Space (Output) >= 7 then
+         --  Alert body (2 bytes) out of the scratch buffer FIRST: the header
+         --  build below reuses the same buffer.
+         Output.Data (Output.Write_Pos + 5) := Byte (Hdr_Buf.all (1));  --  level
+         Output.Data (Output.Write_Pos + 6) := Byte (Hdr_Buf.all (2));  --  description
+         Build_Record_Header (Hdr_Buf, 16#15#, 16#0303#, 2, Hdr);
+         Output.Data (Output.Write_Pos .. Output.Write_Pos + 4) := Hdr;
          Output.Write_Pos := Output.Write_Pos + 7;
          Bytes_Out := 7;
       end if;
 
-      RFLX_Free_Alert (Buf_Ptr);
    end Build_Plaintext_Alert;
 
 end SPARKTLS.Records;

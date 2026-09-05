@@ -57,7 +57,7 @@ is
    begin
       S.Last_Error := Err;
       Set_State (S, Error_State);
-      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
+      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy, S.Rec_Hdr);
       --  When the output buffer is full, no alert byte hit the wire;
       --  collapse the recorded error to Unexpected_Message so the
       --  Error_Has_Alert ghost remains satisfied (RFC 8446 6 lets
@@ -98,7 +98,8 @@ is
          Keys        => S.Server_App,
          Implicit_IV => S.HC.Server_Write_IV_12,
          Output      => S.Output,
-         Bytes_Out   => Dummy);
+         Bytes_Out   => Dummy,
+         Hdr_Buf     => S.Rec_Hdr);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_12;
 
@@ -123,7 +124,8 @@ is
          Keys        => S.Server_App,
          Implicit_IV => S.Server_IV_12,
          Output      => S.Output,
-         Bytes_Out   => Dummy);
+         Bytes_Out   => Dummy,
+         Hdr_Buf     => S.Rec_Hdr);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_Connected_12;
 
@@ -274,7 +276,10 @@ is
    --  empty certificate_authorities. Appends to the transcript and to the
    --  scratch flight; OK is False when the record does not fit.
    procedure Append_Cert_Request_12
-     (HC : in out Handshake_Context; Scratch : in out IO_Buffer; OK : out Boolean)
+     (HC      : in out Handshake_Context;
+      Scratch : in out IO_Buffer;
+      OK      : out Boolean;
+      Hdr_Buf : in out RBT_A.Bytes_Ptr)
    is
       Rec_Out              : N32;
       Cert_Type_RSA_Sign   : constant Byte := 16#01#;
@@ -344,7 +349,7 @@ is
       CR_Free (Buf);
 
       Append_Transcript (HC, CR_Buf);
-      Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out);
+      Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out, Hdr_Buf);
       OK := Rec_Out /= 0;
    end Append_Cert_Request_12;
 
@@ -623,7 +628,8 @@ is
             return;
          end if;
          Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
-         Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), Scratch, Rec_Out);
+         Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), Scratch, Rec_Out,
+                                         S.Rec_Hdr);
          if Rec_Out = 0 then
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
             return;
@@ -638,7 +644,8 @@ is
          Build_Certificate_Chain_12 (Cfg.Local.all, Cert_Buf, Cert_Len);
          if Cert_Len > 0 then
             Append_Transcript (S.HC, Cert_Buf (0 .. Cert_Len - 1));
-            Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out);
+            Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out,
+                                            S.Rec_Hdr);
             if Rec_Out = 0 then
                Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                return;
@@ -655,7 +662,8 @@ is
          Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
          if SKE_Len > 0 then
             Append_Transcript (S.HC, SKE_Buf (0 .. SKE_Len - 1));
-            Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), Scratch, Rec_Out);
+            Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), Scratch, Rec_Out,
+                                            S.Rec_Hdr);
             if Rec_Out = 0 then
                Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                return;
@@ -665,7 +673,7 @@ is
 
       --  4. CertificateRequest (optional client auth)
       if Cfg.Request_Client_Cert then
-         Append_Cert_Request_12 (S.HC, Scratch, CR_OK);
+         Append_Cert_Request_12 (S.HC, Scratch, CR_OK, S.Rec_Hdr);
          if not CR_OK then
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
             return;
@@ -679,7 +687,8 @@ is
       begin
          Build_Server_Hello_Done (Done_Buf, Done_Len);
          Append_Transcript (S.HC, Done_Buf (0 .. Done_Len - 1));
-         Records.Build_Handshake_Record (Done_Buf (0 .. Done_Len - 1), Scratch, Rec_Out);
+         Records.Build_Handshake_Record (Done_Buf (0 .. Done_Len - 1), Scratch, Rec_Out,
+                                         S.Rec_Hdr);
          if Rec_Out = 0 then
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
             return;
@@ -885,7 +894,8 @@ is
       end if;
 
       Append_Transcript (S.HC, NST_Buf (0 .. NST_Total - 1));
-      Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), Scratch, NST_Rec_Out);
+      Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), Scratch, NST_Rec_Out,
+                                      S.Rec_Hdr);
 
       if NST_Rec_Out = 0 then
          return;
@@ -957,7 +967,8 @@ is
             return;
          end if;
          Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
-         Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), Scratch, Rec_Out);
+         Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), Scratch, Rec_Out,
+                                         S.Rec_Hdr);
          if Rec_Out = 0 then
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
             return;
@@ -988,7 +999,7 @@ is
       declare
          CCS_Out : N32;
       begin
-         Records.Build_CCS_Record (Scratch, CCS_Out);
+         Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
          if CCS_Out = 0 then
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
             return;
@@ -1009,7 +1020,7 @@ is
          Append_Transcript (S.HC, FB (0 .. FL - 1));
 
          Records.TLS12.Build_Encrypted_Record_12
-           (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO);
+           (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO, S.Rec_Hdr);
          --  No counter rewind on the failure paths below: both are fatal
          --  (Error_State), so the advanced counter is never used again --
          --  and a burned nonce STAYS burned, rather than relying on the
@@ -1445,7 +1456,8 @@ is
             A : N32;
          begin
             Records.Build_Plaintext_Alert
-              (Level => 1, Desc => 0, Output => S.Output, Bytes_Out => A);
+              (Level => 1, Desc => 0, Output => S.Output, Bytes_Out => A,
+              Hdr_Buf=> S.Rec_Hdr);
             pragma Assert (A in 0 | 7);
          end;
          Set_State (S, Closing);
@@ -2355,7 +2367,7 @@ is
 
                --  Emit as plaintext handshake record (server WRITE
                --  state still pre-CCS).
-               Records.Build_Handshake_Record (NST_Data, Scratch, NST_Rec_Out);
+               Records.Build_Handshake_Record (NST_Data, Scratch, NST_Rec_Out, S.Rec_Hdr);
                if NST_Rec_Out = 0 then
                   S.Last_Error := Insufficient_Buffer;
                   Set_State (S, Error_State);
@@ -2391,7 +2403,7 @@ is
          return;
       end if;
 
-      Records.Build_CCS_Record (Scratch, CCS_Out);
+      Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
       if CCS_Out = 0 then
          S.Last_Error := Insufficient_Buffer;
          Set_State (S, Error_State);
@@ -2407,7 +2419,7 @@ is
       pragma Assert (S.HC.Server_Write_IV_12'Length = Records.TLS12.Implicit_IV_Len);
 
       Records.TLS12.Build_Encrypted_Record_12
-        (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO);
+        (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO, S.Rec_Hdr);
 
       if EO = 0 then
          --  Fatal path: no rewind, the burned nonce stays
@@ -2745,7 +2757,8 @@ is
                Keys        => S.Server_App,
                Implicit_IV => S.Server_IV_12,
                Output      => S.Output,
-               Bytes_Out   => A);
+               Bytes_Out   => A,
+               Hdr_Buf     => S.Rec_Hdr);
             pragma Assert (A <= N32 (S.Output.Data'Length));
          end;
          Result := (if Output_Pending (S) > 0 then Has_Output else OK);
@@ -2862,7 +2875,8 @@ is
                            Keys        => S.Server_App,
                            Implicit_IV => S.Server_IV_12,
                            Output      => S.Output,
-                           Bytes_Out   => A);
+                           Bytes_Out   => A,
+                           Hdr_Buf     => S.Rec_Hdr);
                         pragma Assert (A <= N32 (S.Output.Data'Length));
                      end;
                      if S.State = Connected then

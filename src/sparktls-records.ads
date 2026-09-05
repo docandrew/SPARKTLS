@@ -1,4 +1,5 @@
 with RFLX.RFLX_Builtin_Types;
+use type RFLX.RFLX_Builtin_Types.Bytes_Ptr;
 with SPARKNaCl;      use SPARKNaCl;
 with SPARKNaCl.Secretbox;
 with SPARKNaCl.Core;
@@ -56,6 +57,26 @@ is
    --  very first ClientHello  BoGo LooseInitialRecordVersion. All
    --  other call sites leave the default False so mid-handshake junk
    --  versions still trip Bad_Version (BoGo CheckRecordVersion).
+   --  The connection's RecordFlux record-layer scratch buffer (Session.Rec_Hdr):
+   --  five bytes, enough for a record header or an alert body. Allocated on
+   --  first use, then borrowed and returned by every header parse and build.
+   procedure Ensure_Header_Buffer (Hdr : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+   with Post => Hdr /= null;
+
+   --  Serialise a 5-byte TLS record header (RFC 8446 5.1: type, legacy
+   --  version, length) through the RecordFlux TLS_Record_Header builder into
+   --  Hdr_Buf, returning the bytes in Hdr. The single point where a wire
+   --  record header is produced.
+   procedure Build_Record_Header
+     (Hdr_Buf      : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr;
+      Content_Type : in Byte;
+      Version      : in N32;
+      Length       : in N32;
+      Hdr          : out Byte_Seq)
+   with
+     Pre  => Hdr'Length = Record_Header_Size and then Version <= 65535 and then Length <= 65535,
+     Post => Hdr_Buf /= null;
+
    procedure Parse_Record_Header
      (Data          : in Byte_Seq;
       Avail         : in N32;
@@ -95,7 +116,10 @@ is
    --  RFC 8446 5.1: Build a plaintext handshake record.
    --  Used for ClientHello and ServerHello (before encryption).
    procedure Build_Handshake_Record
-     (Fragment : in Byte_Seq; Output : in out IO_Buffer; Bytes_Out : out N32)
+     (Fragment  : in Byte_Seq;
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32;
+      Hdr_Buf   : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
    with
      Pre =>
        Fragment'First = 0
@@ -110,7 +134,10 @@ is
    --  client-side plaintext handshake records use 0x0303 via
    --  Build_Handshake_Record above.
    procedure Build_Initial_ClientHello_Record
-     (Fragment : in Byte_Seq; Output : in out IO_Buffer; Bytes_Out : out N32)
+     (Fragment  : in Byte_Seq;
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32;
+      Hdr_Buf   : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
    with
      Pre => Fragment'First = 0 and Fragment'Length > 0 and Fragment'Length <= Max_Fragment,
      --  A non-zero Bytes_Out means both the 5-byte header and the
@@ -130,7 +157,8 @@ is
       Inner_Type : in Byte;
       Keys       : in out Traffic_Keys;
       Output     : in out IO_Buffer;
-      Bytes_Out  : out N32)
+      Bytes_Out  : out N32;
+      Hdr_Buf    : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
       --  Relaxed 2026-04-29: the body uses Ada slide-assignment to copy
       --  Plaintext into a 0-based local Inner buffer, so any First works.
       --  Length-based bound replaces the prior absolute-Last bound so a
@@ -203,7 +231,8 @@ is
 
    --  RFC 8446 5: Build a Change Cipher Spec record.
    --  Always exactly 6 bytes: header(5) + payload(1 byte = 0x01).
-   procedure Build_CCS_Record (Output : in out IO_Buffer; Bytes_Out : out N32)
+   procedure Build_CCS_Record
+     (Output : in out IO_Buffer; Bytes_Out : out N32; Hdr_Buf : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
    with Post => Bytes_Out in 0 | 6;  --  RFC 8446 5: CCS is exactly 6 bytes
 
    --  RFC 8446 6: Build an encrypted alert record.
@@ -214,7 +243,8 @@ is
       Desc      : in Byte;
       Keys      : in out Traffic_Keys;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32)
+      Bytes_Out : out N32;
+      Hdr_Buf   : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
    with
      Pre => SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
      Post =>
@@ -236,7 +266,8 @@ is
       Desc      : in Byte;
       --  TLS alert description
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32)
+      Bytes_Out : out N32;
+      Hdr_Buf   : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
    with
      Pre => SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
      Post =>

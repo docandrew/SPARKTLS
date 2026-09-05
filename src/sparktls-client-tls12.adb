@@ -57,7 +57,7 @@ is
    begin
       S.Last_Error := Err;
       Set_State (S, Error_State);
-      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy);
+      Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy, S.Rec_Hdr);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Alert_And_Error;
 
@@ -75,7 +75,8 @@ is
          Keys        => S.Client_App,
          Implicit_IV => S.Client_IV_12,
          Output      => S.Output,
-         Bytes_Out   => Dummy);
+         Bytes_Out   => Dummy,
+         Hdr_Buf     => S.Rec_Hdr);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
    end Send_Encrypted_Alert_Connected_12;
 
@@ -1111,7 +1112,7 @@ is
    begin
       Result := OK;
       Append_Transcript (S.HC.TS, Msg);
-      Records.Build_Handshake_Record (Msg, Scratch, Rec_Out);
+      Records.Build_Handshake_Record (Msg, Scratch, Rec_Out, S.Rec_Hdr);
       if Rec_Out = 0 then
          Send_Cleartext_Handshake_Error_12 (S, D, Err, Result);
          pragma Assert (Result in Has_Output | Error_Alert);
@@ -1157,7 +1158,8 @@ is
 
       if Cert_Len > 0 then
          Append_Transcript (S.HC.TS, Cert_Buf (0 .. Cert_Len - 1));
-         Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out);
+         Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out,
+                                         S.Rec_Hdr);
          if Rec_Out = 0 then
             Reset (D.Reasm);
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
@@ -1389,7 +1391,7 @@ is
       Append_Transcript (S.HC.TS, FB (0 .. FL - 1));
 
       Build_Encrypted_Record_12
-        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, Scratch, EO);
+        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, Scratch, EO, S.Rec_Hdr);
       if EO = 0 then
          --  Fatal path -- no counter rewind; the burned nonce stays
          --  burned and the connection dies here.
@@ -1477,7 +1479,7 @@ is
    begin
       Derive_Keys_12 (S, D);
 
-      Records.Build_CCS_Record (Scratch, CCS_Out);
+      Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
       if CCS_Out = 0 then
          Send_Cleartext_Handshake_Error_12 (S, D, Insufficient_Buffer, Result);
          return;
@@ -2949,7 +2951,8 @@ is
          Keys        => S.Client_App,
          Implicit_IV => S.HC.Client_Write_IV_12,
          Output      => S.Output,
-         Bytes_Out   => Dummy);
+         Bytes_Out   => Dummy,
+         Hdr_Buf     => S.Rec_Hdr);
       --  No rewind on Dummy = 0: this path sets Error_State below
       --  unconditionally, so the advanced counter is never used again.
 
@@ -3080,7 +3083,7 @@ is
       EO      : N32;
    begin
       Result := OK;
-      Records.Build_CCS_Record (Scratch, CCS_Out);
+      Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
       if CCS_Out = 0 then
          Send_Alert_And_Error (S, Insufficient_Buffer, Result);
          return;
@@ -3095,7 +3098,7 @@ is
            (S.HC.Master_Secret_12, Label_Client_Finished, Byte_Seq (TH), False, FB, FL);
       end if;
       Build_Encrypted_Record_12
-        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, Scratch, EO);
+        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, Scratch, EO, S.Rec_Hdr);
       --  Both failure paths below are fatal (Error_State): no counter
       --  rewind, the burned nonce stays burned.
       if EO = 0 then

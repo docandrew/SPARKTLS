@@ -287,7 +287,8 @@ is
       --  (TLS 1.0) for middlebox compatibility, even though the actual
       --  protocol is negotiated via supported_versions.
       Records.Build_Initial_ClientHello_Record
-        (Fragment => CH_Buf (0 .. CH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out);
+        (Fragment => CH_Buf (0 .. CH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out,
+        Hdr_Buf   => S.Rec_Hdr);
 
       if Rec_Out = 0 then
          Set_State (S, Error_State);
@@ -678,7 +679,8 @@ is
                  (Level     => 2,
                   Desc      => Alert_Desc (S.Last_Error),
                   Output    => S.Output,
-                  Bytes_Out => Ignored_A);
+                  Bytes_Out => Ignored_A,
+                  Hdr_Buf   => S.Rec_Hdr);
             end;
             S.State := Error_State;
             Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
@@ -718,7 +720,8 @@ is
                     (Level     => 2,
                      Desc      => Alert_Desc (Unexpected_Message),
                      Output    => S.Output,
-                     Bytes_Out => Ignored_A);
+                     Bytes_Out => Ignored_A,
+                     Hdr_Buf   => S.Rec_Hdr);
                end;
                S.Last_Error := Unexpected_Message;
                S.State := Error_State;
@@ -779,11 +782,11 @@ is
                declare
                   Ignored_CCS_Bytes : N32;
                begin
-                  Records.Build_CCS_Record (S.Output, Ignored_CCS_Bytes);
+                  Records.Build_CCS_Record (S.Output, Ignored_CCS_Bytes, S.Rec_Hdr);
                end;
                S.HC.Sent_HRR_CCS := True;
                Records.Build_Handshake_Record
-                 (CH2_Buf (0 .. CH2_Len - 1), S.Output, Ignored_Rec_Out);
+                 (CH2_Buf (0 .. CH2_Len - 1), S.Output, Ignored_Rec_Out, S.Rec_Hdr);
             end;
             --  Reset Has_TLS_1_3 so the next SH
             --  parse re-derives it; without this,
@@ -904,7 +907,8 @@ is
                           (Level     => 2,
                            Desc      => Alert_Desc (Unexpected_Message),
                            Output    => S.Output,
-                           Bytes_Out => A);
+                           Bytes_Out => A,
+                           Hdr_Buf   => S.Rec_Hdr);
                         pragma Assert (A <= N32 (S.Output.Data'Length));
                      end;
                      S.Last_Error := Unexpected_Message;
@@ -1245,7 +1249,8 @@ is
                Keys        => S.Client_App,
                Implicit_IV => S.Client_IV_12,
                Output      => S.Output,
-               Bytes_Out   => Ignored_Alert_Out);
+               Bytes_Out   => Ignored_Alert_Out,
+               Hdr_Buf     => S.Rec_Hdr);
 
          when TLS_1_3          =>
             Records.Build_Alert_Record
@@ -1253,7 +1258,8 @@ is
                Desc      => 0,
                Keys      => S.Client_App,
                Output    => S.Output,
-               Bytes_Out => Ignored_Alert_Out);
+               Bytes_Out => Ignored_Alert_Out,
+               Hdr_Buf   => S.Rec_Hdr);
 
          when TLS_Undetermined =>
             null;

@@ -64,7 +64,8 @@ is
         (Level     => 2,  --  fatal
          Desc      => Alert_Desc (Err),
          Output    => S.Output,
-         Bytes_Out => Dummy);
+         Bytes_Out => Dummy,
+         Hdr_Buf   => S.Rec_Hdr);
       --  Let caller drain the alert before seeing Error_Alert
       if Output_Pending (S) > 0 then
          Result := Has_Output;
@@ -1202,7 +1203,8 @@ is
                Keys        => S.Server_App,
                Implicit_IV => S.Server_IV_12,
                Output      => S.Output,
-               Bytes_Out   => Ignored_Alert_Out);
+               Bytes_Out   => Ignored_Alert_Out,
+               Hdr_Buf     => S.Rec_Hdr);
 
          when TLS_1_3          =>
             Records.Build_Alert_Record
@@ -1210,7 +1212,8 @@ is
                Desc      => 0,
                Keys      => S.Server_App,
                Output    => S.Output,
-               Bytes_Out => Ignored_Alert_Out);
+               Bytes_Out => Ignored_Alert_Out,
+               Hdr_Buf   => S.Rec_Hdr);
 
          when TLS_Undetermined =>
             return;

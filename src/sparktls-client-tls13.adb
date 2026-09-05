@@ -61,13 +61,14 @@ is
    is
       A1, A2 : N32;
    begin
-      Records.Build_CCS_Record (S.Output, A1);
+      Records.Build_CCS_Record (S.Output, A1, S.Rec_Hdr);
       Records.Build_Alert_Record
         (Level     => 2,
          Desc      => Alert_Desc (Err),
          Keys      => S.HC.Client_HS,
          Output    => S.Output,
-         Bytes_Out => A2);
+         Bytes_Out => A2,
+         Hdr_Buf   => S.Rec_Hdr);
       S.Last_Error := Err;
       S.State := Error_State;
       Result :=
@@ -91,7 +92,8 @@ is
          Desc      => Alert_Desc (Err),
          Keys      => S.Client_App,
          Output    => S.Output,
-         Bytes_Out => A);
+         Bytes_Out => A,
+         Hdr_Buf   => S.Rec_Hdr);
       S.Last_Error := Err;
       S.State := Error_State;
       Result := (if A > 0 or else Output_Pending (S) > 0 then Has_Output else Error_Alert);
@@ -1399,7 +1401,8 @@ is
                Inner_Type => 16#16#,
                Keys       => S.HC.Client_HS,
                Output     => Scratch,
-               Bytes_Out  => Enc_Out);
+               Bytes_Out  => Enc_Out,
+               Hdr_Buf    => S.Rec_Hdr);
             if Enc_Out = 0 then
                Result := Error_Alert;
             end if;
@@ -1443,7 +1446,8 @@ is
                Inner_Type => 16#16#,
                Keys       => S.HC.Client_HS,
                Output     => Scratch,
-               Bytes_Out  => Enc_Out);
+               Bytes_Out  => Enc_Out,
+               Hdr_Buf    => S.Rec_Hdr);
             if Enc_Out = 0 then
                Result := Error_Alert;
                return;
@@ -1498,7 +1502,8 @@ is
                      Inner_Type => 16#16#,
                      Keys       => S.HC.Client_HS,
                      Output     => Scratch,
-                     Bytes_Out  => Enc_Out);
+                     Bytes_Out  => Enc_Out,
+                     Hdr_Buf    => S.Rec_Hdr);
                   if Enc_Out = 0 then
                      Result := Error_Alert;
                      return;
@@ -1558,7 +1563,8 @@ is
             Inner_Type => 16#16#,
             Keys       => S.HC.Client_HS,
             Output     => Scratch,
-            Bytes_Out  => Enc_Out);
+            Bytes_Out  => Enc_Out,
+            Hdr_Buf    => S.Rec_Hdr);
       end;
 
       if Enc_Out = 0 then
@@ -1634,7 +1640,8 @@ is
          Inner_Type => 16#16#,
          Keys       => S.HC.Client_HS,
          Output     => Scratch,
-         Bytes_Out  => Enc_Out);
+         Bytes_Out  => Enc_Out,
+         Hdr_Buf    => S.Rec_Hdr);
 
       if Enc_Out = 0 then
          S.Last_Error := Insufficient_Buffer;
@@ -1710,7 +1717,7 @@ is
          declare
             Pre_CCS_Out : N32;
          begin
-            Records.Build_CCS_Record (Scratch, Pre_CCS_Out);
+            Records.Build_CCS_Record (Scratch, Pre_CCS_Out, S.Rec_Hdr);
             if Pre_CCS_Out = 0 then
                S.Last_Error := Insufficient_Buffer;
                Set_State (S, Error_State);
@@ -2992,7 +2999,8 @@ is
                         Desc      => 0,
                         Keys      => S.Client_App,
                         Output    => S.Output,
-                        Bytes_Out => A);
+                        Bytes_Out => A,
+                        Hdr_Buf   => S.Rec_Hdr);
                   end;
                   if S.State = Connected then
                      Set_State (S, Closing);

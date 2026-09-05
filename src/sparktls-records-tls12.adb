@@ -6,6 +6,7 @@ with SPARKNaCl.Secretbox;
 with SPARKNaCl.Stream;
 with SPARKTLSCrypto.AES_GCM;
 use SPARKTLSCrypto;
+with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 
 --  TLS 1.2 Record Layer  AEAD (GCM + ChaCha20-Poly1305)
 --
@@ -189,7 +190,8 @@ is
       Keys         : in out Traffic_Keys;
       Implicit_IV  : in Byte_Seq;
       Output       : in out IO_Buffer;
-      Bytes_Out    : out N32)
+      Bytes_Out    : out N32;
+      Hdr_Buf      : in out RBT.Bytes_Ptr)
    is
       pragma Assert (Plaintext'Last < Max_Record_Plaintext);
       PT_Len : constant N32 := N32 (Plaintext'Length);
@@ -301,11 +303,10 @@ is
          return;
       end if;
 
-      Hdr (0) := Content_Type;
-      Hdr (1) := TLS12_Version_Major;
-      Hdr (2) := TLS12_Version_Minor;
-      pragma Assert (SPARKTLS.Record_Version_RFC_8446_5_1 (Hdr (1), Hdr (2)));
-      Hdr (3 .. 4) := TS16 (Unsigned_16 (Frag_Len));
+      Build_Record_Header
+        (Hdr_Buf, Content_Type,
+         N32 (TLS12_Version_Major) * 256 + N32 (TLS12_Version_Minor), Frag_Len, Hdr);
+      pragma Assert (SPARKTLS.Record_Version_RFC_8446_5_1 (TLS12_Version_Major, TLS12_Version_Minor));
 
       --  Write: header || [explicit_nonce for GCM] || ciphertext || tag
       Write_To_Output (Output, Hdr, OK);
@@ -526,7 +527,8 @@ is
       Keys        : in out Traffic_Keys;
       Implicit_IV : in Byte_Seq;
       Output      : in out IO_Buffer;
-      Bytes_Out   : out N32)
+      Bytes_Out   : out N32;
+      Hdr_Buf     : in out RBT.Bytes_Ptr)
    is
       --  Alert payload: level[1] || description[1] = 2 bytes
       Alert : constant Byte_Seq (0 .. 1) := (0 => Level, 1 => Desc);
@@ -541,7 +543,8 @@ is
          Keys         => Keys,
          Implicit_IV  => Implicit_IV,
          Output       => Output,
-         Bytes_Out    => Bytes_Out);
+         Bytes_Out    => Bytes_Out,
+         Hdr_Buf      => Hdr_Buf);
    end Build_Alert_Record_12;
 
 end SPARKTLS.Records.TLS12;

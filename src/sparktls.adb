@@ -268,7 +268,8 @@ is
             Inner_Type => 16#16#,
             Keys       => S.Client_App,
             Output     => S.Output,
-            Bytes_Out  => Sent);
+            Bytes_Out  => Sent,
+            Hdr_Buf    => S.Rec_Hdr);
          if Sent = 0 then
             return;   --  no room; retry on the next write
 
@@ -281,7 +282,8 @@ is
             Inner_Type => 16#16#,
             Keys       => S.Server_App,
             Output     => S.Output,
-            Bytes_Out  => Sent);
+            Bytes_Out  => Sent,
+            Hdr_Buf    => S.Rec_Hdr);
          if Sent = 0 then
             return;
          end if;
@@ -398,14 +400,16 @@ is
                      Keys         => S.Client_App,
                      Implicit_IV  => S.Client_IV_12,
                      Output       => S.Output,
-                     Bytes_Out    => Enc_Out);
+                     Bytes_Out    => Enc_Out,
+                     Hdr_Buf      => S.Rec_Hdr);
                else
                   Records.Build_Encrypted_Record
                     (Plaintext  => Frag,
                      Inner_Type => 16#17#,
                      Keys       => S.Client_App,
                      Output     => S.Output,
-                     Bytes_Out  => Enc_Out);
+                     Bytes_Out  => Enc_Out,
+                     Hdr_Buf    => S.Rec_Hdr);
                end if;
             else
                if S.Version = TLS_1_2 then
@@ -415,14 +419,16 @@ is
                      Keys         => S.Server_App,
                      Implicit_IV  => S.Server_IV_12,
                      Output       => S.Output,
-                     Bytes_Out    => Enc_Out);
+                     Bytes_Out    => Enc_Out,
+                     Hdr_Buf      => S.Rec_Hdr);
                else
                   Records.Build_Encrypted_Record
                     (Plaintext  => Frag,
                      Inner_Type => 16#17#,
                      Keys       => S.Server_App,
                      Output     => S.Output,
-                     Bytes_Out  => Enc_Out);
+                     Bytes_Out  => Enc_Out,
+                     Hdr_Buf    => S.Rec_Hdr);
                end if;
             end if;
          end;
