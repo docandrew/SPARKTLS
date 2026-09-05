@@ -1,6 +1,6 @@
-with Ada.Unchecked_Deallocation;
 with Interfaces;           use Interfaces;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Borrow;
 with RFLX.TLS_Handshake.TLS_Handshake;
 with RFLX.Tls_Parameters;
 
@@ -14,18 +14,6 @@ is
    use type RBT.Length;
    use type RBT.Index;
    use type RBT.Bytes_Ptr;
-
-   --  Deallocate an RFLX buffer.
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
-   with Post => Buf = null;
-
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr) with SPARK_Mode => Off is
-      procedure Dealloc is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-   begin
-      Dealloc (Buf);
-   end RFLX_Free;
-
    ----------------------------------------------------------------------------
    --  Parse_Handshake_Header
    ----------------------------------------------------------------------------
@@ -45,9 +33,12 @@ is
       end if;
 
       declare
-         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Data'Length) => 0);
+         Buf    : RBT.Bytes_Ptr;
+         Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       begin
-         Buf.all := To_RFLX (Data);
+         --  Read-only borrow of the whole message; we only read Tag + Length.
+         SPARKTLS.RFLX_Borrow.Borrow_Read
+           (Data, Data'First, N32 (Data'Length), Holder, Buf);
          Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Data'Length) * 8));
          Verify_Message (Ctx);
 
@@ -63,7 +54,7 @@ is
          end if;
 
          Take_Buffer (Ctx, Buf);
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
       end;
    end Parse_Handshake_Header;
 
