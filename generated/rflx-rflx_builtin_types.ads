@@ -34,6 +34,17 @@ is
 
    type Bytes_Ptr is access Bytes;
 
+   --  HAND-MAINTAINED (SPARKTLS, see README.md): the SPARK-Off primitives
+   --  SPARKTLS.RFLX_Borrow and SPARKTLS.AEAD_InPlace fabricate a Bytes_Ptr to
+   --  inline storage (in-place, zero-copy build/parse) via an Unchecked_Conversion
+   --  from a GNAT fat-pointer record. That type pun makes GNAT warn, at -O3, that
+   --  it could trip type-based alias analysis. This pragma disables strict-aliasing
+   --  optimization for THIS access type ONLY; the rest of the library keeps the
+   --  TBAA performance benefit. The pun's byte accesses are all same-typed
+   --  (Bytes), so this is belt-and-suspenders, not a correctness dependency.
+   --  Re-add after "rflx generate -n".
+   pragma No_Strict_Aliasing (Bytes_Ptr);
+
    type Bit_Length is range 0 .. Length'Last * 8;
 
    type Boolean_Base is mod 2;

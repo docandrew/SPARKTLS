@@ -11,18 +11,30 @@ Every message unit is **pristine `rflx generate` output** — never hand-edit
 one, not even to track a spec change: change the spec and regenerate (see
 "Checking for drift" below).
 
-**Exactly one library file is hand-maintained (since 2026-09-05):**
-`rflx-rflx_builtin_types.ads` declares `subtype Byte is
-Interfaces.Unsigned_8;` where RecordFlux emits `type Byte is mod 2**8;`.
-This makes RecordFlux's byte the same type as SPARKNaCl's, so `Byte_Seq`
-and `Bytes` convert with a checked Ada array conversion instead of an
-element copy (the generic's `Custom_Byte is (<>)` formal exists for this).
+**One library file carries two hand-maintained edits (since 2026-09-05),
+both in `rflx-rflx_builtin_types.ads`:**
+
+1. It declares `subtype Byte is Interfaces.Unsigned_8;` where RecordFlux
+emits `type Byte is mod 2**8;`. This makes RecordFlux's byte the same type
+as SPARKNaCl's, so `Byte_Seq` and `Bytes` convert with a checked Ada array
+conversion instead of an element copy (the generic's `Custom_Byte is (<>)`
+formal exists for this).
+
+2. It adds `pragma No_Strict_Aliasing (Bytes_Ptr);` after the `Bytes_Ptr`
+declaration. The SPARK-Off primitives `SPARKTLS.RFLX_Borrow` and
+`SPARKTLS.AEAD_InPlace` fabricate a `Bytes_Ptr` to inline storage via an
+`Unchecked_Conversion` from a fat-pointer record; the pragma turns type-based
+alias analysis off for this one access type so that pun cannot be miscompiled
+at `-O3`, while the rest of the library keeps strict aliasing. `No_Strict_Aliasing`
+takes a local name, so it must live in this file (the type's declaration unit).
+
 Consequences:
 
 - **Always regenerate with `-n` (`--no-library`).** It emits only the
   message units; the 15 `rflx-rflx_*` library files are left alone. A
-  regeneration without `-n` silently restores RecordFlux's `Byte` and
-  reintroduces the copies.
+  regeneration without `-n` silently restores RecordFlux's `Byte` (and
+  reintroduces the copies) and drops the `No_Strict_Aliasing` pragma; re-apply
+  both.
 - **On a RecordFlux upgrade**, regenerate the library once (without `-n`)
   into a scratch directory, diff the `rflx-rflx_*` files, re-apply the
   one-line change, and check that `RFLX_Generic_Types` still requires

@@ -10,8 +10,16 @@ package body SPARKTLS.RFLX_Borrow with SPARK_Mode => Off is
       P_BOUNDS : System.Address;
    end record;
 
+   --  pragma No_Strict_Aliasing (Bytes_Ptr) in rflx-rflx_builtin_types.ads is
+   --  the substantive fix: it turns TBAA OFF for this one access type so the
+   --  fat-pointer pun below cannot be miscompiled at -O3, while the rest of the
+   --  library keeps strict aliasing. GNAT still emits its generic "possible
+   --  aliasing" note at each Unchecked_Conversion; it is redundant with that
+   --  pragma, so it is suppressed narrowly here (not library-wide).
+   pragma Warnings (Off, "*aliasing*");
    function To_Ptr is new Ada.Unchecked_Conversion (Fat, RBT.Bytes_Ptr);
    function To_Fat is new Ada.Unchecked_Conversion (RBT.Bytes_Ptr, Fat);
+   pragma Warnings (On, "*aliasing*");
 
    ----------------------------------------------------------------------------
    procedure Borrow
