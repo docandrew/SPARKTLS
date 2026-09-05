@@ -761,8 +761,7 @@ is
          CCS_Out : N32;
       begin
          Records.Build_Handshake_Record
-           (Fragment => HRR_Buf (0 .. Msg_Len - 1), Output => S.Output, Bytes_Out => Rec_Out,
-           Hdr_Buf   => S.Rec_Hdr);
+           (Fragment => HRR_Buf (0 .. Msg_Len - 1), Output => S.Output, Bytes_Out => Rec_Out);
          if Rec_Out = 0 then
             Abort_Flight (S);
             return;
@@ -1605,8 +1604,7 @@ is
 
          --  Write ServerHello record (plaintext) into S.Output
          Records.Build_Handshake_Record
-           (Fragment => SH_Buf (0 .. SH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out,
-           Hdr_Buf   => S.Rec_Hdr);
+           (Fragment => SH_Buf (0 .. SH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out);
 
          if Rec_Out = 0 then
             S.Last_Error := Insufficient_Buffer;

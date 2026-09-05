@@ -1111,7 +1111,7 @@ is
    begin
       Result := OK;
       Append_Transcript (S.HC.TS, Msg);
-      Records.Build_Handshake_Record (Msg, S.Output, Rec_Out, S.Rec_Hdr);
+      Records.Build_Handshake_Record (Msg, S.Output, Rec_Out);
       if Rec_Out = 0 then
          Send_Cleartext_Handshake_Error_12 (S, D, Err, Result);
          pragma Assert (Result in Has_Output | Error_Alert);
@@ -1156,8 +1156,7 @@ is
 
       if Cert_Len > 0 then
          Append_Transcript (S.HC.TS, Cert_Buf (0 .. Cert_Len - 1));
-         Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), S.Output, Rec_Out,
-                                         S.Rec_Hdr);
+         Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), S.Output, Rec_Out);
          if Rec_Out = 0 then
             Reset (D.Reasm);
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);

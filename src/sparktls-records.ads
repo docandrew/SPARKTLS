@@ -140,8 +140,7 @@ is
    procedure Build_Handshake_Record
      (Fragment  : in Byte_Seq;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32;
-      Hdr_Buf   : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      Bytes_Out : out N32)
    with
      Pre =>
        Fragment'First = 0
@@ -158,8 +157,7 @@ is
    procedure Build_Initial_ClientHello_Record
      (Fragment  : in Byte_Seq;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32;
-      Hdr_Buf   : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+      Bytes_Out : out N32)
    with
      Pre => Fragment'First = 0 and Fragment'Length > 0 and Fragment'Length <= Max_Fragment,
      --  A non-zero Bytes_Out means both the 5-byte header and the

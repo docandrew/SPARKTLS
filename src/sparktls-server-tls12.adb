@@ -352,7 +352,7 @@ is
       CR_Free (Buf);
 
       Append_Transcript (HC, CR_Buf);
-      Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out, Hdr_Buf);
+      Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out);
       OK := Rec_Out /= 0;
    end Append_Cert_Request_12;
 
@@ -633,8 +633,7 @@ is
                return;
             end if;
             Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
-            Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), S.Output, Rec_Out,
-                                            S.Rec_Hdr);
+            Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), S.Output, Rec_Out);
             if Rec_Out = 0 then
                Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                return;
@@ -649,8 +648,7 @@ is
             Build_Certificate_Chain_12 (Cfg.Local.all, Cert_Buf, Cert_Len);
             if Cert_Len > 0 then
                Append_Transcript (S.HC, Cert_Buf (0 .. Cert_Len - 1));
-               Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), S.Output, Rec_Out,
-                                               S.Rec_Hdr);
+               Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), S.Output, Rec_Out);
                if Rec_Out = 0 then
                   Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                   return;
@@ -667,8 +665,7 @@ is
             Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
             if SKE_Len > 0 then
                Append_Transcript (S.HC, SKE_Buf (0 .. SKE_Len - 1));
-               Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), S.Output, Rec_Out,
-                                               S.Rec_Hdr);
+               Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), S.Output, Rec_Out);
                if Rec_Out = 0 then
                   Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                   return;
@@ -692,8 +689,7 @@ is
          begin
             Build_Server_Hello_Done (Done_Buf, Done_Len);
             Append_Transcript (S.HC, Done_Buf (0 .. Done_Len - 1));
-            Records.Build_Handshake_Record (Done_Buf (0 .. Done_Len - 1), S.Output, Rec_Out,
-                                            S.Rec_Hdr);
+            Records.Build_Handshake_Record (Done_Buf (0 .. Done_Len - 1), S.Output, Rec_Out);
             if Rec_Out = 0 then
                Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                return;
@@ -897,8 +893,7 @@ is
       end if;
 
       Append_Transcript (S.HC, NST_Buf (0 .. NST_Total - 1));
-      Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), S.Output, NST_Rec_Out,
-                                      S.Rec_Hdr);
+      Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), S.Output, NST_Rec_Out);
 
       if NST_Rec_Out = 0 then
          return;
@@ -972,8 +967,7 @@ is
                return;
             end if;
             Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
-            Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), S.Output, Rec_Out,
-                                            S.Rec_Hdr);
+            Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), S.Output, Rec_Out);
             if Rec_Out = 0 then
                Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                return;
@@ -2371,7 +2365,7 @@ is
 
                --  Emit as plaintext handshake record (server WRITE
                --  state still pre-CCS).
-               Records.Build_Handshake_Record (NST_Data, S.Output, NST_Rec_Out, S.Rec_Hdr);
+               Records.Build_Handshake_Record (NST_Data, S.Output, NST_Rec_Out);
                if NST_Rec_Out = 0 then
                   S.Last_Error := Insufficient_Buffer;
                   Set_State (S, Error_State);

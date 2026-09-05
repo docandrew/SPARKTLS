@@ -287,8 +287,7 @@ is
       --  (TLS 1.0) for middlebox compatibility, even though the actual
       --  protocol is negotiated via supported_versions.
       Records.Build_Initial_ClientHello_Record
-        (Fragment => CH_Buf (0 .. CH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out,
-        Hdr_Buf   => S.Rec_Hdr);
+        (Fragment => CH_Buf (0 .. CH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out);
 
       if Rec_Out = 0 then
          Set_State (S, Error_State);
@@ -788,7 +787,7 @@ is
                end;
                S.HC.Sent_HRR_CCS := True;
                Records.Build_Handshake_Record
-                 (CH2_Buf (0 .. CH2_Len - 1), S.Output, Ignored_Rec_Out, S.Rec_Hdr);
+                 (CH2_Buf (0 .. CH2_Len - 1), S.Output, Ignored_Rec_Out);
             end;
             --  Reset Has_TLS_1_3 so the next SH
             --  parse re-derives it; without this,

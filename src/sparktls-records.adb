@@ -232,13 +232,11 @@ is
    procedure Build_Handshake_Record
      (Fragment  : in Byte_Seq;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32;
-      Hdr_Buf   : in out RBT.Bytes_Ptr)
+      Bytes_Out : out N32)
    is
       --  TLS record: type(1) + version(2) + length(2) + fragment
       --  Manual construction replaces RFLX to eliminate 'Unrestricted_Access.
       Frag_Len : constant N32 := N32 (Fragment'Length);
-      Hdr      : Byte_Seq (0 .. 4) := (others => 0);
       OK       : Boolean;
    begin
       Bytes_Out := 0;
@@ -246,10 +244,8 @@ is
       --  Build 5-byte header: Handshake (0x16) + TLS 1.2 (0x0303) + length
       --  RFC 8446 5.1: SHOULD be 0x0303 for all records after ClientHello.
       --  RFC 5246 6.2.1: record version = negotiated version (0x0303).
-      Build_Record_Header (Hdr_Buf, 16#16#, 16#0303#, Frag_Len, Hdr);
       pragma Assert (Record_Version_RFC_8446_5_1 (16#03#, 16#03#));
-
-      Write_To_Output (Output, Hdr, OK);
+      Put_Record_Header (Output, 16#16#, 16#0303#, Frag_Len, OK);
       if not OK then
          return;
       end if;
@@ -265,11 +261,9 @@ is
    procedure Build_Initial_ClientHello_Record
      (Fragment  : in Byte_Seq;
       Output    : in out IO_Buffer;
-      Bytes_Out : out N32;
-      Hdr_Buf   : in out RBT.Bytes_Ptr)
+      Bytes_Out : out N32)
    is
       Frag_Len : constant N32 := N32 (Fragment'Length);
-      Hdr      : Byte_Seq (0 .. 4) := (others => 0);
       OK       : Boolean;
    begin
       Bytes_Out := 0;
@@ -277,9 +271,7 @@ is
       --  RFC 8446 5.1: legacy_record_version = 0x0301 (TLS 1.0) for
       --  the initial ClientHello. Middleboxes more reliably forward
       --  the record when it claims TLS 1.0 than TLS 1.2.
-      Build_Record_Header (Hdr_Buf, 16#16#, 16#0301#, Frag_Len, Hdr);
-
-      Write_To_Output (Output, Hdr, OK);
+      Put_Record_Header (Output, 16#16#, 16#0301#, Frag_Len, OK);
       if not OK then
          return;
       end if;
