@@ -1545,7 +1545,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -1739,7 +1739,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -2004,7 +2004,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -2457,7 +2457,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
       if not Rec.OK then
          --  RFC 5246 7.2.1: alerts are under the current write
          --  state. We're past the client's CCS (READ side encrypted)
@@ -2695,7 +2695,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
 
       --  RFC 5246 7.2.1 / 7.2.2: post-Finished alerts MUST be
       --  encrypted under the app keys; a plaintext alert lands as a

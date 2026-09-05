@@ -122,6 +122,7 @@ is
    procedure Build_Server_Hello
      (Negotiated : in TLS13_Suite;
       HC         : in out Engaged_Context;
+      Arena      : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr;
       Result     : out Byte_Seq;
       Len        : out N32)
    with

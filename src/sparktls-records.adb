@@ -10,7 +10,7 @@ with RFLX.RFLX_Types;
 with RFLX.TLS_Alert;
 with RFLX.TLS_Alert.Alert;
 with RFLX.Tls_Parameters;
-with RFLX.TLS_Record.TLS_Plaintext;
+with RFLX.TLS_Record.TLS_Record_Header;
 with RFLX.TLS_Record;
 with RFLX.TLS_Common;
 
@@ -79,12 +79,25 @@ is
      (Data          : in Byte_Seq;
       Avail         : in N32;
       Result        : out Parse_Result;
+      Hdr           : in out RBT.Bytes_Ptr;
       Loose_Initial : in Boolean := False)
    is
-      --  TLS record header: content_type(1) + version(2) + length(2) = 5 bytes
-      --  Manual parsing replaces RFLX to eliminate 'Unrestricted_Access.
-      Frag_Len : N32;
+      --  TLS record header: content_type(1) + version(2) + length(2) = 5
+      --  bytes, decoded through the RecordFlux TLS_Record_Header message
+      --  from a 5-byte copy in the per-connection Hdr buffer -- never by
+      --  aliasing the I/O buffer, which is what forced 'Unrestricted_Access
+      --  in the earlier RecordFlux attempt. All three fields are tolerant in
+      --  the spec, so the RFC policy below runs in the RFC-mandated order and
+      --  each fault keeps its alert: version, then length, then type.
+      package RH renames RFLX.TLS_Record.TLS_Record_Header;
+      use type RBT.Bytes_Ptr;
+      Ctx      : RH.Context;
       B        : N32;
+      V        : N32;
+      CT       : Byte;
+      Major    : Byte;
+      Minor    : Byte;
+      Frag_Len : N32;
    begin
       Result := (OK => False, others => <>);
 
@@ -94,33 +107,56 @@ is
 
       B := Data'First;
 
+      --  Per-connection header buffer: allocated once, reused every record.
+      if Hdr = null then
+         Hdr := new RBT.Bytes'(1 .. RBT.Index (Record_Header_Size) => 0);
+      end if;
+      Hdr.all (1 .. RBT.Index (Record_Header_Size)) :=
+        To_RFLX (Data (B .. B + Record_Header_Size - 1));
+
+      --  Written_Last is mandatory for a parse: the default (0) means
+      --  "nothing written yet" (First - 1), which is right for a build but
+      --  leaves a parse context empty. All five header bytes are data.
+      RH.Initialize
+        (Ctx, Hdr, Written_Last => RBT.Bit_Length (Record_Header_Size * 8));
+      RH.Verify_Message (Ctx);
+      if not RH.Well_Formed_Message (Ctx) then
+         --  Unreachable while Written_Last covers all five bytes (tolerant
+         --  fields cannot fail). If it ever fires, EVERY record is rejected
+         --  and connections stall with no alert (the 2026-09-05 regression:
+         --  a bare Initialize left the context empty). Keep the buffer
+         --  discipline and report "not a record" exactly as before.
+         RH.Take_Buffer (Ctx, Hdr);
+         return;
+      end if;
+      CT       := Byte (RH.Get_Content_Type (Ctx));
+      V        := N32 (RH.Get_Legacy_Record_Version (Ctx));
+      Major    := Byte (V / 256);
+      Minor    := Byte (V mod 256);
+      Frag_Len := N32 (RH.Get_Length (Ctx));
+      RH.Take_Buffer (Ctx, Hdr);
+
       --  RFC 8446 5.1 / RFC 5246 6.2.1: the record-layer version
       --  must encode some TLS version. The major byte must be 0x03;
       --  the minor byte one of 0x01 (TLS 1.0) .. 0x04 (TLS 1.3) for
       --  every record except the very first ClientHello (where
-      --  Loose_Initial relaxes the minor-byte check  RFC 8446 5.1
+      --  Loose_Initial relaxes the minor-byte check -- RFC 8446 5.1
       --  / RFC 5246 E.1 / BoGo LooseInitialRecordVersion).
-      if Data (B + 1) /= 16#03# then
+      if Major /= 16#03# then
          Result.Bad_Version := True;
          return;
       end if;
-      if not Loose_Initial and then Data (B + 2) not in 16#01# .. 16#04# then
+      if not Loose_Initial and then Minor not in 16#01# .. 16#04# then
          Result.Bad_Version := True;
          return;
       end if;
       --  Pin the field-level invariant for downstream proofs.
-      pragma
-        Assert
-          (Loose_Initial or else Record_Version_Valid_RFC_8446_5_1 (Data (B + 1), Data (B + 2)));
+      pragma Assert (Loose_Initial or else Record_Version_Valid_RFC_8446_5_1 (Major, Minor));
 
-      --  Parse 2-byte fragment length (big-endian) from bytes 3..4
-      Frag_Len := N32 (Data (B + 3)) * 256 + N32 (Data (B + 4));
-
-      --  Determine content type and per-type length limit.
-      --  RFC 8446 5.1: plaintext fragment â¤ 2^14
-      --  RFC 8446 5.2: encrypted fragment â¤ 2^14 + 256
+      --  RFC 8446 5.1: plaintext fragment <= 2^14
+      --  RFC 8446 5.2: encrypted fragment <= 2^14 + 256
       declare
-         Max_Len : constant N32 := (if Data (B) = 16#17# then Max_Fragment + 256 else Max_Fragment);
+         Max_Len : constant N32 := (if CT = 16#17# then Max_Fragment + 256 else Max_Fragment);
       begin
          if Frag_Len = 0 or else Frag_Len > Max_Len then
             Result.Overflow := True;
@@ -130,19 +166,18 @@ is
 
       if Avail < Record_Header_Size + Frag_Len then
          return;  --  need more data
-
       end if;
 
       Result.Fragment_Pos := Record_Header_Size;
       Result.Fragment_Len := Frag_Len;
       --  RFC 8446 5.1/5.2: any fragment that survived the length
       --  check above satisfies the per-type max. The pragma pins the
-      --  invariant  a future loosening of Max_Len (e.g., dropping
+      --  invariant -- a future loosening of Max_Len (e.g., dropping
       --  the type-conditioned cap) would break SPARK proof here.
-      pragma Assert (Record_Length_Bound_RFC_8446_5_1 (Data (B), Result.Fragment_Len));
+      pragma Assert (Record_Length_Bound_RFC_8446_5_1 (CT, Result.Fragment_Len));
       Result.Record_Len := Record_Header_Size + Frag_Len;
 
-      case Data (B) is
+      case CT is
          when 16#16# =>
             Result.Content := Content_Handshake;
             Result.OK := True;
@@ -166,7 +201,7 @@ is
       --  RFC-recognized types. Pin the property; a future edit that
       --  added 0x18 or similar must update both the case AND the
       --  predicate, otherwise SPARK proof fails here.
-      pragma Assert (if Result.OK then Outer_Content_Type_Valid_RFC_8446_5_1 (Data (B)));
+      pragma Assert (if Result.OK then Outer_Content_Type_Valid_RFC_8446_5_1 (CT));
    end Parse_Record_Header;
 
    procedure Build_Handshake_Record

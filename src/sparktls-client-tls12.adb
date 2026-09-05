@@ -2089,7 +2089,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -2845,7 +2845,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -3127,7 +3127,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -3372,7 +3372,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec);
+        (S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1), Available (S.Input), Rec, S.Rec_Hdr);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;

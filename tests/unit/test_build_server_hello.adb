@@ -9,12 +9,17 @@ with Interfaces;           use Interfaces;
 with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Handshake.TLS13;
+with RFLX.RFLX_Builtin_Types;
 with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
 with Det_Random_Lib;
 with SPARKTLS.Test_Support;
 
 procedure Test_Build_Server_Hello is
+   --  One arena shared by every call below, exactly as production does:
+   --  allocated on the first Build_Server_Hello, borrowed and returned by
+   --  each later one, so the reuse path is exercised here too.
+   Arena : RFLX.RFLX_Builtin_Types.Bytes_Ptr := null;
 
    Total : Natural := 0;
    Pass  : Natural := 0;
@@ -92,7 +97,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Result, Len);
+        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
 
       Check ("X25519: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -132,7 +137,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Result, Len);
+        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
 
       Check ("X25519: negotiated curve is 0x001D (x25519)",
              HC.KE.Negotiated and then HC.KE.Curve = Group_X25519);
@@ -147,7 +152,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Result, Len);
+        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
       Check ("Min-size buffer (256B): fits", Len > 0 and Len <= 256);
    end Test_Buffer_Too_Small;
 
@@ -163,7 +168,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P256_PK      := Make_P256_Peer_PK;
 
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Result, Len);
+        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
 
       Check ("P-256: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -187,7 +192,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P384_PK      := Make_P384_Peer_PK;
 
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Result, Len);
+        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
 
       Check ("P-384: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -211,7 +216,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P256_PK      := (others => 0);  --  not a valid point
 
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Result, Len);
+        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
       Check ("P-256: invalid peer pubkey → Len = 0", Len = 0);
    end Test_P256_Invalid_Peer_PK_Rejected;
 
@@ -226,7 +231,7 @@ procedure Test_Build_Server_Hello is
       HC.Client_Has_P256   := False;
       HC.Client_Has_P384   := False;
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Result, Len);
+        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
       Check ("No common group → Len = 0", Len = 0);
    end Test_No_Common_Group;
 
@@ -272,9 +277,9 @@ procedure Test_Build_Server_Hello is
       Init_Context (S1, HC1);
       Init_Context (S2, HC2);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S1)), HC1, R1, L1);
+        (TLS13_Suite (Suite (S1)), HC1, Arena, R1, L1);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S2)), HC2, R2, L2);
+        (TLS13_Suite (Suite (S2)), HC2, Arena, R2, L2);
 
       Check ("Two identical inputs produce identical lengths", L1 = L2);
       Check ("Two identical inputs produce identical bytes",

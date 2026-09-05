@@ -94,6 +94,29 @@ package TLS_Record is
          Encrypted_Record : Opaque;
       end message;
 
+   -- TLS-only record header (RFC 8446 5.1 / RFC 5246 6.2.1): header fields
+   -- only. The fragment stays in the I/O buffer as opaque (usually AEAD)
+   -- bytes and is never copied through RecordFlux. All three fields are
+   -- tolerant, so RecordFlux never rejects the header structurally: the RFC
+   -- policy (content type in 20 .. 23, version major 0x03 / minor 0x01 ..
+   -- 0x04 -- relaxed for the very first ClientHello record -- and length
+   -- 1 .. 2^14, +256 for application data) is applied in code in the
+   -- RFC-mandated order, so each fault maps to its own alert
+   -- (protocol_version before record_overflow), exactly as
+   -- Client_Hello.Legacy_Version_Any does. DTLS keeps its own TLS_Plaintext
+   -- / DTLS_Ciphertext messages above.
+   type Record_Content_Type_Any is unsigned 8;
+   type Record_Version_Any is unsigned 16;
+   type Record_Length_Any is unsigned 16;
+
+   type TLS_Record_Header is
+      message
+         Content_Type : Record_Content_Type_Any;
+         Legacy_Record_Version : Record_Version_Any;
+         Length : Record_Length_Any
+            then null;
+      end message;
+
    -- Refinements for the TLS_Plaintext type.
    -- NOTE: Corresponding refinements must also be defined for the TLS_Record
    -- type further below.

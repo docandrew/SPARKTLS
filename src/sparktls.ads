@@ -11,6 +11,9 @@ with X509;
 package SPARKTLS
   with SPARK_Mode => On
 is
+
+   --  RFLX byte-buffer type for the reusable per-session handshake arena.
+   package RBT_A renames RFLX.RFLX_Builtin_Types;
    --  Needed because Session is now a private type: contracts that used to
    --  say S.State'Old now say State (S)'Old, and Ada only permits 'Old on a
    --  function call in a potentially-unevaluated context (inside an "if" in
@@ -119,6 +122,14 @@ is
    pragma Compile_Time_Error
      (Transcript_Capacity /= SPARKTLS_Reassembly.Max_HS_Msg,
       "Transcript_Capacity must equal SPARKTLS_Reassembly.Max_HS_Msg");
+
+   --  Size of the reusable RecordFlux handshake arena (one per HS_Pool slot).
+   --  Must be large enough for the biggest handshake message we build or parse
+   --  through RecordFlux; Max_HS_Msg is exactly that protocol bound.
+   RFLX_Arena_Size : constant N32 := 32768;
+   pragma Compile_Time_Error
+     (RFLX_Arena_Size /= SPARKTLS_Reassembly.Max_HS_Msg,
+      "RFLX_Arena_Size must equal SPARKTLS_Reassembly.Max_HS_Msg");
 
    --  Sufficient for all real-world handshakes. Typical transcript is
    --  ~2 KB. Pathological inputs (32K sig_algs) require reassembly
@@ -2818,6 +2829,12 @@ private
       --  I/O buffers
       Input  : IO_Buffer;
       Output : IO_Buffer;
+
+      --  Per-connection RecordFlux buffer for the 5-byte TLS record header
+      --  (Records.Parse_Record_Header). Records outlive the handshake slot,
+      --  so this cannot live in HS_Pool; allocated lazily on the first
+      --  record and reused for every record of the connection.
+      Rec_Hdr : RBT_A.Bytes_Ptr := null;
 
       --  Application traffic keys (set during handshake, used after)
       Client_App : Traffic_Keys;

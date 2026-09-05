@@ -513,6 +513,7 @@ is
            (Data          => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
             Avail         => Available (S.Input),
             Result        => Rec,
+            Hdr           => S.Rec_Hdr,
             Loose_Initial => True);
 
          if Rec.Overflow then

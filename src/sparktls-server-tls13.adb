@@ -540,7 +540,8 @@ is
          Records.Parse_Record_Header
            (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
             Avail  => Available (S.Input),
-            Result => Rec);
+            Result => Rec,
+            Hdr    => S.Rec_Hdr);
 
          if Rec.Overflow then
             Send_Alert_And_Error (S, Record_Overflow, Result);
@@ -1597,7 +1598,7 @@ is
       end if;
 
       Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Flight_Suite), S.HC, SH_Buf, SH_Len);
+        (TLS13_Suite (Flight_Suite), S.HC, D.Arena, SH_Buf, SH_Len);
 
       if SH_Len = 0 then
          --  RFC 7748 6.1: small-subgroup X25519 rejection sets
@@ -2116,7 +2117,8 @@ is
       Records.Parse_Record_Header
         (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Avail  => Available (S.Input),
-         Result => Rec);
+         Result => Rec,
+         Hdr    => S.Rec_Hdr);
 
       if Rec.Overflow then
          Send_Encrypted_Alert (S, Record_Overflow, Result);
@@ -2960,7 +2962,8 @@ is
       Records.Parse_Record_Header
         (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Avail  => Available (S.Input),
-         Result => Rec);
+         Result => Rec,
+         Hdr    => S.Rec_Hdr);
 
       if Rec.Overflow then
          Send_Encrypted_Alert (S, Record_Overflow, Result);
@@ -3231,7 +3234,8 @@ is
       Records.Parse_Record_Header
         (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Avail  => Available (S.Input),
-         Result => Rec);
+         Result => Rec,
+         Hdr    => S.Rec_Hdr);
 
       if Rec.Overflow then
          Send_Encrypted_Alert (S, Record_Overflow, Result);

@@ -846,7 +846,8 @@ is
          Records.Parse_Record_Header
            (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
             Avail  => Available (S.Input),
-            Result => Rec);
+            Result => Rec,
+            Hdr    => S.Rec_Hdr);
 
          if Rec.Bad_Version then
             S.Last_Error := Protocol_Version;

@@ -2371,7 +2371,8 @@ is
       Records.Parse_Record_Header
         (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Avail  => Available (S.Input),
-         Result => Rec);
+         Result => Rec,
+         Hdr    => S.Rec_Hdr);
 
       if Rec.Bad_Version then
          --  RFC 8446 5.1 / RFC 5246 6.2.1: legacy_record_version
@@ -3063,7 +3064,8 @@ is
       Records.Parse_Record_Header
         (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
          Avail  => Available (S.Input),
-         Result => Rec);
+         Result => Rec,
+         Hdr    => S.Rec_Hdr);
 
       if Rec.Bad_Version then
          --  RFC 8446 5.1 / RFC 5246 6.2.1: legacy_record_version

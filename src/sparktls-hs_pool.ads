@@ -37,6 +37,11 @@ is
       Peer_Leaf      : Pool_Entry;
       Peer_Ints      : Cert_Pool;
       Peer_Int_Count : Cert_Pool_Count := 0;
+      --  Reusable RecordFlux build/parse arena, borrowed by handshake
+      --  messages via Initialize/Take_Buffer. Allocated once (lazily) and
+      --  reused across handshakes on this slot; Release deliberately does
+      --  not touch it, so the buffer persists for the pool's lifetime.
+      Arena          : RBT_A.Bytes_Ptr := null;
    end record;
 
    type Slot_Array is array (Slot_Index) of HS_Data;

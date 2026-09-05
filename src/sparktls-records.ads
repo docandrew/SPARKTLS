@@ -1,3 +1,4 @@
+with RFLX.RFLX_Builtin_Types;
 with SPARKNaCl;      use SPARKNaCl;
 with SPARKNaCl.Secretbox;
 with SPARKNaCl.Core;
@@ -59,7 +60,10 @@ is
      (Data          : in Byte_Seq;
       Avail         : in N32;
       Result        : out Parse_Result;
+      Hdr           : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr;
       Loose_Initial : in Boolean := False)
+      --  Hdr is the connection's 5-byte RecordFlux header buffer (allocated
+      --  here on first use, then borrowed and returned on every call).
       --  Body indexes via Data'First + offset, so no First = 0 needed.
       --  Data'Last bounded by IO_Buffer_Capacity so all callers (slices
       --  into S.Input.Data, which is itself bounded) satisfy the Pre.

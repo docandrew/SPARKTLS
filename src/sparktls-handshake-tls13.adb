@@ -483,6 +483,7 @@ is
    procedure Build_Server_Hello
      (Negotiated : in TLS13_Suite;
       HC         : in out Engaged_Context;
+      Arena      : in out RBT.Bytes_Ptr;
       Result     : out Byte_Seq;
       Len        : out N32)
    is
@@ -535,10 +536,16 @@ is
       --  version(2) + random(32) + sid_len(1) + sid + suite(2) + comp(1) + ext_len(2)
       Body_Len := 40 + Sid_Len + Ext_Total;
 
+      --  Borrow the reusable per-slot handshake arena instead of a fresh
+      --  buffer: allocate it once (lazily) at the shared arena size,
+      --  Initialize hands it to the context, and Take_Buffer returns it
+      --  below. No per-message new/free.
+      if Arena = null then
+         Arena := new RBT.Bytes'(1 .. RBT.Index (RFLX_Arena_Size) => 0);
+      end if;
       declare
-         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. SH_Buf_Len => 0);
       begin
-         Initialize (Ctx, Buf);
+         Initialize (Ctx, Arena);
          Set_Legacy_Version (Ctx, RFLX.TLS_Common.TLS_1_2);
          Set_Random (Ctx, To_RFLX (Byte_Seq (HC.Server_Random)));
          --  RFC 8446 4.1.3: echo the client's session_id at its real length.
@@ -604,7 +611,7 @@ is
             Update_Extensions_TLS (Ctx, Exts);
          end;
 
-         Take_Buffer (Ctx, Buf);
+         Take_Buffer (Ctx, Arena);
          --  Handshake header by hand for now (type + 3-byte length), as the
          --  other RecordFlux builders do; the outer TLS_Handshake context is
          --  the remaining half-step (task 147).
@@ -612,8 +619,8 @@ is
          Result (1) := 0;
          Result (2) := 0;
          Result (3) := Byte (Body_Len);
-         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-         RFLX_Free (Buf);
+         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Arena.all (1 .. RBT.Index (Body_Len)));
+         --  No free: Arena is the reusable session buffer, returned above.
       end;
       Len := 4 + Body_Len;
    end Build_Server_Hello;
