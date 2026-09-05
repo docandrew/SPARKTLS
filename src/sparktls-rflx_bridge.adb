@@ -18,11 +18,10 @@ is
    end To_RFLX;
 
    function To_NaCl (Data : RBT.Bytes) return Byte_Seq is
-      Result : Byte_Seq (0 .. N32 (Data'Length) - 1) := (others => 0);
+      --  One checked array conversion, slid into a 0-based result: legal now
+      --  that RFLX's Byte is SPARKNaCl's Byte (no element loop).
+      Result : constant Byte_Seq (0 .. N32 (Data'Length) - 1) := Byte_Seq (Data);
    begin
-      for I in Data'Range loop
-         Result (N32 (I - Data'First)) := SPARKNaCl.Byte (Data (I));
-      end loop;
       return Result;
    end To_NaCl;
 

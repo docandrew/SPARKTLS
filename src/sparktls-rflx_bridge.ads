@@ -35,4 +35,11 @@ is
      Pre => Data'Length > 0,
      Post => To_NaCl'Result'First = 0 and To_NaCl'Result'Length = Data'Length;
 
+   --  There are deliberately no View_As_* helpers here. Now that RFLX's Byte
+   --  is SPARKNaCl's Byte, a conversion written inline as an actual parameter
+   --  (Byte_Seq (X) / RBT.Bytes (X)) is a zero-copy view; a FUNCTION returning
+   --  the same conversion copies its whole result through the secondary stack
+   --  (measured with -gnatG, 2026-09-05). To_RFLX and To_NaCl are the sliding
+   --  copies, named as such. See generated/README.md for the bounds rule.
+
 end SPARKTLS.RFLX_Bridge;

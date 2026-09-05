@@ -11,6 +11,8 @@
 pragma Style_Checks ("N3aAbCdefhiIklnOprStux");
 pragma Warnings (Off, """Always_Terminates"" is not a valid aspect identifier");
 
+with Interfaces;
+
 package RFLX.RFLX_Builtin_Types
 with
   SPARK_Mode,
@@ -21,7 +23,12 @@ is
 
    type Index is new Length range 1 .. Length'Last;
 
-   type Byte is mod 2**8;
+   --  HAND-MAINTAINED (SPARKTLS, see README.md): RecordFlux emits
+   --  "type Byte is mod 2**8;" here. SPARKTLS instead shares SPARKNaCl's byte
+   --  type (Interfaces.Unsigned_8) so that Byte_Seq <-> Bytes are plain checked
+   --  array conversions instead of element copies. Representation-identical.
+   --  Regenerate with "rflx generate -n" so this file is never overwritten.
+   subtype Byte is Interfaces.Unsigned_8;
 
    type Bytes is array (Index range <>) of Byte;
 

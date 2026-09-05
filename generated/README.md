@@ -1,16 +1,44 @@
 # Generated parser/builder code
 
-Output of `rflx generate -d generated/ specs/*.rflx` against AdaCore's
+Output of `rflx generate -n -d generated/ specs/*.rflx` against AdaCore's
 [RecordFlux](https://github.com/AdaCore/RecordFlux) (Apache-2.0; see
 `../NOTICE`).
 
 Generated with **RecordFlux 0.26.0**. Keep this directory in sync with
 `../specs/` — see "Checking for drift" below.
 
-The `generated/` directory is **pristine `rflx generate` output — no
-post-generation patches are applied** (confirmed 2026-09-04). Never
-hand-edit generated code, not even to track a spec change: change the
-spec and regenerate (see "Checking for drift" below).
+Every message unit is **pristine `rflx generate` output** — never hand-edit
+one, not even to track a spec change: change the spec and regenerate (see
+"Checking for drift" below).
+
+**Exactly one library file is hand-maintained (since 2026-09-05):**
+`rflx-rflx_builtin_types.ads` declares `subtype Byte is
+Interfaces.Unsigned_8;` where RecordFlux emits `type Byte is mod 2**8;`.
+This makes RecordFlux's byte the same type as SPARKNaCl's, so `Byte_Seq`
+and `Bytes` convert with a checked Ada array conversion instead of an
+element copy (the generic's `Custom_Byte is (<>)` formal exists for this).
+Consequences:
+
+- **Always regenerate with `-n` (`--no-library`).** It emits only the
+  message units; the 15 `rflx-rflx_*` library files are left alone. A
+  regeneration without `-n` silently restores RecordFlux's `Byte` and
+  reintroduces the copies.
+- **On a RecordFlux upgrade**, regenerate the library once (without `-n`)
+  into a scratch directory, diff the `rflx-rflx_*` files, re-apply the
+  one-line change, and check that `RFLX_Generic_Types` still requires
+  `Index'First = 1` (the conversions rely on it).
+- **Zero-copy conversions are written inline, in parameter positions.**
+  Measured on GNAT with `-gnatG` (2026-09-05): `Byte_Seq (X)` / `Bytes (X)`
+  written directly as an `in`, `in out` or `out` actual (or in an object
+  renaming) is a view -- no temporary, no copy. A *function* returning the
+  same conversion copies its whole result through the secondary stack, so
+  `SPARKTLS.RFLX_Bridge` deliberately has no `View_As_*` helpers; its
+  `To_RFLX` / `To_NaCl` are the sliding copies and are named as such.
+- **Mind the direction.** `Bytes -> Byte_Seq` is always in range (`Index`
+  starts at 1, `N32` at 0). `Byte_Seq -> Bytes` carries the conversion's own
+  bounds check: a 0-based slice fails it. Under proof that is a VC at the
+  site; under `-gnatp` it is an unchecked assumption. Keep such sites to
+  genuine 0->1 seams and never suppress the check without proving it.
 
 Two patches this file used to require are gone:
 
