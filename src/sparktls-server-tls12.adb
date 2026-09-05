@@ -1345,7 +1345,7 @@ is
          begin
             pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
             declare
-               Frag     : constant Byte_Seq := Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1)));
+               Frag     : constant Byte_Seq := Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
                Msg_Type : Maybe_HS_Msg;
                Msg_Len  : N32;
                Parse_OK : Boolean;
@@ -1416,7 +1416,7 @@ is
       CCS_Pos : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
       CCS_OK  : constant Boolean :=
         Rec.Fragment_Len = 1
-        and then S.Input.Data.all (Ix (CCS_Pos)) = 16#01#
+        and then S.Input.Storage (Ix (CCS_Pos)) = 16#01#
         and then not S.HC.CCS_Received;
    begin
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -1451,7 +1451,7 @@ is
       Alert_Desc : Byte := 0;
    begin
       if Rec.Fragment_Len >= 2 then
-         Alert_Desc := S.Input.Data.all (Ix (FS + 1));
+         Alert_Desc := S.Input.Storage (Ix (FS + 1));
       end if;
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
       if Alert_Desc = 0 then
@@ -1561,7 +1561,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -1624,7 +1624,7 @@ is
                  N32'Min (N32'Min (Wanted (D.Reasm), Frag_Len), Free_Space (D.Reasm));
             begin
                if Take > 0 then
-                  Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Take - 1))));
+                  Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Take - 1))));
                end if;
 
                if Take /= Frag_Len then
@@ -1670,19 +1670,19 @@ is
             end if;
 
             Reset (D.Reasm);
-            Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1))));
+            Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1))));
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Result := OK;
             return;
          else
             declare
                HS_Msg_Len : constant N32 :=
-                 N32 (S.Input.Data.all (Ix (FS + 1))) * 65536
-                 + N32 (S.Input.Data.all (Ix (FS + 2))) * 256
-                 + N32 (S.Input.Data.all (Ix (FS + 3)));
+                 N32 (S.Input.Storage (Ix (FS + 1))) * 65536
+                 + N32 (S.Input.Storage (Ix (FS + 2))) * 256
+                 + N32 (S.Input.Storage (Ix (FS + 3)));
                HS_Total   : constant N32 := HS_Msg_Len + 4;
             begin
-               if S.Input.Data.all (Ix (FS)) /= HS_Msg_Wire (HT_Client_Key_Exchange) then
+               if S.Input.Storage (Ix (FS)) /= HS_Msg_Wire (HT_Client_Key_Exchange) then
                   Consume_And_Alert_12 (S, Rec, Unexpected_Message, Result);
                   return;
                end if;
@@ -1693,7 +1693,7 @@ is
 
                if HS_Total > Frag_Len then
                   Reset (D.Reasm);
-                  Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1))));
+                  Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1))));
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Result := OK;
                   return;
@@ -1701,7 +1701,7 @@ is
             end;
 
             declare
-               Frag : constant Byte_Seq := Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1)));
+               Frag : constant Byte_Seq := Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
             begin
                Result := OK;
                Finish_CKE_12 (S, Rec, Frag, Result);
@@ -1755,7 +1755,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -1787,7 +1787,7 @@ is
          end if;
 
          declare
-            Frag     : constant Byte_Seq := Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1)));
+            Frag     : constant Byte_Seq := Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
             Msg_Type : Maybe_HS_Msg;
             Msg_Len  : N32;
             Parse_OK : Boolean;
@@ -2020,7 +2020,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
 
       if not Rec.OK then
          if Rec.Bad_Version then
@@ -2052,7 +2052,7 @@ is
          end if;
 
          declare
-            Frag     : constant Byte_Seq := Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1)));
+            Frag     : constant Byte_Seq := Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
             Msg_Type : Maybe_HS_Msg;
             Msg_Len  : N32;
             Parse_OK : Boolean;
@@ -2461,7 +2461,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
       if not Rec.OK then
          --  RFC 5246 7.2.1: alerts are under the current write
          --  state. We're past the client's CCS (READ side encrypted)
@@ -2517,10 +2517,10 @@ is
             Fin_OK    : Boolean;
          begin
             for I in N32 range 0 .. Frag_Len - 1 loop
-               Encrypted (I) := S.Input.Data.all (Ix (FS + I));
+               Encrypted (I) := S.Input.Storage (Ix (FS + I));
             end loop;
             for I in N32 range 0 .. 4 loop
-               Hdr (I) := S.Input.Data.all (Ix (S.Input.Read_Pos + I));
+               Hdr (I) := S.Input.Storage (Ix (S.Input.Read_Pos + I));
             end loop;
 
             Decrypt_Record_12
@@ -2699,7 +2699,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
 
       --  RFC 5246 7.2.1 / 7.2.2: post-Finished alerts MUST be
       --  encrypted under the app keys; a plaintext alert lands as a
@@ -2752,7 +2752,7 @@ is
                Output      => S.Output,
                Bytes_Out   => A,
                Hdr_Buf     => S.Rec_Hdr);
-            pragma Assert (A <= N32 (S.Output.Data.all'Length));
+            pragma Assert (A <= N32 (S.Output.Storage'Length));
          end;
          Result := (if Output_Pending (S) > 0 then Has_Output else OK);
          return;
@@ -2785,10 +2785,10 @@ is
             DV        : Boolean;
          begin
             for I in N32 range 0 .. Frag_Len - 1 loop
-               Encrypted (I) := S.Input.Data.all (Ix (FS + I));
+               Encrypted (I) := S.Input.Storage (Ix (FS + I));
             end loop;
             for I in N32 range 0 .. 4 loop
-               Hdr (I) := S.Input.Data.all (Ix (S.Input.Read_Pos + I));
+               Hdr (I) := S.Input.Storage (Ix (S.Input.Read_Pos + I));
             end loop;
 
             declare
@@ -2871,7 +2871,7 @@ is
                            Output      => S.Output,
                            Bytes_Out   => A,
                            Hdr_Buf     => S.Rec_Hdr);
-                        pragma Assert (A <= N32 (S.Output.Data.all'Length));
+                        pragma Assert (A <= N32 (S.Output.Storage'Length));
                      end;
                      if S.State = Connected then
                         Set_State (S, Closing);

@@ -2059,7 +2059,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -2076,8 +2076,8 @@ is
          declare
             AS   : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
             ALen : constant N32 := Rec.Fragment_Len;
-            Lvl  : constant Byte := (if ALen >= 1 then S.Input.Data.all (Ix (AS)) else 0);
-            Dsc  : constant Byte := (if ALen >= 2 then S.Input.Data.all (Ix (AS + 1)) else 0);
+            Lvl  : constant Byte := (if ALen >= 1 then S.Input.Storage (Ix (AS)) else 0);
+            Dsc  : constant Byte := (if ALen >= 2 then S.Input.Storage (Ix (AS + 1)) else 0);
          begin
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             if Lvl = 1 and Dsc /= 0 then
@@ -2114,7 +2114,7 @@ is
          declare
             CCS_Pos     : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
             CCS_Byte_OK : constant Boolean :=
-              Rec.Fragment_Len = 1 and then S.Input.Data.all (Ix (CCS_Pos)) = 16#01#;
+              Rec.Fragment_Len = 1 and then S.Input.Storage (Ix (CCS_Pos)) = 16#01#;
          begin
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             if not CCS_Byte_OK then
@@ -2290,7 +2290,7 @@ is
            N32'Min (N32'Min (Wanted (D.Reasm), Frag_Len), Free_Space (D.Reasm));
       begin
          if Copy_Len > 0 then
-            Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Copy_Len - 1))));
+            Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Copy_Len - 1))));
          end if;
       end;
       pragma Assert (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
@@ -2373,7 +2373,7 @@ is
       Result   : out Action) is
    begin
       Reset (D.Reasm);
-      Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1))));
+      Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1))));
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
       Result := OK;
    end Start_Fresh_Pending_Header_Reassembly;
@@ -2414,7 +2414,7 @@ is
       Total : constant N32 := Msg_Len + 4;
    begin
       Reset (D.Reasm);
-      Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1))));
+      Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1))));
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
       Result := OK;
    end Start_Fresh_Spanning_Reassembly;
@@ -2454,7 +2454,7 @@ is
       Result   : out Action) is
    begin
       Reset (D.Reasm);
-      Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1))));
+      Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1))));
       S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
       Result := OK;
    end Start_Fresh_Complete_Message;
@@ -2489,14 +2489,14 @@ is
       end if;
 
       declare
-         Frag : Byte_Seq renames Byte_Seq (S.Input.Data.all (Ix (FS) .. Ix (FS + Frag_Len - 1)));
+         Frag : Byte_Seq renames Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
       begin
          Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
       end;
       if not Parse_OK then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          declare
-            Raw_Type : constant Byte := (if Frag_Len >= 1 then S.Input.Data.all (Ix (FS)) else 0);
+            Raw_Type : constant Byte := (if Frag_Len >= 1 then S.Input.Storage (Ix (FS)) else 0);
             Is_Known : constant Boolean :=
               Raw_Type
               in 16#01#
@@ -2815,7 +2815,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -2832,7 +2832,7 @@ is
          declare
             CCS_Pos     : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
             CCS_Byte_OK : constant Boolean :=
-              Rec.Fragment_Len = 1 and then S.Input.Data.all (Ix (CCS_Pos)) = 16#01#;
+              Rec.Fragment_Len = 1 and then S.Input.Storage (Ix (CCS_Pos)) = 16#01#;
          begin
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             if S.HC.T12.Server_Will_Issue
@@ -3101,7 +3101,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -3136,10 +3136,10 @@ is
          DV        : Boolean;
       begin
          for I in N32 range 0 .. Frag_Len - 1 loop
-            Encrypted (I) := S.Input.Data.all (Ix (FS + I));
+            Encrypted (I) := S.Input.Storage (Ix (FS + I));
          end loop;
          for I in N32 range 0 .. 4 loop
-            Hdr (I) := S.Input.Data.all (Ix (S.Input.Read_Pos + I));
+            Hdr (I) := S.Input.Storage (Ix (S.Input.Read_Pos + I));
          end loop;
 
          declare
@@ -3346,7 +3346,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
+        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec, S.Rec_Hdr);
 
       if Rec.Bad_Version then
          S.Last_Error := Protocol_Version;
@@ -3407,10 +3407,10 @@ is
             DV        : Boolean;
          begin
             for I in N32 range 0 .. Frag_Len - 1 loop
-               Encrypted (I) := S.Input.Data.all (Ix (FS + I));
+               Encrypted (I) := S.Input.Storage (Ix (FS + I));
             end loop;
             for I in N32 range 0 .. 4 loop
-               Hdr (I) := S.Input.Data.all (Ix (S.Input.Read_Pos + I));
+               Hdr (I) := S.Input.Storage (Ix (S.Input.Read_Pos + I));
             end loop;
 
             declare

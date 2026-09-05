@@ -2284,9 +2284,9 @@ is
          --  Copy to 0-indexed locals (Decrypt_Record requires
          --  0-indexed inputs)
          Encrypted      : Byte_Seq (0 .. Frag_Len - 1) :=
-           Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
+           Byte_Seq (S.Input.Storage (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
          Hdr            : Byte_Seq (0 .. 4) :=
-           Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Read_Pos + 4)));
+           Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Read_Pos + 4)));
          Plaintext      : Byte_Seq (0 .. Frag_Len - 1);
          Plain_Len      : N32;
          Inner_Type     : Byte;
@@ -2373,7 +2373,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Data   => Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
+        (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
          Result => Rec,
          Hdr    => S.Rec_Hdr);
@@ -2410,7 +2410,7 @@ is
             declare
                CCS_Pos : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
                CCS_OK  : constant Boolean :=
-                 Rec.Fragment_Len = 1 and then S.Input.Data.all (Ix (CCS_Pos)) = 16#01#;
+                 Rec.Fragment_Len = 1 and then S.Input.Storage (Ix (CCS_Pos)) = 16#01#;
             begin
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                if CCS_OK and then not S.HC.CCS_Received then
@@ -2855,8 +2855,8 @@ is
          Frag_Len   : constant N32 := Rec.Fragment_Len;
          Frag_Start : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
          Encrypted  : Byte_Seq (0 .. Frag_Len - 1) :=
-           Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
-         Hdr        : Byte_Seq (0 .. 4) := Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Read_Pos + 4)));
+           Byte_Seq (S.Input.Storage (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
+         Hdr        : Byte_Seq (0 .. 4) := Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Read_Pos + 4)));
          Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
          Plain_Len  : N32;
          Inner_Type : Byte;
@@ -3068,7 +3068,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Data   => Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
+        (Data   => Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
          Result => Rec,
          Hdr    => S.Rec_Hdr);

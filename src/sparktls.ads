@@ -810,7 +810,7 @@ is
    --  The one 0/1 seam. IO_Buffer positions are 0-based COUNTS (Read_Pos,
    --  Write_Pos, Available, Free_Space are unchanged); the storage they index
    --  is RecordFlux's 1-based Bytes, so contexts Initialize on it in place.
-   --  Every index into Data goes through Ix; never index Data.all directly.
+   --  Every index into Storage goes through Ix.
    function Ix (P : N32) return RBT_A.Index
    is (RBT_A.Index (P + 1))
    with Pre => P < IO_Buffer_Capacity;
@@ -825,11 +825,15 @@ is
                    Dst (I) = Src (Src'First + N32 (I - Dst'First)));
 
 
+   --  The I/O storage lives INLINE in the Session: no heap, no null window,
+   --  nothing to free, and a Session assignment (S := Configure (...)) starts
+   --  from zeroed storage. It is RecordFlux's 1-based Bytes so contexts can
+   --  work on it in place; aliased because a context borrows a pointer into
+   --  it (the SPARK-Off Borrow/Discard primitives of the in-place rounds).
+   subtype IO_Storage is RBT_A.Bytes (1 .. RBT_A.Index (IO_Buffer_Capacity));
+
    type IO_Buffer is record
-      --  1-based RecordFlux storage, allocated once in Client/Server.Configure
-      --  (the only allocation in the library's lifetime) and never freed.
-      --  Null until Configure.
-      Data      : RBT_A.Bytes_Ptr := null;
+      Storage   : aliased IO_Storage := (others => 0);
       Read_Pos  : Buffer_Size := 0;  --  next byte to consume
       Write_Pos : Buffer_Size := 0;  --  next byte to write
    end record

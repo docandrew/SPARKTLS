@@ -65,7 +65,7 @@ is
          Len : constant N32 := N32 (Data'Length);
       begin
          if Free_Space (Output) >= Len then
-            Copy_In (Output.Data.all (Ix (Output.Write_Pos) .. Ix (Output.Write_Pos + Len - 1)), Data);
+            Copy_In (Output.Storage (Ix (Output.Write_Pos) .. Ix (Output.Write_Pos + Len - 1)), Data);
             Output.Write_Pos := Output.Write_Pos + Len;
             OK := True;
          else
@@ -344,7 +344,7 @@ is
       begin
          --  Header at [Hdr_Pos .. Hdr_Pos + 4]
          for I in 0 .. 4 loop
-            Output.Data.all (Ix (Hdr_Pos + N32 (I))) := Hdr (N32 (I));
+            Output.Storage (Ix (Hdr_Pos + N32 (I))) := Hdr (N32 (I));
          end loop;
 
          --  Plaintext + content_type byte at [CT_Pos .. Tag_Pos - 1].
@@ -354,10 +354,10 @@ is
          --  shuffle per 16 KB record).
          if Plaintext'Length > 0 then
             for I in N32 range 0 .. N32 (Plaintext'Length) - 1 loop
-               Output.Data.all (Ix (CT_Pos + I)) := Plaintext (Plaintext'First + I);
+               Output.Storage (Ix (CT_Pos + I)) := Plaintext (Plaintext'First + I);
             end loop;
          end if;
-         Output.Data.all (Ix (Tag_Pos - 1)) := Inner_Type;
+         Output.Storage (Ix (Tag_Pos - 1)) := Inner_Type;
 
          --  Encrypt in place + compute tag, slice-aware.
          case Keys.Suite is
@@ -366,7 +366,7 @@ is
                   AES_Key : constant AES.AES128_Key := AES.Construct (Keys.Key (0 .. 15));
                begin
                   AES_GCM.Encrypt_InPlace
-                    (Buf => Byte_Seq (Output.Data.all (Ix (CT_Pos) .. Ix (Tag_Pos - 1))),
+                    (Buf => Byte_Seq (Output.Storage (Ix (CT_Pos) .. Ix (Tag_Pos - 1))),
                      Tag => Tag,
                      N   => Nonce,
                      K   => AES_Key,
@@ -378,7 +378,7 @@ is
                   AES_Key : constant AES.AES256_Key := AES.Construct (Keys.Key);
                begin
                   AES_GCM.Encrypt_InPlace_256
-                    (Buf => Byte_Seq (Output.Data.all (Ix (CT_Pos) .. Ix (Tag_Pos - 1))),
+                    (Buf => Byte_Seq (Output.Storage (Ix (CT_Pos) .. Ix (Tag_Pos - 1))),
                      Tag => Tag,
                      N   => Nonce,
                      K   => AES_Key,
@@ -410,14 +410,14 @@ is
                   --  Copy ChaCha20 ciphertext into the destination
                   --  slice we already reserved above.
                   for I in N32 range 0 .. Inner_Len - 1 loop
-                     Output.Data.all (Ix (CT_Pos + I)) := Ciphertext (I);
+                     Output.Storage (Ix (CT_Pos + I)) := Ciphertext (I);
                   end loop;
                end;
          end case;
 
          --  Tag at [Tag_Pos .. Tag_Pos + 15]
          for I in 0 .. 15 loop
-            Output.Data.all (Ix (Tag_Pos + N32 (I))) := Tag (N32 (I));
+            Output.Storage (Ix (Tag_Pos + N32 (I))) := Tag (N32 (I));
          end loop;
 
          Output.Write_Pos := Output.Write_Pos + Total;
@@ -663,10 +663,10 @@ is
       if Free_Space (Output) >= 7 then
          --  Alert body (2 bytes) out of the scratch buffer FIRST: the header
          --  build below reuses the same buffer.
-         Output.Data.all (Ix (Output.Write_Pos + 5)) := Byte (Hdr_Buf.all (1));  --  level
-         Output.Data.all (Ix (Output.Write_Pos + 6)) := Byte (Hdr_Buf.all (2));  --  description
+         Output.Storage (Ix (Output.Write_Pos + 5)) := Byte (Hdr_Buf.all (1));  --  level
+         Output.Storage (Ix (Output.Write_Pos + 6)) := Byte (Hdr_Buf.all (2));  --  description
          Build_Record_Header (Hdr_Buf, 16#15#, 16#0303#, 2, Hdr);
-         Copy_In (Output.Data.all (Ix (Output.Write_Pos) .. Ix (Output.Write_Pos + 4)), Hdr);
+         Copy_In (Output.Storage (Ix (Output.Write_Pos) .. Ix (Output.Write_Pos + 4)), Hdr);
          Output.Write_Pos := Output.Write_Pos + 7;
          Bytes_Out := 7;
       end if;
