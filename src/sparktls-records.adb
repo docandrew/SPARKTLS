@@ -104,6 +104,42 @@ is
       Hdr := To_NaCl (Hdr_Buf.all (1 .. RBT.Index (Record_Header_Size)));
    end Build_Record_Header;
 
+   --  Build a 5-byte record header directly into Output.Storage at byte
+   --  position Pos (a 0-based count), in place via Borrow. Does NOT advance
+   --  Write_Pos -- for callers (Build_Encrypted_Record) that place records at
+   --  explicit offsets and manage Write_Pos themselves.
+   procedure Put_Header_At
+     (Output       : in out IO_Buffer;
+      Pos          : in N32;
+      Content_Type : in Byte;
+      Version      : in N32;
+      Length       : in N32)
+   with
+     Pre  => Pos + Record_Header_Size <= IO_Buffer_Capacity
+             and then Version <= 65535 and then Length <= 65535,
+     Post => Output.Write_Pos = Output.Write_Pos'Old
+             and then Output.Read_Pos = Output.Read_Pos'Old
+   is
+      package RH renames RFLX.TLS_Record.TLS_Record_Header;
+      Ctx    : RH.Context;
+      P      : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
+   begin
+      SPARKTLS.RFLX_Borrow.Borrow
+        (Output.Storage,
+         Ix (Pos),
+         Ix (Pos + Record_Header_Size - 1),
+         Holder, P);
+      RH.Initialize (Ctx, P);
+      RH.Set_Content_Type
+        (Ctx, RFLX.TLS_Record.Record_Content_Type_Any (Content_Type));
+      RH.Set_Legacy_Record_Version
+        (Ctx, RFLX.TLS_Record.Record_Version_Any (Version));
+      RH.Set_Length (Ctx, RFLX.TLS_Record.Record_Length_Any (Length));
+      RH.Take_Buffer (Ctx, P);
+      SPARKTLS.RFLX_Borrow.Discard (P);
+   end Put_Header_At;
+
    procedure Parse_Record_Header
      (Data          : in Byte_Seq;
       Avail         : in N32;
@@ -292,6 +328,7 @@ is
       Bytes_Out  : out N32;
       Hdr_Buf    : in out RBT.Bytes_Ptr)
    is
+      pragma Unreferenced (Hdr_Buf);  --  removed with Rec_Hdr in the parse-side step
       Inner_Len : constant N32 := N32 (Plaintext'Length) + 1;
       Enc_Len   : constant N32 := Inner_Len + Tag_Size;
       Total     : constant N32 := Record_Header_Size + Enc_Len;
@@ -308,8 +345,6 @@ is
          return;
       end if;
 
-      --  Build TLS record header (5 bytes: type + version + length).
-      Build_Record_Header (Hdr_Buf, 16#17#, 16#0303#, Enc_Len, Hdr);
       pragma Assert (Record_Version_RFC_8446_5_1 (16#03#, 16#03#));
 
       --  RFC 8446 5.3: nonce = IV xor sequence number. Fail closed at the
@@ -336,10 +371,10 @@ is
          CT_Pos  : constant N32 := Hdr_Pos + Record_Header_Size;
          Tag_Pos : constant N32 := CT_Pos + Inner_Len;
       begin
-         --  Header at [Hdr_Pos .. Hdr_Pos + 4]
-         for I in 0 .. 4 loop
-            Output.Storage (Ix (Hdr_Pos + N32 (I))) := Hdr (N32 (I));
-         end loop;
+         --  Header at [Hdr_Pos .. Hdr_Pos + 4], built in place; keep a copy
+         --  in Hdr (5 bytes) for the AEAD AAD, which must be a non-aliased value.
+         Put_Header_At (Output, Hdr_Pos, 16#17#, 16#0303#, Enc_Len);
+         Hdr := To_NaCl (Output.Storage (Ix (Hdr_Pos) .. Ix (Hdr_Pos + 4)));
 
          --  Plaintext + content_type byte at [CT_Pos .. Tag_Pos - 1].
          --  This single Plaintext-into-Output copy is the only data
@@ -562,30 +597,12 @@ is
       Length       : in N32;
       OK           : out Boolean)
    is
-      package RH renames RFLX.TLS_Record.TLS_Record_Header;
-      Ctx    : RH.Context;
-      P      : RBT.Bytes_Ptr;
-      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
    begin
       if Free_Space (Output) < Record_Header_Size then
          OK := False;
          return;
       end if;
-
-      SPARKTLS.RFLX_Borrow.Borrow
-        (Output.Storage,
-         Ix (Output.Write_Pos),
-         Ix (Output.Write_Pos + Record_Header_Size - 1),
-         Holder, P);
-      RH.Initialize (Ctx, P);
-      RH.Set_Content_Type
-        (Ctx, RFLX.TLS_Record.Record_Content_Type_Any (Content_Type));
-      RH.Set_Legacy_Record_Version
-        (Ctx, RFLX.TLS_Record.Record_Version_Any (Version));
-      RH.Set_Length (Ctx, RFLX.TLS_Record.Record_Length_Any (Length));
-      RH.Take_Buffer (Ctx, P);
-      SPARKTLS.RFLX_Borrow.Discard (P);
-
+      Put_Header_At (Output, Output.Write_Pos, Content_Type, Version, Length);
       Output.Write_Pos := Output.Write_Pos + Record_Header_Size;
       OK := True;
    end Put_Record_Header;
