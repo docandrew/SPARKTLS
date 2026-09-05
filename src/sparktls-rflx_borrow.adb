@@ -31,6 +31,18 @@ package body SPARKTLS.RFLX_Borrow with SPARK_Mode => Off is
       P := null;  --  never Free: the target is inline, not heap
    end Discard;
 
+   procedure Borrow_Read
+     (Source : SPARKNaCl.Byte_Seq;
+      First  : SPARKNaCl.N32;
+      Length : SPARKNaCl.N32;
+      Holder : aliased in out Bounds_Holder;
+      P      : out RBT.Bytes_Ptr) is
+   begin
+      Holder := (F => 1, L => RBT.Index (Length));
+      P := To_Ptr (Fat'(P_ARRAY  => Source (First)'Address,
+                        P_BOUNDS => Holder'Address));
+   end Borrow_Read;
+
    ----------------------------------------------------------------------------
    function Layout_Verified return Boolean is
       procedure Free is new Ada.Unchecked_Deallocation (RBT.Bytes, RBT.Bytes_Ptr);

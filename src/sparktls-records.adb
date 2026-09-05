@@ -128,14 +128,17 @@ is
       Loose_Initial : in Boolean := False)
    is
       --  TLS record header: content_type(1) + version(2) + length(2) = 5
-      --  bytes, decoded through the RecordFlux TLS_Record_Header message
-      --  from a 5-byte copy in the per-connection Hdr buffer -- never by
-      --  aliasing the I/O buffer, which is what forced 'Unrestricted_Access
-      --  in the earlier RecordFlux attempt. All three fields are tolerant in
-      --  the spec, so the RFC policy below runs in the RFC-mandated order and
-      --  each fault keeps its alert: version, then length, then type.
+      --  bytes, decoded through the RecordFlux TLS_Record_Header message on a
+      --  read-only borrow of the I/O buffer's header window (in place, no
+      --  copy; sound because RFLX parse never writes its buffer). All three
+      --  fields are tolerant in the spec, so the RFC policy below runs in the
+      --  RFC-mandated order and each fault keeps its alert: version, then
+      --  length, then type.
+      pragma Unreferenced (Hdr);  --  removed with Rec_Hdr in the sweep step
       package RH renames RFLX.TLS_Record.TLS_Record_Header;
       Ctx      : RH.Context;
+      P        : RBT.Bytes_Ptr;
+      Holder   : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       B        : N32;
       V        : N32;
       CT       : Byte;
@@ -151,15 +154,13 @@ is
 
       B := Data'First;
 
-      Ensure_Header_Buffer (Hdr);
-      Hdr.all (1 .. RBT.Index (Record_Header_Size)) :=
-        To_RFLX (Data (B .. B + Record_Header_Size - 1));
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Data, B, Record_Header_Size, Holder, P);
 
       --  Written_Last is mandatory for a parse: the default (0) means
       --  "nothing written yet" (First - 1), which is right for a build but
       --  leaves a parse context empty. All five header bytes are data.
       RH.Initialize
-        (Ctx, Hdr, Written_Last => RBT.Bit_Length (Record_Header_Size * 8));
+        (Ctx, P, Written_Last => RBT.Bit_Length (Record_Header_Size * 8));
       RH.Verify_Message (Ctx);
       if not RH.Well_Formed_Message (Ctx) then
          --  Unreachable while Written_Last covers all five bytes (tolerant
@@ -167,7 +168,8 @@ is
          --  and connections stall with no alert (the 2026-09-05 regression:
          --  a bare Initialize left the context empty). Keep the buffer
          --  discipline and report "not a record" exactly as before.
-         RH.Take_Buffer (Ctx, Hdr);
+         RH.Take_Buffer (Ctx, P);
+         SPARKTLS.RFLX_Borrow.Discard (P);
          return;
       end if;
       CT       := Byte (RH.Get_Content_Type (Ctx));
@@ -175,7 +177,8 @@ is
       Major    := Byte (V / 256);
       Minor    := Byte (V mod 256);
       Frag_Len := N32 (RH.Get_Length (Ctx));
-      RH.Take_Buffer (Ctx, Hdr);
+      RH.Take_Buffer (Ctx, P);
+      SPARKTLS.RFLX_Borrow.Discard (P);
 
       --  RFC 8446 5.1 / RFC 5246 6.2.1: the record-layer version
       --  must encode some TLS version. The major byte must be 0x03;

@@ -31,6 +31,7 @@
 --  reproducer tls_proj/exp_conv/.
 
 with RFLX.RFLX_Builtin_Types;
+with SPARKNaCl;
 package SPARKTLS.RFLX_Borrow with SPARK_Mode is
 
    package RBT renames RFLX.RFLX_Builtin_Types;
@@ -57,6 +58,24 @@ package SPARKTLS.RFLX_Borrow with SPARK_Mode is
    --  Drop a borrowed pointer. Never frees -- the target is inline storage.
    procedure Discard (P : in out RBT.Bytes_Ptr)
    with Post => P = null;
+
+   --  Read-only borrow for PARSING: hand a context a pointer to
+   --  Source (First .. First + Length - 1), 1-based, without copying. Sound
+   --  because the RFLX parse path (Initialize with Written_Last,
+   --  Verify_Message, Get_*, Take_Buffer) never writes the buffer -- verified
+   --  in the generated code: only Read/Extract, never Write -- so the
+   --  fabricated writable pointer to `in` Source is only ever read.
+   procedure Borrow_Read
+     (Source : SPARKNaCl.Byte_Seq;
+      First  : SPARKNaCl.N32;
+      Length : SPARKNaCl.N32;
+      Holder : aliased in out Bounds_Holder;
+      P      : out RBT.Bytes_Ptr)
+   with
+     Pre  => Length > 0
+             and then First >= Source'First
+             and then First + Length - 1 <= Source'Last,
+     Post => P /= null and then P'First = 1 and then P'Last = RBT.Index (Length);
 
    --  True iff the fabricated fat-pointer layout matches the compiler's. The
    --  body raises Program_Error at elaboration if this is ever False.
