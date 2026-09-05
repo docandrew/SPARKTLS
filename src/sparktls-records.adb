@@ -83,26 +83,6 @@ is
       end if;
    end Ensure_Header_Buffer;
 
-   procedure Build_Record_Header
-     (Hdr_Buf      : in out RBT.Bytes_Ptr;
-      Content_Type : in Byte;
-      Version      : in N32;
-      Length       : in N32;
-      Hdr          : out Byte_Seq)
-   is
-      package RH renames RFLX.TLS_Record.TLS_Record_Header;
-      Ctx : RH.Context;
-   begin
-      Ensure_Header_Buffer (Hdr_Buf);
-      --  A build starts from an empty context: the default Written_Last is
-      --  exactly right here (a parse must pass it explicitly).
-      RH.Initialize (Ctx, Hdr_Buf);
-      RH.Set_Content_Type (Ctx, RFLX.TLS_Record.Record_Content_Type_Any (Content_Type));
-      RH.Set_Legacy_Record_Version (Ctx, RFLX.TLS_Record.Record_Version_Any (Version));
-      RH.Set_Length (Ctx, RFLX.TLS_Record.Record_Length_Any (Length));
-      RH.Take_Buffer (Ctx, Hdr_Buf);
-      Hdr := To_NaCl (Hdr_Buf.all (1 .. RBT.Index (Record_Header_Size)));
-   end Build_Record_Header;
 
    --  Build a 5-byte record header directly into Output.Storage at byte
    --  position Pos (a 0-based count), in place via Borrow. Does NOT advance
@@ -657,30 +637,20 @@ is
       use RFLX.TLS_Alert;
       use RFLX.TLS_Alert.Alert;
       use RFLX.Tls_Parameters;
-      use type RFLX.RFLX_Types.Bytes_Ptr;
-      use type RFLX.RFLX_Types.Bit_Length;
 
-      use type RFLX.RFLX_Builtin_Types.Bytes_Ptr;
+      pragma Unreferenced (Hdr_Buf);  --  removed with Rec_Hdr in the parse-side step
 
-      --  The alert body and the record header both go through RecordFlux
-      --  using the connection's scratch buffer (Hdr_Buf), so this path has no
-      --  allocation of its own; the former per-call new/Unchecked_Deallocation
-      --  (a SPARK_Mode Off body) is gone.
-      Hdr        : Byte_Seq (0 .. 4) := (others => 0);
-      Ctx        : RFLX.TLS_Alert.Alert.Context;
       Alert_Lvl  : RFLX.TLS_Alert.Alert_Level;
       Alert_Desc : RFLX.Tls_Parameters.TLS_Alerts_Enum;
    begin
       Bytes_Out := 0;
 
-      --  Map level byte to RFLX enum
       if Level = 1 then
          Alert_Lvl := Warning;
       else
          Alert_Lvl := Fatal;
       end if;
 
-      --  Map description byte to RFLX enum
       declare
          Base_Val : constant RFLX.RFLX_Types.Base_Integer := RFLX.RFLX_Types.Base_Integer (Desc);
       begin
@@ -700,24 +670,33 @@ is
          end if;
       end;
 
-      --  Build alert payload via RFLX
-      Ensure_Header_Buffer (Hdr_Buf);
-      Initialize (Ctx, Hdr_Buf);
-      Set_Level (Ctx, Alert_Lvl);
-      pragma
-        Assert
-          (RFLX.Tls_Parameters.Valid_TLS_Alerts (RFLX.Tls_Parameters.To_Base_Integer (Alert_Desc)));
-      Set_Description (Ctx, Alert_Desc);
-      Take_Buffer (Ctx, Hdr_Buf);
-
-      --  Wrap in plaintext TLS record: type(1) + version(2) + length(2) + alert(2)
       if Free_Space (Output) >= 7 then
-         --  Alert body (2 bytes) out of the scratch buffer FIRST: the header
-         --  build below reuses the same buffer.
-         Output.Storage (Ix (Output.Write_Pos + 5)) := Byte (Hdr_Buf.all (1));  --  level
-         Output.Storage (Ix (Output.Write_Pos + 6)) := Byte (Hdr_Buf.all (2));  --  description
-         Build_Record_Header (Hdr_Buf, 16#15#, 16#0303#, 2, Hdr);
-         Copy_In (Output.Storage (Ix (Output.Write_Pos) .. Ix (Output.Write_Pos + 4)), Hdr);
+         --  Alert body (level, description) built in place at [Wp+5 .. Wp+6]
+         --  through the RecordFlux Alert message -- no scratch, no copy.
+         declare
+            Ctx    : RFLX.TLS_Alert.Alert.Context;
+            P      : RBT.Bytes_Ptr;
+            Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
+         begin
+            SPARKTLS.RFLX_Borrow.Borrow
+              (Output.Storage,
+               Ix (Output.Write_Pos + 5),
+               Ix (Output.Write_Pos + 6),
+               Holder, P);
+            Initialize (Ctx, P);
+            Set_Level (Ctx, Alert_Lvl);
+            pragma
+              Assert
+                (RFLX.Tls_Parameters.Valid_TLS_Alerts
+                   (RFLX.Tls_Parameters.To_Base_Integer (Alert_Desc)));
+            Set_Description (Ctx, Alert_Desc);
+            Take_Buffer (Ctx, P);
+            SPARKTLS.RFLX_Borrow.Discard (P);
+         end;
+
+         --  Record header (alert = 0x15, TLS 1.2, length 2) in place at [Wp .. Wp+4].
+         Put_Header_At (Output, Output.Write_Pos, 16#15#, 16#0303#, 2);
+
          Output.Write_Pos := Output.Write_Pos + 7;
          Bytes_Out := 7;
       end if;

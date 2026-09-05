@@ -69,20 +69,6 @@ is
    procedure Ensure_Header_Buffer (Hdr : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
    with Post => Hdr /= null;
 
-   --  Serialise a 5-byte TLS record header (RFC 8446 5.1: type, legacy
-   --  version, length) through the RecordFlux TLS_Record_Header builder into
-   --  Hdr_Buf, returning the bytes in Hdr. The single point where a wire
-   --  record header is produced.
-   procedure Build_Record_Header
-     (Hdr_Buf      : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr;
-      Content_Type : in Byte;
-      Version      : in N32;
-      Length       : in N32;
-      Hdr          : out Byte_Seq)
-   with
-     Pre  => Hdr'Length = Record_Header_Size and then Version <= 65535 and then Length <= 65535,
-     Post => Hdr_Buf /= null;
-
    --  Build the 5-byte record header directly into Output at the write
    --  position, in place (no scratch, no copy), via SPARKTLS.RFLX_Borrow.
    --  OK is False iff there was no room; then Output is unchanged.

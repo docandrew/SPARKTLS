@@ -193,6 +193,7 @@ is
       Bytes_Out    : out N32;
       Hdr_Buf      : in out RBT.Bytes_Ptr)
    is
+      pragma Unreferenced (Hdr_Buf);  --  removed with Rec_Hdr in the parse-side step
       pragma Assert (Plaintext'Last < Max_Record_Plaintext);
       PT_Len : constant N32 := N32 (Plaintext'Length);
 
@@ -218,7 +219,6 @@ is
       AAD        : Byte_Seq (0 .. AAD_Len - 1);
       Ciphertext : Byte_Seq (0 .. Plaintext'Last);
       Tag        : Bytes_16;
-      Hdr        : Byte_Seq (0 .. 4) := (others => 0);
       Exp_Nonce  : Byte_Seq (0 .. 7);
       OK         : Boolean;
    begin
@@ -303,13 +303,12 @@ is
          return;
       end if;
 
-      Build_Record_Header
-        (Hdr_Buf, Content_Type,
-         N32 (TLS12_Version_Major) * 256 + N32 (TLS12_Version_Minor), Frag_Len, Hdr);
       pragma Assert (SPARKTLS.Record_Version_RFC_8446_5_1 (TLS12_Version_Major, TLS12_Version_Minor));
 
       --  Write: header || [explicit_nonce for GCM] || ciphertext || tag
-      Write_To_Output (Output, Hdr, OK);
+      Put_Record_Header
+        (Output, Content_Type,
+         N32 (TLS12_Version_Major) * 256 + N32 (TLS12_Version_Minor), Frag_Len, OK);
       if not OK then
          return;
       end if;
