@@ -14,6 +14,7 @@ is
 
    --  RFLX byte-buffer type for the reusable per-session handshake arena.
    package RBT_A renames RFLX.RFLX_Builtin_Types;
+   use type RBT_A.Index;
    --  Needed because Session is now a private type: contracts that used to
    --  say S.State'Old now say State (S)'Old, and Ada only permits 'Old on a
    --  function call in a potentially-unevaluated context (inside an "if" in
@@ -806,8 +807,29 @@ is
 
    subtype Buffer_Size is N32 range 0 .. IO_Buffer_Capacity;
 
+   --  The one 0/1 seam. IO_Buffer positions are 0-based COUNTS (Read_Pos,
+   --  Write_Pos, Available, Free_Space are unchanged); the storage they index
+   --  is RecordFlux's 1-based Bytes, so contexts Initialize on it in place.
+   --  Every index into Data goes through Ix; never index Data.all directly.
+   function Ix (P : N32) return RBT_A.Index
+   is (RBT_A.Index (P + 1))
+   with Pre => P < IO_Buffer_Capacity;
+
+   --  Writes into an IO_Buffer go through this procedure. Dst is the RFLX
+   --  Bytes slice itself (no view conversion at the call: gnatprove 16.1
+   --  aborts on an out-view conversion between Byte_Seq and Bytes); the
+   --  0-based Src slides onto the 1-based Dst inside.
+   procedure Copy_In (Dst : out RBT_A.Bytes; Src : in Byte_Seq)
+   with Pre  => Dst'Length = Src'Length,
+        Post => (for all I in Dst'Range =>
+                   Dst (I) = Src (Src'First + N32 (I - Dst'First)));
+
+
    type IO_Buffer is record
-      Data      : Byte_Seq (0 .. IO_Buffer_Capacity - 1) := (others => 0);
+      --  1-based RecordFlux storage, allocated once in Client/Server.Configure
+      --  (the only allocation in the library's lifetime) and never freed.
+      --  Null until Configure.
+      Data      : RBT_A.Bytes_Ptr := null;
       Read_Pos  : Buffer_Size := 0;  --  next byte to consume
       Write_Pos : Buffer_Size := 0;  --  next byte to write
    end record
@@ -2594,9 +2616,9 @@ is
    with Ghost;
    function Server_App (S : Session) return Traffic_Keys
    with Ghost;
-   function Input (S : Session) return IO_Buffer
+   function Input_Read_Pos (S : Session) return N32
    with Ghost;
-   function Output (S : Session) return IO_Buffer
+   function Output_Read_Pos (S : Session) return N32
    with Ghost;
    function Client_Seq_12 (S : Session) return Unsigned_64
    with Ghost;
@@ -2670,8 +2692,10 @@ is
        and Has_Context (S) = Has_Context (S)'Old
        and Server_App (S) = Server_App (S)'Old
        and Client_App (S) = Client_App (S)'Old
-       and Input (S) = Input (S)'Old
-       and Output (S) = Output (S)'Old
+       and Input_Available (S) = Input_Available (S)'Old
+       and Input_Read_Pos (S) = Input_Read_Pos (S)'Old
+       and Output_Pending (S) = Output_Pending (S)'Old
+       and Output_Read_Pos (S) = Output_Read_Pos (S)'Old
        and Server_Seq_12 (S) = Server_Seq_12 (S)'Old
        and Client_Seq_12 (S) = Client_Seq_12 (S)'Old
        and Last_Error (S) = Last_Error (S)'Old
@@ -3034,10 +3058,10 @@ private
    is (S.Client_App);
    function Server_App (S : Session) return Traffic_Keys
    is (S.Server_App);
-   function Input (S : Session) return IO_Buffer
-   is (S.Input);
-   function Output (S : Session) return IO_Buffer
-   is (S.Output);
+   function Input_Read_Pos (S : Session) return N32
+   is (S.Input.Read_Pos);
+   function Output_Read_Pos (S : Session) return N32
+   is (S.Output.Read_Pos);
    function Client_Seq_12 (S : Session) return Unsigned_64
    is (S.Client_App.Counter);
    function Server_Seq_12 (S : Session) return Unsigned_64

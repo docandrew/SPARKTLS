@@ -62,7 +62,7 @@ package SPARKTLS_Reassembly_G with SPARK_Mode => On is
    --  so. A subtype rather than a precondition conjunct, so the bound holds
    --  everywhere the type is used instead of being restated by every
    --  subprogram that accepts wire data.
-   subtype Wire_Chunk is Byte_Seq with Dynamic_Predicate => Wire_Chunk'Last < IO_Buffer_Capacity;
+   subtype Wire_Chunk is Byte_Seq with Dynamic_Predicate => Wire_Chunk'Last <= IO_Buffer_Capacity;
 
    type Buffer is private;
 

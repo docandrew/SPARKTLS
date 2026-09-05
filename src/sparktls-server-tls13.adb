@@ -540,7 +540,7 @@ is
          Rec : Records.Parse_Result;
       begin
          Records.Parse_Record_Header
-           (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+           (Data   => Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
             Avail  => Available (S.Input),
             Result => Rec,
             Hdr    => S.Rec_Hdr);
@@ -572,7 +572,7 @@ is
             declare
                CCS_Pos : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
                CCS_OK  : constant Boolean :=
-                 Rec.Fragment_Len = 1 and then S.Input.Data (CCS_Pos) = 16#01#;
+                 Rec.Fragment_Len = 1 and then S.Input.Data.all (Ix (CCS_Pos)) = 16#01#;
             begin
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                if CCS_OK then
@@ -633,7 +633,7 @@ is
                     N32'Min (N32'Min (Wanted (D.Reasm), Frag_Len), Free_Space (D.Reasm));
                begin
                   if Take > 0 then
-                     Append (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Take - 1));
+                     Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Take - 1))));
                   end if;
                end;
                Consume_Record;
@@ -674,15 +674,15 @@ is
                Send_Alert_And_Error (S, Decode_Error, Result);
             elsif Frag_Len < 4 then
                Reset (D.Reasm);
-               Append (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1));
+               Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1))));
                Consume_Record;
                Result := OK;
             else
                declare
                   HS_Msg_Len : constant N32 :=
-                    N32 (S.Input.Data (Frag_Start + 1)) * 65536
-                    + N32 (S.Input.Data (Frag_Start + 2)) * 256
-                    + N32 (S.Input.Data (Frag_Start + 3));
+                    N32 (S.Input.Data.all (Ix (Frag_Start + 1))) * 65536
+                    + N32 (S.Input.Data.all (Ix (Frag_Start + 2))) * 256
+                    + N32 (S.Input.Data.all (Ix (Frag_Start + 3)));
                   HS_Total   : constant N32 := HS_Msg_Len + 4;
                begin
                   if HS_Total > Max_HS_Msg then
@@ -690,7 +690,7 @@ is
                      Send_Alert_And_Error (S, Decode_Error, Result);
                   elsif HS_Total > Frag_Len then
                      Reset (D.Reasm);
-                     Append (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1));
+                     Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1))));
                      Consume_Record;
                      Result := OK;
                   else
@@ -698,7 +698,7 @@ is
                         Frag           : Byte_Seq (0 .. Frag_Len - 1);
                         Ready_To_Build : Boolean;
                      begin
-                        Frag := S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1);
+                        Frag := Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
                         Complete_Client_Hello_Retry
                           (S, D, Frag, True, Rec.Record_Len, Ready_To_Build, Result);
                         if Ready_To_Build then
@@ -2110,7 +2110,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+        (Data   => Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
          Result => Rec,
          Hdr    => S.Rec_Hdr);
@@ -2165,9 +2165,9 @@ is
                Frag_Len   : constant N32 := Rec.Fragment_Len;
                Frag_Start : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
                Encrypted  : Byte_Seq (0 .. Frag_Len - 1) :=
-                 S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1);
+                 Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
                Hdr        : constant Byte_Seq (0 .. 4) :=
-                 S.Input.Data (S.Input.Read_Pos .. S.Input.Read_Pos + 4);
+                 Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Read_Pos + 4)));
                Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
                Plain_Len  : N32;
                Inner_Type : Byte;
@@ -2778,9 +2778,9 @@ is
          Frag_Len   : constant N32 := Rec.Fragment_Len;
          Frag_Start : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
          Encrypted  : Byte_Seq (0 .. Frag_Len - 1) :=
-           S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1);
+           Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
          Hdr        : constant Byte_Seq (0 .. 4) :=
-           S.Input.Data (S.Input.Read_Pos .. S.Input.Read_Pos + 4);
+           Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Read_Pos + 4)));
          Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
          Plain_Len  : N32;
          Inner_Type : Byte;
@@ -2972,7 +2972,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+        (Data   => Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
          Result => Rec,
          Hdr    => S.Rec_Hdr);
@@ -3246,7 +3246,7 @@ is
       end if;
 
       Records.Parse_Record_Header
-        (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+        (Data   => Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
          Avail  => Available (S.Input),
          Result => Rec,
          Hdr    => S.Rec_Hdr);
@@ -3297,9 +3297,9 @@ is
          Frag_Len   : constant N32 := Rec.Fragment_Len;
          Frag_Start : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
          Encrypted  : Byte_Seq (0 .. Frag_Len - 1) :=
-           S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1);
+           Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
          Hdr        : constant Byte_Seq (0 .. 4) :=
-           S.Input.Data (S.Input.Read_Pos .. S.Input.Read_Pos + 4);
+           Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Read_Pos + 4)));
          Plaintext  : Byte_Seq (0 .. Frag_Len - 1);
          Plain_Len  : N32;
          Inner_Type : Byte;

@@ -312,6 +312,10 @@ is
          HC => (Cfg => Cfg, others => <>),
          others => <>)
       do
+         --  The only allocation in the library's lifetime: the session's two
+         --  I/O buffers, RecordFlux-native and 1-based, never freed.
+         S.Input.Data  := new RBT_A.Bytes'(1 .. RBT_A.Index (IO_Buffer_Capacity) => 0);
+         S.Output.Data := new RBT_A.Bytes'(1 .. RBT_A.Index (IO_Buffer_Capacity) => 0);
          if not Client_Config_Can_Start (Cfg, Resume_Usable) then
             Set_State (S, Error_State);
             S.Last_Error := Bad_Configuration;
@@ -364,7 +368,7 @@ is
       --  bytes -- two half-updates that had to agree. Now the bytes ARE the
       --  state.
       Reset (D.Reasm);
-      Append (D.Reasm, S.Input.Data (From .. From + Len - 1));
+      Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (From) .. Ix (From + Len - 1))));
    end Copy_Input_Fragment;
 
    procedure Start_Pending_SH_Reassembly
@@ -493,11 +497,11 @@ is
       --  Header is in this fragment. Decode
       --  HS_Total; if msg spans, start reassembly.
       declare
-         pragma Assert (Frag_Start + 3 <= S.Input.Data'Last);
+         pragma Assert (Frag_Start + 3 < IO_Buffer_Capacity);
          HS_Len   : constant N32 :=
-           N32 (S.Input.Data (Frag_Start + 1)) * 65536
-           + N32 (S.Input.Data (Frag_Start + 2)) * 256
-           + N32 (S.Input.Data (Frag_Start + 3));
+           N32 (S.Input.Data.all (Ix (Frag_Start + 1))) * 65536
+           + N32 (S.Input.Data.all (Ix (Frag_Start + 2))) * 256
+           + N32 (S.Input.Data.all (Ix (Frag_Start + 3)));
          HS_Total : constant N32 := HS_Len + 4;
       begin
          if HS_Total > Max_HS_Msg or else HS_Total > Transcript_Capacity then
@@ -543,7 +547,7 @@ is
               N32'Min (N32'Min (Wanted (D.Reasm), Frag_Len), Free_Space (D.Reasm));
          begin
             if Take > 0 then
-               Append (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Take - 1));
+               Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Take - 1))));
             end if;
          end;
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -849,7 +853,7 @@ is
          Rec : Records.Parse_Result;
       begin
          Records.Parse_Record_Header
-           (Data   => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+           (Data   => Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
             Avail  => Available (S.Input),
             Result => Rec,
             Hdr    => S.Rec_Hdr);
@@ -894,7 +898,7 @@ is
                declare
                   CCS_Pos : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
                   CCS_OK  : constant Boolean :=
-                    Rec.Fragment_Len = 1 and then S.Input.Data (CCS_Pos) = 16#01#;
+                    Rec.Fragment_Len = 1 and then S.Input.Data.all (Ix (CCS_Pos)) = 16#01#;
                begin
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   if CCS_OK and then not S.HC.CCS_Received then
@@ -912,7 +916,7 @@ is
                            Output    => S.Output,
                            Bytes_Out => A,
                            Hdr_Buf   => S.Rec_Hdr);
-                        pragma Assert (A <= N32 (S.Output.Data'Length));
+                        pragma Assert (A <= N32 (S.Output.Data.all'Length));
                      end;
                      S.Last_Error := Unexpected_Message;
                      Set_State (S, Error_State);
@@ -935,7 +939,7 @@ is
                      S.Last_Error := Decode_Error;
                      Set_State (S, Error_State);
                      Result := Error_Alert;
-                  elsif S.Input.Data (Alert_Pos) = 1 and then S.Input.Data (Alert_Pos + 1) /= 0
+                  elsif S.Input.Data.all (Ix (Alert_Pos)) = 1 and then S.Input.Data.all (Ix (Alert_Pos + 1)) /= 0
                   then
                      if S.Warning_Alerts_Recvd >= Max_Warning_Alerts then
                         S.Last_Error := Decode_Error;
@@ -945,7 +949,7 @@ is
                         S.Warning_Alerts_Recvd := S.Warning_Alerts_Recvd + 1;
                         Result := OK;
                      end if;
-                  elsif S.Input.Data (Alert_Pos + 1) = 0 then
+                  elsif S.Input.Data.all (Ix (Alert_Pos + 1)) = 0 then
                      --  close_notify before ServerHello: the peer
                      --  hung up mid-handshake. Unchanged behaviour.
                      S.Last_Error := Unexpected_Message;
@@ -960,7 +964,7 @@ is
                      --  "unexpected message" hides that. No alert
                      --  is queued in reply -- we are reacting to
                      --  the peer's alert, not raising our own.
-                     S.Last_Error := Error_From_Alert (S.Input.Data (Alert_Pos + 1));
+                     S.Last_Error := Error_From_Alert (S.Input.Data.all (Ix (Alert_Pos + 1)));
                      Set_State (S, Error_State);
                      Result := Error_Alert;
                   end if;

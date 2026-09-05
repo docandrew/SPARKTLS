@@ -10,6 +10,12 @@ use SPARKNaCl.Core;
 package SPARKTLS.Records
   with SPARK_Mode => On
 is
+   --  IO_Buffer holds an owning access component, so `Output'Old` would alias
+   --  (SPARK RM 3.10(13)); contracts use `Free_Space (Output)'Old`, which inside an
+   --  `if` is a potentially-unevaluated use of 'Old on a call (RM 6.1.1(27)).
+   --  Allowed here as handshake-server_msgs.ads / client_msgs.ads already do.
+   pragma Unevaluated_Use_Of_Old (Allow);
+
    Record_Header_Size : constant := 5;
    Max_Fragment : constant := 16384;
    Tag_Size : constant := 16;
@@ -91,7 +97,7 @@ is
    with
      Pre =>
        Data'Length > 0
-       and then Data'Last < N32 (IO_Buffer_Capacity)
+       and then Data'Last <= N32 (IO_Buffer_Capacity)
        and then Avail > 0
        and then Avail <= N32 (IO_Buffer_Capacity)
        and then Data'First + Avail - 1 <= Data'Last,
@@ -186,7 +192,7 @@ is
         --  RFC 8446 5.3
         else
           Keys.Counter = Keys.Counter'Old)
-       and then (if Free_Space (Output'Old)
+       and then (if Free_Space (Output)'Old
                    >= Record_Header_Size + N32 (Plaintext'Length) + 1 + Tag_Size
                  then Output.Write_Pos = Output.Write_Pos'Old + Bytes_Out);
 
@@ -248,7 +254,7 @@ is
    with
      Pre => SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
      Post =>
-       (if Free_Space (Output'Old) >= Record_Header_Size + 3 + Tag_Size
+       (if Free_Space (Output)'Old >= Record_Header_Size + 3 + Tag_Size
         then Output.Write_Pos = Output.Write_Pos'Old + Bytes_Out);
 
    --  Build a plaintext alert record (no encryption).

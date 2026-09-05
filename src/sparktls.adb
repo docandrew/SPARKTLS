@@ -52,6 +52,12 @@ is
       S.State := To;
    end Set_State;
 
+   procedure Copy_In (Dst : out RBT_A.Bytes; Src : in Byte_Seq) is
+      subtype Target is RBT_A.Bytes (Dst'Range);
+   begin
+      Dst := Target (Src);
+   end Copy_In;
+
    procedure Begin_Flight (S : in out Session) is
    begin
       S.Flight_Start := S.Output.Write_Pos;
@@ -85,12 +91,12 @@ is
    --  Shift unread data to the front of the buffer to reclaim space
    ----------------------------------------------------------------------------
    procedure Compact (Buf : in out IO_Buffer)
-   with Post => Buf.Read_Pos = 0 and Available (Buf) = Available (Buf'Old)
+   with Post => Buf.Read_Pos = 0 and Available (Buf) = Available (Buf)'Old
    is
       Len : constant N32 := Available (Buf);
    begin
       if Buf.Read_Pos > 0 and Len > 0 then
-         Buf.Data (0 .. Len - 1) := Buf.Data (Buf.Read_Pos .. Buf.Read_Pos + Len - 1);
+         Buf.Data.all (Ix (0) .. Ix (Len - 1)) := Buf.Data.all (Ix (Buf.Read_Pos) .. Ix (Buf.Read_Pos + Len - 1));
          Buf.Read_Pos := 0;
          Buf.Write_Pos := Len;
       elsif Len = 0 then
@@ -178,7 +184,7 @@ is
       pragma Assert (Count <= Space);
       pragma Assert (S.Input.Write_Pos + Count <= IO_Buffer_Capacity);
 
-      S.Input.Data (S.Input.Write_Pos .. S.Input.Write_Pos + Count - 1) := Data (0 .. Count - 1);
+      Copy_In (S.Input.Data.all (Ix (S.Input.Write_Pos) .. Ix (S.Input.Write_Pos + Count - 1)), Data (0 .. Count - 1));
       S.Input.Write_Pos := S.Input.Write_Pos + Count;
 
       Bytes_Fed := Count;
@@ -203,7 +209,7 @@ is
       pragma Assert (S.Output.Read_Pos + Count <= S.Output.Write_Pos);
 
       --  Copy data, then zero only the unused tail
-      Dest (0 .. Count - 1) := S.Output.Data (S.Output.Read_Pos .. S.Output.Read_Pos + Count - 1);
+      Dest (0 .. Count - 1) := Byte_Seq (S.Output.Data.all (Ix (S.Output.Read_Pos) .. Ix (S.Output.Read_Pos + Count - 1)));
       if Count < N32 (Dest'Length) then
          Dest (Count .. Dest'Last) := (others => 0);
       end if;

@@ -62,7 +62,7 @@ is
          Len : constant N32 := N32 (Data'Length);
       begin
          if Free_Space (Output) >= Len then
-            Output.Data (Output.Write_Pos .. Output.Write_Pos + Len - 1) := Data;
+            Copy_In (Output.Data.all (Ix (Output.Write_Pos) .. Ix (Output.Write_Pos + Len - 1)), Data);
             Output.Write_Pos := Output.Write_Pos + Len;
             OK := True;
          else

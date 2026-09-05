@@ -126,6 +126,10 @@ is
          HC     => (Cfg => Cfg, others => <>),
          others => <>)
       do
+         --  The only allocation in the library's lifetime: the session's two
+         --  I/O buffers, RecordFlux-native and 1-based, never freed.
+         S.Input.Data  := new RBT_A.Bytes'(1 .. RBT_A.Index (IO_Buffer_Capacity) => 0);
+         S.Output.Data := new RBT_A.Bytes'(1 .. RBT_A.Index (IO_Buffer_Capacity) => 0);
          if not Server_Config_Can_Start (Cfg) then
             Set_State (S, Error_State);
             S.Last_Error := Bad_Configuration;
@@ -512,7 +516,7 @@ is
          Rec : Records.Parse_Result;
       begin
          Records.Parse_Record_Header
-           (Data          => S.Input.Data (S.Input.Read_Pos .. S.Input.Write_Pos - 1),
+           (Data          => Byte_Seq (S.Input.Data.all (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))),
             Avail         => Available (S.Input),
             Result        => Rec,
             Hdr           => S.Rec_Hdr,
@@ -690,7 +694,7 @@ is
                      begin
                         if Copy_Len > 0 then
                            Append
-                             (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Copy_Len - 1));
+                             (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Copy_Len - 1))));
                         end if;
                      end;
                      S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -919,7 +923,7 @@ is
                   --  the fragment parameter and the in-out Session.
                   declare
                      Frag : constant Byte_Seq (0 .. Frag_Len - 1) :=
-                       S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1);
+                       Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1)));
                   begin
                      Handshake.Server_Msgs.Parse_Client_Hello
                        (S.Negotiated_Suite,
@@ -1061,7 +1065,7 @@ is
                   --  a buffer that does not yet have a
                   --  readable header.
                   Reset (D.Reasm);
-                  Append (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1));
+                  Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1))));
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Result := OK;
                   pragma Assert (S.State = Wait_Client_Hello);
@@ -1087,7 +1091,7 @@ is
                   --  so there is nothing that can
                   --  disagree with them.
                   Reset (D.Reasm);
-                  Append (D.Reasm, S.Input.Data (Frag_Start .. Frag_Start + Frag_Len - 1));
+                  Append (D.Reasm, Byte_Seq (S.Input.Data.all (Ix (Frag_Start) .. Ix (Frag_Start + Frag_Len - 1))));
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
                   Result := OK;
                   pragma Assert (S.State = Wait_Client_Hello);
@@ -1117,9 +1121,9 @@ is
 
                   declare
                      HS_Msg_Len : constant N32 :=
-                       N32 (S.Input.Data (Frag_Start + 1)) * 65536
-                       + N32 (S.Input.Data (Frag_Start + 2)) * 256
-                       + N32 (S.Input.Data (Frag_Start + 3));
+                       N32 (S.Input.Data.all (Ix (Frag_Start + 1))) * 65536
+                       + N32 (S.Input.Data.all (Ix (Frag_Start + 2))) * 256
+                       + N32 (S.Input.Data.all (Ix (Frag_Start + 3)));
                      HS_Total   : constant N32 := HS_Msg_Len + 4;
                   begin
                      if HS_Total > Max_HS_Msg then

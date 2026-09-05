@@ -13,7 +13,8 @@ with Ada.Text_IO;   use Ada.Text_IO;
 with Ada.Command_Line;
 with Interfaces;    use Interfaces;
 with SPARKNaCl;     use SPARKNaCl;
-with SPARKTLS;      use SPARKTLS;
+with SPARKTLS;
+with SPARKTLS_Reassembly;      use SPARKTLS;
 with SPARKTLS.Records.TLS12;
 with RFLX.RFLX_Builtin_Types;
 
@@ -64,6 +65,7 @@ begin
       Output    : IO_Buffer;
       Bytes_Out : N32;
    begin
+      Output.Data := new RFLX.RFLX_Builtin_Types.Bytes'(1 .. RFLX.RFLX_Builtin_Types.Index (SPARKTLS_Reassembly.IO_Buffer_Capacity) => 0);
       Keys.Suite   := Suite_AES_128_GCM_SHA256;
       Keys.Counter := Rekey_After_Records - 1;
       SPARKTLS.Records.TLS12.Build_Encrypted_Record_12
