@@ -1,0 +1,14 @@
+with "../sparktls.gpr";
+
+project ECDHE_P384_Test is
+
+   for Source_Dirs use (".");
+   for Object_Dir use ".";
+   for Create_Missing_Dirs use "True";
+   for Main use ("ecdhe_p384_test.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        ("-gnat2022", "-g", "-gnatQ", "-gnatw.X");
+   end Compiler;
+end ECDHE_P384_Test;

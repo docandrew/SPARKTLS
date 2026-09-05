@@ -1,0 +1,156 @@
+--  SPARKTLS handshake transcript  streaming, bufferless (carve 2).
+--
+--  The transcript is the concatenation of every handshake message,
+--  hashed at several protocol points. The digest algorithm is not
+--  known until the cipher suite is negotiated, so this ADT runs BOTH
+--  SHA-256 and SHA-384 contexts from the first byte and drops the
+--  loser at selection ("dual streaming" -- the TLS<=1.1-era parallel
+--  digest technique, bounded at exactly two by our suite set; see the
+--  2026-08-25 design discussion). Consequences, all deliberate:
+--
+--    * No buffer. The old 32 KB Transcript array, its capacity, every
+--      capacity guard and every Len bound cease to exist -- and with
+--      them the non-RFC restrictions they imposed (no single message
+--      over 32 KB, no handshake TOTAL over 32 KB). Reassembly's 128 KB
+--      per-message bound is the only remaining limit, documented.
+--
+--    * Memory: two hash states (~500 B) replace 32 KB per in-flight
+--      handshake, and every VC carrying an `HC : in out` shrinks by
+--      the same amount.
+--
+--    * Verified prerequisites: streaming SHA-384 added 2026-08-25
+--      (sparktlscrypto-hashing-sha384, NIST KATs 8/8); the 1.2
+--      client-auth CertificateVerify audit confirms no accepted
+--      scheme signs raw transcript bytes (all verify over a 256/384
+--      digest), so clone-and-finalize serves every draw point.
+--
+--  No predicate: Started and Selected are pure phase; there is no
+--  cross-field relation the base type system cannot express.
+
+with Interfaces;
+with SPARKNaCl; use SPARKNaCl;
+use type Interfaces.Integer_32;
+with SPARKTLSCrypto.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA384;
+with SPARKTLSCrypto.Hashing.SHA512;
+
+package SPARKTLS_Transcript
+  with SPARK_Mode => On
+is
+   pragma Unevaluated_Use_Of_Old (Allow);
+
+   type Hash_Choice is (Both, Only_256, Only_384);
+
+   --  Startedness is a DISCRIMINANT (phase-carve 2026-08-26): the fact
+   --  that bytes have been appended rides the type structurally, so the
+   --  hash draw points need no precondition and callers holding a
+   --  Started_Transcript carry the fact through any call chain and
+   --  across Advance re-entries for free (flow-level, not prover-level).
+   --  Full view PUBLIC deliberately (2026-08-26): both gnatprove 15.1
+   --  and 16.1 crash in full-project mode on the private view of this
+   --  discriminated type (unbound __main_of_wrapper in Why3 translation;
+   --  minimal reproducer in the AdaCore report). Nothing here needs
+   --  hiding: the invariant is the discriminant itself.
+   --  EXPERIMENT 1 (2026-08-27): discriminant temporarily replaced by a
+   --  plain component to isolate the gnat2why __main_of_wrapper crash.
+   --  Started_Transcript degrades to an alias so the phase carve's
+   --  formal retypes keep compiling unchanged.
+   type Transcript_State is record
+      C256     : SPARKTLSCrypto.Hashing.SHA256.Context;
+      C384     : SPARKTLSCrypto.Hashing.SHA384.Context;
+      C512     : SPARKTLSCrypto.Hashing.SHA512.Context;
+      Choice   : Hash_Choice := Both;
+      Has_Data : Boolean := False;
+   end record;
+
+   --  Predicate subtype (workaround shape, see tasks #113/#114): carries
+   --  the started guarantee the discriminant used to. Checked only at
+   --  writes to transcript objects; preservation provable from Append's
+   --  postcondition.
+   subtype Started_Transcript is Transcript_State
+   with Dynamic_Predicate => Started (Started_Transcript);
+
+   --  Fresh transcript: both digests initialised, nothing appended.
+   procedure Start (TS : out Transcript_State)
+   with Global => null, Post => not Started (TS) and then Selected (TS) = Both;
+
+   --  Append handshake-message bytes. Feeds whichever contexts are
+   --  still live; O(len), no storage.
+   procedure Append (TS : in out Transcript_State; Data : Byte_Seq)
+   with
+     Global => null,
+     Pre => Data'Last < N32'Last - 256,
+     Post =>
+       Started (TS) = (Started (TS)'Old or else Data'Length > 0)
+       and then Selected (TS) = Selected (TS)'Old;
+
+   --  Suite negotiated: drop the losing digest. Idempotent for the
+   --  same choice; never call with a DIFFERENT choice after selecting.
+   procedure Select_Hash (TS : in out Transcript_State; C : Hash_Choice)
+   with
+     Global => null,
+     Pre => C /= Both,
+     Post => Selected (TS) = C and then Started (TS) = Started (TS)'Old;
+
+   --  Transcript hash at this instant (clone-and-finalize; the running
+   --  context is untouched, so appends may continue afterwards).
+   procedure Current_256 (TS : in Transcript_State; H : out SPARKTLSCrypto.Hashing.SHA256.Digest)
+   with Global => null;
+
+   procedure Current_384 (TS : in Transcript_State; H : out SPARKTLSCrypto.Hashing.SHA384.Digest)
+   with Global => null;
+
+   --  TLS 1.2 CertificateVerify may negotiate a sha512 signature
+   --  scheme (0x0601/0x0806) over the raw transcript; the third
+   --  stream serves it. Runs unconditionally -- one extra pass over a
+   --  few KB of handshake per connection is cheaper than conditional
+   --  state. Never a suite hash, so Select_Hash does not affect it.
+   procedure Current_512 (TS : in Transcript_State; H : out SPARKTLSCrypto.Hashing.SHA512.Digest)
+   with Global => null;
+
+   --  PSK binders (RFC 8446 Section 4.2.11.2): the binder covers the
+   --  transcript so far PLUS a truncated ClientHello that is not part
+   --  of the transcript yet (build side: mid-construction; verify
+   --  side: before the CH is appended). Clone-update-finalize.
+   procedure Suffix_256
+     (TS : in Transcript_State; Suffix : in Byte_Seq; H : out SPARKTLSCrypto.Hashing.SHA256.Digest)
+   with Global => null, Pre => Suffix'Last < N32'Last - 256;
+
+   procedure Suffix_384
+     (TS : in Transcript_State; Suffix : in Byte_Seq; H : out SPARKTLSCrypto.Hashing.SHA384.Digest)
+   with Global => null, Pre => Suffix'Last < N32'Last - 256;
+
+   --  RFC 8446 Section 4.4.1: on HelloRetryRequest the transcript is
+   --  replaced by message_hash(04 00 00 Hash.length || Hash(CH1)).
+   --  Requires the hash already selected (HRR names the suite).
+   procedure Reset_For_HRR (TS : in out Transcript_State)
+   with
+     Global => null,
+     Post => Selected (TS) = Selected (TS)'Old and then Started (TS) = Started (TS)'Old;
+
+   --  Fresh, empty transcript as a value (binder Basis for the initial
+   --  ClientHello, where the binder covers only the truncated CH).
+   function Fresh return Transcript_State
+   with Global => null, Post => not Started (Fresh'Result) and then Selected (Fresh'Result) = Both;
+
+   --  Zeroize hash state (pre-free scrub). Reinitializes every context
+   --  in place; the discriminant is untouched, so this is legal on both
+   --  constrained and unconstrained objects.
+   procedure Wipe (TS : in out Transcript_State)
+   with Global => null;
+
+   --  True once any bytes have been appended. Retained for existing
+   --  callers; new code reads the discriminant directly.
+   function Started (TS : Transcript_State) return Boolean
+   with Global => null;
+
+   function Selected (TS : Transcript_State) return Hash_Choice
+   with Global => null;
+
+   function Started (TS : Transcript_State) return Boolean
+   is (TS.Has_Data);
+
+   function Selected (TS : Transcript_State) return Hash_Choice
+   is (TS.Choice);
+
+end SPARKTLS_Transcript;

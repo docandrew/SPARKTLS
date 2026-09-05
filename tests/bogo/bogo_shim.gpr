@@ -1,0 +1,29 @@
+--  BoGo shim project — adversarial-test integration.
+--
+--  Builds a single-file Ada shim that implements the BoringSSL
+--  test runner's wire protocol (PORTING.md):
+--    * TCP-client to localhost:<port>
+--    * Sends 8-byte little-endian shim_id first
+--    * Then speaks TLS as the role specified by -server / no -server
+--    * Exit 0 on success, 89 on unimplemented flag, else nonzero
+--
+--  Output: bin/tests/bogo_shim
+with "../../sparktls.gpr";
+
+project Bogo_Shim is
+   for Create_Missing_Dirs use "True";
+   for Object_Dir use "obj";
+   for Exec_Dir use "../../bin/tests";
+   --  ../support carries SPARKTLS.Test_Support (test-only white-box access).
+   for Source_Dirs use (".", "../../examples", "../support");
+   --  Pulls in entropy_random.ad{s,b} which the shim uses.
+   for Main use ("bogo_shim.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatn", "-gnatp");
+   end Compiler;
+   package Binder is
+      for Switches ("Ada") use ("-Es");
+   end Binder;
+
+end Bogo_Shim;

@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    env:
+      ALR_NON_INTERACTIVE: "1"
+      NO_COLOR: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          # aarch64 is disabled until SPARKTLSCrypto builds without x86 asm.
+          # Its accelerated units (AES-NI, GHASH-NI, four AVX-512 modules --
+          # 12 files) call System.Machine_Code.Asm with x86 instructions and
+          # live in the unconditional "src" directory, so they cannot compile
+          # on aarch64. The CPUID dispatch is a RUNTIME gate for selecting an
+          # implementation on x86; it does not make the sources portable.
+          # Re-enable once a software-only build exists -- see
+          # PRODUCTION_READINESS.md, "P1: CI And Reproducibility".
+          # - arch: aarch64
+          #   runner: ubuntu-24.04-arm
+    name: build-test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: false
+
+      # alire.toml pins sparkx509 / sparknacl / sparktlscrypto by relative
+      # path so local development can edit them side by side. CI checks out
+      # only sparktls, so clone the siblings into the parent directory --
+      # actions/checkout cannot place a repo outside $GITHUB_WORKSPACE.
+      - name: Fetch sibling crates
+        run: bash ci/fetch-deps.sh
+
+      - uses: DeterminateSystems/nix-installer-action@e50d5f73bfe71c2dd0aa4218de8f4afa59f8f81d # v16
+
+      - uses: alire-project/setup-alire@8398015c233537c928d12293d46c0dcecb54434c # v5
+        if: matrix.arch == 'aarch64'
+        with:
+          version: "2.1.0"
+          toolchain: "gnat_native gprbuild"
+
+      - name: Build and test
+        run: nix develop --command bash ci/check.sh
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sparktls-build-test-logs-${{ matrix.arch }}
+          if-no-files-found: ignore
+          path: |
+            tests/protocol/logs/**
+            tests/bogo/_cache/last_results.log
+            tests/bogo/_cache/transcripts/**
+            tests/bogo/obj/*.stdout
+            tests/bogo/obj/*.stderr
+
+  timing:
+    env:
+      ALR_NON_INTERACTIVE: "1"
+      NO_COLOR: "1"
+    name: timing (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: false
+
+      # alire.toml pins sparkx509 / sparknacl / sparktlscrypto by relative
+      # path so local development can edit them side by side. CI checks out
+      # only sparktls, so clone the siblings into the parent directory --
+      # actions/checkout cannot place a repo outside $GITHUB_WORKSPACE.
+      - name: Fetch sibling crates
+        run: bash ci/fetch-deps.sh
+
+      - uses: DeterminateSystems/nix-installer-action@e50d5f73bfe71c2dd0aa4218de8f4afa59f8f81d # v16
+
+      - name: Timing checks
+        run: nix develop --command bash ci/timing.sh all
+
+      - name: Upload timing failure logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sparktls-timing-logs
+          if-no-files-found: ignore
+          path: |
+            tests/ctgrind/obj/*.stdout
+            tests/ctgrind/obj/*.stderr
+            tests/ctgrind/obj/*.cswi

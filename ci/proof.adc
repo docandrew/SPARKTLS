@@ -1,0 +1,48 @@
+--  Configuration pragmas applied ONLY when proving, never when building.
+--
+--  Why this file exists
+--  --------------------
+--  SPARK RM 9(2) refuses to analyse any tasking construct unless the
+--  partition commits to a restricted concurrency profile. A protected
+--  object counts as a tasking construct even with no tasks anywhere in the
+--  program, so SPARKTLS.Session_Cache -- the reference ticket store, which
+--  is one protected object and nothing else -- could not be SPARK_Mode =>
+--  On without these two pragmas. With them it verifies; without them
+--  gnatprove reports "tasking in SPARK requires Ravenscar profile" on every
+--  protected operation before looking at a single VC.
+--
+--  Why it is NOT in sparktls.gpr
+--  -----------------------------
+--  pragma Profile is partition-wide. Putting it in the project file would
+--  push Ravenscar/Jorvik onto every application that builds against this
+--  library -- forbidding dynamic priorities, most of Ada.Calendar, entry
+--  queues longer than one caller, and much else -- for the sake of one
+--  optional child package that most callers never touch. A library has no
+--  business dictating its consumers' concurrency profile.
+--
+--  ci/prove.sh appends this file via -cargs -gnatec=, so it reaches
+--  gnatprove and nothing else. `alr build` is unaffected: consumers get an
+--  ordinary protected object with ordinary Ada semantics, and the profile
+--  imposes no runtime cost or ordering constraint on them.
+--
+--  What this does and does not buy
+--  -------------------------------
+--  The absence-of-runtime-error proofs for the protected bodies (ranges,
+--  indices, overflow) are profile-independent -- they hold regardless of
+--  how the final partition is built. Data-race freedom likewise comes from
+--  Ada's protected-object semantics, not from SPARK.
+--
+--  What DOES depend on the profile holding in the final link is SPARK's
+--  scheduling-level reasoning: priority-ceiling correctness and
+--  deadlock freedom. A consumer who builds without Ravenscar/Jorvik does
+--  not inherit those two guarantees. That is an honest limitation and is
+--  stated in the Session_Cache spec rather than glossed over.
+--
+--  Jorvik rather than Ravenscar: Jorvik (Ada 2022) relaxes Ravenscar's
+--  hardest restrictions (relative delays, entry queue length, non-blocking
+--  ceilings) while keeping the analysability SPARK needs. Session_Cache has
+--  no entries and no delays, so it satisfies either; Jorvik is chosen
+--  because it is the weaker claim and therefore the more honest one.
+
+pragma Profile (Jorvik);
+pragma Partition_Elaboration_Policy (Sequential);
