@@ -2678,6 +2678,19 @@ is
        and Negotiated_Suite (S) = Negotiated_Suite (S)'Old
        and Negotiated_Suite_12 (S) = Negotiated_Suite_12 (S)'Old;
 
+   --  Flight protocol. A handshake flight is built record by record straight
+   --  into S.Output. Begin_Flight marks Write_Pos; if the flight fails,
+   --  Abort_Flight truncates Output back to the mark -- before any alert is
+   --  written -- so the peer never sees a partial flight; End_Flight closes
+   --  the flight, aborting it when Failed. Abort_Flight is a no-op outside a
+   --  flight, so the alert primitives call it unconditionally.
+   procedure Begin_Flight (S : in out Session)
+   with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old;
+   procedure Abort_Flight (S : in out Session)
+   with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old;
+   procedure End_Flight (S : in out Session; Failed : Boolean)
+   with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old;
+
    --  Push received ciphertext bytes into the session's input buffer.
    --  RFC 8446 5.1: the record layer accepts bytes from the transport.
    --  State is not modified by feeding data.
@@ -2835,6 +2848,13 @@ private
       --  so this cannot live in HS_Pool; allocated lazily on the first
       --  record and reused for every record of the connection.
       Rec_Hdr : RBT_A.Bytes_Ptr := null;
+
+      --  Flight protocol (Begin_Flight / Abort_Flight / End_Flight): a
+      --  handshake flight is built straight into Output; on failure the
+      --  partial flight is truncated back to Flight_Start before any alert
+      --  is written, so the peer never observes a partial flight.
+      Flight_Start : Buffer_Size := 0;
+      In_Flight    : Boolean := False;
 
       --  Application traffic keys (set during handshake, used after)
       Client_App : Traffic_Keys;

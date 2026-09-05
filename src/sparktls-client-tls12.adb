@@ -55,6 +55,7 @@ is
    is
       Dummy : N32;
    begin
+      Abort_Flight (S);
       S.Last_Error := Err;
       Set_State (S, Error_State);
       Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy, S.Rec_Hdr);
@@ -68,6 +69,7 @@ is
       Dummy : N32;
    begin
       Set_State (S, Error_State);
+      Abort_Flight (S);
       S.Last_Error := Err;
       Records.TLS12.Build_Alert_Record_12
         (Level       => 2,
@@ -1035,7 +1037,6 @@ is
    procedure Append_Client_Certificate_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    with
      Pre  =>
@@ -1075,7 +1076,6 @@ is
    procedure Append_TLS12_Client_Handshake_Record
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Msg     : in Byte_Seq;
       Err     : in Error_Code;
       Result  : out Action)
@@ -1099,7 +1099,6 @@ is
    procedure Append_TLS12_Client_Handshake_Record
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Msg     : in Byte_Seq;
       Err     : in Error_Code;
       Result  : out Action)
@@ -1112,7 +1111,7 @@ is
    begin
       Result := OK;
       Append_Transcript (S.HC.TS, Msg);
-      Records.Build_Handshake_Record (Msg, Scratch, Rec_Out, S.Rec_Hdr);
+      Records.Build_Handshake_Record (Msg, S.Output, Rec_Out, S.Rec_Hdr);
       if Rec_Out = 0 then
          Send_Cleartext_Handshake_Error_12 (S, D, Err, Result);
          pragma Assert (Result in Has_Output | Error_Alert);
@@ -1129,7 +1128,6 @@ is
    procedure Append_Client_Certificate_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    is
       Cert_Buf : Byte_Seq (0 .. 4 + 3 + Max_Cert_DER - 1);
@@ -1158,7 +1156,7 @@ is
 
       if Cert_Len > 0 then
          Append_Transcript (S.HC.TS, Cert_Buf (0 .. Cert_Len - 1));
-         Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out,
+         Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), S.Output, Rec_Out,
                                          S.Rec_Hdr);
          if Rec_Out = 0 then
             Reset (D.Reasm);
@@ -1173,7 +1171,6 @@ is
    procedure Append_Client_Key_Exchange_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    with
      Pre  => S.Negotiated_Suite in TLS12_Suite,
@@ -1184,7 +1181,6 @@ is
    procedure Append_Client_Key_Exchange_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    is
       CKE     : Byte_Seq (0 .. Max_Client_Key_Exchange - 1);
@@ -1199,7 +1195,7 @@ is
            and then S.Negotiated_Suite in TLS12_Suite);
       if CKE_Len > 0 then
          Append_TLS12_Client_Handshake_Record
-           (S, D, Scratch, CKE (0 .. CKE_Len - 1), Insufficient_Buffer, Result);
+           (S, D, CKE (0 .. CKE_Len - 1), Insufficient_Buffer, Result);
          if Result /= OK then
             return;
          end if;
@@ -1300,7 +1296,6 @@ is
    procedure Append_Client_Certificate_Verify_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    with
      Pre  =>
@@ -1314,7 +1309,6 @@ is
    procedure Append_Client_Certificate_Verify_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    is
       CV_Buf : Byte_Seq (0 .. 523);
@@ -1332,7 +1326,7 @@ is
       end if;
 
       Append_TLS12_Client_Handshake_Record
-        (S, D, Scratch, CV_Buf (0 .. CV_Len - 1), Insufficient_Buffer, Result);
+        (S, D, CV_Buf (0 .. CV_Len - 1), Insufficient_Buffer, Result);
       if Result /= OK then
          return;
       end if;
@@ -1367,7 +1361,6 @@ is
    procedure Encrypt_Client_Finished_Record_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       FB      : in Byte_Seq;
       FL      : in N32;
       Result  : out Action)
@@ -1379,7 +1372,6 @@ is
    procedure Encrypt_Client_Finished_Record_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       FB      : in Byte_Seq;
       FL      : in N32;
       Result  : out Action)
@@ -1391,7 +1383,7 @@ is
       Append_Transcript (S.HC.TS, FB (0 .. FL - 1));
 
       Build_Encrypted_Record_12
-        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, Scratch, EO, S.Rec_Hdr);
+        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, S.Output, EO, S.Rec_Hdr);
       if EO = 0 then
          --  Fatal path -- no counter rewind; the burned nonce stays
          --  burned and the connection dies here.
@@ -1401,39 +1393,10 @@ is
       end if;
    end Encrypt_Client_Finished_Record_12;
 
-   procedure Commit_Client_Flight_Scratch_12
-     (S       : in out Session;
-      D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in IO_Buffer;
-      Result  : out Action)
-   with
-     Post => Result in OK | Has_Output | Error_Alert;
-
-   procedure Commit_Client_Flight_Scratch_12
-     (S       : in out Session;
-      D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in IO_Buffer;
-      Result  : out Action) is
-   begin
-      Result := OK;
-      if Free_Space (S.Output) < Scratch.Write_Pos then
-         --  Fatal path -- no counter rewind (the counter lives inside
-         --  S.Client_App now); the connection dies here.
-         Send_Cleartext_Handshake_Error_12 (S, D, Insufficient_Buffer, Result);
-         pragma Assert (Result in Has_Output | Error_Alert);
-         return;
-      end if;
-
-      S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-        Scratch.Data (0 .. Scratch.Write_Pos - 1);
-      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
-      pragma Assert (Result = OK);
-   end Commit_Client_Flight_Scratch_12;
 
    procedure Encrypt_And_Commit_Client_Finished_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       FB      : in Byte_Seq;
       FL      : in N32;
       Result  : out Action)
@@ -1445,22 +1408,20 @@ is
    procedure Encrypt_And_Commit_Client_Finished_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       FB      : in Byte_Seq;
       FL      : in N32;
       Result  : out Action) is
    begin
-      Encrypt_Client_Finished_Record_12 (S, D, Scratch, FB, FL, Result);
+      Encrypt_Client_Finished_Record_12 (S, D, FB, FL, Result);
       if Result /= OK then
          return;
       end if;
-      Commit_Client_Flight_Scratch_12 (S, D, Scratch, Result);
+      Result := OK;  --  the former commit's success value
    end Encrypt_And_Commit_Client_Finished_12;
 
    procedure Append_Client_CCS_And_Finished_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    with
      Pre  => S.Negotiated_Suite in TLS12_Suite,
@@ -1470,7 +1431,6 @@ is
    procedure Append_Client_CCS_And_Finished_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    is
       CCS_Out : N32;
@@ -1479,14 +1439,14 @@ is
    begin
       Derive_Keys_12 (S, D);
 
-      Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
+      Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
       if CCS_Out = 0 then
          Send_Cleartext_Handshake_Error_12 (S, D, Insufficient_Buffer, Result);
          return;
       end if;
 
       Build_Client_Finished_12_Message (S, FB, FL);
-      Encrypt_And_Commit_Client_Finished_12 (S, D, Scratch, FB, FL, Result);
+      Encrypt_And_Commit_Client_Finished_12 (S, D, FB, FL, Result);
    end Append_Client_CCS_And_Finished_12;
 
    procedure Build_Client_Flight_12
@@ -1505,33 +1465,41 @@ is
    procedure Build_Client_Flight_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
-      Scratch : IO_Buffer;
-   begin
-      Append_Client_Certificate_12 (S, D, Scratch, Result);
-      if Result /= OK then
-         return;
-      end if;
-
-      Append_Client_Key_Exchange_12 (S, D, Scratch, Result);
-      if Result /= OK then
-         return;
-      end if;
-
-      if S.HC.Cert_Request_Received
-        and then S.HC.Cfg.Local.Has_Identity
-        and then S.HC.T12.Client_Cert_Allowed
-      then
-         Append_Client_Certificate_Verify_12 (S, D, Scratch, Result);
+      procedure Flight
+        (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+      is
+      begin
+         Append_Client_Certificate_12 (S, D, Result);
          if Result /= OK then
             return;
          end if;
-      end if;
 
-      Append_Client_CCS_And_Finished_12 (S, D, Scratch, Result);
-      if Result /= OK then
-         return;
-      end if;
+         Append_Client_Key_Exchange_12 (S, D, Result);
+         if Result /= OK then
+            return;
+         end if;
 
+         if S.HC.Cert_Request_Received
+           and then S.HC.Cfg.Local.Has_Identity
+           and then S.HC.T12.Client_Cert_Allowed
+         then
+            Append_Client_Certificate_Verify_12 (S, D, Result);
+            if Result /= OK then
+               return;
+            end if;
+         end if;
+
+         Append_Client_CCS_And_Finished_12 (S, D, Result);
+         if Result /= OK then
+            return;
+         end if;
+
+      end Flight;
+
+   begin
+      Begin_Flight (S);
+      Flight (S, D, Result);
+      End_Flight (S, Failed => Result = Error_Alert or else State (S) = Error_State);
    end Build_Client_Flight_12;
 
    --  RFC 5246 7.4.5 ServerHelloDone (HS type 0x0E). End of the
@@ -2945,6 +2913,7 @@ is
    is
       Dummy : N32;
    begin
+      Abort_Flight (S);
       Records.TLS12.Build_Alert_Record_12
         (Level       => 2,
          Desc        => Desc_Code,
@@ -2957,6 +2926,7 @@ is
       --  unconditionally, so the advanced counter is never used again.
 
       Reset (D.Reasm);
+      Abort_Flight (S);
       S.Last_Error := Err;
       Set_State (S, Error_State);
       Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
@@ -3061,7 +3031,7 @@ is
    --  encrypted Finished. In the resumed flow the CLIENT sends these
    --  AFTER the server's Finished (inverse of the full handshake order
    --  where they were already sent). Atomic flight assembly: build
-   --  into Scratch first; commit-fail paths are fatal (no rollback).
+   --  into S.Output first; commit-fail paths are fatal (no rollback).
    procedure Send_Abbreviated_Client_Flight_12
      (S : in out Session; Result : out Action)
    with Post => (if Result = OK then S.State = S.State'Old);
@@ -3069,49 +3039,50 @@ is
    procedure Send_Abbreviated_Client_Flight_12
      (S : in out Session; Result : out Action)
    is
-      use Records.TLS12;
-      use Key_Schedule_12;
-      Use_384 : constant Boolean :=
-        S.Negotiated_Suite
-        in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
-      Scratch : IO_Buffer;
-      CCS_Out : N32;
-      FB      : Byte_Seq (0 .. Finished_12_Total_Len - 1);
-      FL      : N32;
-      TH      : Digest;
-      TH4     : SPARKNaCl.Hashing.SHA384.Digest;
-      EO      : N32;
+      procedure Flight
+        (S : in out Session; Result : out Action)
+      is
+         use Records.TLS12;
+         use Key_Schedule_12;
+         Use_384 : constant Boolean :=
+           S.Negotiated_Suite
+           in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+         CCS_Out : N32;
+         FB      : Byte_Seq (0 .. Finished_12_Total_Len - 1);
+         FL      : N32;
+         TH      : Digest;
+         TH4     : SPARKNaCl.Hashing.SHA384.Digest;
+         EO      : N32;
+      begin
+         Result := OK;
+         Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+         if CCS_Out = 0 then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+         if Use_384 then
+            SPARKTLS_Transcript.Current_384 (S.HC.TS, TH4);
+            Build_Finished_12
+              (S.HC.Master_Secret_12, Label_Client_Finished, Byte_Seq (TH4), True, FB, FL);
+         else
+            SPARKTLS_Transcript.Current_256 (S.HC.TS, TH);
+            Build_Finished_12
+              (S.HC.Master_Secret_12, Label_Client_Finished, Byte_Seq (TH), False, FB, FL);
+         end if;
+         Build_Encrypted_Record_12
+           (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, S.Output, EO, S.Rec_Hdr);
+         --  Both failure paths below are fatal (Error_State): no counter
+         --  rewind, the burned nonce stays burned.
+         if EO = 0 then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+      end Flight;
+
    begin
-      Result := OK;
-      Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
-      if CCS_Out = 0 then
-         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-         return;
-      end if;
-      if Use_384 then
-         SPARKTLS_Transcript.Current_384 (S.HC.TS, TH4);
-         Build_Finished_12
-           (S.HC.Master_Secret_12, Label_Client_Finished, Byte_Seq (TH4), True, FB, FL);
-      else
-         SPARKTLS_Transcript.Current_256 (S.HC.TS, TH);
-         Build_Finished_12
-           (S.HC.Master_Secret_12, Label_Client_Finished, Byte_Seq (TH), False, FB, FL);
-      end if;
-      Build_Encrypted_Record_12
-        (FB (0 .. FL - 1), 16#16#, S.Client_App, S.HC.Client_Write_IV_12, Scratch, EO, S.Rec_Hdr);
-      --  Both failure paths below are fatal (Error_State): no counter
-      --  rewind, the burned nonce stays burned.
-      if EO = 0 then
-         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-         return;
-      end if;
-      if Free_Space (S.Output) < Scratch.Write_Pos then
-         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-         return;
-      end if;
-      S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-        Scratch.Data (0 .. Scratch.Write_Pos - 1);
-      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+      Begin_Flight (S);
+      Flight (S, Result);
+      End_Flight (S, Failed => Result = Error_Alert or else State (S) = Error_State);
    end Send_Abbreviated_Client_Flight_12;
 
    procedure Process_Server_Finished

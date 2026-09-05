@@ -61,6 +61,9 @@ is
    is
       A1, A2 : N32;
    begin
+      --  Abort any in-progress flight BEFORE the CCS: this helper emits two
+      --  records (CCS, then the encrypted alert) and both must survive.
+      Abort_Flight (S);
       Records.Build_CCS_Record (S.Output, A1, S.Rec_Hdr);
       Records.Build_Alert_Record
         (Level     => 2,
@@ -87,6 +90,7 @@ is
    is
       A : N32;
    begin
+      Abort_Flight (S);
       Records.Build_Alert_Record
         (Level     => 2,
          Desc      => Alert_Desc (Err),
@@ -132,7 +136,6 @@ is
    procedure Send_Client_Certificate
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    with
      Post =>
@@ -1354,7 +1357,6 @@ is
    procedure Send_Client_Certificate
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action)
    is
       Enc_Out       : N32;
@@ -1400,7 +1402,7 @@ is
               (Plaintext  => Empty_Cert,
                Inner_Type => 16#16#,
                Keys       => S.HC.Client_HS,
-               Output     => Scratch,
+               Output     => S.Output,
                Bytes_Out  => Enc_Out,
                Hdr_Buf    => S.Rec_Hdr);
             if Enc_Out = 0 then
@@ -1445,7 +1447,7 @@ is
               (Plaintext  => Cert_Buf (0 .. Cert_Len - 1),
                Inner_Type => 16#16#,
                Keys       => S.HC.Client_HS,
-               Output     => Scratch,
+               Output     => S.Output,
                Bytes_Out  => Enc_Out,
                Hdr_Buf    => S.Rec_Hdr);
             if Enc_Out = 0 then
@@ -1501,7 +1503,7 @@ is
                     (Plaintext  => CV_Buf (0 .. CV_Len - 1),
                      Inner_Type => 16#16#,
                      Keys       => S.HC.Client_HS,
-                     Output     => Scratch,
+                     Output     => S.Output,
                      Bytes_Out  => Enc_Out,
                      Hdr_Buf    => S.Rec_Hdr);
                   if Enc_Out = 0 then
@@ -1517,7 +1519,6 @@ is
    procedure Build_Client_Finished_384
      (S               : in out Session;
       D               : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch         : in out IO_Buffer;
       App_TS_Hash_384 : in Key_Schedule.Digest_384;
       Result          : out Action)
    with
@@ -1527,7 +1528,6 @@ is
    procedure Build_Client_Finished_384
      (S               : in out Session;
       D               : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch         : in out IO_Buffer;
       App_TS_Hash_384 : in Key_Schedule.Digest_384;
       Result          : out Action)
    is
@@ -1562,7 +1562,7 @@ is
            (Plaintext  => Big_Finished,
             Inner_Type => 16#16#,
             Keys       => S.HC.Client_HS,
-            Output     => Scratch,
+            Output     => S.Output,
             Bytes_Out  => Enc_Out,
             Hdr_Buf    => S.Rec_Hdr);
       end;
@@ -1600,7 +1600,6 @@ is
    procedure Build_Client_Finished_256
      (S               : in out Session;
       D               : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch         : in out IO_Buffer;
       App_TS_Hash_256 : in Digest;
       Result          : out Action)
    with
@@ -1610,7 +1609,6 @@ is
    procedure Build_Client_Finished_256
      (S               : in out Session;
       D               : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch         : in out IO_Buffer;
       App_TS_Hash_256 : in Digest;
       Result          : out Action)
    is
@@ -1639,7 +1637,7 @@ is
         (Plaintext  => Finished_Buf (0 .. Finished_Len - 1),
          Inner_Type => 16#16#,
          Keys       => S.HC.Client_HS,
-         Output     => Scratch,
+         Output     => S.Output,
          Bytes_Out  => Enc_Out,
          Hdr_Buf    => S.Rec_Hdr);
 
@@ -1684,100 +1682,99 @@ is
    procedure Derive_App_Keys_And_Send_Finished
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
-      Cert_Result     : Action;
-      --  Atomic flight assembly: client mTLS flight is
-      --  [Cert + CertVerify] (optional) + CCS + Finished. We build into
-      --  Scratch and only commit once everything fits, so the peer
-      --  never sees a half-flight. Each Build_Encrypted_Record call
-      --  advances S.HC.Client_HS.Counter; we save it and restore on any
-      --  failure to keep AEAD nonces in sync with what the peer saw.
-      Scratch         : IO_Buffer;
-      --  RFC 8446 7.1: client_application_traffic_secret_0 uses
-      --  the transcript hash through SERVER's Finished  NOT
-      --  including any subsequent client Cert/CV. Snapshot the
-      --  hash BEFORE Send_Client_Certificate appends our Cert,
-      --  so App keys match what the peer derives. Was: re-hashed
-      --  AFTER Send_Client_Certificate had appended the empty Cert,
-      --  producing keys that diverged from the peer's, leading to
-      --  "bad record MAC" on the first post-handshake record.
-      App_TS_Hash_256 : constant Digest := Transcript_Hash_256 (S.HC);
-      App_TS_Hash_384 : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
-   begin
-      --  RFC 8446 D.4: middlebox-compatibility CCS goes FIRST
-      --  in the client's post-server-Finished flight, BEFORE any
-      --  encrypted record. Otherwise the runner-side Go TLS stack
-      --  rejects with "invalid TLS 1.3 ChangeCipherSpec" because
-      --  it expects a CCS where it sees an app_data record.
-      --
-      --  If we already emitted the dummy CCS between HRR and CH2
-      --  (S.HC.Sent_HRR_CCS), skip  the server's
-      --  expectChangeCipherSpec was cleared by that one and a
-      --  second CCS would be rejected as unexpected.
-      if not S.HC.Sent_HRR_CCS then
-         declare
-            Pre_CCS_Out : N32;
-         begin
-            Records.Build_CCS_Record (Scratch, Pre_CCS_Out, S.Rec_Hdr);
-            if Pre_CCS_Out = 0 then
+      procedure Flight
+        (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+      is
+         Cert_Result     : Action;
+         --  Atomic flight assembly: client mTLS flight is
+         --  [Cert + CertVerify] (optional) + CCS + Finished. We build into
+         --  S.Output and only commit once everything fits, so the peer
+         --  never sees a half-flight. Each Build_Encrypted_Record call
+         --  advances S.HC.Client_HS.Counter; we save it and restore on any
+         --  failure to keep AEAD nonces in sync with what the peer saw.
+         --  RFC 8446 7.1: client_application_traffic_secret_0 uses
+         --  the transcript hash through SERVER's Finished  NOT
+         --  including any subsequent client Cert/CV. Snapshot the
+         --  hash BEFORE Send_Client_Certificate appends our Cert,
+         --  so App keys match what the peer derives. Was: re-hashed
+         --  AFTER Send_Client_Certificate had appended the empty Cert,
+         --  producing keys that diverged from the peer's, leading to
+         --  "bad record MAC" on the first post-handshake record.
+         App_TS_Hash_256 : constant Digest := Transcript_Hash_256 (S.HC);
+         App_TS_Hash_384 : constant Key_Schedule.Digest_384 := Transcript_Hash_384 (S.HC);
+      begin
+         --  RFC 8446 D.4: middlebox-compatibility CCS goes FIRST
+         --  in the client's post-server-Finished flight, BEFORE any
+         --  encrypted record. Otherwise the runner-side Go TLS stack
+         --  rejects with "invalid TLS 1.3 ChangeCipherSpec" because
+         --  it expects a CCS where it sees an app_data record.
+         --
+         --  If we already emitted the dummy CCS between HRR and CH2
+         --  (S.HC.Sent_HRR_CCS), skip  the server's
+         --  expectChangeCipherSpec was cleared by that one and a
+         --  second CCS would be rejected as unexpected.
+         if not S.HC.Sent_HRR_CCS then
+            declare
+               Pre_CCS_Out : N32;
+            begin
+               Records.Build_CCS_Record (S.Output, Pre_CCS_Out, S.Rec_Hdr);
+               if Pre_CCS_Out = 0 then
+                  S.Last_Error := Insufficient_Buffer;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
+                  return;
+               end if;
+            end;
+         end if;
+
+         --  mTLS: send client certificate before Finished if requested
+         Send_Client_Certificate (S, D, Cert_Result);
+         if Cert_Result /= OK then
+            if S.State = Wait_Server_Finished then
                S.Last_Error := Insufficient_Buffer;
                Set_State (S, Error_State);
-               Result := Error_Alert;
-               return;
             end if;
-         end;
-      end if;
-
-      --  mTLS: send client certificate before Finished if requested
-      Send_Client_Certificate (S, D, Scratch, Cert_Result);
-      if Cert_Result /= OK then
-         if S.State = Wait_Server_Finished then
-            S.Last_Error := Insufficient_Buffer;
-            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
          end if;
-         Result := Error_Alert;
-         return;
-      end if;
 
-      if S.State /= Wait_Server_Finished then
-         Result := Error_Alert;
-         return;
-      end if;
+         if S.State /= Wait_Server_Finished then
+            Result := Error_Alert;
+            return;
+         end if;
 
-      case S.Negotiated_Suite is
-         when Suite_AES_256_GCM_SHA384 =>
-            Build_Client_Finished_384 (S, D, Scratch, App_TS_Hash_384, Result);
-            if Result /= OK then
-               return;
-            end if;
+         case S.Negotiated_Suite is
+            when Suite_AES_256_GCM_SHA384 =>
+               Build_Client_Finished_384 (S, D, App_TS_Hash_384, Result);
+               if Result /= OK then
+                  return;
+               end if;
 
-         when others =>
-            pragma
-              Assert
-                (S.Negotiated_Suite in Suite_AES_128_GCM_SHA256 | Suite_CHACHA20_POLY1305_SHA256);
-            Build_Client_Finished_256 (S, D, Scratch, App_TS_Hash_256, Result);
-            if Result /= OK then
-               return;
-            end if;
-      end case;
+            when others =>
+               pragma
+                 Assert
+                   (S.Negotiated_Suite in Suite_AES_128_GCM_SHA256 | Suite_CHACHA20_POLY1305_SHA256);
+               Build_Client_Finished_256 (S, D, App_TS_Hash_256, Result);
+               if Result /= OK then
+                  return;
+               end if;
+         end case;
 
-      if S.State /= Wait_Server_Finished then
-         Result := Error_Alert;
-         return;
-      end if;
+         if S.State /= Wait_Server_Finished then
+            Result := Error_Alert;
+            return;
+         end if;
 
-      --  Atomic commit: full client flight assembled in Scratch.
-      if Free_Space (S.Output) < Scratch.Write_Pos then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
-      S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-        Scratch.Data (0 .. Scratch.Write_Pos - 1);
-      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+         --  Atomic commit: full client flight assembled in S.Output.
 
-      Set_State (S, Client_Finished_Sent);
-      Result := Has_Output;
+         Set_State (S, Client_Finished_Sent);
+         Result := Has_Output;
+      end Flight;
+
+   begin
+      Begin_Flight (S);
+      Flight (S, D, Result);
+      End_Flight (S, Failed => Result = Error_Alert or else State (S) = Error_State);
    end Derive_App_Keys_And_Send_Finished;
 
    procedure Set_Traffic_Keys
@@ -2994,6 +2991,7 @@ is
                   declare
                      A : N32;
                   begin
+                     Abort_Flight (S);
                      Records.Build_Alert_Record
                        (Level     => 1,
                         Desc      => 0,

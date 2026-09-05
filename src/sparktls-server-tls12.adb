@@ -55,6 +55,7 @@ is
    procedure Send_Alert_And_Error (S : in out Session; Err : Error_Code; Result : out Action) is
       Dummy : N32;
    begin
+      Abort_Flight (S);
       S.Last_Error := Err;
       Set_State (S, Error_State);
       Records.Build_Plaintext_Alert (2, Alert_Desc (Err), S.Output, Dummy, S.Rec_Hdr);
@@ -91,6 +92,7 @@ is
       Dummy : N32;
    begin
       Set_State (S, Error_State);
+      Abort_Flight (S);
       S.Last_Error := Err;
       Records.TLS12.Build_Alert_Record_12
         (Level       => 2,
@@ -117,6 +119,7 @@ is
       Dummy : N32;
    begin
       Set_State (S, Error_State);
+      Abort_Flight (S);
       S.Last_Error := Err;
       Records.TLS12.Build_Alert_Record_12
         (Level       => 2,
@@ -527,187 +530,188 @@ is
    procedure Build_Server_Flight_12_Full
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    is
-      Gen_Random : constant Random_Bytes_Fn := Cfg.Random;
-      Rec_Out    : N32;
-      CR_OK      : Boolean;
-      --  Atomic flight assembly: build every record into a scratch buffer
-      --  first. We commit to S.Output only when the entire flight has
-      --  been built and we know it fits, so the peer never observes a
-      --  partial flight. (All four records here are plaintext, so the
-      --  AEAD counter doesn't need rolling back on failure.)
-      Scratch    : IO_Buffer;
-   begin
-      --  TLS 1.2 uses supported_groups (no key_share extension)
-      if S.HC.Client_Has_X25519 or S.HC.Client_Supports_X25519 then
-         S.HC.KE.Curve := Group_X25519;
-         S.HC.KE.Negotiated := True;
-      elsif S.HC.Client_Has_P256 or S.HC.Client_Supports_P256 then
-         S.HC.KE.Curve := Group_Secp256r1;
-         S.HC.KE.Negotiated := True;
-      elsif S.HC.Client_Has_P384 or S.HC.Client_Supports_P384 then
-         S.HC.KE.Curve := Group_Secp384r1;
-         S.HC.KE.Negotiated := True;
-      else
-         Send_Alert_And_Error (S, Handshake_Failure, Result);
-         return;
-      end if;
-      pragma Assert (S.HC.KE.Negotiated);
-
-      --  The unversioned dispatcher commits the selected TLS 1.2 suite
-      --  before entering this package.
-      if S.Negotiated_Suite
-         not in Suite_ECDHE_RSA_AES128_GCM_SHA256
-              | Suite_ECDHE_RSA_AES256_GCM_SHA384
-              | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
-              | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
-              | Suite_ECDHE_RSA_CHACHA20_SHA256
-              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
-      then
-         --  No matching TLS 1.2 ECDHE+AEAD suite
-         Send_Alert_And_Error (S, Handshake_Failure, Result);
-         return;
-      end if;
-
-      --  Negotiate signature scheme: pick the first client-offered
-      --  scheme that is compatible with our local key's signing
-      --  algorithm. RSA-PKCS#1 v1.5 schemes (0x0401/0x0501/0x0601)
-      --  would be valid in TLS 1.2 but we don't yet implement
-      --  v1.5 *signing* in SPARKTLSCrypto.RSA  only verify  so
-      --  we offer PSS only for RSA keys. Verify is supported, so
-      --  client cert sigs in v1.5 are still accepted via the
-      --  cert_verify path.
-      declare
-         Negotiated : Maybe_Sig_Scheme;
+      procedure Flight
+        (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
+      is
+         Gen_Random : constant Random_Bytes_Fn := Cfg.Random;
+         Rec_Out    : N32;
+         CR_OK      : Boolean;
+         --  Atomic flight assembly: build every record into a scratch buffer
+         --  first. We commit to S.Output only when the entire flight has
+         --  been built and we know it fits, so the peer never observes a
+         --  partial flight. (All four records here are plaintext, so the
+         --  AEAD counter doesn't need rolling back on failure.)
       begin
-         Negotiate_Sig_Algo_12 (S.HC, Cfg, Negotiated);
-         if Negotiated = Scheme_None then
+         --  TLS 1.2 uses supported_groups (no key_share extension)
+         if S.HC.Client_Has_X25519 or S.HC.Client_Supports_X25519 then
+            S.HC.KE.Curve := Group_X25519;
+            S.HC.KE.Negotiated := True;
+         elsif S.HC.Client_Has_P256 or S.HC.Client_Supports_P256 then
+            S.HC.KE.Curve := Group_Secp256r1;
+            S.HC.KE.Negotiated := True;
+         elsif S.HC.Client_Has_P384 or S.HC.Client_Supports_P384 then
+            S.HC.KE.Curve := Group_Secp384r1;
+            S.HC.KE.Negotiated := True;
+         else
             Send_Alert_And_Error (S, Handshake_Failure, Result);
             return;
          end if;
-         S.HC.Negotiated_Sig_Algo := Negotiated;
-      end;
-
-      case S.HC.KE.Curve is
-         when Group_X25519    =>
-            Gen_Random (Byte_Seq (S.HC.KE.Local_SK));
-
-         when Group_Secp256r1 =>
-            Gen_Random (Byte_Seq (S.HC.KE.P256_SK));
-
-         when Group_Secp384r1 =>
-            Gen_Random (Byte_Seq (S.HC.KE.P384_SK));
-
-         when others          =>
-            null;
-      end case;
-
-      if Cfg.Require_ALPN and then not SPARKTLS.Handshake.Server_Msgs.Has_ALPN_Match (S.HC) then
-         Send_Alert_And_Error (S, No_Application_Protocol, Result);
-         return;
-      end if;
-
-      --  1. ServerHello
-      --  Re-establish S.HC.Cfg facts locally: Build_Server_Hello_12's Pre
-      --  names S.HC.Cfg (Handshake.TLS12 cannot see Server's Ready_Config),
-      --  and the prover cannot link the Cfg copy back to S.HC.Cfg. Three
-      --  null checks, semantically unreachable, fail closed.
-      if S.HC.Cfg not in Ready_Config then
-         S.Last_Error := Internal_Error;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
-      declare
-         Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1);
-         Hello_Len : N32;
-      begin
-         Build_Server_Hello_12 (S.Negotiated_Suite, S.Negotiated_ALPN, S.HC, Hello_Buf, Hello_Len);
-         pragma Assert (S.Role = Role_Server);
-         if Hello_Len = 0 then
-            Send_Alert_And_Error (S, Internal_Error, Result);
-            return;
-         end if;
-         Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
-         Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), Scratch, Rec_Out,
-                                         S.Rec_Hdr);
-         if Rec_Out = 0 then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            return;
-         end if;
-      end;
-
-      --  2. Certificate (TLS 1.2 format)
-      declare
-         Cert_Buf : Byte_Seq (0 .. Max_Record_Plaintext - 1);
-         Cert_Len : N32;
-      begin
-         Build_Certificate_Chain_12 (Cfg.Local.all, Cert_Buf, Cert_Len);
-         if Cert_Len > 0 then
-            Append_Transcript (S.HC, Cert_Buf (0 .. Cert_Len - 1));
-            Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), Scratch, Rec_Out,
-                                            S.Rec_Hdr);
-            if Rec_Out = 0 then
-               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-               return;
-            end if;
-         end if;
-      end;
-
-      --  3. ServerKeyExchange
-      declare
-         SKE_Buf : Byte_Seq (0 .. Max_Server_Key_Exchange - 1);
-         SKE_Len : N32;
-      begin
          pragma Assert (S.HC.KE.Negotiated);
-         Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
-         if SKE_Len > 0 then
-            Append_Transcript (S.HC, SKE_Buf (0 .. SKE_Len - 1));
-            Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), Scratch, Rec_Out,
+
+         --  The unversioned dispatcher commits the selected TLS 1.2 suite
+         --  before entering this package.
+         if S.Negotiated_Suite
+            not in Suite_ECDHE_RSA_AES128_GCM_SHA256
+                 | Suite_ECDHE_RSA_AES256_GCM_SHA384
+                 | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+                 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+                 | Suite_ECDHE_RSA_CHACHA20_SHA256
+                 | Suite_ECDHE_ECDSA_CHACHA20_SHA256
+         then
+            --  No matching TLS 1.2 ECDHE+AEAD suite
+            Send_Alert_And_Error (S, Handshake_Failure, Result);
+            return;
+         end if;
+
+         --  Negotiate signature scheme: pick the first client-offered
+         --  scheme that is compatible with our local key's signing
+         --  algorithm. RSA-PKCS#1 v1.5 schemes (0x0401/0x0501/0x0601)
+         --  would be valid in TLS 1.2 but we don't yet implement
+         --  v1.5 *signing* in SPARKTLSCrypto.RSA  only verify  so
+         --  we offer PSS only for RSA keys. Verify is supported, so
+         --  client cert sigs in v1.5 are still accepted via the
+         --  cert_verify path.
+         declare
+            Negotiated : Maybe_Sig_Scheme;
+         begin
+            Negotiate_Sig_Algo_12 (S.HC, Cfg, Negotiated);
+            if Negotiated = Scheme_None then
+               Send_Alert_And_Error (S, Handshake_Failure, Result);
+               return;
+            end if;
+            S.HC.Negotiated_Sig_Algo := Negotiated;
+         end;
+
+         case S.HC.KE.Curve is
+            when Group_X25519    =>
+               Gen_Random (Byte_Seq (S.HC.KE.Local_SK));
+
+            when Group_Secp256r1 =>
+               Gen_Random (Byte_Seq (S.HC.KE.P256_SK));
+
+            when Group_Secp384r1 =>
+               Gen_Random (Byte_Seq (S.HC.KE.P384_SK));
+
+            when others          =>
+               null;
+         end case;
+
+         if Cfg.Require_ALPN and then not SPARKTLS.Handshake.Server_Msgs.Has_ALPN_Match (S.HC) then
+            Send_Alert_And_Error (S, No_Application_Protocol, Result);
+            return;
+         end if;
+
+         --  1. ServerHello
+         --  Re-establish S.HC.Cfg facts locally: Build_Server_Hello_12's Pre
+         --  names S.HC.Cfg (Handshake.TLS12 cannot see Server's Ready_Config),
+         --  and the prover cannot link the Cfg copy back to S.HC.Cfg. Three
+         --  null checks, semantically unreachable, fail closed.
+         if S.HC.Cfg not in Ready_Config then
+            S.Last_Error := Internal_Error;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+            return;
+         end if;
+         declare
+            Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1);
+            Hello_Len : N32;
+         begin
+            Build_Server_Hello_12 (S.Negotiated_Suite, S.Negotiated_ALPN, S.HC, Hello_Buf, Hello_Len);
+            pragma Assert (S.Role = Role_Server);
+            if Hello_Len = 0 then
+               Send_Alert_And_Error (S, Internal_Error, Result);
+               return;
+            end if;
+            Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
+            Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), S.Output, Rec_Out,
                                             S.Rec_Hdr);
             if Rec_Out = 0 then
                Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                return;
             end if;
+         end;
+
+         --  2. Certificate (TLS 1.2 format)
+         declare
+            Cert_Buf : Byte_Seq (0 .. Max_Record_Plaintext - 1);
+            Cert_Len : N32;
+         begin
+            Build_Certificate_Chain_12 (Cfg.Local.all, Cert_Buf, Cert_Len);
+            if Cert_Len > 0 then
+               Append_Transcript (S.HC, Cert_Buf (0 .. Cert_Len - 1));
+               Records.Build_Handshake_Record (Cert_Buf (0 .. Cert_Len - 1), S.Output, Rec_Out,
+                                               S.Rec_Hdr);
+               if Rec_Out = 0 then
+                  Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+                  return;
+               end if;
+            end if;
+         end;
+
+         --  3. ServerKeyExchange
+         declare
+            SKE_Buf : Byte_Seq (0 .. Max_Server_Key_Exchange - 1);
+            SKE_Len : N32;
+         begin
+            pragma Assert (S.HC.KE.Negotiated);
+            Build_Server_Key_Exchange (S.HC, Cfg.Local.all, Gen_Random, SKE_Buf, SKE_Len);
+            if SKE_Len > 0 then
+               Append_Transcript (S.HC, SKE_Buf (0 .. SKE_Len - 1));
+               Records.Build_Handshake_Record (SKE_Buf (0 .. SKE_Len - 1), S.Output, Rec_Out,
+                                               S.Rec_Hdr);
+               if Rec_Out = 0 then
+                  Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+                  return;
+               end if;
+            end if;
+         end;
+
+         --  4. CertificateRequest (optional client auth)
+         if Cfg.Request_Client_Cert then
+            Append_Cert_Request_12 (S.HC, S.Output, CR_OK, S.Rec_Hdr);
+            if not CR_OK then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
          end if;
-      end;
 
-      --  4. CertificateRequest (optional client auth)
-      if Cfg.Request_Client_Cert then
-         Append_Cert_Request_12 (S.HC, Scratch, CR_OK, S.Rec_Hdr);
-         if not CR_OK then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            return;
-         end if;
-      end if;
+         --  5. ServerHelloDone
+         declare
+            Done_Buf : Byte_Seq (0 .. 3);
+            Done_Len : N32;
+         begin
+            Build_Server_Hello_Done (Done_Buf, Done_Len);
+            Append_Transcript (S.HC, Done_Buf (0 .. Done_Len - 1));
+            Records.Build_Handshake_Record (Done_Buf (0 .. Done_Len - 1), S.Output, Rec_Out,
+                                            S.Rec_Hdr);
+            if Rec_Out = 0 then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
+         end;
 
-      --  5. ServerHelloDone
-      declare
-         Done_Buf : Byte_Seq (0 .. 3);
-         Done_Len : N32;
-      begin
-         Build_Server_Hello_Done (Done_Buf, Done_Len);
-         Append_Transcript (S.HC, Done_Buf (0 .. Done_Len - 1));
-         Records.Build_Handshake_Record (Done_Buf (0 .. Done_Len - 1), Scratch, Rec_Out,
-                                         S.Rec_Hdr);
-         if Rec_Out = 0 then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            return;
-         end if;
-      end;
+         --  Atomic commit: full flight built. If it fits in S.Output, copy
+         --  in one shot; otherwise abort without touching S.Output.
 
-      --  Atomic commit: full flight built. If it fits in S.Output, copy
-      --  in one shot; otherwise abort without touching S.Output.
-      if Free_Space (S.Output) < Scratch.Write_Pos then
-         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-         return;
-      end if;
-      S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-        Scratch.Data (0 .. Scratch.Write_Pos - 1);
-      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+         pragma Assert (S.Role = Role_Server);
+         Set_State (S, Server_Hello_Sent);
+         Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
+      end Flight;
 
-      pragma Assert (S.Role = Role_Server);
-      Set_State (S, Server_Hello_Sent);
-      Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
+   begin
+      Begin_Flight (S);
+      Flight (S, Cfg, Result);
+      End_Flight (S, Failed => Result = Error_Alert or else State (S) = Error_State);
    end Build_Server_Flight_12_Full;
 
    ------------------------------------------------------------------
@@ -851,7 +855,6 @@ is
       Cfg     : in Ready_Config;
       Key_ID  : in SPARKTLS.Tickets_12.Bytes_4;
       TEK     : in SPARKTLS.Tickets_12.Bytes_32;
-      Scratch : in out IO_Buffer;
       OK      : out Boolean)
    is
       Nonce_Buf   : Byte_Seq (0 .. 11) := (others => 0);
@@ -894,7 +897,7 @@ is
       end if;
 
       Append_Transcript (S.HC, NST_Buf (0 .. NST_Total - 1));
-      Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), Scratch, NST_Rec_Out,
+      Records.Build_Handshake_Record (NST_Buf (0 .. NST_Total - 1), S.Output, NST_Rec_Out,
                                       S.Rec_Hdr);
 
       if NST_Rec_Out = 0 then
@@ -907,154 +910,154 @@ is
    procedure Build_Abbreviated_Server_Flight_12
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    is
-      use Key_Schedule_12;
-      use type SPARKTLS.Tickets_12.Bytes_4;
-      Gen_Random    : constant Random_Bytes_Fn := Cfg.Random;
-      Rec_Out       : N32;
-      Scratch       : IO_Buffer;
-      Use_384       : constant Boolean :=
-        S.Negotiated_Suite
-        in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
-      --  Sealing key comes from the caller's store, not from Config.
-      --  Filled by Get_Active_TEK below; if the callback reports no key
-      --  we simply do not issue a ticket.
-      Active_Key_ID : Byte_Seq (0 .. 3) := (others => 0);
-      Active_TEK    : Byte_Seq (0 .. 31) := (others => 0);
-      Have_TEK      : Boolean := False;
-      NST_OK        : Boolean;
+      procedure Flight
+        (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
+      is
+         use Key_Schedule_12;
+         use type SPARKTLS.Tickets_12.Bytes_4;
+         Gen_Random    : constant Random_Bytes_Fn := Cfg.Random;
+         Rec_Out       : N32;
+         Use_384       : constant Boolean :=
+           S.Negotiated_Suite
+           in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384;
+         --  Sealing key comes from the caller's store, not from Config.
+         --  Filled by Get_Active_TEK below; if the callback reports no key
+         --  we simply do not issue a ticket.
+         Active_Key_ID : Byte_Seq (0 .. 3) := (others => 0);
+         Active_TEK    : Byte_Seq (0 .. 31) := (others => 0);
+         Have_TEK      : Boolean := False;
+         NST_OK        : Boolean;
+      begin
+         --  Get_Time /= null for the same reason as the full flight: an
+         --  unexpirable ticket is worse than no ticket. Have_TEK stays
+         --  False, which the NST path already reads as "issue nothing".
+         if Cfg.Get_Active_TEK /= null and then Cfg.Get_Time /= null then
+            Cfg.Get_Active_TEK.all (Active_Key_ID, Active_TEK, Have_TEK);
+         end if;
+         --  Mirror the full-flight setup that Build_Server_Flight_12_Full
+         --  did before we diverted. We don't pick a group (no ECDHE), we
+         --  don't pick a signature scheme (no SKE), but we DO need the
+         --  Negotiated_Sig_Algo to be cleared so Build_Server_Hello_12
+         --  doesn't try to echo a stale value.
+         S.HC.Negotiated_Sig_Algo := Scheme_None;
+
+         --  Fresh server random (32 bytes).
+         declare
+            Server_Random : Bytes_32;
+         begin
+            Gen_Random (Byte_Seq (Server_Random));
+            Set_Server_Random_12 (S.HC, Server_Random);
+         end;
+
+         if Cfg.Require_ALPN and then not SPARKTLS.Handshake.Server_Msgs.Has_ALPN_Match (S.HC) then
+            Send_Alert_And_Error (S, No_Application_Protocol, Result);
+            return;
+         end if;
+
+         --  1. ServerHello (with empty session_ticket ext, since
+         --     TLS12_Ticket_Offered + TLS12_Ticket_Keys are set).
+         declare
+            Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1);
+            Hello_Len : N32;
+         begin
+            if S.HC.Cfg not in Ready_Config then
+               S.Last_Error := Internal_Error;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+               return;
+            end if;
+            Build_Server_Hello_12 (S.Negotiated_Suite, S.Negotiated_ALPN, S.HC, Hello_Buf, Hello_Len);
+            if Hello_Len = 0 then
+               Send_Alert_And_Error (S, Internal_Error, Result);
+               return;
+            end if;
+            Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
+            Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), S.Output, Rec_Out,
+                                            S.Rec_Hdr);
+            if Rec_Out = 0 then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
+         end;
+
+         --  2. Derive AEAD keys (no master-secret PRF  restored from
+         --     ticket; just expand to traffic keys + IVs).
+         Derive_Keys_Resumed_12 (S, Cfg);
+
+         --  3. NewSessionTicket (re-issued under our active TEK with a
+         --     fresh nonce). RFC 5077 3.3: the server MUST send NST in
+         --     the resumed flight if it advertised session_ticket in SH.
+         Issue_Resumed_NST_12
+           (S,
+            Cfg,
+            SPARKTLS.Tickets_12.Bytes_4 (Active_Key_ID),
+            SPARKTLS.Tickets_12.Bytes_32 (Active_TEK),
+            NST_OK);
+
+         if not NST_OK then
+            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+            return;
+         end if;
+
+         --  4. ChangeCipherSpec (plaintext, content type 20).
+         declare
+            CCS_Out : N32;
+         begin
+            Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+            if CCS_Out = 0 then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
+         end;
+
+         --  5. Server Finished (encrypted with the just-derived app keys).
+         declare
+            FB : Byte_Seq (0 .. Finished_12_Total_Len - 1);
+            FL : N32;
+            EO : N32;
+         begin
+            Build_Server_Finished_12 (S.HC.TS, S.HC.Master_Secret_12, Use_384, FB, FL);
+
+            --  Append server Finished plaintext to transcript so the
+            --  client's expected Finished hash (which covers up to
+            --  server Finished) matches.
+            Append_Transcript (S.HC, FB (0 .. FL - 1));
+
+            Records.TLS12.Build_Encrypted_Record_12
+              (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, S.Output, EO, S.Rec_Hdr);
+            --  No counter rewind on the failure paths below: both are fatal
+            --  (Error_State), so the advanced counter is never used again --
+            --  and a burned nonce STAYS burned, rather than relying on the
+            --  discarded S.Output ciphertext never leaking.
+            if EO = 0 then
+               Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+               return;
+            end if;
+         end;
+
+         --  Atomic commit.
+
+         --  Mirror state into Session record. The sequence counters no
+         --  longer need mirroring: they live INSIDE S.Server_App /
+         --  S.Client_App, which are already Session state -- the
+         --  handshake-to-connected counter handoff is gone by construction.
+         S.Client_IV_12 := S.HC.Client_Write_IV_12;
+         S.Server_IV_12 := S.HC.Server_Write_IV_12;
+
+         --  Mark CKE-received so the existing Process_Client_CCS_12 /
+         --  Process_Client_Finished_12 state-check predicates don't
+         --  trip on the missing ClientKeyExchange (abbreviated flow).
+         S.HC.CKE_Received_12 := True;
+
+         --  Server flight is on the wire; await client CCS + Finished.
+         Set_State (S, Wait_Client_Finished);
+         Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
+      end Flight;
+
    begin
-      --  Get_Time /= null for the same reason as the full flight: an
-      --  unexpirable ticket is worse than no ticket. Have_TEK stays
-      --  False, which the NST path already reads as "issue nothing".
-      if Cfg.Get_Active_TEK /= null and then Cfg.Get_Time /= null then
-         Cfg.Get_Active_TEK.all (Active_Key_ID, Active_TEK, Have_TEK);
-      end if;
-      --  Mirror the full-flight setup that Build_Server_Flight_12_Full
-      --  did before we diverted. We don't pick a group (no ECDHE), we
-      --  don't pick a signature scheme (no SKE), but we DO need the
-      --  Negotiated_Sig_Algo to be cleared so Build_Server_Hello_12
-      --  doesn't try to echo a stale value.
-      S.HC.Negotiated_Sig_Algo := Scheme_None;
-
-      --  Fresh server random (32 bytes).
-      declare
-         Server_Random : Bytes_32;
-      begin
-         Gen_Random (Byte_Seq (Server_Random));
-         Set_Server_Random_12 (S.HC, Server_Random);
-      end;
-
-      if Cfg.Require_ALPN and then not SPARKTLS.Handshake.Server_Msgs.Has_ALPN_Match (S.HC) then
-         Send_Alert_And_Error (S, No_Application_Protocol, Result);
-         return;
-      end if;
-
-      --  1. ServerHello (with empty session_ticket ext, since
-      --     TLS12_Ticket_Offered + TLS12_Ticket_Keys are set).
-      declare
-         Hello_Buf : Byte_Seq (0 .. Max_Server_Hello_12 - 1);
-         Hello_Len : N32;
-      begin
-         if S.HC.Cfg not in Ready_Config then
-            S.Last_Error := Internal_Error;
-            Set_State (S, Error_State);
-            Result := Error_Alert;
-            return;
-         end if;
-         Build_Server_Hello_12 (S.Negotiated_Suite, S.Negotiated_ALPN, S.HC, Hello_Buf, Hello_Len);
-         if Hello_Len = 0 then
-            Send_Alert_And_Error (S, Internal_Error, Result);
-            return;
-         end if;
-         Append_Transcript (S.HC, Hello_Buf (0 .. Hello_Len - 1));
-         Records.Build_Handshake_Record (Hello_Buf (0 .. Hello_Len - 1), Scratch, Rec_Out,
-                                         S.Rec_Hdr);
-         if Rec_Out = 0 then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            return;
-         end if;
-      end;
-
-      --  2. Derive AEAD keys (no master-secret PRF  restored from
-      --     ticket; just expand to traffic keys + IVs).
-      Derive_Keys_Resumed_12 (S, Cfg);
-
-      --  3. NewSessionTicket (re-issued under our active TEK with a
-      --     fresh nonce). RFC 5077 3.3: the server MUST send NST in
-      --     the resumed flight if it advertised session_ticket in SH.
-      Issue_Resumed_NST_12
-        (S,
-         Cfg,
-         SPARKTLS.Tickets_12.Bytes_4 (Active_Key_ID),
-         SPARKTLS.Tickets_12.Bytes_32 (Active_TEK),
-         Scratch,
-         NST_OK);
-
-      if not NST_OK then
-         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-         return;
-      end if;
-
-      --  4. ChangeCipherSpec (plaintext, content type 20).
-      declare
-         CCS_Out : N32;
-      begin
-         Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
-         if CCS_Out = 0 then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            return;
-         end if;
-      end;
-
-      --  5. Server Finished (encrypted with the just-derived app keys).
-      declare
-         FB : Byte_Seq (0 .. Finished_12_Total_Len - 1);
-         FL : N32;
-         EO : N32;
-      begin
-         Build_Server_Finished_12 (S.HC.TS, S.HC.Master_Secret_12, Use_384, FB, FL);
-
-         --  Append server Finished plaintext to transcript so the
-         --  client's expected Finished hash (which covers up to
-         --  server Finished) matches.
-         Append_Transcript (S.HC, FB (0 .. FL - 1));
-
-         Records.TLS12.Build_Encrypted_Record_12
-           (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO, S.Rec_Hdr);
-         --  No counter rewind on the failure paths below: both are fatal
-         --  (Error_State), so the advanced counter is never used again --
-         --  and a burned nonce STAYS burned, rather than relying on the
-         --  discarded Scratch ciphertext never leaking.
-         if EO = 0 then
-            Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-            return;
-         end if;
-      end;
-
-      --  Atomic commit.
-      if Free_Space (S.Output) < Scratch.Write_Pos then
-         Send_Alert_And_Error (S, Insufficient_Buffer, Result);
-         return;
-      end if;
-      S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-        Scratch.Data (0 .. Scratch.Write_Pos - 1);
-      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
-
-      --  Mirror state into Session record. The sequence counters no
-      --  longer need mirroring: they live INSIDE S.Server_App /
-      --  S.Client_App, which are already Session state -- the
-      --  handshake-to-connected counter handoff is gone by construction.
-      S.Client_IV_12 := S.HC.Client_Write_IV_12;
-      S.Server_IV_12 := S.HC.Server_Write_IV_12;
-
-      --  Mark CKE-received so the existing Process_Client_CCS_12 /
-      --  Process_Client_Finished_12 state-check predicates don't
-      --  trip on the missing ClientKeyExchange (abbreviated flow).
-      S.HC.CKE_Received_12 := True;
-
-      --  Server flight is on the wire; await client CCS + Finished.
-      Set_State (S, Wait_Client_Finished);
-      Result := (if Output_Pending (S) > 0 then Has_Output else Need_Input);
+      Begin_Flight (S);
+      Flight (S, Cfg, Result);
+      End_Flight (S, Failed => Result = Error_Alert or else State (S) = Error_State);
    end Build_Abbreviated_Server_Flight_12;
 
    procedure Derive_Keys_12 (S : in out Session; Cfg : in Ready_Config) is
@@ -1455,6 +1458,7 @@ is
          declare
             A : N32;
          begin
+            Abort_Flight (S);
             Records.Build_Plaintext_Alert
               (Level => 1, Desc => 0, Output => S.Output, Bytes_Out => A,
               Hdr_Buf=> S.Rec_Hdr);
@@ -2287,10 +2291,10 @@ is
    --  offered the session_ticket extension AND we have configured
    --  ticket-encryption keys. Resumed-flight NSTs (the abbreviated case) are
    --  emitted from a different code path. Appends the NST to the transcript
-   --  (RFC 5077 3.5: before the server Finished hash) and to Scratch as a
+   --  (RFC 5077 3.5: before the server Finished hash) and to S.Output as a
    --  plaintext handshake record. On failure sets the error state; the
    --  caller aborts the flight.
-   procedure Issue_NST_12 (S : in out Session; Scratch : in out IO_Buffer; OK : out Boolean) is
+   procedure Issue_NST_12 (S : in out Session; OK : out Boolean) is
    begin
       OK := True;
       if S.HC.T12.Ticket_Offered
@@ -2367,7 +2371,7 @@ is
 
                --  Emit as plaintext handshake record (server WRITE
                --  state still pre-CCS).
-               Records.Build_Handshake_Record (NST_Data, Scratch, NST_Rec_Out, S.Rec_Hdr);
+               Records.Build_Handshake_Record (NST_Data, S.Output, NST_Rec_Out, S.Rec_Hdr);
                if NST_Rec_Out = 0 then
                   S.Last_Error := Insufficient_Buffer;
                   Set_State (S, Error_State);
@@ -2390,66 +2394,54 @@ is
    --  plaintext until CCS, so NST is a plaintext handshake record.
    procedure Commit_Finished_Flight_12 (S : in out Session; Use_384 : in Boolean; OK : out Boolean)
    is
-      Scratch : IO_Buffer;
-      NST_OK  : Boolean;
-      CCS_Out : N32;
-      EO      : N32;
-      FB      : Byte_Seq (0 .. Finished_12_Total_Len - 1);
-      FL      : N32;
-   begin
-      OK := False;
-      Issue_NST_12 (S, Scratch, NST_OK);
-      if not NST_OK then
-         return;
-      end if;
-
-      Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
-      if CCS_Out = 0 then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
-         return;
-      end if;
-
-      Build_Server_Finished_12 (S.HC.TS, S.HC.Master_Secret_12, Use_384, FB, FL);
-
-      pragma Assert (FB'First = 0);
-      pragma Assert (FB'Last = Finished_12_Total_Len - 1);
-      pragma Assert (S.HC.Server_Write_IV_12'First = 0);
-      pragma Assert (S.HC.Server_Write_IV_12'Last = 11);
-      pragma Assert (S.HC.Server_Write_IV_12'Length = Records.TLS12.Implicit_IV_Len);
-
-      Records.TLS12.Build_Encrypted_Record_12
-        (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, Scratch, EO, S.Rec_Hdr);
-
-      if EO = 0 then
-         --  Fatal path: no rewind, the burned nonce stays
-         --  burned and the connection dies here.
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
-         return;
-      end if;
-
-      --  Atomic commit
-      if Free_Space (S.Output) < Scratch.Write_Pos then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
-         return;
-      end if;
-
-      declare
-         --  Bind the commit length HERE, after the flight is built:
-         --  binding it at block entry froze Write_Pos = 0 and the
-         --  commit copied nothing (a414432 regression -- killed every
-         --  TLS 1.2 full handshake; range 1.. makes the empty-flight
-         --  case a checked error instead of a silent no-op).
-         subtype Commit_Length is Buffer_Size range 1 .. IO_Buffer_Capacity;
-         Len           : constant Commit_Length := Scratch.Write_Pos;
-         New_Write_Pos : constant Buffer_Size := S.Output.Write_Pos + Len;
+      procedure Flight (S : in out Session; Use_384 : in Boolean; OK : out Boolean)
+      is
+         NST_OK  : Boolean;
+         CCS_Out : N32;
+         EO      : N32;
+         FB      : Byte_Seq (0 .. Finished_12_Total_Len - 1);
+         FL      : N32;
       begin
-         S.Output.Data (S.Output.Write_Pos .. New_Write_Pos - 1) := Scratch.Data (0 .. Len - 1);
-         S.Output.Write_Pos := New_Write_Pos;
-      end;
-      OK := True;
+         OK := False;
+         Issue_NST_12 (S, NST_OK);
+         if not NST_OK then
+            return;
+         end if;
+
+         Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+         if CCS_Out = 0 then
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            return;
+         end if;
+
+         Build_Server_Finished_12 (S.HC.TS, S.HC.Master_Secret_12, Use_384, FB, FL);
+
+         pragma Assert (FB'First = 0);
+         pragma Assert (FB'Last = Finished_12_Total_Len - 1);
+         pragma Assert (S.HC.Server_Write_IV_12'First = 0);
+         pragma Assert (S.HC.Server_Write_IV_12'Last = 11);
+         pragma Assert (S.HC.Server_Write_IV_12'Length = Records.TLS12.Implicit_IV_Len);
+
+         Records.TLS12.Build_Encrypted_Record_12
+           (FB (0 .. FL - 1), 16#16#, S.Server_App, S.HC.Server_Write_IV_12, S.Output, EO, S.Rec_Hdr);
+
+         if EO = 0 then
+            --  Fatal path: no rewind, the burned nonce stays
+            --  burned and the connection dies here.
+            S.Last_Error := Insufficient_Buffer;
+            Set_State (S, Error_State);
+            return;
+         end if;
+
+         --  Atomic commit
+         OK := True;
+      end Flight;
+
+   begin
+      Begin_Flight (S);
+      Flight (S, Use_384, OK);
+      End_Flight (S, Failed => not OK);
    end Commit_Finished_Flight_12;
 
    procedure Process_Client_Finished_12
@@ -2751,6 +2743,7 @@ is
          declare
             A : N32;
          begin
+            Abort_Flight (S);
             Records.TLS12.Build_Alert_Record_12
               (Level       => 1,
                Desc        => 100,
@@ -2869,6 +2862,7 @@ is
                      declare
                         A : N32;
                      begin
+                        Abort_Flight (S);
                         Records.TLS12.Build_Alert_Record_12
                           (Level       => 1,
                            Desc        => 0,

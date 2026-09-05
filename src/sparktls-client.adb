@@ -675,6 +675,7 @@ is
             declare
                Ignored_A : N32;
             begin
+               Abort_Flight (S);
                Records.Build_Plaintext_Alert
                  (Level     => 2,
                   Desc      => Alert_Desc (S.Last_Error),
@@ -716,6 +717,7 @@ is
                declare
                   Ignored_A : N32;
                begin
+                  Abort_Flight (S);
                   Records.Build_Plaintext_Alert
                     (Level     => 2,
                      Desc      => Alert_Desc (Unexpected_Message),
@@ -903,6 +905,7 @@ is
                      declare
                         A : N32;
                      begin
+                        Abort_Flight (S);
                         Records.Build_Plaintext_Alert
                           (Level     => 2,
                            Desc      => Alert_Desc (Unexpected_Message),
@@ -1243,6 +1246,7 @@ is
 
       case S.Version is
          when TLS_1_2          =>
+            Abort_Flight (S);
             Records.TLS12.Build_Alert_Record_12
               (Level       => 1,
                Desc        => 0,
@@ -1253,6 +1257,7 @@ is
                Hdr_Buf     => S.Rec_Hdr);
 
          when TLS_1_3          =>
+            Abort_Flight (S);
             Records.Build_Alert_Record
               (Level     => 1,
                Desc      => 0,

@@ -60,6 +60,7 @@ is
       null; -- debug removed
       S.Last_Error := Err;
       Set_State (S, Error_State);
+      Abort_Flight (S);
       Records.Build_Plaintext_Alert
         (Level     => 2,  --  fatal
          Desc      => Alert_Desc (Err),
@@ -1197,6 +1198,7 @@ is
       end if;
       case S.Version is
          when TLS_1_2          =>
+            Abort_Flight (S);
             Records.TLS12.Build_Alert_Record_12
               (Level       => 1,
                Desc        => 0,
@@ -1207,6 +1209,7 @@ is
                Hdr_Buf     => S.Rec_Hdr);
 
          when TLS_1_3          =>
+            Abort_Flight (S);
             Records.Build_Alert_Record
               (Level     => 1,
                Desc      => 0,

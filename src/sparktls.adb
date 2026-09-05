@@ -52,6 +52,34 @@ is
       S.State := To;
    end Set_State;
 
+   procedure Begin_Flight (S : in out Session) is
+   begin
+      S.Flight_Start := S.Output.Write_Pos;
+      S.In_Flight := True;
+   end Begin_Flight;
+
+   procedure Abort_Flight (S : in out Session) is
+   begin
+      if S.In_Flight then
+         --  Drop the partial flight. The mark was taken at Begin_Flight and
+         --  Read_Pos only moves in Drain_Ciphertext, which cannot run
+         --  mid-flight, so the mark is still inside the live window.
+         if S.Flight_Start in S.Output.Read_Pos .. S.Output.Write_Pos then
+            S.Output.Write_Pos := S.Flight_Start;
+         end if;
+         S.In_Flight := False;
+      end if;
+   end Abort_Flight;
+
+   procedure End_Flight (S : in out Session; Failed : Boolean) is
+   begin
+      if Failed then
+         Abort_Flight (S);
+      else
+         S.In_Flight := False;
+      end if;
+   end End_Flight;
+
    ----------------------------------------------------------------------------
    --  Compact
    --  Shift unread data to the front of the buffer to reclaim space

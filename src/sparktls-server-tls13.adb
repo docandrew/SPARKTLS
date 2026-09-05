@@ -130,7 +130,6 @@ is
      (S         : in out Session;
       D         : in out SPARKTLS.HS_Pool.HS_Data;
       Plaintext : in Byte_Seq;
-      Scratch   : in out IO_Buffer;
       Result    : out Action;
       Emitted   : out Boolean)
    with
@@ -156,7 +155,6 @@ is
      (S         : in out Session;
       D         : in out SPARKTLS.HS_Pool.HS_Data;
       Plaintext : in Byte_Seq;
-      Scratch   : in out IO_Buffer;
       Result    : out Action;
       Emitted   : out Boolean)
    with
@@ -267,6 +265,7 @@ is
       null; -- debug removed
       S.Last_Error := Err;
       Set_State (S, Error_State);
+      Abort_Flight (S);
       Records.Build_Plaintext_Alert
         (Level     => 2,  --  fatal
          Desc      => Alert_Desc (Err),
@@ -303,6 +302,7 @@ is
          Result := Error_Alert;
          return;
       end if;
+      Abort_Flight (S);
       Records.Build_Alert_Record
         (Level     => 2,
          Desc      => Alert_Desc (Err),
@@ -756,29 +756,26 @@ is
 
       --  Atomic flight assembly: HRR + CCS into scratch, commit only if
       --  the whole flight fits.
+      Begin_Flight (S);
       declare
-         Scratch : IO_Buffer;
          CCS_Out : N32;
       begin
          Records.Build_Handshake_Record
-           (Fragment => HRR_Buf (0 .. Msg_Len - 1), Output => Scratch, Bytes_Out => Rec_Out,
+           (Fragment => HRR_Buf (0 .. Msg_Len - 1), Output => S.Output, Bytes_Out => Rec_Out,
            Hdr_Buf   => S.Rec_Hdr);
          if Rec_Out = 0 then
+            Abort_Flight (S);
             return;
          end if;
 
          --  Send CCS for middlebox compatibility
-         Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
+         Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
          if CCS_Out = 0 then
+            Abort_Flight (S);
             return;
          end if;
 
-         if Free_Space (S.Output) < Scratch.Write_Pos then
-            return;
-         end if;
-         S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-           Scratch.Data (0 .. Scratch.Write_Pos - 1);
-         S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
+         End_Flight (S, Failed => False);
          S.HC.Sent_HRR_CCS := True;
          Built := True;
       end;
@@ -1035,7 +1032,6 @@ is
      (S         : in out Session;
       D         : in out SPARKTLS.HS_Pool.HS_Data;
       Plaintext : in Byte_Seq;
-      Scratch   : in out IO_Buffer;
       Result    : out Action;
       Emitted   : out Boolean)
    is
@@ -1046,7 +1042,7 @@ is
         (Plaintext  => Plaintext,
          Inner_Type => 16#16#,
          Keys       => S.HC.Server_HS,
-         Output     => Scratch,
+         Output     => S.Output,
          Bytes_Out  => Enc_Out,
          Hdr_Buf    => S.Rec_Hdr);
 
@@ -1065,7 +1061,6 @@ is
      (S         : in out Session;
       D         : in out SPARKTLS.HS_Pool.HS_Data;
       Plaintext : in Byte_Seq;
-      Scratch   : in out IO_Buffer;
       Result    : out Action;
       Emitted   : out Boolean)
    is
@@ -1078,7 +1073,7 @@ is
            (Plaintext  => Plaintext,
             Inner_Type => 16#16#,
             Keys       => S.HC.Server_HS,
-            Output     => Scratch,
+            Output     => S.Output,
             Bytes_Out  => Enc_Out,
             Hdr_Buf    => S.Rec_Hdr);
 
@@ -1097,7 +1092,7 @@ is
            (Plaintext  => Plaintext (0 .. N32 (Max_Fragment) - 1),
             Inner_Type => 16#16#,
             Keys       => S.HC.Server_HS,
-            Output     => Scratch,
+            Output     => S.Output,
             Bytes_Out  => Enc_Out,
             Hdr_Buf    => S.Rec_Hdr);
 
@@ -1114,7 +1109,7 @@ is
            (Plaintext  => Plaintext (N32 (Max_Fragment) .. Plaintext'Last),
             Inner_Type => 16#16#,
             Keys       => S.HC.Server_HS,
-            Output     => Scratch,
+            Output     => S.Output,
             Bytes_Out  => Enc_Out,
             Hdr_Buf    => S.Rec_Hdr);
 
@@ -1138,7 +1133,6 @@ is
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
       Cfg     : in Ready_Config;
-      Scratch : in out IO_Buffer;
       Result  : out Action;
       Emitted : out Boolean)
    with
@@ -1186,7 +1180,6 @@ is
         (S         => S,
          D         => D,
          Plaintext => Cert_Buf (0 .. Cert_Len - 1),
-         Scratch   => Scratch,
          Result    => Result,
          Emitted   => Emitted);
    end Emit_Certificate_Chain;
@@ -1198,7 +1191,6 @@ is
      (S          : in out Session;
       D          : in out SPARKTLS.HS_Pool.HS_Data;
       Cfg        : in Ready_Config;
-      Scratch    : in out IO_Buffer;
       Result     : out Action;
       Emitted    : out Boolean)
    with
@@ -1261,7 +1253,6 @@ is
         (S         => S,
          D         => D,
          Plaintext => CV_Buf (0 .. CV_Len - 1),
-         Scratch   => Scratch,
          Result    => Result,
          Emitted   => Emitted);
    end Emit_Cert_Verify;
@@ -1342,7 +1333,6 @@ is
    procedure Emit_Server_Finished
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
-      Scratch : in out IO_Buffer;
       Result  : out Action;
       Emitted : out Boolean)
    with
@@ -1374,7 +1364,6 @@ is
                  (S         => S,
                   D         => D,
                   Plaintext => Big_Finished,
-                  Scratch   => Scratch,
                   Result    => Result,
                   Emitted   => Emitted);
             end;
@@ -1399,7 +1388,6 @@ is
                  (S         => S,
                   D         => D,
                   Plaintext => Fin_Buf (0 .. Fin_Len - 1),
-                  Scratch   => Scratch,
                   Result    => Result,
                   Emitted   => Emitted);
             end;
@@ -1408,7 +1396,7 @@ is
 
    --  Second half of the server flight: everything that goes out under the
    --  handshake keys (EncryptedExtensions, Certificate/CertificateVerify,
-   --  Finished), then the atomic commit of Scratch to S.Output and the
+   --  Finished), then the atomic commit of S.Output to S.Output and the
    --  application-key derivation. Split out of Build_Server_Flight_13 so
    --  the prover sees this half against one precondition instead of the
    --  whole negotiation path (the plaintext half is the caller).
@@ -1416,7 +1404,6 @@ is
      (S            : in out Session;
       D            : in out SPARKTLS.HS_Pool.HS_Data;
       Cfg          : in Ready_Config;
-      Scratch      : in out IO_Buffer;
       Flight_Suite : in Supported_Suite;
       Result       : out Action)
    with
@@ -1443,7 +1430,6 @@ is
            (S         => S,
             D         => D,
             Plaintext => EE_Buf (0 .. EE_Len - 1),
-            Scratch   => Scratch,
             Result    => Result,
             Emitted   => Emitted);
          if not Emitted then
@@ -1468,7 +1454,6 @@ is
                     (S         => S,
                      D         => D,
                      Plaintext => CR_Buf (0 .. CR_Len - 1),
-                     Scratch   => Scratch,
                      Result    => Result,
                      Emitted   => Emitted);
                   if not Emitted then
@@ -1482,7 +1467,7 @@ is
          declare
             Emitted : Boolean;
          begin
-            Emit_Certificate_Chain (S, D, Cfg, Scratch, Result, Emitted);
+            Emit_Certificate_Chain (S, D, Cfg, Result, Emitted);
             if not Emitted then
                return;
             end if;
@@ -1492,7 +1477,7 @@ is
          declare
             Emitted : Boolean;
          begin
-            Emit_Cert_Verify (S, D, Cfg, Scratch, Result, Emitted);
+            Emit_Cert_Verify (S, D, Cfg, Result, Emitted);
             if not Emitted then
                return;
             end if;
@@ -1504,25 +1489,16 @@ is
       declare
          Emitted : Boolean;
       begin
-         Emit_Server_Finished (S, D, Scratch, Result, Emitted);
+         Emit_Server_Finished (S, D, Result, Emitted);
          if not Emitted then
             return;
          end if;
       end;
 
-      --  Atomic commit: full flight assembled in Scratch. If S.Output
+      --  Atomic commit: full flight assembled in S.Output. If S.Output
       --  has room, copy in one shot; otherwise abort and roll the
       --  AEAD counter back so subsequent records (or the alert we may
       --  send) stay nonce-synchronised with the peer.
-      if Free_Space (S.Output) < Scratch.Write_Pos then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
-      S.Output.Data (S.Output.Write_Pos .. S.Output.Write_Pos + Scratch.Write_Pos - 1) :=
-        Scratch.Data (0 .. Scratch.Write_Pos - 1);
-      S.Output.Write_Pos := S.Output.Write_Pos + Scratch.Write_Pos;
 
       --  Derive application keys now (using transcript through server Finished)
       Derive_App_Keys (S, TLS13_Suite (Flight_Suite));
@@ -1537,132 +1513,143 @@ is
       Cfg    : in Ready_Config;
       Result : out Action)
    is
-      SH_Buf             : Byte_Seq (0 .. Handshake.TLS13.Max_Server_Hello - 1);
-      SH_Len             : N32;
-      Rec_Out            : N32;
-      CCS_Out            : N32;
-      --  Atomic flight assembly: every record goes into Scratch first.
-      --  We commit to S.Output as one block at the end so the peer never
-      --  observes a partial flight. Each Build_Encrypted_Record call
-      --  advances S.HC.Server_HS.Counter; if the commit fails we restore
-      --  the counter so the next record's AEAD nonce stays in sync with
-      --  what the peer actually sees.
-      Scratch            : IO_Buffer;
-      Flight_Suite       : constant Supported_Suite := S.Negotiated_Suite;
-      Flight_Hash_Len    : N32;
-   begin
-      --  Negotiation has already committed the version. Keep the suite
-      --  consistency check local instead of exporting it as a caller VC.
-      if Flight_Suite not in TLS13_Suite then
-         Send_Alert_And_Error (S, Internal_Error, Result);
-         return;
-      end if;
-
-      --  PSK resumption: verify binder, install if valid, fatal-alert
-      --  on mismatch. Sets S.HC.Using_PSK on success.
-      if S.HC.PSK.Offered and then Cfg.Store_Session /= null and then Cfg.Lookup_Session /= null
-      then
-         declare
-            Rejected : Boolean;
-         begin
-            Verify_PSK_Binder (S, D, Cfg, Rejected, Result);
-            if Rejected then
-               return;
-            end if;
-         end;
-      end if;
-
-      --  RFC 8446 4.2.3: pick a sig_algorithm compatible with our
-      --  local cert. Skipped on PSK resumption (no signature in flight).
-      if not S.HC.Using_PSK then
-         declare
-            Got_It : Boolean;
-         begin
-            Negotiate_Sig_Algo (S, D, Cfg, Got_It, Result);
-            if not Got_It then
-               return;
-            end if;
-         end;
-      end if;
-
-      --  Check if HelloRetryRequest is needed.
-      --
-      --  RFC 8446 4.1.4: choose the first mutually supported group
-      --  in server preference order. If the client did not send a
-      --  key_share for that selected group, send HRR requesting it.
-      declare
-         HRR_Handled : Boolean;
+      procedure Flight
+        (S      : in out Session;
+         D      : in out SPARKTLS.HS_Pool.HS_Data;
+         Cfg    : in Ready_Config;
+         Result : out Action)
+      is
+         SH_Buf             : Byte_Seq (0 .. Handshake.TLS13.Max_Server_Hello - 1);
+         SH_Len             : N32;
+         Rec_Out            : N32;
+         CCS_Out            : N32;
+         --  Atomic flight assembly: every record goes into S.Output first.
+         --  We commit to S.Output as one block at the end so the peer never
+         --  observes a partial flight. Each Build_Encrypted_Record call
+         --  advances S.HC.Server_HS.Counter; if the commit fails we restore
+         --  the counter so the next record's AEAD nonce stays in sync with
+         --  what the peer actually sees.
+         Flight_Suite       : constant Supported_Suite := S.Negotiated_Suite;
+         Flight_Hash_Len    : N32;
       begin
-         Maybe_Send_HRR (S, HRR_Handled, Result);
-         if HRR_Handled then
+         --  Negotiation has already committed the version. Keep the suite
+         --  consistency check local instead of exporting it as a caller VC.
+         if Flight_Suite not in TLS13_Suite then
+            Send_Alert_And_Error (S, Internal_Error, Result);
             return;
          end if;
-      end;
 
-      if Cfg.Require_ALPN and then not Handshake.Server_Msgs.Has_ALPN_Match (S.HC) then
-         Send_Alert_And_Error (S, No_Application_Protocol, Result);
-         return;
-      end if;
-
-      Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Flight_Suite), S.HC, D.Arena, SH_Buf, SH_Len);
-
-      if SH_Len = 0 then
-         --  RFC 7748 6.1: small-subgroup X25519 rejection sets
-         --  Ext_Parse_Err := Illegal_Parameter so we don't fold it
-         --  into the catch-all handshake_failure.
-         if S.HC.Ext_Parse_Err /= No_Error then
-            Send_Alert_And_Error (S, S.HC.Ext_Parse_Err, Result);
-         else
-            Send_Alert_And_Error (S, Handshake_Failure, Result);
+         --  PSK resumption: verify binder, install if valid, fatal-alert
+         --  on mismatch. Sets S.HC.Using_PSK on success.
+         if S.HC.PSK.Offered and then Cfg.Store_Session /= null and then Cfg.Lookup_Session /= null
+         then
+            declare
+               Rejected : Boolean;
+            begin
+               Verify_PSK_Binder (S, D, Cfg, Rejected, Result);
+               if Rejected then
+                  return;
+               end if;
+            end;
          end if;
-         return;
-      end if;
 
-      --  Add ServerHello to transcript
-      Append_Transcript (S.HC, SH_Buf (0 .. SH_Len - 1));
+         --  RFC 8446 4.2.3: pick a sig_algorithm compatible with our
+         --  local cert. Skipped on PSK resumption (no signature in flight).
+         if not S.HC.Using_PSK then
+            declare
+               Got_It : Boolean;
+            begin
+               Negotiate_Sig_Algo (S, D, Cfg, Got_It, Result);
+               if not Got_It then
+                  return;
+               end if;
+            end;
+         end if;
 
-      --  Write ServerHello record (plaintext) into Scratch
-      Records.Build_Handshake_Record
-        (Fragment => SH_Buf (0 .. SH_Len - 1), Output => Scratch, Bytes_Out => Rec_Out,
-        Hdr_Buf   => S.Rec_Hdr);
+         --  Check if HelloRetryRequest is needed.
+         --
+         --  RFC 8446 4.1.4: choose the first mutually supported group
+         --  in server preference order. If the client did not send a
+         --  key_share for that selected group, send HRR requesting it.
+         declare
+            HRR_Handled : Boolean;
+         begin
+            Maybe_Send_HRR (S, HRR_Handled, Result);
+            if HRR_Handled then
+               return;
+            end if;
+         end;
 
-      if Rec_Out = 0 then
-         S.Last_Error := Insufficient_Buffer;
-         Set_State (S, Error_State);
-         Result := Error_Alert;
-         return;
-      end if;
+         if Cfg.Require_ALPN and then not Handshake.Server_Msgs.Has_ALPN_Match (S.HC) then
+            Send_Alert_And_Error (S, No_Application_Protocol, Result);
+            return;
+         end if;
 
-      --  Derive handshake keys
-      Derive_Handshake_Keys (S.HC, TLS13_Suite (Flight_Suite));
-      Flight_Hash_Len := Hash_Len (S.HC.Neg);
-      --  Restored after r67: the length checks downstream consume this
-      --  fact; it proves trivially now that Flight_Hash_Len comes from
-      --  Hash_Len (S.HC.Neg) (assert on the SAME object, no cross-object).
-      pragma
-        Assert
-          (if S.HC.Neg.Suite = Suite_AES_256_GCM_SHA384 then Flight_Hash_Len = 48
-             else Flight_Hash_Len = 32);
-      --  Save the AEAD counter snapshot now: every Build_Encrypted_Record
-      --  call below advances S.HC.Server_HS.Counter unconditionally
-      --  (Post: Keys.Counter = Keys.Counter'Old + 1). If the final
-      --  commit fails we restore this so the next record's nonce stays
-      --  in sync with whatever the peer last saw.
-      pragma Assert (S.HC.Server_HS.Counter = 0);
+         Handshake.TLS13.Build_Server_Hello
+           (TLS13_Suite (Flight_Suite), S.HC, D.Arena, SH_Buf, SH_Len);
 
-      --  Send CCS for middlebox compatibility unless HRR already sent it.
-      if not S.HC.Sent_HRR_CCS then
-         Records.Build_CCS_Record (Scratch, CCS_Out, S.Rec_Hdr);
-         if CCS_Out = 0 then
+         if SH_Len = 0 then
+            --  RFC 7748 6.1: small-subgroup X25519 rejection sets
+            --  Ext_Parse_Err := Illegal_Parameter so we don't fold it
+            --  into the catch-all handshake_failure.
+            if S.HC.Ext_Parse_Err /= No_Error then
+               Send_Alert_And_Error (S, S.HC.Ext_Parse_Err, Result);
+            else
+               Send_Alert_And_Error (S, Handshake_Failure, Result);
+            end if;
+            return;
+         end if;
+
+         --  Add ServerHello to transcript
+         Append_Transcript (S.HC, SH_Buf (0 .. SH_Len - 1));
+
+         --  Write ServerHello record (plaintext) into S.Output
+         Records.Build_Handshake_Record
+           (Fragment => SH_Buf (0 .. SH_Len - 1), Output => S.Output, Bytes_Out => Rec_Out,
+           Hdr_Buf   => S.Rec_Hdr);
+
+         if Rec_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
             Result := Error_Alert;
             return;
          end if;
-      end if;
 
-      Emit_Encrypted_Server_Flight_13 (S, D, Cfg, Scratch, Flight_Suite, Result);
+         --  Derive handshake keys
+         Derive_Handshake_Keys (S.HC, TLS13_Suite (Flight_Suite));
+         Flight_Hash_Len := Hash_Len (S.HC.Neg);
+         --  Restored after r67: the length checks downstream consume this
+         --  fact; it proves trivially now that Flight_Hash_Len comes from
+         --  Hash_Len (S.HC.Neg) (assert on the SAME object, no cross-object).
+         pragma
+           Assert
+             (if S.HC.Neg.Suite = Suite_AES_256_GCM_SHA384 then Flight_Hash_Len = 48
+                else Flight_Hash_Len = 32);
+         --  Save the AEAD counter snapshot now: every Build_Encrypted_Record
+         --  call below advances S.HC.Server_HS.Counter unconditionally
+         --  (Post: Keys.Counter = Keys.Counter'Old + 1). If the final
+         --  commit fails we restore this so the next record's nonce stays
+         --  in sync with whatever the peer last saw.
+         pragma Assert (S.HC.Server_HS.Counter = 0);
+
+         --  Send CCS for middlebox compatibility unless HRR already sent it.
+         if not S.HC.Sent_HRR_CCS then
+            Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+            if CCS_Out = 0 then
+               S.Last_Error := Insufficient_Buffer;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+               return;
+            end if;
+         end if;
+
+         Emit_Encrypted_Server_Flight_13 (S, D, Cfg, Flight_Suite, Result);
+      end Flight;
+
+   begin
+      Begin_Flight (S);
+      Flight (S, D, Cfg, Result);
+      End_Flight (S, Failed => Result = Error_Alert or else State (S) = Error_State);
    end Build_Server_Flight_13;
 
    --  Derive handshake traffic keys from shared secret
@@ -2153,6 +2140,7 @@ is
                declare
                   Ignored_A : N32;
                begin
+                  Abort_Flight (S);
                   Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
                                               S.Rec_Hdr);
                end;
@@ -2190,6 +2178,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
+                     Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
                                                  S.Rec_Hdr);
                   end;
@@ -2218,6 +2207,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
+                     Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
                                                  S.Rec_Hdr);
                   end;
@@ -2235,6 +2225,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
+                     Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
                                                  S.Rec_Hdr);
                   end;
@@ -2349,6 +2340,7 @@ is
    is
       Ignored_A : N32;
    begin
+      Abort_Flight (S);
       Records.Build_Alert_Record (2, Desc, S.Server_App, S.Output, Ignored_A, S.Rec_Hdr);
       S.Last_Error := Err;
       Set_State (S, Error_State);
@@ -2740,6 +2732,7 @@ is
                    | 16#14#;
                Ignored_A : N32;
             begin
+               Abort_Flight (S);
                Records.Build_Alert_Record
                  (2, (if Is_Known then 50 else 10), S.Server_App, S.Output, Ignored_A, S.Rec_Hdr);
                S.Last_Error := (if Is_Known then Decode_Error else Unexpected_Message);
@@ -2757,6 +2750,7 @@ is
             declare
                Ignored_A : N32;
             begin
+               Abort_Flight (S);
                Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
                                            S.Rec_Hdr);
             end;
@@ -2840,6 +2834,7 @@ is
             declare
                Ignored_A : N32;
             begin
+               Abort_Flight (S);
                Records.Build_Alert_Record (2, AD_Bad_Record_MAC, S.Server_App, S.Output, Ignored_A,
                                            S.Rec_Hdr);
             end;
@@ -2866,6 +2861,7 @@ is
             declare
                Ignored_A : N32;
             begin
+               Abort_Flight (S);
                Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
                                            S.Rec_Hdr);
             end;
@@ -3010,6 +3006,7 @@ is
                declare
                   Ignored_A : N32;
                begin
+                  Abort_Flight (S);
                   Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
                                               S.Rec_Hdr);
                end;
@@ -3315,6 +3312,7 @@ is
             declare
                Ignored_Alert_Out : N32;
             begin
+               Abort_Flight (S);
                Records.Build_Alert_Record
                  (Level     => 2,
                   Desc      => 10,  --  unexpected_message
@@ -3340,6 +3338,7 @@ is
             declare
                Ignored_Alert_Out : N32;
             begin
+               Abort_Flight (S);
                Records.Build_Alert_Record
                  (Level     => 2,
                   Desc      => 22,  --  record_overflow
@@ -3375,6 +3374,7 @@ is
             declare
                Ignored_Alert_Out : N32;
             begin
+               Abort_Flight (S);
                Records.Build_Alert_Record
                  (Level     => 2,       --  fatal
                   Desc      => 20,      --  bad_record_mac
@@ -3428,6 +3428,7 @@ is
                      declare
                         Ignored_A : N32;
                      begin
+                        Abort_Flight (S);
                         Records.Build_Alert_Record (2, AD_Unexpected_Message, S.Server_App, S.Output, Ignored_A,
                                                     S.Rec_Hdr);
                      end;
@@ -3468,6 +3469,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
+                     Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A,
                                                  S.Rec_Hdr);
                   end;
@@ -3479,6 +3481,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
+                     Abort_Flight (S);
                      Records.Build_Alert_Record (2, AD_Illegal_Parameter, S.Server_App, S.Output, Ignored_A,
                                                  S.Rec_Hdr);
                   end;
@@ -3495,6 +3498,7 @@ is
                   declare
                      Ignored_A : N32;
                   begin
+                     Abort_Flight (S);
                      Records.Build_Alert_Record
                        (Level     => 1,
                         Desc      => 0,
@@ -3525,6 +3529,7 @@ is
                         declare
                            Ignored_A : N32;
                         begin
+                           Abort_Flight (S);
                            Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A,
                                                        S.Rec_Hdr);
                         end;
@@ -3539,6 +3544,7 @@ is
                      declare
                         Ignored_A : N32;
                      begin
+                        Abort_Flight (S);
                         Records.Build_Alert_Record (2, AD_Decode_Error, S.Server_App, S.Output, Ignored_A,
                                                     S.Rec_Hdr);
                      end;
