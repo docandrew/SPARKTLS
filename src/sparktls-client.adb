@@ -784,7 +784,7 @@ is
                declare
                   Ignored_CCS_Bytes : N32;
                begin
-                  Records.Build_CCS_Record (S.Output, Ignored_CCS_Bytes, S.Rec_Hdr);
+                  Records.Build_CCS_Record (S.Output, Ignored_CCS_Bytes);
                end;
                S.HC.Sent_HRR_CCS := True;
                Records.Build_Handshake_Record

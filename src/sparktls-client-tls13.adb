@@ -64,7 +64,7 @@ is
       --  Abort any in-progress flight BEFORE the CCS: this helper emits two
       --  records (CCS, then the encrypted alert) and both must survive.
       Abort_Flight (S);
-      Records.Build_CCS_Record (S.Output, A1, S.Rec_Hdr);
+      Records.Build_CCS_Record (S.Output, A1);
       Records.Build_Alert_Record
         (Level     => 2,
          Desc      => Alert_Desc (Err),
@@ -1717,7 +1717,7 @@ is
             declare
                Pre_CCS_Out : N32;
             begin
-               Records.Build_CCS_Record (S.Output, Pre_CCS_Out, S.Rec_Hdr);
+               Records.Build_CCS_Record (S.Output, Pre_CCS_Out);
                if Pre_CCS_Out = 0 then
                   S.Last_Error := Insufficient_Buffer;
                   Set_State (S, Error_State);

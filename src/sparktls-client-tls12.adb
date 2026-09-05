@@ -1439,7 +1439,7 @@ is
    begin
       Derive_Keys_12 (S, D);
 
-      Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+      Records.Build_CCS_Record (S.Output, CCS_Out);
       if CCS_Out = 0 then
          Send_Cleartext_Handshake_Error_12 (S, D, Insufficient_Buffer, Result);
          return;
@@ -3055,7 +3055,7 @@ is
          EO      : N32;
       begin
          Result := OK;
-         Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+         Records.Build_CCS_Record (S.Output, CCS_Out);
          if CCS_Out = 0 then
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
             return;

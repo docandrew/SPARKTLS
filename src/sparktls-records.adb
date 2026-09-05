@@ -12,6 +12,8 @@ with RFLX.Tls_Parameters;
 with RFLX.TLS_Record.TLS_Record_Header;
 with RFLX.TLS_Record;
 with RFLX.TLS_Common;
+with SPARKTLS.RFLX_Borrow;
+with SPARKTLS.AEAD_InPlace;
 
 package body SPARKTLS.Records
   with SPARK_Mode => On
@@ -365,24 +367,28 @@ is
                declare
                   AES_Key : constant AES.AES128_Key := AES.Construct (Keys.Key (0 .. 15));
                begin
-                  AES_GCM.Encrypt_InPlace
-                    (Buf => Byte_Seq (Output.Storage (Ix (CT_Pos) .. Ix (Tag_Pos - 1))),
-                     Tag => Tag,
-                     N   => Nonce,
-                     K   => AES_Key,
-                     AAD => Hdr);
+                  SPARKTLS.AEAD_InPlace.GCM_Encrypt_128
+                    (Storage  => Output.Storage,
+                     CT_First => Ix (CT_Pos),
+                     CT_Last  => Ix (Tag_Pos - 1),
+                     Tag      => Tag,
+                     Nonce    => Nonce,
+                     Key      => AES_Key,
+                     AAD      => Hdr);
                end;
 
             when Suite_AES_256_GCM_SHA384 =>
                declare
                   AES_Key : constant AES.AES256_Key := AES.Construct (Keys.Key);
                begin
-                  AES_GCM.Encrypt_InPlace_256
-                    (Buf => Byte_Seq (Output.Storage (Ix (CT_Pos) .. Ix (Tag_Pos - 1))),
-                     Tag => Tag,
-                     N   => Nonce,
-                     K   => AES_Key,
-                     AAD => Hdr);
+                  SPARKTLS.AEAD_InPlace.GCM_Encrypt_256
+                    (Storage  => Output.Storage,
+                     CT_First => Ix (CT_Pos),
+                     CT_Last  => Ix (Tag_Pos - 1),
+                     Tag      => Tag,
+                     Nonce    => Nonce,
+                     Key      => AES_Key,
+                     AAD      => Hdr);
                end;
 
             when others =>
@@ -557,23 +563,59 @@ is
       end;
    end Decrypt_Record;
 
-   procedure Build_CCS_Record
-     (Output : in out IO_Buffer; Bytes_Out : out N32; Hdr_Buf : in out RBT.Bytes_Ptr)
+   procedure Put_Record_Header
+     (Output       : in out IO_Buffer;
+      Content_Type : in Byte;
+      Version      : in N32;
+      Length       : in N32;
+      OK           : out Boolean)
    is
-      CCS : Byte_Seq (0 .. 5) := (others => 0);
-      Hdr : Byte_Seq (0 .. 4) := (others => 0);
-      OK  : Boolean;
+      package RH renames RFLX.TLS_Record.TLS_Record_Header;
+      Ctx    : RH.Context;
+      P      : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
    begin
-      --  Header through RecordFlux; the body is the single fixed octet 0x01
-      --  (RFC 5246 7.1), the same one-byte class as KeyUpdate.
-      Build_Record_Header (Hdr_Buf, 16#14#, 16#0303#, 1, Hdr);
-      CCS (0 .. 4) := Hdr;
-      CCS (5) := 16#01#;
-      Write_To_Output (Output, CCS, OK);
+      if Free_Space (Output) < Record_Header_Size then
+         OK := False;
+         return;
+      end if;
+
+      SPARKTLS.RFLX_Borrow.Borrow
+        (Output.Storage,
+         Ix (Output.Write_Pos),
+         Ix (Output.Write_Pos + Record_Header_Size - 1),
+         Holder, P);
+      RH.Initialize (Ctx, P);
+      RH.Set_Content_Type
+        (Ctx, RFLX.TLS_Record.Record_Content_Type_Any (Content_Type));
+      RH.Set_Legacy_Record_Version
+        (Ctx, RFLX.TLS_Record.Record_Version_Any (Version));
+      RH.Set_Length (Ctx, RFLX.TLS_Record.Record_Length_Any (Length));
+      RH.Take_Buffer (Ctx, P);
+      SPARKTLS.RFLX_Borrow.Discard (P);
+
+      Output.Write_Pos := Output.Write_Pos + Record_Header_Size;
+      OK := True;
+   end Put_Record_Header;
+
+   procedure Build_CCS_Record
+     (Output : in out IO_Buffer; Bytes_Out : out N32)
+   is
+      OK : Boolean;
+   begin
+      --  Header in place through RecordFlux; the body is the single fixed
+      --  octet 0x01 (RFC 5246 7.1), the same one-byte class as KeyUpdate.
+      --  Guarded on 6 bytes so header and body commit together.
+      Bytes_Out := 0;
+      if Free_Space (Output) < 6 then
+         return;
+      end if;
+      Put_Record_Header (Output, 16#14#, 16#0303#, 1, OK);
       if OK then
-         Bytes_Out := 6;
-      else
-         Bytes_Out := 0;
+         Write_To_Output (Output, (0 => 16#01#), OK);
+         if OK then
+            Bytes_Out := 6;
+         end if;
       end if;
    end Build_CCS_Record;
 

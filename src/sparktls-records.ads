@@ -83,6 +83,22 @@ is
      Pre  => Hdr'Length = Record_Header_Size and then Version <= 65535 and then Length <= 65535,
      Post => Hdr_Buf /= null;
 
+   --  Build the 5-byte record header directly into Output at the write
+   --  position, in place (no scratch, no copy), via SPARKTLS.RFLX_Borrow.
+   --  OK is False iff there was no room; then Output is unchanged.
+   procedure Put_Record_Header
+     (Output       : in out IO_Buffer;
+      Content_Type : in Byte;
+      Version      : in N32;
+      Length       : in N32;
+      OK           : out Boolean)
+   with
+     Pre  => Version <= 65535 and then Length <= 65535,
+     Post => OK = (Free_Space (Output)'Old >= Record_Header_Size)
+             and then Available (Output) =
+                        Available (Output)'Old
+                        + (if OK then Record_Header_Size else 0);
+
    procedure Parse_Record_Header
      (Data          : in Byte_Seq;
       Avail         : in N32;
@@ -238,7 +254,7 @@ is
    --  RFC 8446 5: Build a Change Cipher Spec record.
    --  Always exactly 6 bytes: header(5) + payload(1 byte = 0x01).
    procedure Build_CCS_Record
-     (Output : in out IO_Buffer; Bytes_Out : out N32; Hdr_Buf : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr)
+     (Output : in out IO_Buffer; Bytes_Out : out N32)
    with Post => Bytes_Out in 0 | 6;  --  RFC 8446 5: CCS is exactly 6 bytes
 
    --  RFC 8446 6: Build an encrypted alert record.

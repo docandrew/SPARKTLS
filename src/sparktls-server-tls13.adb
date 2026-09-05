@@ -769,7 +769,7 @@ is
          end if;
 
          --  Send CCS for middlebox compatibility
-         Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+         Records.Build_CCS_Record (S.Output, CCS_Out);
          if CCS_Out = 0 then
             Abort_Flight (S);
             return;
@@ -1634,7 +1634,7 @@ is
 
          --  Send CCS for middlebox compatibility unless HRR already sent it.
          if not S.HC.Sent_HRR_CCS then
-            Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+            Records.Build_CCS_Record (S.Output, CCS_Out);
             if CCS_Out = 0 then
                S.Last_Error := Insufficient_Buffer;
                Set_State (S, Error_State);

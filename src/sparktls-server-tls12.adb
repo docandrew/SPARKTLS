@@ -1003,7 +1003,7 @@ is
          declare
             CCS_Out : N32;
          begin
-            Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+            Records.Build_CCS_Record (S.Output, CCS_Out);
             if CCS_Out = 0 then
                Send_Alert_And_Error (S, Insufficient_Buffer, Result);
                return;
@@ -2408,7 +2408,7 @@ is
             return;
          end if;
 
-         Records.Build_CCS_Record (S.Output, CCS_Out, S.Rec_Hdr);
+         Records.Build_CCS_Record (S.Output, CCS_Out);
          if CCS_Out = 0 then
             S.Last_Error := Insufficient_Buffer;
             Set_State (S, Error_State);
