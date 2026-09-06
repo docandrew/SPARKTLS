@@ -671,6 +671,9 @@ is
          Ctx : EE.Context;
       begin
          if Msg_Len > N32 (Result'Length) then
+            --  Dead branch (Msg_Len <= 272 <= Result'Length by the subtype and
+            --  Pre); assigned so flow sees Len initialized on every path.
+            Len := Msg_Len;
             return;
          end if;
 

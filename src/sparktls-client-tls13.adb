@@ -33,6 +33,10 @@ with RFLX.TLS_Handshake.New_Session_Ticket;
 with RFLX.TLS_Handshake.Certificate_Request;
 with RFLX.TLS_Handshake.CR_Extensions;
 with RFLX.TLS_Handshake.CR_Extension;
+with RFLX.TLS_Handshake.Signature_Algorithms;
+with RFLX.TLS_Handshake.Certificate_Authorities;
+with RFLX.TLS_Handshake.Distinguished_Names;
+with RFLX.TLS_Handshake.Distinguished_Name;
 with RFLX.TLS_Handshake.NST_Extensions;
 with RFLX.TLS_Handshake.NST_Extension;
 
@@ -123,7 +127,14 @@ is
       OK   : out Boolean;
       Err  : out Error_Code)
    with
-     Pre => Data'Length >= 4 and Data'Last < N32'Last and Data'Last <= N32'Last - 16#1_0004#,
+     Pre =>
+       Data'Length >= 4
+       and then Data'Last < N32'Last
+       and then Data'Last <= N32'Last - 16#1_0004#
+       --  Upper bound from the caller (Handle_EE_13): bounds Body_Len for the
+       --  Written_Last arithmetic in Initialize. Ordered after the Data'Last
+       --  bound so the Data'Length -> N32 conversion here is itself in range.
+       and then Data'Length <= Transcript_Capacity,
      Post => S.State = S.State'Old and then S.Negotiated_Suite = S.Negotiated_Suite'Old;
 
    --  OK = False signals a fatal protocol error. `Err` discriminates
@@ -418,6 +429,7 @@ is
       package EE_Elem renames RFLX.TLS_Handshake.EE_Extension;
       package RBT     renames RFLX.RFLX_Builtin_Types;
       use type RBT.Length;
+      use type RBT.Bit_Length;
       procedure EE_Free is new
         Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
 
@@ -465,6 +477,15 @@ is
          begin
             EE.Switch_To_Extensions (Ctx, Exts);
             while EE_Seq.Has_Element (Exts) loop
+               pragma Loop_Invariant (EE_Seq.Has_Buffer (Exts));
+               pragma Loop_Invariant (EE_Seq.Valid (Exts));
+               pragma Loop_Invariant (not EE.Has_Buffer (Ctx));
+               pragma Loop_Invariant (EE.Present (Ctx, EE.F_Extensions));
+               pragma Loop_Invariant (Ctx.Buffer_First = Exts.Buffer_First);
+               pragma Loop_Invariant (Ctx.Buffer_Last = Exts.Buffer_Last);
+               pragma Loop_Invariant (Exts.First = EE.Field_First (Ctx, EE.F_Extensions));
+               pragma Loop_Invariant (Exts.Last = EE.Field_Last (Ctx, EE.F_Extensions));
+               pragma Loop_Invariant (Seen_Count <= 32);
                declare
                   E : EE_Elem.Context;
                begin
@@ -507,6 +528,14 @@ is
          begin
             EE.Switch_To_Extensions (Ctx, Exts);
             while Pol_Err = No_Error and then EE_Seq.Has_Element (Exts) loop
+               pragma Loop_Invariant (EE_Seq.Has_Buffer (Exts));
+               pragma Loop_Invariant (EE_Seq.Valid (Exts));
+               pragma Loop_Invariant (not EE.Has_Buffer (Ctx));
+               pragma Loop_Invariant (EE.Present (Ctx, EE.F_Extensions));
+               pragma Loop_Invariant (Ctx.Buffer_First = Exts.Buffer_First);
+               pragma Loop_Invariant (Ctx.Buffer_Last = Exts.Buffer_Last);
+               pragma Loop_Invariant (Exts.First = EE.Field_First (Ctx, EE.F_Extensions));
+               pragma Loop_Invariant (Exts.Last = EE.Field_Last (Ctx, EE.F_Extensions));
                declare
                   E : EE_Elem.Context;
                begin
@@ -639,6 +668,15 @@ is
       D      : in out SPARKTLS.HS_Pool.HS_Data;
       Data   : in Byte_Seq;
       Result : out Action)
+   with
+     --  The facts Handle_EE_13 requires; Process_Handshake_Message's Pre
+     --  establishes them for every arm. They bound Body_Len for Borrow_Read and
+     --  Initialize (Written_Last) and keep Data'First + 4 in range.
+     Pre =>
+       Data'First = 0
+       and then Data'Length >= 4
+       and then Data'Last < N32'Last - 4
+       and then Data'Length <= Transcript_Capacity
    is
       package CR_M   renames RFLX.TLS_Handshake.Certificate_Request;
       package CR_Seq renames RFLX.TLS_Handshake.CR_Extensions;
@@ -646,6 +684,11 @@ is
       package RBT    renames RFLX.RFLX_Builtin_Types;
       use type RBT.Length;
       use type RBT.Bit_Length;
+      package SA_M   renames RFLX.TLS_Handshake.Signature_Algorithms;
+      package CA_M   renames RFLX.TLS_Handshake.Certificate_Authorities;
+      package DN_Seq renames RFLX.TLS_Handshake.Distinguished_Names;
+      package DN_El  renames RFLX.TLS_Handshake.Distinguished_Name;
+      use type RBT.Index;
       procedure CR_Free is new
         Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
 
@@ -661,14 +704,28 @@ is
       Picked    : Maybe_Sig_Scheme := Scheme_None;
       Sig_Found : Boolean := False;
       Fail_Err  : Error_Code := No_Error;
-      --  Offsets (into Data) of the signature_algorithms (SA) and
-      --  certificate_authorities (CA) list bodies, for the selector. 0 = none.
-      SA_Pos, SA_Cnt : N32 := 0;
-      CA_Pos, CA_Cnt : N32 := 0;
+      --  Where the signature_algorithms list and the certificate_authorities
+      --  list sit in the message body, for the selector: 1-based body byte
+      --  index of the first list byte, and the list length. Both come from the
+      --  RecordFlux field positions; the loop invariant keeps every recorded
+      --  window inside the body (Start + Cnt - 1 <= Body_Len).
+      subtype Body_Pos is N32 range 1 .. Max_HS_Msg;
+      SA_Start : N32 := 1;
+      SA_Cnt   : N32 := 0;
+      CA_Start : N32 := 1;
+      CA_Cnt   : N32 := 0;
+      CA_Found : Boolean := False;
    begin
       Result := OK;
       if S.HC.Using_PSK then
          Send_HS_Encrypted_Alert (S, D, Unexpected_Message, Result);
+         return;
+      end if;
+
+      --  Empty body: nothing for RecordFlux to verify, and Borrow_Read needs a
+      --  non-empty window. Same alert as the not-well-formed path below.
+      if Data'Length < 5 then
+         Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
          return;
       end if;
 
@@ -698,110 +755,169 @@ is
       SPARKTLS_Transcript.Append (S.HC.TS, Data);
       S.HC.Cert_Request_Received := True;
 
-      --  Iterate the extensions through RecordFlux; P tracks the same
-      --  extension's offset in Data (they are contiguous after the
-      --  4-byte header, 1-byte empty context and 2-byte ext-list length),
-      --  so the opaque sig_algs / CA bodies stay Data slices.
-      declare
-         P : N32 := Data'First + 7;
-      begin
-         if CR_M.Present (Ctx, CR_M.F_Extensions) then
-            declare
-               Exts : CR_Seq.Context;
-            begin
-               CR_M.Switch_To_Extensions (Ctx, Exts);
-               while Fail_Err = No_Error and then CR_Seq.Has_Element (Exts) loop
-                  declare
-                     E : CR_El.Context;
-                  begin
-                     CR_Seq.Switch (Exts, E);
-                     CR_El.Verify_Message (E);
-                     if CR_El.Well_Formed_Message (E)
-                       and then P + 4 <= Data'Last + 1
-                     then
-                        declare
-                           Tag   : constant Unsigned_16 := Tag_Wire (CR_El.Get_Tag (E));
-                           E_Len : constant N32 := N32 (CR_El.Get_Data_Length (E));
-                           V_OK  : Boolean;
-                           V_Err : Error_Code;
-                        begin
-                           Validate_Server_Ext (E_CR, Tag, E_Len, S.HC, V_OK, V_Err);
-                           if not V_OK then
-                              Fail_Err := V_Err;
-                           elsif Tag = 16#000D#
-                             and then E_Len >= 4
-                             and then P + 4 + E_Len <= Data'Last + 1
-                           then
-                              declare
-                                 List_Len : constant N32 :=
-                                   N32 (Data (P + 4)) * 256 + N32 (Data (P + 5));
-                              begin
-                                 if List_Len + 2 = E_Len and then List_Len >= 2 then
-                                    Sig_Found := True;
-                                    SA_Pos := P + 6;
-                                    SA_Cnt := List_Len;
-                                    Picked :=
-                                      Handshake.Pick_Sig_Algo_With_Prefs
-                                        (Data (P + 6 .. P + 5 + List_Len),
-                                         S.HC.Cfg.Local.Sign_Algo,
-                                         S.HC.Cfg.Sign_Sig_Algos,
-                                         S.HC.Cfg.Sign_Sig_Algo_Count);
-                                 end if;
-                              end;
-                           elsif Tag = 16#002F#
-                             and then E_Len >= 2
-                             and then P + 4 + E_Len <= Data'Last + 1
-                           then
-                              declare
-                                 Outer_Len : constant N32 :=
-                                   N32 (Data (P + 4)) * 256 + N32 (Data (P + 5));
-                                 DN_P      : N32 := P + 6;
-                                 DN_End    : constant N32 := P + 6 + Outer_Len;
-                                 Bad       : Boolean := False;
-                              begin
-                                 if 2 + Outer_Len /= E_Len
-                                   or else DN_End > P + 4 + E_Len
-                                   or else Outer_Len = 0
-                                 then
-                                    Bad := True;
-                                 else
-                                    while not Bad and then DN_P < DN_End loop
-                                       pragma Loop_Invariant (DN_P <= DN_End);
-                                       pragma Loop_Variant (Increases => DN_P);
-                                       if DN_P + 2 > DN_End then
-                                          Bad := True;
-                                       else
-                                          declare
-                                             DN_Len : constant N32 :=
-                                               N32 (Data (DN_P)) * 256 + N32 (Data (DN_P + 1));
-                                          begin
-                                             if DN_P + 2 + DN_Len > DN_End or else DN_Len = 0 then
-                                                Bad := True;
-                                             else
-                                                DN_P := DN_P + 2 + DN_Len;
-                                             end if;
-                                          end;
-                                       end if;
-                                    end loop;
-                                 end if;
-                                 if Bad then
-                                    Fail_Err := Decode_Error;
-                                 else
-                                    CA_Pos := P + 6;
-                                    CA_Cnt := Outer_Len;
-                                 end if;
-                              end;
-                           end if;
-                           P := P + 4 + E_Len;
-                        end;
-                     end if;
-                     CR_Seq.Update (Exts, E);
-                  end;
-               end loop;
-               CR_M.Update_Extensions (Ctx, Exts);
-            end;
-         end if;
-      end;
+      --  Walk the extensions through RecordFlux. The two bodies the selector
+      --  needs (signature_algorithms, certificate_authorities) are validated
+      --  through the spec's own message types over a second read-only view of
+      --  exactly their bytes, and recorded as windows into the body; nothing is
+      --  re-parsed by hand.
+      if CR_M.Present (Ctx, CR_M.F_Extensions) then
+         declare
+            Exts : CR_Seq.Context;
+         begin
+            CR_M.Switch_To_Extensions (Ctx, Exts);
+            while Fail_Err = No_Error and then CR_Seq.Has_Element (Exts) loop
+               pragma Loop_Invariant (CR_Seq.Has_Buffer (Exts));
+               pragma Loop_Invariant (CR_Seq.Valid (Exts));
+               pragma Loop_Invariant (not CR_M.Has_Buffer (Ctx));
+               pragma Loop_Invariant (CR_M.Present (Ctx, CR_M.F_Extensions));
+               pragma Loop_Invariant (Ctx.Buffer_First = Exts.Buffer_First);
+               pragma Loop_Invariant (Ctx.Buffer_Last = Exts.Buffer_Last);
+               pragma Loop_Invariant (Exts.First = CR_M.Field_First (Ctx, CR_M.F_Extensions));
+               pragma Loop_Invariant (Exts.Last = CR_M.Field_Last (Ctx, CR_M.F_Extensions));
+               --  The context spans exactly the body, and every recorded
+               --  window lies inside it.
+               pragma Loop_Invariant (Ctx.Buffer_Last = RBT.Index (Body_Len));
+               pragma Loop_Invariant (SA_Start + SA_Cnt - 1 <= Body_Len);
+               pragma Loop_Invariant (CA_Start + CA_Cnt - 1 <= Body_Len);
+               declare
+                  E : CR_El.Context;
+               begin
+                  CR_Seq.Switch (Exts, E);
+                  CR_El.Verify_Message (E);
+                  if CR_El.Well_Formed_Message (E) then
+                     pragma Assert (CR_El.Message_Last (E) <= E.Last);
+                     pragma Assert (RFLX.RFLX_Types.To_Index (E.Last) <= E.Buffer_Last);
+                     pragma Assert (E.Buffer_Last = RBT.Index (Body_Len));
+                     declare
+                        Tag   : constant Unsigned_16 := Tag_Wire (CR_El.Get_Tag (E));
+                        E_Len : constant N32 := N32 (CR_El.Get_Data_Length (E));
+                        V_OK  : Boolean;
+                        V_Err : Error_Code;
+                     begin
+                        Validate_Server_Ext (E_CR, Tag, E_Len, S.HC, V_OK, V_Err);
+                        if not V_OK then
+                           Fail_Err := V_Err;
+                        elsif (Tag = 16#000D# and then E_Len >= 4)
+                          or else (Tag = 16#002F# and then E_Len >= 2)
+                        then
+                           --  The extension body as a window of the message
+                           --  body: buffer bytes Off .. Off_Last (1-based), i.e.
+                           --  Data (Data'First + 3 + Off .. Data'First + 3 + Off_Last).
+                           --  Data is the last field of CR_Extension, so its end
+                           --  is the message end, which the context keeps inside
+                           --  the buffer.
+                           declare
+                              Off      : constant Body_Pos :=
+                                Body_Pos (RFLX.RFLX_Types.To_Index (CR_El.Field_First (E, CR_El.F_Data)));
+                              Off_Last : constant Body_Pos :=
+                                Body_Pos (RFLX.RFLX_Types.To_Index (CR_El.Message_Last (E)));
+                           begin
+                              pragma Assert (Off_Last <= Body_Len);
+                              if Off <= Off_Last then
+                                 declare
+                                    Win_Len  : constant N32 := Off_Last - Off + 1;
+                                    Win_Bits : constant RBT.Bit_Length :=
+                                      RBT.Bit_Length (RBT.Length (Win_Len) * 8);
+                                    H2 : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
+                                    B2 : RBT.Bytes_Ptr;
+                                 begin
+                                    SPARKTLS.RFLX_Borrow.Borrow_Read
+                                      (Data, Data'First + 3 + Off, Win_Len, H2, B2);
+                                    if Tag = 16#000D# then
+                                       --  RFC 8446 4.2.3: 16-bit list length, then
+                                       --  the list; the list is exactly the rest of
+                                       --  the body. Anything else leaves Sig_Found
+                                       --  clear, which is decode_error below.
+                                       declare
+                                          SC : SA_M.Context;
+                                       begin
+                                          SA_M.Initialize (SC, B2, Written_Last => Win_Bits);
+                                          SA_M.Verify_Message (SC);
+                                          if SA_M.Well_Formed_Message (SC)
+                                            and then SA_M.Message_Last (SC) = Win_Bits
+                                          then
+                                             Sig_Found := True;
+                                             SA_Start  := Off + 2;
+                                             SA_Cnt    := Win_Len - 2;
+                                             Picked :=
+                                               Handshake.Pick_Sig_Algo_With_Prefs
+                                                 (Data (Data'First + 3 + SA_Start
+                                                        .. Data'First + 2 + SA_Start + SA_Cnt),
+                                                  S.HC.Cfg.Local.Sign_Algo,
+                                                  S.HC.Cfg.Sign_Sig_Algos,
+                                                  S.HC.Cfg.Sign_Sig_Algo_Count);
+                                          end if;
+                                          SA_M.Take_Buffer (SC, B2);
+                                       end;
+                                    else
+                                       --  RFC 8446 4.2.4: 16-bit list length, then
+                                       --  DistinguishedName<1..2^16-1> entries filling
+                                       --  the body exactly. Any shape fault is
+                                       --  decode_error.
+                                       declare
+                                          CC  : CA_M.Context;
+                                          Bad : Boolean := False;
+                                       begin
+                                          CA_M.Initialize (CC, B2, Written_Last => Win_Bits);
+                                          CA_M.Verify_Message (CC);
+                                          if not CA_M.Well_Formed_Message (CC)
+                                            or else CA_M.Message_Last (CC) /= Win_Bits
+                                          then
+                                             Bad := True;
+                                          elsif CA_M.Present (CC, CA_M.F_Authorities) then
+                                             declare
+                                                DNs : DN_Seq.Context;
+                                             begin
+                                                CA_M.Switch_To_Authorities (CC, DNs);
+                                                while not Bad and then DN_Seq.Has_Element (DNs) loop
+                                                   pragma Loop_Invariant (DN_Seq.Has_Buffer (DNs));
+                                                   pragma Loop_Invariant (DN_Seq.Valid (DNs));
+                                                   pragma Loop_Invariant (not CA_M.Has_Buffer (CC));
+                                                   pragma Loop_Invariant
+                                                     (CA_M.Present (CC, CA_M.F_Authorities));
+                                                   pragma Loop_Invariant (CC.Buffer_First = DNs.Buffer_First);
+                                                   pragma Loop_Invariant (CC.Buffer_Last = DNs.Buffer_Last);
+                                                   pragma Loop_Invariant
+                                                     (DNs.First = CA_M.Field_First (CC, CA_M.F_Authorities));
+                                                   pragma Loop_Invariant
+                                                     (DNs.Last = CA_M.Field_Last (CC, CA_M.F_Authorities));
+                                                   declare
+                                                      DN : DN_El.Context;
+                                                   begin
+                                                      DN_Seq.Switch (DNs, DN);
+                                                      DN_El.Verify_Message (DN);
+                                                      if not DN_El.Well_Formed_Message (DN) then
+                                                         Bad := True;
+                                                      end if;
+                                                      DN_Seq.Update (DNs, DN);
+                                                   end;
+                                                end loop;
+                                                CA_M.Update_Authorities (CC, DNs);
+                                             end;
+                                          end if;
+                                          CA_M.Take_Buffer (CC, B2);
+                                          if Bad then
+                                             Fail_Err := Decode_Error;
+                                          else
+                                             CA_Found := True;
+                                             CA_Start := Off + 2;
+                                             CA_Cnt   := Win_Len - 2;
+                                          end if;
+                                       end;
+                                    end if;
+                                    SPARKTLS.RFLX_Borrow.Discard (B2);
+                                 end;
+                              end if;
+                           end;
+                        end if;
+                     end;
+                  end if;
+                  CR_Seq.Update (Exts, E);
+               end;
+            end loop;
+            CR_M.Update_Extensions (Ctx, Exts);
+         end;
+      end if;
 
       CR_M.Take_Buffer (Ctx, Buf);
       SPARKTLS.RFLX_Borrow.Discard (Buf);
@@ -811,15 +927,18 @@ is
          return;
       end if;
 
-      --  Application credential selection (RFC 8446 4.2.4). Slices clamped to
-      --  Data so their bounds are local facts; the walk above validated them.
+      --  RFC 5246 7.4.4 / RFC 8446 4.3.2 credential selection: the peer's
+      --  certificate_authorities and signature_algorithms, as the wire lists.
       if S.HC.Cfg.Select_Client_Identity /= null then
          declare
-            CA_Len    : constant N32 := N32'Min (CA_Cnt, Data'Last + 1 - CA_Pos);
-            SA_Len    : constant N32 := N32'Min (SA_Cnt, Data'Last + 1 - SA_Pos);
             Picked_Id : constant Maybe_Identity_Access :=
               S.HC.Cfg.Select_Client_Identity
-                (Data (CA_Pos .. CA_Pos + CA_Len - 1), Data (SA_Pos .. SA_Pos + SA_Len - 1));
+                ((if CA_Found
+                  then Data (Data'First + 3 + CA_Start .. Data'First + 2 + CA_Start + CA_Cnt)
+                  else Byte_Seq'(1 .. 0 => 0)),
+                 (if Sig_Found
+                  then Data (Data'First + 3 + SA_Start .. Data'First + 2 + SA_Start + SA_Cnt)
+                  else Byte_Seq'(1 .. 0 => 0)));
          begin
             if Picked_Id = null then
                S.HC.Cfg.Local := No_Identity'Access;
@@ -832,7 +951,7 @@ is
             if Sig_Found then
                Picked :=
                  Handshake.Pick_Sig_Algo_With_Prefs
-                   (Data (SA_Pos .. SA_Pos + SA_Len - 1),
+                   (Data (Data'First + 3 + SA_Start .. Data'First + 2 + SA_Start + SA_Cnt),
                     S.HC.Cfg.Local.Sign_Algo,
                     S.HC.Cfg.Sign_Sig_Algos,
                     S.HC.Cfg.Sign_Sig_Algo_Count);
@@ -2440,7 +2559,9 @@ is
        Plaintext'First = 0
        and then Plaintext'Last < IO_Buffer_Capacity
        and then Plain_Len <= Max_Record_Plaintext
-       and then Plain_Len <= N32 (Plaintext'Length),
+       and then Plain_Len <= N32 (Plaintext'Length)
+       --  Header present: Message_Length's Post gives the caller >= 4.
+       and then Plain_Len >= 4,
      Post =>
        (if Result = OK
         then S.State = S.State'Old and then Post_HS_Reasm."=" (S.Post_HS, S.Post_HS'Old));
@@ -2453,6 +2574,7 @@ is
       package NST_El  renames RFLX.TLS_Handshake.NST_Extension;
       package RBT     renames RFLX.RFLX_Builtin_Types;
       use type RBT.Length;
+      use type RBT.Bit_Length;
       procedure NST_Free is new
         Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
 
@@ -2578,6 +2700,15 @@ is
                   begin
                      NST_M.Switch_To_Extensions (Ctx, Exts);
                      while not Dup and then not Bad and then NST_Seq.Has_Element (Exts) loop
+                        pragma Loop_Invariant (NST_Seq.Has_Buffer (Exts));
+                        pragma Loop_Invariant (NST_Seq.Valid (Exts));
+                        pragma Loop_Invariant (not NST_M.Has_Buffer (Ctx));
+                        pragma Loop_Invariant (NST_M.Present (Ctx, NST_M.F_Extensions));
+                        pragma Loop_Invariant (Ctx.Buffer_First = Exts.Buffer_First);
+                        pragma Loop_Invariant (Ctx.Buffer_Last = Exts.Buffer_Last);
+                        pragma Loop_Invariant (Exts.First = NST_M.Field_First (Ctx, NST_M.F_Extensions));
+                        pragma Loop_Invariant (Exts.Last = NST_M.Field_Last (Ctx, NST_M.F_Extensions));
+                        pragma Loop_Invariant (Seen_N <= 16);
                         declare
                            E : NST_El.Context;
                         begin

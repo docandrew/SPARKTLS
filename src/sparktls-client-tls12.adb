@@ -693,31 +693,57 @@ is
       Frag    : in Byte_Seq;
       Msg_Len : in N32;
       Result  : out Action)
+   with
+     --  Exactly Dispatch_Server_Flight_Message's Pre (the only caller): the
+     --  Frag bounds cover the header slice and Append_Transcript, the Msg_Len
+     --  bound covers the buffer size and Written_Last.
+     Pre =>
+       Msg_Len <= Max_HS_Msg - 4
+       and then Frag'First <= Frag'Last
+       and then Frag'Last < N32'Last - 256
+       and then Frag'First <= N32'Last - 4
+       and then Msg_Len <= N32'Last - Frag'First - 4
+       and then Msg_Len <= N32 (Frag'Length) - 4
+       and then Frag'First + 3 + Msg_Len <= Frag'Last
+       and then Frag'Last - Frag'First < Transcript_Capacity
    is
       package CR12 renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
       use type RBT.Bit_Length;
-      procedure CR_Free is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      use type RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Buf : RBT.Bytes_Ptr;
       Ctx : CR12.Context;
 
+      --  Release the borrowed view (if the context still holds it) and raise
+      --  the alert. The Post is what lets every `Fail (..); return;` path show
+      --  that Buf and Ctx own nothing at end of scope.
       procedure Fail (Err : Error_Code)
-      with Pre => not CR12.Has_Buffer (Ctx) or else CR12.Has_Buffer (Ctx)
+      with
+        Pre  => Buf = null,   --  Initialize moved Buf into Ctx
+        Post => Buf = null and then not CR12.Has_Buffer (Ctx)
       is
       begin
          if CR12.Has_Buffer (Ctx) then
             CR12.Take_Buffer (Ctx, Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
          end if;
-         CR_Free (Buf);
          Reset (D.Reasm);
          Send_Alert_And_Error (S, Err, Result);
       end Fail;
    begin
       Result := OK;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Msg_Len) => 0);
-      Buf.all :=
-        To_RFLX (Frag (Frag'First + 4 .. Frag'First + 3 + Msg_Len));
+      --  Empty body: RecordFlux cannot take a zero-length buffer. decode_error,
+      --  as on the not-well-formed path.
+      if Msg_Len = 0 then
+         Reset (D.Reasm);
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+
+      --  Read-only view of the body: no per-message allocation, no copy. The
+      --  bounds Borrow_Read needs are exactly the Pre plus the guard above.
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Frag, Frag'First + 4, Msg_Len, Holder, Buf);
       CR12.Initialize
         (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Msg_Len) * 8));
       CR12.Verify_Message (Ctx);
@@ -844,7 +870,7 @@ is
       end;
 
       CR12.Take_Buffer (Ctx, Buf);
-      CR_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       Append_Transcript (S.HC.TS, Frag);
    end Handle_CertReq_12;
 

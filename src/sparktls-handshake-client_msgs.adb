@@ -1852,6 +1852,7 @@ is
    with
      Pre  =>
        RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx)
+       and then not Ctx'Constrained
        and then Scratch /= null
        and then Scratch'First = 1
        and then Scratch'Last = Body_Scratch_Len
@@ -1911,33 +1912,54 @@ is
          Negotiated := To_Suite (Wire);
       end;
 
-      declare
-         Exts : RFLX.TLS_Handshake.HRR_Extensions_TLS.Context;
-         Fail : Error_Code := No_Error;
-      begin
-         Switch_To_Extensions_TLS (Ctx, Exts);
-         while Fail = No_Error
-           and then RFLX.TLS_Handshake.HRR_Extensions_TLS.Has_Element (Exts)
-         loop
-            declare
-               E : RFLX.TLS_Handshake.HRR_Extension_TLS.Context;
-            begin
-               RFLX.TLS_Handshake.HRR_Extensions_TLS.Switch (Exts, E);
-               RFLX.TLS_Handshake.HRR_Extension_TLS.Verify_Message (E);
-               if RFLX.TLS_Handshake.HRR_Extension_TLS.Well_Formed_Message (E) then
-                  Process_HRR_Extension (E, HC, Scratch, Seen, N_Seen, Has_TLS13, Fail);
-               else
-                  Fail := Decode_Error;
-               end if;
-               RFLX.TLS_Handshake.HRR_Extensions_TLS.Update (Exts, E);
-            end;
-         end loop;
-         Update_Extensions_TLS (Ctx, Exts);
-         if Fail /= No_Error then
-            Err := Fail;
-            return;
-         end if;
-      end;
+      if Present (Ctx, F_Extensions_TLS) then
+         declare
+            Exts : RFLX.TLS_Handshake.HRR_Extensions_TLS.Context;
+            Fail : Error_Code := No_Error;
+         begin
+            Switch_To_Extensions_TLS (Ctx, Exts);
+            while Fail = No_Error
+              and then RFLX.TLS_Handshake.HRR_Extensions_TLS.Has_Element (Exts)
+            loop
+               pragma Loop_Invariant (RFLX.TLS_Handshake.HRR_Extensions_TLS.Has_Buffer (Exts));
+               pragma Loop_Invariant (RFLX.TLS_Handshake.HRR_Extensions_TLS.Valid (Exts));
+               pragma Loop_Invariant
+                 (not RFLX.TLS_Handshake.Hello_Retry_Request.Has_Buffer (Ctx));
+               pragma Loop_Invariant
+                 (RFLX.TLS_Handshake.Hello_Retry_Request.Present
+                    (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS));
+               pragma Loop_Invariant (Ctx.Buffer_First = Exts.Buffer_First);
+               pragma Loop_Invariant (Ctx.Buffer_Last = Exts.Buffer_Last);
+               pragma Loop_Invariant
+                 (Exts.First = RFLX.TLS_Handshake.Hello_Retry_Request.Field_First
+                    (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS));
+               pragma Loop_Invariant
+                 (Exts.Last = RFLX.TLS_Handshake.Hello_Retry_Request.Field_Last
+                    (Ctx, RFLX.TLS_Handshake.Hello_Retry_Request.F_Extensions_TLS));
+               pragma Loop_Invariant (N_Seen <= Seen'Last);
+               pragma Loop_Invariant
+                 (Scratch /= null and then Scratch'First = 1
+                  and then Scratch'Last = Body_Scratch_Len);
+               declare
+                  E : RFLX.TLS_Handshake.HRR_Extension_TLS.Context;
+               begin
+                  RFLX.TLS_Handshake.HRR_Extensions_TLS.Switch (Exts, E);
+                  RFLX.TLS_Handshake.HRR_Extension_TLS.Verify_Message (E);
+                  if RFLX.TLS_Handshake.HRR_Extension_TLS.Well_Formed_Message (E) then
+                     Process_HRR_Extension (E, HC, Scratch, Seen, N_Seen, Has_TLS13, Fail);
+                  else
+                     Fail := Decode_Error;
+                  end if;
+                  RFLX.TLS_Handshake.HRR_Extensions_TLS.Update (Exts, E);
+               end;
+            end loop;
+            Update_Extensions_TLS (Ctx, Exts);
+            if Fail /= No_Error then
+               Err := Fail;
+               return;
+            end if;
+         end;
+      end if;
 
       if Has_TLS13 then
          HC.Has_TLS_1_3 := True;
@@ -2287,7 +2309,7 @@ is
    is
       BS      : constant N32 := Data'First + 4;
       Sid_Len : N32;
-      P       : N32;
+      Off     : N32;
    begin
       if Data (BS) /= 16#03# or else Data (BS + 1) /= 16#03# then
          return No_Error;
@@ -2296,9 +2318,13 @@ is
       if Sid_Len > 32 then
          return Decode_Error;
       end if;
-      --  version(2)+random(32)+sid_len(1)+sid+suite(2) -> compression byte.
-      P := BS + 35 + Sid_Len + 2;
-      if P <= Data'Last and then Data (P) /= 0 then
+      --  version(2)+random(32)+sid_len(1)+sid+suite(2) -> compression byte,
+      --  measured as an offset from Data'First (41 + Sid_Len <= 73, so the
+      --  sum cannot overflow) instead of the absolute index Data'First+41+
+      --  Sid_Len, whose upper bound is not tied to Data'Last on a short
+      --  message and so cannot be shown in range.
+      Off := 41 + Sid_Len;
+      if Off <= Data'Length - 1 and then Data (Data'First + Off) /= 0 then
          return Illegal_Parameter;
       end if;
       return Decode_Error;
@@ -2317,6 +2343,7 @@ is
    with
      Pre  =>
        RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx)
+       and then not Ctx'Constrained
        and then Data'Length in 42 .. Max_HS_Msg
        and then Data'Last < N32 (Natural'Last)
        and then Scratch /= null
@@ -2387,6 +2414,25 @@ is
             while Fail = No_Error
               and then RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element (Exts)
             loop
+               pragma Loop_Invariant (RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer (Exts));
+               pragma Loop_Invariant (RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Exts));
+               pragma Loop_Invariant
+                 (not RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx));
+               pragma Loop_Invariant
+                 (RFLX.TLS_Handshake.Server_Hello.Present
+                    (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS));
+               pragma Loop_Invariant (Ctx.Buffer_First = Exts.Buffer_First);
+               pragma Loop_Invariant (Ctx.Buffer_Last = Exts.Buffer_Last);
+               pragma Loop_Invariant
+                 (Exts.First = RFLX.TLS_Handshake.Server_Hello.Field_First
+                    (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS));
+               pragma Loop_Invariant
+                 (Exts.Last = RFLX.TLS_Handshake.Server_Hello.Field_Last
+                    (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS));
+               pragma Loop_Invariant (N_Seen <= Seen'Last);
+               pragma Loop_Invariant
+                 (Scratch /= null and then Scratch'First = 1
+                  and then Scratch'Last = Body_Scratch_Len);
                declare
                   E : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                begin
@@ -2480,6 +2526,25 @@ is
             while Fail = No_Error
               and then RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element (Exts)
             loop
+               pragma Loop_Invariant (RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Buffer (Exts));
+               pragma Loop_Invariant (RFLX.TLS_Handshake.SH_Extensions_TLS.Valid (Exts));
+               pragma Loop_Invariant
+                 (not RFLX.TLS_Handshake.Server_Hello.Has_Buffer (Ctx));
+               pragma Loop_Invariant
+                 (RFLX.TLS_Handshake.Server_Hello.Present
+                    (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS));
+               pragma Loop_Invariant (Ctx.Buffer_First = Exts.Buffer_First);
+               pragma Loop_Invariant (Ctx.Buffer_Last = Exts.Buffer_Last);
+               pragma Loop_Invariant
+                 (Exts.First = RFLX.TLS_Handshake.Server_Hello.Field_First
+                    (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS));
+               pragma Loop_Invariant
+                 (Exts.Last = RFLX.TLS_Handshake.Server_Hello.Field_Last
+                    (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Extensions_TLS));
+               pragma Loop_Invariant (N_Seen <= Seen'Last);
+               pragma Loop_Invariant
+                 (Scratch /= null and then Scratch'First = 1
+                  and then Scratch'Last = Body_Scratch_Len);
                declare
                   E : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                begin
@@ -2617,9 +2682,13 @@ is
       --  fields (RFC 5246 7.4.1.3: 38 body bytes with an empty
       --  session_id). Anything else is not parsed here and the caller
       --  answers handshake_failure, as before.
-      if Data'Length < 42
+      --  Test the Data'Last bound FIRST: it establishes Data'Last < N32'Last,
+      --  which bounds Data'Length <= N32'Last so the Max_HS_Msg comparison's
+      --  conversion of Data'Length to N32 cannot overflow (a 0-based N32-indexed
+      --  slice can otherwise have 'Length = N32'Last + 1).
+      if Data'Last >= N32 (Natural'Last)
+        or else Data'Length < 42
         or else Data'Length > Max_HS_Msg
-        or else Data'Last >= N32 (Natural'Last)
         or else Data (Data'First) /= HS_Msg_Wire (HT_Server_Hello)
       then
          return;

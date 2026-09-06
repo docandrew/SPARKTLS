@@ -2715,7 +2715,21 @@ is
    procedure Begin_Flight (S : in out Session)
    with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old;
    procedure Abort_Flight (S : in out Session)
-   with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old;
+   with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old
+     --  Frame: Abort_Flight only truncates Output.Write_Pos (drops a partial
+     --  flight) and clears In_Flight. Pin the fields it leaves untouched so
+     --  callers (the alert primitives) can carry their own 'Old frame across it.
+     --  NOT Output_Pending: that shrinks when the partial flight is dropped.
+     and Has_Context (S) = Has_Context (S)'Old
+     and Server_App (S) = Server_App (S)'Old
+     and Client_App (S) = Client_App (S)'Old
+     and Input_Available (S) = Input_Available (S)'Old
+     and Input_Read_Pos (S) = Input_Read_Pos (S)'Old
+     and Output_Read_Pos (S) = Output_Read_Pos (S)'Old
+     and Server_Seq_12 (S) = Server_Seq_12 (S)'Old
+     and Client_Seq_12 (S) = Client_Seq_12 (S)'Old
+     and Negotiated_Suite (S) = Negotiated_Suite (S)'Old
+     and Negotiated_Suite_12 (S) = Negotiated_Suite_12 (S)'Old;
    procedure End_Flight (S : in out Session; Failed : Boolean)
    with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old;
 
