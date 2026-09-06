@@ -1,6 +1,7 @@
 with SPARKTLS.HS_Pool;
 with Ada.Unchecked_Deallocation;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Borrow;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
@@ -106,6 +107,7 @@ is
       package C12_Entry renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
       Body_Len : constant N32 := N32 (HS_Msg'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx      : C12.Context;
       Cert_Idx : Natural := 0;
    begin
@@ -129,14 +131,13 @@ is
          end if;
       end;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 .. HS_Msg'First + 4 + Body_Len - 1));
+      SPARKTLS.RFLX_Borrow.Borrow_Read (HS_Msg, HS_Msg'First + 4, Body_Len, Holder, Buf);
       C12.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Body_Len) * 8);
       C12.Verify_Message (Ctx);
 
       if not C12.Well_Formed_Message (Ctx) then
          C12.Take_Buffer (Ctx, Buf);
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          return;
       end if;
 
@@ -154,7 +155,7 @@ is
                     and then C12.Field_Condition (Ctx, C12.F_Certificate_List))
             then
                C12.Take_Buffer (Ctx, Buf);
-               RFLX_Free (Buf);
+               SPARKTLS.RFLX_Borrow.Discard (Buf);
                return;
             end if;
 
@@ -246,7 +247,7 @@ is
                   end if;
                   if not C12_Entries.Valid (Entries_Ctx) then
                      C12_Entries.Take_Buffer (Entries_Ctx, Buf);
-                     RFLX_Free (Buf);
+                     SPARKTLS.RFLX_Borrow.Discard (Buf);
                      return;
                   end if;
                   pragma Assert (C12_Entries.Has_Buffer (Entries_Ctx));
@@ -255,7 +256,7 @@ is
             end loop;
 
             C12_Entries.Take_Buffer (Entries_Ctx, Buf);
-            RFLX_Free (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             OK := True;
             Err := No_Error;
             return;
@@ -263,7 +264,7 @@ is
       end if;
 
       C12.Take_Buffer (Ctx, Buf);
-      RFLX_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       OK := True;
       Err := No_Error;
    end Parse_Certificate_Chain_12;

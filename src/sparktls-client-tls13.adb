@@ -21,6 +21,7 @@ use SPARKTLSCrypto;
 
 with X509;
 with SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Borrow;
 with Ada.Unchecked_Deallocation;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.RFLX_Types;
@@ -426,6 +427,7 @@ is
 
       Body_Len : constant N32 := N32 (Data'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx      : EE.Context;
 
       subtype Seen_Range is N32 range 1 .. 32;
@@ -443,8 +445,7 @@ is
          return;
       end if;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := SPARKTLS.RFLX_Bridge.To_RFLX (Data (Data'First + 4 .. Data'Last));
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First + 4, Body_Len, Holder, Buf);
       EE.Initialize
         (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       EE.Verify_Message (Ctx);
@@ -453,7 +454,7 @@ is
          OK  := False;
          Err := Decode_Error;
          EE.Take_Buffer (Ctx, Buf);
-         EE_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          return;
       end if;
 
@@ -495,7 +496,7 @@ is
          OK  := False;
          Err := Decode_Error;
          EE.Take_Buffer (Ctx, Buf);
-         EE_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          return;
       end if;
 
@@ -564,7 +565,7 @@ is
          Err := Pol_Err;
       end if;
       EE.Take_Buffer (Ctx, Buf);
-      EE_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
    end Extract_ALPN_From_EE;
 
    procedure Handle_EE_13
@@ -654,6 +655,7 @@ is
 
       Body_Len : constant N32 := N32 (Data'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx      : CR_M.Context;
 
       Picked    : Maybe_Sig_Scheme := Scheme_None;
@@ -670,8 +672,7 @@ is
          return;
       end if;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := SPARKTLS.RFLX_Bridge.To_RFLX (Data (Data'First + 4 .. Data'Last));
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First + 4, Body_Len, Holder, Buf);
       CR_M.Initialize
         (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       CR_M.Verify_Message (Ctx);
@@ -680,7 +681,7 @@ is
         or else CR_M.Message_Last (Ctx) /= RBT.Bit_Length (RBT.Length (Body_Len) * 8)
       then
          CR_M.Take_Buffer (Ctx, Buf);
-         CR_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
          return;
       end if;
@@ -689,7 +690,7 @@ is
       --  certificate_request_context MUST be empty.
       if N32 (CR_M.Get_Certificate_Request_Context_Length (Ctx)) /= 0 then
          CR_M.Take_Buffer (Ctx, Buf);
-         CR_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          Send_HS_Encrypted_Alert (S, D, Decode_Error, Result);
          return;
       end if;
@@ -803,7 +804,7 @@ is
       end;
 
       CR_M.Take_Buffer (Ctx, Buf);
-      CR_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
 
       if Fail_Err /= No_Error then
          Send_HS_Encrypted_Alert (S, D, Fail_Err, Result);
@@ -1344,7 +1345,7 @@ is
             end if;
 
          when others =>
-            --  RFC 8446 4: unknown handshake type â unexpected_message.
+            --  RFC 8446 4: unknown handshake type -> unexpected_message.
             --  BoGo's WrongMessageType-TLS13-* injects `type + 42` here.
             Send_HS_Encrypted_Alert (S, D, Unexpected_Message, Result);
       end case;
@@ -2373,7 +2374,7 @@ is
       if Rec.Bad_Version then
          --  RFC 8446 5.1 / RFC 5246 6.2.1: legacy_record_version
          --  must be 0x03xx with minor in 1..4. Anything else
-         --  (BoGo CheckRecordVersion: 0x03FF) â fatal
+         --  (BoGo CheckRecordVersion: 0x03FF) -> fatal
          --  protocol_version alert.
          S.Last_Error := Protocol_Version;
          Set_State (S, Error_State);
@@ -2885,7 +2886,7 @@ is
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
          if not Dec_Valid then
-            --  RFC 8446 5.2: post-handshake AEAD failure â fatal
+            --  RFC 8446 5.2: post-handshake AEAD failure -> fatal
             --  bad_record_mac under client_application_traffic_secret.
             Send_App_Encrypted_Alert (S, Bad_Record_MAC, Result);
             return;
@@ -2924,7 +2925,7 @@ is
                   Result := Plaintext_Ready;
                else
                   --  Empty plaintext record. Count + cap to limit
-                  --  DoS via flood (BoGo SendEmptyRecords: 33+ â
+                  --  DoS via flood (BoGo SendEmptyRecords: 33+ ->
                   --  TOO_MANY_EMPTY_FRAGMENTS).
                   --  Check BEFORE incrementing: the counter then never exceeds the
                   --  cap, so the bound holds BY CONSTRUCTION rather than being
@@ -2937,7 +2938,7 @@ is
                      S.Empty_Records_Recvd := S.Empty_Records_Recvd + 1;
                      Result := OK;
                   end if;
-                  --  RFC 8446 5.2 cap: â¤ 32 in live state, > 32
+                  --  RFC 8446 5.2 cap: <= 32 in live state, > 32
                   --  only after the alert is queued.
                   pragma Assert (Empty_Records_Bounded_RFC_8446_5_2 (S));
                end if;
@@ -2970,7 +2971,7 @@ is
                   --  Truncated alert.
                   Send_App_Encrypted_Alert (S, Decode_Error, Result);
                elsif Plaintext (0) /= 1 and Plaintext (0) /= 2 then
-                  --  Bogus alert level â fatal illegal_parameter.
+                  --  Bogus alert level -> fatal illegal_parameter.
                   Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
                elsif Plaintext (1) = 0 then
                   --  close_notify (warning, desc=0). Reply in kind.
@@ -3021,7 +3022,7 @@ is
                         Result := OK;
                      end if;
                      --  RFC 8446 6.1 cap: invariant must hold on
-                     --  every exit path. Either â¤ 4 (still tolerable)
+                     --  every exit path. Either <= 4 (still tolerable)
                      --  or > 4 with State already advanced to
                      --  Error_State by the if-branch above.
                      pragma Assert (Warning_Alerts_Bounded_RFC_8446_6_1 (S));
@@ -3066,7 +3067,7 @@ is
       if Rec.Bad_Version then
          --  RFC 8446 5.1 / RFC 5246 6.2.1: legacy_record_version
          --  must be 0x03xx with minor in 1..4. Anything else
-         --  (BoGo CheckRecordVersion: 0x03FF) â fatal
+         --  (BoGo CheckRecordVersion: 0x03FF) -> fatal
          --  protocol_version alert.
          S.Last_Error := Protocol_Version;
          Set_State (S, Error_State);

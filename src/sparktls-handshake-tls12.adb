@@ -18,6 +18,7 @@ use SPARKTLSCrypto;
 with SPARKTLS.Cert_Verify;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Borrow;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.RFLX_Types;
 with RFLX.TLS_Handshake.Server_Hello;
@@ -646,6 +647,7 @@ is
       procedure RFLX_Free_Local is new
         Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr := null;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx : SKE.Context;
    begin
       OK := False;
@@ -661,18 +663,12 @@ is
       --  RFLX parse. The TLS_1_2_Server_Key_Exchange_ECDHE message
       --  enforces curve_type = Named_Curve (rejects explicit-prime /
       --  explicit-char2  those were never legal for modern TLS 1.2).
-      declare
-         Data_Len : constant N32 := Data'Last + 1;
-      begin
-         pragma Assert (Data_Len = Data'Length);
-         Buf := new RBT.Bytes'(1 .. RBT.Index (Data_Len) => 0);
-      end;
-      Buf.all := To_RFLX (Data);
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First, N32 (Data'Length), Holder, Buf);
       SKE.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Buf'Length * 8));
       SKE.Verify_Message (Ctx);
       if not SKE.Well_Formed_Message (Ctx) then
          SKE.Take_Buffer (Ctx, Buf);
-         RFLX_Free_Local (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          return;
       end if;
 
@@ -692,14 +688,14 @@ is
       begin
          if Curve = Group_None or Sig_Len = 0 or Sig_Len > Max_Sig then
             SKE.Take_Buffer (Ctx, Buf);
-            RFLX_Free_Local (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             return;
          end if;
 
          if Pt_Len /= Point_Len_For_Group (Curve) then
             HC.Ext_Parse_Err := Illegal_Parameter;
             SKE.Take_Buffer (Ctx, Buf);
-            RFLX_Free_Local (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             return;
          end if;
          pragma Assert (Pt_Len = Point_Len_For_Group (Curve));
@@ -725,7 +721,7 @@ is
                   if Byte (Pt_RFLX (1)) /= 16#04# then
                      HC.Ext_Parse_Err := Illegal_Parameter;
                      SKE.Take_Buffer (Ctx, Buf);
-                     RFLX_Free_Local (Buf);
+                     SPARKTLS.RFLX_Borrow.Discard (Buf);
                      return;
                   end if;
                   for I in N32 range 0 .. 64 loop
@@ -737,7 +733,7 @@ is
                   if Byte (Pt_RFLX (1)) /= 16#04# then
                      HC.Ext_Parse_Err := Illegal_Parameter;
                      SKE.Take_Buffer (Ctx, Buf);
-                     RFLX_Free_Local (Buf);
+                     SPARKTLS.RFLX_Borrow.Discard (Buf);
                      return;
                   end if;
                   for I in N32 range 0 .. 96 loop
@@ -746,14 +742,14 @@ is
 
                when others =>
                   SKE.Take_Buffer (Ctx, Buf);
-                  RFLX_Free_Local (Buf);
+                  SPARKTLS.RFLX_Borrow.Discard (Buf);
                   return;
             end case;
          end;
 
          if 4 + Pt_Len > Data'Length then
             SKE.Take_Buffer (Ctx, Buf);
-            RFLX_Free_Local (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             return;
          end if;
          pragma Assert (4 + Pt_Len <= Data'Length);
@@ -777,7 +773,7 @@ is
               or else Alg_Value > RFLX.RFLX_Types.Base_Integer (Unsigned_16'Last)
             then
                SKE.Take_Buffer (Ctx, Buf);
-               RFLX_Free_Local (Buf);
+               SPARKTLS.RFLX_Borrow.Discard (Buf);
                return;
             end if;
             pragma Assert (Params_Len <= Data'Length);
@@ -811,14 +807,14 @@ is
 
             if not Sig_OK then
                SKE.Take_Buffer (Ctx, Buf);
-               RFLX_Free_Local (Buf);
+               SPARKTLS.RFLX_Borrow.Discard (Buf);
                return;
             end if;
          end;
       end;
 
       SKE.Take_Buffer (Ctx, Buf);
-      RFLX_Free_Local (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       OK := True;
    end Parse_Server_Key_Exchange;
 
@@ -837,6 +833,7 @@ is
       procedure RFLX_Free_Local is new
         Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx : CKE.Context;
    begin
       OK := False;
@@ -846,17 +843,12 @@ is
          return;
       end if;
 
-      declare
-         Data_Len : constant N32 := Data'Last - Data'First + 1;
-      begin
-         Buf := new RBT.Bytes'(1 .. RBT.Index (Data_Len) => 0);
-      end;
-      Buf.all := To_RFLX (Data);
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First, N32 (Data'Length), Holder, Buf);
       CKE.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Buf'Length * 8));
       CKE.Verify_Message (Ctx);
       if not CKE.Well_Formed_Message (Ctx) then
          CKE.Take_Buffer (Ctx, Buf);
-         RFLX_Free_Local (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          return;
       end if;
 
@@ -869,14 +861,14 @@ is
          --  are a protocol error.
          if Data'Length /= 1 + Pt_Len then
             CKE.Take_Buffer (Ctx, Buf);
-            RFLX_Free_Local (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             return;
          end if;
 
          if Pt_Len /= Point_Len_For_Group (HC.KE.Curve) then
             HC.Ext_Parse_Err := Illegal_Parameter;
             CKE.Take_Buffer (Ctx, Buf);
-            RFLX_Free_Local (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             return;
          end if;
 
@@ -891,7 +883,7 @@ is
                if Byte (Pt_RFLX (1)) /= 16#04# then
                   HC.Ext_Parse_Err := Illegal_Parameter;
                   CKE.Take_Buffer (Ctx, Buf);
-                  RFLX_Free_Local (Buf);
+                  SPARKTLS.RFLX_Borrow.Discard (Buf);
                   return;
                end if;
                for I in N32 range 0 .. 64 loop
@@ -902,7 +894,7 @@ is
                if Byte (Pt_RFLX (1)) /= 16#04# then
                   HC.Ext_Parse_Err := Illegal_Parameter;
                   CKE.Take_Buffer (Ctx, Buf);
-                  RFLX_Free_Local (Buf);
+                  SPARKTLS.RFLX_Borrow.Discard (Buf);
                   return;
                end if;
                for I in N32 range 0 .. 96 loop
@@ -911,13 +903,13 @@ is
 
             when others =>
                CKE.Take_Buffer (Ctx, Buf);
-               RFLX_Free_Local (Buf);
+               SPARKTLS.RFLX_Borrow.Discard (Buf);
                return;
          end case;
       end;
 
       CKE.Take_Buffer (Ctx, Buf);
-      RFLX_Free_Local (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       OK := True;
    end Parse_Client_Key_Exchange;
 
@@ -1667,6 +1659,7 @@ is
       procedure RFLX_Free_Local is new
         Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx : NST.Context;
    begin
       Lifetime_Hint := 0;
@@ -1678,13 +1671,12 @@ is
          return;
       end if;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (NST_Body'Length) => 0);
-      Buf.all := To_RFLX (NST_Body);
+      SPARKTLS.RFLX_Borrow.Borrow_Read (NST_Body, NST_Body'First, NST_Body'Length, Holder, Buf);
       NST.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (NST_Body'Length * 8));
       NST.Verify_Message (Ctx);
       if not NST.Well_Formed_Message (Ctx) then
          NST.Take_Buffer (Ctx, Buf);
-         RFLX_Free_Local (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          return;
       end if;
 
@@ -1692,7 +1684,7 @@ is
       Ticket_Len := N32 (NST.Get_Ticket_Length (Ctx));
 
       NST.Take_Buffer (Ctx, Buf);
-      RFLX_Free_Local (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
 
       --  Final structural sanity: declared sizes match wire length.
       if Ticket_Len + 6 /= N32 (NST_Body'Length) then

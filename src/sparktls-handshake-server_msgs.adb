@@ -1,6 +1,7 @@
 with Ada.Unchecked_Deallocation;
 with Interfaces;           use Interfaces;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Borrow;
 with RFLX.TLS_Handshake.Client_Hello;
 with RFLX.TLS_Handshake.CH_Extensions_TLS;
 with RFLX.TLS_Handshake.CH_Extension_TLS;
@@ -1726,7 +1727,7 @@ is
             HC.Client_Saw_Key_Share := True;
             if DLen in Wire_Key_Share_Len then
                Parse_KS_Extension (Ext_Ctx, DLen, HC);
-               --  Parse_KS_Extension â Apply_KS_Entry stashes
+               --  Parse_KS_Extension -> Apply_KS_Entry stashes
                --  Illegal_Parameter in HC.Ext_Parse_Err on duplicate-
                --  group violations (RFC 8446 4.2.8). Surface to the
                --  Parse_Client_Hello caller as a parse failure.
@@ -2275,6 +2276,7 @@ is
 
       Body_Len           : N32;
       Buf                : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx                : Context;
       Raw_Legacy_Version : N32 := 0;
    begin
@@ -2323,8 +2325,7 @@ is
       --  Skip 4-byte handshake header, pass body to Client_Hello context
       Body_Len := N32 (Data'Length) - 4;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First + 4, Body_Len, Holder, Buf);
 
       if Buf.all'Length >= 2 then
          Raw_Legacy_Version := N32 (Buf.all (1)) * 256 + N32 (Buf.all (2));
@@ -2351,7 +2352,7 @@ is
         and then Message_Last (Ctx) /= RBT.Bit_Length (RBT.Length (Body_Len) * 8)
       then
          Take_Buffer (Ctx, Buf);
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          Last_Err := Decode_Error;
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
@@ -2359,12 +2360,12 @@ is
 
       if not Well_Formed_Message (Ctx) then
          Take_Buffer (Ctx, Buf);
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          --  Distinguish failure modes for the right alert:
-         --    legacy_version != 0x0303      â protocol_version
-         --    legacy_compression_methods    â illegal_parameter
+         --    legacy_version != 0x0303      -> protocol_version
+         --    legacy_compression_methods    -> illegal_parameter
          --       != single 0x00 byte
-         --    other                         â decode_error
+         --    other                         -> decode_error
          --
          --  ClientHello body layout (RFC 8446 4.1.2):
          --    legacy_version(2) | random(32) | session_id_len(1) |
@@ -2430,7 +2431,7 @@ is
          HC.Legacy_Session_ID := (others => 0);
          if SID_Len > 32 then
             Take_Buffer (Ctx, Buf);
-            RFLX_Free (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             Last_Err := Decode_Error;
 
             pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
@@ -2464,7 +2465,7 @@ is
       --  Need at least one matching suite (either TLS 1.3 or 1.2)
       if Negotiated = Suite_None and Negotiated_12 = Suite_None then
          Take_Buffer (Ctx, Buf);
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
 
          pragma Assert (HC.Legacy_Session_ID_Len in 0 .. 32);
          return;
@@ -2483,7 +2484,7 @@ is
                --  extensions can stash a more accurate alert in
                --  HC.Ext_Parse_Err
                Take_Buffer (Ctx, Buf);
-               RFLX_Free (Buf);
+               SPARKTLS.RFLX_Borrow.Discard (Buf);
 
                if HC.Ext_Parse_Err /= No_Error then
                   Last_Err := HC.Ext_Parse_Err;
@@ -2508,7 +2509,7 @@ is
       end if;
 
       Take_Buffer (Ctx, Buf);
-      RFLX_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
 
       --  If legacy_version was TLS 1.0/1.1 and no supported_versions
       --  override named a version we support, reject rather than

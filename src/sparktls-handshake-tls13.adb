@@ -15,6 +15,7 @@ with SPARKTLSCrypto.P256.Point;
 with SPARKTLSCrypto.P384.Point;
 use SPARKTLSCrypto;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Borrow;
 with SPARKTLS.Handshake.Server_Msgs; use SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Handshake.Certs; use SPARKTLS.Handshake.Certs;
 with RFLX.TLS_Handshake.Certificate;
@@ -1204,6 +1205,7 @@ is
       package C13_Entry renames RFLX.TLS_Handshake.Certificate_Entry;
       Body_Len                : constant N32 := N32 (HS_Msg'Length) - 4;
       Buf                     : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx                     : C13.Context;
       Cert_Idx                : Natural := 0;
       Ext_Reject              : Boolean := False;
@@ -1244,20 +1246,19 @@ is
          end;
       end;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := To_RFLX (HS_Msg (HS_Msg'First + 4 .. HS_Msg'First + 4 + Body_Len - 1));
+      SPARKTLS.RFLX_Borrow.Borrow_Read (HS_Msg, HS_Msg'First + 4, Body_Len, Holder, Buf);
       C13.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Body_Len) * 8);
       C13.Verify_Message (Ctx);
 
       if not C13.Well_Formed_Message (Ctx) then
          C13.Take_Buffer (Ctx, Buf);
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
          return;
       end if;
 
       --  Walk certificate entries. Sequence iteration follows the
-      --  RFLX message-sequence pattern: Switch â loop Has_Element â
+      --  RFLX message-sequence pattern: Switch -> loop Has_Element ->
       --  Switch / Verify_Message / Update.
       declare
          use type RBT.Bit_Length;
@@ -1277,7 +1278,7 @@ is
                        and then C13.Field_Condition (Ctx, C13.F_Certificate_List))
                then
                   C13.Take_Buffer (Ctx, Buf);
-                  RFLX_Free (Buf);
+                  SPARKTLS.RFLX_Borrow.Discard (Buf);
                   pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                   return;
                end if;
@@ -1396,7 +1397,7 @@ is
                      end if;
                      if not C13_Entries.Valid (Entries_Ctx) then
                         C13_Entries.Take_Buffer (Entries_Ctx, Buf);
-                        RFLX_Free (Buf);
+                        SPARKTLS.RFLX_Borrow.Discard (Buf);
                         pragma Assert (HC.Client_HS.Counter = Saved_Client_HS_Counter);
                         return;
                      end if;
@@ -1404,7 +1405,7 @@ is
                end loop;
 
                C13_Entries.Take_Buffer (Entries_Ctx, Buf);
-               RFLX_Free (Buf);
+               SPARKTLS.RFLX_Borrow.Discard (Buf);
                if Ext_Reject then
                   OK := False;
                   Err := Unsupported_Extension;
@@ -1419,7 +1420,7 @@ is
       end;
 
       C13.Take_Buffer (Ctx, Buf);
-      RFLX_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
 
       if Ext_Reject then
          OK := False;

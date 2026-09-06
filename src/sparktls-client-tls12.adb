@@ -25,6 +25,7 @@ use type X509.Algorithm_ID;
 use type X509.Certificate;
 
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Borrow;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
@@ -391,9 +392,9 @@ is
       procedure RFLX_Free_Local is new
         Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf                  : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx                  : C12.Context;
       B                    : constant N32 := Frag'First + 4;
-      Body_Bytes           : Byte_Seq (0 .. Msg_Len - 1);
       Cert_Idx             : Natural := 0;
       Saved_Selected_Group : constant ECDHE_Group := HC.KE.Curve
       with Ghost;
@@ -414,16 +415,14 @@ is
          end if;
       end;
 
-      Body_Bytes := Frag (B .. B + Msg_Len - 1);
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Msg_Len) => 0);
-      Buf.all := To_RFLX (Body_Bytes);
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Frag, B, Msg_Len, Holder, Buf);
       C12.Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (Msg_Len * 8));
       C12.Verify_Message (Ctx);
 
       if not C12.Well_Formed_Message (Ctx) then
          C12.Take_Buffer (Ctx, Buf);
-         RFLX_Free_Local (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          return;
       end if;
 
@@ -437,7 +436,7 @@ is
             begin
                if not C12.Has_Buffer (Ctx) then
                   C12.Take_Buffer (Ctx, Buf);
-                  RFLX_Free_Local (Buf);
+                  SPARKTLS.RFLX_Borrow.Discard (Buf);
                   return;
                end if;
                if not (C12.Valid_Next (Ctx, C12.F_Certificate_List)
@@ -448,7 +447,7 @@ is
                        and then C12.Field_Condition (Ctx, C12.F_Certificate_List))
                then
                   C12.Take_Buffer (Ctx, Buf);
-                  RFLX_Free_Local (Buf);
+                  SPARKTLS.RFLX_Borrow.Discard (Buf);
                   return;
                end if;
                C12.Switch_To_Certificate_List (Ctx, Entries_Ctx);
@@ -535,7 +534,7 @@ is
                   end;
                end loop;
                C12_Entries.Take_Buffer (Entries_Ctx, Buf);
-               RFLX_Free_Local (Buf);
+               SPARKTLS.RFLX_Borrow.Discard (Buf);
                OK := True;
                return;
             end;
@@ -543,13 +542,13 @@ is
       end;
 
       C12.Take_Buffer (Ctx, Buf);
-      RFLX_Free_Local (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       pragma Assert (HC.KE.Curve = Saved_Selected_Group);
       OK := True;
    end Parse_Cert_Chain_12;
 
    --  RFC 5246 7.4.2 leaf-cert validation (TLS 1.2): keyUsage,
-   --  cipher-suite â cert-algorithm match, hostname binding, chain
+   --  cipher-suite <-> cert-algorithm match, hostname binding, chain
    --  validation. Each gate emits its own alert and returns; on full
    --  success Result is left untouched by the caller.
    procedure Validate_Server_Cert_12
@@ -2849,7 +2848,7 @@ is
             else
                --  RFC 5246 7.1: ChangeCipherSpec payload MUST be the
                --  single byte 0x01. BoGo BadChangeCipherSpec-* sends
-               --  other bytes / lengths â unexpected_message.
+               --  other bytes / lengths -> unexpected_message.
                Send_Alert_And_Error (S, Unexpected_Message, Result);
             end if;
          end;
@@ -3489,7 +3488,7 @@ is
                   elsif PL >= 1 and then Plaintext (0) = 1 then
                      --  warning (non-close_notify)  count + cap.
                      --  RFC 8446 6.1 / BoGo SendWarningAlerts-TooMany:
-                     --  more than 4 in a connection â fatal
+                     --  more than 4 in a connection -> fatal
                      --  decode_error.
                      --  Check BEFORE incrementing: the counter then never exceeds the
                      --  cap, so the bound holds BY CONSTRUCTION rather than being

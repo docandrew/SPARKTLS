@@ -8,6 +8,7 @@ with SPARKTLSCrypto.X25519;
 with SPARKTLSCrypto.HKDF;  use SPARKTLSCrypto.HKDF;
 with SPARKTLSCrypto.MAC;   use SPARKTLSCrypto.MAC;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
+with SPARKTLS.RFLX_Borrow;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.Tickets_12;
 with RFLX.TLS_Handshake.Client_Hello;
@@ -1980,17 +1981,17 @@ is
       use RFLX.TLS_Handshake.Hello_Retry_Request;
       Body_Len : constant N32 := N32 (Data'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Scratch  : RBT.Bytes_Ptr;
       Ctx      : Context;
    begin
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First + 4, Body_Len, Holder, Buf);
       Scratch := new RBT.Bytes'(1 .. Body_Scratch_Len => 0);
       Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       Verify_Message (Ctx);
       Check_HRR (Ctx, Scratch, HC, Negotiated, Version, OK, Err);
       Take_Buffer (Ctx, Buf);
-      RFLX_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       RFLX_Free (Scratch);
    end Parse_HRR_Message;
 
@@ -2584,17 +2585,17 @@ is
       use RFLX.TLS_Handshake.Server_Hello;
       Body_Len : constant N32 := N32 (Data'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
+      Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Scratch  : RBT.Bytes_Ptr;
       Ctx      : Context;
    begin
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all := To_RFLX (Data (Data'First + 4 .. Data'Last));
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First + 4, Body_Len, Holder, Buf);
       Scratch := new RBT.Bytes'(1 .. Body_Scratch_Len => 0);
       Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       Verify_Message (Ctx);
       Check_SH (Ctx, Data, Scratch, HC, ALPN, Negotiated, Version, OK, Err);
       Take_Buffer (Ctx, Buf);
-      RFLX_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       RFLX_Free (Scratch);
    end Parse_SH_Message;
 
