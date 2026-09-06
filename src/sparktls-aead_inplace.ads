@@ -21,6 +21,7 @@
 
 with SPARKNaCl;      use SPARKNaCl;
 with SPARKNaCl.AES;
+with SPARKNaCl.Core;
 with RFLX.RFLX_Builtin_Types;
 package SPARKTLS.AEAD_InPlace with SPARK_Mode is
 
@@ -56,5 +57,25 @@ package SPARKTLS.AEAD_InPlace with SPARK_Mode is
      Pre    => CT_First in Storage'Range
                and then CT_Last in CT_First .. Storage'Last
                and then AAD'Last < N32'Last;
+
+   --  ChaCha20-Poly1305 (RFC 8439) on the record window Storage (CT_First ..
+   --  CT_Last), AAD = the 5-byte record header. Same overlay as the GCM
+   --  procedures; the Pre mirrors SPARKTLSCrypto.ChaCha20_Poly1305.Encrypt_InPlace.
+   procedure ChaCha20_Poly1305_Encrypt
+     (Storage  : in out RBT.Bytes;
+      CT_First : in     RBT.Index;
+      CT_Last  : in     RBT.Index;
+      Tag      :    out Bytes_16;
+      Nonce    : in     Bytes_12;
+      Key      : in     SPARKNaCl.Core.ChaCha20_Key;
+      AAD      : in     Byte_Seq)
+   with
+     Global => null,
+     Pre    => CT_First in Storage'Range
+               and then CT_Last in CT_First .. Storage'Last
+               and then AAD'First = 0
+               and then AAD'Last < N32'Last
+               and then I64 (N32 (CT_Last) - N32 (CT_First) + 1) + I64 (AAD'Length) + 192
+                        <= I64 (N32'Last);
 
 end SPARKTLS.AEAD_InPlace;

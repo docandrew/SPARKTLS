@@ -676,7 +676,14 @@ is
        Data'First = 0
        and then Data'Length >= 4
        and then Data'Last < N32'Last - 4
-       and then Data'Length <= Transcript_Capacity
+       and then Data'Length <= Transcript_Capacity,
+     --  What Process_Handshake_Message's Post restates: every exit is OK or an
+     --  alert (Send_HS_Encrypted_Alert publishes Has_Output | Error_Alert).
+     Post =>
+       Result in OK | Has_Output | Error_Alert
+       --  Frame: the suite is never written here (the alert helper pins it), so
+       --  the dispatcher keeps its TLS13_Suite fact across this arm.
+       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
    is
       package CR_M   renames RFLX.TLS_Handshake.Certificate_Request;
       package CR_Seq renames RFLX.TLS_Handshake.CR_Extensions;
@@ -1795,8 +1802,15 @@ is
    procedure Derive_App_Keys_And_Send_Finished
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
+      --  The Pre carries the suite fact the `when others` arm needs; the Post is
+      --  what the enclosing Post restates (every path ends in Has_Output or an
+      --  alert). Discharged from Derive_App_Keys_And_Send_Finished's own Pre
+      --  across Begin_Flight, whose Post pins Negotiated_Suite.
       procedure Flight
         (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+      with
+        Pre  => S.Negotiated_Suite in TLS13_Suite,
+        Post => Result in Has_Output | Error_Alert
       is
          Cert_Result     : Action;
          --  Atomic flight assembly: client mTLS flight is

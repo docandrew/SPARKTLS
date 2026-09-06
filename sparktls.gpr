@@ -71,21 +71,33 @@ project Sparktls is
                             "-march=native",
                             "-mtune=native");
       when "debug" =>
-         Build_Switches := ("-g",   -- Debug info
-                            "-Og"); -- No optimization
+         Build_Switches := ("-g",        -- Debug info
+                            "-Og",       -- No optimization
+                            "-gnato13"); -- Assertion arithmetic ELIMINATED (bignum),
+                                         -- general code STRICT. Only meaningful when
+                                         -- runtime checks are on (no -gnatp); the
+                                         -- prover gets the same via ci/proof.adc.
    end case;
 
    package Compiler is
+      --  ORDER MATTERS: GNAT applies switches left to right, and a check-enabling
+      --  switch (e.g. -gnato*) given AFTER -gnatp turns those checks back on.
+      --  Measured 2026-09-06: a trailing -gnato13 re-enabled overflow checks in
+      --  every N32 add of the release library (3 checks per byte in the record
+      --  copy loop; bulk throughput halved). The release lane now carries NO
+      --  overflow-mode switch at all: -gnato13 lives in the debug Build_Switches
+      --  and, for the prover, as pragma Overflow_Mode in ci/proof.adc. Keep
+      --  Runtime_Checks_Switches (-gnatp) after every group that could enable
+      --  a check.
       for Default_Switches ("Ada") use
+        ("-gnat2022", -- Ada 2022
+         "-gnatw.X",  -- Disable warnings for No_Exception_Propagation
+         "-gnatQ") &  -- Don't quit. Generate ALI and tree files even if illegalities
         Compile_Checks_Switches &
         Build_Switches &
         Runtime_Checks_Switches &
         Style_Checks_Switches &
-        Contracts_Switches &
-        ("-gnat2022", -- Ada 2022
-         "-gnato13",  -- expressions within assertions evaluate intermediate overflow checks
-         "-gnatw.X",  -- Disable warnings for No_Exception_Propagation
-         "-gnatQ");   -- Don't quit. Generate ALI and tree files even if illegalities
+        Contracts_Switches;
    end Compiler;
 
    package Binder is

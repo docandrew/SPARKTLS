@@ -2713,7 +2713,21 @@ is
    --  the flight, aborting it when Failed. Abort_Flight is a no-op outside a
    --  flight, so the alert primitives call it unconditionally.
    procedure Begin_Flight (S : in out Session)
-   with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old;
+   with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old
+     --  Frame: Begin_Flight only records the flight mark (Flight_Start,
+     --  In_Flight). Pin everything else, as Abort_Flight does, so callers keep
+     --  their own facts (e.g. the negotiated suite) across it.
+     and Has_Context (S) = Has_Context (S)'Old
+     and Server_App (S) = Server_App (S)'Old
+     and Client_App (S) = Client_App (S)'Old
+     and Input_Available (S) = Input_Available (S)'Old
+     and Input_Read_Pos (S) = Input_Read_Pos (S)'Old
+     and Output_Pending (S) = Output_Pending (S)'Old
+     and Output_Read_Pos (S) = Output_Read_Pos (S)'Old
+     and Server_Seq_12 (S) = Server_Seq_12 (S)'Old
+     and Client_Seq_12 (S) = Client_Seq_12 (S)'Old
+     and Negotiated_Suite (S) = Negotiated_Suite (S)'Old
+     and Negotiated_Suite_12 (S) = Negotiated_Suite_12 (S)'Old;
    procedure Abort_Flight (S : in out Session)
    with Post => State (S) = State (S)'Old and Role (S) = Role (S)'Old and Last_Error (S) = Last_Error (S)'Old
      --  Frame: Abort_Flight only truncates Output.Write_Pos (drops a partial

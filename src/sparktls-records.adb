@@ -391,33 +391,17 @@ is
                end;
 
             when others =>
-               --  ChaCha20-Poly1305 fallback path: keep the older
-               --  separate-buffer code until we have an in-place
-               --  variant for SPARKNaCl.Secretbox.Create. AES suites
-               --  carry the bulk of TLS traffic, so the optimization
-               --  there is what shows up in benchmarks.
-               declare
-                  Inner      : Byte_Seq (0 .. Inner_Len - 1) := (others => 0);
-                  Ciphertext : Byte_Seq (0 .. Inner_Len - 1);
-                  Key        : constant ChaCha20_Key := SPARKNaCl.Core.Construct (Keys.Key);
-               begin
-                  if Plaintext'Length > 0 then
-                     Inner (0 .. N32 (Plaintext'Length) - 1) := Plaintext;
-                  end if;
-                  Inner (Inner'Last) := Inner_Type;
-                  SPARKTLSCrypto.ChaCha20_Poly1305.Encrypt
-                    (C   => Ciphertext,
-                     Tag => Tag,
-                     M   => Inner,
-                     N   => ChaCha20_IETF_Nonce (Nonce),
-                     K   => Key,
-                     AAD => Hdr);
-                  --  Copy ChaCha20 ciphertext into the destination
-                  --  slice we already reserved above.
-                  for I in N32 range 0 .. Inner_Len - 1 loop
-                     Output.Storage (Ix (CT_Pos + I)) := Ciphertext (I);
-                  end loop;
-               end;
+               --  ChaCha20-Poly1305 (RFC 8439), in place on the storage window
+               --  like the AES arms: the plaintext and inner type are already
+               --  there, so no separate buffers and no copy back.
+               SPARKTLS.AEAD_InPlace.ChaCha20_Poly1305_Encrypt
+                 (Storage  => Output.Storage,
+                  CT_First => Ix (CT_Pos),
+                  CT_Last  => Ix (Tag_Pos - 1),
+                  Tag      => Tag,
+                  Nonce    => Nonce,
+                  Key      => SPARKNaCl.Core.Construct (Keys.Key),
+                  AAD      => Hdr);
          end case;
 
          --  Tag at [Tag_Pos .. Tag_Pos + 15]

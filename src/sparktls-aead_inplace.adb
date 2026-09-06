@@ -1,5 +1,7 @@
 with System;  pragma Unreferenced (System);
 with SPARKTLSCrypto.AES_GCM;
+with SPARKTLSCrypto.ChaCha20_Poly1305;
+with SPARKNaCl.Core;
 
 --  Why this body is SPARK_Mode Off
 --  --------------------------------
@@ -55,5 +57,27 @@ package body SPARKTLS.AEAD_InPlace with SPARK_Mode => Off is
       SPARKTLSCrypto.AES_GCM.Encrypt_InPlace_256
         (Buf => Buf, Tag => Tag, N => Nonce, K => Key, AAD => AAD);
    end GCM_Encrypt_256;
+
+   procedure ChaCha20_Poly1305_Encrypt
+     (Storage  : in out RBT.Bytes;
+      CT_First : in     RBT.Index;
+      CT_Last  : in     RBT.Index;
+      Tag      :    out Bytes_16;
+      Nonce    : in     Bytes_12;
+      Key      : in     SPARKNaCl.Core.ChaCha20_Key;
+      AAD      : in     Byte_Seq)
+   is
+      Buf : Byte_Seq (0 .. N32 (CT_Last) - N32 (CT_First))
+        with Import, Address => Storage (CT_First)'Address;
+   begin
+      --  Proven (SPARK On) crypto, called from this Off body only to keep the
+      --  in-place overlay out of Why3's crashing conversion path.
+      SPARKTLSCrypto.ChaCha20_Poly1305.Encrypt_InPlace
+        (Buf => Buf,
+         Tag => Tag,
+         N   => SPARKNaCl.Core.ChaCha20_IETF_Nonce (Nonce),
+         K   => Key,
+         AAD => AAD);
+   end ChaCha20_Poly1305_Encrypt;
 
 end SPARKTLS.AEAD_InPlace;

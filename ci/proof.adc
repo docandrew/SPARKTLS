@@ -46,3 +46,9 @@
 
 pragma Profile (Jorvik);
 pragma Partition_Elaboration_Policy (Sequential);
+
+--  Prover-side equivalent of -gnato13: assertion and contract arithmetic is
+--  mathematical (no intermediate-overflow VCs), general code strict. It lives
+--  here rather than in the release compiler switches, where a trailing
+--  -gnato13 used to re-enable runtime overflow checks (sparktls.gpr, Compiler).
+pragma Overflow_Mode (General => Strict, Assertions => Eliminated);
