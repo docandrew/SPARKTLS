@@ -132,6 +132,13 @@ is
      (RFLX_Arena_Size /= SPARKTLS_Reassembly.Max_HS_Msg,
       "RFLX_Arena_Size must equal SPARKTLS_Reassembly.Max_HS_Msg");
 
+   --  The build/parse arena as a SIZED array, not a bare access. A Borrow
+   --  view of it carries First = 1 and Last = RFLX_Arena_Size by construction,
+   --  which is exactly what the RFLX build preconditions
+   --  (Available_Space >= Field_Size) need and a reused Bytes_Ptr can never
+   --  supply. Mirrors IO_Storage; lives inline in HS_Data (no heap).
+   subtype Arena_Bytes is RBT_A.Bytes (1 .. RBT_A.Index (RFLX_Arena_Size));
+
    --  Sufficient for all real-world handshakes. Typical transcript is
    --  ~2 KB. Pathological inputs (32K sig_algs) require reassembly
    --  but the transcript only includes the final parsed result.

@@ -484,7 +484,7 @@ is
    procedure Build_Server_Hello
      (Negotiated : in TLS13_Suite;
       HC         : in out Engaged_Context;
-      Arena      : in out RBT.Bytes_Ptr;
+      Arena_Storage : in out Arena_Bytes;
       Result     : out Byte_Seq;
       Len        : out N32)
    is
@@ -501,6 +501,8 @@ is
       Ext_Total  : N32;
       Body_Len   : N32;
       Ctx        : Context;
+      Holder     : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
+      Buf        : RBT.Bytes_Ptr;
    begin
       Result := (others => 0);
       Len := 0;
@@ -537,16 +539,14 @@ is
       --  version(2) + random(32) + sid_len(1) + sid + suite(2) + comp(1) + ext_len(2)
       Body_Len := 40 + Sid_Len + Ext_Total;
 
-      --  Borrow the reusable per-slot handshake arena instead of a fresh
-      --  buffer: allocate it once (lazily) at the shared arena size,
-      --  Initialize hands it to the context, and Take_Buffer returns it
-      --  below. No per-message new/free.
-      if Arena = null then
-         Arena := new RBT.Bytes'(1 .. RBT.Index (RFLX_Arena_Size) => 0);
-      end if;
+      --  Borrow the inline per-slot arena: the Borrow Post pins Buf'First = 1
+      --  and Buf'Last = RFLX_Arena_Size, which anchors every Set_* space
+      --  precondition. No heap, no per-message new/free; Discard below.
       declare
       begin
-         Initialize (Ctx, Arena);
+         SPARKTLS.RFLX_Borrow.Borrow
+           (Arena_Storage, Arena_Storage'First, Arena_Storage'Last, Holder, Buf);
+         Initialize (Ctx, Buf);
          Set_Legacy_Version (Ctx, RFLX.TLS_Common.TLS_1_2);
          Set_Random (Ctx, To_RFLX (Byte_Seq (HC.Server_Random)));
          --  RFC 8446 4.1.3: echo the client's session_id at its real length.
@@ -612,7 +612,7 @@ is
             Update_Extensions_TLS (Ctx, Exts);
          end;
 
-         Take_Buffer (Ctx, Arena);
+         Take_Buffer (Ctx, Buf);
          --  Handshake header by hand for now (type + 3-byte length), as the
          --  other RecordFlux builders do; the outer TLS_Handshake context is
          --  the remaining half-step (task 147).
@@ -620,7 +620,8 @@ is
          Result (1) := 0;
          Result (2) := 0;
          Result (3) := Byte (Body_Len);
-         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Arena.all (1 .. RBT.Index (Body_Len)));
+         Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          --  No free: Arena is the reusable session buffer, returned above.
       end;
       Len := 4 + Body_Len;
@@ -629,6 +630,7 @@ is
    procedure Build_Encrypted_Extensions
      (S               : in Session;
       Negotiated_ALPN : out Hostname_Buf;
+      Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
       Len             : out N32)
    is
@@ -665,9 +667,8 @@ is
          package EE      renames RFLX.TLS_Handshake.Encrypted_Extensions;
          package EE_Seq  renames RFLX.TLS_Handshake.EE_Extensions;
          package EE_Elem renames RFLX.TLS_Handshake.EE_Extension;
-         procedure EE_Free is new
-           Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-         Buf : RBT.Bytes_Ptr;
+         Buf    : RBT.Bytes_Ptr;
+         Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
          Ctx : EE.Context;
       begin
          if Msg_Len > N32 (Result'Length) then
@@ -677,55 +678,63 @@ is
             return;
          end if;
 
-         Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+         SPARKTLS.RFLX_Borrow.Borrow
+           (Arena_Storage, Arena_Storage'First, Arena_Storage'Last, Holder, Buf);
          EE.Initialize (Ctx, Buf);
          EE.Set_Length (Ctx, RFLX.TLS_Handshake.Encrypted_Extensions_Length (Ext_Len));
 
-         declare
-            Exts : EE_Seq.Context;
-         begin
-            EE.Switch_To_Extensions (Ctx, Exts);
+         --  RFC 8446 4.3.1: the extension list may be empty (no ALPN match, no SNI
+         --  ack). Switch_To_Extensions needs a non-empty field; an empty list is
+         --  finished with Initialize_Extensions, RecordFlux's empty-sequence idiom.
+         if Ext_Len > 0 then
+            declare
+               Exts : EE_Seq.Context;
+            begin
+               EE.Switch_To_Extensions (Ctx, Exts);
 
-            --  RFC 6066 3 / RFC 8446 4.4.1: server_name acknowledgement, empty body.
-            if SNI_Ext_Len > 0 then
-               declare
-                  E : EE_Elem.Context;
-               begin
-                  EE_Seq.Switch (Exts, E);
-                  EE_Elem.Set_Tag (E, RFLX.Tls_Extensiontype_Values.Server_Name);
-                  EE_Elem.Set_Data_Length (E, 0);
-                  EE_Elem.Set_Data_Empty (E);
-                  EE_Seq.Update (Exts, E);
-               end;
-            end if;
+               --  RFC 6066 3 / RFC 8446 4.4.1: server_name acknowledgement, empty body.
+               if SNI_Ext_Len > 0 then
+                  declare
+                     E : EE_Elem.Context;
+                  begin
+                     EE_Seq.Switch (Exts, E);
+                     EE_Elem.Set_Tag (E, RFLX.Tls_Extensiontype_Values.Server_Name);
+                     EE_Elem.Set_Data_Length (E, 0);
+                     EE_Elem.Set_Data_Empty (E);
+                     EE_Seq.Update (Exts, E);
+                  end;
+               end if;
 
-            --  RFC 7301: application_layer_protocol_negotiation, the selected
-            --  protocol. Body = protocol_name_list<1..>: list_len(2) +
-            --  proto_len(1) + proto, laid down as the extension's opaque data.
-            if ALPN_Match then
-               declare
-                  E     : EE_Elem.Context;
-                  A_Len : constant N32 := N32 (ALPN_PL);
-                  A_Body : Byte_Seq (0 .. 2 + A_Len) := (others => 0);
-               begin
-                  A_Body (0) := Byte ((A_Len + 1) / 256);
-                  A_Body (1) := Byte ((A_Len + 1) mod 256);
-                  A_Body (2) := Byte (A_Len);
-                  for I in 1 .. ALPN_PL loop
-                     A_Body (2 + N32 (I)) := Byte (Character'Pos (Selected_ALPN.Data (I)));
-                  end loop;
-                  EE_Seq.Switch (Exts, E);
-                  EE_Elem.Set_Tag
-                    (E, RFLX.Tls_Extensiontype_Values.Application_Layer_Protocol_Negotiation);
-                  EE_Elem.Set_Data_Length (E, RFLX.TLS_Handshake.Data_Length (3 + A_Len));
-                  EE_Elem.Set_Data (E, To_RFLX (A_Body));
-                  EE_Seq.Update (Exts, E);
-                  Negotiated_ALPN := Selected_ALPN;
-               end;
-            end if;
+               --  RFC 7301: application_layer_protocol_negotiation, the selected
+               --  protocol. Body = protocol_name_list<1..>: list_len(2) +
+               --  proto_len(1) + proto, laid down as the extension's opaque data.
+               if ALPN_Match then
+                  declare
+                     E     : EE_Elem.Context;
+                     A_Len : constant N32 := N32 (ALPN_PL);
+                     A_Body : Byte_Seq (0 .. 2 + A_Len) := (others => 0);
+                  begin
+                     A_Body (0) := Byte ((A_Len + 1) / 256);
+                     A_Body (1) := Byte ((A_Len + 1) mod 256);
+                     A_Body (2) := Byte (A_Len);
+                     for I in 1 .. ALPN_PL loop
+                        A_Body (2 + N32 (I)) := Byte (Character'Pos (Selected_ALPN.Data (I)));
+                     end loop;
+                     EE_Seq.Switch (Exts, E);
+                     EE_Elem.Set_Tag
+                       (E, RFLX.Tls_Extensiontype_Values.Application_Layer_Protocol_Negotiation);
+                     EE_Elem.Set_Data_Length (E, RFLX.TLS_Handshake.Data_Length (3 + A_Len));
+                     EE_Elem.Set_Data (E, To_RFLX (A_Body));
+                     EE_Seq.Update (Exts, E);
+                     Negotiated_ALPN := Selected_ALPN;
+                  end;
+               end if;
 
-            EE.Update_Extensions (Ctx, Exts);
-         end;
+               EE.Update_Extensions (Ctx, Exts);
+            end;
+         else
+            EE.Initialize_Extensions (Ctx);
+         end if;
 
          EE.Take_Buffer (Ctx, Buf);
          Result (0) := HS_Msg_Wire (HT_Encrypted_Extensions);
@@ -733,7 +742,7 @@ is
          Result (2) := Byte ((Body_Len / 256) mod 256);
          Result (3) := Byte (Body_Len mod 256);
          Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-         EE_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          Len := Msg_Len;
       end;
    end Build_Encrypted_Extensions;
@@ -839,7 +848,11 @@ is
       Len := Msg_Len;
    end Build_Certificate_Request;
 
-   procedure Build_Certificate_Chain (Id : in Identity; Result : out Byte_Seq; Len : out N32) is
+   procedure Build_Certificate_Chain
+     (Id            : in Identity;
+      Arena_Storage : in out Arena_Bytes;
+      Result        : out Byte_Seq;
+      Len           : out N32) is
       package C13         renames RFLX.TLS_Handshake.Certificate;
       package C13_Entries renames RFLX.TLS_Handshake.Certificate_Entries;
       package C13_Entry   renames RFLX.TLS_Handshake.Certificate_Entry;
@@ -869,6 +882,7 @@ is
          Body_Len : constant N32 := 1 + 3 + List_Len;
          Msg_Len  : constant N32 := 4 + Body_Len;
          Buf      : RBT.Bytes_Ptr;
+         Holder   : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
          Ctx      : C13.Context;
          Entries  : C13_Entries.Context;
 
@@ -895,7 +909,8 @@ is
             return;
          end if;
 
-         Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+         SPARKTLS.RFLX_Borrow.Borrow
+           (Arena_Storage, Arena_Storage'First, Arena_Storage'Last, Holder, Buf);
          C13.Initialize (Ctx, Buf);
          C13.Set_Certificate_Request_Context_Length (Ctx, 0);
          C13.Set_Certificate_Request_Context_Empty (Ctx);
@@ -928,7 +943,7 @@ is
          Result (2) := Byte ((Body_Len / 256) mod 256);
          Result (3) := Byte (Body_Len mod 256);
          Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          Len := Msg_Len;
       end;
    end Build_Certificate_Chain;
@@ -989,6 +1004,7 @@ is
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
       Random          : in Random_Bytes_Fn;
+      Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
       Len             : out N32)
    is
@@ -1160,13 +1176,15 @@ is
          Body_Len : constant N32 := 4 + Sig_Len;
          Msg_Len  : constant N32 := 4 + Body_Len;
          Buf      : RBT.Bytes_Ptr;
+         Holder   : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
          Ctx      : Context;
       begin
          if Msg_Len > N32 (Result'Length) then
             return;
          end if;
 
-         Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+         SPARKTLS.RFLX_Borrow.Borrow
+           (Arena_Storage, Arena_Storage'First, Arena_Storage'Last, Holder, Buf);
          Initialize (Ctx, Buf);
          Set_Algorithm (Ctx, Algo_Enum);
          Set_Signature_Length (Ctx, RFLX.TLS_Handshake.Signature_Length (Sig_Len));
@@ -1186,7 +1204,7 @@ is
          Result (3) := Byte (Body_Len mod 256);
          Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
 
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          Len := Msg_Len;
       end;
    end Build_Certificate_Verify;

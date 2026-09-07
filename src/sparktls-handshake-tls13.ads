@@ -26,7 +26,11 @@ is
    Max_Cert_Msg     : constant := SPARKTLS.Handshake.Certs.Max_Cert_Msg;
 
    --  Build a Certificate message with leaf + intermediates from an Identity.
-   procedure Build_Certificate_Chain (Id : in Identity; Result : out Byte_Seq; Len : out N32)
+   procedure Build_Certificate_Chain
+     (Id            : in Identity;
+      Arena_Storage : in out Arena_Bytes;
+      Result        : out Byte_Seq;
+      Len           : out N32)
    with
      Pre =>
        Result'First = 0
@@ -44,6 +48,7 @@ is
       Sig_Algo_Wire   : in Maybe_Sig_Scheme;
       Role            : in TLS_Role;
       Random          : in Random_Bytes_Fn;
+      Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
       Len             : out N32)
    with
@@ -122,7 +127,7 @@ is
    procedure Build_Server_Hello
      (Negotiated : in TLS13_Suite;
       HC         : in out Engaged_Context;
-      Arena      : in out RFLX.RFLX_Builtin_Types.Bytes_Ptr;
+      Arena_Storage : in out Arena_Bytes;
       Result     : out Byte_Seq;
       Len        : out N32)
    with
@@ -165,6 +170,7 @@ is
    procedure Build_Encrypted_Extensions
      (S               : in Session;
       Negotiated_ALPN : out Hostname_Buf;
+      Arena_Storage   : in out Arena_Bytes;
       Result          : out Byte_Seq;
       Len             : out N32)
    with

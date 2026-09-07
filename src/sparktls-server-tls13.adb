@@ -1153,7 +1153,7 @@ is
       end if;
 
       Handshake.TLS13.Build_Certificate_Chain
-        (Id => Cfg.Local.all, Result => Cert_Buf, Len => Cert_Len);
+        (Id => Cfg.Local.all, Arena_Storage => D.Arena_Storage, Result => Cert_Buf, Len => Cert_Len);
 
       if Cert_Len = 0
         or else Cert_Len >= Transcript_Capacity
@@ -1230,6 +1230,7 @@ is
          Sig_Algo_Wire   => S.HC.Negotiated_Sig_Algo,
          Role            => Role_Server,
          Random          => Cfg.Random,
+         Arena_Storage   => D.Arena_Storage,
          Result          => CV_Buf,
          Len             => CV_Len);
 
@@ -1413,7 +1414,7 @@ is
          EE_ALPN : Hostname_Buf;
          Emitted : Boolean;
       begin
-         Handshake.TLS13.Build_Encrypted_Extensions (S, EE_ALPN, EE_Buf, EE_Len);
+         Handshake.TLS13.Build_Encrypted_Extensions (S, EE_ALPN, D.Arena_Storage, EE_Buf, EE_Len);
          S.Negotiated_ALPN := EE_ALPN;
          pragma Assert (EE_Len in 6 .. N32 (EE_Buf'Length));
          pragma Assert (EE_Len <= Max_Fragment);
@@ -1578,7 +1579,7 @@ is
          end if;
 
          Handshake.TLS13.Build_Server_Hello
-           (TLS13_Suite (Flight_Suite), S.HC, D.Arena, SH_Buf, SH_Len);
+           (TLS13_Suite (Flight_Suite), S.HC, D.Arena_Storage, SH_Buf, SH_Len);
 
          if SH_Len = 0 then
             --  RFC 7748 6.1: small-subgroup X25519 rejection sets

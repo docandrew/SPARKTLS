@@ -1554,7 +1554,7 @@ is
          Cert_Len : N32;
       begin
          Handshake.TLS13.Build_Certificate_Chain
-           (Id => S.HC.Cfg.Local.all, Result => Cert_Buf, Len => Cert_Len);
+           (Id => S.HC.Cfg.Local.all, Arena_Storage => D.Arena_Storage, Result => Cert_Buf, Len => Cert_Len);
          if Cert_Len = 0 or else Cert_Len >= Transcript_Capacity or else Cert_Len > Max_Fragment
          then
             S.Last_Error := Internal_Error;
@@ -1618,6 +1618,7 @@ is
                   Sig_Algo_Wire   => S.HC.Negotiated_Sig_Algo,
                   Role            => Role_Client,
                   Random          => S.HC.Cfg.Random,
+                  Arena_Storage   => D.Arena_Storage,
                   Result          => CV_Buf,
                   Len             => CV_Len);
                if CV_Len > 0 then

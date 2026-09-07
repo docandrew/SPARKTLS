@@ -37,11 +37,11 @@ is
       Peer_Leaf      : Pool_Entry;
       Peer_Ints      : Cert_Pool;
       Peer_Int_Count : Cert_Pool_Count := 0;
-      --  Reusable RecordFlux build/parse arena, borrowed by handshake
-      --  messages via Initialize/Take_Buffer. Allocated once (lazily) and
-      --  reused across handshakes on this slot; Release deliberately does
-      --  not touch it, so the buffer persists for the pool's lifetime.
-      Arena          : RBT_A.Bytes_Ptr := null;
+      --  Reusable RecordFlux build/parse arena, INLINE (no heap). Handshake
+      --  builders hand it to RecordFlux via SPARKTLS.RFLX_Borrow.Borrow and
+      --  return it with Discard; the storage is part of the slot, so it
+      --  persists across handshakes for the pool's lifetime.
+      Arena_Storage  : aliased Arena_Bytes := (others => 0);
    end record;
 
    type Slot_Array is array (Slot_Index) of HS_Data;
