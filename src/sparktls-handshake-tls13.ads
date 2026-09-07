@@ -179,7 +179,8 @@ is
 
    --  RFC 8446 Section 4.3.2: CertificateRequest with an empty context
    --  and the supported TLS 1.3 signature schemes.
-   procedure Build_Certificate_Request (Result : out Byte_Seq; Len : out N32)
+   procedure Build_Certificate_Request
+     (Arena_Storage : in out Arena_Bytes; Result : out Byte_Seq; Len : out N32)
    with
      Pre => Result'First = 0 and Result'Last in 31 .. 16#FFFF#,
      Post => Len <= N32 (Result'Length);

@@ -88,7 +88,7 @@ is
       Version      : in N32;
       Length       : in N32)
    with
-     Pre  => Pos + Record_Header_Size <= IO_Buffer_Capacity
+     Pre  => Pos <= IO_Buffer_Capacity - Record_Header_Size
              and then Version <= 65535 and then Length <= 65535,
      Post => Output.Write_Pos = Output.Write_Pos'Old
              and then Output.Read_Pos = Output.Read_Pos'Old

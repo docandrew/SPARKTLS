@@ -47,10 +47,10 @@ is
        and then S.Role = S.Role'Old
        and then S.Negotiated_Suite = S.Negotiated_Suite'Old
        and then Error_Has_Alert (S.State, Output_Pending (S), S.Last_Error)
-       and then (if Output_Pending (S) > 0 then S.Last_Error = Err)
-       and then
-         (if S.Output.Write_Pos'Old <= IO_Buffer_Capacity - 7
-          then Output_Pending (S) > 0 and then S.Last_Error = Err);
+       and then (if Output_Pending (S) > 0 then S.Last_Error = Err);
+   --  The former "alert always fits when there was room" conjunct is gone:
+   --  Abort_Flight's frame does not export Write_Pos <= Write_Pos'Old, so it
+   --  was unprovable, and no caller used it (server-tls13's Post never had it).
 
    procedure Send_Alert_And_Error (S : in out Session; Err : Error_Code; Result : out Action) is
       Dummy : N32;
@@ -716,8 +716,6 @@ is
    procedure Derive_Keys_Resumed_12 (S : in out Session; Cfg : in Ready_Config)
    with
      Pre  =>
-       S.Version = TLS_1_2
-       and then
          S.Negotiated_Suite
          in Suite_ECDHE_RSA_AES128_GCM_SHA256
           | Suite_ECDHE_RSA_AES256_GCM_SHA384
@@ -902,8 +900,22 @@ is
    procedure Build_Abbreviated_Server_Flight_12
      (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
    is
+      --  Not inlined for proof (analyzed on its own): restate the outer
+      --  precondition so the calls inside see the same facts.
       procedure Flight
         (S : in out Server_Session; Cfg : in Ready_Config; Result : out Action)
+      with
+        Pre =>
+          S.State = Wait_Client_Hello
+          and then S.Role = Role_Server
+          and then
+            S.Negotiated_Suite
+            in Suite_ECDHE_RSA_AES128_GCM_SHA256
+             | Suite_ECDHE_RSA_AES256_GCM_SHA384
+             | Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+             | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+             | Suite_ECDHE_RSA_CHACHA20_SHA256
+             | Suite_ECDHE_ECDSA_CHACHA20_SHA256
       is
          use Key_Schedule_12;
          use type SPARKTLS.Tickets_12.Bytes_4;

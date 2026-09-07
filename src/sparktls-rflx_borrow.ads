@@ -74,7 +74,7 @@ package SPARKTLS.RFLX_Borrow with SPARK_Mode is
    with
      Pre  => Length > 0
              and then First >= Source'First
-             and then First + Length - 1 <= Source'Last,
+             and then Length - 1 <= Source'Last - First,
      Post => P /= null and then P'First = 1 and then P'Last = RBT.Index (Length);
 
    --  True iff the fabricated fat-pointer layout matches the compiler's. The

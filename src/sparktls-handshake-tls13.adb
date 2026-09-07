@@ -416,8 +416,13 @@ is
       Suite := RFLX_Suite (Negotiated);
 
       declare
-         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. HRR_Buf_Len => 0);
+         --  Inline scratch (no heap): the HRR body is at most HRR_Buf_Len bytes;
+         --  Borrow's Post pins the bounds, Discard returns the view.
+         Scratch : aliased RBT.Bytes (1 .. HRR_Buf_Len) := (others => 0);
+         Holder  : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
+         Buf     : RBT.Bytes_Ptr;
       begin
+         SPARKTLS.RFLX_Borrow.Borrow (Scratch, Scratch'First, Scratch'Last, Holder, Buf);
          Initialize (Ctx, Buf);
          Set_Legacy_Version (Ctx, RFLX.TLS_Common.TLS_1_2);
          Set_Random (Ctx, To_RFLX (Byte_Seq (HRR_Sentinel)));
@@ -476,7 +481,7 @@ is
          Result (2) := 0;
          Result (3) := Byte (Body_Len);
          Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
       end;
       Len := 4 + Body_Len;
    end Build_HRR_Message;
@@ -747,7 +752,8 @@ is
       end;
    end Build_Encrypted_Extensions;
 
-   procedure Build_Certificate_Request (Result : out Byte_Seq; Len : out N32) is
+   procedure Build_Certificate_Request
+     (Arena_Storage : in out Arena_Bytes; Result : out Byte_Seq; Len : out N32) is
       use RFLX.TLS_Handshake.Certificate_Request;
       use RFLX.Tls_Extensiontype_Values;
       use type RBT.Bytes;
@@ -790,8 +796,11 @@ is
       end if;
 
       declare
-         Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+         Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
+         Buf    : RBT.Bytes_Ptr;
       begin
+         SPARKTLS.RFLX_Borrow.Borrow
+           (Arena_Storage, Arena_Storage'First, Arena_Storage'Last, Holder, Buf);
          Initialize (Ctx, Buf);
 
          --  Empty certificate_request_context
@@ -808,27 +817,18 @@ is
             Switch_To_Extensions (Ctx, Ext_Seq_Ctx);
 
             --  Build signature_algorithms extension
+            --  The single signature_algorithms extension, built in place inside
+            --  the sequence (Switch/Set/Update) as Build_Encrypted_Extensions does:
+            --  no separate element buffer, no copy.
             declare
-               E_Buf : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (Ext_Len) => 0);
                E_Ctx : RFLX.TLS_Handshake.CR_Extension.Context;
             begin
-               RFLX.TLS_Handshake.CR_Extension.Initialize (E_Ctx, E_Buf);
+               RFLX.TLS_Handshake.CR_Extensions.Switch (Ext_Seq_Ctx, E_Ctx);
                RFLX.TLS_Handshake.CR_Extension.Set_Tag (E_Ctx, Signature_Algorithms);
                RFLX.TLS_Handshake.CR_Extension.Set_Data_Length
                  (E_Ctx, RFLX.TLS_Handshake.Data_Length (Sig_Algo_Data'Length));
                RFLX.TLS_Handshake.CR_Extension.Set_Data (E_Ctx, Sig_Algo_Data);
-               declare
-                  use type RFLX.RFLX_Builtin_Types.Bit_Length;
-               begin
-                  pragma Assert (RFLX.TLS_Handshake.CR_Extension.Size (E_Ctx) > 0);
-                  if RFLX.TLS_Handshake.CR_Extensions.Available_Space (Ext_Seq_Ctx)
-                    >= RFLX.TLS_Handshake.CR_Extension.Size (E_Ctx)
-                  then
-                     RFLX.TLS_Handshake.CR_Extensions.Append_Element (Ext_Seq_Ctx, E_Ctx);
-                  end if;
-               end;
-               RFLX.TLS_Handshake.CR_Extension.Take_Buffer (E_Ctx, E_Buf);
-               RFLX_Free (E_Buf);
+               RFLX.TLS_Handshake.CR_Extensions.Update (Ext_Seq_Ctx, E_Ctx);
             end;
 
             Update_Extensions (Ctx, Ext_Seq_Ctx);
@@ -842,7 +842,7 @@ is
          Result (2) := Byte ((Body_Len / 256) mod 256);
          Result (3) := Byte (Body_Len mod 256);
          Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
       end;
 
       Len := Msg_Len;
@@ -856,9 +856,27 @@ is
       package C13         renames RFLX.TLS_Handshake.Certificate;
       package C13_Entries renames RFLX.TLS_Handshake.Certificate_Entries;
       package C13_Entry   renames RFLX.TLS_Handshake.Certificate_Entry;
+      use type RBT.Bit_Length;
 
-      --  certificate_request_context(1)=0 + certificate_list_length(3) + entries.
-      --  Each entry: cert_data_length(3) + cert_data + extensions_length(2)=0.
+      --  Wire size of one CertificateEntry: 3-byte length + DER + 2-byte
+      --  (empty) extensions_length.
+      Entry_Overhead : constant N32 := 5;
+
+      --  Ghost tally: wire bytes of the intermediates From .. Int_Count - 1.
+      --  Both loops below are invariant-linked to it, so the space the
+      --  sequence has left is always exactly what the remaining entries need.
+      function Tail_Len (Id : Identity; From : Natural) return N32
+      is (if From >= Id.Int_Count then 0
+          else (if Id.Ints (From).Present
+                then Entry_Overhead + N32 (Id.Ints (From).DER_Len) else 0)
+               + Tail_Len (Id, From + 1))
+      with
+        Ghost,
+        Pre  => From <= Id.Int_Count and then Id.Int_Count <= Max_Pool_Size,
+        Post => Tail_Len'Result
+                <= N32 (Id.Int_Count - From) * (Entry_Overhead + N32 (Max_Cert_DER)),
+        Subprogram_Variant => (Decreases => Id.Int_Count - From);
+
       List_Len : N32;
    begin
       Result := (others => 0);
@@ -868,15 +886,23 @@ is
          return;
       end if;
 
-      List_Len := 3 + Id.NaCl_Cert_Len + 2;
+      --  Leaf first, then every present intermediate.
+      List_Len := Entry_Overhead + Id.NaCl_Cert_Len;
       for I in 0 .. Id.Int_Count - 1 loop
          pragma
            Loop_Invariant
-             (List_Len <= 3 + Id.NaCl_Cert_Len + 2 + N32 (I) * (3 + N32 (Max_Cert_DER) + 2));
+             (List_Len <= Entry_Overhead + Id.NaCl_Cert_Len
+                          + N32 (I) * (Entry_Overhead + N32 (Max_Cert_DER)));
+         pragma Loop_Invariant (List_Len >= Entry_Overhead + Id.NaCl_Cert_Len);
+         pragma
+           Loop_Invariant
+             (List_Len = Entry_Overhead + Id.NaCl_Cert_Len
+                         + (Tail_Len (Id, 0) - Tail_Len (Id, I)));
          if Id.Ints (I).Present then
-            List_Len := List_Len + 3 + N32 (Id.Ints (I).DER_Len) + 2;
+            List_Len := List_Len + Entry_Overhead + N32 (Id.Ints (I).DER_Len);
          end if;
       end loop;
+      pragma Assert (List_Len = Entry_Overhead + Id.NaCl_Cert_Len + Tail_Len (Id, 0));
 
       declare
          Body_Len : constant N32 := 1 + 3 + List_Len;
@@ -886,14 +912,29 @@ is
          Ctx      : C13.Context;
          Entries  : C13_Entries.Context;
 
-         --  Append one CertificateEntry (cert_data, empty extensions) to the
-         --  Certificate_List sequence.
+         --  One entry in place inside the sequence. Analyzed on its own (it
+         --  has a contract), so the Post carries the sequence frame and the
+         --  exact space consumed back to the caller.
          procedure Put_Entry (DER : in Byte_Seq; DER_Len : in N32)
          with
            Pre =>
              DER'First = 0
              and then DER_Len in 1 .. N32 (Max_Cert_DER)
              and then DER'Last >= DER_Len - 1
+             and then C13_Entries.Has_Buffer (Entries)
+             and then C13_Entries.Valid (Entries)
+             and then C13_Entries.Available_Space (Entries)
+                      >= RBT.Bit_Length (Entry_Overhead + DER_Len) * 8,
+           Post =>
+             C13_Entries.Has_Buffer (Entries)
+             and C13_Entries.Valid (Entries)
+             and C13_Entries.Available_Space (Entries)
+                 = C13_Entries.Available_Space (Entries)'Old
+                   - RBT.Bit_Length (Entry_Overhead + DER_Len) * 8
+             and Entries.Buffer_First = Entries.Buffer_First'Old
+             and Entries.Buffer_Last = Entries.Buffer_Last'Old
+             and Entries.First = Entries.First'Old
+             and Entries.Last = Entries.Last'Old
          is
             E : C13_Entry.Context;
          begin
@@ -905,7 +946,9 @@ is
             C13_Entries.Update (Entries, E);
          end Put_Entry;
       begin
-         if Msg_Len > N32 (Result'Length) then
+         --  The body must also fit the arena the message is built in: a chain
+         --  larger than that is refused here (Len = 0), never written past it.
+         if Msg_Len > N32 (Result'Length) or else Body_Len > RFLX_Arena_Size then
             return;
          end if;
 
@@ -916,11 +959,32 @@ is
          C13.Set_Certificate_Request_Context_Empty (Ctx);
          C13.Set_Certificate_List_Length
            (Ctx, RFLX.TLS_Handshake.Certificate_List_Length (List_Len));
+         --  Two steps for the list's room (a time-limit VC when left whole):
+         --  the guard above bounds the list by the arena, and the arena's tail
+         --  past the 4-byte prefix is exactly that much.
+         pragma Assert (List_Len <= RFLX_Arena_Size - 4);
+         pragma
+           Assert
+             (C13.Available_Space (Ctx, C13.F_Certificate_List)
+              >= RBT.Bit_Length (RFLX_Arena_Size - 4) * 8);
          C13.Switch_To_Certificate_List (Ctx, Entries);
+         --  The fresh sequence's free space is the whole list: the tally anchor.
+         pragma
+           Assert (C13_Entries.Available_Space (Entries) = RBT.Bit_Length (List_Len) * 8);
 
-         --  Leaf, then intermediates in pool order.
          Put_Entry (Id.NaCl_Cert_DER, Id.NaCl_Cert_Len);
+
          for I in 0 .. Id.Int_Count - 1 loop
+            pragma Loop_Invariant (C13_Entries.Has_Buffer (Entries));
+            pragma Loop_Invariant (C13_Entries.Valid (Entries));
+            pragma Loop_Invariant (Entries.Buffer_First = Ctx.Buffer_First);
+            pragma Loop_Invariant (Entries.Buffer_Last = Ctx.Buffer_Last);
+            pragma Loop_Invariant (Entries.First = C13.Field_First (Ctx, C13.F_Certificate_List));
+            pragma Loop_Invariant (Entries.Last = C13.Field_Last (Ctx, C13.F_Certificate_List));
+            pragma
+              Loop_Invariant
+                (C13_Entries.Available_Space (Entries)
+                 = RBT.Bit_Length (Tail_Len (Id, I)) * 8);
             if Id.Ints (I).Present and then Id.Ints (I).DER_Len > 0 then
                declare
                   Int_DER : Byte_Seq (0 .. N32 (Id.Ints (I).DER_Len) - 1);
@@ -936,8 +1000,6 @@ is
          C13.Update_Certificate_List (Ctx, Entries);
          C13.Take_Buffer (Ctx, Buf);
 
-         --  Handshake header (type + 24-bit length) by hand, as the other
-         --  RecordFlux builders do (task 147: outer TLS_Handshake header).
          Result (0) := HS_Msg_Wire (HT_Certificate);
          Result (1) := Byte (Body_Len / 65536);
          Result (2) := Byte ((Body_Len / 256) mod 256);

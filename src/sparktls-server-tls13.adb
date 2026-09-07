@@ -727,6 +727,11 @@ is
       HRR_Buf : Byte_Seq (0 .. Handshake.TLS13.Max_Server_Hello - 1);
       Msg_Len : N32;
       Rec_Out : N32;
+      --  Ghost snapshot of the entry state: the Post `S.State = S.State'Old`
+      --  is re-established after every whole-S call below, so each step is a
+      --  small VC instead of one over the whole Session 'Old copy (a
+      --  time-and-memory-limit VC when left whole).
+      St0     : constant Connection_State := S.State with Ghost;
    begin
       Rec_Out := 0;
       Built := False;
@@ -754,6 +759,7 @@ is
       --  Atomic flight assembly: HRR + CCS into scratch, commit only if
       --  the whole flight fits.
       Begin_Flight (S);
+      pragma Assert (S.State = St0);
       declare
          CCS_Out : N32;
       begin
@@ -761,6 +767,7 @@ is
            (Fragment => HRR_Buf (0 .. Msg_Len - 1), Output => S.Output, Bytes_Out => Rec_Out);
          if Rec_Out = 0 then
             Abort_Flight (S);
+            pragma Assert (S.State = St0);
             return;
          end if;
 
@@ -768,10 +775,12 @@ is
          Records.Build_CCS_Record (S.Output, CCS_Out);
          if CCS_Out = 0 then
             Abort_Flight (S);
+            pragma Assert (S.State = St0);
             return;
          end if;
 
          End_Flight (S, Failed => False);
+         pragma Assert (S.State = St0);
          S.HC.Sent_HRR_CCS := True;
          Built := True;
       end;
@@ -1440,7 +1449,7 @@ is
                CR_Len  : N32;
                Emitted : Boolean;
             begin
-               Handshake.TLS13.Build_Certificate_Request (CR_Buf, CR_Len);
+               Handshake.TLS13.Build_Certificate_Request (D.Arena_Storage, CR_Buf, CR_Len);
                if CR_Len > 0 then
                   pragma Assert (CR_Len <= Max_Fragment);
                   Append_And_Encrypt_Server_HS
@@ -1506,11 +1515,17 @@ is
       Cfg    : in Ready_Config;
       Result : out Action)
    is
+      --  Not inlined for proof (analyzed on its own): restate the outer
+      --  precondition so the calls inside see the same facts.
       procedure Flight
         (S      : in out Session;
          D      : in out SPARKTLS.HS_Pool.HS_Data;
          Cfg    : in Ready_Config;
          Result : out Action)
+      with
+        Pre =>
+          S.Role = Role_Server
+          and then S.State in Wait_Client_Hello | Wait_Client_Hello_Retry
       is
          SH_Buf             : Byte_Seq (0 .. Handshake.TLS13.Max_Server_Hello - 1);
          SH_Len             : N32;

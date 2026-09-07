@@ -34,6 +34,7 @@ is
      (Ticket     : in Session_Ticket;
       Get_Time   : in Get_Time_Fn;
       HC         : in out Handshake_Context;
+      Arena_Storage : in out Arena_Bytes;
       Result     : out Byte_Seq;
       Len        : out N32;
       Retry_Mode : in Boolean := False)

@@ -1488,8 +1488,13 @@ is
    procedure Build_Client_Flight_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
+      --  Not inlined for proof (analyzed on its own): restate the outer
+      --  contract so the calls inside see the same facts and Result flows out.
       procedure Flight
         (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+      with
+        Pre  => S.Negotiated_Suite in TLS12_Suite,
+        Post => Result in OK | Has_Output | Error_Alert
       is
       begin
          Append_Client_Certificate_12 (S, D, Result);
@@ -1541,12 +1546,14 @@ is
    with
      Pre  =>
        Msg_Len <= Max_HS_Msg - 4
+       --  Non-null Frag first: it bounds Frag'First into N32 for the
+       --  subtraction below (a null Frag may carry base-type bounds).
+       and then Frag'First <= Frag'Last
        --  256: transcript-append bound (see Handle_CertReq_12).
        and then Frag'Last < N32'Last - 256
        and then Frag'First <= N32'Last - 4
        and then Msg_Len <= N32'Last - Frag'First - 4
        and then Frag'First + 3 + Msg_Len <= Frag'Last
-       and then Frag'First <= Frag'Last
        and then Frag'Last - Frag'First < Transcript_Capacity
        and then S.Negotiated_Suite in TLS12_Suite,
      Post =>
@@ -3061,8 +3068,12 @@ is
    procedure Send_Abbreviated_Client_Flight_12
      (S : in out Session; Result : out Action)
    is
+      --  Analyzed on its own (it has a contract): the outer Post's state
+      --  frame is proved here, on the flight body, instead of over the
+      --  whole inlined procedure (a time-limit VC).
       procedure Flight
         (S : in out Session; Result : out Action)
+      with Post => (if Result = OK then S.State = S.State'Old)
       is
          use Records.TLS12;
          use Key_Schedule_12;

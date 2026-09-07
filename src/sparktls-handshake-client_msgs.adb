@@ -906,6 +906,7 @@ is
      (Ticket     : in Session_Ticket;
       Get_Time   : in Get_Time_Fn;
       HC         : in out Handshake_Context;
+      Arena_Storage : in out Arena_Bytes;
       Result     : out Byte_Seq;
       Len        : out N32;
       Retry_Mode : in Boolean := False)
@@ -1059,6 +1060,7 @@ is
       CH_Msg_Len    : constant N32 := 4 + CH_Body_Len;
 
       Buf         : RBT.Bytes_Ptr := null;
+      Holder      : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx         : Context;
       PK_Bytes    : Byte_Seq (0 .. 31);   --  X25519 public key
       P256_PK_Enc : Byte_Seq (0 .. 64);   --  P-256 public key (uncompressed)
@@ -1098,7 +1100,10 @@ is
       --  takes exactly that prefix, so the oversize is pure scratch, freed
       --  at Take_Buffer. (Sizing this exactly to CH_Body_Len is what forced
       --  the intractable accounting chain we removed.)
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Max_HS_Msg) => 0);
+      --  The body is built in the caller's inline arena (no heap); Borrow's
+      --  Post pins Buf'First/'Last to the arena bounds.
+      SPARKTLS.RFLX_Borrow.Borrow
+        (Arena_Storage, Arena_Storage'First, Arena_Storage'Last, Holder, Buf);
       Initialize (Ctx, Buf);
 
       --  Size-accounting chain, anchored at Initialize. Each step states
@@ -1458,7 +1463,7 @@ is
       Take_Buffer (Ctx, Buf);
 
       if CH_Msg_Len > N32 (Result'Length) then
-         RFLX_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          return;
       end if;
 
@@ -1468,7 +1473,7 @@ is
       Result (3) := Byte (CH_Body_Len mod 256);
       Result (4 .. 4 + CH_Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (CH_Body_Len)));
 
-      RFLX_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       Len := CH_Msg_Len;
 
       --  0-RTT (RFC 8446 4.2.10) intentionally not offered  see

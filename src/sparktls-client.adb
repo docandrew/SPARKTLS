@@ -198,14 +198,16 @@ is
           S.State = Wait_Server_Hello
           and then S.HC.HRR_Cookie_Len <= N32 (S.HC.HRR_Cookie'Length));
 
-   procedure Initialize_Client_Handshake (S : in out Client_Session; OK : out Boolean)
+   procedure Initialize_Client_Handshake
+     (S : in out Client_Session; D : in out SPARKTLS.HS_Pool.HS_Data; OK : out Boolean)
    is
       CH_Buf  : Byte_Seq (0 .. Handshake.Client_Msgs.Max_Client_Hello - 1);
       CH_Len  : N32;
       Rec_Out : N32;
    begin
       OK := False;
-      Handshake.Client_Msgs.Build_Client_Hello (S.Ticket, S.Get_Time, S.HC, CH_Buf, CH_Len);
+      Handshake.Client_Msgs.Build_Client_Hello
+        (S.Ticket, S.Get_Time, S.HC, D.Arena_Storage, CH_Buf, CH_Len);
 
       if CH_Len = 0 then
          Set_State (S, Error_State);
@@ -330,7 +332,7 @@ is
                declare
                   Acquired_Slot : constant Slot_Index := S.Slot;
                begin
-                  Initialize_Client_Handshake (S, OK);
+                  Initialize_Client_Handshake (S, SPARKTLS.HS_Pool.Slots (Acquired_Slot), OK);
 
                   if not OK then
                      SPARKTLS.HS_Pool.Release (Acquired_Slot);
@@ -760,7 +762,8 @@ is
                Ignored_Rec_Out : N32;
             begin
                Handshake.Client_Msgs.Build_Client_Hello
-                 (S.Ticket, S.Get_Time, S.HC, CH2_Buf, CH2_Len, Retry_Mode => True);
+                 (S.Ticket, S.Get_Time, S.HC, D.Arena_Storage, CH2_Buf, CH2_Len,
+                  Retry_Mode => True);
                if CH2_Len = 0 or else CH2_Len > N32 (CH2_Buf'Length) then
                   S.Last_Error := Internal_Error;
                   S.State := Error_State;
