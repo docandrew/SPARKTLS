@@ -1,6 +1,5 @@
 with SPARKTLS.HS_Pool;
 with Interfaces;           use Interfaces;
-with Ada.Unchecked_Deallocation;
 with SPARKNaCl.Cryptobox;
 with SPARKNaCl.Scalar;
 with SPARKTLSCrypto.Hashing.SHA256;
@@ -412,8 +411,6 @@ is
       Sig_OK  : Boolean;
 
       package SKE renames RFLX.TLS_Handshake.TLS_1_2_Server_Key_Exchange_ECDHE;
-      procedure SKE_Free is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
 
       --  Our negotiated group / signature scheme as the RecordFlux enum the
       --  setters take. Codepoints match the wire (see Maybe_Sig_Scheme).
@@ -513,6 +510,10 @@ is
             Body_Len : constant N32 := Params_Len + 2 + 2 + Sig_Len;  --  params + algo + len + sig
             Total    : constant N32 := 4 + Body_Len;
             Pt_Len   : constant N32 := Params_Len - 4;  --  curve_type(1)+curve(2)+len(1) prefix
+            --  Inline scratch (no heap): Total <= Max_Server_Key_Exchange is
+            --  checked just below, so the body fits; Borrow pins the bounds.
+            Scratch  : aliased RBT.Bytes (1 .. RBT.Index (Max_Server_Key_Exchange)) := (others => 0);
+            Holder   : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
             Buf      : RBT.Bytes_Ptr;
             Ctx      : SKE.Context;
          begin
@@ -528,7 +529,7 @@ is
             --  then the 2-byte SignatureScheme (= the legacy hash||sig bytes)
             --  and the signature. The signature was computed above over
             --  client_random || server_random || ECParams.
-            Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+            SPARKTLS.RFLX_Borrow.Borrow (Scratch, Scratch'First, Scratch'Last, Holder, Buf);
             SKE.Initialize (Ctx, Buf);
             SKE.Set_Curve_Type (Ctx, RFLX.Tls_Parameters.Named_Curve);
             SKE.Set_Named_Curve (Ctx, RFLX_Group (HC.KE.Curve));
@@ -545,7 +546,7 @@ is
             Put24 (Result, 1, Body_Len);
             Result (4 .. 4 + Body_Len - 1) :=
               To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
-            SKE_Free (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             Len := Total;
          end;
       end;
@@ -644,8 +645,6 @@ is
       OK   : out Boolean)
    is
       package SKE renames RFLX.TLS_Handshake.TLS_1_2_Server_Key_Exchange_ECDHE;
-      procedure RFLX_Free_Local is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr := null;
       Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx : SKE.Context;
@@ -830,8 +829,6 @@ is
      (HC : in out Engaged_Context; Data : in Byte_Seq; OK : out Boolean)
    is
       package CKE renames RFLX.TLS_Handshake.TLS_1_2_Client_Key_Exchange_ECDHE;
-      procedure RFLX_Free_Local is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr;
       Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx : CKE.Context;
@@ -1611,11 +1608,12 @@ is
       Len           : out N32)
    is
       package NST renames RFLX.TLS_Handshake.TLS_1_2_New_Session_Ticket;
-      procedure RFLX_Free_Local is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Ticket_Len : constant N32 := Ticket'Last + 1;
       Body_Len   : constant N32 := 4 + 2 + Ticket_Len;
       Total_Len  : constant N32 := 4 + Body_Len;
+      --  Inline scratch (no heap), sized by the ticket bound in the Pre.
+      Scratch    : aliased RBT.Bytes (1 .. RBT.Index (6 + Max_TLS12_Ticket_Len)) := (others => 0);
+      Holder     : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Buf        : RBT.Bytes_Ptr;
       Ctx        : NST.Context;
    begin
@@ -1627,7 +1625,7 @@ is
       end if;
 
       --  Build the body via RFLX.
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
+      SPARKTLS.RFLX_Borrow.Borrow (Scratch, Scratch'First, Scratch'Last, Holder, Buf);
       NST.Initialize (Ctx, Buf);
       NST.Set_Ticket_Lifetime_Hint (Ctx, RFLX.TLS_Handshake.Ticket_Lifetime (Lifetime_Hint));
       NST.Set_Ticket_Length (Ctx, RFLX.TLS_Handshake.TLS_1_2_NST_Ticket_Length (Ticket_Len));
@@ -1645,7 +1643,7 @@ is
       Result (3) := Byte (Body_Len mod 256);
       Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
 
-      RFLX_Free_Local (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
       Len := Total_Len;
    end Build_New_Session_Ticket_12;
 
@@ -1656,8 +1654,6 @@ is
       OK            : out Boolean)
    is
       package NST renames RFLX.TLS_Handshake.TLS_1_2_New_Session_Ticket;
-      procedure RFLX_Free_Local is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf : RBT.Bytes_Ptr;
       Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx : NST.Context;

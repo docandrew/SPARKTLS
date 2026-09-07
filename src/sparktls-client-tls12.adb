@@ -1,5 +1,4 @@
 with SPARKTLS.HS_Pool;
-with Ada.Unchecked_Deallocation;
 with Interfaces;                    use Interfaces;
 with SPARKNaCl;                     use SPARKNaCl;
 with SPARKTLSCrypto.Hashing.SHA256; use SPARKTLSCrypto.Hashing.SHA256;
@@ -389,8 +388,6 @@ is
       package C12 renames RFLX.TLS_Handshake.TLS_1_2_Certificate;
       package C12_Entries renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Entries;
       package C12_Entry renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Entry;
-      procedure RFLX_Free_Local is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
       Buf                  : RBT.Bytes_Ptr;
       Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Ctx                  : C12.Context;

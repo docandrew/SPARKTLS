@@ -1,5 +1,4 @@
 with SPARKTLS.HS_Pool;
-with Ada.Unchecked_Deallocation;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with SPARKTLS.RFLX_Borrow;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate;
@@ -15,16 +14,6 @@ is
    use type RBT.Index;
    use type RBT.Bytes_Ptr;
    use type RBT.Bit_Length;
-
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
-   with Post => Buf = null;
-
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr) with SPARK_Mode => Off is
-      procedure Dealloc is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-   begin
-      Dealloc (Buf);
-   end RFLX_Free;
 
    ------------------------------------------------------------------
    --  RFLX-to-X.509 copy helpers shared by TLS 1.2 and TLS 1.3

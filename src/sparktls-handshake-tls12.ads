@@ -436,7 +436,7 @@ is
      Pre =>
        Result'First = 0
        and then Ticket'First = 0
-       and then Ticket'Last in 0 .. 65534
+       and then Ticket'Last in 0 .. Max_TLS12_Ticket_Len - 1
        and then Result'Last >= 10 + Ticket'Last,
      Post => Len > 0 and then Result'Last >= Len - 1;
 

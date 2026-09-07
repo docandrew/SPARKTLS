@@ -1,4 +1,3 @@
-with Ada.Unchecked_Deallocation;
 with Interfaces;           use Interfaces;
 with SPARKTLSCrypto.Hashing.SHA256;
 with SPARKNaCl.Hashing.SHA384;
@@ -92,20 +91,7 @@ is
       16#33#,
       16#9C#);
 
-   --  Deallocate an RFLX buffer.
-   --  Body is SPARK_Mode Off (Unchecked_Deallocation of 'access all').
-   --  Spec is On so SPARK can verify call sites.
    use type RBT.Bytes_Ptr;
-
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
-   with Post => Buf = null;
-
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr) with SPARK_Mode => Off is
-      procedure Dealloc is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-   begin
-      Dealloc (Buf);
-   end RFLX_Free;
 
    subtype P384_Public_Key_Seq is Byte_Seq (0 .. 96);
 
@@ -2009,17 +1995,21 @@ is
       Body_Len : constant N32 := N32 (Data'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
       Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
+      --  Extension-body scratch, inline (no heap); its own bounds holder.
+      Scratch_Storage : aliased RBT.Bytes (1 .. Body_Scratch_Len) := (others => 0);
+      Holder2  : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Scratch  : RBT.Bytes_Ptr;
       Ctx      : Context;
    begin
       SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First + 4, Body_Len, Holder, Buf);
-      Scratch := new RBT.Bytes'(1 .. Body_Scratch_Len => 0);
+      SPARKTLS.RFLX_Borrow.Borrow
+        (Scratch_Storage, Scratch_Storage'First, Scratch_Storage'Last, Holder2, Scratch);
       Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       Verify_Message (Ctx);
       Check_HRR (Ctx, Scratch, HC, Negotiated, Version, OK, Err);
       Take_Buffer (Ctx, Buf);
       SPARKTLS.RFLX_Borrow.Discard (Buf);
-      RFLX_Free (Scratch);
+      SPARKTLS.RFLX_Borrow.Discard (Scratch);
    end Parse_HRR_Message;
 
    ----------------------------------------------------------------------------
@@ -2656,17 +2646,21 @@ is
       Body_Len : constant N32 := N32 (Data'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
       Holder : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
+      --  Extension-body scratch, inline (no heap); its own bounds holder.
+      Scratch_Storage : aliased RBT.Bytes (1 .. Body_Scratch_Len) := (others => 0);
+      Holder2  : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Scratch  : RBT.Bytes_Ptr;
       Ctx      : Context;
    begin
       SPARKTLS.RFLX_Borrow.Borrow_Read (Data, Data'First + 4, Body_Len, Holder, Buf);
-      Scratch := new RBT.Bytes'(1 .. Body_Scratch_Len => 0);
+      SPARKTLS.RFLX_Borrow.Borrow
+        (Scratch_Storage, Scratch_Storage'First, Scratch_Storage'Last, Holder2, Scratch);
       Initialize (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       Verify_Message (Ctx);
       Check_SH (Ctx, Data, Scratch, HC, ALPN, Negotiated, Version, OK, Err);
       Take_Buffer (Ctx, Buf);
       SPARKTLS.RFLX_Borrow.Discard (Buf);
-      RFLX_Free (Scratch);
+      SPARKTLS.RFLX_Borrow.Discard (Scratch);
    end Parse_SH_Message;
 
    procedure Parse_Server_Hello

@@ -1,4 +1,3 @@
-with Ada.Unchecked_Deallocation;
 with Interfaces;           use Interfaces;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with SPARKTLS.RFLX_Borrow;
@@ -21,9 +20,6 @@ is
    use type RFLX.Tls_Parameters.TLS_Supported_Groups_Enum;
    use type RFLX.TLS_Handshake.Data_Length;
 
-   --  Deallocate an RFLX buffer.
-   --  Body is SPARK_Mode Off (Unchecked_Deallocation of 'access all').
-   --  Spec is On so SPARK can verify call sites.
    use type RBT.Bytes_Ptr;
 
    function Compression_Methods_OK (Data : Byte_Seq; Is_TLS13 : Boolean) return Boolean
@@ -95,16 +91,6 @@ is
       end loop;
       return Has_Null;
    end Compression_Methods_OK;
-
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr)
-   with Post => Buf = null;
-
-   procedure RFLX_Free (Buf : in out RBT.Bytes_Ptr) with SPARK_Mode => Off is
-      procedure Dealloc is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-   begin
-      Dealloc (Buf);
-   end RFLX_Free;
 
    ----------------------------------------------------------------------------
    --  Per-extension helpers extracted from Parse_Client_Hello
@@ -324,44 +310,69 @@ is
       HC      : in out Handshake_Context;
       OK      : out Boolean)
    is
-      SA_Buf   : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
-      Pos      : RBT.Index := 3;
-      List_Len : N32;
-   begin
-      OK := True;
-      RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, SA_Buf.all);
-      List_Len := N32 (SA_Buf (1)) * 256 + N32 (SA_Buf (2));
-      if List_Len /= DLen - 2 or else List_Len mod 2 /= 0 or else List_Len = 0 then
-         RFLX_Free (SA_Buf);
-         OK := False;
-         return;
-      end if;
-      declare
-         Iter_Count : N32 := 0;
-         Cap        : constant N32 := HC.Cfg.DoS_Caps.Max_Sig_Algs_Wire;
+      use type RBT.Length;
+      use type RBT.Index;
+      --  The extension body is scanned in place through the generated
+      --  callback getter (no copy, no heap). Scan writes only these locals;
+      --  the results are folded into HC afterwards, so HC's frame is a
+      --  plain sequence of assignments.
+      Cap      : constant N32 := HC.Cfg.DoS_Caps.Max_Sig_Algs_Wire;
+      Found    : Sig_Algo_List := (others => Scheme_None);
+      N_Found  : Natural range 0 .. Max_Sig_Algos := 0;
+      Shape_OK : Boolean := False;
+
+      procedure Scan (Data : RBT.Bytes);
+
+      procedure Scan (Data : RBT.Bytes) is
+         List_Len : N32;
+         Pairs    : N32;
       begin
-         while Pos + 1 <= RBT.Index (DLen) and then Iter_Count < Cap loop
+         Shape_OK := False;
+         if Data'Length /= RBT.Length (DLen) or else Data'Length < 2 then
+            return;
+         end if;
+         List_Len := N32 (Data (Data'First)) * 256 + N32 (Data (Data'First + 1));
+         if List_Len /= DLen - 2 or else List_Len mod 2 /= 0 or else List_Len = 0 then
+            return;
+         end if;
+         Shape_OK := True;
+         Pairs := List_Len / 2;
+         --  Iteration cap: entries past DoS_Caps.Max_Sig_Algs_Wire are
+         --  silently dropped (the cap is well above any legitimate client;
+         --  default 64 vs typical 6-15).
+         for I in 0 .. N32'Min (Pairs, Cap) - 1 loop
+            pragma Loop_Invariant (N_Found <= Max_Sig_Algos);
             declare
+               P0   : constant RBT.Index := Data'First + RBT.Index (2 + 2 * I);
                Algo : constant Maybe_Sig_Scheme :=
                  Scheme_From_Wire
-                   (Unsigned_16 (SA_Buf (Pos)) * 256 + Unsigned_16 (SA_Buf (Pos + 1)));
+                   (Unsigned_16 (Data (P0)) * 256 + Unsigned_16 (Data (P0 + 1)));
             begin
                --  Unknown or SHA-1 schemes map to Scheme_None and are
                --  dropped here; the stored list holds only schemes we
                --  can actually negotiate.
-               if Algo /= Scheme_None and then HC.Peer_Sig_Algo_Count < Max_Sig_Algos then
-                  HC.Peer_Sig_Algos (HC.Peer_Sig_Algo_Count) := Algo;
-                  HC.Peer_Sig_Algo_Count := HC.Peer_Sig_Algo_Count + 1;
+               if Algo /= Scheme_None and then N_Found < Max_Sig_Algos then
+                  Found (N_Found) := Algo;
+                  N_Found := N_Found + 1;
                end if;
             end;
-            Pos := Pos + 2;
-            Iter_Count := Iter_Count + 1;
          end loop;
-      end;
-      --  Iteration cap: any entries past DoS_Caps.Max_Sig_Algs_Wire
-      --  are silently dropped (the cap is well above any legitimate
-      --  client; default 64 vs typical 6-15).
-      RFLX_Free (SA_Buf);
+      end Scan;
+
+      procedure Get is new
+        RFLX.TLS_Handshake.CH_Extension_TLS.Generic_Get_Data (Process_Data => Scan);
+   begin
+      Get (Ext_Ctx);
+      OK := Shape_OK;
+      if Shape_OK then
+         for K in 0 .. N_Found - 1 loop
+            pragma Loop_Invariant (HC.Peer_Sig_Algo_Count <= Max_Sig_Algos);
+            if HC.Peer_Sig_Algo_Count < Max_Sig_Algos then
+               HC.Peer_Sig_Algos (HC.Peer_Sig_Algo_Count) := Found (K);
+               HC.Peer_Sig_Algo_Count := HC.Peer_Sig_Algo_Count + 1;
+            end if;
+         end loop;
+      end if;
    end Parse_Sig_Algs_Extension;
 
    --  Parse the supported_groups extension data: 2-byte list_len
@@ -388,39 +399,58 @@ is
       DLen    : in Wire_Small_Ext_Len;
       HC      : in out Handshake_Context)
    is
-      SG_Buf   : RBT.Bytes_Ptr := new RBT.Bytes'(1 .. RBT.Index (DLen) => 0);
-      List_Len : N32;
-      Pos      : N32;
-   begin
-      RFLX.TLS_Handshake.CH_Extension_TLS.Get_Data (Ext_Ctx, SG_Buf.all);
-      List_Len := N32 (SG_Buf (1)) * 256 + N32 (SG_Buf (2));
-      Pos := 3;
-      declare
-         Iter_Count : N32 := 0;
-         Cap        : constant N32 := HC.Cfg.DoS_Caps.Max_Supported_Groups;
+      use type RBT.Length;
+      use type RBT.Index;
+      --  In-place scan through the generated callback getter (no copy, no
+      --  heap); the results are folded into HC afterwards.
+      Cap    : constant N32 := HC.Cfg.DoS_Caps.Max_Supported_Groups;
+      X25519 : Boolean := False;
+      P256   : Boolean := False;
+      P384   : Boolean := False;
+
+      procedure Scan (Data : RBT.Bytes);
+
+      procedure Scan (Data : RBT.Bytes) is
+         List_Len : N32;
+         Pairs    : N32;
       begin
-         while Pos + 1 <= N32 (DLen) and then Pos < 3 + List_Len and then Iter_Count < Cap loop
-            pragma Loop_Invariant (Pos >= 3);
+         if Data'Length /= RBT.Length (DLen) or else Data'Length < 2 then
+            return;
+         end if;
+         List_Len := N32 (Data (Data'First)) * 256 + N32 (Data (Data'First + 1));
+         --  Pairs present in the body, then pairs the list declares, then the
+         --  DoS_Caps.Max_Supported_Groups cap; entries past it are dropped.
+         Pairs := N32'Min ((DLen - 2) / 2, (List_Len + 1) / 2);
+         for I in 0 .. N32'Min (Pairs, Cap) - 1 loop
             declare
+               P0  : constant RBT.Index := Data'First + RBT.Index (2 + 2 * I);
                Grp : constant Unsigned_16 :=
-                 Unsigned_16 (SG_Buf (RBT.Index (Pos))) * 256
-                 + Unsigned_16 (SG_Buf (RBT.Index (Pos + 1)));
+                 Unsigned_16 (Data (P0)) * 256 + Unsigned_16 (Data (P0 + 1));
             begin
                if Grp = 16#001D# then
-                  HC.Client_Supports_X25519 := True;
+                  X25519 := True;
                elsif Grp = 16#0017# then
-                  HC.Client_Supports_P256 := True;
+                  P256 := True;
                elsif Grp = 16#0018# then
-                  HC.Client_Supports_P384 := True;
+                  P384 := True;
                end if;
             end;
-            Pos := Pos + 2;
-            Iter_Count := Iter_Count + 1;
          end loop;
-      end;
-      --  DoS_Caps.Max_Supported_Groups bounds the walk; entries past
-      --  the cap are silently dropped.
-      RFLX_Free (SG_Buf);
+      end Scan;
+
+      procedure Get is new
+        RFLX.TLS_Handshake.CH_Extension_TLS.Generic_Get_Data (Process_Data => Scan);
+   begin
+      Get (Ext_Ctx);
+      if X25519 then
+         HC.Client_Supports_X25519 := True;
+      end if;
+      if P256 then
+         HC.Client_Supports_P256 := True;
+      end if;
+      if P384 then
+         HC.Client_Supports_P384 := True;
+      end if;
    end Parse_Supported_Groups_Extension;
 
    --  Parse the supported_versions extension data (CH variant):

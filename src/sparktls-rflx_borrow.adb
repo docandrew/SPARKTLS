@@ -1,6 +1,5 @@
 with System; use type System.Address;
 with Ada.Unchecked_Conversion;
-with Ada.Unchecked_Deallocation;
 
 package body SPARKTLS.RFLX_Borrow with SPARK_Mode => Off is
 
@@ -53,8 +52,9 @@ package body SPARKTLS.RFLX_Borrow with SPARK_Mode => Off is
 
    ----------------------------------------------------------------------------
    function Layout_Verified return Boolean is
-      procedure Free is new Ada.Unchecked_Deallocation (RBT.Bytes, RBT.Bytes_Ptr);
-      H  : RBT.Bytes_Ptr := new RBT.Bytes'(3 .. 9 => 0);
+      --  A stack object viewed through an ordinary fat pointer: no heap, no free.
+      X  : aliased RBT.Bytes (3 .. 9) := (others => 0);
+      H  : constant RBT.Bytes_Ptr := X'Unrestricted_Access;
       F  : constant Fat := To_Fat (H);
       B  : Bounds_Holder with Import, Address => F.P_BOUNDS;
       OK : constant Boolean :=
@@ -62,7 +62,6 @@ package body SPARKTLS.RFLX_Borrow with SPARK_Mode => Off is
         and then F.P_ARRAY = H.all'Address
         and then B.F = 3 and then B.L = 9;
    begin
-      Free (H);
       return OK;
    end Layout_Verified;
 

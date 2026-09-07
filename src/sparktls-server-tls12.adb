@@ -1,4 +1,5 @@
 with SPARKTLS.HS_Pool;
+with SPARKTLS.RFLX_Borrow;
 with Interfaces;                    use Interfaces;
 with SPARKNaCl;                     use SPARKNaCl;
 with SPARKTLS_Reassembly;           use SPARKTLS_Reassembly;
@@ -19,7 +20,6 @@ with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule_12;
 with SPARKTLS.Tickets_12;
 with SPARKTLS.RFLX_Bridge;
-with Ada.Unchecked_Deallocation;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
 with SPARKTLS.Cert_Verify;          use SPARKTLS.Cert_Verify;
@@ -320,8 +320,9 @@ is
       package RBT  renames RFLX.RFLX_Builtin_Types;
       package CR12 renames RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
       use SPARKTLS.RFLX_Bridge;
-      procedure CR_Free is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+      --  Inline scratch (no heap): the body is the fixed CR_Body_Len bytes.
+      CR_Scratch : aliased RBT.Bytes (1 .. RBT.Index (CR_Body_Len)) := (others => 0);
+      CR_Holder  : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Buf : RBT.Bytes_Ptr;
       Ctx : CR12.Context;
    begin
@@ -329,7 +330,7 @@ is
 
       --  RFC 5246 7.4.4 body via RecordFlux: certificate_types +
       --  supported_signature_algorithms + empty certificate_authorities.
-      Buf := new RBT.Bytes'(1 .. RBT.Index (CR_Body_Len) => 0);
+      SPARKTLS.RFLX_Borrow.Borrow (CR_Scratch, CR_Scratch'First, CR_Scratch'Last, CR_Holder, Buf);
       CR12.Initialize (Ctx, Buf);
       CR12.Set_Certificate_Types_Length
         (Ctx, RFLX.TLS_Handshake.TLS_1_2_CR_Cert_Types_Length (Certificate_Types'Length));
@@ -346,7 +347,7 @@ is
       CR_Buf (2) := Byte ((CR_Body_Len / 256) mod 256);
       CR_Buf (3) := Byte (CR_Body_Len mod 256);
       CR_Buf (4 .. 4 + CR_Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (CR_Body_Len)));
-      CR_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
 
       Append_Transcript (HC, CR_Buf);
       Records.Build_Handshake_Record (CR_Buf, Scratch, Rec_Out);

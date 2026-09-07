@@ -1,5 +1,6 @@
 with Interfaces;                    use Interfaces;
 with SPARKNaCl.Hashing.SHA384;
+with SPARKTLS.RFLX_Borrow;
 with SPARKTLSCrypto.Hashing.SHA256; use SPARKTLSCrypto.Hashing.SHA256;
 with SPARKTLSCrypto.MAC;            use SPARKTLSCrypto.MAC;
 with SPARKTLSCrypto.HKDF;           use SPARKTLSCrypto.HKDF;
@@ -16,7 +17,6 @@ with SPARKTLS.Key_Schedule;
 with SPARKTLS.Key_Update;
 with X509;
 with SPARKTLS.RFLX_Bridge;
-with Ada.Unchecked_Deallocation;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.TLS_Handshake.New_Session_Ticket;
 with RFLX.TLS_Handshake.NST_Extensions;
@@ -2512,14 +2512,15 @@ is
             package NST_Seq renames RFLX.TLS_Handshake.NST_Extensions;
             package NST_El  renames RFLX.TLS_Handshake.NST_Extension;
             use SPARKTLS.RFLX_Bridge;
-            procedure NST_Free is new
-              Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
+            --  Inline scratch (no heap): NST_Body_Len <= 42 by construction.
+            Scratch : aliased RBT.Bytes (1 .. 42) := (others => 0);
+            Holder  : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
             Buf : RBT.Bytes_Ptr;
             Ctx : NST_M.Context;
          begin
             --  RFC 8446 4.6.1 body via RecordFlux: fixed fields, then the
             --  extensions (GREASE + optional ticket_flags).
-            Buf := new RBT.Bytes'(1 .. RBT.Index (NST_Body_Len) => 0);
+            SPARKTLS.RFLX_Borrow.Borrow (Scratch, Scratch'First, Scratch'Last, Holder, Buf);
             NST_M.Initialize (Ctx, Buf);
             NST_M.Set_Ticket_Lifetime (Ctx, 3600);
             NST_M.Set_Ticket_Age_Add
@@ -2576,7 +2577,7 @@ is
             NST (3) := Byte (NST_Body_Len);
             NST (4 .. 4 + NST_Body_Len - 1) :=
               To_NaCl (Buf.all (1 .. RBT.Index (NST_Body_Len)));
-            NST_Free (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
 
             --  NewSessionTicket is a post-handshake
             --  optimisation (RFC 8446 4.6.1); it is

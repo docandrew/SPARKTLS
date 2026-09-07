@@ -22,7 +22,6 @@ use SPARKTLSCrypto;
 with X509;
 with SPARKTLS.RFLX_Bridge;
 with SPARKTLS.RFLX_Borrow;
-with Ada.Unchecked_Deallocation;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.RFLX_Types;
 with RFLX.TLS_Handshake.Encrypted_Extensions;
@@ -430,9 +429,6 @@ is
       package RBT     renames RFLX.RFLX_Builtin_Types;
       use type RBT.Length;
       use type RBT.Bit_Length;
-      procedure EE_Free is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-
       function Tag_Wire
         (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
       is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
@@ -696,9 +692,6 @@ is
       package DN_Seq renames RFLX.TLS_Handshake.Distinguished_Names;
       package DN_El  renames RFLX.TLS_Handshake.Distinguished_Name;
       use type RBT.Index;
-      procedure CR_Free is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
-
       function Tag_Wire
         (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
       is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
@@ -2590,14 +2583,13 @@ is
       package RBT     renames RFLX.RFLX_Builtin_Types;
       use type RBT.Length;
       use type RBT.Bit_Length;
-      procedure NST_Free is new
-        Ada.Unchecked_Deallocation (Object => RBT.Bytes, Name => RBT.Bytes_Ptr);
 
       function Tag_Wire
         (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
       is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
 
       Body_Len : constant N32 := Plain_Len - 4;
+      Holder   : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
       Buf      : RBT.Bytes_Ptr;
       Ctx      : NST_M.Context;
    begin
@@ -2611,10 +2603,9 @@ is
          return;
       end if;
 
-      Buf := new RBT.Bytes'(1 .. RBT.Index (Body_Len) => 0);
-      Buf.all :=
-        SPARKTLS.RFLX_Bridge.To_RFLX
-          (Plaintext (Plaintext'First + 4 .. Plaintext'First + Plain_Len - 1));
+      --  Read-only view of the body in place (no copy, no heap); the
+      --  generated parser only reads through it.
+      SPARKTLS.RFLX_Borrow.Borrow_Read (Plaintext, Plaintext'First + 4, Body_Len, Holder, Buf);
       NST_M.Initialize
         (Ctx, Buf, Written_Last => RBT.Bit_Length (RBT.Length (Body_Len) * 8));
       NST_M.Verify_Message (Ctx);
@@ -2623,7 +2614,7 @@ is
          --  Structural failure, including a zero-length ticket
          --  (Ticket_Length is 1 .. -- BoGo SendEmptySessionTicket-TLS13).
          NST_M.Take_Buffer (Ctx, Buf);
-         NST_Free (Buf);
+         SPARKTLS.RFLX_Borrow.Discard (Buf);
          Send_App_Encrypted_Alert (S, Decode_Error, Result);
          return;
       end if;
@@ -2636,7 +2627,7 @@ is
          --  ticket is decode_error (BoGo SendEmptySessionTicket-TLS13).
          if Tick_Len = 0 then
             NST_M.Take_Buffer (Ctx, Buf);
-            NST_Free (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             Send_App_Encrypted_Alert (S, Decode_Error, Result);
             return;
          end if;
@@ -2645,7 +2636,7 @@ is
          --  store it. Drop the ticket silently, as the former parser did.
          if Nonce_Len = 0 or else Tick_Len > Max_Ticket_Len then
             NST_M.Take_Buffer (Ctx, Buf);
-            NST_Free (Buf);
+            SPARKTLS.RFLX_Borrow.Discard (Buf);
             return;
          end if;
 
@@ -2791,7 +2782,7 @@ is
       end;
 
       NST_M.Take_Buffer (Ctx, Buf);
-      NST_Free (Buf);
+      SPARKTLS.RFLX_Borrow.Discard (Buf);
    end Process_NST_Message;
 
    procedure Reset_Post_HS_Reasm (S : in out Session)
