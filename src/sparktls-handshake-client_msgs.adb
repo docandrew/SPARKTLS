@@ -1538,17 +1538,22 @@ is
    --  body read here is a cookie: 2 + the 1024 bytes HC.HRR_Cookie keeps.
    Body_Scratch_Len : constant := 1100;
 
+   --  Type-level fact the generator checks at parse time but does not attach
+   --  to the always_valid record: the raw arm is a 16-bit wire value.
    function Tag_Wire
      (T : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
-   is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (T)));
+   is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (T)))
+   with Pre => RFLX.Tls_Extensiontype_Values.Valid_TLS_ExtensionType_Values (T);
 
    function Group_Wire
      (G : RFLX.Tls_Parameters.TLS_Supported_Groups) return Unsigned_16
-   is (Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (G)));
+   is (Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (G)))
+   with Pre => RFLX.Tls_Parameters.Valid_TLS_Supported_Groups (G);
 
    function Suite_Wire
      (S : RFLX.Tls_Parameters.TLS_Cipher_Suites) return Unsigned_16
-   is (Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (S)));
+   is (Unsigned_16 (RFLX.Tls_Parameters.To_Base_Integer (S)))
+   with Pre => RFLX.Tls_Parameters.Valid_TLS_Cipher_Suites (S);
 
    procedure Check_EC_Point_Formats_Body
      (Data  : in Byte_Seq;

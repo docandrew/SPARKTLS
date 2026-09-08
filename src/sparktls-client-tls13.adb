@@ -431,7 +431,8 @@ is
       use type RBT.Bit_Length;
       function Tag_Wire
         (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
-      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
+      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)))
+      with Pre => RFLX.Tls_Extensiontype_Values.Valid_TLS_ExtensionType_Values (Tg);
 
       Body_Len : constant N32 := N32 (Data'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
@@ -694,7 +695,8 @@ is
       use type RBT.Index;
       function Tag_Wire
         (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
-      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
+      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)))
+      with Pre => RFLX.Tls_Extensiontype_Values.Valid_TLS_ExtensionType_Values (Tg);
 
       Body_Len : constant N32 := N32 (Data'Length) - 4;
       Buf      : RBT.Bytes_Ptr;
@@ -2586,7 +2588,8 @@ is
 
       function Tag_Wire
         (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
-      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)));
+      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)))
+      with Pre => RFLX.Tls_Extensiontype_Values.Valid_TLS_ExtensionType_Values (Tg);
 
       Body_Len : constant N32 := Plain_Len - 4;
       Holder   : aliased SPARKTLS.RFLX_Borrow.Bounds_Holder;
