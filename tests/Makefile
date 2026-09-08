@@ -29,4 +29,4 @@ tlscert: openssl-25519.cnf
 
 @PHONY: debugserver
 debugserver:
-	openssl s_server -accept 8443 -tls1_3 -key tlscipher.lan.key -cert tlscipher.lan.crt -sigalgs "ed25519" -ciphersuites "TLS_CHACHA20_POLY1305_SHA256" -debug
+	openssl s_server -accept 8443 -tls1_3 -key tlscipher.lan.key -cert tlscipher.lan.crt -sigalgs "ed25519" -ciphersuites TLS_AES_256_GCM_SHA384 -debug

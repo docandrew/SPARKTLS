@@ -1,0 +1,41 @@
+with "../../sparktls.gpr";
+
+project Unit_Tests is
+   for Create_Missing_Dirs use "True";
+   for Object_Dir use "obj";
+   for Exec_Dir use "../../bin/tests";
+   --  ../support carries SPARKTLS.Test_Support, the test-only white-box
+   --  accessor child. It lives outside src/ so it is never compiled into
+   --  the shipped library -- see tests/support/sparktls-test_support.ads.
+   for Source_Dirs use (".", "../support");
+   for Main use ("test_aead_cap_boundary.adb",
+                 "test_sha384_streaming_kat.adb",
+                 "test_crypto.adb", "test_fiat_p256_kat.adb",
+                 "test_fiat_25519_kat.adb", "test_25519_rfc.adb",
+                 "test_build_server_hello.adb",
+                 "test_build_server_hello_12.adb",
+                 "test_handshake_tls13.adb",
+                 "test_parse_client_hello.adb",
+                 "test_aes_ni.adb",
+                 "test_ghash_ni.adb",
+                 "test_vaes.adb",
+                 "test_poly1305.adb",
+                 "test_chacha20_avx512.adb",
+                 "test_rsa_pkcs1_kat.adb",
+                 "test_rsa_pss_sign_kat.adb",
+                 "test_aes_gcm_inplace.adb",
+                 "test_aes_gcm_seq.adb",
+                 "test_psk_resume.adb",
+                 "test_key_update_ratelimit.adb",
+                 "test_tickets_12.adb",
+                 "test_reassembly.adb",
+                 "test_clock.adb",
+                 "test_tek_rotation.adb",
+                 "test_validation_config.adb",
+                 "test_tls12_ecdsa.adb",
+                 "test_exporter.adb");
+
+   package Compiler is
+      for Default_Switches ("Ada") use ("-gnat2022", "-O2", "-gnatn", "-gnatp");
+   end Compiler;
+end Unit_Tests;

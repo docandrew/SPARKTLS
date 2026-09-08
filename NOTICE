@@ -1,0 +1,20 @@
+SPARKTLS
+========
+
+SPARKTLS is licensed under the BSD 3-Clause License. See LICENSE.
+
+Third-party and generated material
+----------------------------------
+
+RecordFlux-generated code under generated/ was generated from RecordFlux
+specifications using AdaCore RecordFlux. Those generated units carry:
+
+  Copyright (C) 2018-2026 AdaCore
+  SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+RecordFlux specification files under specs/ are based in part on AdaCore
+RecordFlux example TLS specifications. See specs/CHANGES_FROM_UPSTREAM.md for
+the local changes tracked from the upstream examples.
+
+SPARKTLS depends on SPARKNaCl, SPARKTLSCrypto, SPARKx509, and SPARKEntropy via
+their respective package metadata and licenses.

@@ -1,0 +1,276 @@
+with RFLX.RFLX_Builtin_Types;
+use type RFLX.RFLX_Builtin_Types.Bytes_Ptr;
+with SPARKNaCl;      use SPARKNaCl;
+with SPARKNaCl.Secretbox;
+with SPARKNaCl.Core;
+use SPARKNaCl.Core;
+
+--  TLS 1.3 Record Layer
+
+package SPARKTLS.Records
+  with SPARK_Mode => On
+is
+   --  IO_Buffer holds an owning access component, so `Output'Old` would alias
+   --  (SPARK RM 3.10(13)); contracts use `Free_Space (Output)'Old`, which inside an
+   --  `if` is a potentially-unevaluated use of 'Old on a call (RM 6.1.1(27)).
+   --  Allowed here as handshake-server_msgs.ads / client_msgs.ads already do.
+   pragma Unevaluated_Use_Of_Old (Allow);
+
+   Record_Header_Size : constant := 5;
+   Max_Fragment : constant := 16384;
+   Tag_Size : constant := 16;
+
+   type Record_Content is
+     (Content_Handshake,
+      Content_Alert,
+      Content_Application_Data,
+      Content_Change_Cipher_Spec,
+      Content_Unknown);
+
+   --  Record-layer fragment length: the parser rejects 0 and anything above
+   --  Max_Fragment (+256 for application data) before storing it, so every
+   --  consumer sees the bound as a type, not as a threaded contract.
+   subtype Fragment_Length is N32 range 0 .. Max_Fragment + 256;
+
+   --  RFC 8446 5.1: Parsed TLS record header.
+   type Parse_Result is record
+      OK           : Boolean := False;
+      Overflow     : Boolean := False;  --  fragment exceeds RFC limit
+      Bad_Version  : Boolean := False;  --  record version not in {3,1}..{3,4}
+      Content      : Record_Content := Content_Unknown;
+      Fragment_Pos : N32 := 0;  --  offset of fragment in Data
+      --  Bounded by construction: the parser stores it only after rejecting
+      --  0 and anything above Max_Fragment (+256 for application data),
+      --  so consumers see the record-layer bound as a type, not a contract.
+      Fragment_Len : Fragment_Length := 0;  --  fragment byte count
+      Record_Len   : N32 := 0;  --  total record length (header + fragment)
+   end record
+   with
+     Predicate =>
+       (if Parse_Result.OK
+        then
+          Parse_Result.Content /= Content_Unknown
+          and Parse_Result.Fragment_Pos = Record_Header_Size
+          and not Parse_Result.Overflow
+          and not Parse_Result.Bad_Version);
+
+   --  RFC 8446 5.1: Parse a TLS record header (5 bytes).
+   --  Validates content type and fragment length bounds.
+   --
+   --  Loose_Initial: when True, the minor record-version byte is
+   --  unconstrained (only major must be 0x03). RFC 5246 E.1 / RFC
+   --  8446 5.1 tell servers to tolerate any record version on the
+   --  very first ClientHello  BoGo LooseInitialRecordVersion. All
+   --  other call sites leave the default False so mid-handshake junk
+   --  versions still trip Bad_Version (BoGo CheckRecordVersion).
+   --  Build the 5-byte record header directly into Output at the write
+   --  position, in place (no scratch, no copy), via SPARKTLS.RFLX_Borrow.
+   --  OK is False iff there was no room; then Output is unchanged.
+   procedure Put_Record_Header
+     (Output       : in out IO_Buffer;
+      Content_Type : in Byte;
+      Version      : in N32;
+      Length       : in N32;
+      OK           : out Boolean)
+   with
+     Pre  => Version <= 65535 and then Length <= 65535,
+     Post => OK = (Free_Space (Output)'Old >= Record_Header_Size)
+             and then Available (Output) =
+                        Available (Output)'Old
+                        + (if OK then Record_Header_Size else 0);
+
+   procedure Parse_Record_Header
+     (Data          : in Byte_Seq;
+      Avail         : in N32;
+      Result        : out Parse_Result;
+      Loose_Initial : in Boolean := False)
+      --  Hdr is the connection's 5-byte RecordFlux header buffer (allocated
+      --  here on first use, then borrowed and returned on every call).
+      --  Body indexes via Data'First + offset, so no First = 0 needed.
+      --  Data'Last bounded by IO_Buffer_Capacity so all callers (slices
+      --  into S.Input.Data, which is itself bounded) satisfy the Pre.
+   with
+     Pre =>
+       Data'Length > 0
+       and then Data'Last <= N32 (IO_Buffer_Capacity)
+       and then Avail > 0
+       and then Avail <= N32 (IO_Buffer_Capacity)
+       and then Data'First + Avail - 1 <= Data'Last,
+     Post =>
+       Result.Record_Len <= Avail                  --  fits in buffer
+       and (if Result.OK
+            then
+              Result.Content /= Content_Unknown       --  known type
+              and Result.Fragment_Len >= 1             --  never zero
+              and Result.Fragment_Len
+                  <= Max_Fragment
+                     + Max_Record_Overhead
+                       --  RFC 8446 5.1
+              and Result.Fragment_Pos
+                  = Record_Header_Size
+                    --  Body sets Record_Len := Header_Size + Fragment_Len,
+                    --  so callers can derive Fragment_Pos + Fragment_Len.
+              and Result.Record_Len = Result.Fragment_Pos + Result.Fragment_Len
+              and not Result.Overflow)                  --  type predicate
+       and (if Result.Overflow then not Result.OK);  --  overflow â !OK
+
+   --  RFC 8446 5.1: Build a plaintext handshake record.
+   --  Used for ClientHello and ServerHello (before encryption).
+   procedure Build_Handshake_Record
+     (Fragment  : in Byte_Seq;
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32)
+   with
+     Pre =>
+       Fragment'First = 0
+       and Fragment'Length > 0
+       and Fragment'Length <= Max_Fragment;  --  RFC 8446 5.1
+
+   --  RFC 8446 5.1: Build the initial ClientHello record with the
+   --  legacy_record_version = TLS 1.0 (0x0301). The RFC permits both
+   --  0x0301 and 0x0303 for the initial ClientHello, but middleboxes
+   --  and version-strict peers (e.g. BoGo's VersionNegotiation tests)
+   --  expect 0x0301 for maximum compatibility. All subsequent
+   --  client-side plaintext handshake records use 0x0303 via
+   --  Build_Handshake_Record above.
+   procedure Build_Initial_ClientHello_Record
+     (Fragment  : in Byte_Seq;
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32)
+   with
+     Pre => Fragment'First = 0 and Fragment'Length > 0 and Fragment'Length <= Max_Fragment,
+     --  A non-zero Bytes_Out means both the 5-byte header and the
+     --  fragment were written, so the buffer necessarily holds data.
+     --  Callers need this to conclude a ClientHello is actually queued;
+     --  without it Bytes_Out and Output are unrelated to the prover,
+     --  which is what blocked Client.Init's Output_Pending postcondition.
+     Post => (if Bytes_Out > 0 then Available (Output) > 0);
+
+   --  RFC 8446 5.2: Build an encrypted TLS record.
+   --  Inner_Type: 0x15 (alert), 0x16 (handshake), 0x17 (application_data).
+   --  The nonce counter is incremented for each record.
+   --  RFC 8446 5.2: Build an encrypted TLS record.
+   --  Nonce counter increments by 1 for each record (5.3).
+   procedure Build_Encrypted_Record
+     (Plaintext  : in Byte_Seq;
+      Inner_Type : in Byte;
+      Keys       : in out Traffic_Keys;
+      Output     : in out IO_Buffer;
+      Bytes_Out  : out N32)
+      --  Relaxed 2026-04-29: the body uses Ada slide-assignment to copy
+      --  Plaintext into a 0-based local Inner buffer, so any First works.
+      --  Length-based bound replaces the prior absolute-Last bound so a
+      --  fragmenting caller can pass slices `Plaintext (Pos .. ...)` of
+      --  a larger buffer without re-basing each chunk.
+      --
+      --  Plaintext'Length is compared without the N32 conversion that
+      --  SPARK can't prove safe (Plaintext'Last could in principle be
+      --  N32'Last, making Length one past N32'Last).
+      --
+      --  Post is conditional: when Output is full, the body bails early
+      --  with Bytes_Out = 0 and does not advance Keys.Counter. Callers
+      --  must check Bytes_Out and only treat the call as completed when
+      --  it is non-zero.
+   with
+     Pre =>
+       Plaintext'Length
+       <= Max_Fragment
+          --  RFC 8446 5.4: only alert/handshake/application_data
+          --  may be emitted as inner content type. CCS (0x14)
+          --  only appears in unencrypted records.
+       and SPARKTLS.Inner_Type_Valid_RFC_8446_5_4 (Inner_Type),             --  RFC 8446 5.5
+     Post =>
+       (if Bytes_Out > 0 then Keys.Counter = Keys.Counter'Old + 1
+        --  RFC 8446 5.3
+        else
+          Keys.Counter = Keys.Counter'Old)
+       and then (if Free_Space (Output)'Old
+                   >= Record_Header_Size + N32 (Plaintext'Length) + 1 + Tag_Size
+                 then Output.Write_Pos = Output.Write_Pos'Old + Bytes_Out);
+
+   --  Decrypt a TLS 1.3 encrypted record.
+   --  RFC 8446 Section 5.4: Valid reports AEAD authentication and
+   --  decryption success. Callers still validate the recovered inner
+   --  content type and map invalid values to the right protocol alert.
+   procedure Decrypt_Record
+     (Encrypted  : in Byte_Seq;
+      Record_Hdr : in Byte_Seq;
+      Keys       : in out Traffic_Keys;
+      Plaintext  : out Byte_Seq;
+      Plain_Len  : out N32;
+      Inner_Type : out Byte;
+      Valid      : out Boolean)
+   with
+     Pre =>
+       Encrypted'First = 0
+       and Encrypted'Last < Max_Fragment + 256
+       and Encrypted'Last >= Tag_Size
+       and Record_Hdr'First = 0
+       and Record_Hdr'Length = Record_Header_Size
+       and Plaintext'First = 0
+       and Plaintext'Last >= Encrypted'Last,  --  plaintext buffer >= encrypted
+     --  NO Nonce_Space_Available Pre (removed with carve 5a
+     --  phase 2): the body fails closed at the arithmetic limit
+     --  itself -- Valid = False, channel unchanged -- so the
+     --  obligation callers had to thread was redundant with a
+     --  check the read path needs anyway.
+     Post => --  Frame: decrypt touches ONLY the counter. Without this,
+     --  every caller lost all Keys facts at every decrypt call
+     --  ("postcondition should mention Keys" hints, r40).
+       Keys
+         .Key
+       = Keys'Old.Key
+       and Keys.IV = Keys'Old.IV
+       and Keys.Suite = Keys'Old.Suite
+       and (if Keys'Old.Counter < Record_Counter'Last
+            then Keys.Counter in Keys'Old.Counter .. Keys'Old.Counter + 1
+            else Keys.Counter = Keys'Old.Counter and not Valid)
+       and (if Valid then (Plain_Len = 0 or else Plain_Len - 1 <= Plaintext'Last));     --  bounds
+
+   --  RFC 8446 5: Build a Change Cipher Spec record.
+   --  Always exactly 6 bytes: header(5) + payload(1 byte = 0x01).
+   procedure Build_CCS_Record
+     (Output : in out IO_Buffer; Bytes_Out : out N32)
+   with Post => Bytes_Out in 0 | 6;  --  RFC 8446 5: CCS is exactly 6 bytes
+
+   --  RFC 8446 6: Build an encrypted alert record.
+   --  RFC 8446 6.1 / 6.2 binding: warning level only for close_notify
+   --  / user_canceled; everything else is fatal.
+   procedure Build_Alert_Record
+     (Level     : in Byte;
+      Desc      : in Byte;
+      Keys      : in out Traffic_Keys;
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32)
+   with
+     Pre => SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
+     Post =>
+       (if Free_Space (Output)'Old >= Record_Header_Size + 3 + Tag_Size
+        then Output.Write_Pos = Output.Write_Pos'Old + Bytes_Out);
+
+   --  Build a plaintext alert record (no encryption).
+   --  Uses RFLX-generated alert serializer for the payload.
+   --  Used during handshake before keys are established.
+   --
+   --  RFC 8446 6 (and the RFLX schema):
+   --    Warning level (1) is ONLY valid with close_notify (0) or
+   --    user_canceled (90).
+   --    Fatal level (2) is for all OTHER alerts (close_notify and
+   --    user_canceled are warning-only).
+   procedure Build_Plaintext_Alert
+     (Level     : in Byte;
+      --  1=warning, 2=fatal
+      Desc      : in Byte;
+      --  TLS alert description
+      Output    : in out IO_Buffer;
+      Bytes_Out : out N32)
+   with
+     Pre => SPARKTLS.Alert_Level_Description_Valid_RFC_8446_6_1 (Level, Desc),
+     Post =>
+       Bytes_Out in 0 | 7
+       and then Output.Read_Pos = Output.Read_Pos'Old
+       and then (if Output.Write_Pos'Old <= IO_Buffer_Capacity - 7
+                 then Bytes_Out = 7 and then Available (Output) > 0)
+       and then (if Bytes_Out = 7 then Output.Write_Pos = Output.Write_Pos'Old + 7);
+
+end SPARKTLS.Records;

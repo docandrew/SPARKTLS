@@ -1,0 +1,3 @@
+[submodule "fuzz/tlsfuzzer"]
+	path = fuzz/tlsfuzzer
+	url = https://github.com/tlsfuzzer/tlsfuzzer.git

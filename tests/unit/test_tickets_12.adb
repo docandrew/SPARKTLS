@@ -1,0 +1,275 @@
+--  Unit test for SPARKTLS.Tickets_12 encrypt/decrypt round-trip.
+
+with Ada.Text_IO;          use Ada.Text_IO;
+with Ada.Command_Line;
+with Interfaces;           use Interfaces;
+with SPARKNaCl;            use SPARKNaCl;
+with SPARKTLS;             use SPARKTLS;
+with SPARKTLS.Tickets_12;
+with X509;
+
+procedure Test_Tickets_12 is
+
+   package T renames SPARKTLS.Tickets_12;
+
+   Total : Natural := 0;
+   Pass  : Natural := 0;
+   Fail  : Natural := 0;
+
+   procedure Check (Name : String; OK : Boolean) is
+   begin
+      Total := Total + 1;
+      if OK then
+         Pass := Pass + 1;
+         Put_Line ("  PASS: " & Name);
+      else
+         Fail := Fail + 1;
+         Put_Line ("  FAIL: " & Name);
+      end if;
+   end Check;
+
+   TEK_A : constant T.Bytes_32 :=
+     (16#11#, 16#22#, 16#33#, 16#44#, 16#55#, 16#66#, 16#77#, 16#88#,
+      16#99#, 16#AA#, 16#BB#, 16#CC#, 16#DD#, 16#EE#, 16#FF#, 16#00#,
+      others => 16#42#);
+   TEK_B : constant T.Bytes_32 :=
+     (16#5A#, 16#5A#, 16#5A#, 16#5A#, others => 16#A5#);
+   Key_ID_A : constant T.Bytes_4 := (16#01#, 16#02#, 16#03#, 16#04#);
+   Key_ID_B : constant T.Bytes_4 := (16#F0#, 16#F1#, 16#F2#, 16#F3#);
+   Nonce    : constant T.Bytes_12 := (others => 16#7E#);
+
+   function Make_Plain return T.Ticket_Plain is
+      P : T.Ticket_Plain;
+   begin
+      for I in N32 range 0 .. 47 loop
+         P.Master_Secret (I) := Byte (16#80# + (Natural (I) mod 32));
+      end loop;
+      P.Suite := 16#C02F#;
+      P.Created_At := 1_700_000_000;
+      P.SID_Len := 16;
+      for I in N32 range 0 .. 15 loop
+         P.SID (I) := Byte (16#C0# + Natural (I));
+      end loop;
+      return P;
+   end Make_Plain;
+
+   function Make_Keys return TLS12_Ticket_Key_Array is
+      K : TLS12_Ticket_Key_Array;
+   begin
+      K (0) := (Key_ID => Byte_Seq (Key_ID_A),
+                TEK    => Byte_Seq (TEK_A),
+                Valid  => True,
+                Created_At => 0);
+      K (1) := (Key_ID => Byte_Seq (Key_ID_B),
+                TEK    => Byte_Seq (TEK_B),
+                Valid  => True,
+                Created_At => 0);
+      K (2) := (Key_ID => (others => 0), TEK => (others => 0),
+                Valid  => False, Created_At => 0);
+      K (3) := (Key_ID => (others => 0), TEK => (others => 0),
+                Valid  => False, Created_At => 0);
+      return K;
+   end Make_Keys;
+
+   --  Round-trip one Ticket_Plain through Encrypt/Decrypt and compare
+   --  every field. Now is derived from Created_At so the age check never
+   --  trips -- these cases are about the CODEC, not expiry.
+   procedure Round_Trip (Label : String; P_In : T.Ticket_Plain) is
+      P_Out  : T.Ticket_Plain;
+      Ticket : Byte_Seq (0 .. 255) := (others => 0);
+      Len    : N32;
+      OK     : Boolean;
+   begin
+      T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
+                        P_In.Created_At + 100, 3600, P_Out, OK);
+      Check (Label & ": decrypt", OK);
+      if OK then
+         Check (Label & ": master_secret",
+                P_Out.Master_Secret = P_In.Master_Secret);
+         Check (Label & ": suite", P_Out.Suite = P_In.Suite);
+         Check (Label & ": created_at",
+                P_Out.Created_At = P_In.Created_At);
+         Check (Label & ": sid_len", P_Out.SID_Len = P_In.SID_Len);
+         if P_In.SID_Len > 0 then
+            Check (Label & ": sid bytes",
+                   P_Out.SID (0 .. P_In.SID_Len - 1)
+                     = P_In.SID (0 .. P_In.SID_Len - 1));
+         end if;
+      end if;
+   end Round_Trip;
+
+begin
+   Put_Line ("=== SPARKTLS.Tickets_12 round-trip ===");
+
+   declare
+      P_In, P_Out : T.Ticket_Plain;
+      Ticket : Byte_Seq (0 .. 255) := (others => 0);
+      Len : N32;
+      OK : Boolean;
+   begin
+      P_In := Make_Plain;
+      T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
+      Check ("Encrypt: Len > 0", Len > 0);
+      --  32 = Key_ID (4) + Nonce (12) + Tag (16); the rest is plaintext.
+      --  Written in terms of SID_Len so it keeps meaning if the fixture
+      --  changes -- the old literal "32 + 59 + 16" only matched because
+      --  this fixture happens to use SID_Len = 16.
+      Check ("Encrypt: Len = overhead + plaintext",
+             Len = 32 + (59 + P_In.SID_Len));
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
+                        1_700_000_100, 3600, P_Out, OK);
+      Check ("Decrypt: succeeded", OK);
+      Check ("Round-trip: Master_Secret matches",
+             P_Out.Master_Secret = P_In.Master_Secret);
+      Check ("Round-trip: Suite matches", P_Out.Suite = P_In.Suite);
+      Check ("Round-trip: Created_At matches",
+             P_Out.Created_At = P_In.Created_At);
+      Check ("Round-trip: SID_Len matches",
+             P_Out.SID_Len = P_In.SID_Len);
+      Check ("Round-trip: SID bytes match",
+             P_Out.SID (0 .. P_In.SID_Len - 1)
+               = P_In.SID (0 .. P_In.SID_Len - 1));
+   end;
+
+   declare
+      P_In, P_Out : T.Ticket_Plain;
+      Ticket : Byte_Seq (0 .. 255) := (others => 0);
+      Len : N32;
+      OK : Boolean;
+   begin
+      P_In := Make_Plain;
+      T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
+      Ticket (Len - 1) := Ticket (Len - 1) xor 16#01#;
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
+                        1_700_000_100, 3600, P_Out, OK);
+      Check ("Tampered tag → Decrypt fails", not OK);
+   end;
+
+   declare
+      P_In, P_Out : T.Ticket_Plain;
+      Ticket : Byte_Seq (0 .. 255) := (others => 0);
+      Len : N32;
+      OK : Boolean;
+      Wrong_ID : constant T.Bytes_4 :=
+        (16#DE#, 16#AD#, 16#BE#, 16#EF#);
+   begin
+      P_In := Make_Plain;
+      --  Key selection moved out of Decrypt_Ticket (the caller looks the
+      --  key up via Config.Get_TEK_By_Id, keyed on Ticket_Key_ID). What
+      --  remains testable here is that the wrong key does not open it.
+      T.Encrypt_Ticket (P_In, Wrong_ID, TEK_A, Nonce, Ticket, Len);
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_B,
+                        1_700_000_100, 3600, P_Out, OK);
+      Check ("Wrong TEK → Decrypt fails", not OK);
+   end;
+
+   declare
+      P_In, P_Out : T.Ticket_Plain;
+      Ticket : Byte_Seq (0 .. 255) := (others => 0);
+      Len : N32;
+      OK : Boolean;
+   begin
+      P_In := Make_Plain;
+      T.Encrypt_Ticket (P_In, Key_ID_B, TEK_B, Nonce, Ticket, Len);
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_B,
+                        1_700_000_100, 3600, P_Out, OK);
+      Check ("Rotation: ticket under Key_B decrypts", OK);
+      Check ("Rotation: round-trip Master_Secret",
+             OK and then P_Out.Master_Secret = P_In.Master_Secret);
+   end;
+
+   declare
+      P_In, P_Out : T.Ticket_Plain;
+      Ticket : Byte_Seq (0 .. 255) := (others => 0);
+      Len : N32;
+      OK : Boolean;
+   begin
+      P_In := Make_Plain;
+      T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
+                        1_700_000_000 + 7200, 3600, P_Out, OK);
+      Check ("Expired ticket (>Max_Age) → Decrypt fails", not OK);
+   end;
+
+   declare
+      P_In, P_Out : T.Ticket_Plain;
+      Ticket : Byte_Seq (0 .. 255) := (others => 0);
+      Len : N32;
+      OK : Boolean;
+   begin
+      P_In := Make_Plain;
+      T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
+      T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
+                        1_600_000_000, 86400, P_Out, OK);
+      Check ("Future-dated ticket → Decrypt fails", not OK);
+   end;
+
+   --  Codec boundary cases. The single fixture above only exercises
+   --  SID_Len = 16 and one timestamp; a layout bug at the ends of the
+   --  ranges (empty session ID, full 32-byte session ID, epoch) would
+   --  otherwise go unnoticed until interop caught it.
+   declare
+      P : T.Ticket_Plain;
+   begin
+      P := Make_Plain;
+      P.SID_Len := 0;
+      P.SID := (others => 0);
+      Round_Trip ("Boundary sid_len=0", P);
+
+      P := Make_Plain;
+      P.SID_Len := 32;
+      for I in N32 range 0 .. 31 loop
+         P.SID (I) := Byte (16#A0# + Natural (I));
+      end loop;
+      Round_Trip ("Boundary sid_len=32", P);
+
+      P := Make_Plain;
+      P.Created_At := 0;
+      Round_Trip ("Boundary created_at=epoch", P);
+
+      P := Make_Plain;
+      P.Created_At := 4_102_444_800;  --  2100-01-01, past 32-bit time
+      Round_Trip ("Boundary created_at=2100", P);
+
+      P := Make_Plain;
+      P.Suite := 0;
+      Round_Trip ("Boundary suite=0", P);
+
+      P := Make_Plain;
+      P.Suite := 16#FFFF#;
+      Round_Trip ("Boundary suite=FFFF", P);
+   end;
+
+   --  To_Unix_Seconds spot-checks.
+   declare
+      Epoch : constant X509.Date_Time :=
+        (1970, 1, 1, 0, 0, 0);
+      Y2K   : constant X509.Date_Time :=
+        (2000, 1, 1, 0, 0, 0);
+      Now   : constant X509.Date_Time :=
+        (2026, 5, 16, 12, 30, 45);
+      Before : constant X509.Date_Time :=
+        (1969, 12, 31, 23, 59, 59);
+   begin
+      Check ("To_Unix_Seconds: Epoch = 0",
+             T.To_Unix_Seconds (Epoch) = 0);
+      --  2000-01-01 00:00:00 UTC = 946684800 (well-known constant)
+      Check ("To_Unix_Seconds: Y2K = 946684800",
+             T.To_Unix_Seconds (Y2K) = 946_684_800);
+      --  2026-05-16 12:30:45 UTC = 1778934645
+      --  (= 20454 days for years 1970..2025 + 135 days Jan..mid-May)
+      Check ("To_Unix_Seconds: 2026-05-16 12:30:45",
+             T.To_Unix_Seconds (Now) = 1_778_934_645);
+      Check ("To_Unix_Seconds: pre-1970 → 0",
+             T.To_Unix_Seconds (Before) = 0);
+   end;
+
+   Put_Line ("");
+   Put_Line ("=== Total:" & Total'Image
+             & " Pass:" & Pass'Image
+             & " Fail:" & Fail'Image & " ===");
+   if Fail > 0 then
+      Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
+   end if;
+end Test_Tickets_12;

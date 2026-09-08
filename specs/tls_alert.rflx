@@ -1,0 +1,21 @@
+with Tls_Parameters;
+
+package TLS_Alert is
+
+   -- TLS 1.3 (RFC 8446) and DTLS 1.3 (RFC 9147)
+
+   type Alert_Level is (Warning => 1, Fatal => 2) with Size => 8;
+
+   type Alert is
+      message
+         Level : Alert_Level;
+         Description : Tls_Parameters::TLS_Alerts
+            then null
+               if (Level = Warning and
+                     (Description = Tls_Parameters::Close_Notify
+                        or Description = Tls_Parameters::User_Canceled))
+                  or (Level = Fatal and Description /= Tls_Parameters::Close_Notify
+                        and Description /= Tls_Parameters::User_Canceled);
+      end message;
+
+end TLS_Alert;

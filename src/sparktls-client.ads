@@ -1,0 +1,189 @@
+with SPARKTLS.Records.TLS12;
+
+package SPARKTLS.Client
+  with SPARK_Mode => On
+is
+   ----------------------------------------------------------------------------
+   --  Client-side TLS 1.3 session management
+   --
+   --  Usage (blocking):
+   --
+   --    S   : SPARKTLS.Session;
+   --    Cfg : SPARKTLS.Config := (Random => My_RNG'Access, ...);
+   --    Res : SPARKTLS.Action;
+   --    Buf : Byte_Seq (0 .. 16383);
+   --    N   : N32;
+   --
+   --    SPARKTLS.Client.Init (S, Cfg);
+   --
+   --    loop
+   --       SPARKTLS.Client.Advance (S, Res);
+   --       case Res is
+   --          when Has_Output =>
+   --             SPARKTLS.Drain_Ciphertext (S, Buf, N);
+   --             Socket_Write (Buf (0 .. N - 1));
+   --          when Need_Input =>
+   --             N := Socket_Read (Buf);
+   --             SPARKTLS.Feed_Ciphertext (S, Buf (0 .. N - 1), N);
+   --          when Handshake_Done =>
+   --             exit;  -- ready for application data
+   --          when Plaintext_Ready =>
+   --             SPARKTLS.Read_Plaintext (S, Buf, N);
+   --             -- process Buf (0 .. N - 1)
+   --          when Error_Alert =>
+   --             -- handle Last_Error (S)
+   --             exit;
+   --          when others =>
+   --             null;
+   --       end case;
+   --    end loop;
+   --
+   --  Usage (async / event-driven):
+   --
+   --    On socket readable:
+   --       N := Socket_Read (Buf);
+   --       SPARKTLS.Feed_Ciphertext (S, Buf (0 .. N - 1), N);
+   --       loop
+   --          SPARKTLS.Client.Advance (S, Res);
+   --          exit when Res = Need_Input;
+   --          -- handle Has_Output, Plaintext_Ready, etc.
+   --       end loop;
+   --
+   --    On socket writable (if Has_Output was returned):
+   --       SPARKTLS.Drain_Ciphertext (S, Buf, N);
+   --       Socket_Write (Buf (0 .. N - 1));
+   ----------------------------------------------------------------------------
+
+   ----------------------------------------------------------------------------
+   --  Configure
+   --  Quick setup: configure and initialize a client session in one call.
+   --  Sets Mode_WebPKI and Purpose_Server.
+   --  After Configure, the caller should drain and send the ClientHello.
+   --
+   --  Side_Effects: allocate from the available Handshake Context (HC) pool
+   ----------------------------------------------------------------------------
+   function Configure (Cfg : Config) return Session
+   with
+     Side_Effects,
+     --  Configure leaves the session in Client_Hello_Sent, or Error_State
+     --  on a bad configuration / exhausted pool -- never Idle. Documented
+     --  rather than stated as a Post: the conjunct exhausts the provers
+     --  (Configure builds the ClientHello) and contracts do not execute in
+     --  shipped builds.
+     Post => Configure'Result.Role = Role_Client;
+
+   ----------------------------------------------------------------------------
+   --  Advance
+   --  Step the client handshake / record processing state machine.
+   --
+   --  Processes available input, advances state, and may produce
+   --  output. The returned Action tells the caller what to do:
+   --
+   --    Need_Input      => read from transport, Feed_Ciphertext, Advance
+   --    Has_Output      => Drain_Ciphertext, send, Advance
+   --    Plaintext_Ready => call Read_Plaintext
+   --    Handshake_Done  => connection is ready for app data
+   --    Error_Alert     => check Last_Error (S)
+   --  RFC 8446 4.1: Step the client handshake / record processing
+   --  state machine.
+   procedure Advance (S : in out Session; Result : out Action)
+   with Pre => State (S) /= Idle and Role (S) = Role_Client;
+
+   --  RFC 8446 6.1: Send a close_notify alert.
+   procedure Close_Notify (S : in out Session)
+     --  Deliberately callable on an already-closed session: Advance reports
+     --  both a half-duplex close and a completed close with Shutdown, and the
+     --  application cannot distinguish them. On a finished session this is a
+     --  no-op (the body returns before touching the scrubbed keys).
+   with
+     Pre  => Role (S) = Role_Client and not Write_Limit_Reached (S),
+     Post =>
+       (if State (S)'Old in Connected | Closing
+        then State (S) = Closing)             --  RFC 8446 6.1
+       and (State (S)'Old in Connected | Closing or State (S) = State (S)'Old);
+
+   --  True if a peer certificate has been received and parsed.
+   function Has_Peer_Certificate (S : Session) return Boolean;
+
+   ----------------------------------------------------------------------------
+   --  Session resumption (RFC 8446 4.6.1 / 2.2)
+   --
+   --  Workflow:
+   --    1. Connect normally. After Handshake_Done (or after any
+   --       Advance call), check Has_Session_Ticket; if True,
+   --       persist Get_Session_Ticket's return value.
+   --    2. On the next connection, place the saved ticket in
+   --       Cfg.Resume_Ticket BEFORE Init / Configure. Init copies
+   --       it into the session before building CH, which then
+   --       carries the pre_shared_key extension.
+   --
+   --  The Cfg-driven path is required because Init constructs and
+   --  queues CH atomically  there is no post-Init injection point
+   --  for the ticket.
+   ----------------------------------------------------------------------------
+
+   --  True iff a usable resumption PSK has been derived from a
+   --  NewSessionTicket. Servers may send NSTs at any point after
+   --  Handshake_Done; callers should re-check (and resnapshot)
+   --  whenever they return to their event loop.
+   function Has_Session_Ticket (S : Session) return Boolean;
+
+   --  True iff the current connection's handshake completed
+   --  using the PSK supplied via Cfg.Resume_Ticket (server
+   --  accepted resumption). Cleared on every Init/Configure.
+   --  Stable across the freeing of the handshake context  the
+   --  flag is mirrored from HC into S at handshake completion.
+   function Was_Resumed (S : Session) return Boolean;
+
+   --  Note: 0-RTT (RFC 8446 2.3 / 4.2.10) is intentionally
+   --  not exposed. There is no Write_Early_Data / Was_0RTT_Accepted
+   --  API on this stack  the replay + lack-of-forward-secrecy
+   --  trade-off is incompatible with the project's threat model.
+   --  Resumption (Was_Resumed above) is 1-RTT and fully supported.
+
+   --  Snapshot the current resumption ticket. Returns the empty
+   --  ticket (Valid=False) if none. The returned record is
+   --  self-contained and can be persisted to disk / passed to
+   --  another process; placing it in a future Cfg.Resume_Ticket
+   --  enables PSK resumption.
+   --
+   --  RFC 8446 4.6.1: tickets MUST NOT be reused; the caller is
+   --  responsible for using each persisted ticket at most once.
+   function Get_Session_Ticket (S : Session) return Session_Ticket;
+
+   --  RFC 5077 3.3 TLS 1.2 session ticket extraction. Mirror of the
+   --  TLS 1.3 PSK pair above. The TLS 1.2 server populates this
+   --  field via NewSessionTicket; callers persist it across
+   --  connections and inject into the next Config.TLS12_Resume_Ticket
+   --  to attempt abbreviated resumption.
+   function Has_TLS12_Ticket (S : Session) return Boolean;
+
+   function Get_TLS12_Ticket (S : Session) return Session_Ticket_12;
+
+private
+
+   --  Completions of the query functions declared above. A public child's
+   --  private part may name the parent's private components, so these keep
+   --  their original bodies verbatim once Session becomes a private type.
+   --  GNATprove reads expression-function completions here, so the prover
+   --  sees exactly what it saw before this relocation.
+
+   function Has_Peer_Certificate (S : Session) return Boolean
+   is (S.Peer_Cert_Valid);
+
+   function Has_Session_Ticket (S : Session) return Boolean
+   is (S.Ticket.Valid);
+
+   function Was_Resumed (S : Session) return Boolean
+   is (S.Resumed_From_PSK);
+
+   function Get_Session_Ticket (S : Session) return Session_Ticket
+   is (S.Ticket);
+
+   function Has_TLS12_Ticket (S : Session) return Boolean
+   is (S.TLS12_New_Ticket.Valid);
+
+   function Get_TLS12_Ticket (S : Session) return Session_Ticket_12
+   is (S.TLS12_New_Ticket);
+
+end SPARKTLS.Client;

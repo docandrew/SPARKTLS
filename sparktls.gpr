@@ -1,14 +1,16 @@
 with "config/sparktls_config.gpr";
 project Sparktls is
 
-   -- for Library_Name use "Sparktls";
-   -- for Library_Version use Project'Library_Name & ".so." & Sparktls_Config.Crate_Version;
+   for Library_Name use "Sparktls";
+   for Library_Version use Project'Library_Name & ".so." & Sparktls_Config.Crate_Version;
 
-   for Source_Dirs use ("src");
+   for Source_Dirs use ("src", "generated");
    for Object_Dir use "obj";
    for Create_Missing_Dirs use "True";
    for Library_Dir use "lib";
-   for Main use ("src/tls.adb");
+
+   --  Old monolithic test client is now in examples/
+   --  for Main use ("src/tls.adb");
 
    type Library_Type_Type is ("relocatable", "static", "static-pic");
    Library_Type : Library_Type_Type :=
@@ -48,7 +50,7 @@ project Sparktls is
          Style_Checks_Switches :=
            ("-gnatyg",   -- GNAT Style checks
             "-gnaty-d",  -- Disable no DOS line terminators
-            "-gnatyM80", -- Maximum line length
+            "-gnatyM100", -- Maximum line length
             "-gnatyO");  -- Overriding subprograms explicitly marked as such
       when others => null;
    end case;
@@ -65,25 +67,45 @@ project Sparktls is
    case Build_Mode is
       when "optimize" =>
          Build_Switches := ("-O3",     -- Optimization
-                            "-gnatn"); -- Enable inlining
+                            "-gnatn", -- Enable inlining
+                            "-march=native",
+                            "-mtune=native");
       when "debug" =>
-         Build_Switches := ("-g",   -- Debug info
-                            "-Og"); -- No optimization
+         Build_Switches := ("-g",        -- Debug info
+                            "-Og",       -- No optimization
+                            "-gnato13"); -- Assertion arithmetic ELIMINATED (bignum),
+                                         -- general code STRICT. Only meaningful when
+                                         -- runtime checks are on (no -gnatp); the
+                                         -- prover gets the same via ci/proof.adc.
    end case;
 
    package Compiler is
+      --  ORDER MATTERS: GNAT applies switches left to right, and a check-enabling
+      --  switch (e.g. -gnato*) given AFTER -gnatp turns those checks back on.
+      --  Measured 2026-09-06: a trailing -gnato13 re-enabled overflow checks in
+      --  every N32 add of the release library (3 checks per byte in the record
+      --  copy loop; bulk throughput halved). The release lane now carries NO
+      --  overflow-mode switch at all: -gnato13 lives in the debug Build_Switches
+      --  and, for the prover, as pragma Overflow_Mode in ci/proof.adc. Keep
+      --  Runtime_Checks_Switches (-gnatp) after every group that could enable
+      --  a check.
       for Default_Switches ("Ada") use
+        ("-gnat2022", -- Ada 2022
+         "-gnatw.X",  -- Disable warnings for No_Exception_Propagation
+         "-gnatQ") &  -- Don't quit. Generate ALI and tree files even if illegalities
         Compile_Checks_Switches &
         Build_Switches &
         Runtime_Checks_Switches &
         Style_Checks_Switches &
-        Contracts_Switches &
-        ("-gnatw.X", -- Disable warnings for No_Exception_Propagation
-         "-gnatQ");  -- Don't quit. Generate ALI and tree files even if illegalities
+        Contracts_Switches;
    end Compiler;
 
    package Binder is
       for Switches ("Ada") use ("-Es"); --  Symbolic traceback
    end Binder;
+
+   --  package Prove is
+   --     for Proof_Switches ("Ada") use ("-cargs", "-gnatec=ci/proof.adc");
+   --  end Prove;
 
 end Sparktls;

@@ -1,17 +1,28 @@
 name = "sparktls"
 description = "SPARK implementation of TLS 1.3"
 version = "0.0.0"
+licenses = "BSD-3-Clause"
 
 authors = ["Jon Andrew"]
 maintainers = ["Jon Andrew <jonfandrew@fastmail.com>"]
 maintainers-logins = ["docandrew"]
 [[depends-on]]
-gnatprove = "^12.1.1"
+gnatprove = "^16.0.0"
 [[depends-on]]
-gnat = "^13.1.0"
+gnat = "^16.0.0"
 [[depends-on]]
 sparknacl = "^4.0.0"
 [[depends-on]]
 sparkx509 = "~0.0.1"
+[[depends-on]]
+sparktlscrypto = "~0.0.1"
 [[pins]]
 sparkx509 = { path='../sparkx509' }
+sparknacl = { path='../sparknacl' }
+sparktlscrypto = { path='../sparktlscrypto' }
+
+[build-switches]
+#  Ada 2022 is required for postconditions on access-to-subprogram types
+#  (see Lookup_Session_Fn in sparktls.ads). Set here rather than in
+#  config/sparktls_config.gpr, which Alire regenerates.
+"*".ada_version = "Ada2022"

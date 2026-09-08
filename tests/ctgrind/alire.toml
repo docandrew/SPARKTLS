@@ -1,0 +1,6 @@
+name = "ctgrind"
+version = "0.0.0"
+description = "Constant-time analysis harness using Valgrind/memcheck"
+
+[[pins]]
+sparktls = { path = "../.." }

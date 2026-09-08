@@ -1,0 +1,81 @@
+package SPARKTLS_Ticket is
+
+   -- Server-side TLS 1.2 session-ticket plaintext (RFC 5077 §4).
+   --
+   -- This is NOT a wire format shared with peers: it is the SERVER's own
+   -- state, sealed under its ticket-encryption key with AES-GCM and opaque
+   -- to clients. It is specified here rather than hand-serialized so the
+   -- encoder and decoder are generated and provable, and so a layout change
+   -- is a spec edit rather than an arithmetic edit at three call sites.
+   --
+   -- Fixed size (no variable-length trailer): Session_ID is always carried
+   -- as its full 32 bytes with Session_ID_Length saying how much is
+   -- meaningful. That costs a few bytes per ticket and removes the
+   -- length-dependent offset arithmetic that made the hand-written codec
+   -- fragile.
+
+   -- Format version. Bump when the layout changes. A server upgraded in
+   -- the field will then FAIL to parse tickets minted by the previous
+   -- build instead of misreading them; Decrypt_Ticket already treats a
+   -- parse failure as a cache miss, so the peer transparently falls back
+   -- to a full handshake. Old versions are rejected rather than
+   -- translated: a stale ticket is cheap to replace, and per-version
+   -- decoders are exactly the kind of code that rots unnoticed.
+   type Format_Version is (V1 => 1) with Size => 8;
+
+   -- RFC 7627 §5.3: whether the session this ticket represents negotiated
+   -- Extended Master Secret. Sealed here so a resuming client cannot
+   -- influence it. On resumption the server compares this against the
+   -- current handshake and aborts on a mismatch -- resuming a non-EMS
+   -- session as EMS (or the reverse) is the triple-handshake attack path,
+   -- and this comparison is the defence.
+   type EMS_Status is (EMS_Absent => 0, EMS_Negotiated => 1) with Size => 8;
+
+   -- Negotiated cipher suite, checked against the current handshake's
+   -- suite on resumption (RFC 5077 §3.4).
+   type Cipher_Suite is unsigned 16;
+
+   -- Ticket issue time, seconds since the Unix epoch, carried as two
+   -- 32-bit halves.
+   --
+   -- Split because RecordFlux caps scalar types at 63 bits
+   -- (MAX_SCALAR_SIZE; field values flow through
+   -- RFLX.RFLX_Arithmetic.Base_Integer, which is
+   -- "range 0 .. 2**63 - 1" -- signed, hence the ceiling). A 64-bit
+   -- scalar is rejected outright. The alternatives were a 48-bit scalar
+   -- (loses nothing in practice but reintroduces a narrowing that must
+   -- be guarded) or an Opaque 8-byte field (puts us back to hand-rolled
+   -- shift/or byte assembly on the one field where a mistake means
+   -- tickets outliving their expiry). Two generated scalars cost 2 bytes
+   -- and one line of arithmetic and leave nothing to truncate.
+   --
+   -- Byte order is High_Order_First -- RecordFlux's default when the
+   -- Byte_Order aspect is absent -- so Hi followed by Lo is byte-for-byte
+   -- a big-endian 64-bit value. Recombine as
+   -- U64 (Hi) * 2**32 + U64 (Lo).
+   type Word32 is unsigned 32;
+
+   -- How much of the 32-byte Session_ID field is meaningful.
+   type Session_ID_Length is range 0 .. 32 with Size => 8;
+
+   type Ticket_Plain is
+      message
+         --  No explicit "if Version = V1" guard: with a single-valued
+         --  enum RecordFlux proves that condition always true, because a
+         --  byte that is not 1 fails to parse as Format_Version at all.
+         --  The type IS the version check. When V2 is added the enum
+         --  gains a value and conditional transitions become meaningful.
+         Version : Format_Version;
+         Master_Secret : Opaque
+            with Size => 48 * 8;
+         Suite : Cipher_Suite;
+         Created_At_Hi : Word32;
+         Created_At_Lo : Word32;
+         EMS : EMS_Status;
+         Session_ID_Len : Session_ID_Length;
+         Session_ID : Opaque
+            with Size => 32 * 8
+            then null;
+      end message;
+
+end SPARKTLS_Ticket;
