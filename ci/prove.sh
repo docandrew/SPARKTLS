@@ -135,6 +135,27 @@ else
     echo "   A runaway solver can OOM-kill the machine. See ci/README.md."
 fi
 
+#  Pre-pass: RecordFlux's rflx_arithmetic under the real COLIBRI v1. Its two
+#  variable-exponent goals (Fits_Into's 2**Bits overflow check, the Lemma_Size
+#  assertion) close only with a native-power solver; v1 is that solver but
+#  gives spurious `sat` on the large message goals, so it is NOT the default
+#  `colibri` (flake.nix: the colibri2 engine behind the v1 driver). Shape,
+#  measured 2026-09-08: v1 first on PATH, the whole unit forced (-f is unit-
+#  granular: a --limit-line pre-pass invalidates the other goals), colibri as
+#  the ONLY prover so no z3/cvc5/altergo failure is recorded; the full run
+#  below then replays colibri's two successes (same name and budgets) and
+#  proves the rest itself (Left_Shift's Post is Z3's). Its output is the one
+#  ledger. Skipped, loudly, without the flake variable: the ledger then
+#  carries those two findings.
+if [[ -n "${COLIBRI_V1_DIR:-}" && -x "${COLIBRI_V1_DIR}/colibri" && "$*" != *"-u "* ]]; then
+    echo "== pre-pass: rflx_arithmetic under COLIBRI v1 (${COLIBRI_V1_DIR}), colibri only, forced"
+    PATH="${COLIBRI_V1_DIR}:${PATH}" "${RUNNER[@]}" alr gnatprove \
+        -u rflx-rflx_arithmetic.adb -f -j"${PROVE_JOBS}" "${PROVE_LEVEL_ARGS[@]}" --prover=colibri \
+        --counterexamples="$PROVE_CEX" --output=oneline "${PROVE_CARGS[@]}" 2>&1 \
+        | grep -E "arithmetic\.(ads|adb):(36|83):|error|GNAT BUG" || true
+else
+    echo "== pre-pass (rflx_arithmetic under COLIBRI v1): SKIPPED (COLIBRI_V1_DIR unset or a -u run)"
+fi
 echo "== gnatprove ${GNATPROVE_ARGS[*]}"
 echo "== started $(date '+%F %T')"
 

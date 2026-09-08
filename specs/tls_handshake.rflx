@@ -439,6 +439,34 @@ package TLS_Handshake is
          Extensions_TLS : CH_Extensions_TLS;
       end message;
 
+   -- ClientHello as this implementation BUILDS it: extensions always
+   -- present, so Extensions_Length is unconditional. Client_Hello above is
+   -- the parse type (its Message'Last condition admits the extension-less
+   -- TLS 1.2 form). On the build side that condition is evaluated against
+   -- the context's Written_Last, which no generated postcondition exports,
+   -- so a builder on the conditional type cannot discharge the setter
+   -- precondition (RecordFlux's own spec comments the condition out and
+   -- cites eng/recordflux/RecordFlux#1317). Same wire layout.
+   type Client_Hello_Ext is
+      message
+         Legacy_Version : Legacy_Version_Any;
+         Random : Opaque
+            with Size => 32 * 8;
+         Legacy_Session_ID_Length : Legacy_Session_ID_Length;
+         Legacy_Session_ID : Opaque
+            with Size => Legacy_Session_ID_Length * 8;
+         Cipher_Suites_Length : Cipher_Suites_Length;
+         Cipher_Suites_TLS : Cipher_Suites_TLS
+            with Size => Cipher_Suites_Length * 8;
+         Legacy_Compression_Methods_Length : Legacy_Compression_Methods_Length;
+         Legacy_Compression_Methods : Opaque
+            with Size => Legacy_Compression_Methods_Length * 8;
+         Extensions_Length : Client_Hello_Extensions_Length
+            then Extensions_TLS
+               with Size => Extensions_Length * 8;
+         Extensions_TLS : CH_Extensions_TLS;
+      end message;
+
    -- ClientHello, DTLS transport (kept for the DTLS implementation to come).
    type Client_Hello_DTLS is
       message
@@ -502,6 +530,28 @@ package TLS_Handshake is
                if Message'Last = Legacy_Compression_Method'Last
             then Extensions_Length
                if Message'Last /= Legacy_Compression_Method'Last;
+         Extensions_Length : Server_Hello_Extensions_Length
+            then Extensions_TLS
+               with Size => Extensions_Length * 8;
+         Extensions_TLS : SH_Extensions_TLS;
+      end message;
+
+   -- ServerHello as the TLS 1.3 server BUILDS it: extensions always present
+   -- (supported_versions at least), so Extensions_Length is unconditional.
+   -- Server_Hello above is the parse type; see Client_Hello_Ext for why the
+   -- Message'Last condition cannot be discharged on the build side.
+   type Server_Hello_Ext is
+      message
+         Legacy_Version : TLS_Common::Protocol_Version
+            then Random
+               if Legacy_Version = TLS_Common::TLS_1_2;
+         Random : Opaque
+            with Size => 32 * 8;
+         Legacy_Session_ID_Length : Legacy_Session_ID_Length;
+         Legacy_Session_ID : Opaque
+            with Size => Legacy_Session_ID_Length * 8;
+         Cipher_Suite_TLS : Cipher_Suite_TLS;
+         Legacy_Compression_Method : Legacy_Compression_Method;
          Extensions_Length : Server_Hello_Extensions_Length
             then Extensions_TLS
                with Size => Extensions_Length * 8;

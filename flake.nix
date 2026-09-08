@@ -93,10 +93,45 @@
               ]
             else
               [ ];
+          #  The real COLIBRI v1 (CEA LIST, LGPL 2.1) as a SECOND solver, kept
+          #  off gnatprove's `colibri` name: ci/prove.sh runs it only in a second
+          #  pass over RecordFlux's rflx_arithmetic (variable-exponent 2**N
+          #  goals that only a native-power solver closes; v1 gives spurious
+          #  `sat` on the large message goals, so it must not be the default).
+          #  The ELF finds COLIBRI/ and ECLIPSE/ relative to itself, hence the
+          #  whole bundle under opt/ and COLIBRI_V1_DIR pointing at it.
+          colibri1 =
+            if system == "x86_64-linux" then
+              [
+                (pkgs.stdenvNoCC.mkDerivation {
+                  pname = "colibri1";
+                  version = "2026.06";
+                  src = pkgs.fetchurl {
+                    name = "colibri.2026.06-e7.tbz";
+                    url = "https://git.frama-c.com/api/v4/projects/804/packages/generic/colibri/2026.06/colibri.2026.06-e7.tbz";
+                    hash = "sha256-UROzLleQoNMyGf0lvbZnozpF/l2/MlUVFwmnvIBabck=";
+                  };
+                  dontBuild = true;
+                  dontFixup = true;
+                  dontPatchShebangs = true;
+                  installPhase = ''
+                    mkdir -p $out/opt
+                    cp -r . $out/opt/colibri
+                  '';
+                  meta = {
+                    description = "COLIBRI constraint-programming SMT solver (CEA LIST), release bundle (second-pass prover)";
+                    homepage = "https://colibri.frama-c.com";
+                    license = pkgs.lib.licenses.lgpl21Only;
+                    platforms = [ "x86_64-linux" ];
+                  };
+                })
+              ]
+            else
+              [ ];
         in
         {
           default = pkgs.mkShell {
-            packages = alirePackages ++ colibri ++ (with pkgs; [
+            packages = alirePackages ++ colibri ++ colibri1 ++ (with pkgs; [
               bash
               coreutils
               curl
@@ -145,6 +180,8 @@
               #  in /usr/include -- the build silently uses those instead.
               export C_INCLUDE_PATH="${pkgs.valgrind.dev}/include''${C_INCLUDE_PATH:+:$C_INCLUDE_PATH}"
 
+              #  ci/prove.sh's second pass (rflx_arithmetic under COLIBRI v1).
+              export COLIBRI_V1_DIR="${if system == "x86_64-linux" then "${builtins.head colibri1}/opt/colibri" else ""}"
               echo "SPARKTLS dev shell: use ci/check.sh for the reproducible CI lane."
             '';
           };

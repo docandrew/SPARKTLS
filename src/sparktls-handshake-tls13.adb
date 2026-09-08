@@ -28,6 +28,7 @@ with RFLX.TLS_Handshake.Certificate_Request;
 with RFLX.TLS_Handshake.CR_Extensions;
 with RFLX.TLS_Handshake.CR_Extension;
 with RFLX.TLS_Handshake.Server_Hello;
+with RFLX.TLS_Handshake.Server_Hello_Ext;
 with RFLX.TLS_Handshake.SH_Extensions_TLS;
 with RFLX.TLS_Handshake.SH_Extension_TLS;
 with RFLX.TLS_Handshake.Hello_Retry_Request;
@@ -482,7 +483,9 @@ is
       Result     : out Byte_Seq;
       Len        : out N32)
    is
-      use RFLX.TLS_Handshake.Server_Hello;
+      --  The build-side message type (extensions unconditional); Server_Hello
+      --  is the parse type. Same wire layout.
+      use RFLX.TLS_Handshake.Server_Hello_Ext;
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
       --  Generous buffer, as the ClientHello and HelloRetryRequest builders:

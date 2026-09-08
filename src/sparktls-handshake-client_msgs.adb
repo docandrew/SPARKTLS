@@ -11,6 +11,7 @@ with SPARKTLS.RFLX_Borrow;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.Tickets_12;
 with RFLX.TLS_Handshake.Client_Hello;
+with RFLX.TLS_Handshake.Client_Hello_Ext;
 with RFLX.TLS_Handshake.Server_Hello;
 with RFLX.TLS_Handshake.SH_Extensions_TLS;
 with RFLX.TLS_Handshake.SH_Extension_TLS;
@@ -897,7 +898,9 @@ is
       Len        : out N32;
       Retry_Mode : in Boolean := False)
    is
-      use RFLX.TLS_Handshake.Client_Hello;
+      --  The build-side message type (extensions unconditional); Client_Hello
+      --  is the parse type. Same wire layout.
+      use RFLX.TLS_Handshake.Client_Hello_Ext;
       use RFLX.TLS_Common;
 
       --  Retry CH2 with a server-selected group: only that group's
@@ -1109,9 +1112,9 @@ is
       --  they replace the single whole-chain unfolding at the extensions switch
       --  that sat at the time limit.
       Set_Legacy_Version (Ctx, 16#0303#);  --  RFC 8446 4.1.2: legacy_version = 0x0303
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Random) = Ctx.First + 16);
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Random) = Ctx.First + 16);
       Set_Random (Ctx, To_RFLX (HC.Client_Random));
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Session_ID_Length) = Ctx.First + 272);
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Legacy_Session_ID_Length) = Ctx.First + 272);
       if HC.Cfg.Versions = TLS_1_2_Only then
          Set_Legacy_Session_ID_Length (Ctx, 0);
          Set_Legacy_Session_ID_Empty (Ctx);
@@ -1119,12 +1122,12 @@ is
          Set_Legacy_Session_ID_Length (Ctx, 32);
          Set_Legacy_Session_ID (Ctx, To_RFLX (HC.Legacy_Session_ID));
       end if;
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_Length) = Ctx.First + 280 + 8 * RBT.Bit_Length (Session_ID_Len));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Cipher_Suites_Length) = Ctx.First + 280 + 8 * RBT.Bit_Length (Session_ID_Len));
       --  TLS version routes past cookie fields to cipher_suites_length
       --  9 suites: 3 TLS 1.3 + 3 TLS 1.2 ECDHE-RSA + 3 TLS 1.2
       --  ECDHE-ECDSA = 18 bytes
       Set_Cipher_Suites_Length (Ctx, RFLX.TLS_Handshake.Cipher_Suites_Length (18));
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Cipher_Suites_TLS) = Ctx.First + 296 + 8 * RBT.Bit_Length (Session_ID_Len));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Cipher_Suites_TLS) = Ctx.First + 296 + 8 * RBT.Bit_Length (Session_ID_Len));
 
       --  Build cipher suite sequence
       declare
@@ -1142,21 +1145,21 @@ is
          Append_Cipher_Suite (Suites_Ctx, RFLX.Tls_Parameters.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
          Update_Cipher_Suites_TLS (Ctx, Suites_Ctx);
       end;
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods_Length) = Ctx.First + 440 + 8 * RBT.Bit_Length (Session_ID_Len));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Legacy_Compression_Methods_Length) = Ctx.First + 440 + 8 * RBT.Bit_Length (Session_ID_Len));
 
       Set_Legacy_Compression_Methods_Length (Ctx, 1);
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Legacy_Compression_Methods) = Ctx.First + 448 + 8 * RBT.Bit_Length (Session_ID_Len));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Legacy_Compression_Methods) = Ctx.First + 448 + 8 * RBT.Bit_Length (Session_ID_Len));
       --  Field_Size of the compression-methods field is data-dependent:
       --  it follows from the length field just written (1 byte = 8 bits).
       Set_Legacy_Compression_Methods (Ctx, To_RFLX (Byte_Seq'(0 => 16#00#)));
       Set_Extensions_Length
         (Ctx, RFLX.TLS_Handshake.Client_Hello_Extensions_Length (Ext_Total_All));
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS) = Ctx.First + 472 + 8 * RBT.Bit_Length (Session_ID_Len));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Extensions_TLS) = Ctx.First + 472 + 8 * RBT.Bit_Length (Session_ID_Len));
       --  Room for the extensions: the message's Last is the arena end (Initialize
       --  Post + Borrow Post), the field's size is the length just written, and the
       --  upfront guard bounds that length by the result buffer.
       pragma Assert (Ctx.Last = RBT.Bit_Length (RFLX_Arena_Size) * 8);
-      pragma Assert (RFLX.TLS_Handshake.Client_Hello.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS) = 8 * RBT.Bit_Length (Ext_Total_All));
+      pragma Assert (RFLX.TLS_Handshake.Client_Hello_Ext.Field_Size (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Extensions_TLS) = 8 * RBT.Bit_Length (Ext_Total_All));
       pragma Assert (Ext_Total_All <= RFLX_Arena_Size - 59);
       --  Likewise: the extensions field size follows from the length
       --  field just written.
@@ -1199,8 +1202,8 @@ is
          --  Switch_To_Extensions_TLS precondition.
          pragma
            Assert
-             (RFLX.TLS_Handshake.Client_Hello.Field_First
-                (Ctx, RFLX.TLS_Handshake.Client_Hello.F_Extensions_TLS)
+             (RFLX.TLS_Handshake.Client_Hello_Ext.Field_First
+                (Ctx, RFLX.TLS_Handshake.Client_Hello_Ext.F_Extensions_TLS)
                 rem RBT.Byte'Size
                 = 1);
          Switch_To_Extensions_TLS (Ctx, Exts_Ctx);
