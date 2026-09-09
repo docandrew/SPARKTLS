@@ -18,7 +18,6 @@ sparkx509 = "~0.0.1"
 sparktlscrypto = "~0.0.1"
 [[pins]]
 sparkx509 = { path='../sparkx509' }
-sparknacl = { path='../sparknacl' }
 sparktlscrypto = { path='../sparktlscrypto' }
 
 [build-switches]

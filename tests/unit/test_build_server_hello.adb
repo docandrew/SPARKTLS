@@ -16,10 +16,10 @@ with Det_Random_Lib;
 with SPARKTLS.Test_Support;
 
 procedure Test_Build_Server_Hello is
-   --  One arena shared by every call below, exactly as production does:
-   --  allocated on the first Build_Server_Hello, borrowed and returned by
-   --  each later one, so the reuse path is exercised here too.
-   Arena : RFLX.RFLX_Builtin_Types.Bytes_Ptr := null;
+   --  One arena shared by every call below, exactly as production does: the
+   --  builder takes the caller-owned storage (no heap) and borrows it per call,
+   --  so the reuse path is exercised here too.
+   Arena : aliased SPARKTLS.Arena_Bytes := (others => 0);
 
    Total : Natural := 0;
    Pass  : Natural := 0;
