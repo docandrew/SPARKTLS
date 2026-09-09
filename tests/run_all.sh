@@ -234,7 +234,10 @@ if echo "$SUITES" | grep -q "unit"; then
     # Real-world CA chain test: handshake against major HTTPS sites
     # using the OS Mozilla CA bundle. Skipped automatically when no
     # network or no CA bundle.
-    if [ -f /etc/ssl/certs/ca-certificates.crt ] && getent hosts www.google.com >/dev/null 2>&1; then
+    #  Live external-site handshakes: useful locally, but non-deterministic
+    #  (network egress, remote cert churn, the badssl negative-test hosts), so
+    #  never gate CI on them. GitHub Actions sets CI=true; skip there.
+    if [ -z "${CI:-}" ] && [ -f /etc/ssl/certs/ca-certificates.crt ] && getent hosts www.google.com >/dev/null 2>&1; then
         output=$(bash tests/realworld/run.sh 2>&1 || true)
         rw_pass=$(echo "$output" | grep -oE "[0-9]+/[0-9]+ passed" | tail -1 | cut -d'/' -f1)
         rw_fail=$(echo "$output" | grep -oE "[0-9]+ failed" | tail -1 | awk '{print $1}')
