@@ -35,7 +35,7 @@ SPARKTLSCRYPTO_REF="${SPARKTLSCRYPTO_REF:-master}"
 # build fails and tls_fetch / tls_blocking_server never exist -- which the
 # integration, protocol (tlsfuzzer), realworld and benchmark suites all need.
 SPARKENTROPY_URL="https://github.com/docandrew/sparkentropy.git"
-SPARKENTROPY_REF="${SPARKENTROPY_REF:-e07febf337f81c4c78a7fd6efe56f30dec8e4608}"
+SPARKENTROPY_REF="${SPARKENTROPY_REF:-main}"
 
 clone_at() {
     local url="$1" ref="$2" dir="$3"
