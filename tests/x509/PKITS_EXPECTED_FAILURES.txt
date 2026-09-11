@@ -1,0 +1,70 @@
+# NIST PKITS expected failures -- 60 cases, snapshot 2026-09-10.
+#
+# Run: python3 tests/x509/pkits_runner.py <pkits-dir> bin/tests/x509_validate --expected tests/x509/PKITS_EXPECTED_FAILURES.txt
+# Revocation (4.4/4.14/4.15): only reason partitions, indirect CRLs / cRLIssuer and delta CRLs
+# remain -- deliberately unsupported (ledger 2026-09-09). Name constraints (4.13): directoryName,
+# rfc822Name and URI forms + constraints inherited down the path implemented 2026-09-10: all 38 pass.
+# Everything else is certificate-path policy outside revocation:
+# 4.8/4.9/4.10/4.11/4.12 certificate policies & mappings (incl. the six 'Invalid Self-Issued ...'
+# cases that only appeared once revocation stopped masking them), 4.1 DSA, 4.2.4
+# GeneralizedTime-before-2050 (we are stricter than PKITS here).
+4.1.4 Valid DSA Signatures Test4
+4.1.5 Valid DSA Parameter Inheritance Test5
+4.2.4 Valid GeneralizedTime notBefore Date Test4
+4.8.1 All Certificates Same Policy Test1 (Subpart 3)
+4.8.2 All Certificates No Policies Test2 (Subpart 2)
+4.8.3 Different Policies Test3 (Subpart 2)
+4.8.3 Different Policies Test3 (Subpart 3)
+4.8.6 Overlapping Policies Test6 (Subpart 2)
+4.8.6 Overlapping Policies Test6 (Subpart 1)
+4.8.10 All Certificates Same Policies Test10 (Subpart 3)
+4.8.10 All Certificates Same Policies Test10 (Subpart 1)
+4.8.10 All Certificates Same Policies Test10 (Subpart 2)
+4.8.11 All Certificates AnyPolicy Test11 (Subpart 1)
+4.8.11 All Certificates AnyPolicy Test11 (Subpart 2)
+4.8.13 All Certificates Same Policies Test13 (Subpart 3)
+4.8.13 All Certificates Same Policies Test13 (Subpart 2)
+4.8.13 All Certificates Same Policies Test13 (Subpart 1)
+4.8.14 AnyPolicy Test14 (Subpart 1)
+4.8.18 User Notice Qualifier Test18 (Subpart 2)
+4.8.18 User Notice Qualifier Test18 (Subpart 1)
+4.9.3 Invalid RequireExplicitPolicy Test3
+4.9.5 Invalid RequireExplicitPolicy Test5
+4.9.7 Invalid Self-Issued requireExplicitPolicy Test7
+4.9.8 Invalid Self-Issued requireExplicitPolicy Test8
+4.10.1 Valid Policy Mapping Test1 (Subpart 1)
+4.10.3 Valid Policy Mapping Test3 (Subpart 2)
+4.10.5 Valid Policy Mapping Test5 (Subpart 1)
+4.10.6 Valid Policy Mapping Test6 (Subpart 1)
+4.10.7 Invalid Mapping From anyPolicy Test7
+4.10.8 Invalid Mapping To anyPolicy Test8
+4.10.9 Valid Policy Mapping Test9
+4.10.11 Valid Policy Mapping Test11
+4.10.12 Valid Policy Mapping Test12 (Subpart 2)
+4.10.12 Valid Policy Mapping Test12 (Subpart 1)
+4.10.13 Valid Policy Mapping Test13 (Subpart 2)
+4.10.13 Valid Policy Mapping Test13 (Subpart 1)
+4.10.14 Valid Policy Mapping Test14
+4.11.1 Invalid inhibitPolicyMapping Test1
+4.11.3 Invalid inhibitPolicyMapping Test3
+4.11.5 Invalid inhibitPolicyMapping Test5
+4.11.6 Invalid inhibitPolicyMapping Test6
+4.11.8 Invalid Self-Issued inhibitPolicyMapping Test8
+4.11.9 Invalid Self-Issued inhibitPolicyMapping Test9
+4.11.10 Invalid Self-Issued inhibitPolicyMapping Test10
+4.11.11 Invalid Self-Issued inhibitPolicyMapping Test11
+4.12.2 Valid inhibitAnyPolicy Test2
+4.12.3 inhibitAnyPolicy Test3 (Subpart 1)
+4.12.7 Valid Self-Issued inhibitAnyPolicy Test7
+4.12.9 Valid Self-Issued inhibitAnyPolicy Test9
+4.14.18 Valid onlySomeReasons Test18
+4.14.19 Valid onlySomeReasons Test19
+4.14.22 Valid IDP with indirectCRL Test22
+4.14.24 Valid IDP with indirectCRL Test24
+4.14.25 Valid IDP with indirectCRL Test25
+4.14.28 Valid cRLIssuer Test28
+4.14.29 Valid cRLIssuer Test29
+4.14.30 Valid cRLIssuer Test30
+4.14.33 Valid cRLIssuer Test33
+4.15.4 Invalid delta-CRL Test4
+4.15.5 Valid delta-CRL Test5
