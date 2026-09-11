@@ -118,22 +118,24 @@ is
 
    --  Persist a resumption PSK and return the identity to put on the wire.
    procedure Store_Session
-     (PSK     : Bytes_48;
-      PSK_Len : PSK_Length;
-      Suite   : Unsigned_16;
-      Age_Add : Unsigned_32;
-      ID_Out  : out Ticket_ID)
+     (PSK         : Bytes_48;
+      PSK_Len     : PSK_Length;
+      Suite       : Unsigned_16;
+      Age_Add     : Unsigned_32;
+      Client_Auth : Boolean;
+      ID_Out      : out Ticket_ID)
    with Pre => PSK_Len in 32 | 48;
 
    --  Retrieve a PSK by identity. Found => False for a miss, a cipher-suite
    --  mismatch, or anything else -- all mean "do a full handshake".
    procedure Lookup_Session
-     (ID         : Byte_Seq;
-      Want_Suite : Unsigned_16;
-      PSK        : out Bytes_48;
-      PSK_Len    : out N32;
-      Suite      : out Unsigned_16;
-      Found      : out Boolean)
+     (ID          : Byte_Seq;
+      Want_Suite  : Unsigned_16;
+      PSK         : out Bytes_48;
+      PSK_Len     : out N32;
+      Suite       : out Unsigned_16;
+      Client_Auth : out Boolean;
+      Found       : out Boolean)
    with
      Pre => ID'First = 0 and then ID'Length = Ticket_ID_Len,
      Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);

@@ -2678,6 +2678,26 @@ is
          return;
       end if;
 
+      --  RFC 8446 4.2.11: when the server accepted our PSK (it echoed
+      --  selected_identity = 0, so HC.Using_PSK is set), the negotiated
+      --  cipher suite's Hash MUST be the one the PSK is associated with.
+      --  Our resumption ticket is bound to a single hash
+      --  (Resume_Ticket.PSK_Len = 32 for the SHA-256 suites, 48 for
+      --  AES-256-GCM-SHA384). A mismatch MUST abort with illegal_parameter:
+      --  otherwise Derive_Handshake_Keys would fall back to an all-zero PSK
+      --  while Using_PSK stays set, completing the handshake with no
+      --  Certificate/CertificateVerify and a public early secret -- full
+      --  server impersonation against any client holding a ticket (SR-01).
+      --  The HRR offer path already enforces the same rule when it rebuilds
+      --  CH2 (see Append_PSK_Extension's Needed_PSK_Len); this is the
+      --  initial-ServerHello arm that was missing.
+      if HC.Using_PSK
+        and then HC.Cfg.Resume_Ticket.PSK_Len /= Suite_Hash_Len (Negotiated)
+      then
+         Err := Illegal_Parameter;
+         return;   --  OK stays False (set at entry)
+      end if;
+
       --  TLS 1.3: ECDHE shared secret from the key_share.
       declare
          SS_OK  : Boolean;

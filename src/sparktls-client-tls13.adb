@@ -1109,6 +1109,7 @@ is
             D                      => D,
             HS_Msg                 => Data,
             Reject_Cert_Extensions => True,
+            Want_Staple            => S.HC.Cfg.Request_OCSP_Staple,
             OK                     => Parse_OK,
             Err                    => Parse_Err);
          if not Parse_OK then

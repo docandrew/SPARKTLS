@@ -828,20 +828,22 @@ is
       Rejected : out Boolean;
       Result   : out Action)
    is
-      PSK     : Bytes_48;
-      PSK_Len : N32;
-      Suite   : Unsigned_16;
-      Found   : Boolean;
+      PSK         : Bytes_48;
+      PSK_Len     : N32;
+      Suite       : Unsigned_16;
+      Client_Auth : Boolean;
+      Found       : Boolean;
    begin
       Rejected := False;
       Result := OK;
       Cfg.Lookup_Session
-        (ID         => S.HC.PSK.Offer_ID,
-         Want_Suite => Wire_Of (S.Negotiated_Suite),
-         PSK        => PSK,
-         PSK_Len    => PSK_Len,
-         Suite      => Suite,
-         Found      => Found);
+        (ID          => S.HC.PSK.Offer_ID,
+         Want_Suite  => Wire_Of (S.Negotiated_Suite),
+         PSK         => PSK,
+         PSK_Len     => PSK_Len,
+         Suite       => Suite,
+         Client_Auth => Client_Auth,
+         Found       => Found);
 
       --  DEFENCE AGAINST THE CALLBACK, not merely a proof aid.
       --
@@ -862,6 +864,17 @@ is
       --  for the S.HC.PSK.Value_Len assignment below
       --  (PSK_Value_Length is N32 range 0 .. 48).
       if Found and then (Suite /= Wire_Of (S.Negotiated_Suite) or else PSK_Len not in 32 | 48) then
+         Found := False;
+      end if;
+
+      --  SR-03: an mTLS-required server MUST NOT resume from a session that
+      --  was not itself client-authenticated. PSK resumption skips
+      --  CertificateRequest, so accepting such a ticket would admit an
+      --  unauthenticated peer -- e.g. a ticket minted by a permissive
+      --  listener that shares this cache. Decline the identity (RFC 8446
+      --  4.2.11 lets us) and fall through to a full handshake, which will
+      --  request and verify the client certificate.
+      if Found and then Cfg.Require_Client_Cert and then not Client_Auth then
          Found := False;
       end if;
       pragma Assert (if Found then Suite = Wire_Of (S.Negotiated_Suite));
@@ -1879,11 +1892,16 @@ is
    begin
       Result := OK;
       Append_Transcript (S.HC, Data);
+      --  SR audit (SendExtensionOnClientCertificate): a CertificateEntry from
+      --  the CLIENT must carry NO extensions -- our CertificateRequest never
+      --  offers any (RFC 8446 4.4.2), so reject any that appear, and never
+      --  treat a client-supplied status_request as a solicited OCSP staple.
       Handshake.TLS13.Parse_Certificate_Chain_13
         (HC                     => S.HC,
          D                      => D,
          HS_Msg                 => Data,
-         Reject_Cert_Extensions => False,
+         Reject_Cert_Extensions => True,
+         Want_Staple            => False,
          OK                     => Parse_OK,
          Err                    => Parse_Err);
       if not Parse_OK then
@@ -2405,10 +2423,11 @@ is
    --  session cache when callbacks are configured, and record res_master
    --  in the Session for later key material.
    procedure Store_Resumption_Secrets
-     (S       : in out Session;
-      Nonce   : in Byte_Seq;
-      Age_Add : in Unsigned_32;
-      TID     : out Ticket_ID)
+     (S           : in out Session;
+      Nonce       : in Byte_Seq;
+      Age_Add     : in Unsigned_32;
+      Client_Auth : in Boolean;
+      TID         : out Ticket_ID)
    with Pre => Nonce'First = 0 and then Nonce'Last in 1 .. 254
    is
       use SPARKTLS.Ticket_Cache;
@@ -2429,8 +2448,11 @@ is
             if S.HC.Cfg.Store_Session /= null and then S.HC.Cfg.Lookup_Session /= null
             then
                pragma Warnings (Off, "value conversion implemented by copy");
+               --  SR-03: bind whether this session was client-authenticated
+               --  (Client_Auth = the validated client leaf was present).
                S.HC.Cfg.Store_Session
-                 (Bytes_48 (PSK_Out), 48, Wire_Of (S.Negotiated_Suite), Age_Add, TID);
+                 (Bytes_48 (PSK_Out), 48, Wire_Of (S.Negotiated_Suite), Age_Add,
+                  Client_Auth, TID);
                pragma Warnings (On, "value conversion implemented by copy");
             end if;
             pragma Warnings (Off, "value conversion implemented by copy");
@@ -2456,8 +2478,11 @@ is
                   for I in N32 range 0 .. 31 loop
                      PSK_48 (I) := PSK_Out (I);
                   end loop;
+                  --  SR-03: bind whether this session was client-authenticated
+                  --  (Client_Auth = the validated client leaf was present).
                   S.HC.Cfg.Store_Session
-                    (PSK_48, 32, Wire_Of (S.Negotiated_Suite), Age_Add, TID);
+                    (PSK_48, 32, Wire_Of (S.Negotiated_Suite), Age_Add,
+                     Client_Auth, TID);
                end;
             end if;
             S.Res_Master := (others => 0);
@@ -2672,7 +2697,8 @@ is
               + Unsigned_32 (Ticket_Random (4)) * 2 ** 8
               + Unsigned_32 (Ticket_Random (5));
 
-            Store_Resumption_Secrets (S, Nonce, Age_Add, TID);
+            Store_Resumption_Secrets
+              (S, Nonce, Age_Add, D.Peer_Leaf.Present, TID);
 
             Send_New_Session_Ticket_13 (S, Nonce, Age_Add, TID);
          end;

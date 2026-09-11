@@ -1148,6 +1148,21 @@ is
             S.Input.Write_Pos := 0;
             Result := Shutdown;
 
+         when Error_State =>
+            --  A fatal error was already raised and its alert queued (e.g.
+            --  a ServerHello that failed validation). The connection is
+            --  dead: drain any pending alert, report Error_Alert, and
+            --  DISCARD any further input. Without this, Error_State fell
+            --  through to "others" and Advance dispatched the buffered
+            --  post-ServerHello encrypted flight into the record layer with
+            --  no handshake keys -- failing as bad_record_mac and
+            --  OVERWRITING the real Last_Error.
+            --  This is a general "reported for the wrong reason" failure
+	    --  mode: a fatal state must not keep consuming the wire.
+            S.Input.Read_Pos := 0;
+            S.Input.Write_Pos := 0;
+            Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
+
          when others    =>
             Handled := False;
             Result := Need_Input;

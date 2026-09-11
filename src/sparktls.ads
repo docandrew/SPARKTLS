@@ -1230,6 +1230,14 @@ is
       PSK_Len : PSK_Length := 0;
       Suite   : Unsigned_16 := 0;
       Age_Add : Unsigned_32 := 0;
+      --  SR-03: whether the session this ticket was issued from had a
+      --  verified client certificate. A resuming server that requires
+      --  client auth (Config.Require_Client_Cert) must refuse a ticket
+      --  whose original session was NOT client-authenticated, since PSK
+      --  resumption skips CertificateRequest -- otherwise a ticket issued
+      --  by a permissive listener sharing the same cache would resume,
+      --  unauthenticated, onto the mTLS-required one.
+      Client_Auth : Boolean := False;
       Valid   : Boolean := False;
    end record
    with
@@ -1502,11 +1510,12 @@ is
    --  Persist a resumption PSK; return the identity to put on the wire.
    type Store_Session_Fn is
      access procedure
-       (PSK     : Bytes_48;
-        PSK_Len : PSK_Length;
-        Suite   : Unsigned_16;
-        Age_Add : Unsigned_32;
-        ID_Out  : out Ticket_ID)
+       (PSK         : Bytes_48;
+        PSK_Len     : PSK_Length;
+        Suite       : Unsigned_16;
+        Age_Add     : Unsigned_32;
+        Client_Auth : Boolean;
+        ID_Out      : out Ticket_ID)
    with Pre => PSK_Len in 32 | 48;
 
    --  Retrieve a PSK by identity. Found => False on miss, wrong suite,
@@ -1521,12 +1530,13 @@ is
    --  every implementation rather than one.
    type Lookup_Session_Fn is
      access procedure
-       (ID         : Byte_Seq;
-        Want_Suite : Unsigned_16;
-        PSK        : out Bytes_48;
-        PSK_Len    : out N32;
-        Suite      : out Unsigned_16;
-        Found      : out Boolean)
+       (ID          : Byte_Seq;
+        Want_Suite  : Unsigned_16;
+        PSK         : out Bytes_48;
+        PSK_Len     : out N32;
+        Suite       : out Unsigned_16;
+        Client_Auth : out Boolean;
+        Found       : out Boolean)
    with
      Pre  => ID'First = 0 and then ID'Length = Ticket_ID_Len,
      Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);
@@ -1995,6 +2005,17 @@ is
 
    function Hash_Len (N : Negotiated_Params) return Hash_Length
    is (if N.Suite = Suite_AES_256_GCM_SHA384 then 48 else 32);
+
+   --  Hash output length (== resumption PSK length) for a cipher suite.
+   --  32 for the SHA-256 suites, 48 for AES-256-GCM-SHA384. Used by the
+   --  client's ServerHello check to reject a PSK selection whose suite
+   --  hash does not match the offered ticket (RFC 8446 4.2.11, SR-01):
+   --  a resumption ticket is bound to exactly one hash, and accepting a
+   --  mismatched suite would collapse the PSK to all-zeros while skipping
+   --  certificate verification. Exposed so the decision is unit-testable.
+   function Suite_Hash_Len (S : Supported_Suite) return Hash_Length
+   is (if S = Suite_AES_256_GCM_SHA384 then 48 else 32)
+   with Post => Suite_Hash_Len'Result in 32 | 48;
 
    type Handshake_Context is record
       --  Configuration (callbacks, trust store, identity)
