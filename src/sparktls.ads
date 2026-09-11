@@ -1211,48 +1211,19 @@ is
      access function (CA_Names : Byte_Seq; Sig_Algos : Byte_Seq) return Maybe_Identity_Access;
 
    ----------------------------------------------------------------------------
-   --  Ticket Store (for session resumption)
-   --  Defined here so Config can reference it. Implementation in
-   --  SPARKTLS.Ticket_Cache child package.
+   --  PSK length bound.
+   --  RFC 8446 4.6.1: a resumption PSK is 32 bytes (SHA-256 suites) or 48
+   --  bytes (SHA-384). Length fields carry their own bounds (#84/#82): the
+   --  check moves to the assignment that produces the value and every read
+   --  gets it free.
+   --
+   --  Session resumption is stateless (RFC 5077): the server seals the PSK
+   --  and its metadata into the ticket itself under the TEK ring (see
+   --  SPARKTLS.Tickets_12 and the Get_Active_TEK / Get_TEK_By_Id callbacks
+   --  below). There is no server-side ticket store.
    ----------------------------------------------------------------------------
 
-   Max_Cached_Tickets : constant := 1024;
-   Ticket_ID_Len      : constant := 16;
-   subtype Ticket_ID is Byte_Seq (0 .. Ticket_ID_Len - 1);
-
-   --  Length fields carry their own bounds (#84/#82): the check moves to
-   --  the assignment that produces the value and every read gets it free.
    subtype PSK_Length is N32 range 0 .. 48;
-
-   type Ticket_Entry is record
-      ID      : Ticket_ID := (others => 0);
-      PSK     : Bytes_48 := (others => 0);
-      PSK_Len : PSK_Length := 0;
-      Suite   : Unsigned_16 := 0;
-      Age_Add : Unsigned_32 := 0;
-      --  SR-03: whether the session this ticket was issued from had a
-      --  verified client certificate. A resuming server that requires
-      --  client auth (Config.Require_Client_Cert) must refuse a ticket
-      --  whose original session was NOT client-authenticated, since PSK
-      --  resumption skips CertificateRequest -- otherwise a ticket issued
-      --  by a permissive listener sharing the same cache would resume,
-      --  unauthenticated, onto the mTLS-required one.
-      Client_Auth : Boolean := False;
-      Valid   : Boolean := False;
-   end record
-   with
-     Predicate =>
-       --  RFC 8446 4.6.1: PSK is SHA-256 (32 byte) or SHA-384 (48
-       --  byte) only when Valid; zero-length on invalid slots is OK
-       --  because they're never read.
-       (if Ticket_Entry.Valid then Ticket_Entry.PSK_Len in 32 | 48 else Ticket_Entry.PSK_Len = 0);
-
-   type Ticket_Array is array (Natural range 0 .. Max_Cached_Tickets - 1) of Ticket_Entry;
-
-   type Ticket_Store is record
-      Entries : Ticket_Array;
-      Next    : Natural range 0 .. Max_Cached_Tickets - 1 := 0;
-   end record;
 
    ----------------------------------------------------------------------------
    --  Session Ticket (RFC 8446 4.6.1)
@@ -1499,7 +1470,7 @@ is
    --  THREAD SAFETY is the implementation's responsibility. SPARKTLS holds
    --  no shared state of its own, so sessions are independent; anything
    --  these callbacks touch is shared by the application's choice. See
-   --  SPARKTLS.Ticket_Store.Protected_Impl for a ready-made thread-safe one.
+   --  SPARKTLS.Session_Cache for a ready-made thread-safe reference cache.
    --
    --  DO NOT BLOCK. These run inside handshake processing. A cache miss is
    --  always safe -- it falls back to a full handshake -- so a distributed
@@ -1507,58 +1478,9 @@ is
    --  stall the state machine.
    ----------------------------------------------------------------------------
 
-   --  Persist a resumption PSK; return the identity to put on the wire.
-   type Store_Session_Fn is
-     access procedure
-       (PSK         : Bytes_48;
-        PSK_Len     : PSK_Length;
-        Suite       : Unsigned_16;
-        Age_Add     : Unsigned_32;
-        Client_Auth : Boolean;
-        ID_Out      : out Ticket_ID)
-   with Pre => PSK_Len in 32 | 48;
-
-   --  Retrieve a PSK by identity. Found => False on miss, wrong suite,
-   --  expiry, or any error: all mean "do a full handshake".
-   --  Post mirrors SPARKTLS.Ticket_Cache.Lookup, which already PROVES it.
-   --  Without it here the guarantee was lost three times over -- Ticket_Cache
-   --  -> protected Cache.Lookup -> Session_Cache.Lookup_Session -> this access
-   --  type -- so the server could not discharge
-   --  "if Found then Suite = S.Negotiated_Suite" at the call site even though
-   --  the reference implementation establishes it. The contract belongs on the
-   --  access type: that is the boundary a caller can see, and it obligates
-   --  every implementation rather than one.
-   type Lookup_Session_Fn is
-     access procedure
-       (ID          : Byte_Seq;
-        Want_Suite  : Unsigned_16;
-        PSK         : out Bytes_48;
-        PSK_Len     : out N32;
-        Suite       : out Unsigned_16;
-        Client_Auth : out Boolean;
-        Found       : out Boolean)
-   with
-     Pre  => ID'First = 0 and then ID'Length = Ticket_ID_Len,
-     Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);
-   --  Mirrors SPARKTLS.Ticket_Cache.Lookup, which already proves it.
-   --  Requires Ada 2022 (postcondition on an access-to-subprogram type);
-   --  see ada_version in alire.toml.
-   --
-   --  THIS CONTRACT DOES NOT MAKE THE RESULT TRUSTWORTHY, and the server
-   --  still re-checks it at the call site. Deleting that check because
-   --  gnatprove calls it redundant would be a mistake, for two reasons:
-   --    * SPARK obligates only implementations whose 'Access is taken in
-   --      SPARK-verified code. An application may supply this callback
-   --      from ordinary Ada -- or any language -- and is bound by nothing.
-   --    * Postconditions are checked at runtime only while assertions are
-   --      enabled. A release build checks nothing.
-   --  So for a caller, this Post is an ASSUMPTION the library cannot
-   --  enforce. The call site derives the same fact from an explicit test
-   --  instead, which is why the proof does not depend on trusting the
-   --  application. Keep both.
-
-   --  TLS 1.2 stateless tickets (RFC 5077): the key that seals outgoing
-   --  tickets, and lookup by the Key_ID carried in an inbound ticket.
+   --  Stateless session tickets (RFC 5077), shared by TLS 1.2 and 1.3: the
+   --  key that seals outgoing tickets, and lookup by the Key_ID carried in
+   --  an inbound ticket.
    --  Replaces the old shared key array, and lets an HSM-backed
    --  deployment supply keys without the library holding them.
    type Get_Active_TEK_Fn is
@@ -1772,12 +1694,6 @@ is
       --  SSL_VERIFY_FAIL_IF_NO_PEER_CERT distinction.
       Require_Client_Cert : Boolean := False;
 
-      --  Server: resumption storage callbacks. When both are non-null the
-      --  server sends NewSessionTicket after the handshake and accepts
-      --  PSK identities on resumption. Null disables resumption.
-      Store_Session  : Store_Session_Fn := null;
-      Lookup_Session : Lookup_Session_Fn := null;
-
       --  Server: mark TLS 1.3 NewSessionTicket values as usable across
       --  hostnames via the ticket_flags resumption_across_names bit.
       --  Default False is the conservative policy: tickets are scoped to
@@ -1826,7 +1742,7 @@ is
       --  per-node rotation would break cross-node resume.
       --
       --  CAVEAT: all of the above is Session_Cache, the reference cache.
-      --  An app that supplies its OWN Store_Session/Get_Active_TEK
+      --  An app that supplies its OWN Get_Active_TEK / Get_TEK_By_Id
       --  callbacks owns rotation entirely and gets none of this for free.
 
       TLS12_Resume_Ticket : Session_Ticket_12;
@@ -1951,7 +1867,11 @@ is
    --  live value; write components individually (carve 3b lesson).
    type PSK_State is record
       Offered           : Boolean := False;
-      Offer_ID          : Ticket_ID := (others => 0);
+      --  The full offered PSK identity (a stateless RFC 5077 sealed
+      --  ticket, up to Max_Ticket_Len bytes), not a 16-byte lookup key:
+      --  the server opens it with the TEK ring. Offer_ID_Len = 0 => none.
+      Offer_ID          : Byte_Seq (0 .. Max_Ticket_Len - 1) := (others => 0);
+      Offer_ID_Len      : Ticket_Length := 0;
       Value             : Bytes_48 := (others => 0);   --  zeros if no PSK
       Value_Len         : PSK_Value_Length := 0;       --  0 = no PSK
       Binder            : Bytes_48 := (others => 0);   --  received binder
@@ -1973,6 +1893,12 @@ is
       Server_Echoed_SID     : Boolean := False;
       Resuming              : Boolean := False;
       Ticket_Offered        : Boolean := False;
+      --  SR-04: the peer proved possession of a validated client cert in
+      --  THIS handshake (set after CertificateVerify succeeds), or the
+      --  session was resumed from a ticket that says so. Sealed into every
+      --  TLS 1.2 ticket we issue so an mTLS-required listener can refuse
+      --  an abbreviated resume of an unauthenticated session.
+      Client_Authed         : Boolean := False;
       Ticket_Resume_OK      : Boolean := False;
       Ticket_Will_Issue     : Boolean := False;
       Resumed_Master_Secret : Byte_Seq (0 .. 47) := (others => 0);

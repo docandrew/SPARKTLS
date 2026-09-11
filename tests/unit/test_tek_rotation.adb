@@ -110,7 +110,7 @@ begin
       TEK_Buf    : Byte_Seq (0 .. 31) := (others => 0);
       Have       : Boolean;
    begin
-      Plain.Master_Secret := (others => 16#5A#);
+      Plain.Secret := (others => 16#5A#);
       Plain.Suite         := Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256;
       Plain.Created_At    := 5000;
       Plain.SID_Len       := 0;
@@ -141,11 +141,12 @@ begin
             TEK     => TEK_Buf,
             Now     => 6100,
             Max_Age => 3600,
-            Plain   => Out_Plain,
+            Expect_Kind => SPARKTLS.Tickets_12.Kind_TLS12,
+            Plain       => Out_Plain,
             Status  => OK);
          Check ("ticket opens after rotation (grace window)", OK);
          Check ("recovered master secret matches",
-                OK and then Out_Plain.Master_Secret = Plain.Master_Secret);
+                OK and then Out_Plain.Secret = Plain.Secret);
       end if;
    end;
 

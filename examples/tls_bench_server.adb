@@ -237,10 +237,10 @@ begin
                           SPARKTLS.Server.Configure
                             ((Local   => Id'Unchecked_Access,
                               Random  => Entropy_Random.Random'Access,
-                              Store_Session  =>
-                                SPARKTLS.Session_Cache.Store_Session'Access,
-                              Lookup_Session =>
-                                SPARKTLS.Session_Cache.Lookup_Session'Access,
+                              Get_Active_TEK =>
+                                SPARKTLS.Session_Cache.Get_Active_TEK'Access,
+                              Get_TEK_By_Id  =>
+                                SPARKTLS.Session_Cache.Get_TEK_By_Id'Access,
                               others  => <>));
                         Ev.Events := unsigned (EPOLLIN);
                         Ev.Data.FD := Client_FD;

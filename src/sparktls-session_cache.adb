@@ -12,7 +12,6 @@
 --  lock, so ticket sealing and opening never serialise handshakes against
 --  each other.
 
-with SPARKTLS.Ticket_Cache;
 with SPARKTLS.Tickets_12;
 
 package body SPARKTLS.Session_Cache
@@ -41,29 +40,6 @@ is
 
    protected Cache is
 
-      procedure Store
-        (PSK         : Bytes_48;
-         PSK_Len     : PSK_Length;
-         Suite       : Unsigned_16;
-         Age_Add     : Unsigned_32;
-         Client_Auth : Boolean;
-         ID_Out      : out Ticket_ID)
-         --  Ticket_Cache.Store requires a valid PSK length; a protected op
-         --  cannot inherit that, so restate it here.
-      with Pre => PSK_Len in 32 | 48;
-
-      procedure Lookup
-        (ID          : Byte_Seq;
-         Want_Suite  : Unsigned_16;
-         PSK         : out Bytes_48;
-         PSK_Len     : out N32;
-         Suite       : out Unsigned_16;
-         Client_Auth : out Boolean;
-         Found       : out Boolean)
-      with
-        Pre => ID'First = 0 and then ID'Length = Ticket_ID_Len,
-        Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);
-
       procedure Active_Key
         (Key_ID : out Byte_Seq;
          TEK    : out Byte_Seq;
@@ -87,7 +63,6 @@ is
       procedure Clear;
 
    private
-      PSKs : Ticket_Store;
       Keys : Key_Ring :=
         (others =>
            (Key_ID => (others => 0), TEK => (others => 0), Valid => False, Created_At => 0));
@@ -96,46 +71,6 @@ is
    end Cache;
 
    protected body Cache is
-
-      procedure Store
-        (PSK         : Bytes_48;
-         PSK_Len     : PSK_Length;
-         Suite       : Unsigned_16;
-         Age_Add     : Unsigned_32;
-         Client_Auth : Boolean;
-         ID_Out      : out Ticket_ID) is
-      begin
-         --  Reuse the existing cache logic; it is already SPARK-proven and
-         --  operates on a plain Ticket_Store passed in out.
-         SPARKTLS.Ticket_Cache.Store
-           (Cache       => PSKs,
-            PSK         => PSK,
-            PSK_Len     => PSK_Len,
-            Suite       => Suite,
-            Age_Add     => Age_Add,
-            Client_Auth => Client_Auth,
-            ID_Out      => ID_Out);
-      end Store;
-
-      procedure Lookup
-        (ID          : Byte_Seq;
-         Want_Suite  : Unsigned_16;
-         PSK         : out Bytes_48;
-         PSK_Len     : out N32;
-         Suite       : out Unsigned_16;
-         Client_Auth : out Boolean;
-         Found       : out Boolean) is
-      begin
-         SPARKTLS.Ticket_Cache.Lookup
-           (Cache       => PSKs,
-            ID          => ID,
-            Want_Suite  => Want_Suite,
-            PSK         => PSK,
-            PSK_Len     => PSK_Len,
-            Suite       => Suite,
-            Client_Auth => Client_Auth,
-            Found       => Found);
-      end Lookup;
 
       procedure Active_Key (Key_ID : out Byte_Seq; TEK : out Byte_Seq; Found : out Boolean) is
       begin
@@ -194,7 +129,6 @@ is
 
       procedure Clear is
       begin
-         PSKs := (others => <>);
          Keys :=
            (others =>
               (Key_ID => (others => 0), TEK => (others => 0), Valid => False, Created_At => 0));
@@ -270,31 +204,6 @@ is
    ----------------------------------------------------------------------
    --  Callback delegates
    ----------------------------------------------------------------------
-
-   procedure Store_Session
-     (PSK         : Bytes_48;
-      PSK_Len     : PSK_Length;
-      Suite       : Unsigned_16;
-      Age_Add     : Unsigned_32;
-      Client_Auth : Boolean;
-      ID_Out      : out Ticket_ID) is
-   begin
-      --  SR-02: the identity is a one-way hash of the PSK, computed inside
-      --  Ticket_Cache.Store -- unlinkable to the secret and needing no RNG.
-      Cache.Store (PSK, PSK_Len, Suite, Age_Add, Client_Auth, ID_Out);
-   end Store_Session;
-
-   procedure Lookup_Session
-     (ID          : Byte_Seq;
-      Want_Suite  : Unsigned_16;
-      PSK         : out Bytes_48;
-      PSK_Len     : out N32;
-      Suite       : out Unsigned_16;
-      Client_Auth : out Boolean;
-      Found       : out Boolean) is
-   begin
-      Cache.Lookup (ID, Want_Suite, PSK, PSK_Len, Suite, Client_Auth, Found);
-   end Lookup_Session;
 
    procedure Get_Active_TEK (Key_ID : out Byte_Seq; TEK : out Byte_Seq; Found : out Boolean) is
    begin

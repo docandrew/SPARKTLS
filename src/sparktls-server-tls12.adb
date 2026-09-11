@@ -241,12 +241,13 @@ is
                OK := False;
             else
                SPARKTLS.Tickets_12.Decrypt_Ticket
-                 (Ticket  => S.HC.T12.Peer_Ticket (0 .. S.HC.T12.Peer_Ticket_Len - 1),
-                  TEK     => TEK,
-                  Now     => Now,
-                  Max_Age => Max_Age,
-                  Plain   => Plain,
-                  Status  => OK);
+                 (Ticket      => S.HC.T12.Peer_Ticket (0 .. S.HC.T12.Peer_Ticket_Len - 1),
+                  TEK         => TEK,
+                  Now         => Now,
+                  Max_Age     => Max_Age,
+                  Expect_Kind => SPARKTLS.Tickets_12.Kind_TLS12,
+                  Plain       => Plain,
+                  Status      => OK);
             end if;
             if OK
               and then
@@ -259,12 +260,36 @@ is
                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
               and then Plain.Suite = Wire_Of (S.Negotiated_Suite)
             then
-               --  Resume: install ticket's master_secret + force suite.
-               S.HC.Master_Secret_12 := Plain.Master_Secret;
-               S.Negotiated_Suite := To_Suite (Plain.Suite);
-               S.HC.T12.Resuming := True;
-               Build_Abbreviated_Server_Flight_12 (S, Cfg, Result);
-               return;
+               --  SR-04 / RFC 7627 5.3: the original session used the
+               --  extended master secret but this ClientHello does not
+               --  offer it. The client has dropped EMS between sessions;
+               --  the server MUST abort rather than resume or downgrade.
+               if Plain.EMS and then not S.HC.Use_EMS then
+                  Send_Alert_And_Error (S, Handshake_Failure, Result);
+                  return;
+               end if;
+
+               --  Resume only when EMS state is unchanged (a client that
+               --  newly offers EMS gets a full handshake, RFC 7627 5.3) and,
+               --  when this listener requires client auth, the ticket says
+               --  the original session was client-authenticated (SR-04):
+               --  an abbreviated handshake skips CertificateRequest, so an
+               --  unauthenticated ticket would otherwise admit the peer.
+               --  Anything else falls through to a full handshake, which
+               --  RFC 5077 3.4 permits and which will request the cert.
+               if Plain.EMS = S.HC.Use_EMS
+                 and then (not S.HC.Cfg.Require_Client_Cert or else Plain.Client_Auth)
+               then
+                  --  Resume: install ticket's master_secret + force suite,
+                  --  and carry the authenticated status into the ticket we
+                  --  re-issue on this flight.
+                  S.HC.Master_Secret_12 := Plain.Secret;
+                  S.Negotiated_Suite := To_Suite (Plain.Suite);
+                  S.HC.T12.Resuming := True;
+                  S.HC.T12.Client_Authed := Plain.Client_Auth;
+                  Build_Abbreviated_Server_Flight_12 (S, Cfg, Result);
+                  return;
+               end if;
             end if;
          end;
       end if;
@@ -859,8 +884,15 @@ is
    begin
       OK := False;
       Cfg.Random.all (Nonce_Buf);
-      Plain.Master_Secret := S.HC.Master_Secret_12;
+      Plain.Secret := S.HC.Master_Secret_12;
+      Plain.Secret_Len := 48;
+      Plain.Kind := SPARKTLS.Tickets_12.Kind_TLS12;
       Plain.Suite := Wire_Of (S.Negotiated_Suite);
+      --  SR-04: seal the session's EMS state and client-auth status. On the
+      --  abbreviated path both were carried in from the ticket we resumed
+      --  (the gate only resumes when EMS matches the new ClientHello).
+      Plain.EMS := S.HC.Use_EMS;
+      Plain.Client_Auth := S.HC.T12.Client_Authed;
 
       Plain.Created_At :=
         (if Cfg.Get_Time /= null
@@ -2148,6 +2180,12 @@ is
                return;
             end if;
 
+            --  SR-04: signature verified AND cert validated -- the peer is
+            --  authenticated for this session. Recorded here (not at
+            --  Certificate time, which only proves the chain parsed) so the
+            --  ticket we issue after Finished carries the truth.
+            S.HC.T12.Client_Authed := True;
+
             Append_Transcript (S.HC, Frag);
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Set_State (S, Wait_Client_Finished);
@@ -2331,8 +2369,14 @@ is
             --  expiry check on the decrypt side; without
             --  Cfg.Get_Time we encode 0 and Decrypt_Ticket skips
             --  the age window check (acceptable for dev / test).
-            Plain.Master_Secret := S.HC.Master_Secret_12;
+            Plain.Secret := S.HC.Master_Secret_12;
+            Plain.Secret_Len := 48;
+            Plain.Kind := SPARKTLS.Tickets_12.Kind_TLS12;
             Plain.Suite := Wire_Of (S.Negotiated_Suite);
+            --  SR-04: seal EMS state and whether the client authenticated
+            --  (CertificateVerify + validation) in this full handshake.
+            Plain.EMS := S.HC.Use_EMS;
+            Plain.Client_Auth := S.HC.T12.Client_Authed;
             Plain.Created_At :=
               (if S.HC.Cfg.Get_Time /= null
                then SPARKTLS.Tickets_12.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)

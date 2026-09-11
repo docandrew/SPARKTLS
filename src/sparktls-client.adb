@@ -1015,10 +1015,12 @@ is
       HC.KE.P384_SK := (others => 0);
       SPARKTLS_Transcript.Wipe (HC.TS);
       HC.T12.Resumed_Master_Secret := (others => 0);
+      HC.T12.Client_Authed := False;
       HC.EMS_Session_Hash := (others => 0);
       HC.PSK.Value := (others => 0);
       HC.PSK.Binder := (others => 0);
       HC.PSK.Offer_ID := (others => 0);
+      HC.PSK.Offer_ID_Len := 0;
       HC.Client_Random := (others => 0);
       HC.Server_Random := (others => 0);
    end Scrub_Handshake_Context;

@@ -81,9 +81,6 @@ is
    --  extension. Empty string means we don't echo ALPN even if
    --  the client offered something. Single-protocol only  for
    --  multi-protocol selection use Init with a built Config.
-   --  SPARK_Mode Off: Ticket_Store_Access is access-all (shared mutable
-   --  cache). SPARK's ownership model treats it as a move, but the pointer
-   --  is intentionally shared between caller and Config.
 
    --  RFC 8446 4.1: Step the server handshake / record processing
    --  state machine.

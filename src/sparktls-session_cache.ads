@@ -1,10 +1,11 @@
---  Reference thread-safe implementation of the ticket-storage callbacks.
+--  Reference thread-safe implementation of the ticket-key callbacks.
 --
---  SPARKTLS itself holds no ticket storage: Config carries callbacks
---  (Store_Session / Lookup_Session / Get_Active_TEK / Get_TEK_By_Id) and the
---  application supplies them. That keeps the core free of global state and of
---  owning pointers, and leaves concurrency policy where only the application
---  can decide it.
+--  Session resumption is stateless (RFC 5077): the server seals each PSK and
+--  its metadata into the ticket itself under a ticket-encryption key (TEK).
+--  SPARKTLS holds no ticket storage -- Config carries the key callbacks
+--  (Get_Active_TEK / Get_TEK_By_Id) and the application supplies them. That
+--  keeps the core free of global state and of owning pointers, and leaves
+--  concurrency policy where only the application can decide it.
 --
 --  This package is that decision made for you, for the common case: a
 --  single-process server, possibly multi-threaded, that wants resumption to
@@ -21,8 +22,6 @@
 --       (S              => S,
 --        Local          => Ident'Unchecked_Access,
 --        Random         => My_RNG'Access,
---        Store_Session  => SPARKTLS.Session_Cache.Store_Session'Access,
---        Lookup_Session => SPARKTLS.Session_Cache.Lookup_Session'Access,
 --        Get_Active_TEK => SPARKTLS.Session_Cache.Get_Active_TEK'Access,
 --        Get_TEK_By_Id  => SPARKTLS.Session_Cache.Get_TEK_By_Id'Access);
 --
@@ -116,31 +115,7 @@ is
    --  Callbacks  pass these to Configure/Init via 'Access.
    ----------------------------------------------------------------------
 
-   --  Persist a resumption PSK and return the identity to put on the wire.
-   procedure Store_Session
-     (PSK         : Bytes_48;
-      PSK_Len     : PSK_Length;
-      Suite       : Unsigned_16;
-      Age_Add     : Unsigned_32;
-      Client_Auth : Boolean;
-      ID_Out      : out Ticket_ID)
-   with Pre => PSK_Len in 32 | 48;
-
-   --  Retrieve a PSK by identity. Found => False for a miss, a cipher-suite
-   --  mismatch, or anything else -- all mean "do a full handshake".
-   procedure Lookup_Session
-     (ID          : Byte_Seq;
-      Want_Suite  : Unsigned_16;
-      PSK         : out Bytes_48;
-      PSK_Len     : out N32;
-      Suite       : out Unsigned_16;
-      Client_Auth : out Boolean;
-      Found       : out Boolean)
-   with
-     Pre => ID'First = 0 and then ID'Length = Ticket_ID_Len,
-     Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);
-
-   --  The key that seals new TLS 1.2 tickets. Found => False before any
+   --  The key that seals new tickets. Found => False before any
    --  Rotate_TEK call, which simply means no ticket is issued.
    procedure Get_Active_TEK (Key_ID : out Byte_Seq; TEK : out Byte_Seq; Found : out Boolean)
    with Pre => Key_ID'Length = 4 and then TEK'Length = 32;

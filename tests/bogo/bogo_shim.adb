@@ -1358,20 +1358,17 @@ procedure Bogo_Shim is
                Server_Cfg.Request_Client_Cert := Cfg.Request_Client_Cert;
                Server_Cfg.Require_Client_Cert := Cfg.Require_Client_Cert;
                Server_Cfg.Skip_Verify := Cfg.Request_Client_Cert;
-               --  Resumption storage is the shared Session_Cache; null
-               --  callbacks disable it for -no-ticket cases.
-               Server_Cfg.Store_Session :=
-                 (if Cfg.No_Ticket then null
-                  else SPARKTLS.Session_Cache.Store_Session'Access);
-               Server_Cfg.Lookup_Session :=
-                 (if Cfg.No_Ticket then null
-                  else SPARKTLS.Session_Cache.Lookup_Session'Access);
+               --  Resumption is stateless (RFC 5077): the PSK is sealed into
+               --  the ticket under the TEK ring, so the key callbacks drive
+               --  both TLS 1.2 and 1.3 tickets. Null them for -no-ticket.
                Server_Cfg.TLS13_Resumption_Across_Names :=
                  Cfg.Resumption_Across_Names;
                Server_Cfg.Get_Active_TEK :=
-                 SPARKTLS.Session_Cache.Get_Active_TEK'Access;
+                 (if Cfg.No_Ticket then null
+                  else SPARKTLS.Session_Cache.Get_Active_TEK'Access);
                Server_Cfg.Get_TEK_By_Id :=
-                 SPARKTLS.Session_Cache.Get_TEK_By_Id'Access;
+                 (if Cfg.No_Ticket then null
+                  else SPARKTLS.Session_Cache.Get_TEK_By_Id'Access);
                Server_Cfg.Versions := Policy;
                Server_Cfg.TLS12_Cipher_List := Cfg.TLS12_Cipher_List;
                Server_Cfg.TLS12_Cipher_Groups := Cfg.TLS12_Cipher_Groups;

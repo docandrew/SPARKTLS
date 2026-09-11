@@ -289,13 +289,13 @@ begin
          Len    : N32;
          Got    : Boolean;
       begin
-         P_In.Master_Secret := (others => 16#77#);
+         P_In.Secret := (others => 16#77#);
          P_In.Suite         := 16#C02F#;
          P_In.Created_At    := Created;
          P_In.SID_Len       := 0;
          T.Encrypt_Ticket (P_In, Key_ID, TEK, Nonce, Wire, Len);
          T.Decrypt_Ticket (Wire (0 .. Len - 1), Byte_Seq (TEK),
-                           Now, Max_Age, P_Out, Got);
+                           Now, Max_Age, T.Kind_TLS12, P_Out, Got);
          Check (Label, Got = Want);
       end Try;
    begin

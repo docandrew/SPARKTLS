@@ -42,7 +42,7 @@ procedure Test_Tickets_12 is
       P : T.Ticket_Plain;
    begin
       for I in N32 range 0 .. 47 loop
-         P.Master_Secret (I) := Byte (16#80# + (Natural (I) mod 32));
+         P.Secret (I) := Byte (16#80# + (Natural (I) mod 32));
       end loop;
       P.Suite := 16#C02F#;
       P.Created_At := 1_700_000_000;
@@ -82,11 +82,11 @@ procedure Test_Tickets_12 is
    begin
       T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
-                        P_In.Created_At + 100, 3600, P_Out, OK);
+                        P_In.Created_At + 100, 3600, T.Kind_TLS12, P_Out, OK);
       Check (Label & ": decrypt", OK);
       if OK then
          Check (Label & ": master_secret",
-                P_Out.Master_Secret = P_In.Master_Secret);
+                P_Out.Secret = P_In.Secret);
          Check (Label & ": suite", P_Out.Suite = P_In.Suite);
          Check (Label & ": created_at",
                 P_Out.Created_At = P_In.Created_At);
@@ -114,14 +114,16 @@ begin
       --  32 = Key_ID (4) + Nonce (12) + Tag (16); the rest is plaintext.
       --  Written in terms of SID_Len so it keeps meaning if the fixture
       --  changes -- the old literal "32 + 59 + 16" only matched because
+      --  (61 = fixed plaintext: secret 48 + secret_len 1 + suite 2 +
+      --  created_at 8 + flags 1 + sid_len 1)
       --  this fixture happens to use SID_Len = 16.
       Check ("Encrypt: Len = overhead + plaintext",
-             Len = 32 + (59 + P_In.SID_Len));
+             Len = 32 + (61 + P_In.SID_Len));
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
-                        1_700_000_100, 3600, P_Out, OK);
+                        1_700_000_100, 3600, T.Kind_TLS12, P_Out, OK);
       Check ("Decrypt: succeeded", OK);
       Check ("Round-trip: Master_Secret matches",
-             P_Out.Master_Secret = P_In.Master_Secret);
+             P_Out.Secret = P_In.Secret);
       Check ("Round-trip: Suite matches", P_Out.Suite = P_In.Suite);
       Check ("Round-trip: Created_At matches",
              P_Out.Created_At = P_In.Created_At);
@@ -142,7 +144,7 @@ begin
       T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
       Ticket (Len - 1) := Ticket (Len - 1) xor 16#01#;
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
-                        1_700_000_100, 3600, P_Out, OK);
+                        1_700_000_100, 3600, T.Kind_TLS12, P_Out, OK);
       Check ("Tampered tag → Decrypt fails", not OK);
    end;
 
@@ -160,7 +162,7 @@ begin
       --  remains testable here is that the wrong key does not open it.
       T.Encrypt_Ticket (P_In, Wrong_ID, TEK_A, Nonce, Ticket, Len);
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_B,
-                        1_700_000_100, 3600, P_Out, OK);
+                        1_700_000_100, 3600, T.Kind_TLS12, P_Out, OK);
       Check ("Wrong TEK → Decrypt fails", not OK);
    end;
 
@@ -173,10 +175,10 @@ begin
       P_In := Make_Plain;
       T.Encrypt_Ticket (P_In, Key_ID_B, TEK_B, Nonce, Ticket, Len);
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_B,
-                        1_700_000_100, 3600, P_Out, OK);
+                        1_700_000_100, 3600, T.Kind_TLS12, P_Out, OK);
       Check ("Rotation: ticket under Key_B decrypts", OK);
       Check ("Rotation: round-trip Master_Secret",
-             OK and then P_Out.Master_Secret = P_In.Master_Secret);
+             OK and then P_Out.Secret = P_In.Secret);
    end;
 
    declare
@@ -188,7 +190,7 @@ begin
       P_In := Make_Plain;
       T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
-                        1_700_000_000 + 7200, 3600, P_Out, OK);
+                        1_700_000_000 + 7200, 3600, T.Kind_TLS12, P_Out, OK);
       Check ("Expired ticket (>Max_Age) → Decrypt fails", not OK);
    end;
 
@@ -201,7 +203,7 @@ begin
       P_In := Make_Plain;
       T.Encrypt_Ticket (P_In, Key_ID_A, TEK_A, Nonce, Ticket, Len);
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
-                        1_600_000_000, 86400, P_Out, OK);
+                        1_600_000_000, 86400, T.Kind_TLS12, P_Out, OK);
       Check ("Future-dated ticket → Decrypt fails", not OK);
    end;
 

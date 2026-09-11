@@ -751,20 +751,28 @@ is
       end loop;
    end Count_PSK_Identities;
 
+   --  Capture the FULL first offered PSK identity (a stateless sealed
+   --  ticket, up to Max_Ticket_Len bytes) plus its length, rather than a
+   --  16-byte lookup key. The server opens it with the TEK ring later.
    procedure Parse_First_PSK_Identity
-     (Ext_Data : in Byte_Seq;
-      IDs_End  : out PSK_Ext_Index;
-      Ticket   : out Ticket_ID;
-      Status   : out PSK_Identity_Status)
+     (Ext_Data   : in Byte_Seq;
+      IDs_End     : out PSK_Ext_Index;
+      Ticket      : out Byte_Seq;
+      Ticket_Len  : out N32;
+      Status      : out PSK_Identity_Status)
    with
-     Pre => Ext_Data'First = 0 and then Ext_Data'Last in 5 .. 1023,
-     Post => (if Status = PSK_Identity_OK then IDs_End in 2 .. Ext_Data'Last + 1);
+     Pre => Ext_Data'First = 0 and then Ext_Data'Last in 5 .. 1023
+            and then Ticket'First = 0 and then Ticket'Last = Max_Ticket_Len - 1,
+     Post => (if Status = PSK_Identity_OK
+              then IDs_End in 2 .. Ext_Data'Last + 1
+                   and then Ticket_Len in 1 .. Max_Ticket_Len);
 
    procedure Parse_First_PSK_Identity
-     (Ext_Data : in Byte_Seq;
-      IDs_End  : out PSK_Ext_Index;
-      Ticket   : out Ticket_ID;
-      Status   : out PSK_Identity_Status)
+     (Ext_Data   : in Byte_Seq;
+      IDs_End     : out PSK_Ext_Index;
+      Ticket      : out Byte_Seq;
+      Ticket_Len  : out N32;
+      Status      : out PSK_Identity_Status)
    is
       DLen    : constant PSK_Ext_Index := Ext_Data'Last + 1;
       IDs_Len : constant N32 := N32 (Ext_Data (0)) * 256 + N32 (Ext_Data (1));
@@ -772,6 +780,7 @@ is
    begin
       IDs_End := 0;
       Ticket := (others => 0);
+      Ticket_Len := 0;
       Status := PSK_Identity_Ignore;
 
       if IDs_Len = 0 then
@@ -791,19 +800,20 @@ is
       begin
          if IDs_Rem < 6
            or else Tick_Len = 0
-           or else Tick_Len > N32 (Ticket_ID_Len)
+           or else Tick_Len > N32 (Max_Ticket_Len)
            or else Tick_Len > IDs_Rem - 6
          then
             return;
          end if;
 
-         pragma Assert (Tick_Len in 1 .. N32 (Ticket_ID_Len));
+         pragma Assert (Tick_Len in 1 .. N32 (Max_Ticket_Len));
          pragma Assert (P + 2 + Tick_Len <= Ext_Data'Last);
          for I in N32 range 0 .. Tick_Len - 1 loop
             pragma Loop_Invariant (I < Tick_Len);
             pragma Loop_Invariant (P + 2 + I <= Ext_Data'Last);
             Ticket (I) := Ext_Data (P + 2 + I);
          end loop;
+         Ticket_Len := Tick_Len;
          Status := PSK_Identity_OK;
       end;
    end Parse_First_PSK_Identity;
@@ -820,7 +830,11 @@ is
        and then Ext_Data'Last in 5 .. 1023
        and then Binders_Start in 2 .. Ext_Data'Last + 1,
      Post =>
-       (if OK then Binder_Count > 0 and then HC.PSK.Binder_Len in 32 | 48)
+       --  Binder_Len = 0 when OK marks a deferred binder (present but not the
+       --  hash length); Verify_PSK_Binder resolves it. A real binder is
+       --  32/48 with a positive count.
+       (if OK then HC.PSK.Binder_Len in 0 | 32 | 48)
+       and then (if OK and then HC.PSK.Binder_Len /= 0 then Binder_Count > 0)
        and then HC.Legacy_Session_ID_Len = HC.Legacy_Session_ID_Len'Old
        and then (if HC.Cfg.Local'Old /= null and then Local_Config_Valid (HC.Cfg.Local'Old)
                  then HC.Cfg.Local /= null and then Local_Config_Valid (HC.Cfg.Local));
@@ -966,8 +980,19 @@ is
             OK := False;
 
          when PSK_Binders_Verify_Error =>
-            HC.Ext_Parse_Err := Certificate_Verify_Failed;
-            OK := False;
+            --  A binder whose length is not the hash size (32/48). Whether
+            --  this is fatal depends on whether the offered identity resolves
+            --  to a real TLS 1.3 ticket, which we can only tell once we open
+            --  it. Defer: record "binder present but unusable" (Binder_Len =
+            --  0) and let the CH parse succeed. Verify_PSK_Binder then rejects
+            --  a resolvable identity with a bad binder (BoGo
+            --  Resume-Server-BinderWrongLength) but declines an unresolvable
+            --  one -- e.g. a stale TLS 1.2 ticket offered at 1.3 -- and falls
+            --  through to a full handshake (BoGo Resume-Server-TLS12-TLS13,
+            --  expectResumeRejected). A truly absent binders list is a
+            --  separate PSK_Binders_Decode_Error above and still aborts.
+            HC.PSK.Binder_Len := 0;
+            OK := True;
       end case;
    end Parse_PSK_Binders;
 
@@ -1008,14 +1033,14 @@ is
       IDs_End        : out PSK_Ext_Index;
       Continue_Parse : out Boolean)
    is
-      Ticket : Ticket_ID;
-      Status : PSK_Identity_Status;
+      Tick_Len : N32;
+      Status   : PSK_Identity_Status;
    begin
-      Parse_First_PSK_Identity (Ext_Data, IDs_End, Ticket, Status);
+      Parse_First_PSK_Identity (Ext_Data, IDs_End, HC.PSK.Offer_ID, Tick_Len, Status);
       case Status is
          when PSK_Identity_OK =>
             pragma Assert (IDs_End in 2 .. Ext_Data'Last + 1);
-            HC.PSK.Offer_ID := Ticket;
+            HC.PSK.Offer_ID_Len := Tick_Len;
             HC.PSK.Offered := True;
             Continue_Parse := True;
 
@@ -1059,7 +1084,12 @@ is
          return;
       end if;
 
-      if Ident_Count /= Binder_Count then
+      --  Skip the identity/binder count check when the first binder was
+      --  deferred as unusable (Binder_Len = 0): its wrong length made the
+      --  binder scan stop early, so Binder_Count is not meaningful. The
+      --  deferred offer is resolved in Verify_PSK_Binder, which rejects a
+      --  real ticket with a bad binder and declines an unresolvable one.
+      if HC.PSK.Binder_Len /= 0 and then Ident_Count /= Binder_Count then
          HC.Ext_Parse_Err := Illegal_Parameter;
          HC.PSK.Binder_Len := 0;
          pragma Assert (HC.Legacy_Session_ID_Len = Saved_Legacy);
@@ -1802,7 +1832,18 @@ is
             end if;
 
          when RFLX.Tls_Extensiontype_Values.Pre_Shared_Key =>
-            if DLen in Wire_PSK_Ext_Len then
+            --  pre_shared_key is a TLS 1.3-only extension and MUST be the
+            --  last one (RFC 8446 4.2.11), so supported_versions has already
+            --  been parsed and HC.Has_TLS_1_3 is decided. Only process it
+            --  when the client actually offered TLS 1.3. A TLS 1.2
+            --  ClientHello that also carries a stray pre_shared_key -- e.g.
+            --  a client offering a 1.2 session_ticket with an appended PSK --
+            --  must ignore it, not parse it as a 1.3 resumption offer (doing
+            --  so would fail binder validation and abort the legacy
+            --  abbreviated handshake). Before stateless tickets this was
+            --  masked: 1.3 identities were 16-byte hash ids, so the longer
+            --  1.2 ticket was rejected by the identity-length cap.
+            if HC.Has_TLS_1_3 and then DLen in Wire_PSK_Ext_Len then
                Parse_PSK_Extension (Ext_Ctx, DLen, HC);
                --  RFC 8446 4.2.11: PSK shape errors (missing
                --  binders, identity/binder count mismatch,
@@ -2603,6 +2644,17 @@ is
          Version := TLS_1_3;
       else
          Version := TLS_1_2;
+         --  pre_shared_key (RFC 8446 4.2.11) is a TLS 1.3-only extension.
+         --  A ClientHello without supported_versions=0x0304 is TLS 1.2, so
+         --  any pre_shared_key it carries -- e.g. a client that also offers
+         --  a TLS 1.2 session_ticket in the same ClientHello -- must be
+         --  ignored. Otherwise the offered PSK would divert suite and
+         --  version selection onto the 1.3 resumption path and break the
+         --  legacy abbreviated handshake. (Before stateless tickets this was
+         --  masked: 1.3 identities were 16-byte hash ids and the identity
+         --  parser rejected the longer 1.2 ticket, leaving PSK.Offered False.)
+         HC.PSK.Offered := False;
+         HC.PSK.Offer_ID_Len := 0;
       end if;
 
       if not Compression_Methods_OK (Data, Is_TLS13 => Version = TLS_1_3) then

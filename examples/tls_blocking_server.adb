@@ -172,10 +172,6 @@ procedure TLS_Blocking_Server is
                                   else null),
           Request_Client_Cert => MTLS,
           Require_Client_Cert => MTLS_Require,
-          Store_Session       =>
-            SPARKTLS.Session_Cache.Store_Session'Access,
-          Lookup_Session      =>
-            SPARKTLS.Session_Cache.Lookup_Session'Access,
           Get_Active_TEK      =>
             SPARKTLS.Session_Cache.Get_Active_TEK'Access,
           Get_TEK_By_Id       =>
