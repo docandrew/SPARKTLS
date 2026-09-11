@@ -759,6 +759,7 @@ is
       IDs_End     : out PSK_Ext_Index;
       Ticket      : out Byte_Seq;
       Ticket_Len  : out N32;
+      Age         : out Unsigned_32;
       Status      : out PSK_Identity_Status)
    with
      Pre => Ext_Data'First = 0 and then Ext_Data'Last in 5 .. 1023
@@ -772,6 +773,7 @@ is
       IDs_End     : out PSK_Ext_Index;
       Ticket      : out Byte_Seq;
       Ticket_Len  : out N32;
+      Age         : out Unsigned_32;
       Status      : out PSK_Identity_Status)
    is
       DLen    : constant PSK_Ext_Index := Ext_Data'Last + 1;
@@ -781,6 +783,7 @@ is
       IDs_End := 0;
       Ticket := (others => 0);
       Ticket_Len := 0;
+      Age := 0;
       Status := PSK_Identity_Ignore;
 
       if IDs_Len = 0 then
@@ -814,6 +817,15 @@ is
             Ticket (I) := Ext_Data (P + 2 + I);
          end loop;
          Ticket_Len := Tick_Len;
+         --  obfuscated_ticket_age: the uint32 right after the identity
+         --  (RFC 8446 4.2.11). In bounds: Tick_Len <= IDs_Rem - 6 puts all
+         --  four bytes inside the identities list.
+         pragma Assert (P + 2 + Tick_Len + 3 <= Ext_Data'Last);
+         Age := 0;
+         for I in N32 range 0 .. 3 loop
+            pragma Loop_Invariant (P + 2 + Tick_Len + I <= Ext_Data'Last);
+            Age := Shift_Left (Age, 8) or Unsigned_32 (Ext_Data (P + 2 + Tick_Len + I));
+         end loop;
          Status := PSK_Identity_OK;
       end;
    end Parse_First_PSK_Identity;
@@ -1034,13 +1046,15 @@ is
       Continue_Parse : out Boolean)
    is
       Tick_Len : N32;
+      Age      : Unsigned_32;
       Status   : PSK_Identity_Status;
    begin
-      Parse_First_PSK_Identity (Ext_Data, IDs_End, HC.PSK.Offer_ID, Tick_Len, Status);
+      Parse_First_PSK_Identity (Ext_Data, IDs_End, HC.PSK.Offer_ID, Tick_Len, Age, Status);
       case Status is
          when PSK_Identity_OK =>
             pragma Assert (IDs_End in 2 .. Ext_Data'Last + 1);
             HC.PSK.Offer_ID_Len := Tick_Len;
+            HC.PSK.Offer_Age := Age;
             HC.PSK.Offered := True;
             Continue_Parse := True;
 

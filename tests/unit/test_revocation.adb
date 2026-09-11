@@ -61,10 +61,54 @@ procedure Test_Revocation is
       end;
    end Load;
 
-   --  The fixtures were issued on 2026-09-09; OCSP nextUpdate / CRL
-   --  nextUpdate are +7 days.
-   Now    : constant X509.Date_Time := (2026, 9, 10, 12, 0, 0);
-   Future : constant X509.Date_Time := (2027, 1, 1, 0, 0, 0);
+   --  Fixture clock. gen.sh regenerates the OCSP responses / CRLs with the
+   --  real time of day (openssl stamps thisUpdate = now, nextUpdate = +7 d),
+   --  so a pinned constant here goes stale or lands "in the future" the
+   --  moment the fixtures are rebuilt. gen.sh therefore also writes
+   --  now.txt: line 1 = generation + 1 h (our "Now"), line 2 = generation
+   --  + 30 d (our "Future", past every nextUpdate). Read those; fall back
+   --  to the original constants only if the file is missing.
+   function Fixture_Time
+     (Line_No : Positive; Default : X509.Date_Time) return X509.Date_Time
+   is
+      F : File_Type;
+      V : array (1 .. 6) of Natural := (others => 0);
+   begin
+      Open (F, In_File, Dir & "/now.txt");
+      declare
+         S   : String (1 .. 256);
+         L   : Natural := 0;
+         P   : Natural := 1;
+         Beg : Natural;
+      begin
+         for N in 1 .. Line_No loop
+            Get_Line (F, S, L);
+         end loop;
+         Close (F);
+         for K in 1 .. 6 loop
+            while P <= L and then S (P) = ' ' loop
+               P := P + 1;
+            end loop;
+            Beg := P;
+            while P <= L and then S (P) /= ' ' loop
+               P := P + 1;
+            end loop;
+            V (K) := Natural'Value (S (Beg .. P - 1));
+         end loop;
+      end;
+      return (V (1), V (2), V (3), V (4), V (5), V (6));
+   exception
+      when others =>
+         if Is_Open (F) then
+            Close (F);
+         end if;
+         Put_Line ("NOTE: " & Dir & "/now.txt missing or unreadable;"
+                   & " using the built-in fixture clock");
+         return Default;
+   end Fixture_Time;
+
+   Now    : constant X509.Date_Time := Fixture_Time (1, (2026, 9, 10, 12, 0, 0));
+   Future : constant X509.Date_Time := Fixture_Time (2, (2027, 1, 1, 0, 0, 0));
 
    Skew : constant := 300;
 

@@ -24,14 +24,14 @@ with Ada.Calendar.Time_Zones;
 with Interfaces;              use Interfaces;
 with SPARKNaCl;               use SPARKNaCl;
 with SPARKTLS;                use SPARKTLS;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with SPARKTLS.Client;
 with Det_Random_Lib;
 with X509;
 
 procedure Test_Clock is
 
-   package T renames SPARKTLS.Tickets_12;
+   package T renames SPARKTLS.Tickets;
 
    Total : Natural := 0;
    Pass  : Natural := 0;
@@ -323,10 +323,10 @@ begin
            0, Born, Life, False);
 
       --  ...and the reason that guard is NECESSARY: with no clock at all
-      --  both sides are 0, so Tickets_12 alone would accept forever. The
+      --  both sides are 0, so Tickets alone would accept forever. The
       --  protection lives in the caller, not here. This test pins that
       --  fact so a future refactor cannot quietly rely on the wrong layer.
-      Try ("no clock at all: Tickets_12 alone would accept (guard is upstream)",
+      Try ("no clock at all: Tickets alone would accept (guard is upstream)",
            0, 0, 0, True);
 
       --  Max_Age = 0 with a real clock means every ticket is stale.

@@ -1,16 +1,22 @@
---  SPARKTLS.Tickets_12
+--  SPARKTLS.Tickets
 --  RFC 5077 stateless session-ticket encryption, shared by TLS 1.2 and
---  TLS 1.3. (The "_12" suffix is a legacy name from when only 1.2 used
---  it; the format is version-neutral and carries a Kind tag.)
+--  TLS 1.3. The format is version-neutral and carries a Kind tag.
+--  (Formerly SPARKTLS.Tickets_12, from when only TLS 1.2 used it.)
 --
 --  Wire format:
 --    [ Key_ID (4) | Nonce (12) | Ciphertext (N) | Tag (16) ]
 --
 --  Plaintext layout (packed by Encrypt_Ticket):
 --    [ secret (48) | secret_len (1) | suite (2) | created_at_u64 (8)
---    | flags (1) | sid_len (1) | sid (0..32) ]
+--    | flags (1) | age_add_u32 (4) | sni_hash (32) | sid_len (1) | sid (0..32) ]
 --    flags byte: bit0 = client_auth, bit1 = extended_master_secret,
---                bit2 = kind (0 = TLS 1.2, 1 = TLS 1.3).
+--                bit2 = kind (0 = TLS 1.2, 1 = TLS 1.3),
+--                bit3 = across_names (ticket may resume under another SNI).
+--    age_add is the NewSessionTicket ticket_age_add (TLS 1.3), so the
+--    server can recover the true ticket age for the RFC 8446 4.2.11
+--    freshness check. sni_hash is SHA-256 of the server_name the ticket
+--    was issued under (all zeros if none), for the RFC 6066 3 rule that a
+--    ticket resumes only under the name it was issued for.
 --
 --  The Kind tag, checked on Decrypt, stops a ticket sealed for one TLS
 --  version being replayed against the other (SR-04). The secret is the
@@ -26,7 +32,7 @@ with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
 with X509;
 
-package SPARKTLS.Tickets_12
+package SPARKTLS.Tickets
   with SPARK_Mode => On
 is
 
@@ -45,7 +51,7 @@ is
    subtype Bytes_4 is Byte_Seq (0 .. 3);
 
    --  Maximum on-wire ticket length:
-   --    4 (key_id) + 12 (nonce) + 93 (plaintext max) + 16 (tag) = 125
+   --    4 (key_id) + 12 (nonce) + 129 (plaintext max) + 16 (tag) = 161
    --  Round up to give callers a roomy buffer.
    Max_Ticket_Wire_Len : constant := 256;
 
@@ -62,9 +68,18 @@ is
       Kind        : Ticket_Kind := Kind_TLS12;
       Client_Auth : Boolean := False;            --  SR-03: peer was mTLS-authed
       EMS         : Boolean := False;            --  extended master secret (1.2)
+      --  SR-03 residuals: SNI binding (RFC 6066 3 / RFC 8446 4.6.1) and the
+      --  ticket_age_add needed for the RFC 8446 4.2.11 age check.
+      Across_Names : Boolean := False;           --  may resume under another SNI
+      Age_Add      : Unsigned_32 := 0;           --  NST ticket_age_add (1.3)
+      SNI_Hash     : Bytes_32 := (others => 0);  --  SHA-256(server_name), 0 if none
       SID_Len     : N32 := 0;                    --  0 .. 32 (1.2 only)
       SID         : Bytes_32 := (others => 0);
    end record;
+
+   --  SHA-256 of the SNI a ticket is issued under; all zeros when the
+   --  ClientHello carried no server_name. Servers compare this on resume.
+   procedure Hash_Server_Name (Name : in Hostname_Buf; H : out Bytes_32);
 
    --  Encrypt a Ticket_Plain into wire format.
    --  Caller must supply a 12-byte CSPRNG nonce. The Key_ID (4 bytes,
@@ -130,4 +145,4 @@ is
        and then TEK'Length = 32,
      Post => (if Status then Plain.Kind = Expect_Kind and then Plain.Secret_Len in 32 | 48);
 
-end SPARKTLS.Tickets_12;
+end SPARKTLS.Tickets;

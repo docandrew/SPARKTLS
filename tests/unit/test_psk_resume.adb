@@ -20,7 +20,7 @@ with Interfaces;           use Interfaces;
 with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Client;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with Det_Random_Lib;
 with X509;
 with SPARKTLS.Test_Support;
@@ -62,7 +62,7 @@ procedure Test_PSK_Resume is
       end loop;
       T.Lifetime := 7200;
       T.Age_Add  := 16#DEADBEEF#;
-      T.Received_At := SPARKTLS.Tickets_12.To_Unix_Seconds
+      T.Received_At := SPARKTLS.Tickets.To_Unix_Seconds
         ((Year => 2026, Month => 5, Day => 15,
           Hour => 0, Minute => 0, Second => 0));
       T.PSK_Len  := 32;

@@ -1,4 +1,6 @@
---  Reference thread-safe implementation of the ticket-key callbacks.
+--  SPARKTLS.Ticket_Keys (formerly Session_Cache, from the session-ID era):
+--  reference thread-safe ticket-encryption-key ring behind the Config
+--  callbacks Get_Active_TEK / Get_TEK_By_Id.
 --
 --  Session resumption is stateless (RFC 5077): the server seals each PSK and
 --  its metadata into the ticket itself under a ticket-encryption key (TEK).
@@ -9,26 +11,27 @@
 --
 --  This package is that decision made for you, for the common case: a
 --  single-process server, possibly multi-threaded, that wants resumption to
---  work without writing any of it. It is a CHILD package, so the Ada tasking
+--  work without writing any of it. It holds KEYS ONLY -- with stateless
+--  tickets there is no per-session state anywhere on the server. It is a CHILD package, so the Ada tasking
 --  runtime is linked only if you actually reference it -- an embedded caller
 --  that leaves the callbacks null pays nothing.
 --
 --  Usage:
 --
---     SPARKTLS.Session_Cache.Initialize
+--     SPARKTLS.Ticket_Keys.Initialize
 --       (Random => My_RNG'Access, Clock => My_Clock'Access);
 --
 --     SPARKTLS.Server.Configure
 --       (S              => S,
 --        Local          => Ident'Unchecked_Access,
 --        Random         => My_RNG'Access,
---        Get_Active_TEK => SPARKTLS.Session_Cache.Get_Active_TEK'Access,
---        Get_TEK_By_Id  => SPARKTLS.Session_Cache.Get_TEK_By_Id'Access);
+--        Get_Active_TEK => SPARKTLS.Ticket_Keys.Get_Active_TEK'Access,
+--        Get_TEK_By_Id  => SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access);
 --
 --  Call Initialize once at startup. It installs a first ticket key and turns
 --  on rotation (every 24h by default); the library itself no longer rotates
 --  keys, because it no longer holds them. Before Initialize there is no key,
---  so TLS 1.2 tickets are not issued and clients do full handshakes.
+--  so no tickets (TLS 1.2 or 1.3) are issued and clients do full handshakes.
 --
 --  DEPLOYMENT SHAPES this does and does not cover:
 --
@@ -39,17 +42,20 @@
 --      serialises access, so any number of tasks may drive sessions
 --      concurrently against one cache.
 --
---    * MULTI-PROCESS  NOT covered. Workers in separate address spaces would
---      each get their own copy, so a ticket issued by one is unknown to the
---      others (clients simply re-handshake). Sharing across processes needs
---      shared memory or a key/ticket file, which is environment-specific;
---      implement the four callbacks over whatever your platform provides.
---
---    * MULTI-NODE / DISTRIBUTED  NOT covered. Needs an external store
---      (Redis, memcached, a database). Implement the callbacks against it,
---      and note the contract below: DO NOT BLOCK. A lookup that cannot answer
---      quickly should report Found => False and let the handshake proceed in
---      full; that is always safe, whereas stalling blocks the state machine.
+--    * MULTI-PROCESS / MULTI-NODE / BEHIND A LOAD BALANCER -- supported, and
+--      this is the point of stateless tickets: a ticket sealed on one node is
+--      opened by any other node that holds the same key ring. Nothing per
+--      session is shared; only the TEK ring must be identical everywhere.
+--      Two ways: (a) Initialize with Rotation_Interval => 0 and feed every
+--      node the same keys via Rotate_TEK from your key source (KMS, Vault,
+--      Redis, an orchestrator push); (b) implement the two callbacks
+--      directly against that source and do not link this package at all.
+--      Rotation rule: distribute a new key to EVERY node before ANY node
+--      starts sealing with it, and keep the previous key openable for at
+--      least the ticket lifetime (3600 s) plus clock skew -- the key id in
+--      the ticket lets Get_TEK_By_Id open tickets sealed under older ring
+--      entries. Fetch keys on a background schedule; never block on the
+--      handshake path (a miss simply means a full handshake).
 --
 --  SPARK_Mode is ON here, including the protected object.
 --
@@ -83,15 +89,15 @@
 with SPARKNaCl;  use SPARKNaCl;
 with Interfaces; use Interfaces;
 
-package SPARKTLS.Session_Cache
-  with SPARK_Mode => Off
+package SPARKTLS.Ticket_Keys
+  with SPARK_Mode => On
 is
 
    ----------------------------------------------------------------------
    --  Setup
    ----------------------------------------------------------------------
 
-   --  Seed the cache and start rotating ticket keys.
+   --  Seed the key ring and start rotating ticket keys.
    --
    --  Installs a first sealing key immediately, then rotates whenever the
    --  active key reaches Rotation_Interval seconds. Rotation is lazy: the
@@ -106,8 +112,8 @@ is
    --  is kept in sync by an orchestrator pushing the same key to every
    --  node (independent per-node rotation would break cross-node resume).
    --
-   --  Until this is called there is no key, so no TLS 1.2 tickets are
-   --  issued and clients simply perform full handshakes.
+   --  Until this is called there is no key, so no tickets are issued and
+   --  clients simply perform full handshakes.
    procedure Initialize
      (Random : Random_Bytes_Fn; Clock : Get_Time_Fn; Rotation_Interval : Unsigned_32 := 24 * 3600);
 
@@ -150,7 +156,7 @@ is
    function Active_Key_Age (Now_Secs : Unsigned_64) return Unsigned_64
    with Volatile_Function;
 
-   --  Drop every cached PSK and key. Intended for tests and for shutdown.
+   --  Drop every key. Intended for tests and for shutdown.
    procedure Reset;
 
-end SPARKTLS.Session_Cache;
+end SPARKTLS.Ticket_Keys;

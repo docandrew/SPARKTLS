@@ -1219,7 +1219,7 @@ is
    --
    --  Session resumption is stateless (RFC 5077): the server seals the PSK
    --  and its metadata into the ticket itself under the TEK ring (see
-   --  SPARKTLS.Tickets_12 and the Get_Active_TEK / Get_TEK_By_Id callbacks
+   --  SPARKTLS.Tickets and the Get_Active_TEK / Get_TEK_By_Id callbacks
    --  below). There is no server-side ticket store.
    ----------------------------------------------------------------------------
 
@@ -1470,7 +1470,7 @@ is
    --  THREAD SAFETY is the implementation's responsibility. SPARKTLS holds
    --  no shared state of its own, so sessions are independent; anything
    --  these callbacks touch is shared by the application's choice. See
-   --  SPARKTLS.Session_Cache for a ready-made thread-safe reference cache.
+   --  SPARKTLS.Ticket_Keys for a ready-made thread-safe reference cache.
    --
    --  DO NOT BLOCK. These run inside handshake processing. A cache miss is
    --  always safe -- it falls back to a full handshake -- so a distributed
@@ -1722,11 +1722,11 @@ is
 
       --  TICKET-ENCRYPTION KEY (TEK) ROTATION IS NOT CONFIGURED HERE.
       --  There is no Auto_Rotate_TEK flag and no interval in Cfg: the
-      --  mechanism lives in SPARKTLS.Session_Cache, which is where the
+      --  mechanism lives in SPARKTLS.Ticket_Keys, which is where the
       --  key material and the CSPRNG already are.
       --
       --  Rotation is ON BY DEFAULT (24 h) once the app calls
-      --      Session_Cache.Initialize (Random, Clock, Rotation_Interval)
+      --      Ticket_Keys.Initialize (Random, Clock, Rotation_Interval)
       --  and is LAZY: Get_Active_TEK checks the active key's age on each
       --  ticket issuance and rotates in place, so the check rides on real
       --  traffic and an idle server does no work. No timer task.
@@ -1737,11 +1737,11 @@ is
       --  oldest drops out.
       --
       --  Rotation_Interval => 0 disables it and hands control back to the
-      --  app via Session_Cache.Rotate_TEK -- the right choice for HSM keys
+      --  app via Ticket_Keys.Rotate_TEK -- the right choice for HSM keys
       --  or a fleet kept in sync by an orchestrator, where independent
       --  per-node rotation would break cross-node resume.
       --
-      --  CAVEAT: all of the above is Session_Cache, the reference cache.
+      --  CAVEAT: all of the above is Ticket_Keys, the reference cache.
       --  An app that supplies its OWN Get_Active_TEK / Get_TEK_By_Id
       --  callbacks owns rotation entirely and gets none of this for free.
 
@@ -1872,6 +1872,11 @@ is
       --  the server opens it with the TEK ring. Offer_ID_Len = 0 => none.
       Offer_ID          : Byte_Seq (0 .. Max_Ticket_Len - 1) := (others => 0);
       Offer_ID_Len      : Ticket_Length := 0;
+      --  obfuscated_ticket_age from the offered identity (RFC 8446 4.2.11) and
+      --  the server's freshness verdict on it. The handshake proceeds either
+      --  way (the RFC's SHOULD); a future 0-RTT path MUST consult Age_Fresh.
+      Offer_Age         : Unsigned_32 := 0;
+      Age_Fresh         : Boolean := False;
       Value             : Bytes_48 := (others => 0);   --  zeros if no PSK
       Value_Len         : PSK_Value_Length := 0;       --  0 = no PSK
       Binder            : Bytes_48 := (others => 0);   --  received binder

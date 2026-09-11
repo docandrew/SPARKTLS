@@ -159,6 +159,8 @@ is
       HC.PSK.Binder := (others => 0);
       HC.PSK.Offer_ID := (others => 0);
       HC.PSK.Offer_ID_Len := 0;
+      HC.PSK.Offer_Age := 0;
+      HC.PSK.Age_Fresh := False;
       HC.Client_Random := (others => 0);
       HC.Server_Random := (others => 0);
    end Scrub_Handshake_Context;

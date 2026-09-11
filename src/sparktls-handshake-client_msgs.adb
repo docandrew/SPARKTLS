@@ -9,7 +9,7 @@ with SPARKTLSCrypto.MAC;   use SPARKTLSCrypto.MAC;
 with SPARKTLS.RFLX_Bridge; use SPARKTLS.RFLX_Bridge;
 with SPARKTLS.RFLX_Borrow;
 with SPARKTLS.Key_Schedule;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with RFLX.TLS_Handshake.Client_Hello;
 with RFLX.TLS_Handshake.Client_Hello_Ext;
 with RFLX.TLS_Handshake.Server_Hello;
@@ -445,7 +445,7 @@ is
                                  if Get_Time /= null and then Ticket.Received_At /= 0 then
                                     declare
                                        Now : constant Unsigned_64 :=
-                                         Tickets_12.To_Unix_Seconds (Get_Time.all);
+                                         Tickets.To_Unix_Seconds (Get_Time.all);
                                     begin
                                        if Now >= Ticket.Received_At
                                          and then Now - Ticket.Received_At

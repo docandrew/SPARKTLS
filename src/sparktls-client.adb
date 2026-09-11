@@ -5,7 +5,7 @@ with SPARKTLS.Records;    use SPARKTLS.Records;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Client_Msgs;
 with SPARKTLS.Handshake.TLS12;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Client.TLS12;
 with SPARKTLS.Client.TLS13;
@@ -63,7 +63,7 @@ is
       end if;
 
       declare
-         Now : constant Unsigned_64 := SPARKTLS.Tickets_12.To_Unix_Seconds (Clock.all);
+         Now : constant Unsigned_64 := SPARKTLS.Tickets.To_Unix_Seconds (Clock.all);
       begin
          Usable := Now < T.Received_At or else Now - T.Received_At < Unsigned_64 (T.Lifetime);
       end;
@@ -1021,6 +1021,8 @@ is
       HC.PSK.Binder := (others => 0);
       HC.PSK.Offer_ID := (others => 0);
       HC.PSK.Offer_ID_Len := 0;
+      HC.PSK.Offer_Age := 0;
+      HC.PSK.Age_Fresh := False;
       HC.Client_Random := (others => 0);
       HC.Server_Random := (others => 0);
    end Scrub_Handshake_Context;

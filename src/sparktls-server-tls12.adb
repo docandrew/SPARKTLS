@@ -18,7 +18,7 @@ with SPARKTLS.Handshake.Certs;
 with SPARKTLS.Handshake.Server_Msgs;
 with SPARKTLS.Handshake.TLS12;
 with SPARKTLS.Key_Schedule_12;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with SPARKTLS.RFLX_Bridge;
 with RFLX.RFLX_Builtin_Types;
 with RFLX.TLS_Handshake.TLS_1_2_Certificate_Request;
@@ -204,7 +204,7 @@ is
         --  >= Key_ID width, not merely > 0: Ticket_Key_ID reads a 4-byte
         --  prefix, and the peer chooses this length. A 1..3 byte ticket is
         --  malformed -- fall through to a full handshake per RFC 5077 3.4.
-        and then S.HC.T12.Peer_Ticket_Len >= SPARKTLS.Tickets_12.Ticket_Key_ID_Size
+        and then S.HC.T12.Peer_Ticket_Len >= SPARKTLS.Tickets.Ticket_Key_ID_Size
         and then S.HC.T12.Peer_Ticket_Len <= Max_TLS12_Ticket_Len
         and then S.HC.Cfg.Get_Active_TEK /= null
         and then S.HC.Cfg.Get_TEK_By_Id /= null
@@ -214,7 +214,7 @@ is
         and then S.HC.Cfg.Get_Time /= null
       then
          declare
-            Plain     : SPARKTLS.Tickets_12.Ticket_Plain;
+            Plain     : SPARKTLS.Tickets.Ticket_Plain;
             OK        : Boolean;
             --  RFC 5077 5.6 expiry: with a clock callback we enforce
             --  Cfg.TLS12_Ticket_Lifetime as the hard maximum age. No
@@ -223,7 +223,7 @@ is
             --  but operators MUST supply Cfg.Get_Time in production).
             Now       : constant Unsigned_64 :=
               (if S.HC.Cfg.Get_Time /= null
-               then SPARKTLS.Tickets_12.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
+               then SPARKTLS.Tickets.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
                else 0);
             Max_Age   : constant Unsigned_32 :=
               (if S.HC.Cfg.Get_Time /= null then S.HC.Cfg.TLS12_Ticket_Lifetime else 0);
@@ -231,7 +231,7 @@ is
             --  trying every configured key in turn. A miss is not an error:
             --  RFC 5077 3.4 says fall through to a full handshake.
             Wanted_ID : constant Byte_Seq :=
-              SPARKTLS.Tickets_12.Ticket_Key_ID
+              SPARKTLS.Tickets.Ticket_Key_ID
                 (S.HC.T12.Peer_Ticket (0 .. S.HC.T12.Peer_Ticket_Len - 1));
             TEK       : Byte_Seq (0 .. 31) := (others => 0);
             TEK_Found : Boolean := False;
@@ -240,12 +240,12 @@ is
             if not TEK_Found then
                OK := False;
             else
-               SPARKTLS.Tickets_12.Decrypt_Ticket
+               SPARKTLS.Tickets.Decrypt_Ticket
                  (Ticket      => S.HC.T12.Peer_Ticket (0 .. S.HC.T12.Peer_Ticket_Len - 1),
                   TEK         => TEK,
                   Now         => Now,
                   Max_Age     => Max_Age,
-                  Expect_Kind => SPARKTLS.Tickets_12.Kind_TLS12,
+                  Expect_Kind => SPARKTLS.Tickets.Kind_TLS12,
                   Plain       => Plain,
                   Status      => OK);
             end if;
@@ -277,7 +277,17 @@ is
                --  unauthenticated ticket would otherwise admit the peer.
                --  Anything else falls through to a full handshake, which
                --  RFC 5077 3.4 permits and which will request the cert.
+               --  SR-03 / RFC 6066 3: "A server ... MUST NOT accept the request
+               --  to resume the session if the server_name extension contains
+               --  a different name. Instead, it proceeds with a full
+               --  handshake." Compare the sealed SNI hash with this
+               --  ClientHello's (zeros = none on either side).
+               declare
+                  Cur_SNI : SPARKTLS.Tickets.Bytes_32;
+               begin
+                  SPARKTLS.Tickets.Hash_Server_Name (S.HC.Peer_SNI, Cur_SNI);
                if Plain.EMS = S.HC.Use_EMS
+                 and then Cur_SNI = Plain.SNI_Hash
                  and then (not S.HC.Cfg.Require_Client_Cert or else Plain.Client_Auth)
                then
                   --  Resume: install ticket's master_secret + force suite,
@@ -290,6 +300,7 @@ is
                   Build_Abbreviated_Server_Flight_12 (S, Cfg, Result);
                   return;
                end if;
+               end;
             end if;
          end;
       end if;
@@ -870,12 +881,12 @@ is
    procedure Issue_Resumed_NST_12
      (S       : in out Session;
       Cfg     : in Ready_Config;
-      Key_ID  : in SPARKTLS.Tickets_12.Bytes_4;
-      TEK     : in SPARKTLS.Tickets_12.Bytes_32;
+      Key_ID  : in SPARKTLS.Tickets.Bytes_4;
+      TEK     : in SPARKTLS.Tickets.Bytes_32;
       OK      : out Boolean)
    is
       Nonce_Buf   : Byte_Seq (0 .. 11) := (others => 0);
-      Plain       : SPARKTLS.Tickets_12.Ticket_Plain;
+      Plain       : SPARKTLS.Tickets.Ticket_Plain;
       Ticket_Buf  : Byte_Seq (0 .. 255) := (others => 0);
       Ticket_Len  : N32;
       NST_Buf     : Byte_Seq (0 .. 271) := (others => 0);
@@ -886,27 +897,30 @@ is
       Cfg.Random.all (Nonce_Buf);
       Plain.Secret := S.HC.Master_Secret_12;
       Plain.Secret_Len := 48;
-      Plain.Kind := SPARKTLS.Tickets_12.Kind_TLS12;
+      Plain.Kind := SPARKTLS.Tickets.Kind_TLS12;
       Plain.Suite := Wire_Of (S.Negotiated_Suite);
       --  SR-04: seal the session's EMS state and client-auth status. On the
       --  abbreviated path both were carried in from the ticket we resumed
       --  (the gate only resumes when EMS matches the new ClientHello).
       Plain.EMS := S.HC.Use_EMS;
       Plain.Client_Auth := S.HC.T12.Client_Authed;
+      --  SR-03: bind the SNI (RFC 6066 3). TLS 1.2 never resumes across
+      --  names, so Across_Names stays False; Age_Add is a 1.3 concept.
+      SPARKTLS.Tickets.Hash_Server_Name (S.HC.Peer_SNI, Plain.SNI_Hash);
 
       Plain.Created_At :=
         (if Cfg.Get_Time /= null
-         then SPARKTLS.Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all)
+         then SPARKTLS.Tickets.To_Unix_Seconds (Cfg.Get_Time.all)
          else 0);
 
       Plain.SID_Len := 0;
       Plain.SID := (others => 0);
 
-      SPARKTLS.Tickets_12.Encrypt_Ticket
+      SPARKTLS.Tickets.Encrypt_Ticket
         (Plain      => Plain,
          Key_ID     => Key_ID,
          TEK        => TEK,
-         Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
+         Nonce      => SPARKTLS.Tickets.Bytes_12 (Nonce_Buf),
          Ticket     => Ticket_Buf,
          Ticket_Len => Ticket_Len);
 
@@ -951,7 +965,7 @@ is
              | Suite_ECDHE_ECDSA_CHACHA20_SHA256
       is
          use Key_Schedule_12;
-         use type SPARKTLS.Tickets_12.Bytes_4;
+         use type SPARKTLS.Tickets.Bytes_4;
          Gen_Random    : constant Random_Bytes_Fn := Cfg.Random;
          Rec_Out       : N32;
          Use_384       : constant Boolean :=
@@ -1026,8 +1040,8 @@ is
          Issue_Resumed_NST_12
            (S,
             Cfg,
-            SPARKTLS.Tickets_12.Bytes_4 (Active_Key_ID),
-            SPARKTLS.Tickets_12.Bytes_32 (Active_TEK),
+            SPARKTLS.Tickets.Bytes_4 (Active_Key_ID),
+            SPARKTLS.Tickets.Bytes_32 (Active_TEK),
             NST_OK);
 
          if not NST_OK then
@@ -2346,13 +2360,13 @@ is
         and then S.HC.Cfg.Get_Time /= null
       then
          declare
-            use type SPARKTLS.Tickets_12.Bytes_4;
+            use type SPARKTLS.Tickets.Bytes_4;
             --  Sealing key supplied by the caller's store.
             Key_ID_Buf  : Byte_Seq (0 .. 3) := (others => 0);
             TEK_Buf     : Byte_Seq (0 .. 31) := (others => 0);
             Have_TEK    : Boolean := False;
             Nonce_Buf   : Byte_Seq (0 .. 11);
-            Plain       : SPARKTLS.Tickets_12.Ticket_Plain;
+            Plain       : SPARKTLS.Tickets.Ticket_Plain;
             Ticket_Buf  : Byte_Seq (0 .. 255);
             Ticket_Len  : N32;
             NST_Buf     : Byte_Seq (0 .. 271);
@@ -2371,24 +2385,26 @@ is
             --  the age window check (acceptable for dev / test).
             Plain.Secret := S.HC.Master_Secret_12;
             Plain.Secret_Len := 48;
-            Plain.Kind := SPARKTLS.Tickets_12.Kind_TLS12;
+            Plain.Kind := SPARKTLS.Tickets.Kind_TLS12;
             Plain.Suite := Wire_Of (S.Negotiated_Suite);
             --  SR-04: seal EMS state and whether the client authenticated
             --  (CertificateVerify + validation) in this full handshake.
             Plain.EMS := S.HC.Use_EMS;
             Plain.Client_Auth := S.HC.T12.Client_Authed;
+            --  SR-03: bind the SNI this ticket is issued under (RFC 6066 3).
+            SPARKTLS.Tickets.Hash_Server_Name (S.HC.Peer_SNI, Plain.SNI_Hash);
             Plain.Created_At :=
               (if S.HC.Cfg.Get_Time /= null
-               then SPARKTLS.Tickets_12.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
+               then SPARKTLS.Tickets.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
                else 0);
             Plain.SID_Len := 0;
             Plain.SID := (others => 0);
 
-            SPARKTLS.Tickets_12.Encrypt_Ticket
+            SPARKTLS.Tickets.Encrypt_Ticket
               (Plain      => Plain,
-               Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Key_ID_Buf),
-               TEK        => SPARKTLS.Tickets_12.Bytes_32 (TEK_Buf),
-               Nonce      => SPARKTLS.Tickets_12.Bytes_12 (Nonce_Buf),
+               Key_ID     => SPARKTLS.Tickets.Bytes_4 (Key_ID_Buf),
+               TEK        => SPARKTLS.Tickets.Bytes_32 (TEK_Buf),
+               Nonce      => SPARKTLS.Tickets.Bytes_12 (Nonce_Buf),
                Ticket     => Ticket_Buf,
                Ticket_Len => Ticket_Len);
 

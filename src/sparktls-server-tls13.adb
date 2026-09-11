@@ -29,7 +29,7 @@ with SPARKTLSCrypto.HKDF384;
 with SPARKTLSCrypto.P384.Field;
 with SPARKTLSCrypto.P384.ECDSA;
 use SPARKTLSCrypto;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 
 with SPARKTLS_Transcript;
 use type SPARKTLS_Transcript.Transcript_State;
@@ -854,37 +854,75 @@ is
       --  (Expect_Kind) -- is treated as a miss, and RFC 8446 4.2.11 / RFC
       --  5077 3.4 let us decline the identity and fall through to a full
       --  handshake. No server-side session state is consulted.
-      if S.HC.PSK.Offer_ID_Len >= SPARKTLS.Tickets_12.Ticket_Key_ID_Size then
+      if S.HC.PSK.Offer_ID_Len >= SPARKTLS.Tickets.Ticket_Key_ID_Size then
          declare
             Ticket_Bytes : constant Byte_Seq :=
               S.HC.PSK.Offer_ID (0 .. S.HC.PSK.Offer_ID_Len - 1);
             Key_ID       : constant Byte_Seq :=
-              SPARKTLS.Tickets_12.Ticket_Key_ID (Ticket_Bytes);
+              SPARKTLS.Tickets.Ticket_Key_ID (Ticket_Bytes);
             TEK          : Byte_Seq (0 .. 31) := (others => 0);
             TEK_Found    : Boolean := False;
             Now          : constant Unsigned_64 :=
               (if Cfg.Get_Time /= null
-               then SPARKTLS.Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all)
+               then SPARKTLS.Tickets.To_Unix_Seconds (Cfg.Get_Time.all)
                else 0);
-            Plain        : SPARKTLS.Tickets_12.Ticket_Plain;
+            Plain        : SPARKTLS.Tickets.Ticket_Plain;
             Open_OK      : Boolean := False;
          begin
             Cfg.Get_TEK_By_Id.all (Key_ID, TEK, TEK_Found);
             if TEK_Found then
-               SPARKTLS.Tickets_12.Decrypt_Ticket
+               SPARKTLS.Tickets.Decrypt_Ticket
                  (Ticket      => Ticket_Bytes,
                   TEK         => TEK,
                   Now         => Now,
                   Max_Age     => TLS13_Ticket_Lifetime_Secs,
-                  Expect_Kind => SPARKTLS.Tickets_12.Kind_TLS13,
+                  Expect_Kind => SPARKTLS.Tickets.Kind_TLS13,
                   Plain       => Plain,
                   Status      => Open_OK);
                if Open_OK then
-                  PSK         := Plain.Secret;
-                  PSK_Len     := Plain.Secret_Len;
-                  Suite       := Plain.Suite;
-                  Client_Auth := Plain.Client_Auth;
-                  Found       := True;
+                  declare
+                     Cur_SNI : SPARKTLS.Tickets.Bytes_32;
+                  begin
+                     --  SR-03: a ticket resumes only under the SNI it was
+                     --  issued for (RFC 6066 3; RFC 8446 4.6.1 default),
+                     --  unless it was issued with resumption_across_names.
+                     --  A mismatch is a decline (full handshake), not an
+                     --  error.
+                     SPARKTLS.Tickets.Hash_Server_Name (S.HC.Peer_SNI, Cur_SNI);
+                     if Plain.Across_Names or else Cur_SNI = Plain.SNI_Hash then
+                        PSK         := Plain.Secret;
+                        PSK_Len     := Plain.Secret_Len;
+                        Suite       := Plain.Suite;
+                        Client_Auth := Plain.Client_Auth;
+                        Found       := True;
+
+                        --  RFC 8446 4.2.11: the server MUST validate the
+                        --  ticket age against the time since issue. On a
+                        --  mismatch it SHOULD still proceed and only reject
+                        --  0-RTT, so this records the verdict rather than
+                        --  declining; a future early-data path must honour
+                        --  S.HC.PSK.Age_Fresh. Age in ms is recovered from
+                        --  the obfuscated value with the sealed age_add
+                        --  (mod 2^32); tolerance covers RTT and clock skew.
+                        S.HC.PSK.Age_Fresh := False;
+                        if Cfg.Get_Time /= null
+                          and then Now >= Plain.Created_At
+                          and then Now - Plain.Created_At <= 604_800
+                        then
+                           declare
+                              Expected_MS  : constant Unsigned_64 :=
+                                (Now - Plain.Created_At) * 1000;
+                              Age_MS       : constant Unsigned_64 :=
+                                Unsigned_64 (S.HC.PSK.Offer_Age - Plain.Age_Add);
+                              Tolerance_MS : constant Unsigned_64 := 10_000;
+                           begin
+                              S.HC.PSK.Age_Fresh :=
+                                Age_MS <= Expected_MS + Tolerance_MS
+                                and then Expected_MS <= Age_MS + Tolerance_MS;
+                           end;
+                        end if;
+                     end if;
+                  end;
                end if;
             end if;
          end;
@@ -2480,14 +2518,15 @@ is
    procedure Store_Resumption_Secrets
      (S           : in out Session;
       Nonce       : in Byte_Seq;
+      Age_Add     : in Unsigned_32;
       Client_Auth : in Boolean;
       Ticket      : out Byte_Seq;
       Ticket_Len  : out N32)
    with
      Pre => Nonce'First = 0 and then Nonce'Last in 1 .. 254
             and then Ticket'First = 0
-            and then Ticket'Last >= SPARKTLS.Tickets_12.Max_Ticket_Wire_Len - 1,
-     Post => Ticket_Len in 0 .. SPARKTLS.Tickets_12.Max_Ticket_Wire_Len
+            and then Ticket'Last >= SPARKTLS.Tickets.Max_Ticket_Wire_Len - 1,
+     Post => Ticket_Len in 0 .. SPARKTLS.Tickets.Max_Ticket_Wire_Len
    is
       PSK_Sealed : Bytes_48 := (others => 0);
       Sec_Len    : N32 := 32;
@@ -2542,7 +2581,7 @@ is
             TEK        : Byte_Seq (0 .. 31) := (others => 0);
             Have_TEK   : Boolean := False;
             AEAD_Nonce : Byte_Seq (0 .. 11) := (others => 0);
-            Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
+            Plain      : SPARKTLS.Tickets.Ticket_Plain;
          begin
             S.HC.Cfg.Get_Active_TEK.all (Key_ID, TEK, Have_TEK);
             if Have_TEK then
@@ -2552,15 +2591,23 @@ is
                Plain.Suite       := Wire_Of (S.Negotiated_Suite);
                Plain.Created_At  :=
                  (if S.HC.Cfg.Get_Time /= null
-                  then SPARKTLS.Tickets_12.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
+                  then SPARKTLS.Tickets.To_Unix_Seconds (S.HC.Cfg.Get_Time.all)
                   else 0);
-               Plain.Kind        := SPARKTLS.Tickets_12.Kind_TLS13;
+               Plain.Kind        := SPARKTLS.Tickets.Kind_TLS13;
                Plain.Client_Auth := Client_Auth;
-               SPARKTLS.Tickets_12.Encrypt_Ticket
+               --  SR-03 residuals: the NST's ticket_age_add (RFC 8446 4.2.11
+               --  age recovery on resume), the SNI this ticket is issued
+               --  under (RFC 6066 3 / RFC 8446 4.6.1), and whether the
+               --  ticket_flags resumption_across_names bit we emit lets it
+               --  resume under another name.
+               Plain.Age_Add      := Age_Add;
+               Plain.Across_Names := S.HC.Cfg.TLS13_Resumption_Across_Names;
+               SPARKTLS.Tickets.Hash_Server_Name (S.HC.Peer_SNI, Plain.SNI_Hash);
+               SPARKTLS.Tickets.Encrypt_Ticket
                  (Plain      => Plain,
-                  Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Key_ID),
-                  TEK        => SPARKTLS.Tickets_12.Bytes_32 (TEK),
-                  Nonce      => SPARKTLS.Tickets_12.Bytes_12 (AEAD_Nonce),
+                  Key_ID     => SPARKTLS.Tickets.Bytes_4 (Key_ID),
+                  TEK        => SPARKTLS.Tickets.Bytes_32 (TEK),
+                  Nonce      => SPARKTLS.Tickets.Bytes_12 (AEAD_Nonce),
                   Ticket     => Ticket,
                   Ticket_Len => Ticket_Len);
             end if;
@@ -2580,7 +2627,7 @@ is
       Ticket_Len : in N32)
    with Pre => Nonce'First = 0 and then Nonce'Last >= 1
                and then Ticket'First = 0
-               and then Ticket_Len in 1 .. SPARKTLS.Tickets_12.Max_Ticket_Wire_Len
+               and then Ticket_Len in 1 .. SPARKTLS.Tickets.Max_Ticket_Wire_Len
                and then Ticket'Last >= Ticket_Len - 1
    is
       Enc_Out : N32;
@@ -2767,7 +2814,7 @@ is
             Nonce         : Byte_Seq (0 .. 1);
             Age_Add       : Unsigned_32;
             Sealed        :
-              Byte_Seq (0 .. SPARKTLS.Tickets_12.Max_Ticket_Wire_Len - 1) :=
+              Byte_Seq (0 .. SPARKTLS.Tickets.Max_Ticket_Wire_Len - 1) :=
                 (others => 0);
             Sealed_Len    : N32 := 0;
          begin
@@ -2782,7 +2829,7 @@ is
             --  Derive res_master and seal the resumption PSK into a
             --  stateless ticket (Sealed_Len = 0 => no active TEK => no NST).
             Store_Resumption_Secrets
-              (S, Nonce, D.Peer_Leaf.Present, Sealed, Sealed_Len);
+              (S, Nonce, Age_Add, D.Peer_Leaf.Present, Sealed, Sealed_Len);
 
             if Sealed_Len > 0 then
                Send_New_Session_Ticket_13 (S, Nonce, Age_Add, Sealed, Sealed_Len);

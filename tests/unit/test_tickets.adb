@@ -1,16 +1,16 @@
---  Unit test for SPARKTLS.Tickets_12 encrypt/decrypt round-trip.
+--  Unit test for SPARKTLS.Tickets encrypt/decrypt round-trip.
 
 with Ada.Text_IO;          use Ada.Text_IO;
 with Ada.Command_Line;
 with Interfaces;           use Interfaces;
 with SPARKNaCl;            use SPARKNaCl;
 with SPARKTLS;             use SPARKTLS;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with X509;
 
-procedure Test_Tickets_12 is
+procedure Test_Tickets is
 
-   package T renames SPARKTLS.Tickets_12;
+   package T renames SPARKTLS.Tickets;
 
    Total : Natural := 0;
    Pass  : Natural := 0;
@@ -46,6 +46,11 @@ procedure Test_Tickets_12 is
       end loop;
       P.Suite := 16#C02F#;
       P.Created_At := 1_700_000_000;
+      P.Age_Add := 16#0102_0304#;
+      P.SNI_Hash := (others => 16#AB#);
+      P.Across_Names := True;
+      P.Client_Auth := True;
+      P.EMS := True;
       P.SID_Len := 16;
       for I in N32 range 0 .. 15 loop
          P.SID (I) := Byte (16#C0# + Natural (I));
@@ -91,6 +96,11 @@ procedure Test_Tickets_12 is
          Check (Label & ": created_at",
                 P_Out.Created_At = P_In.Created_At);
          Check (Label & ": sid_len", P_Out.SID_Len = P_In.SID_Len);
+      Check (Label & ": age_add", P_Out.Age_Add = P_In.Age_Add);
+      Check (Label & ": sni_hash", P_Out.SNI_Hash = P_In.SNI_Hash);
+      Check (Label & ": across_names", P_Out.Across_Names = P_In.Across_Names);
+      Check (Label & ": client_auth", P_Out.Client_Auth = P_In.Client_Auth);
+      Check (Label & ": ems", P_Out.EMS = P_In.EMS);
          if P_In.SID_Len > 0 then
             Check (Label & ": sid bytes",
                    P_Out.SID (0 .. P_In.SID_Len - 1)
@@ -100,7 +110,7 @@ procedure Test_Tickets_12 is
    end Round_Trip;
 
 begin
-   Put_Line ("=== SPARKTLS.Tickets_12 round-trip ===");
+   Put_Line ("=== SPARKTLS.Tickets round-trip ===");
 
    declare
       P_In, P_Out : T.Ticket_Plain;
@@ -114,11 +124,11 @@ begin
       --  32 = Key_ID (4) + Nonce (12) + Tag (16); the rest is plaintext.
       --  Written in terms of SID_Len so it keeps meaning if the fixture
       --  changes -- the old literal "32 + 59 + 16" only matched because
-      --  (61 = fixed plaintext: secret 48 + secret_len 1 + suite 2 +
-      --  created_at 8 + flags 1 + sid_len 1)
+      --  (97 = fixed plaintext: secret 48 + secret_len 1 + suite 2 +
+      --  created_at 8 + flags 1 + age_add 4 + sni_hash 32 + sid_len 1)
       --  this fixture happens to use SID_Len = 16.
       Check ("Encrypt: Len = overhead + plaintext",
-             Len = 32 + (61 + P_In.SID_Len));
+             Len = 32 + (97 + P_In.SID_Len));
       T.Decrypt_Ticket (Ticket (0 .. Len - 1), TEK_A,
                         1_700_000_100, 3600, T.Kind_TLS12, P_Out, OK);
       Check ("Decrypt: succeeded", OK);
@@ -274,4 +284,4 @@ begin
    if Fail > 0 then
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
    end if;
-end Test_Tickets_12;
+end Test_Tickets;
