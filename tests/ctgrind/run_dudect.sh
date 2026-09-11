@@ -76,6 +76,7 @@ run_one dudect_x25519      || fail=1
 run_one dudect_p256_ecdsa  || fail=1
 run_one dudect_p384_ecdsa  || fail=1
 run_one dudect_aead        || fail=1
+run_one dudect_rsa_sign    || fail=1
 
 if [ "$fail" -eq 0 ]; then
   echo "=== ALL dudect checks pass ==="

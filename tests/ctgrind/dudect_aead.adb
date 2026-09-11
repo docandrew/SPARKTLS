@@ -26,21 +26,28 @@ procedure Dudect_AEAD is
    --  Two distinct keys to compare timing across.
    K0_Bytes : constant Bytes_32 := (others => 16#00#);
    K1_Bytes : constant Bytes_32 := (others => 16#FF#);
-   K0, K1   : SPARKNaCl.Core.ChaCha20_Key;
+   K0, K1   : aliased SPARKNaCl.Core.ChaCha20_Key;
 
    C   : aliased Byte_Seq (0 .. 4095);
    Tag : Bytes_16;
 
+   --  One code path for both classes (see dudect_p256_ecdsa.adb): the
+   --  class only selects which key the shared subprogram reads.
+   Cur : access SPARKNaCl.Core.ChaCha20_Key;
+   procedure Encrypt_Cur is
+   begin
+      SPARKTLSCrypto.ChaCha20_Poly1305.Encrypt
+        (C => C, Tag => Tag, M => M, N => Nonce, K => Cur.all, AAD => AAD);
+   end Encrypt_Cur;
    procedure Sub_0 is
    begin
-      SPARKTLSCrypto.ChaCha20_Poly1305.Encrypt
-        (C => C, Tag => Tag, M => M, N => Nonce, K => K0, AAD => AAD);
+      Cur := K0'Access;
+      Encrypt_Cur;
    end Sub_0;
-
    procedure Sub_1 is
    begin
-      SPARKTLSCrypto.ChaCha20_Poly1305.Encrypt
-        (C => C, Tag => Tag, M => M, N => Nonce, K => K1, AAD => AAD);
+      Cur := K1'Access;
+      Encrypt_Cur;
    end Sub_1;
 begin
    SPARKNaCl.Core.Construct (K0, K0_Bytes);
@@ -50,5 +57,5 @@ begin
         "ChaCha20-Poly1305 Encrypt 4KiB (K=zeros vs K=ones, opt build)",
       Subject_0 => Sub_0'Access,
       Subject_1 => Sub_1'Access,
-      N         => 2_000);
+      N         => 20_000);   --  ~5 us per call: 10x the sample of the EC harnesses
 end Dudect_AEAD;

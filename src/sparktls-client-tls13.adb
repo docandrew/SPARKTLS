@@ -10,6 +10,7 @@ with SPARKTLS.Records;     use SPARKTLS.Records;
 with SPARKTLS.Cert_Verify; use SPARKTLS.Cert_Verify;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.TLS13;
+with SPARKTLS.Revocation;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.Key_Update;
 with SPARKTLS.Tickets_12;
@@ -969,6 +970,73 @@ is
       S.HC.Negotiated_Sig_Algo := Picked;
    end Handle_CertReq_13;
 
+   --  Revocation verdict for the validated leaf (RFC 6960 stapled OCSP,
+   --  RFC 5280 CRLs) under Config's policy; maps a failure to the alert
+   --  code and the error state. Kept out of Handle_Cert_13 so that
+   --  handler's frame postcondition stays within budget.
+   procedure Check_Revocation_13
+     (S      : in out Session;
+      D      : in SPARKTLS.HS_Pool.HS_Data;
+      Cert_X : in X509.Byte_Seq;
+      Result : out Action)
+   with
+     Pre  =>
+       Cert_X'First = 0
+       and then Cert_X'Last < X509.N32 (Max_Cert_DER)
+       and then X509.Spans_Valid (D.Peer_Leaf.Cert, Cert_X'Last)
+       and then S.HC.Cfg.Trust /= null
+       and then S.HC.Cfg.Get_Time /= null,
+     Post =>
+       S.Client_App = S.Client_App'Old
+       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+       and then Result in OK | Error_Alert
+       and then (if Result = OK then S.State = S.State'Old
+                 else S.State = Error_State);
+
+   procedure Check_Revocation_13
+     (S      : in out Session;
+      D      : in SPARKTLS.HS_Pool.HS_Data;
+      Cert_X : in X509.Byte_Seq;
+      Result : out Action)
+   is
+      Rev : SPARKTLS.Revocation.Decision;
+   begin
+      Result := OK;
+      SPARKTLS.Revocation.Evaluate
+        (Policy          => S.HC.Cfg.Revocation,
+         Staple_Asked    => S.HC.Cfg.Request_OCSP_Staple,
+         Allow_SHA1      => S.HC.Cfg.Allow_SHA1_CertID,
+         Skew_Seconds    => S.HC.Cfg.Revocation_Skew_Seconds,
+         CRLs            => S.HC.Cfg.CRLs,
+         Now             => S.HC.Cfg.Get_Time.all,
+         Leaf_DER        => Cert_X,
+         Leaf            => D.Peer_Leaf.Cert,
+         Ints            => D.Peer_Ints,
+         Int_Count       => D.Peer_Int_Count,
+         Roots           => S.HC.Cfg.Trust.Roots,
+         Root_Count      => S.HC.Cfg.Trust.Root_Count,
+         Stapled         => D.Stapled_OCSP,
+         Stapled_Len     => D.Stapled_OCSP_Len,
+         Stapled_Too_Big => D.Stapled_Too_Big,
+         Verdict         => Rev);
+      case Rev is
+         when SPARKTLS.Revocation.Proceed =>
+            null;
+         when SPARKTLS.Revocation.Fail_Revoked =>
+            S.Last_Error := Certificate_Revoked;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+         when SPARKTLS.Revocation.Fail_Bad_Status =>
+            S.Last_Error := Bad_Certificate_Status_Response;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+         when SPARKTLS.Revocation.Fail_No_Evidence =>
+            S.Last_Error := Bad_Certificate;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+      end case;
+   end Check_Revocation_13;
+
    --  RFC 8446 4.4.2 client-side Certificate handler. Parses chain
    --  via Parse_Certificate_Chain_13, runs hostname binding (RFC 6125
    --  6.4) and trust-chain validation, transitions to
@@ -1028,6 +1096,10 @@ is
       end if;
       SPARKTLS_Transcript.Append (S.HC.TS, Data);
 
+      --  A fresh Certificate message: forget any earlier staple.
+      D.Stapled_OCSP_Len := 0;
+      D.Stapled_Too_Big  := False;
+
       declare
          Parse_OK  : Boolean;
          Parse_Err : Error_Code;
@@ -1044,6 +1116,17 @@ is
             return;
          end if;
       end;
+
+      --  Stapled OCSP observer (RFC 8446 4.4.2.1): what arrived, before
+      --  any verdict.
+      if S.HC.Cfg.Observe_Staple /= null then
+         if D.Stapled_OCSP_Len > 0 then
+            S.HC.Cfg.Observe_Staple
+              (D.Stapled_OCSP (0 .. D.Stapled_OCSP_Len - 1), D.Stapled_Too_Big);
+         elsif D.Stapled_Too_Big then
+            S.HC.Cfg.Observe_Staple (D.Stapled_OCSP (1 .. 0), True);
+         end if;
+      end if;
 
       if S.HC.Cfg.Server_Name.Len > 0
         and then not S.HC.Cfg.Skip_Hostname_Verify
@@ -1119,6 +1202,13 @@ is
                S.Last_Error := Certificate_Unknown;
                Set_State (S, Error_State);
                Result := Error_Alert;
+               return;
+            end if;
+
+            --  Revocation (stapled OCSP, then configured CRLs), after the
+            --  core and the application hook accepted the chain.
+            Check_Revocation_13 (S, D, Cert_X, Result);
+            if Result /= OK then
                return;
             end if;
          end;

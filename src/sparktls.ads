@@ -7,6 +7,8 @@ use SPARKTLS_Reassembly;
 with SPARKTLS_Transcript;
 with RFLX.RFLX_Builtin_Types;
 with X509;
+with X509.CRL;
+with SPARKTLSCrypto.RSA;
 
 package SPARKTLS
   with SPARK_Mode => On
@@ -92,7 +94,8 @@ is
       HT_Server_Hello_Done,     --  0x0E
       HT_Certificate_Verify,    --  0x0F
       HT_Client_Key_Exchange,   --  0x10
-      HT_Finished);             --  0x14
+      HT_Finished,              --  0x14
+      HT_Certificate_Status);   --  0x16 (RFC 6066 8, TLS 1.2 only)
    subtype HS_Msg_Type is Maybe_HS_Msg;
 
    type HS_Msg_Wire_Type is array (Maybe_HS_Msg) of Byte;
@@ -109,7 +112,8 @@ is
       HT_Server_Hello_Done    => 16#0E#,
       HT_Certificate_Verify   => 16#0F#,
       HT_Client_Key_Exchange  => 16#10#,
-      HT_Finished             => 16#14#];
+      HT_Finished             => 16#14#,
+      HT_Certificate_Status   => 16#16#];
 
    function HS_Msg_From_Wire (W : Byte) return Maybe_HS_Msg;
 
@@ -500,6 +504,8 @@ is
       Bad_Certificate,
       Certificate_Unknown,         --  RFC 8446 6.2 alert 46: application veto (Config.Verify_Peer)
       Certificate_Expired,
+      Certificate_Revoked,         --  RFC 8446 6.2 alert 44: revocation evidence says revoked
+      Bad_Certificate_Status_Response, --  RFC 6066 8 alert 113: bad / missing stapled OCSP
       Certificate_Verify_Failed,
       Certificate_Required,        --  RFC 8446 6 alert 116
       Decode_Error,
@@ -783,6 +789,8 @@ is
          when Bad_Certificate           => 42,
          when Certificate_Unknown       => 46,
          when Certificate_Expired       => 45,
+         when Certificate_Revoked       => 44,
+         when Bad_Certificate_Status_Response => 113,
          when Illegal_Parameter         => 47,
          when Decode_Error              => 50,
          when Certificate_Verify_Failed => 51,
@@ -1096,6 +1104,10 @@ is
       RSA_Mod_Len    : N32 range 0 .. Max_RSA_Key_Bytes := 0;
       RSA_Priv_Exp   : Byte_Seq (0 .. Max_RSA_Key_Bytes - 1) := (others => 0);
       RSA_Pub_Exp    : Unsigned_32 := 0;
+      --  CRT form of the RSA key when the PKCS#8 blob carried p, q, dP,
+      --  dQ, qInv (it always does for OpenSSL-generated keys). Signing
+      --  is ~4x faster with it; without it the plain d exponent is used.
+      RSA_CRT        : SPARKTLSCrypto.RSA.CRT_Params;
 
       Has_Identity : Boolean := False;
    end record;
@@ -1338,6 +1350,67 @@ is
 
    --  Validation purpose (controls EKU requirements on the leaf)
    type Validation_Purpose is (Purpose_Server, Purpose_Client, Purpose_Any);
+
+   ----------------------------------------------------------------------------
+   --  Revocation checking (client side): stapled OCSP (RFC 6066 8 /
+   --  RFC 8446 4.4.2.1) and application-supplied CRLs (RFC 5280 5).
+   --  The library never fetches anything: OCSP evidence arrives stapled
+   --  from the server, CRL evidence is attached by the application at
+   --  configuration time. See SPARKTLS.Revocation for the verifier.
+   ----------------------------------------------------------------------------
+
+   --  Ignore:    no revocation processing at all (not even must-staple).
+   --  Soft_Fail: revoked => fail; no usable evidence => proceed (the
+   --             industry default -- responder outages and captive portals).
+   --  Hard_Fail: revoked => fail; no usable evidence => fail.
+   --  SCOPE: evidence is evaluated for the LEAF certificate only. The
+   --  intermediates of the validated chain are not checked against the
+   --  supplied CRLs or the staple, so a revoked intermediate is not
+   --  detected by this policy (tracked as SR-10 in
+   --  SECURITY_BURNDOWN_2026_09.md). Deployments that need it should
+   --  check intermediates out of band via Config.Verify_Peer for now.
+   --  A leaf carrying RFC 7633 TLS Feature status_request ("must-staple")
+   --  fails without a stapled response under both Soft_Fail and Hard_Fail.
+   type Revocation_Policy is (Ignore, Soft_Fail, Hard_Fail);
+
+   --  Largest stapled OCSP response accepted (a response with an
+   --  embedded responder certificate is 1-3 KB; larger ones are treated
+   --  as absent).
+   Max_OCSP_Response : constant := 16384;
+
+   --  Application-owned CRL store. The application keeps each CRL's DER
+   --  alive for the store's lifetime and registers it with Add_CRL, which
+   --  parses it once; sessions read the store through CRL_Store_Access,
+   --  exactly like Trust_Store. No copying, no size limit per CRL.
+   Max_CRLs : constant := 16;
+
+   type CRL_Bytes_Access is access constant X509.Byte_Seq;
+
+   type CRL_Entry is record
+      DER     : CRL_Bytes_Access := null;
+      View    : X509.CRL.CRL_View;
+      Present : Boolean := False;
+   end record;
+
+   type CRL_Entry_Array is array (1 .. Max_CRLs) of CRL_Entry;
+
+   type CRL_Store is record
+      Entries : CRL_Entry_Array;
+      Count   : Natural range 0 .. Max_CRLs := 0;
+   end record;
+
+   type CRL_Store_Access is access constant CRL_Store;
+
+   --  Client-side observer for a stapled OCSP response, called once per
+   --  handshake when the server stapled one (Response = the OCSPResponse
+   --  DER; Too_Big = it exceeded Max_OCSP_Response and Response is
+   --  empty). Fires whether or not the chain is verified, so a test or
+   --  audit hook can see what arrived; the verdict is Revocation's.
+   --  Must not retain Response.
+   type Staple_Observer is access procedure
+     (Response : X509.Byte_Seq; Too_Big : Boolean);
+
+   --  Add_CRL (parse + register) lives in SPARKTLS.Revocation.
 
    ----------------------------------------------------------------------------
    --  DoS resource limits (2.13 in ROADMAP)
@@ -1584,6 +1657,24 @@ is
       --  True unless Skip_Verify is explicitly enabled for
       --  "require any client certificate" deployments.
       Trust : Trust_Store_Access := null;
+
+      --  Client revocation checking (see Revocation_Policy above).
+      Revocation : Revocation_Policy := Soft_Fail;
+      --  Client: send status_request in ClientHello so a server that
+      --  staples can. Off => never ask, stapled responses are ignored
+      --  and must-staple is not enforced.
+      Request_OCSP_Staple : Boolean := True;
+      --  Accept SHA-1 CertIDs in OCSP responses (RFC 5019 profile; what
+      --  responders emit in practice). SHA-1 here only names the issuer
+      --  (see SPARKTLSCrypto.Hashing.SHA1). False => SHA-1 CertIDs are
+      --  treated as no evidence. NIST sunset for this use: 2030-12-31.
+      Allow_SHA1_CertID : Boolean := True;
+      --  Clock tolerance applied to thisUpdate / nextUpdate windows.
+      Revocation_Skew_Seconds : Natural range 0 .. 86_400 := 300;
+      --  Application-supplied CRLs (null = none).
+      CRLs : CRL_Store_Access := null;
+      --  Observer for stapled OCSP responses (null = none).
+      Observe_Staple : Staple_Observer := null;
 
       --  Local identity (certificate + signing key).
       --  Required for server.  Optional for client (mTLS only).
@@ -1865,6 +1956,10 @@ is
       Client_Cert_Allowed   : Boolean := False;
       Sent_Ticket_Ext       : Boolean := False;
       Server_Will_Issue     : Boolean := False;
+      --  RFC 6066 8: server echoed status_request in the TLS 1.2
+      --  ServerHello, so a CertificateStatus message may follow
+      --  Certificate.
+      Server_Will_Staple    : Boolean := False;
       Server_Echoed_SID     : Boolean := False;
       Resuming              : Boolean := False;
       Ticket_Offered        : Boolean := False;
@@ -2510,7 +2605,10 @@ is
        --  unsupported_extension -- BoGo ExtendedMasterSecret-TLS12-Client.
        --  The condition MUST track Offer_EMS exactly; if one changes so
        --  must the other.
-       or else (Tag = 16#0017# and then HC.Cfg.Versions /= TLS_1_3_Only));
+       or else (Tag = 16#0017# and then HC.Cfg.Versions /= TLS_1_3_Only)
+       --  RFC 6066 8 status_request: emitted iff Cfg.Request_OCSP_Staple
+       --  (see Offer_Staple in Build_Client_Hello); same coupling rule.
+       or else (Tag = 16#0005# and then HC.Cfg.Request_OCSP_Staple));
 
    --  RFC 8446 4.2 single-call validator for any server-generated
    --  extension. Returns OK = True on success; otherwise sets

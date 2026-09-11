@@ -44,6 +44,22 @@ openssl req -x509 -key "$DIR/rsa.key" -out "$DIR/rsa.crt" \
 rm -f "$DIR/rsa_raw.key"
 echo "  Created rsa.crt and rsa.key"
 
+# RSA-2056: a modulus that is not a whole number of 32- or 64-bit limbs
+# (257 bytes). Exercises the odd-size Decode/Encode path and the CRT
+# fallback (no balanced primes) in the signer. Not used by the TLS
+# handshake tests' default set; tests/unit/test_rsa_crt and the
+# integration lane pick it up.
+echo "Generating RSA-2056 test certificate..."
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2056 \
+    -out "$DIR/rsa2056.key" 2>/dev/null
+openssl req -x509 -key "$DIR/rsa2056.key" -out "$DIR/rsa2056.crt" \
+    -days 3650 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+    -addext "extendedKeyUsage=serverAuth,clientAuth" \
+    -addext "keyUsage=digitalSignature,keyEncipherment,keyCertSign" \
+    -addext "basicConstraints=critical,CA:TRUE" 2>/dev/null
+echo "  Created rsa2056.crt and rsa2056.key"
+
 # Convenience symlinks for default server cert (Ed25519)
 ln -sf ed25519.crt "$DIR/server.crt"
 ln -sf ed25519.key "$DIR/server.key"

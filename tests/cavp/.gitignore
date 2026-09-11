@@ -1,2 +1,5 @@
 # Auto-fetched NIST CAVP test vectors. run.sh downloads on demand.
 ecdsa_SigVer.rsp
+SHA1ShortMsg.rsp
+SHA1LongMsg.rsp
+SHA1Monte.rsp

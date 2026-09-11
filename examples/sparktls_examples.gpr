@@ -7,6 +7,7 @@ project SPARKTLS_Examples is
    for Object_Dir use "../bin/examples";
    for Create_Missing_Dirs use "True";
    for Main use ("tls_fetch.adb", "tls_web_epoll.adb",
+                  "tls_revocation_check.adb",
                   "tls_test_client.adb", "tls_test_server.adb",
                   "tls_blocking_server.adb",
                   "tls_bench_server.adb",

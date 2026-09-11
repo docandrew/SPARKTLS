@@ -20,6 +20,8 @@ with SPARKTLS.Handshake.Certs; use SPARKTLS.Handshake.Certs;
 with RFLX.TLS_Handshake.Certificate;
 with RFLX.TLS_Handshake.Certificate_Entries;
 with RFLX.TLS_Handshake.Certificate_Entry;
+with RFLX.TLS_Handshake.CT_Extensions;
+with RFLX.TLS_Handshake.CT_Extension;
 with RFLX.TLS_Handshake.Certificate_Verify;
 with RFLX.TLS_Handshake.Encrypted_Extensions;
 with RFLX.TLS_Handshake.EE_Extensions;
@@ -1166,6 +1168,8 @@ is
                   Modulus   => Id.RSA_Modulus,
                   Mod_Len   => Id.RSA_Mod_Len,
                   Priv_Exp  => Id.RSA_Priv_Exp,
+                  Pub_Exp   => Id.RSA_Pub_Exp,
+                  CRT       => Id.RSA_CRT,
                   Salt      => Byte_Seq (Salt),
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
@@ -1187,6 +1191,8 @@ is
                   Modulus   => Id.RSA_Modulus,
                   Mod_Len   => Id.RSA_Mod_Len,
                   Priv_Exp  => Id.RSA_Priv_Exp,
+                  Pub_Exp   => Id.RSA_Pub_Exp,
+                  CRT       => Id.RSA_CRT,
                   Salt      => Byte_Seq (Salt),
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
@@ -1208,6 +1214,8 @@ is
                   Modulus   => Id.RSA_Modulus,
                   Mod_Len   => Id.RSA_Mod_Len,
                   Priv_Exp  => Id.RSA_Priv_Exp,
+                  Pub_Exp   => Id.RSA_Pub_Exp,
+                  CRT       => Id.RSA_CRT,
                   Salt      => Byte_Seq (Salt),
                   Signature => Sig,
                   Sig_Len   => Sig_Len,
@@ -1267,6 +1275,137 @@ is
    --  RFC 8446 4.4.2 TLS 1.3 Certificate parser (via RFLX)
    ------------------------------------------------------------------
 
+   --  RFC 8446 4.4.2, client side: walk one CertificateEntry's
+   --  extensions. Only what we offered in ClientHello may appear
+   --  (status_request iff Want_Staple), each at most once; anything else
+   --  is unsupported_extension (RFC 8446 4.2). The leaf's status_request
+   --  body, CertificateStatus { status_type ocsp(1), response<1..2^24-1> }
+   --  (RFC 6066 8), is copied into the slot for SPARKTLS.Revocation;
+   --  on intermediates it is validated and ignored. Reject = an
+   --  extension that must not be here (unsupported_extension);
+   --  Malformed = a status_request body that does not decode
+   --  (decode_error, RFC 8446 6.2).
+   procedure Scan_Entry_Extensions
+     (E_Ctx       : in out RFLX.TLS_Handshake.Certificate_Entry.Context;
+      Want_Staple : in     Boolean;
+      Is_Leaf     : in     Boolean;
+      Staple      : in out X509.Byte_Seq;
+      Staple_Len  : in out X509.N32;
+      Too_Big     : in out Boolean;
+      Reject      :    out Boolean;
+      Malformed   :    out Boolean)
+   with
+     Pre  =>
+       not E_Ctx'Constrained
+       and then RFLX.TLS_Handshake.Certificate_Entry.Has_Buffer (E_Ctx)
+       and then RFLX.TLS_Handshake.Certificate_Entry.Well_Formed_Message (E_Ctx)
+       and then RFLX.TLS_Handshake.Certificate_Entry.Present
+                  (E_Ctx, RFLX.TLS_Handshake.Certificate_Entry.F_Extensions)
+       and then Staple'First = 0
+       and then Staple'Last = Max_OCSP_Response - 1
+       and then Staple_Len <= Max_OCSP_Response,
+     Post =>
+       RFLX.TLS_Handshake.Certificate_Entry.Has_Buffer (E_Ctx)
+       and E_Ctx.Buffer_First = E_Ctx.Buffer_First'Old
+       and E_Ctx.Buffer_Last = E_Ctx.Buffer_Last'Old
+       and E_Ctx.First = E_Ctx.First'Old
+       and E_Ctx.Last = E_Ctx.Last'Old
+       and Staple_Len <= Max_OCSP_Response
+   is
+      package CE      renames RFLX.TLS_Handshake.Certificate_Entry;
+      package CT_Seq  renames RFLX.TLS_Handshake.CT_Extensions;
+      package CT_Elem renames RFLX.TLS_Handshake.CT_Extension;
+      use type RBT.Length;
+      use type RBT.Bit_Length;
+
+      function Tag_Wire
+        (Tg : RFLX.Tls_Extensiontype_Values.TLS_ExtensionType_Values) return Unsigned_16
+      is (Unsigned_16 (RFLX.Tls_Extensiontype_Values.To_Base_Integer (Tg)))
+      with Pre => (if not Tg.Known then RFLX.Tls_Extensiontype_Values.Valid_TLS_ExtensionType_Values (Tg.Raw));
+
+      Exts        : CT_Seq.Context;
+      Seen_Staple : Boolean := False;
+   begin
+      Reject := False;
+      Malformed := False;
+      CE.Switch_To_Extensions (E_Ctx, Exts);
+      while CT_Seq.Has_Element (Exts) loop
+         pragma Loop_Invariant (CT_Seq.Has_Buffer (Exts));
+         pragma Loop_Invariant (CT_Seq.Valid (Exts));
+         pragma Loop_Invariant (not CE.Has_Buffer (E_Ctx));
+         pragma Loop_Invariant (CE.Present (E_Ctx, CE.F_Extensions));
+         pragma Loop_Invariant (E_Ctx.Buffer_First = Exts.Buffer_First);
+         pragma Loop_Invariant (E_Ctx.Buffer_Last = Exts.Buffer_Last);
+         pragma Loop_Invariant (Exts.First = CE.Field_First (E_Ctx, CE.F_Extensions));
+         pragma Loop_Invariant (Exts.Last = CE.Field_Last (E_Ctx, CE.F_Extensions));
+         pragma Loop_Invariant (E_Ctx.Buffer_First = E_Ctx.Buffer_First'Loop_Entry);
+         pragma Loop_Invariant (E_Ctx.Buffer_Last = E_Ctx.Buffer_Last'Loop_Entry);
+         pragma Loop_Invariant (E_Ctx.First = E_Ctx.First'Loop_Entry);
+         pragma Loop_Invariant (E_Ctx.Last = E_Ctx.Last'Loop_Entry);
+         pragma Loop_Invariant (Staple_Len <= Max_OCSP_Response);
+         declare
+            E : CT_Elem.Context;
+         begin
+            CT_Seq.Switch (Exts, E);
+            CT_Elem.Verify_Message (E);
+            if CT_Elem.Well_Formed_Message (E) then
+               declare
+                  Tg : constant Unsigned_16 := Tag_Wire (CT_Elem.Get_Tag (E));
+               begin
+                  if Tg = 16#0005# and then Want_Staple and then not Seen_Staple then
+                     Seen_Staple := True;
+                     if Is_Leaf then
+                        declare
+                           DLen : constant N32 := N32 (CT_Elem.Get_Data_Length (E));
+                        begin
+                           if DLen >= 4
+                             and then CT_Elem.Valid (E, CT_Elem.F_Data_Length)
+                             and then CT_Elem.Well_Formed (E, CT_Elem.F_Data)
+                             and then CT_Elem.Valid_Next (E, CT_Elem.F_Data)
+                             and then CT_Elem.Field_Size (E, CT_Elem.F_Data)
+                                      = RBT.Bit_Length (DLen) * RBT.Byte'Size
+                             and then RFLX.RFLX_Types.To_Length
+                                        (CT_Elem.Field_Size (E, CT_Elem.F_Data))
+                                      = RBT.Length (DLen)
+                           then
+                              declare
+                                 Raw : RBT.Bytes (1 .. RBT.Index (DLen));
+                                 RL  : N32;
+                              begin
+                                 CT_Elem.Get_Data (E, Raw);
+                                 --  CertificateStatus: status_type(1) = ocsp, response len (3)
+                                 RL := N32 (Raw (2)) * 65_536 + N32 (Raw (3)) * 256 + N32 (Raw (4));
+                                 if Raw (1) /= 1 or else RL = 0 or else RL /= DLen - 4 then
+                                    Malformed := True;
+                                 elsif RL > Max_OCSP_Response then
+                                    Too_Big := True;
+                                 else
+                                    for I in N32 range 0 .. RL - 1 loop
+                                       pragma Loop_Invariant (I < RL);
+                                       Staple (X509.N32 (I)) := X509.Byte (Raw (RBT.Index (I + 5)));
+                                    end loop;
+                                    Staple_Len := X509.N32 (RL);
+                                 end if;
+                              end;
+                           else
+                              Malformed := True;
+                           end if;
+                        end;
+                     end if;
+                  else
+                     --  Unsolicited, unknown, or duplicated extension.
+                     Reject := True;
+                  end if;
+               end;
+            else
+               Malformed := True;
+            end if;
+            CT_Seq.Update (Exts, E);
+         end;
+      end loop;
+      CE.Update_Extensions (E_Ctx, Exts);
+   end Scan_Entry_Extensions;
+
    procedure Parse_Certificate_Chain_13
      (HC                     : in out Engaged_Context;
       D                      : in out SPARKTLS.HS_Pool.HS_Data;
@@ -1284,6 +1423,7 @@ is
       Ctx                     : C13.Context;
       Cert_Idx                : Natural := 0;
       Ext_Reject              : Boolean := False;
+      Ext_Malformed           : Boolean := False;
       Saved_Client_HS_Counter : constant Unsigned_64 := HC.Client_HS.Counter
       with Ghost;
    begin
@@ -1396,13 +1536,9 @@ is
                            declare
                               C_Len : constant N32 := N32 (C13_Entry.Get_Cert_Data_Length (E_Ctx));
                            begin
-                              --  RFC 8446 4.4.2 per-cert extensions
-                              --  policy check (client only).
-                              if Reject_Cert_Extensions
-                                and then N32 (C13_Entry.Get_Extensions_Length (E_Ctx)) > 0
-                              then
-                                 Ext_Reject := True;
-                              end if;
+                              --  RFC 8446 4.4.2 per-cert extensions are
+                              --  walked below (client only), once the
+                              --  certificate bytes have been read.
                               if C_Len > 0
                                 and then C_Len <= N32 (Max_Cert_DER)
                                 and then C13_Entry.Field_Size (E_Ctx, C13_Entry.F_Cert_Data)
@@ -1461,6 +1597,37 @@ is
                                  end;
                                  Cert_Idx := Cert_Idx + 1;
                               end if;
+
+                              --  RFC 8446 4.4.2 per-cert extensions
+                              --  (client only): solicited, no duplicates;
+                              --  the leaf's status_request is stapled OCSP.
+                              if Reject_Cert_Extensions
+                                and then N32 (C13_Entry.Get_Extensions_Length (E_Ctx)) > 0
+                              then
+                                 if C13_Entry.Present (E_Ctx, C13_Entry.F_Extensions) then
+                                    declare
+                                       Rej, Mal : Boolean;
+                                    begin
+                                       Scan_Entry_Extensions
+                                         (E_Ctx,
+                                          Want_Staple => HC.Cfg.Request_OCSP_Staple,
+                                          Is_Leaf     => Cert_Idx = 1,
+                                          Staple      => D.Stapled_OCSP,
+                                          Staple_Len  => D.Stapled_OCSP_Len,
+                                          Too_Big     => D.Stapled_Too_Big,
+                                          Reject      => Rej,
+                                          Malformed   => Mal);
+                                       if Rej then
+                                          Ext_Reject := True;
+                                       end if;
+                                       if Mal then
+                                          Ext_Malformed := True;
+                                       end if;
+                                    end;
+                                 else
+                                    Ext_Reject := True;
+                                 end if;
+                              end if;
                            end;
                         end if;
                      end if;
@@ -1481,7 +1648,10 @@ is
 
                C13_Entries.Take_Buffer (Entries_Ctx, Buf);
                SPARKTLS.RFLX_Borrow.Discard (Buf);
-               if Ext_Reject then
+               if Ext_Malformed then
+                  OK := False;
+                  Err := Decode_Error;
+               elsif Ext_Reject then
                   OK := False;
                   Err := Unsupported_Extension;
                else
@@ -1497,7 +1667,10 @@ is
       C13.Take_Buffer (Ctx, Buf);
       SPARKTLS.RFLX_Borrow.Discard (Buf);
 
-      if Ext_Reject then
+      if Ext_Malformed then
+         OK := False;
+         Err := Decode_Error;
+      elsif Ext_Reject then
          OK := False;
          Err := Unsupported_Extension;
       else

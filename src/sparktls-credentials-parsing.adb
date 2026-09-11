@@ -117,6 +117,11 @@ is
       E_Pos, E_Len : X509.N32;
       D_Pos, D_Len : X509.N32;
       V_Pos, V_Len : X509.N32;
+      type Five_Idx is array (1 .. 5) of X509.N32;
+      Has_CRT      : Boolean;
+      CRT_Pos      : Five_Idx;
+      CRT_Len      : Five_Idx;
+      CRT_K        : X509.N32;
    begin
       Key_Len := 0;
       OK := False;
@@ -171,18 +176,48 @@ is
       end if;
 
       --  private exponent d
-      declare
-         Ignored_Pos : X509.N32 := Pos;
-      begin
-         Parse_ASN1_Integer (DER, Ignored_Pos, D_Pos, D_Len, P_OK);
-      end;
+      Parse_ASN1_Integer (DER, Pos, D_Pos, D_Len, P_OK);
       if not P_OK or else D_Len < 64 or else D_Len > 512 then
          return;
       end if;
 
-      --  Pack output: n_len(2) || n || d_len(2) || d || e(4)
+      --  CRT components p, q, dP, dQ, qInv (RFC 8017 A.1.2). Optional:
+      --  a key without them (or with oversized ones) still loads, it
+      --  just signs with d.
       declare
-         Total   : constant N32 := 2 + N32 (N_Len) + 2 + N32 (D_Len) + 4;
+         K       : constant X509.N32 := (N_Len + 1) / 2;
+         C_Pos   : Five_Idx := (others => 0);
+         C_Len   : Five_Idx := (others => 0);
+         Cur     : X509.N32 := Pos;
+         Have    : Boolean := True;
+      begin
+         for I in 1 .. 5 loop
+            if Have then
+               Parse_ASN1_Integer (DER, Cur, C_Pos (I), C_Len (I), P_OK);
+               Have := P_OK;
+            end if;
+         end loop;
+         --  Everything the packing loop indexes with, stated once here so
+         --  it holds by construction (K is 32 .. 256 from the modulus
+         --  bounds; each component fits its field and lies inside DER).
+         Has_CRT := Have
+           and then K in 32 .. 256
+           and then (for all J in 1 .. 5 =>
+                       C_Len (J) <= K
+                       and then C_Pos (J) <= DER'Last
+                       and then C_Len (J) <= DER'Last - C_Pos (J) + 1);
+         CRT_Pos := C_Pos;
+         CRT_Len := C_Len;
+         CRT_K   := K;
+      end;
+
+      --  Pack output: n_len(2) || n || d_len(2) || d || e(4)
+      --    [ || k(2) || p(k) || q(k) || dP(k) || dQ(k) || qInv(k) ]
+      --  with every CRT component right-aligned in its k-byte field.
+      declare
+         Base    : constant N32 := 2 + N32 (N_Len) + 2 + N32 (D_Len) + 4;
+         Total   : constant N32 :=
+           (if Has_CRT then Base + 2 + 5 * N32 (CRT_K) else Base);
          Out_Pos : N32 := Key_Out'First;
       begin
          if Total > N32 (Key_Out'Length) then
@@ -216,6 +251,28 @@ is
          for I in X509.N32 range 0 .. E_Len - 1 loop
             Key_Out (Out_Pos + N32 (4 - E_Len) + N32 (I)) := SPARKNaCl.Byte (DER (E_Pos + I));
          end loop;
+         Out_Pos := Out_Pos + 4;
+
+         if Has_CRT then
+            Key_Out (Out_Pos) := SPARKNaCl.Byte (CRT_K / 256);
+            Key_Out (Out_Pos + 1) := SPARKNaCl.Byte (CRT_K mod 256);
+            Out_Pos := Out_Pos + 2;
+            for C in 1 .. 5 loop
+               pragma Loop_Invariant
+                 (Out_Pos = Key_Out'First + Base + 2 + N32 (C - 1) * N32 (CRT_K));
+               Key_Out (Out_Pos .. Out_Pos + N32 (CRT_K) - 1) := (others => 0);
+               if CRT_Len (C) <= CRT_K
+                 and then CRT_Pos (C) <= DER'Last
+                 and then CRT_Len (C) <= DER'Last - CRT_Pos (C) + 1
+               then
+                  for I in X509.N32 range 0 .. CRT_Len (C) - 1 loop
+                     Key_Out (Out_Pos + N32 (CRT_K - CRT_Len (C)) + N32 (I)) :=
+                       SPARKNaCl.Byte (DER (CRT_Pos (C) + I));
+                  end loop;
+               end if;
+               Out_Pos := Out_Pos + N32 (CRT_K);
+            end loop;
+         end if;
 
          Key_Len := N32 (Total);
          OK := True;
@@ -343,7 +400,7 @@ is
    is
       Cert_Result : PEM.Decode_Result;
       Key_Result  : PEM.Decode_Result;
-      Key_Buf     : Byte_Seq (0 .. 1099);
+      Key_Buf     : Byte_Seq (0 .. 2399);   --  RSA-4096 with CRT = 2314
       Key_Len     : N32;
       Key_OK      : Boolean;
       Set_OK      : Boolean;
