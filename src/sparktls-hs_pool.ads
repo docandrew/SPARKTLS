@@ -23,6 +23,8 @@
 --  predicates cannot read globals. All pooled data is deliberately
 --  invariant-free; every proof-carrying fact stays in the Session.
 
+with X509;
+
 package SPARKTLS.HS_Pool
   with SPARK_Mode => On
 is
@@ -37,6 +39,13 @@ is
       Peer_Leaf      : Pool_Entry;
       Peer_Ints      : Cert_Pool;
       Peer_Int_Count : Cert_Pool_Count := 0;
+      --  Stapled OCSP response for the leaf (RFC 8446 4.4.2.1 CertificateEntry
+      --  status_request extension, or the TLS 1.2 CertificateStatus message).
+      --  Len = 0: none. Too_Big: the server stapled something over
+      --  Max_OCSP_Response bytes, treated as absent.
+      Stapled_OCSP     : X509.Byte_Seq (0 .. Max_OCSP_Response - 1) := (others => 0);
+      Stapled_OCSP_Len : X509.N32 range 0 .. Max_OCSP_Response := 0;
+      Stapled_Too_Big  : Boolean := False;
       --  Reusable RecordFlux build/parse arena, INLINE (no heap). Handshake
       --  builders hand it to RecordFlux via SPARKTLS.RFLX_Borrow.Borrow and
       --  return it with Discard; the storage is part of the slot, so it

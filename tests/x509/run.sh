@@ -44,6 +44,11 @@ for tc_dir in "$GEN_DIR"/*/; do
     [ -n "$hostname" ] && cmd+=(--hostname "$hostname")
     [ -n "$vtime" ] && cmd+=(--time "$vtime")
     [ "$mode" = "rfc5280" ] && cmd+=(--mode rfc5280)
+    #  CRL cases: x509-limbo semantics = soft on inapplicable CRLs,
+    #  reject on revoked or invalid ones.
+    for crl in "$tc_dir"/crl_*.pem; do
+        [ -f "$crl" ] && cmd+=(--crl "$crl" --crl-mode soft)
+    done
 
     # Run
     if timeout 10 "${cmd[@]}" > /dev/null 2>&1; then

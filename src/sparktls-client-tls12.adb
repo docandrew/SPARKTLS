@@ -1,4 +1,5 @@
 with SPARKTLS.HS_Pool;
+with SPARKTLS.Revocation;
 with Interfaces;                    use Interfaces;
 with SPARKNaCl;                     use SPARKNaCl;
 with SPARKTLSCrypto.Hashing.SHA256; use SPARKTLSCrypto.Hashing.SHA256;
@@ -1534,6 +1535,83 @@ is
    --  optional CertificateVerify + CCS + encrypted Finished) into a
    --  stack-scratch IO_Buffer; the channel counter is not rolled back on
    --  commit failure to keep AEAD nonces in sync with the peer.
+   --  RFC 6066 8 CertificateStatus (HS type 0x16): only after the server
+   --  echoed status_request in ServerHello, after Certificate and before
+   --  ServerKeyExchange, at most once. Body: status_type ocsp(1) +
+   --  response<1..2^24-1>. The OCSPResponse lands in the slot for
+   --  SPARKTLS.Revocation, which runs at ServerHelloDone.
+   procedure Handle_Cert_Status_12
+     (S       : in out Session;
+      D       : in out SPARKTLS.HS_Pool.HS_Data;
+      Frag    : in Byte_Seq;
+      Msg_Len : in N32;
+      Result  : out Action)
+   with
+     Pre  =>
+       Msg_Len <= Max_HS_Msg - 4
+       and then Frag'First <= Frag'Last
+       and then Frag'Last < N32'Last - 256
+       and then Frag'First <= N32'Last - 4
+       and then Msg_Len <= N32'Last - Frag'First - 4
+       and then Frag'First + 3 + Msg_Len <= Frag'Last
+       and then Frag'Last - Frag'First < Transcript_Capacity
+       and then S.Negotiated_Suite in TLS12_Suite,
+     Post =>
+       --  Frame on success: the message only fills the staple slot and
+       --  the transcript; the session state and suite are untouched.
+       (if Result = OK
+        then
+          S.State = S.State'Old
+          and then S.Negotiated_Suite = S.Negotiated_Suite'Old);
+
+   procedure Handle_Cert_Status_12
+     (S       : in out Session;
+      D       : in out SPARKTLS.HS_Pool.HS_Data;
+      Frag    : in Byte_Seq;
+      Msg_Len : in N32;
+      Result  : out Action)
+   is
+   begin
+      Result := OK;
+      if not S.HC.T12.Server_Will_Staple
+        or else not D.Peer_Leaf.Present
+        or else S.HC.KE.Negotiated
+        or else D.Stapled_OCSP_Len > 0
+        or else D.Stapled_Too_Big
+      then
+         Reset (D.Reasm);
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         return;
+      end if;
+      if Msg_Len < 4 then
+         Reset (D.Reasm);
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+      declare
+         B  : constant N32 := Frag'First + 4;
+         RL : constant N32 :=
+           N32 (Frag (B + 1)) * 65_536 + N32 (Frag (B + 2)) * 256 + N32 (Frag (B + 3));
+      begin
+         if Frag (B) /= 1 or else RL = 0 or else RL /= Msg_Len - 4 then
+            Reset (D.Reasm);
+            Send_Alert_And_Error (S, Decode_Error, Result);
+            return;
+         end if;
+         if RL > Max_OCSP_Response then
+            D.Stapled_Too_Big := True;
+         else
+            for I in N32 range 0 .. RL - 1 loop
+               pragma Loop_Invariant (I < RL);
+               D.Stapled_OCSP (X509.N32 (I)) := X509.Byte (Frag (B + 4 + I));
+            end loop;
+            D.Stapled_OCSP_Len := X509.N32 (RL);
+         end if;
+      end;
+      Append_Transcript (S.HC.TS, Frag);
+      Result := OK;
+   end Handle_Cert_Status_12;
+
    procedure Handle_SHD_12
      (S       : in out Session;
       D       : in out SPARKTLS.HS_Pool.HS_Data;
@@ -1598,6 +1676,71 @@ is
             return;
          end if;
       end;
+
+      --  Stapled OCSP observer (RFC 6066 8): what arrived, before any verdict.
+      if S.HC.Cfg.Observe_Staple /= null then
+         if D.Stapled_OCSP_Len > 0 then
+            S.HC.Cfg.Observe_Staple
+              (D.Stapled_OCSP (0 .. D.Stapled_OCSP_Len - 1), D.Stapled_Too_Big);
+         elsif D.Stapled_Too_Big then
+            S.HC.Cfg.Observe_Staple (D.Stapled_OCSP (1 .. 0), True);
+         end if;
+      end if;
+
+      --  Revocation (stapled OCSP, then configured CRLs): the whole server
+      --  flight is in, so the staple (if any) is known. Same gating as the
+      --  chain validation in Validate_Server_Cert_12.
+      if not S.HC.Cfg.Skip_Verify
+        and then D.Peer_Leaf.Present
+        and then S.HC.Cfg.Trust /= null
+        and then S.HC.Cfg.Get_Time /= null
+      then
+         declare
+            PCDL   : constant N32 := N32 (D.Peer_Leaf.DER_Len);
+            Cert_X : X509.Byte_Seq (0 .. X509.N32 (PCDL) - 1) := (others => 0);
+            Rev    : SPARKTLS.Revocation.Decision;
+         begin
+            for I in N32 range 0 .. PCDL - 1 loop
+               Cert_X (X509.N32 (I)) := D.Peer_Leaf.DER (X509.N32 (I));
+            end loop;
+            SPARKTLS.Revocation.Evaluate
+              (Policy          => S.HC.Cfg.Revocation,
+               Staple_Asked    => S.HC.Cfg.Request_OCSP_Staple,
+               Allow_SHA1      => S.HC.Cfg.Allow_SHA1_CertID,
+               Skew_Seconds    => S.HC.Cfg.Revocation_Skew_Seconds,
+               CRLs            => S.HC.Cfg.CRLs,
+               Now             => S.HC.Cfg.Get_Time.all,
+               Leaf_DER        => Cert_X,
+               Leaf            => D.Peer_Leaf.Cert,
+               Ints            => D.Peer_Ints,
+               Int_Count       => D.Peer_Int_Count,
+               Roots           => S.HC.Cfg.Trust.Roots,
+               Root_Count      => S.HC.Cfg.Trust.Root_Count,
+               Stapled         => D.Stapled_OCSP,
+               Stapled_Len     => D.Stapled_OCSP_Len,
+               Stapled_Too_Big => D.Stapled_Too_Big,
+               Verdict         => Rev);
+            case Rev is
+               when SPARKTLS.Revocation.Proceed =>
+                  null;
+               when SPARKTLS.Revocation.Fail_Revoked =>
+                  Reset (D.Reasm);
+                  Send_Alert_And_Error (S, Certificate_Revoked, Result);
+                  pragma Assert (Result /= OK);
+                  return;
+               when SPARKTLS.Revocation.Fail_Bad_Status =>
+                  Reset (D.Reasm);
+                  Send_Alert_And_Error (S, Bad_Certificate_Status_Response, Result);
+                  pragma Assert (Result /= OK);
+                  return;
+               when SPARKTLS.Revocation.Fail_No_Evidence =>
+                  Reset (D.Reasm);
+                  Send_Alert_And_Error (S, Bad_Certificate, Result);
+                  pragma Assert (Result /= OK);
+                  return;
+            end case;
+         end;
+      end if;
 
       pragma
         Assert
@@ -1812,6 +1955,8 @@ is
                Send_Alert_And_Error (S, Decode_Error, Result);
                return;
             end if;
+            D.Stapled_OCSP_Len := 0;
+            D.Stapled_Too_Big  := False;
             declare
                Parse_OK : Boolean;
             begin
@@ -1830,6 +1975,9 @@ is
 
             Append_Transcript (S.HC.TS, Frag);
             Result := OK;
+
+         when HT_Certificate_Status =>
+            Handle_Cert_Status_12 (S, D, Frag, Msg_Len, Result);
 
          when HT_Certificate_Request =>
             --  RFC 5246 7.4: in an ECDHE flight ServerKeyExchange is

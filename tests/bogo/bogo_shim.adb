@@ -19,6 +19,7 @@ with Ada.Calendar.Formatting;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
 with Ada.Streams;                use Ada.Streams;
+with Ada.Streams.Stream_IO;
 with Ada.Text_IO;                use Ada.Text_IO;
 with Interfaces;                 use Interfaces;
 
@@ -64,6 +65,12 @@ procedure Bogo_Shim is
       Check_Close_Notify   : Boolean := False;
       Request_Client_Cert  : Boolean := False;
       Require_Client_Cert  : Boolean := False;
+      --  OCSP stapling (RFC 6066 8). BoringSSL does not request a staple
+      --  unless -enable-ocsp-stapling, so the shim mirrors that and
+      --  leaves the library default (request) off otherwise.
+      Enable_OCSP_Stapling : Boolean := False;
+      Expect_OCSP_File     : Unbounded_Text := (others => Character'Val (0));
+      Expect_OCSP_Len      : Natural := 0;
       Expect_Hs_Fails      : Boolean := False;
       Resume_Count         : Natural := 0;
       --  ALPN (RFC 7301). BoGo wire-encodes -advertise-alpn as a
@@ -239,6 +246,8 @@ procedure Bogo_Shim is
          when Bad_Certificate          => return "Bad_Certificate";
          when Certificate_Unknown      => return "Certificate_Unknown";
          when Certificate_Expired      => return "Certificate_Expired";
+         when Certificate_Revoked      => return "Certificate_Revoked";
+         when Bad_Certificate_Status_Response => return "Bad_Certificate_Status_Response";
          when Certificate_Verify_Failed =>
             return "Certificate_Verify_Failed";
          when Certificate_Required     => return "Certificate_Required";
@@ -301,6 +310,101 @@ procedure Bogo_Shim is
              & " cseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Client_App_Counter (S))
              & " sseq12=" & Unsigned_64'Image (SPARKTLS.Test_Support.Server_App_Counter (S)));
    end Trace_Step;
+
+   --  ------------------------------------------------------------------
+   --  Stapled OCSP: the library reports what the server stapled through
+   --  Config.Observe_Staple; -expect-ocsp-response compares it with a
+   --  file after the handshake (BoringSSL: SSL_get0_ocsp_response).
+   --  ------------------------------------------------------------------
+   Seen_OCSP         : X509.Byte_Seq (0 .. SPARKTLS.Max_OCSP_Response - 1) := (others => 0);
+   Seen_OCSP_Len     : Natural := 0;
+   Seen_OCSP_Too_Big : Boolean := False;
+
+   procedure Note_Staple (Response : X509.Byte_Seq; Too_Big : Boolean) is
+   begin
+      Trace ("staple observed: " & Response'Length'Image & " bytes, too_big=" & Too_Big'Image);
+      Seen_OCSP_Len := 0;
+      Seen_OCSP_Too_Big := Too_Big;
+      for I in Response'Range loop
+         exit when Seen_OCSP_Len >= Seen_OCSP'Length;
+         Seen_OCSP (X509.N32 (Seen_OCSP_Len)) := Response (I);
+         Seen_OCSP_Len := Seen_OCSP_Len + 1;
+      end loop;
+   end Note_Staple;
+
+   --  BoGo passes binary flag values base64-encoded (runner.go
+   --  base64FlagValue). Decodes standard base64 with '=' padding; any
+   --  bad character yields an empty result.
+   function Base64_Decode (Text : String) return X509.Byte_Seq is
+      function Val (C : Character) return Integer is
+        (case C is
+           when 'A' .. 'Z' => Character'Pos (C) - Character'Pos ('A'),
+           when 'a' .. 'z' => Character'Pos (C) - Character'Pos ('a') + 26,
+           when '0' .. '9' => Character'Pos (C) - Character'Pos ('0') + 52,
+           when '+'        => 62,
+           when '/'        => 63,
+           when others     => -1);
+      Out_B : X509.Byte_Seq (0 .. X509.N32 (Natural'Max (Text'Length, 1)) - 1) := (others => 0);
+      N     : Natural := 0;
+      Acc   : Natural := 0;
+      Bits  : Natural := 0;
+   begin
+      for C of Text loop
+         exit when C = '=';
+         declare
+            V : constant Integer := Val (C);
+         begin
+            if V < 0 then
+               return Out_B (1 .. 0);
+            end if;
+            Acc := Acc * 64 + V;
+            Bits := Bits + 6;
+            if Bits >= 8 then
+               Bits := Bits - 8;
+               Out_B (X509.N32 (N)) := X509.Byte ((Acc / (2 ** Bits)) mod 256);
+               Acc := Acc mod (2 ** Bits);
+               N := N + 1;
+            end if;
+         end;
+      end loop;
+      if N = 0 then
+         return Out_B (1 .. 0);
+      end if;
+      return Out_B (0 .. X509.N32 (N) - 1);
+   end Base64_Decode;
+
+   --  Raw bytes of a file (DER); empty on any error.
+   function Read_File_Bytes (Path : String) return X509.Byte_Seq is
+      package SIO renames Ada.Streams.Stream_IO;
+      File : SIO.File_Type;
+   begin
+      SIO.Open (File, SIO.In_File, Path);
+      declare
+         Size : constant Natural := Natural (SIO.Size (File));
+         Raw  : Stream_Element_Array (1 .. Stream_Element_Offset (Size));
+         Last : Stream_Element_Offset := 0;
+         Out_B : X509.Byte_Seq (0 .. X509.N32 (Natural'Max (Size, 1)) - 1) := (others => 0);
+      begin
+         if Size > 0 then
+            SIO.Read (File, Raw, Last);
+         end if;
+         SIO.Close (File);
+         for I in 1 .. Integer (Last) loop
+            Out_B (X509.N32 (I - 1)) := X509.Byte (Raw (Stream_Element_Offset (I)));
+         end loop;
+         if Last = 0 then
+            return Out_B (1 .. 0);
+         end if;
+         return Out_B (0 .. X509.N32 (Integer (Last)) - 1);
+      end;
+   exception
+      when others =>
+         declare
+            None : constant X509.Byte_Seq (1 .. 0) := (others => 0);
+         begin
+            return None;
+         end;
+   end Read_File_Bytes;
 
    --  ------------------------------------------------------------------
    --  Argv parsing. Each unhandled flag → exit 89.
@@ -580,6 +684,15 @@ procedure Bogo_Shim is
                Cfg.Require_Client_Cert := True;
             elsif A = "-verify-peer" then
                Cfg.Request_Client_Cert := True;
+            elsif A = "-enable-ocsp-stapling" then
+               Cfg.Enable_OCSP_Stapling := True;
+            elsif A = "-expect-ocsp-response" then
+               declare
+                  V : constant String := Next_Arg;
+               begin
+                  Cfg.Expect_OCSP_File (1 .. V'Length) := V;
+                  Cfg.Expect_OCSP_Len := V'Length;
+               end;
             elsif A = "-resume-count" then
                Cfg.Resume_Count := Natural'Value (Next_Arg);
             elsif A = "-curves"
@@ -1164,7 +1277,10 @@ procedure Bogo_Shim is
       end Recv_Once;
 
    begin
-      --  Map (-min-version, -max-version) to a Version_Policy. TLS 1.0
+      --  The observed staple is deliberately NOT reset per handshake: a
+      --  resumed session carries no Certificate, and BoringSSL reports
+      --  the session's cached OCSP response there (OCSPStapling-Client
+      --  with resumeSession). Note_Staple overwrites on a new staple.      --  Map (-min-version, -max-version) to a Version_Policy. TLS 1.0
       --  and 1.1 are deliberately not supported: tests that require
       --  a max below 0x0303 exit 89 (unimplemented). Tests with min
       --  above 0x0304 also exit 89.
@@ -1335,6 +1451,8 @@ procedure Bogo_Shim is
                Client_Cfg.Resume_Ticket := Saved_Ticket;
                Client_Cfg.TLS12_Resume_Ticket := Saved_Ticket_12;
                Client_Cfg.Skip_Verify := True;
+               Client_Cfg.Request_OCSP_Staple := Cfg.Enable_OCSP_Stapling;
+               Client_Cfg.Observe_Staple := Note_Staple'Unrestricted_Access;
                Client_Cfg.Skip_Hostname_Verify := True;
                Client_Cfg.Verify_Sig_Algos := Cfg.Verify_Sig_Algos;
                Client_Cfg.Verify_Sig_Algo_Count := Cfg.Verify_Sig_Count;
@@ -1478,6 +1596,35 @@ procedure Bogo_Shim is
            (Ada.Command_Line.Exit_Status (Exit_Failure));
          Run_Failed := True;
          return;
+      end if;
+
+      --  -expect-ocsp-response BASE64: the stapled OCSP response must equal
+      --  the decoded bytes (an empty value means "expect none").
+      if Cfg.Expect_OCSP_Len > 0 then
+         declare
+            Want : constant X509.Byte_Seq :=
+              Base64_Decode (Cfg.Expect_OCSP_File (1 .. Cfg.Expect_OCSP_Len));
+            Same : Boolean := (not Seen_OCSP_Too_Big)
+              and then Natural (Want'Length) = Seen_OCSP_Len;
+         begin
+            if Same then
+               for I in 0 .. Seen_OCSP_Len - 1 loop
+                  if Seen_OCSP (X509.N32 (I)) /= Want (Want'First + X509.N32 (I)) then
+                     Same := False;
+                     exit;
+                  end if;
+               end loop;
+            end if;
+            if not Same then
+               Err ("expect-ocsp-response mismatch: got" & Seen_OCSP_Len'Image
+                    & " bytes, want" & Want'Length'Image
+                    & (if Seen_OCSP_Too_Big then " (too big)" else ""));
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               Run_Failed := True;
+               return;
+            end if;
+         end;
       end if;
 
       --  -expect-alpn STR: after handshake the negotiated protocol

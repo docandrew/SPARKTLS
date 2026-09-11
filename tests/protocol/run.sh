@@ -116,6 +116,18 @@ ALL_TESTS=(
     session-resumption serverhello-random multiple-ccs-messages
     ecdhe-curves signature-algorithms lengths shuffled-extentions
     symetric-ciphers psk_dhe_ke non-support finished-plaintext
+    #  Added 2026-09-09 with the RSA + revocation work (all use suites we
+    #  implement):
+    #    rsa-signatures        server picks rsa_pss_rsae_sha{256,384,512}
+    #                          when the client offers exactly one; refuses
+    #                          rsa_pss_pss_* with an rsaEncryption key
+    #    pkcs-signature        rsa_pkcs1_* refused in TLS 1.3 (RFC 8446 4.2.3)
+    #    keyshare-omitted      HRR path: omitted / empty key_share handling
+    #    keyupdate-from-server post-handshake KeyUpdate exchange
+    #    rsapss-signatures     the RSASSA-PSS-certificate twin of
+    #                          rsa-signatures -- classified unsupported below
+    rsa-signatures pkcs-signature keyshare-omitted keyupdate-from-server
+    rsapss-signatures
     #  ---------------- TLS 1.2 CORPUS (added 2026-08-18) ----------------
     #  These resolve via the unprefixed fallback above. They were never
     #  runnable before: run.sh only ever built "test-tls13-<name>.py",
@@ -283,6 +295,14 @@ classify_failure() {
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
             FAIL_REASON="script uses only RSA-KX/CBC/DHE suites; unsupported by design"
             FAIL_CLASS="unsupported" ;;
+        rsapss-signatures)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="script needs a server with an RSASSA-PSS (id-RSASSA-PSS) certificate; ours is rsaEncryption (its twin rsa-signatures covers that)"
+            FAIL_CLASS="unsupported" ;;
+        keyupdate-from-server)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="probe expects the server to initiate KeyUpdate(update_requested) after the first record; SPARKTLS rekeys on its record counter (2^23), the example server has no trigger knob"
+            FAIL_CLASS="mismatch" ;;
         ecdhe-curves)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
             FAIL_REASON="unsupported groups and malformed curve points are intentionally rejected"

@@ -156,6 +156,7 @@ is
          when 16#0F# => return HT_Certificate_Verify;
          when 16#10# => return HT_Client_Key_Exchange;
          when 16#14# => return HT_Finished;
+         when 16#16# => return HT_Certificate_Status;
          when others => return HT_Unknown;
       end case;
    end HS_Msg_From_Wire;
@@ -576,6 +577,19 @@ is
                Empty_Echo     => False,
                Always_In_CH   => False);
 
+         when 16#0005# =>
+            --  status_request (RFC 6066 8): offered by the client when
+            --  Cfg.Request_OCSP_Staple; a TLS 1.2 server echoes it EMPTY
+            --  in ServerHello and then sends CertificateStatus; a TLS 1.3
+            --  server answers inside CertificateEntry.extensions (E_CT,
+            --  body = CertificateStatus). Never in SH13 / EE (RFC 8446 4.2).
+            return
+              (Known          => True,
+               Where_Allowed  => (E_CH | E_SH12 | E_CT => True, others => False),
+               Requires_Offer => True,
+               Empty_Echo     => True,
+               Always_In_CH   => False);
+
          when 16#0017# =>
             --  extended_master_secret (RFC 7627)
             return
@@ -932,7 +946,8 @@ is
               & "parameters (RFC 8446 6.2, alert 40)";
 
          when Bad_Certificate =>
-            return "peer certificate was malformed or could not be parsed " & "(alert 42)";
+            return "peer certificate rejected: malformed, unparseable, or "
+              & "(Hard_Fail) no usable revocation evidence (alert 42)";
 
          when Certificate_Unknown =>
             return
@@ -941,6 +956,16 @@ is
 
          when Certificate_Expired =>
             return "peer certificate is expired or not yet valid (alert 45)";
+
+         when Certificate_Revoked =>
+            return
+              "peer certificate is revoked according to a stapled OCSP "
+              & "response or a configured CRL (RFC 8446 6.2, alert 44)";
+
+         when Bad_Certificate_Status_Response =>
+            return
+              "stapled OCSP response was missing, malformed or unverifiable "
+              & "(RFC 6066 8 / RFC 7633, alert 113)";
 
          when Certificate_Verify_Failed =>
             return

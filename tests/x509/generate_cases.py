@@ -12,7 +12,6 @@ Each test becomes:
         meta.txt            -- hostname, time, features, description
 
 Tests we skip:
-    - has-crl (we don't support CRL revocation)
     - CLIENT validation kind (we only do SERVER)
 """
 
@@ -54,10 +53,8 @@ def main():
         total += 1
         features = tc.get('features', [])
 
-        # Skip unsupported test types
-        if 'has-crl' in features:
-            skipped += 1
-            continue
+        # CRL cases are supported: their CRLs are written as crl_N.pem
+        # and passed to the validator with --crl (see run.sh).
         # max-chain-depth tests require a validator-configurable maximum
         # chain depth policy, which we don't implement
         if 'max-chain-depth' in features:
@@ -91,6 +88,11 @@ def main():
             with open(os.path.join(tc_dir, 'intermediates.pem'), 'w') as f:
                 for cert in intermediates:
                     f.write(cert.strip() + '\n')
+
+        # CRLs (PEM), one file each
+        for n, crl in enumerate(tc.get('crls') or []):
+            with open(os.path.join(tc_dir, f'crl_{n}.pem'), 'w') as f:
+                f.write(crl.strip() + '\n')
 
         # Expected result
         with open(os.path.join(tc_dir, 'expect.txt'), 'w') as f:

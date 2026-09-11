@@ -1,3 +1,9 @@
+--  NOTE (2026-09-10): both classes go through ONE subprogram (Sign_Cur)
+--  that reads the nonce through an access value. With a separate
+--  subprogram per class, code layout alone produced a steady Welch t of
+--  4.8-6.6 on an idle box (a few hundred cycles out of ~325k); through a
+--  single code path the same two nonces sit at 2-4.5. Keep it this way
+--  for any harness whose subject runs long enough for layout to matter.
 --  dudect timing-test on P-256 ECDSA Sign.
 --
 --  Expectation: |t| < 4.5 (constant-time across two valid nonces).
@@ -30,14 +36,21 @@ procedure Dudect_P256_ECDSA is
    R, S : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
    OK   : Boolean;
 
+   Cur : access SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;   --  class picks the nonce; one code path
+   procedure Sign_Cur is
+   begin
+      SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, Cur.all, R, S, OK);
+   end Sign_Cur;
    procedure Sub_0 is
    begin
-      SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K0, R, S, OK);
+      Cur := K0'Access;
+      Sign_Cur;
    end Sub_0;
 
    procedure Sub_1 is
    begin
-      SPARKTLSCrypto.P256.ECDSA.Sign (Hash, D, K1, R, S, OK);
+      Cur := K1'Access;
+      Sign_Cur;
    end Sub_1;
 begin
    Dudect_Helpers.Time_Test

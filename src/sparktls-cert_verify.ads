@@ -17,6 +17,22 @@ is
       return Boolean
    with Pre => Cert_DER'First = 0 and Cert_DER'Last < N32'Last - 256;
 
+   --  Verify Sig over Data with Signer's public key. This is the
+   --  primitive behind Verify_Cert_Signature, exposed for the objects
+   --  whose to-be-signed bytes are not a certificate: CRL TBSCertList and
+   --  OCSP tbsResponseData (SPARKTLS.Revocation). Data may be any slice
+   --  (its bounds are not assumed to start at 0); Sig is the raw
+   --  signature value (X509.Sig_Data convention).
+   function Verify_Raw_Signature
+     (Data     : Byte_Seq;
+      Sig_Algo : X509.Algorithm_ID;
+      Sig      : X509.Byte_Seq;
+      Signer   : X509.Certificate) return Boolean
+   with Pre => Data'Last < N32'Last - 256
+               and Sig'First = 0
+               and Sig'Length > 0
+               and Sig'Length <= X509.Max_Sig_Bytes;
+
    --  Validation result
    type Validation_Result is
      (Valid,

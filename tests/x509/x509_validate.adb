@@ -1,6 +1,14 @@
 --  x509-limbo test validator for SPARKTLS/SPARKx509.
 --
 --  Exit codes: 0 = valid, 1 = invalid, 2 = error
+--
+--  Revocation: --crl FILE (PEM "X509 CRL" blocks or raw DER; repeatable)
+--  attaches CRLs; after the chain validates, every certificate on the
+--  path except the trust anchor is checked against them. --crl-mode
+--  soft (default, x509-limbo semantics): revoked or invalid CRL =>
+--  invalid, no applicable CRL => valid. --crl-mode hard (NIST PKITS
+--  semantics): revocation status must be determined for every path
+--  certificate, so no applicable CRL => invalid.
 
 with Ada.Calendar;
 with Ada.Calendar.Formatting;
@@ -14,6 +22,9 @@ with SPARKTLS;      use SPARKTLS;
 with SPARKTLS.PEM;  use SPARKTLS.PEM;
 with SPARKTLS.Cert_Verify;
 with SPARKTLS.Credentials;
+with SPARKTLS.Revocation;
+with Ada.Streams;
+with Ada.Streams.Stream_IO;
 
 procedure X509_Validate is
    use type X509.N32;
@@ -250,6 +261,162 @@ procedure X509_Validate is
    --  made SPARKTLS and OpenSSL look identical in the benchmark regardless
    --  of how either performed.
    Repeat    : Positive := 1;
+
+   --  Revocation (see the header comment)
+   Verbose   : Boolean := False;   --  --verbose: revocation diagnostics on stderr
+   CRLs      : aliased SPARKTLS.CRL_Store;
+   Have_CRL  : Boolean := False;
+   CRL_Bad   : Boolean := False;   --  a --crl file did not parse as a CRL
+   CRL_Hard  : Boolean := False;
+
+   --  Register one CRL file (PEM block(s) or raw DER) with the store.
+   --  Raw bytes of a file (binary-safe; Read_File is line-oriented and
+   --  only right for PEM).
+   function Read_Bytes (Path : String) return String is
+      package SIO renames Ada.Streams.Stream_IO;
+      File : SIO.File_Type;
+   begin
+      SIO.Open (File, SIO.In_File, Path);
+      declare
+         Size : constant Natural := Natural (SIO.Size (File));
+         Raw  : Ada.Streams.Stream_Element_Array
+           (1 .. Ada.Streams.Stream_Element_Offset (Size));
+         Last : Ada.Streams.Stream_Element_Offset := 0;
+         R    : String (1 .. Size);
+      begin
+         if Size > 0 then
+            SIO.Read (File, Raw, Last);
+         end if;
+         SIO.Close (File);
+         for I in 1 .. Integer (Last) loop
+            R (I) := Character'Val (Raw (Ada.Streams.Stream_Element_Offset (I)));
+         end loop;
+         return R (1 .. Integer (Last));
+      end;
+   exception
+      when others => return "";
+   end Read_Bytes;
+
+   procedure Load_CRL (Path : String) is
+      Text : constant String := Read_Bytes (Path);
+
+      procedure Attach (DER : X509.Byte_Seq) is
+         B  : constant SPARKTLS.CRL_Bytes_Access := new X509.Byte_Seq'(DER);
+         OK : Boolean;
+      begin
+         SPARKTLS.Revocation.Add_CRL (CRLs, B, OK);
+         if OK then
+            Have_CRL := True;
+         else
+            CRL_Bad := True;
+            if Verbose then
+               Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error,
+                                     "crl: rejected at parse: " & Path);
+            end if;
+         end if;
+      end Attach;
+   begin
+      if Text'Length = 0 then
+         CRL_Bad := True;
+         return;
+      end if;
+      if Text'Length >= 11 and then Text (Text'First .. Text'First + 10) = "-----BEGIN " then
+         declare
+            Pos   : Positive := Text'First;
+            Found : Boolean;
+            Any   : Boolean := False;
+         begin
+            while Pos <= Text'Last loop
+               Find_Next_PEM (Text, Pos, Found);
+               exit when not Found;
+               declare
+                  R : Decode_Result;
+               begin
+                  Decode (Text (Pos .. Text'Last), R);
+                  if R.OK and then R.DER_Len > 0 then
+                     Attach (R.DER (0 .. R.DER_Len - 1));
+                     Any := True;
+                  else
+                     CRL_Bad := True;
+                  end if;
+               end;
+               Skip_Past_End (Text, Pos);
+            end loop;
+            if not Any then
+               CRL_Bad := True;
+            end if;
+         end;
+      else
+         declare
+            DER : X509.Byte_Seq (0 .. X509.N32 (Text'Length) - 1);
+         begin
+            for I in DER'Range loop
+               DER (I) := X509.Byte (Character'Pos (Text (Text'First + Integer (I))));
+            end loop;
+            Attach (DER);
+         end;
+      end if;
+   end Load_CRL;
+
+   --  Walk the validated path (leaf, then each issuer found among the
+   --  intermediates) and check every certificate against the CRLs.
+   --  Returns True when nothing is revoked (and, in hard mode, every
+   --  status was determined).
+   function Path_Not_Revoked
+     (Leaf_DER : X509.Byte_Seq; Leaf : X509.Certificate) return Boolean
+   is
+      use SPARKTLS.Revocation;
+      Cur_DER  : Cert_DER_Buf := (others => 0);
+      Cur_Len  : X509.N32 := Leaf_DER'Length;
+      Cur      : X509.Certificate := Leaf;
+   begin
+      Cur_DER (0 .. Cur_Len - 1) := Leaf_DER;
+      for Depth in 0 .. Max_Pool_Size loop
+         declare
+            Found, In_Roots : Boolean;
+            Index           : Natural;
+            R               : Revocation_Result;
+         begin
+            Find_Issuer (Cur_DER (0 .. Cur_Len - 1), Cur, Ints, Int_Count,
+                         Roots.Roots, Roots.Root_Count, Found, In_Roots, Index);
+            if not Found then
+               return not CRL_Hard;
+            end if;
+            if In_Roots then
+               Check_CRLs (Cur_DER (0 .. Cur_Len - 1), Cur,
+                           Roots.Roots (Index).DER (0 .. Roots.Roots (Index).DER_Len - 1),
+                           Roots.Roots (Index).Cert, CRLs,
+                           Ints, Int_Count, Roots.Roots, Roots.Root_Count,
+                           Val_Time, 300, R);
+            else
+               Check_CRLs (Cur_DER (0 .. Cur_Len - 1), Cur,
+                           Ints (Index).DER (0 .. Ints (Index).DER_Len - 1),
+                           Ints (Index).Cert, CRLs,
+                           Ints, Int_Count, Roots.Roots, Roots.Root_Count,
+                           Val_Time, 300, R);
+            end if;
+            if Verbose then
+               Ada.Text_IO.Put_Line
+                 (Ada.Text_IO.Standard_Error,
+                  "revocation: depth" & Depth'Image & " issuer="
+                  & (if In_Roots then "root" else "int") & Index'Image
+                  & " -> " & R'Image);
+            end if;
+            case R is
+               when Rev_Revoked | Rev_Malformed => return False;
+               when Rev_Insufficient => if CRL_Hard then return False; end if;
+               when Rev_Ok => null;
+            end case;
+            exit when In_Roots;
+            --  Climb to the issuer (an intermediate)
+            Cur_Len := Ints (Index).DER_Len;
+            Cur_DER := (others => 0);
+            Cur_DER (0 .. Cur_Len - 1) := Ints (Index).DER (0 .. Cur_Len - 1);
+            Cur := Ints (Index).Cert;
+         end;
+      end loop;
+      return True;
+   end Path_Not_Revoked;
 begin
    --  Initialize validation time from system clock
    declare
@@ -347,6 +514,18 @@ begin
                if Ada.Command_Line.Argument (I) = "rfc5280" then
                   Val_Mode := Mode_RFC5280;
                end if;
+            elsif Arg = "--crl"
+               and I < Ada.Command_Line.Argument_Count
+            then
+               I := I + 1;
+               Load_CRL (Ada.Command_Line.Argument (I));
+            elsif Arg = "--crl-mode"
+               and I < Ada.Command_Line.Argument_Count
+            then
+               I := I + 1;
+               CRL_Hard := Ada.Command_Line.Argument (I) = "hard";
+            elsif Arg = "--verbose" then
+               Verbose := True;
             elsif Arg (Arg'First) /= '-' then
                Load_Pool (Arg, Ints, Int_Count);
             end if;
@@ -402,6 +581,21 @@ begin
          end;
       end if;
 
+      if Result = Valid and then CRL_Bad then
+         --  A supplied CRL that does not even parse is a validation
+         --  failure (x509-limbo and PKITS both expect rejection).
+         Result := Err_Structural;
+      end if;
+      if Result = Valid and then (Have_CRL or CRL_Hard) then
+         if not Path_Not_Revoked (Peer_DER (0 .. Peer_Len - 1), Peer_Cert) then
+            Result := Err_Structural;
+         end if;
+      end if;
+
+      if Verbose then
+         Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error,
+                               "validation: " & Result'Image);
+      end if;
       if Result = Valid then
          Ada.Command_Line.Set_Exit_Status (0);
       else

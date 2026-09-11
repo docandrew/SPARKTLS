@@ -1755,6 +1755,16 @@ is
       case Tag.Enum is
          when RFLX.Tls_Extensiontype_Values.Key_Share =>
             HC.Client_Saw_Key_Share := True;
+            --  KeyShareClientHello is client_shares<0..2^16-1>: even an
+            --  empty vector carries its 2-byte length. A body shorter
+            --  than that is malformed (RFC 8446 4.2.8), not a request
+            --  for group selection -- decode_error, never HRR.
+            --  (tlsfuzzer keyshare-omitted "empty key_share extension".)
+            if DLen < 2 then
+               HC.Ext_Parse_Err := Decode_Error;
+               OK := False;
+               return;
+            end if;
             if DLen in Wire_Key_Share_Len then
                Parse_KS_Extension (Ext_Ctx, DLen, HC);
                --  Parse_KS_Extension -> Apply_KS_Entry stashes

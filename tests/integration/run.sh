@@ -95,7 +95,7 @@ echo ""
 echo "--- TLS 1.3: OpenSSL client → SPARKTLS server ---"
 
 # Each cert type with each cipher suite
-for cert_name in rsa ed25519 p256 p384; do
+for cert_name in rsa rsa2056 ed25519 p256 p384; do
     cert="$CERT_DIR/${cert_name}.crt"
     key="$CERT_DIR/${cert_name}.key"
     [ -f "$cert" ] || continue
@@ -136,7 +136,7 @@ echo ""
 # ===================================================================
 echo "--- TLS 1.3: SPARKTLS client → OpenSSL server ---"
 
-for cert_name in rsa ed25519 p256 p384; do
+for cert_name in rsa rsa2056 ed25519 p256 p384; do
     cert="$CERT_DIR/${cert_name}.crt"
     key="$CERT_DIR/${cert_name}.key"
     [ -f "$cert" ] || continue
@@ -1190,6 +1190,113 @@ else
     fi
     cleanup
     rm -rf "$AUTHZ_DIR"
+fi
+
+# ===================================================================
+# Revocation: stapled OCSP (TLS 1.3 CertificateEntry / TLS 1.2
+# CertificateStatus), must-staple, CRLs -- our client against
+# OpenSSL s_server with -status_file, on the sparkx509 fixture PKI.
+# ===================================================================
+REV_GEN="$REPO_ROOT/../sparkx509/tests/revocation/gen.sh"
+REV_DIR="${TMPDIR:-/tmp}/sparkx509-revocation"
+if [ -x "$REV_GEN" ] && bash "$REV_GEN" "$REV_DIR" >/dev/null 2>&1; then
+    echo "--- Revocation: SPARKTLS client -> OpenSSL server ---"
+
+    #  rev_case LABEL VERSION_FLAG CERT KEY STATUS_FILE_OR_- FETCH_FLAGS EXPECT
+    #  EXPECT: "ok" (page fetched) or an "alert N" substring of the error.
+    rev_case() {
+        local label="$1" vflag="$2" cert="$3" key="$4" status="$5" fflags="$6" expect="$7"
+        cleanup
+        if [ "$status" = "-" ]; then
+            openssl s_server -cert "$REV_DIR/$cert" -key "$REV_DIR/$key" \
+                -accept $PORT $vflag -www 2>/dev/null &
+        else
+            openssl s_server -cert "$REV_DIR/$cert" -key "$REV_DIR/$key" \
+                -status_file "$REV_DIR/$status" \
+                -accept $PORT $vflag -www 2>/dev/null &
+        fi
+        wait_for_port
+        local output
+        # shellcheck disable=SC2086
+        output=$(timeout 10 "$FETCH" --cafile "$REV_DIR/ca.crt" $fflags "https://localhost:$PORT/" 2>&1 || true)
+        cleanup
+        if [ "$expect" = "ok" ]; then
+            if echo "$output" | grep -qi "HTTP/1\|200\|html"; then
+                pass "Revocation $label"
+            else
+                fail "Revocation $label (expected success)"
+                echo "    $(echo "$output" | grep -i "error" | head -1)"
+            fi
+        else
+            if echo "$output" | grep -qi "$expect"; then
+                pass "Revocation $label"
+            else
+                fail "Revocation $label (expected '$expect')"
+                echo "    $(echo "$output" | head -1)"
+            fi
+        fi
+    }
+
+    for v in "-tls1_3" "-tls1_2"; do
+        rev_case "stapled good, hard $v"        "$v" good.crt    good.key    ocsp_good_ca.der           "--revocation=hard" ok
+        rev_case "stapled good (delegated) $v"  "$v" good.crt    good.key    ocsp_good_delegated.der    "--revocation=hard" ok
+        rev_case "stapled good (byKey) $v"      "$v" good.crt    good.key    ocsp_good_ca_keyid.der     "--revocation=hard" ok
+        rev_case "stapled good (SHA-256) $v"    "$v" good.crt    good.key    ocsp_good_sha256_nonce.der "--revocation=hard" ok
+        rev_case "stapled revoked, soft $v"     "$v" revoked.crt revoked.key ocsp_revoked_ca.der        ""                  "alert 44"
+        rev_case "stapled revoked, off $v"      "$v" revoked.crt revoked.key ocsp_revoked_ca.der        "--revocation=off"  ok
+        rev_case "wrong staple (other leaf) $v" "$v" revoked.crt revoked.key ocsp_good_ca.der           "--revocation=hard" "alert 42"
+        rev_case "no staple, hard $v"           "$v" good.crt    good.key    -                          "--revocation=hard" "alert 42"
+        rev_case "no staple, soft $v"           "$v" good.crt    good.key    -                          ""                  ok
+        rev_case "must-staple unstapled $v"     "$v" staple.crt  staple.key  -                          ""                  "alert 113"
+        rev_case "must-staple stapled $v"       "$v" staple.crt  staple.key  ocsp_staple_ca.der         ""                  ok
+        rev_case "CRL: good leaf, hard $v"      "$v" good.crt    good.key    -                          "--revocation=hard --crl $REV_DIR/crl.der" ok
+        rev_case "CRL: revoked leaf, soft $v"   "$v" revoked.crt revoked.key -                          "--crl $REV_DIR/crl.der" "alert 44"
+        #  Sharded CRLs: the wrong shard first must not mask the right one,
+        #  and a shard that does not cover the leaf is no evidence.
+        rev_case "CRL shards: wrong first, hard $v" "$v" shard1.crt shard1.key -                       "--revocation=hard --crl $REV_DIR/crl_shard2.der --crl $REV_DIR/crl_shard1.der" "alert 44"
+        rev_case "CRL shards: other only, hard $v"  "$v" shard1.crt shard1.key -                       "--revocation=hard --crl $REV_DIR/crl_shard2.der" "alert 42"
+        rev_case "CRL shards: other only, soft $v"  "$v" shard1.crt shard1.key -                       "--crl $REV_DIR/crl_shard2.der" ok
+    done
+
+    #  The revocation example program (examples/tls_revocation_check):
+    #  same fixtures, its own verdict line. Keeps the documented sample
+    #  honest against the library it demonstrates.
+    REVCHK="$REPO_ROOT/bin/examples/tls_revocation_check"
+    if [ -x "$REVCHK" ]; then
+        #  rev_example LABEL VERSION_FLAG CERT KEY STATUS_FILE_OR_- ARGS EXPECT_SUBSTRING
+        rev_example() {
+            local label="$1" vflag="$2" cert="$3" key="$4" status="$5" args="$6" expect="$7"
+            cleanup
+            if [ "$status" = "-" ]; then
+                openssl s_server -cert "$REV_DIR/$cert" -key "$REV_DIR/$key" \
+                    -accept $PORT $vflag -www 2>/dev/null &
+            else
+                openssl s_server -cert "$REV_DIR/$cert" -key "$REV_DIR/$key" \
+                    -status_file "$REV_DIR/$status" -accept $PORT $vflag -www 2>/dev/null &
+            fi
+            wait_for_port
+            local output
+            # shellcheck disable=SC2086
+            output=$(timeout 10 "$REVCHK" "localhost:$PORT" --cafile "$REV_DIR/ca.crt" $args 2>&1 || true)
+            cleanup
+            if echo "$output" | grep -q "$expect"; then
+                pass "Revocation example $label"
+            else
+                fail "Revocation example $label (expected '$expect')"
+                echo "    $(echo "$output" | tail -1)"
+            fi
+        }
+        rev_example "stapled good, hard"      -tls1_3 good.crt    good.key    ocsp_good_ca.der    "--policy hard" "ACCEPTED: chain valid; revocation evidence verified (stapled OCSP)"
+        rev_example "stapled revoked, soft"   -tls1_3 revoked.crt revoked.key ocsp_revoked_ca.der ""              "REJECTED: .*alert 44"
+        rev_example "no staple, hard"         -tls1_3 good.crt    good.key    -                   "--policy hard" "REJECTED: .*alert 42"
+        rev_example "CRL good, hard"          -tls1_3 good.crt    good.key    -                   "--policy hard --crl $REV_DIR/crl.der" "revocation evidence verified (CRL)"
+        rev_example "CRL revoked, soft"       -tls1_3 revoked.crt revoked.key -                   "--crl $REV_DIR/crl.der" "REJECTED: .*alert 44"
+        rev_example "must-staple, no staple"  -tls1_3 staple.crt  staple.key  -                   ""              "REJECTED: .*alert 113"
+        rev_example "stapled good, TLS 1.2"   -tls1_2 good.crt    good.key    ocsp_good_ca.der    "--policy hard" "revocation evidence verified (stapled OCSP)"
+    fi
+    echo ""
+else
+    echo "--- Revocation: skipped (sparkx509 fixture generator not available) ---"
 fi
 
 # --- Summary ---

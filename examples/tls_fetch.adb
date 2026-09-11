@@ -19,6 +19,8 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Client;
 with SPARKTLS.Credentials;
+with SPARKTLS.Revocation;
+with Ada.Streams.Stream_IO;
 with SPARKTLS.System_Roots;
 with Entropy_Random;
 
@@ -209,6 +211,39 @@ procedure TLS_Fetch is
    Root_Count : Natural := 0;
    Roots_OK   : Boolean := False;
 
+   --  Revocation checking (--revocation=off|soft|hard, --crl <der>)
+   Rev_Policy   : SPARKTLS.Revocation_Policy := SPARKTLS.Soft_Fail;
+   CRL_Args     : array (1 .. 8) of Natural := (others => 0);
+   CRL_Arg_Cnt  : Natural := 0;
+   CRLs         : aliased SPARKTLS.CRL_Store;
+   Have_CRL     : Boolean := False;
+
+   --  Raw bytes of a file, heap-allocated (the CRL store keeps a pointer).
+   function Read_File_Bytes (Path : String) return SPARKTLS.CRL_Bytes_Access is
+      package SIO renames Ada.Streams.Stream_IO;
+      File : SIO.File_Type;
+   begin
+      SIO.Open (File, SIO.In_File, Path);
+      declare
+         Size : constant Natural := Natural (SIO.Size (File));
+         Raw  : Ada.Streams.Stream_Element_Array (1 .. Ada.Streams.Stream_Element_Offset (Size));
+         Last : Ada.Streams.Stream_Element_Offset;
+         Out_B : constant SPARKTLS.CRL_Bytes_Access :=
+           new X509.Byte_Seq'(0 .. X509.N32 (Size) - 1 => 0);
+      begin
+         SIO.Read (File, Raw, Last);
+         SIO.Close (File);
+         declare
+            B : X509.Byte_Seq (0 .. X509.N32 (Size) - 1);
+         begin
+            for I in B'Range loop
+               B (I) := X509.Byte (Raw (Ada.Streams.Stream_Element_Offset (I) + 1));
+            end loop;
+            return new X509.Byte_Seq'(B);
+         end;
+      end;
+   end Read_File_Bytes;
+
    --  Output control
    Verbose      : Boolean := False;
    Headers_Only : Boolean := False;
@@ -237,6 +272,19 @@ begin
             null;  --  consumed by --cafile
          elsif Arg = "--rfc5280" then
             Use_RFC5280 := True;
+         elsif Arg = "--revocation=off" then
+            Rev_Policy := SPARKTLS.Ignore;
+         elsif Arg = "--revocation=soft" then
+            Rev_Policy := SPARKTLS.Soft_Fail;
+         elsif Arg = "--revocation=hard" then
+            Rev_Policy := SPARKTLS.Hard_Fail;
+         elsif Arg = "--crl" and I < Ada.Command_Line.Argument_Count then
+            if CRL_Arg_Cnt < CRL_Args'Last then
+               CRL_Arg_Cnt := CRL_Arg_Cnt + 1;
+               CRL_Args (CRL_Arg_Cnt) := I + 1;
+            end if;
+         elsif CRL_Arg_Cnt > 0 and then CRL_Args (CRL_Arg_Cnt) = I then
+            null;  --  consumed by --crl
          elsif Arg (Arg'First) /= '-' then
             URL_Arg := I;
          end if;
@@ -249,6 +297,8 @@ begin
       Put_Line ("  -I, --head      Show response headers only");
       Put_Line ("  -k, --insecure  Skip certificate verification");
       Put_Line ("  --cafile <pem>  Use specific CA certificate file");
+      Put_Line ("  --revocation=off|soft|hard  Revocation policy (default soft)");
+      Put_Line ("  --crl <der>     Attach a DER CRL for revocation checking (repeatable)");
       return;
    end if;
 
@@ -330,9 +380,25 @@ begin
          end if;
       end if;
 
+      --  Optional CRLs (in the order given)
+      for K in 1 .. CRL_Arg_Cnt loop
+         declare
+            OK : Boolean;
+         begin
+            SPARKTLS.Revocation.Add_CRL
+              (CRLs, Read_File_Bytes (Ada.Command_Line.Argument (CRL_Args (K))), OK);
+            Have_CRL := Have_CRL or OK;
+            if Verbose then
+               Put_Line ("* CRL " & (if OK then "attached" else "REJECTED"));
+            end if;
+         end;
+      end loop;
+
       --  TLS handshake
       S := SPARKTLS.Client.Configure
         ((Server_Name => SPARKTLS.To_Name (Hostname),
+          Revocation  => Rev_Policy,
+          CRLs        => (if Have_CRL then CRLs'Unchecked_Access else null),
           Trust       => (if Insecure or not Roots_OK
                           then null
                           else Roots'Unchecked_Access),
@@ -352,6 +418,14 @@ begin
                SPARKTLS.Drain_Ciphertext (S, Net_Buf, N);
                if N > 0 then
                   Byte_Seq'Write (Channel, Net_Buf (0 .. N - 1));
+               end if;
+               --  A queued fatal alert: report the error that caused it
+               --  now. Calling Advance again in Error_State only yields
+               --  a generic Internal_Error.
+               if SPARKTLS.State (S) = SPARKTLS.Error_State then
+                  Put_Line ("TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
+                  GNAT.Sockets.Close_Socket (Sock);
+                  return;
                end if;
 
             when SPARKTLS.Need_Input =>

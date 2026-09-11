@@ -1005,6 +1005,15 @@ is
       Offer_EMS   : constant Boolean := HC.Cfg.Versions /= TLS_1_3_Only;
       EMS_Ext_Len : constant N32 := (if Offer_EMS then 4 else 0);
 
+      --  status_request (0x0005, RFC 6066 8): CertificateStatusRequest
+      --  { status_type = ocsp(1), responder_id_list<0> (2 bytes),
+      --  request_extensions<0> (2 bytes) } = 5 bytes. Offered iff
+      --  Cfg.Request_OCSP_Staple; Tag_Is_Offered's 0x0005 arm MUST track
+      --  this condition exactly.
+      Offer_Staple  : constant Boolean := HC.Cfg.Request_OCSP_Staple;
+      SR_Data_Len   : constant N32 := 5;
+      SR_Ext_Len    : constant N32 := (if Offer_Staple then 4 + SR_Data_Len else 0);
+
       --  Each extension: tag(2) + data_length(2) + data
       Ext_Total : constant N32 :=
         (4 + SNI_Data_Len) + (4 + SG_Data_Len) + (4 + SA_Data_Len) + (4 + KS_Data_Len)
@@ -1014,7 +1023,8 @@ is
         + ALPN_Ext_Len
         + Cookie_Ext_Len
         + TLS12_Ticket_Ext_Len
-        + EMS_Ext_Len;
+        + EMS_Ext_Len
+        + SR_Ext_Len;
 
       --  ClientHello body: version(2) + random(32) + sid_len(1) +
       --  sid(0 | 32) + suites_len(2) + suites(18) + comp_len(1) +
@@ -1442,6 +1452,26 @@ is
                Append_CH_Extension
                  (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Extended_Master_Secret, Empty);
                Remaining_Ext_Bits := Remaining_Ext_Bits - RBT.Bit_Length (8) * RBT.Bit_Length (4);
+               pragma
+                 Assert
+                   (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
+                      = Remaining_Ext_Bits);
+            end;
+         end if;
+
+         --  status_request (0x0005, RFC 6066 8): ask for a stapled OCSP
+         --  response. Body: status_type ocsp(1) + empty responder_id_list
+         --  + empty request_extensions.
+         if Offer_Staple then
+            declare
+               SR_Raw : constant Byte_Seq (0 .. SR_Data_Len - 1) :=
+                 (16#01#, 16#00#, 16#00#, 16#00#, 16#00#);
+            begin
+               Append_CH_Extension
+                 (Exts_Ctx, RFLX.Tls_Extensiontype_Values.Status_Request, SR_Raw);
+               Remaining_Ext_Bits :=
+                 Remaining_Ext_Bits
+                 - RBT.Bit_Length (8) * (RBT.Bit_Length (4) + RBT.Bit_Length (SR_Raw'Length));
                pragma
                  Assert
                    (RFLX.TLS_Handshake.CH_Extensions_TLS.Available_Space (Exts_Ctx)
@@ -2312,6 +2342,11 @@ is
       elsif Where = E_SH12 and then Tag = 16#0023# and then DLen = 0 then
          --  RFC 5077 3.3: the server will send NewSessionTicket.
          HC.T12.Server_Will_Issue := True;
+
+      elsif Where = E_SH12 and then Tag = 16#0005# and then DLen = 0 then
+         --  RFC 6066 8: the server will send CertificateStatus after
+         --  Certificate (Validate_Server_Ext already required our offer).
+         HC.T12.Server_Will_Staple := True;
       end if;
    end Apply_SH_Extension;
 
@@ -2548,6 +2583,9 @@ is
             Exts : RFLX.TLS_Handshake.SH_Extensions_TLS.Context;
             Fail : Error_Code := No_Error;
          begin
+            pragma Assert
+              (RFLX.TLS_Handshake.Server_Hello.Well_Formed
+                    (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID));
             Switch_To_Extensions_TLS (Ctx, Exts);
             while Fail = No_Error
               and then RFLX.TLS_Handshake.SH_Extensions_TLS.Has_Element (Exts)
@@ -2571,6 +2609,11 @@ is
                pragma Loop_Invariant
                  (Scratch /= null and then Scratch'First = 1
                   and then Scratch'Last = Body_Scratch_Len);
+               --  Carried for Get_Legacy_Session_ID below: established after
+               --  Well_Formed_Message, preserved by Update (cursor frame).
+               pragma Loop_Invariant
+                 (RFLX.TLS_Handshake.Server_Hello.Well_Formed
+                    (Ctx, RFLX.TLS_Handshake.Server_Hello.F_Legacy_Session_ID));
                declare
                   E : RFLX.TLS_Handshake.SH_Extension_TLS.Context;
                begin

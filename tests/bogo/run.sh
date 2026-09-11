@@ -202,12 +202,13 @@ UNSUPPORTED_SKIPS=(
   '*-DTLS*' 'DTLS*' '*-QUIC*' 'QUIC*'
   # DTLS split-alert probes are named without a DTLS token but pass -dtls.
   'SendSplitAlert-*' 'StrayChangeCipherSpec'
-  # ALPS/NPN/ChannelID/OCSP/SCT/server-padding/exporter callback APIs are
+  # ALPS/NPN/ChannelID/SCT/server-padding/exporter callback APIs are
   # BoringSSL-specific or separately-scoped extensions not implemented by
-  # SPARKTLS today.
-  'ALPS-*' '*ALPS*' '*NPN*' '*ChannelID*' '*OCSP*'
-  '*NextProtocol*' '*CertificateStatus*' 'SkipCertificateStatus'
-  '*StatusRequest*'
+  # SPARKTLS today. OCSP stapling: the client side (-enable-ocsp-stapling,
+  # -expect-ocsp-response) is implemented; server-side -ocsp-response is
+  # not and those cases exit 89 (unimplemented).
+  'ALPS-*' '*ALPS*' '*NPN*' '*ChannelID*'
+  '*NextProtocol*'
   'AllExtensions-Client-Permute-*'
   'UnsolicitedCertificateExtensions-*'
   'ExtraClientEncryptedExtension-*'

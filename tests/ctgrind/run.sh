@@ -65,8 +65,12 @@ if [ -n "${NIX_CC:-}" ] && [ -f "$NIX_CC/nix-support/dynamic-linker" ]; then
   done
 fi
 
+#  run_one NAME EXPECT [exact]
+#    EXPECT 0      : must be clean
+#    EXPECT N>0    : canary -- any error count passes (negative control)
+#    EXPECT N exact: error count must be exactly N (classified sites)
 run_one() {
-  local name="$1" expect_errs="$2"
+  local name="$1" expect_errs="$2" mode="${3:-}"
   local exe="$BIN/$name"
   if [ ! -x "$exe" ]; then
     echo "  $name: BINARY MISSING ($exe)"
@@ -83,6 +87,14 @@ run_one() {
     else
       echo "  FAIL  $name ($errs errors — secret-dependent op detected)"
       echo "$out" | sed 's/^/      /' | head -20
+      return 1
+    fi
+  elif [ "$mode" = "exact" ]; then
+    if [ "$errs" -eq "$expect_errs" ]; then
+      echo "  PASS  $name ($errs errors — exactly the classified sites)"
+    else
+      echo "  FAIL  $name ($errs errors — expected exactly $expect_errs classified sites)"
+      echo "$out" | sed 's/^/      /' | head -30
       return 1
     fi
   else
@@ -122,6 +134,16 @@ run_one ct_aead_decrypt      0  || fail=1
 run_one ct_key_schedule      0  || fail=1
 run_one ct_rfc6979           0  || fail=1
 run_one ct_hmac              0  || fail=1
+run_one ct_rsa_sign_plain    0  || fail=1
+#  ct_rsa_sign_crt: exactly THREE classified sites, all one decision --
+#  the verify-after-sign check in RSA_Private_Fast (a constant-time
+#  compare of two PUBLIC outputs, signature and padded message, whose
+#  bytes nevertheless derive from the poisoned key) and the propagation
+#  of its Boolean through Sign_PSS's OK and the harness's print of it.
+#  Reported as seen, not masked. Any other count is a regression: more
+#  means a new key-dependent branch; fewer means the poison stopped
+#  reaching the signer.
+run_one ct_rsa_sign_crt      3 exact || fail=1
 
 echo ""
 if [ "$fail" -eq 0 ]; then

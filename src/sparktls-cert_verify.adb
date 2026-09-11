@@ -186,44 +186,27 @@ is
    --  Verify Certificate Signature
    ----------------------------------------------------------------------------
 
-   function Verify_Cert_Signature
-     (Cert_DER : Byte_Seq; Cert : X509.Certificate; Issuer : X509.Certificate) return Boolean
+   ----------------------------------------------------------------------------
+   --  Verify Signature (primitive): the algorithm dispatch, verbatim from
+   --  the former body of Verify_Cert_Signature, over caller-supplied bytes.
+   ----------------------------------------------------------------------------
+
+   function Dispatch_Signature
+     (TBS_Bytes : Byte_Seq;
+      Sig_Algo  : X509.Algorithm_ID;
+      Sig       : X509.Byte_Seq;
+      Issuer    : X509.Certificate) return Boolean
+   with Pre => TBS_Bytes'Last < N32'Last - 256
+               and Sig'First = 0
+               and Sig'Length > 0
+               and Sig'Length <= X509.Max_Sig_Bytes
+               and X509.PK_Length (Issuer) > 0
+               and X509.PK_Length (Issuer) <= X509.Max_PK_Bytes
    is
-      Sig_Algo : constant X509.Algorithm_ID := X509.Sig_Algorithm (Cert);
-      TBS_Span : constant X509.Span := X509.TBS (Cert);
    begin
-      if not TBS_Span.Present or else X509.Sig_Length (Cert) = 0 then
-         return False;
-      end if;
-
-      if X509.PK_Length (Issuer) = 0 then
-         return False;
-      end if;
-
-      --  Guard TBS span fits in SPARKNaCl N32 range and in Cert_DER
-      if TBS_Span.Last > X509.N32 (N32'Last) or else TBS_Span.First > X509.N32 (N32'Last) then
-         return False;
-      end if;
-      if N32 (TBS_Span.Last) > Cert_DER'Last then
-         return False;
-      end if;
-
-      --  Guard PK/Sig lengths fit preconditions and N32 range
-      if X509.Sig_Length (Cert) > X509.Max_Sig_Bytes
-        or else X509.PK_Length (Issuer) > X509.Max_PK_Bytes
-      then
-         return False;
-      end if;
-      if X509.Sig_Length (Cert) > X509.N32 (N32'Last)
-        or else X509.PK_Length (Issuer) > X509.N32 (N32'Last)
-      then
-         return False;
-      end if;
-
       declare
-         TBS_Bytes : constant Byte_Seq := Cert_DER (N32 (TBS_Span.First) .. N32 (TBS_Span.Last));
-         Sig_Data  : constant X509.Byte_Seq := X509.Sig_Data (Cert);
-         Sig_Len   : constant X509.N32 := X509.Sig_Length (Cert);
+         Sig_Data  : constant X509.Byte_Seq := Sig;
+         Sig_Len   : constant X509.N32 := X509.N32 (Sig'Length);
          PK_Data   : constant X509.Byte_Seq := X509.PK_Data (Issuer);
          PK_Len    : constant X509.N32 := X509.PK_Length (Issuer);
       begin
@@ -473,6 +456,60 @@ is
                return False;
          end case;
       end;
+   end Dispatch_Signature;
+
+   function Verify_Raw_Signature
+     (Data     : Byte_Seq;
+      Sig_Algo : X509.Algorithm_ID;
+      Sig      : X509.Byte_Seq;
+      Signer   : X509.Certificate) return Boolean
+   is
+   begin
+      if X509.PK_Length (Signer) = 0
+        or else X509.PK_Length (Signer) > X509.Max_PK_Bytes
+      then
+         return False;
+      end if;
+      return Dispatch_Signature (Data, Sig_Algo, Sig, Signer);
+   end Verify_Raw_Signature;
+
+   function Verify_Cert_Signature
+     (Cert_DER : Byte_Seq; Cert : X509.Certificate; Issuer : X509.Certificate) return Boolean
+   is
+      Sig_Algo : constant X509.Algorithm_ID := X509.Sig_Algorithm (Cert);
+      TBS_Span : constant X509.Span := X509.TBS (Cert);
+   begin
+      if not TBS_Span.Present or else X509.Sig_Length (Cert) = 0 then
+         return False;
+      end if;
+
+      if X509.PK_Length (Issuer) = 0 then
+         return False;
+      end if;
+
+      --  Guard TBS span fits in SPARKNaCl N32 range and in Cert_DER
+      if TBS_Span.Last > X509.N32 (N32'Last) or else TBS_Span.First > X509.N32 (N32'Last) then
+         return False;
+      end if;
+      if N32 (TBS_Span.Last) > Cert_DER'Last then
+         return False;
+      end if;
+
+      --  Guard PK/Sig lengths fit preconditions and N32 range
+      if X509.Sig_Length (Cert) > X509.Max_Sig_Bytes
+        or else X509.PK_Length (Issuer) > X509.Max_PK_Bytes
+      then
+         return False;
+      end if;
+      if X509.Sig_Length (Cert) > X509.N32 (N32'Last)
+        or else X509.PK_Length (Issuer) > X509.N32 (N32'Last)
+      then
+         return False;
+      end if;
+
+      return Dispatch_Signature
+        (Cert_DER (N32 (TBS_Span.First) .. N32 (TBS_Span.Last)),
+         Sig_Algo, X509.Sig_Data (Cert), Issuer);
    end Verify_Cert_Signature;
 
    ----------------------------------------------------------------------------
@@ -976,6 +1013,7 @@ is
       Id.RSA_Mod_Len := 0;
       Id.RSA_Priv_Exp := (others => 0);
       Id.RSA_Pub_Exp := 0;
+      Id.RSA_CRT := SPARKTLSCrypto.RSA.No_CRT;
       Id.Has_Identity := False;
 
       if Cert_DER'Length = 0 then
@@ -1066,6 +1104,30 @@ is
                  Unsigned_32 (Key (E_Off)) * 2 ** 24 + Unsigned_32 (Key (E_Off + 1)) * 2 ** 16
                  + Unsigned_32 (Key (E_Off + 2)) * 2 ** 8
                  + Unsigned_32 (Key (E_Off + 3));
+
+               --  Optional CRT trailer: k(2) || p || q || dP || dQ || qInv,
+               --  each k bytes. Absent or malformed => plain-d signing.
+               if E_Off + 5 <= Key'Last then
+                  declare
+                     K_Off : constant N32 := E_Off + 4;
+                     K     : constant N32 := N32 (Key (K_Off)) * 256 + N32 (Key (K_Off + 1));
+                  begin
+                     if K in 32 .. SPARKTLSCrypto.RSA.Max_RSA_Prime_Bytes
+                       and then 2 * K = N_Len
+                       and then K_Off + 1 + 5 * K <= Key'Last
+                     then
+                        Id.RSA_CRT.Prime_Len := K;
+                        for I in N32 range 0 .. K - 1 loop
+                           Id.RSA_CRT.P (I)    := Key (K_Off + 2 + I);
+                           Id.RSA_CRT.Q (I)    := Key (K_Off + 2 + K + I);
+                           Id.RSA_CRT.DP (I)   := Key (K_Off + 2 + 2 * K + I);
+                           Id.RSA_CRT.DQ (I)   := Key (K_Off + 2 + 3 * K + I);
+                           Id.RSA_CRT.QInv (I) := Key (K_Off + 2 + 4 * K + I);
+                        end loop;
+                        Id.RSA_CRT.Valid := True;
+                     end if;
+                  end;
+               end if;
             end;
 
          when others                                   =>
@@ -1122,6 +1184,52 @@ is
       --  Used tracks which intermediates are already in the chain.
       --  Returns Valid if a chain to a root was found and all links valid.
       --  Budget is passed in-out to satisfy SPARK (no mutable globals).
+      --  RFC 5280 6.1.3 (b)(c): name constraints accumulate down the path.
+      --  When Issuer joins the chain, every certificate already below it --
+      --  the leaf and the intermediates in Used -- must satisfy Issuer's
+      --  constraints, not only the certificate it directly signed
+      --  (PKITS 4.13.15 / 4.13.17). Self-issued intermediates are exempt
+      --  (4.2.1.10); the leaf never is.
+      function Below_Satisfies_NC
+        (Issuer_DER : X509.Byte_Seq;
+         Issuer     : X509.Certificate;
+         Used       : Used_Set) return Boolean
+      with
+        Pre =>
+          Issuer_DER'First = 0
+          and Issuer_DER'Last < X509.N32 (Max_Cert_DER)
+          and X509.Spans_Valid (Issuer, Issuer_DER'Last)
+          and Leaf_DER'First = 0
+          and Leaf_DER'Last < X509.N32 (Max_Cert_DER)
+          and X509.Spans_Valid (Leaf, Leaf_DER'Last)
+          and Int_Count <= Max_Pool_Size;
+
+      function Below_Satisfies_NC
+        (Issuer_DER : X509.Byte_Seq;
+         Issuer     : X509.Certificate;
+         Used       : Used_Set) return Boolean
+      is
+      begin
+         if not X509.Satisfies_Name_Constraints (Leaf, Leaf_DER, Issuer, Issuer_DER) then
+            return False;
+         end if;
+         for J in 0 .. Int_Count - 1 loop
+            if J <= Ints'Last
+              and then Used (J)
+              and then Ints (J).Present
+              and then Ints (J).DER_Len > 0
+              and then not X509.Is_Self_Issued
+                             (Ints (J).Cert, Ints (J).DER (0 .. Ints (J).DER_Len - 1))
+              and then not X509.Satisfies_Name_Constraints
+                             (Ints (J).Cert, Ints (J).DER (0 .. Ints (J).DER_Len - 1),
+                              Issuer, Issuer_DER)
+            then
+               return False;
+            end if;
+         end loop;
+         return True;
+      end Below_Satisfies_NC;
+
       procedure Try_Build
         (Cert_DER : X509.Byte_Seq;
          Cert     : X509.Certificate;
@@ -1137,7 +1245,13 @@ is
           Cert_DER'First = 0
           and Cert_DER'Last < X509.N32 (Max_Cert_DER)
           and PL_Depth <= Max_Chain_Depth
-          and X509.Spans_Valid (Cert, Cert_DER'Last),
+          and X509.Spans_Valid (Cert, Cert_DER'Last)
+          --  Enclosing-Pre facts restated for the nested proof (used by
+          --  Below_Satisfies_NC): the leaf's bounds and pool size.
+          and Leaf_DER'First = 0
+          and Leaf_DER'Last < X509.N32 (Max_Cert_DER)
+          and X509.Spans_Valid (Leaf, Leaf_DER'Last)
+          and Int_Count <= Max_Pool_Size,
         Subprogram_Variant => (Decreases => Budget),
         Post               =>
           Budget <= Budget'Old
@@ -1198,7 +1312,11 @@ is
                           Must_Be_CA       => Depth > 0,
                           CAs_Below_Issuer => PL_Depth,
                           Mode             => Mode);
-                     if R = Valid then
+                     if R = Valid
+                       and then Below_Satisfies_NC
+                                  (Roots (Ri).DER (0 .. Roots (Ri).DER_Len - 1),
+                                   Roots (Ri).Cert, Used)
+                     then
                         Result := Valid;
                         Anchor := Ri;
                         return;
@@ -1233,7 +1351,11 @@ is
                     Must_Be_CA       => Depth > 0,
                     CAs_Below_Issuer => PL_Depth,
                     Mode             => Mode);
-               if R = Valid then
+               if R = Valid
+                 and then Below_Satisfies_NC
+                            (Ints (Ii).DER (0 .. Ints (Ii).DER_Len - 1),
+                             Ints (Ii).Cert, Used)
+               then
                   --  This intermediate is a valid issuer; recurse.
                   --  RFC 5280 4.2.1.9: self-issued certs don't count
                   --  toward pathLenConstraint.

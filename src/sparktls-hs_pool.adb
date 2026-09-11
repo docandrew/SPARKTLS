@@ -27,6 +27,9 @@ is
          Slots (Slot).Peer_Ints (I).DER_Len := 0;
       end loop;
       Slots (Slot).Peer_Int_Count := 0;
+      Slots (Slot).Stapled_OCSP := (others => 0);
+      Slots (Slot).Stapled_OCSP_Len := 0;
+      Slots (Slot).Stapled_Too_Big := False;
       In_Use (Slot) := False;
    end Release;
 
