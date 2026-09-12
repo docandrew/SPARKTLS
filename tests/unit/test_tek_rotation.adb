@@ -4,7 +4,7 @@
 --  operating on a caller-supplied key array reached through Config). It does
 --  not any more: SPARKTLS holds no ticket keys, so key lifetime belongs to
 --  whoever implements the Get_Active_TEK / Get_TEK_By_Id callbacks. This test
---  therefore targets the reference implementation, SPARKTLS.Session_Cache.
+--  therefore targets the reference implementation, SPARKTLS.Ticket_Keys.
 --
 --  It also tests the properties through the PUBLIC surface rather than by
 --  inspecting slots, because the ring is now private state inside a protected
@@ -26,8 +26,8 @@ with Ada.Command_Line;
 with Interfaces;         use Interfaces;
 with SPARKNaCl;          use SPARKNaCl;
 with SPARKTLS;           use SPARKTLS;
-with SPARKTLS.Session_Cache;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Ticket_Keys;
+with SPARKTLS.Tickets;
 
 procedure Test_TEK_Rotation is
 
@@ -61,91 +61,92 @@ procedure Test_TEK_Rotation is
    Found   : Boolean;
 
 begin
-   Put_Line ("=== TLS 1.2 TEK rotation (SPARKTLS.Session_Cache) ===");
+   Put_Line ("=== TLS 1.2 TEK rotation (SPARKTLS.Ticket_Keys) ===");
 
-   SPARKTLS.Session_Cache.Reset;
+   SPARKTLS.Ticket_Keys.Reset;
 
    --  1. No key installed yet.
-   SPARKTLS.Session_Cache.Get_Active_TEK (Got_ID, Got_TEK, Found);
+   SPARKTLS.Ticket_Keys.Get_Active_TEK (Got_ID, Got_TEK, Found);
    Check ("no active key before first rotation", not Found);
 
    --  2. First key becomes active.
-   SPARKTLS.Session_Cache.Rotate_TEK (Key_ID_Of (16#A1#), TEK_Of (16#A1#), 1000);
-   SPARKTLS.Session_Cache.Get_Active_TEK (Got_ID, Got_TEK, Found);
+   SPARKTLS.Ticket_Keys.Rotate_TEK (Key_ID_Of (16#A1#), TEK_Of (16#A1#), 1000);
+   SPARKTLS.Ticket_Keys.Get_Active_TEK (Got_ID, Got_TEK, Found);
    Check ("first rotation installs an active key", Found);
    Check ("active key is the one installed",
           Found and then Got_ID = Key_ID_Of (16#A1#)
                  and then Got_TEK = TEK_Of (16#A1#));
 
    --  3. Grace window: the old key survives a rotation.
-   SPARKTLS.Session_Cache.Rotate_TEK (Key_ID_Of (16#B2#), TEK_Of (16#B2#), 2000);
-   SPARKTLS.Session_Cache.Get_Active_TEK (Got_ID, Got_TEK, Found);
+   SPARKTLS.Ticket_Keys.Rotate_TEK (Key_ID_Of (16#B2#), TEK_Of (16#B2#), 2000);
+   SPARKTLS.Ticket_Keys.Get_Active_TEK (Got_ID, Got_TEK, Found);
    Check ("second rotation makes the new key active",
           Found and then Got_ID = Key_ID_Of (16#B2#));
 
-   SPARKTLS.Session_Cache.Get_TEK_By_Id (Key_ID_Of (16#A1#), Got_TEK, Found);
+   SPARKTLS.Ticket_Keys.Get_TEK_By_Id (Key_ID_Of (16#A1#), Got_TEK, Found);
    Check ("previous key still retrievable (grace window)",
           Found and then Got_TEK = TEK_Of (16#A1#));
 
    --  4. Age the first key out of the ring.
    for I in 1 .. TLS12_Max_Keys loop
-      SPARKTLS.Session_Cache.Rotate_TEK
+      SPARKTLS.Ticket_Keys.Rotate_TEK
         (Key_ID_Of (Byte (16#C0# + I)), TEK_Of (Byte (16#C0# + I)),
          Unsigned_64 (3000 + I));
    end loop;
-   SPARKTLS.Session_Cache.Get_TEK_By_Id (Key_ID_Of (16#A1#), Got_TEK, Found);
+   SPARKTLS.Ticket_Keys.Get_TEK_By_Id (Key_ID_Of (16#A1#), Got_TEK, Found);
    Check ("oldest key dropped after TLS12_Max_Keys rotations", not Found);
 
    --  5. Ticket round-trip across a rotation.
-   SPARKTLS.Session_Cache.Reset;
-   SPARKTLS.Session_Cache.Rotate_TEK (Key_ID_Of (16#D4#), TEK_Of (16#D4#), 5000);
+   SPARKTLS.Ticket_Keys.Reset;
+   SPARKTLS.Ticket_Keys.Rotate_TEK (Key_ID_Of (16#D4#), TEK_Of (16#D4#), 5000);
    declare
-      Plain      : SPARKTLS.Tickets_12.Ticket_Plain;
+      Plain      : SPARKTLS.Tickets.Ticket_Plain;
       Ticket_Buf : Byte_Seq (0 .. 255);
       Ticket_Len : N32;
       Nonce      : constant Byte_Seq (0 .. 11) := (others => 7);
-      Out_Plain  : SPARKTLS.Tickets_12.Ticket_Plain;
+      Out_Plain  : SPARKTLS.Tickets.Ticket_Plain;
       OK         : Boolean;
       Wanted     : Byte_Seq (0 .. 3);
       TEK_Buf    : Byte_Seq (0 .. 31) := (others => 0);
       Have       : Boolean;
    begin
-      Plain.Master_Secret := (others => 16#5A#);
+      Plain.Secret := (others => 16#5A#);
       Plain.Suite         := Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256;
       Plain.Created_At    := 5000;
       Plain.SID_Len       := 0;
       Plain.SID           := (others => 0);
 
-      SPARKTLS.Session_Cache.Get_Active_TEK (Got_ID, Got_TEK, Found);
-      SPARKTLS.Tickets_12.Encrypt_Ticket
+      SPARKTLS.Ticket_Keys.Get_Active_TEK (Got_ID, Got_TEK, Found);
+      SPARKTLS.Tickets.Encrypt_Ticket
         (Plain      => Plain,
-         Key_ID     => SPARKTLS.Tickets_12.Bytes_4 (Got_ID),
-         TEK        => SPARKTLS.Tickets_12.Bytes_32 (Got_TEK),
+         Key_ID     => SPARKTLS.Tickets.Bytes_4 (Got_ID),
+         TEK        => SPARKTLS.Tickets.Bytes_32 (Got_TEK),
          Nonce      => SPARKNaCl.Bytes_12 (Nonce),
          Ticket     => Ticket_Buf,
          Ticket_Len => Ticket_Len);
       Check ("ticket sealed under active key", Ticket_Len > 0);
 
       --  Rotate, then open the ticket via its own Key_ID.
-      SPARKTLS.Session_Cache.Rotate_TEK
+      SPARKTLS.Ticket_Keys.Rotate_TEK
         (Key_ID_Of (16#E5#), TEK_Of (16#E5#), 6000);
 
-      Wanted := SPARKTLS.Tickets_12.Ticket_Key_ID
+      Wanted := SPARKTLS.Tickets.Ticket_Key_ID
                   (Ticket_Buf (0 .. Ticket_Len - 1));
-      SPARKTLS.Session_Cache.Get_TEK_By_Id (Wanted, TEK_Buf, Have);
+      SPARKTLS.Ticket_Keys.Get_TEK_By_Id (Wanted, TEK_Buf, Have);
       Check ("sealing key still available after rotation", Have);
 
       if Have then
-         SPARKTLS.Tickets_12.Decrypt_Ticket
+         SPARKTLS.Tickets.Decrypt_Ticket
            (Ticket  => Ticket_Buf (0 .. Ticket_Len - 1),
             TEK     => TEK_Buf,
             Now     => 6100,
             Max_Age => 3600,
-            Plain   => Out_Plain,
+            Expect_Kind => SPARKTLS.Tickets.Kind_TLS12,
+            Plain       => Out_Plain,
             Status  => OK);
          Check ("ticket opens after rotation (grace window)", OK);
          Check ("recovered master secret matches",
-                OK and then Out_Plain.Master_Secret = Plain.Master_Secret);
+                OK and then Out_Plain.Secret = Plain.Secret);
       end if;
    end;
 

@@ -81,9 +81,6 @@ is
    --  extension. Empty string means we don't echo ALPN even if
    --  the client offered something. Single-protocol only  for
    --  multi-protocol selection use Init with a built Config.
-   --  SPARK_Mode Off: Ticket_Store_Access is access-all (shared mutable
-   --  cache). SPARK's ownership model treats it as a move, but the pointer
-   --  is intentionally shared between caller and Config.
 
    --  RFC 8446 4.1: Step the server handshake / record processing
    --  state machine.
@@ -144,12 +141,12 @@ is
    ----------------------------------------------------------------------------
    --  RFC 5077 TLS 1.2 ticket encryption key (TEK) rotation
    --
-   --  ROTATION LIVES IN SPARKTLS.Session_Cache, NOT HERE. This package
+   --  ROTATION LIVES IN SPARKTLS.Ticket_Keys, NOT HERE. This package
    --  once declared Rotate_TLS12_Ticket_Key; it moved during the
    --  callback refactor and the orphaned body was deleted 2026-08-19.
    --  Use:
-   --      Session_Cache.Rotate_TEK (New_Key_ID, New_TEK, Now_Secs)
-   --      Session_Cache.Active_Key_Age (Now_Secs)
+   --      Ticket_Keys.Rotate_TEK (New_Key_ID, New_TEK, Now_Secs)
+   --      Ticket_Keys.Active_Key_Age (Now_Secs)
    --
    --  Semantics (unchanged): the new key takes the active slot and older
    --  keys shift down, staying valid for INCOMING ticket decryption so
@@ -158,7 +155,7 @@ is
    --  the active key only.
    --
    --  ROTATION IS AUTOMATIC BY DEFAULT, not caller-driven. Once the app
-   --  calls Session_Cache.Initialize (Random, Clock, Rotation_Interval)
+   --  calls Ticket_Keys.Initialize (Random, Clock, Rotation_Interval)
    --  the cache rotates lazily every Rotation_Interval seconds (24 h
    --  default): Get_Active_TEK checks the active key's age on each ticket
    --  issuance and rotates in place, generating fresh material from the
@@ -173,7 +170,7 @@ is
    --  serialize Advance calls.
    --
    --  Now_Secs is wall-clock Unix seconds recorded as Created_At for the
-   --  new key, typically Tickets_12.To_Unix_Seconds (Cfg.Get_Time.all).
+   --  new key, typically Tickets.To_Unix_Seconds (Cfg.Get_Time.all).
 
 private
 

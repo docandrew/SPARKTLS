@@ -13,7 +13,7 @@ with SPARKTLS.Handshake.TLS13;
 with SPARKTLS.Revocation;
 with SPARKTLS.Key_Schedule;
 with SPARKTLS.Key_Update;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with SPARKTLSCrypto.HMAC384;
 with SPARKTLSCrypto.HKDF384;
 with SPARKTLSCrypto.P384.Field;
@@ -1109,6 +1109,7 @@ is
             D                      => D,
             HS_Msg                 => Data,
             Reject_Cert_Extensions => True,
+            Want_Staple            => S.HC.Cfg.Request_OCSP_Staple,
             OK                     => Parse_OK,
             Err                    => Parse_Err);
          if not Parse_OK then
@@ -2749,7 +2750,7 @@ is
             S.Ticket.Lifetime := Unsigned_32 (NST_M.Get_Ticket_Lifetime (Ctx));
             S.Ticket.Age_Add := Unsigned_32 (NST_M.Get_Ticket_Age_Add (Ctx));
             S.Ticket.Received_At :=
-              (if S.Get_Time /= null then SPARKTLS.Tickets_12.To_Unix_Seconds (S.Get_Time.all)
+              (if S.Get_Time /= null then SPARKTLS.Tickets.To_Unix_Seconds (S.Get_Time.all)
                else 0);
             S.Ticket.Suite := Wire_Of (S.Negotiated_Suite);
             S.Ticket.Server_Name := S.Server_Name;

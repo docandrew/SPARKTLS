@@ -19,11 +19,11 @@ with SPARKNaCl;                  use SPARKNaCl;
 with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Credentials;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with Entropy_Random;
 
 with GNAT.Sockets;               use GNAT.Sockets;
-with SPARKTLS.Session_Cache;
+with SPARKTLS.Ticket_Keys;
 
 procedure TLS_Blocking_Server is
 
@@ -172,14 +172,10 @@ procedure TLS_Blocking_Server is
                                   else null),
           Request_Client_Cert => MTLS,
           Require_Client_Cert => MTLS_Require,
-          Store_Session       =>
-            SPARKTLS.Session_Cache.Store_Session'Access,
-          Lookup_Session      =>
-            SPARKTLS.Session_Cache.Lookup_Session'Access,
           Get_Active_TEK      =>
-            SPARKTLS.Session_Cache.Get_Active_TEK'Access,
+            SPARKTLS.Ticket_Keys.Get_Active_TEK'Access,
           Get_TEK_By_Id       =>
-            SPARKTLS.Session_Cache.Get_TEK_By_Id'Access,
+            SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access,
           Get_Time            => Now_UTC'Unrestricted_Access,
           others              => <>));
 
@@ -273,7 +269,7 @@ begin
    --  seeds the first TLS 1.2 ticket key and turns on rotation (24h by
    --  default); rotation is lazy, checked on the ticket path, so there is
    --  no timer task to manage.
-   SPARKTLS.Session_Cache.Initialize
+   SPARKTLS.Ticket_Keys.Initialize
      (Random            => Entropy_Random.Random'Access,
       Clock             => Now_UTC'Unrestricted_Access,
       Rotation_Interval => Get_TEK_Rotate_Secs);

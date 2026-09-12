@@ -18,7 +18,7 @@ with SPARKTLS.Credentials;
 with Entropy_Random;
 with POSIX_Thin;            use POSIX_Thin;
 with TLS_Echo_Pool;         use TLS_Echo_Pool;
-with SPARKTLS.Session_Cache;
+with SPARKTLS.Ticket_Keys;
 
 procedure TLS_Bench_Server is
 
@@ -172,7 +172,7 @@ begin
    --  Seed ticket storage. No clock is wired here, so rotation stays off --
    --  fine for a short-lived benchmark process; a long-running server should
    --  pass Clock so keys rotate.
-   SPARKTLS.Session_Cache.Initialize
+   SPARKTLS.Ticket_Keys.Initialize
      (Random => Entropy_Random.Random'Access,
       Clock  => null);
 
@@ -237,10 +237,10 @@ begin
                           SPARKTLS.Server.Configure
                             ((Local   => Id'Unchecked_Access,
                               Random  => Entropy_Random.Random'Access,
-                              Store_Session  =>
-                                SPARKTLS.Session_Cache.Store_Session'Access,
-                              Lookup_Session =>
-                                SPARKTLS.Session_Cache.Lookup_Session'Access,
+                              Get_Active_TEK =>
+                                SPARKTLS.Ticket_Keys.Get_Active_TEK'Access,
+                              Get_TEK_By_Id  =>
+                                SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access,
                               others  => <>));
                         Ev.Events := unsigned (EPOLLIN);
                         Ev.Data.FD := Client_FD;

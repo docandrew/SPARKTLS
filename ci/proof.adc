@@ -5,7 +5,7 @@
 --  SPARK RM 9(2) refuses to analyse any tasking construct unless the
 --  partition commits to a restricted concurrency profile. A protected
 --  object counts as a tasking construct even with no tasks anywhere in the
---  program, so SPARKTLS.Session_Cache -- the reference ticket store, which
+--  program, so SPARKTLS.Ticket_Keys -- the reference ticket store, which
 --  is one protected object and nothing else -- could not be SPARK_Mode =>
 --  On without these two pragmas. With them it verifies; without them
 --  gnatprove reports "tasking in SPARK requires Ravenscar profile" on every
@@ -36,11 +36,11 @@
 --  scheduling-level reasoning: priority-ceiling correctness and
 --  deadlock freedom. A consumer who builds without Ravenscar/Jorvik does
 --  not inherit those two guarantees. That is an honest limitation and is
---  stated in the Session_Cache spec rather than glossed over.
+--  stated in the Ticket_Keys spec rather than glossed over.
 --
 --  Jorvik rather than Ravenscar: Jorvik (Ada 2022) relaxes Ravenscar's
 --  hardest restrictions (relative delays, entry queue length, non-blocking
---  ceilings) while keeping the analysability SPARK needs. Session_Cache has
+--  ceilings) while keeping the analysability SPARK needs. Ticket_Keys has
 --  no entries and no delays, so it satisfies either; Jorvik is chosen
 --  because it is the weaker claim and therefore the more honest one.
 

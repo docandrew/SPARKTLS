@@ -106,6 +106,12 @@ is
       D                      : in out SPARKTLS.HS_Pool.HS_Data;
       HS_Msg                 : in Byte_Seq;
       Reject_Cert_Extensions : in Boolean;
+      --  Whether a status_request (stapled OCSP) extension is SOLICITED and
+      --  may appear in a CertificateEntry. True on the client (it offered
+      --  status_request); FALSE on the server parsing the CLIENT's cert,
+      --  which never solicits extensions -- so a client cannot smuggle its
+      --  own "good" OCSP staple in (SR audit: SendExtensionOnClientCertificate).
+      Want_Staple            : in Boolean;
       OK                     : out Boolean;
       Err                    : out Error_Code)
    with

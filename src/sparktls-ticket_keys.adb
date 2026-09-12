@@ -1,5 +1,5 @@
---  Reference implementation: a protected object guarding both the TLS 1.3
---  PSK cache and the TLS 1.2 ticket-encryption-key ring.
+--  Reference implementation: a protected object guarding the
+--  ticket-encryption-key ring shared by TLS 1.2 and TLS 1.3 tickets.
 --
 --  The callback procedures below are thin delegates -- they exist because
 --  Config wants access-to-subprogram values, and 'Access requires a plain
@@ -12,11 +12,10 @@
 --  lock, so ticket sealing and opening never serialise handshakes against
 --  each other.
 
-with SPARKTLS.Ticket_Cache;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 
-package body SPARKTLS.Session_Cache
-  with SPARK_Mode => Off
+package body SPARKTLS.Ticket_Keys
+  with SPARK_Mode => On
 is
 
    --  Ring of ticket-encryption keys. The newest seals outgoing tickets;
@@ -41,27 +40,6 @@ is
 
    protected Cache is
 
-      procedure Store
-        (PSK     : Bytes_48;
-         PSK_Len : PSK_Length;
-         Suite   : Unsigned_16;
-         Age_Add : Unsigned_32;
-         ID_Out  : out Ticket_ID)
-         --  Ticket_Cache.Store requires a valid PSK length; a protected op
-         --  cannot inherit that, so restate it here.
-      with Pre => PSK_Len in 32 | 48;
-
-      procedure Lookup
-        (ID         : Byte_Seq;
-         Want_Suite : Unsigned_16;
-         PSK        : out Bytes_48;
-         PSK_Len    : out N32;
-         Suite      : out Unsigned_16;
-         Found      : out Boolean)
-      with
-        Pre => ID'First = 0 and then ID'Length = Ticket_ID_Len,
-        Post => (if Found then Suite = Want_Suite and then PSK_Len in 32 | 48);
-
       procedure Active_Key
         (Key_ID : out Byte_Seq;
          TEK    : out Byte_Seq;
@@ -85,7 +63,6 @@ is
       procedure Clear;
 
    private
-      PSKs : Ticket_Store;
       Keys : Key_Ring :=
         (others =>
            (Key_ID => (others => 0), TEK => (others => 0), Valid => False, Created_At => 0));
@@ -94,42 +71,6 @@ is
    end Cache;
 
    protected body Cache is
-
-      procedure Store
-        (PSK     : Bytes_48;
-         PSK_Len : PSK_Length;
-         Suite   : Unsigned_16;
-         Age_Add : Unsigned_32;
-         ID_Out  : out Ticket_ID) is
-      begin
-         --  Reuse the existing cache logic; it is already SPARK-proven and
-         --  operates on a plain Ticket_Store passed in out.
-         SPARKTLS.Ticket_Cache.Store
-           (Cache   => PSKs,
-            PSK     => PSK,
-            PSK_Len => PSK_Len,
-            Suite   => Suite,
-            Age_Add => Age_Add,
-            ID_Out  => ID_Out);
-      end Store;
-
-      procedure Lookup
-        (ID         : Byte_Seq;
-         Want_Suite : Unsigned_16;
-         PSK        : out Bytes_48;
-         PSK_Len    : out N32;
-         Suite      : out Unsigned_16;
-         Found      : out Boolean) is
-      begin
-         SPARKTLS.Ticket_Cache.Lookup
-           (Cache      => PSKs,
-            ID         => ID,
-            Want_Suite => Want_Suite,
-            PSK        => PSK,
-            PSK_Len    => PSK_Len,
-            Suite      => Suite,
-            Found      => Found);
-      end Lookup;
 
       procedure Active_Key (Key_ID : out Byte_Seq; TEK : out Byte_Seq; Found : out Boolean) is
       begin
@@ -188,7 +129,6 @@ is
 
       procedure Clear is
       begin
-         PSKs := (others => <>);
          Keys :=
            (others =>
               (Key_ID => (others => 0), TEK => (others => 0), Valid => False, Created_At => 0));
@@ -218,7 +158,7 @@ is
       end if;
 
       if Clock /= null then
-         Now := SPARKTLS.Tickets_12.To_Unix_Seconds (Clock.all);
+         Now := SPARKTLS.Tickets.To_Unix_Seconds (Clock.all);
       end if;
 
       --  Generated outside the lock, installed inside it.
@@ -241,11 +181,16 @@ is
       Key_ID : Byte_Seq (0 .. 3) := (others => 0);
       TEK    : Byte_Seq (0 .. 31) := (others => 0);
    begin
-      if Interval = 0 or else Clock_Fn = null then
-         return;   --  manual control, or not initialised
+      --  Rand_Fn = null is a real case, not a proof nicety: Initialize stores
+      --  Interval and Clock_Fn before its Random = null early return, so a
+      --  clock-but-no-CSPRNG configuration would otherwise reach Rand_Fn.all
+      --  below on the first Get_Active_TEK. Found by SPARK when this unit
+      --  went back to SPARK_Mode On (2026-09-11).
+      if Interval = 0 or else Clock_Fn = null or else Rand_Fn = null then
+         return;   --  manual control, no CSPRNG, or not initialised
 
       end if;
-      Now := SPARKTLS.Tickets_12.To_Unix_Seconds (Clock_Fn.all);
+      Now := SPARKTLS.Tickets.To_Unix_Seconds (Clock_Fn.all);
 
       --  Cache.Age is a protected function, hence a volatile function: SPARK
       --  forbids calling one inside a larger expression, because the value
@@ -264,27 +209,6 @@ is
    ----------------------------------------------------------------------
    --  Callback delegates
    ----------------------------------------------------------------------
-
-   procedure Store_Session
-     (PSK     : Bytes_48;
-      PSK_Len : PSK_Length;
-      Suite   : Unsigned_16;
-      Age_Add : Unsigned_32;
-      ID_Out  : out Ticket_ID) is
-   begin
-      Cache.Store (PSK, PSK_Len, Suite, Age_Add, ID_Out);
-   end Store_Session;
-
-   procedure Lookup_Session
-     (ID         : Byte_Seq;
-      Want_Suite : Unsigned_16;
-      PSK        : out Bytes_48;
-      PSK_Len    : out N32;
-      Suite      : out Unsigned_16;
-      Found      : out Boolean) is
-   begin
-      Cache.Lookup (ID, Want_Suite, PSK, PSK_Len, Suite, Found);
-   end Lookup_Session;
 
    procedure Get_Active_TEK (Key_ID : out Byte_Seq; TEK : out Byte_Seq; Found : out Boolean) is
    begin
@@ -316,4 +240,4 @@ is
       Cache.Clear;
    end Reset;
 
-end SPARKTLS.Session_Cache;
+end SPARKTLS.Ticket_Keys;

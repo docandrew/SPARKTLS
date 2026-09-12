@@ -307,7 +307,7 @@ UNSUPPORTED_SKIPS=(
   #
   # CORRECTION 2026-08-20: this block used to claim "we implement it
   # (tickets and session IDs)". The session-ID half was FALSE. Resumption
-  # here is ticket/PSK-only -- Session_Cache.Lookup_Session is keyed by a
+  # here is ticket/PSK-only -- the sealed ticket is opened with Ticket_Keys.Get_TEK_By_Id, keyed by a
   # TICKET identity (Pre: ID'Length = Ticket_ID_Len) and returns a PSK, and
   # every Session_ID reference in the server is Legacy_Session_ID appearing
   # only in frame conditions (= 'Old), i.e. the RFC 8446 compatibility echo,

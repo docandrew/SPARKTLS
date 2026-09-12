@@ -1411,6 +1411,7 @@ is
       D                      : in out SPARKTLS.HS_Pool.HS_Data;
       HS_Msg                 : in Byte_Seq;
       Reject_Cert_Extensions : in Boolean;
+      Want_Staple            : in Boolean;
       OK                     : out Boolean;
       Err                    : out Error_Code)
    is
@@ -1610,7 +1611,7 @@ is
                                     begin
                                        Scan_Entry_Extensions
                                          (E_Ctx,
-                                          Want_Staple => HC.Cfg.Request_OCSP_Staple,
+                                          Want_Staple => Want_Staple,
                                           Is_Leaf     => Cert_Idx = 1,
                                           Staple      => D.Stapled_OCSP,
                                           Staple_Len  => D.Stapled_OCSP_Len,

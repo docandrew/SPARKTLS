@@ -93,7 +93,7 @@ PROVE_HIGH="$(( high_num * 85 / 100 ))G"
 
 # Proof-only configuration pragmas. SPARK refuses to analyse a protected
 # object without a concurrency profile (SPARK RM 9(2)), and SPARKTLS.
-# Session_Cache is exactly that. The pragmas live here rather than in
+# Ticket_Keys is exactly that. The pragmas live here rather than in
 # sparktls.gpr because pragma Profile is partition-wide: in the project file
 # it would impose Ravenscar/Jorvik on every consumer of the library. Passed
 # via -cargs, it reaches gnatprove and never `alr build`. See ci/proof.adc.
@@ -104,7 +104,7 @@ PROVE_HIGH="$(( high_num * 85 / 100 ))G"
 PROVE_CARGS=(-cargs "-gnatec=${ROOT}/ci/proof.adc")
 if [[ "$*" == *"-cargs"* ]]; then
     echo "== NOTE: caller passed -cargs; ci/proof.adc NOT applied."
-    echo "   Session_Cache will fail SPARK legality (needs pragma Profile)."
+    echo "   Ticket_Keys will fail SPARK legality (needs pragma Profile)."
     echo "   Add -gnatec=${ROOT}/ci/proof.adc to your own -cargs group."
     PROVE_CARGS=()
 fi

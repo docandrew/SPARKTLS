@@ -34,7 +34,7 @@ with X509;
 
 with GNAT.Sockets;               use GNAT.Sockets;
 with SPARKTLS.Test_Support;
-with SPARKTLS.Session_Cache;
+with SPARKTLS.Ticket_Keys;
 
 procedure Bogo_Shim is
 
@@ -133,7 +133,7 @@ procedure Bogo_Shim is
 
    --  TLS 1.2 RFC 5077 ticket key. BoGo's Basic-Server TLS 1.2 cases
    --  require tickets; this fixed test key is installed into the shared
-   --  Session_Cache at startup and stays stable across the resume loop.
+   --  Ticket_Keys at startup and stays stable across the resume loop.
    BoGo_Key_ID : constant SPARKNaCl.Byte_Seq (0 .. 3) :=
      (16#42#, 16#4F#, 16#47#, 16#4F#);
    BoGo_TEK    : constant SPARKNaCl.Byte_Seq (0 .. 31) := (others => 16#A5#);
@@ -1358,20 +1358,17 @@ procedure Bogo_Shim is
                Server_Cfg.Request_Client_Cert := Cfg.Request_Client_Cert;
                Server_Cfg.Require_Client_Cert := Cfg.Require_Client_Cert;
                Server_Cfg.Skip_Verify := Cfg.Request_Client_Cert;
-               --  Resumption storage is the shared Session_Cache; null
-               --  callbacks disable it for -no-ticket cases.
-               Server_Cfg.Store_Session :=
-                 (if Cfg.No_Ticket then null
-                  else SPARKTLS.Session_Cache.Store_Session'Access);
-               Server_Cfg.Lookup_Session :=
-                 (if Cfg.No_Ticket then null
-                  else SPARKTLS.Session_Cache.Lookup_Session'Access);
+               --  Resumption is stateless (RFC 5077): the PSK is sealed into
+               --  the ticket under the TEK ring, so the key callbacks drive
+               --  both TLS 1.2 and 1.3 tickets. Null them for -no-ticket.
                Server_Cfg.TLS13_Resumption_Across_Names :=
                  Cfg.Resumption_Across_Names;
                Server_Cfg.Get_Active_TEK :=
-                 SPARKTLS.Session_Cache.Get_Active_TEK'Access;
+                 (if Cfg.No_Ticket then null
+                  else SPARKTLS.Ticket_Keys.Get_Active_TEK'Access);
                Server_Cfg.Get_TEK_By_Id :=
-                 SPARKTLS.Session_Cache.Get_TEK_By_Id'Access;
+                 (if Cfg.No_Ticket then null
+                  else SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access);
                Server_Cfg.Versions := Policy;
                Server_Cfg.TLS12_Cipher_List := Cfg.TLS12_Cipher_List;
                Server_Cfg.TLS12_Cipher_Groups := Cfg.TLS12_Cipher_Groups;
@@ -1897,7 +1894,7 @@ begin
    Entropy_Random.Init;
    --  Install the fixed TLS 1.2 ticket key into the shared cache. The
    --  library no longer holds ticket keys, so the shim owns this now.
-   SPARKTLS.Session_Cache.Rotate_TEK (BoGo_Key_ID, BoGo_TEK, 0);
+   SPARKTLS.Ticket_Keys.Rotate_TEK (BoGo_Key_ID, BoGo_TEK, 0);
    Parse_Args;
    if Cfg.Port = 0 then
       Err ("bogo_shim: -port required");

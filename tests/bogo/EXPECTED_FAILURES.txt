@@ -101,10 +101,7 @@ Client-Sign-Negotiate-Ed25519-TLS12
 Client-VerifyDefault-Ed25519-TLS12
 Client-VerifyDefault-Ed25519-TLS13
 EchoTLS13CompatibilitySessionID
-ExtendedMasterSecret-NoToYes-Server
-ExtendedMasterSecret-YesToNo-Server
 ExtraPSKIdentity-TLS13
-Resume-Server-BinderWrongLength-SecondBinder
 Resume-Server-CipherNotPreferred
 Resume-Server-DeclineBadCipher
 Resume-Server-DeclineBadCipher-2

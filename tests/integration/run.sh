@@ -923,7 +923,7 @@ fi
 # server with SPARKTLS_TEK_ROTATE_SECS=1 (1-second rotation
 # interval, vs the 24h default), then performs two handshakes ~3s
 # apart and confirms the TLS 1.2 session_ticket's Key_ID prefix
-# (the first 4 bytes of the ticket blob, per Tickets_12 wire format)
+# (the first 4 bytes of the ticket blob, per Tickets wire format)
 # differs between the two — proof that the active TEK was rotated
 # in between.
 # ===================================================================

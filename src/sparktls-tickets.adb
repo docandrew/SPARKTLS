@@ -1,7 +1,8 @@
 with SPARKNaCl.AES;
 with SPARKTLSCrypto.AES_GCM;
+with SPARKTLSCrypto.Hashing.SHA256;
 
-package body SPARKTLS.Tickets_12
+package body SPARKTLS.Tickets
   with SPARK_Mode => On
 is
 
@@ -40,64 +41,154 @@ is
    end To_Unix_Seconds;
 
 
-   --  Plaintext layout helpers.
-   Plain_Master_Secret_Off : constant N32 := 0;
-   Plain_Suite_Off         : constant N32 := 48;
-   Plain_Created_At_Off    : constant N32 := 50;
-   Plain_SID_Len_Off       : constant N32 := 58;
-   Plain_SID_Off           : constant N32 := 59;
-   --  total = 59 + SID_Len (0 .. 32) â 59 .. 91 bytes
+   --  Plaintext layout helpers (version-neutral).
+   Plain_Secret_Off     : constant N32 := 0;   --  secret (48)
+   Plain_Secret_Len_Off : constant N32 := 48;  --  secret_len (1)
+   Plain_Suite_Off      : constant N32 := 49;  --  suite (2)
+   Plain_Created_At_Off : constant N32 := 51;  --  created_at (8)
+   Plain_Flags_Off      : constant N32 := 59;  --  flags (1)
+   Plain_Age_Add_Off    : constant N32 := 60;  --  age_add (4)
+   Plain_SNI_Hash_Off   : constant N32 := 64;  --  sni_hash (32)
+   Plain_SID_Len_Off    : constant N32 := 96;  --  sid_len (1)
+   Plain_SID_Off        : constant N32 := 97;  --  sid (0 .. 32)
+   Plain_Fixed_Len      : constant N32 := 97;
+
+   --  flags bit assignments
+   Flag_Client_Auth  : constant Byte := 1;
+   Flag_EMS          : constant Byte := 2;
+   Flag_Kind_TLS13   : constant Byte := 4;
+   Flag_Across_Names : constant Byte := 8;
+   Flag_Unknown_Mask : constant Byte := 16#F0#;
+   --  total = 97 + SID_Len (0 .. 32) -> 97 .. 129 bytes
+
+   procedure Hash_Server_Name (Name : in Hostname_Buf; H : out Bytes_32) is
+      Buf : Byte_Seq (0 .. N32 (Max_Hostname_Len) - 1) := (others => 0);
+      D   : SPARKTLSCrypto.Hashing.SHA256.Digest;
+   begin
+      if Name.Len = 0 then
+         H := (others => 0);
+         return;
+      end if;
+      for I in 1 .. Name.Len loop
+         pragma Loop_Invariant (I <= Name.Len);
+         Buf (N32 (I) - 1) := Byte (Character'Pos (Name.Data (I)));
+      end loop;
+      SPARKTLSCrypto.Hashing.SHA256.Hash (D, Buf (0 .. N32 (Name.Len) - 1));
+      H := Bytes_32 (D);
+   end Hash_Server_Name;
 
    --  Encode plaintext into a flat Byte_Seq.
    procedure Encode_Plain (Plain : in Ticket_Plain; Buf : out Byte_Seq; Len : out N32)
    with
-     Pre => Buf'First = 0 and then Buf'Last >= 90 and then Plain.SID_Len in 0 .. 32,
-     Post => Len in 59 .. 91
+     Pre => Buf'First = 0 and then Buf'Last >= Plain_SID_Off + 31
+            and then Plain.SID_Len in 0 .. 32 and then Plain.Secret_Len in 32 | 48,
+     Post => Len in Plain_Fixed_Len .. Plain_Fixed_Len + 32
    is
+      Flags : Byte := 0;
    begin
       Buf := (others => 0);
-      --  master_secret (48 bytes)
-      Buf (0 .. 47) := Plain.Master_Secret;
+      --  secret (48 bytes, zero-padded beyond Secret_Len)
+      Buf (Plain_Secret_Off .. Plain_Secret_Off + 47) := Plain.Secret;
+      --  secret_len (1 byte)
+      Buf (Plain_Secret_Len_Off) := Byte (Plain.Secret_Len);
       --  suite (2 bytes, big-endian)
-      Buf (48) := Byte (Shift_Right (Plain.Suite, 8) and 16#FF#);
-      Buf (49) := Byte (Plain.Suite and 16#FF#);
+      Buf (Plain_Suite_Off)     := Byte (Shift_Right (Plain.Suite, 8) and 16#FF#);
+      Buf (Plain_Suite_Off + 1) := Byte (Plain.Suite and 16#FF#);
       --  created_at (8 bytes, big-endian)
       for I in 0 .. 7 loop
-         Buf (50 + N32 (I)) := Byte (Shift_Right (Plain.Created_At, 8 * (7 - I)) and 16#FF#);
+         Buf (Plain_Created_At_Off + N32 (I)) :=
+           Byte (Shift_Right (Plain.Created_At, 8 * (7 - I)) and 16#FF#);
       end loop;
-      --  sid_len (1 byte) + sid (SID_Len bytes, zero-padded out)
-      Buf (58) := Byte (Plain.SID_Len);
-      if Plain.SID_Len > 0 then
-         Buf (59 .. 59 + Plain.SID_Len - 1) := Plain.SID (0 .. Plain.SID_Len - 1);
+      --  flags (1 byte): client_auth | ems | kind
+      if Plain.Client_Auth then
+         Flags := Flags or Flag_Client_Auth;
       end if;
-      Len := 59 + Plain.SID_Len;
+      if Plain.EMS then
+         Flags := Flags or Flag_EMS;
+      end if;
+      if Plain.Kind = Kind_TLS13 then
+         Flags := Flags or Flag_Kind_TLS13;
+      end if;
+      if Plain.Across_Names then
+         Flags := Flags or Flag_Across_Names;
+      end if;
+      Buf (Plain_Flags_Off) := Flags;
+      --  age_add (4 bytes, big-endian)
+      for I in 0 .. 3 loop
+         Buf (Plain_Age_Add_Off + N32 (I)) :=
+           Byte (Shift_Right (Plain.Age_Add, 8 * (3 - I)) and 16#FF#);
+      end loop;
+      --  sni_hash (32 bytes)
+      Buf (Plain_SNI_Hash_Off .. Plain_SNI_Hash_Off + 31) := Plain.SNI_Hash;
+      --  sid_len (1 byte) + sid (SID_Len bytes, zero-padded out)
+      Buf (Plain_SID_Len_Off) := Byte (Plain.SID_Len);
+      if Plain.SID_Len > 0 then
+         Buf (Plain_SID_Off .. Plain_SID_Off + Plain.SID_Len - 1) :=
+           Plain.SID (0 .. Plain.SID_Len - 1);
+      end if;
+      Len := Plain_Fixed_Len + Plain.SID_Len;
    end Encode_Plain;
 
-   --  Inverse of Encode_Plain. Status = False if shape is wrong.
+   --  Inverse of Encode_Plain. Status = False if shape is wrong or the
+   --  decoded Kind does not match Expect_Kind (SR-04).
    procedure Decode_Plain
-     (Buf : in Byte_Seq; Len : in N32; Plain : out Ticket_Plain; Status : out Boolean)
-   with Pre => Buf'First = 0 and then Buf'Last >= Len - 1 and then Len >= 0
+     (Buf         : in Byte_Seq;
+      Len         : in N32;
+      Expect_Kind : in Ticket_Kind;
+      Plain       : out Ticket_Plain;
+      Status      : out Boolean)
+   with
+     Pre => Buf'First = 0 and then Buf'Last >= Len - 1 and then Len >= 0,
+     Post => (if Status then Plain.Kind = Expect_Kind and then Plain.Secret_Len in 32 | 48)
    is
-      SID_Len : N32;
+      SID_Len    : N32;
+      Secret_Len : N32;
+      Flags      : Byte;
+      Kind       : Ticket_Kind;
    begin
       Plain := (others => <>);
       Status := False;
-      if Len < 59 or Len > 91 then
+      if Len < Plain_Fixed_Len or Len > Plain_Fixed_Len + 32 then
          return;
       end if;
-      SID_Len := N32 (Buf (58));
-      if SID_Len > 32 or 59 + SID_Len /= Len then
+      Secret_Len := N32 (Buf (Plain_Secret_Len_Off));
+      if Secret_Len /= 32 and Secret_Len /= 48 then
          return;
       end if;
-      Plain.Master_Secret := Buf (0 .. 47);
-      Plain.Suite := Unsigned_16 (Buf (48)) * 256 + Unsigned_16 (Buf (49));
+      Flags := Buf (Plain_Flags_Off);
+      if (Flags and Flag_Unknown_Mask) /= 0 then
+         return;  --  unknown flag bits set -> reject (our own format)
+      end if;
+      Kind := (if (Flags and Flag_Kind_TLS13) /= 0 then Kind_TLS13 else Kind_TLS12);
+      if Kind /= Expect_Kind then
+         return;  --  cross-version ticket (SR-04)
+      end if;
+      SID_Len := N32 (Buf (Plain_SID_Len_Off));
+      if SID_Len > 32 or Plain_Fixed_Len + SID_Len /= Len then
+         return;
+      end if;
+      Plain.Secret := Buf (Plain_Secret_Off .. Plain_Secret_Off + 47);
+      Plain.Secret_Len := Secret_Len;
+      Plain.Suite :=
+        Unsigned_16 (Buf (Plain_Suite_Off)) * 256 + Unsigned_16 (Buf (Plain_Suite_Off + 1));
       Plain.Created_At := 0;
       for I in 0 .. 7 loop
-         Plain.Created_At := Shift_Left (Plain.Created_At, 8) or Unsigned_64 (Buf (50 + N32 (I)));
+         Plain.Created_At :=
+           Shift_Left (Plain.Created_At, 8) or Unsigned_64 (Buf (Plain_Created_At_Off + N32 (I)));
       end loop;
+      Plain.Kind := Kind;
+      Plain.Client_Auth := (Flags and Flag_Client_Auth) /= 0;
+      Plain.EMS := (Flags and Flag_EMS) /= 0;
+      Plain.Across_Names := (Flags and Flag_Across_Names) /= 0;
+      Plain.Age_Add := 0;
+      for I in 0 .. 3 loop
+         Plain.Age_Add :=
+           Shift_Left (Plain.Age_Add, 8) or Unsigned_32 (Buf (Plain_Age_Add_Off + N32 (I)));
+      end loop;
+      Plain.SNI_Hash := Buf (Plain_SNI_Hash_Off .. Plain_SNI_Hash_Off + 31);
       Plain.SID_Len := SID_Len;
       if SID_Len > 0 then
-         Plain.SID (0 .. SID_Len - 1) := Buf (59 .. 59 + SID_Len - 1);
+         Plain.SID (0 .. SID_Len - 1) := Buf (Plain_SID_Off .. Plain_SID_Off + SID_Len - 1);
       end if;
       Status := True;
    end Decode_Plain;
@@ -112,9 +203,9 @@ is
       Ticket_Len : out N32)
    is
       use SPARKNaCl.AES;
-      Plain_Buf : Byte_Seq (0 .. 90);
+      Plain_Buf : Byte_Seq (0 .. 128);
       Plain_Len : N32;
-      Ct        : Byte_Seq (0 .. 90) := (others => 0);
+      Ct        : Byte_Seq (0 .. 128) := (others => 0);
       Tag       : SPARKNaCl.Bytes_16;
       Key       : AES256_Key;
    begin
@@ -161,18 +252,19 @@ is
    end Ticket_Key_ID;
 
    procedure Decrypt_Ticket
-     (Ticket  : in Byte_Seq;
-      TEK     : in Byte_Seq;
-      Now     : in Unsigned_64;
-      Max_Age : in Unsigned_32;
-      Plain   : out Ticket_Plain;
-      Status  : out Boolean)
+     (Ticket      : in Byte_Seq;
+      TEK         : in Byte_Seq;
+      Now         : in Unsigned_64;
+      Max_Age     : in Unsigned_32;
+      Expect_Kind : in Ticket_Kind;
+      Plain       : out Ticket_Plain;
+      Status      : out Boolean)
    is
       use SPARKNaCl.AES;
       T_Len     : constant N32 := N32 (Ticket'Length);
       Tag       : SPARKNaCl.Bytes_16;
       Ct_Len    : N32;
-      Plain_Buf : Byte_Seq (0 .. 90) := (others => 0);
+      Plain_Buf : Byte_Seq (0 .. 128) := (others => 0);
       Decode_OK : Boolean;
       Key       : AES256_Key;
       AES_OK    : Boolean;
@@ -180,12 +272,12 @@ is
       Plain := (others => <>);
       Status := False;
 
-      --  Minimum wire = 4 (id) + 12 (nonce) + 59 (plain min) + 16 (tag) = 91
-      if T_Len < 91 or T_Len > 256 then
+      --  Minimum wire = 4 (id) + 12 (nonce) + 97 (plain min) + 16 (tag) = 129
+      if T_Len < 129 or T_Len > 256 then
          return;
       end if;
       Ct_Len := T_Len - 32;  --  ciphertext length
-      if Ct_Len > 91 then
+      if Ct_Len > 129 then
          return;
       end if;
 
@@ -226,7 +318,7 @@ is
          Plain_Buf (0 .. Ct_Len - 1) := Pt_Slice;
       end;
 
-      Decode_Plain (Plain_Buf, Ct_Len, Plain, Decode_OK);
+      Decode_Plain (Plain_Buf, Ct_Len, Expect_Kind, Plain, Decode_OK);
       if not Decode_OK then
          return;
       end if;
@@ -243,4 +335,4 @@ is
       Status := True;
    end Decrypt_Ticket;
 
-end SPARKTLS.Tickets_12;
+end SPARKTLS.Tickets;

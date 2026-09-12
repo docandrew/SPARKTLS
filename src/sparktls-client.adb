@@ -5,7 +5,7 @@ with SPARKTLS.Records;    use SPARKTLS.Records;
 with SPARKTLS.Handshake;
 with SPARKTLS.Handshake.Client_Msgs;
 with SPARKTLS.Handshake.TLS12;
-with SPARKTLS.Tickets_12;
+with SPARKTLS.Tickets;
 with SPARKTLS.Records.TLS12;
 with SPARKTLS.Client.TLS12;
 with SPARKTLS.Client.TLS13;
@@ -63,7 +63,7 @@ is
       end if;
 
       declare
-         Now : constant Unsigned_64 := SPARKTLS.Tickets_12.To_Unix_Seconds (Clock.all);
+         Now : constant Unsigned_64 := SPARKTLS.Tickets.To_Unix_Seconds (Clock.all);
       begin
          Usable := Now < T.Received_At or else Now - T.Received_At < Unsigned_64 (T.Lifetime);
       end;
@@ -1015,10 +1015,14 @@ is
       HC.KE.P384_SK := (others => 0);
       SPARKTLS_Transcript.Wipe (HC.TS);
       HC.T12.Resumed_Master_Secret := (others => 0);
+      HC.T12.Client_Authed := False;
       HC.EMS_Session_Hash := (others => 0);
       HC.PSK.Value := (others => 0);
       HC.PSK.Binder := (others => 0);
       HC.PSK.Offer_ID := (others => 0);
+      HC.PSK.Offer_ID_Len := 0;
+      HC.PSK.Offer_Age := 0;
+      HC.PSK.Age_Fresh := False;
       HC.Client_Random := (others => 0);
       HC.Server_Random := (others => 0);
    end Scrub_Handshake_Context;
@@ -1147,6 +1151,21 @@ is
             S.Input.Read_Pos := 0;
             S.Input.Write_Pos := 0;
             Result := Shutdown;
+
+         when Error_State =>
+            --  A fatal error was already raised and its alert queued (e.g.
+            --  a ServerHello that failed validation). The connection is
+            --  dead: drain any pending alert, report Error_Alert, and
+            --  DISCARD any further input. Without this, Error_State fell
+            --  through to "others" and Advance dispatched the buffered
+            --  post-ServerHello encrypted flight into the record layer with
+            --  no handshake keys -- failing as bad_record_mac and
+            --  OVERWRITING the real Last_Error.
+            --  This is a general "reported for the wrong reason" failure
+	    --  mode: a fatal state must not keep consuming the wire.
+            S.Input.Read_Pos := 0;
+            S.Input.Write_Pos := 0;
+            Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
 
          when others    =>
             Handled := False;

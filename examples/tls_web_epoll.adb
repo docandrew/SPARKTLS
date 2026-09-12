@@ -37,7 +37,7 @@ with SPARKTLS.Credentials;
 with Entropy_Random;
 with POSIX_Thin;            use POSIX_Thin;
 with TLS_Echo_Pool;         use TLS_Echo_Pool;
-with SPARKTLS.Session_Cache;
+with SPARKTLS.Ticket_Keys;
 
 procedure TLS_Web_Epoll is
 
@@ -528,6 +528,9 @@ procedure TLS_Web_Epoll is
 
 begin
    Entropy_Random.Init;
+   --  Seed the stateless-ticket (RFC 5077) TEK ring so resumption works.
+   SPARKTLS.Ticket_Keys.Initialize
+     (Random => Entropy_Random.Random'Access, Clock => null);
 
    --  Parse arguments
    if Ada.Command_Line.Argument_Count < 2 then
@@ -630,10 +633,10 @@ begin
                           SPARKTLS.Server.Configure
                             ((Local   => Id'Unchecked_Access,
                               Random  => Entropy_Random.Random'Access,
-                              Store_Session  =>
-                                SPARKTLS.Session_Cache.Store_Session'Access,
-                              Lookup_Session =>
-                                SPARKTLS.Session_Cache.Lookup_Session'Access,
+                              Get_Active_TEK =>
+                                SPARKTLS.Ticket_Keys.Get_Active_TEK'Access,
+                              Get_TEK_By_Id  =>
+                                SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access,
                               others  => <>));
 
                         Ev.Events := unsigned (EPOLLIN);
