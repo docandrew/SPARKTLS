@@ -408,8 +408,13 @@ is
          Cfg     : constant Ready_Config := S.HC.Cfg;
          Policy  : constant Version_Policy := Cfg.Versions;
          Want_13 : constant Boolean := Candidate_Version = TLS_1_3 and Policy /= TLS_1_2_Only;
+         --  RFC 8446 4.2.1: a TLS_1_2_Only server steers a 1.3
+         --  offer down to 1.2 only if the client's supported_versions also
+         --  listed 0x0303; otherwise the else-branch below answers
+         --  protocol_version instead of negotiating an unoffered version.
          Want_12 : constant Boolean :=
-           (Candidate_Version = TLS_1_2 or (Candidate_Version = TLS_1_3 and Policy = TLS_1_2_Only))
+           (Candidate_Version = TLS_1_2
+            or (Candidate_Version = TLS_1_3 and Policy = TLS_1_2_Only and S.HC.SV_Has_TLS_1_2))
            and Policy /= TLS_1_3_Only;
       begin
          if Want_13 then
@@ -846,6 +851,7 @@ is
                                  Has_TLS_1_3                 => S.HC.Has_TLS_1_3,
                                  Saw_Supported_Versions      => S.HC.Saw_Supported_Versions,
                                  SV_Has_Acceptable           => S.HC.SV_Has_Acceptable,
+                                 SV_Has_TLS_1_2              => S.HC.SV_Has_TLS_1_2,
                                  CKE_Received_12             => S.HC.CKE_Received_12,
                                  Use_EMS                     => S.HC.Use_EMS,
                                  EMS_Session_Hash            => S.HC.EMS_Session_Hash,
@@ -1021,6 +1027,7 @@ is
                            Has_TLS_1_3                 => S.HC.Has_TLS_1_3,
                            Saw_Supported_Versions      => S.HC.Saw_Supported_Versions,
                            SV_Has_Acceptable           => S.HC.SV_Has_Acceptable,
+                           SV_Has_TLS_1_2              => S.HC.SV_Has_TLS_1_2,
                            CKE_Received_12             => S.HC.CKE_Received_12,
                            Use_EMS                     => S.HC.Use_EMS,
                            EMS_Session_Hash            => S.HC.EMS_Session_Hash,

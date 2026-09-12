@@ -592,6 +592,49 @@ procedure Test_Parse_Client_Hello is
              HC.Client_Supports_X25519 and then not HC.Client_Has_X25519);
    end Test_Missing_Key_Share_State;
 
+   --  Regression: supported_versions must record 0x0303 separately
+   --  from "something acceptable". server.adb Want_12 consumes
+   --  SV_Has_TLS_1_2 so a TLS_1_2_Only server answers a 1.3-only offer with
+   --  protocol_version instead of negotiating a version never listed
+   --  (RFC 8446 4.2.1 MUST NOT).
+   procedure Test_SV_Has_TLS_1_2 is
+      procedure Run
+        (Label   : String;
+         Vers    : Byte_Seq;
+         Exp_13  : Boolean;
+         Exp_12  : Boolean;
+         Exp_Saw : Boolean)
+      is
+         S       : Server_Session;
+         Neg     : Supported_Suite := Suite_None;
+         Neg_12  : Supported_Suite := Suite_None;
+         Version : TLS_Version;
+         Err     : Error_Code := No_Error;
+         HC      : Handshake_Context;
+         OK      : Boolean;
+      begin
+         Init_Context (S, HC);
+         declare
+            Exts    : constant Byte_Seq :=
+              (if Vers'Length = 0 then Byte_Seq'(1 .. 0 => 0)
+               else Build_Supported_Versions_Ext (Vers));
+            Body_Bs : constant Byte_Seq := Build_Min_CH_Body (Exts => Exts);
+            Data    : constant Byte_Seq := Wrap_Handshake (Body_Bs);
+         begin
+            SPARKTLS.Handshake.Server_Msgs.Parse_Client_Hello
+              (Neg, Neg_12, Err, HC, Data, Version, OK);
+         end;
+         Check (Label & ": Saw_Supported_Versions", HC.Saw_Supported_Versions = Exp_Saw);
+         Check (Label & ": Has_TLS_1_3", HC.Has_TLS_1_3 = Exp_13);
+         Check (Label & ": SV_Has_TLS_1_2", HC.SV_Has_TLS_1_2 = Exp_12);
+      end Run;
+   begin
+      Run ("SV {0304}",       (16#03#, 16#04#),                 True,  False, True);
+      Run ("SV {0304,0303}",  (16#03#, 16#04#, 16#03#, 16#03#), True,  True,  True);
+      Run ("SV {0303}",       (16#03#, 16#03#),                 False, True,  True);
+      Run ("SV absent",       Byte_Seq'(1 .. 0 => 0),           False, False, False);
+   end Test_SV_Has_TLS_1_2;
+
    procedure Test_Missing_Supported_Groups_State is
       S    : Server_Session;
       Neg    : Supported_Suite := Suite_None;
@@ -812,6 +855,7 @@ begin
    Test_KS_P384;
    Test_Missing_Key_Share_State;
    Test_Missing_Supported_Groups_State;
+   Test_SV_Has_TLS_1_2;
    Test_Sig_Algs;
    Test_Supported_Groups;
    Test_Supported_Versions;

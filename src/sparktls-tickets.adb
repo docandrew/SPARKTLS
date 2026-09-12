@@ -130,7 +130,7 @@ is
    end Encode_Plain;
 
    --  Inverse of Encode_Plain. Status = False if shape is wrong or the
-   --  decoded Kind does not match Expect_Kind (SR-04).
+   --  decoded Kind does not match Expect_Kind.
    procedure Decode_Plain
      (Buf         : in Byte_Seq;
       Len         : in N32;
@@ -161,7 +161,7 @@ is
       end if;
       Kind := (if (Flags and Flag_Kind_TLS13) /= 0 then Kind_TLS13 else Kind_TLS12);
       if Kind /= Expect_Kind then
-         return;  --  cross-version ticket (SR-04)
+         return;  --  cross-version ticket
       end if;
       SID_Len := N32 (Buf (Plain_SID_Len_Off));
       if SID_Len > 32 or Plain_Fixed_Len + SID_Len /= Len then

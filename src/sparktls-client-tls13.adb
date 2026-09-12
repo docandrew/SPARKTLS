@@ -1521,6 +1521,15 @@ is
             end if;
 
          when HT_Certificate_Request =>
+            --  RFC 8446 4.3.2: CertificateRequest is legal only between
+            --  EncryptedExtensions and Certificate, and at most once. The
+            --  state gate also covers PSK resumption (EE moves us straight
+            --  to Wait_Server_Finished), where 4.2.11 forbids it. Without
+            --  the gate a repeat re-ran identity and scheme selection.
+            if S.State /= Wait_Certificate or else S.HC.Cert_Request_Received then
+               Send_HS_Encrypted_Alert (S, D, Unexpected_Message, Result);
+               return;
+            end if;
             Handle_CertReq_13 (S, D, Data, Result);
             if Result /= OK then
                return;
@@ -2844,8 +2853,15 @@ is
                                                 if Inner = 0 or else Inner /= DLen - 1 then
                                                    Bad := True;
                                                 elsif Inner >= 2
-                                                  and then (Byte (FB (RBT.Index (DLen))) and 16#01#) /= 0
+                                                  and then (Byte (FB (3)) and 16#01#) /= 0
                                                 then
+                                                   --  RFC 9149 2: flag N lives in byte N / 8, bit
+                                                   --  N mod 8 (LSB first). resumption_across_names
+                                                   --  is flag 8: byte 1 of the mask = FB (3) after
+                                                   --  the length byte. Reading the LAST byte instead
+                                                   --  only worked for a 2-byte mask and dropped the
+                                                   --  flag whenever unknown higher flags lengthened
+                                                   --  it (BoGo KnownAndUnknownTicketFlags-1..4).
                                                    Across := True;
                                                 end if;
                                              end;
@@ -3205,25 +3221,30 @@ is
                   --  Bogus alert level -> fatal illegal_parameter.
                   Send_App_Encrypted_Alert (S, Illegal_Parameter, Result);
                elsif Plaintext (1) = 0 then
-                  --  close_notify (warning, desc=0). Reply in kind.
+                  --  close_notify (warning, desc=0). RFC 8446 6.1: each
+                  --  side sends exactly one. Reply in kind only from
+                  --  Connected; in Closing ours is already on the wire and
+                  --  this is the peer's answer to it -- replying again
+                  --  ping-pongs close_notify with a peer that does the
+                  --  same.
                   --
-                  --  RFC 8446 6.1: record that the peer closed in an
-                  --  orderly way. Without this the application cannot
-                  --  distinguish a finished stream from one an attacker
-                  --  truncated by cutting the transport.
+                  --  Record that the peer closed in an orderly way either
+                  --  way. Without this the application cannot distinguish
+                  --  a finished stream from one an attacker truncated by
+                  --  cutting the transport.
                   S.Peer_Closed_Cleanly := True;
-                  declare
-                     A : N32;
-                  begin
-                     Abort_Flight (S);
-                     Records.Build_Alert_Record
-                       (Level     => 1,
-                        Desc      => 0,
-                        Keys      => S.Client_App,
-                        Output    => S.Output,
-                        Bytes_Out => A);
-                  end;
                   if S.State = Connected then
+                     declare
+                        A : N32;
+                     begin
+                        Abort_Flight (S);
+                        Records.Build_Alert_Record
+                          (Level     => 1,
+                           Desc      => 0,
+                           Keys      => S.Client_App,
+                           Output    => S.Output,
+                           Bytes_Out => A);
+                     end;
                      Set_State (S, Closing);
                   end if;
                   if Output_Pending (S) > 0 then
@@ -3262,8 +3283,9 @@ is
                   end if;
                else
                   --  Fatal alert from peer: close without replying
-                  --  (RFC 8446 6.2: don't send alerts about alerts).
-                  S.Last_Error := Unexpected_Message;
+                  --  (RFC 8446 6.2: don't send alerts about alerts);
+                  --  report its description.
+                  S.Last_Error := Error_From_Alert (Plaintext (1));
                   Set_State (S, Error_State);
                   Result := Error_Alert;
                end if;

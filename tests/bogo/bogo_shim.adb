@@ -92,6 +92,10 @@ procedure Bogo_Shim is
       Expect_ALPN          : Unbounded_Text := (others => Character'Val (0));
       Expect_ALPN_Len      : Natural := 0;
       Expect_EMS           : Boolean := False;
+      --  TLS13-Client-[No]ResumptionAcrossNames: did the received ticket carry
+      --  the resumption_across_names ticket flag (draft-ietf-tls-cross-sni-resumption)?
+      Expect_RAN           : Boolean := False;
+      Expect_Not_RAN       : Boolean := False;
       Decline_ALPN         : Boolean := False;
       Reject_ALPN          : Boolean := False;
       Export_Len           : Natural range 0 .. 1024 := 0;
@@ -679,6 +683,10 @@ procedure Bogo_Shim is
                --  RFC 7627. ems_tests.go passes this on the
                --  ExtendedMasterSecret-TLS12-{Server,Client} tests.
                Cfg.Expect_EMS := True;
+            elsif A = "-expect-resumable-across-names" then
+               Cfg.Expect_RAN := True;
+            elsif A = "-expect-not-resumable-across-names" then
+               Cfg.Expect_Not_RAN := True;
             elsif A = "-require-any-client-certificate" then
                Cfg.Request_Client_Cert := True;
                Cfg.Require_Client_Cert := True;
@@ -1885,6 +1893,35 @@ procedure Bogo_Shim is
         and then SPARKTLS.Client.Has_TLS12_Ticket (S)
       then
          Saved_Ticket_12 := SPARKTLS.Client.Get_TLS12_Ticket (S);
+      end if;
+
+      --  -expect-[not-]resumable-across-names: BoGo issues a ticket and asks
+      --  whether we parsed its resumption_across_names flag. Checked HERE,
+      --  after the connection has drained, because NewSessionTicket is a
+      --  post-handshake message: at Handshake_Done it has not arrived yet. Our SNI gate on
+      --  resumption keys off exactly this bit, so this is the
+      --  external check that the parse is right.
+      if not Cfg.Is_Server and then (Cfg.Expect_RAN or Cfg.Expect_Not_RAN) then
+         if not SPARKTLS.Client.Has_Session_Ticket (S) then
+            Err ("expect-[not-]resumable-across-names: no session ticket received");
+            Ada.Command_Line.Set_Exit_Status
+              (Ada.Command_Line.Exit_Status (Exit_Failure));
+            Run_Failed := True;
+            return;
+         end if;
+         declare
+            RAN : constant Boolean :=
+              SPARKTLS.Client.Get_Session_Ticket (S).Resumption_Across_Names;
+         begin
+            if Cfg.Expect_RAN /= RAN then
+               Err ("resumption_across_names flag mismatch: ticket says "
+                    & Boolean'Image (RAN));
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               Run_Failed := True;
+               return;
+            end if;
+         end;
       end if;
 
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (Exit_Success));

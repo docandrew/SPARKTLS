@@ -883,7 +883,7 @@ is
                   declare
                      Cur_SNI : SPARKTLS.Tickets.Bytes_32;
                   begin
-                     --  SR-03: a ticket resumes only under the SNI it was
+                     --  A ticket resumes only under the SNI it was
                      --  issued for (RFC 6066 3; RFC 8446 4.6.1 default),
                      --  unless it was issued with resumption_across_names.
                      --  A mismatch is a decline (full handshake), not an
@@ -936,7 +936,7 @@ is
          Found := False;
       end if;
 
-      --  SR-03: an mTLS-required server MUST NOT resume from a session that
+      --  An mTLS-required server MUST NOT resume from a session that
       --  was not itself client-authenticated. PSK resumption skips
       --  CertificateRequest, so accepting such a ticket would admit an
       --  unauthenticated peer -- e.g. a ticket minted by a permissive
@@ -2513,7 +2513,7 @@ is
    --  Derive res_master + the resumption PSK over the full transcript,
    --  record res_master in the Session, then SEAL the PSK into a stateless
    --  RFC 5077 ticket under the active TEK (Ticket / Ticket_Len out). No
-   --  active key => Ticket_Len = 0 and no ticket is issued. SR-03: the
+   --  active key => Ticket_Len = 0 and no ticket is issued. The
    --  client-auth status is sealed into the ticket, not a shared cache.
    procedure Store_Resumption_Secrets
      (S           : in out Session;
@@ -2574,7 +2574,7 @@ is
 
       --  Seal the PSK into a stateless ticket under the active TEK. The
       --  same AES-256-GCM machinery TLS 1.2 tickets use; the Kind tag
-      --  stops it being replayed against a 1.2 session (SR-04).
+      --  stops it being replayed against a 1.2 session.
       if S.HC.Cfg.Get_Active_TEK /= null and then S.HC.Cfg.Random /= null then
          declare
             Key_ID     : Byte_Seq (0 .. 3) := (others => 0);
@@ -2595,7 +2595,7 @@ is
                   else 0);
                Plain.Kind        := SPARKTLS.Tickets.Kind_TLS13;
                Plain.Client_Auth := Client_Auth;
-               --  SR-03 residuals: the NST's ticket_age_add (RFC 8446 4.2.11
+               --  Also sealed: the NST's ticket_age_add (RFC 8446 4.2.11
                --  age recovery on resume), the SNI this ticket is issued
                --  under (RFC 6066 3 / RFC 8446 4.6.1), and whether the
                --  ticket_flags resumption_across_names bit we emit lets it
@@ -3008,10 +3008,9 @@ is
          end if;
 
          if Inner_Type = 16#15# and then Plain_Len >= 2 then
-            --  Peer sent alert
-            S.Last_Error :=
-              Error_Code'Val
-                (Natural'Min (Natural (Plaintext (1)), Error_Code'Pos (Error_Code'Last)));
+            --  Peer sent alert: report its description. The old
+            --  Error_Code'Val mapped the byte by enum position.
+            S.Last_Error := Error_From_Alert (Plaintext (1));
             Set_State (S, Error_State);
             Result := Error_Alert;
             return;
@@ -3638,24 +3637,29 @@ is
                   Set_State (S, Error_State);
                   Result := (if Output_Pending (S) > 0 then Has_Output else Error_Alert);
                elsif Plaintext (1) = 0 then
-                  --  close_notify  reply in kind (warning level 1).
+                  --  close_notify. RFC 8446 6.1: each side sends exactly
+                  --  one. Reply in kind (warning level 1) only from
+                  --  Connected; in Closing ours is already on the wire and
+                  --  this is the peer's answer to it -- replying again
+                  --  ping-pongs close_notify with a peer that does the
+                  --  same.
                   --
-                  --  RFC 8446 6.1: record the orderly close so the
+                  --  Record the orderly close either way so the
                   --  application can tell a finished stream from a
                   --  truncated one.
                   S.Peer_Closed_Cleanly := True;
-                  declare
-                     Ignored_A : N32;
-                  begin
-                     Abort_Flight (S);
-                     Records.Build_Alert_Record
-                       (Level     => 1,
-                        Desc      => 0,
-                        Keys      => S.Server_App,
-                        Output    => S.Output,
-                        Bytes_Out => Ignored_A);
-                  end;
                   if S.State = Connected then
+                     declare
+                        Ignored_A : N32;
+                     begin
+                        Abort_Flight (S);
+                        Records.Build_Alert_Record
+                          (Level     => 1,
+                           Desc      => 0,
+                           Keys      => S.Server_App,
+                           Output    => S.Output,
+                           Bytes_Out => Ignored_A);
+                     end;
                      Set_State (S, Closing);
                   end if;
                   if Output_Pending (S) > 0 then
@@ -3700,8 +3704,9 @@ is
                   end if;
                else
                   --  Fatal alert from peer (level=2): close without
-                  --  reply per RFC 8446 6.2 (no alerts about alerts).
-                  S.Last_Error := Unexpected_Message;
+                  --  reply per RFC 8446 6.2 (no alerts about alerts);
+                  --  report its description.
+                  S.Last_Error := Error_From_Alert (Plaintext (1));
                   Set_State (S, Error_State);
                   Result := Error_Alert;
                end if;

@@ -24,23 +24,8 @@ is
    --  handshake-client_msgs.adb.
    pragma Unevaluated_Use_Of_Old (Allow);
 
-   function Lower_ASCII (C : Character) return Character
-   is (if C in 'A' .. 'Z' then Character'Val (Character'Pos (C) + 32) else C);
-
-   function Same_Hostname (Left, Right : Hostname_Buf) return Boolean is
-   begin
-      if Left.Len /= Right.Len then
-         return False;
-      end if;
-
-      for I in 1 .. Left.Len loop
-         if Lower_ASCII (Left.Data (I)) /= Lower_ASCII (Right.Data (I)) then
-            return False;
-         end if;
-      end loop;
-
-      return True;
-   end Same_Hostname;
+   --  Same_Hostname now lives in the SPARKTLS spec (shared with the TLS 1.2
+   --  ticket offer in Handshake.Client_Msgs).
 
    procedure Check_Resume_Ticket_Usable
      (T : Session_Ticket; Clock : Get_Time_Fn; Server_Name : Hostname_Buf; Usable : out Boolean)
@@ -267,6 +252,7 @@ is
             Has_TLS_1_3                 => S.HC.Has_TLS_1_3,
             Saw_Supported_Versions      => S.HC.Saw_Supported_Versions,
             SV_Has_Acceptable           => S.HC.SV_Has_Acceptable,
+            SV_Has_TLS_1_2              => S.HC.SV_Has_TLS_1_2,
             CKE_Received_12             => S.HC.CKE_Received_12,
             Use_EMS                     => S.HC.Use_EMS,
             EMS_Session_Hash            => S.HC.EMS_Session_Hash,
@@ -628,6 +614,11 @@ is
            and then S.HC.T12.Server_Echoed_SID
            and then S.HC.Cfg.TLS12_Resume_Ticket.Valid
            and then S.HC.Cfg.TLS12_Resume_Ticket.Suite = Wire_Of (S.Negotiated_Suite)
+           --  RFC 6066 3: a TLS 1.2 ticket resumes only under the
+           --  name it was issued for. The offer already applies this gate;
+           --  repeat it here so a server echo cannot flip us into Resuming
+           --  with another host's master secret.
+           and then Same_Hostname (S.HC.Cfg.TLS12_Resume_Ticket.Server_Name, S.HC.Cfg.Server_Name)
          then
             S.HC.T12.Resuming := True;
             S.HC.Master_Secret_12 := S.HC.Cfg.TLS12_Resume_Ticket.Master_Secret;
@@ -653,17 +644,24 @@ is
          --  (type 2). Any other handshake type is an
          --  unexpected_message  BoGo
          --  WrongMessageType-ServerHello tests this.
+         --  Fail here rather than fall through into the parser, which
+         --  could overwrite the error or, for bytes that happen to parse
+         --  as an HRR, reach the HRR invariants and report
+         --  internal_error. The alert path below is shared.
          if Frag (Frag'First) /= HS_Msg_Wire (HT_Server_Hello) then
             S.Last_Error := Unexpected_Message;
+            Parse_OK     := False;
+            Candidate    := TLS_Undetermined;
+         else
+            Handshake.Client_Msgs.Parse_Server_Hello
+              (S.Negotiated_Suite,
+               S.Last_Error,
+               S.Negotiated_ALPN,
+               S.HC,
+               Byte_Seq (Frag),
+               Candidate,
+               Parse_OK);
          end if;
-         Handshake.Client_Msgs.Parse_Server_Hello
-           (S.Negotiated_Suite,
-            S.Last_Error,
-            S.Negotiated_ALPN,
-            S.HC,
-            Byte_Seq (Frag),
-            Candidate,
-            Parse_OK);
 
          if not Parse_OK then
             if S.Last_Error = No_Error then

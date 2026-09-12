@@ -10,6 +10,22 @@ with SPARKTLS.Key_Update;
 package body SPARKTLS
   with SPARK_Mode => On
 is
+
+   function Lower_ASCII (C : Character) return Character
+   is (if C in 'A' .. 'Z' then Character'Val (Character'Pos (C) + 32) else C);
+
+   function Same_Hostname (Left, Right : Hostname_Buf) return Boolean is
+   begin
+      if Left.Len /= Right.Len then
+         return False;
+      end if;
+      for I in 1 .. Left.Len loop
+         if Lower_ASCII (Left.Data (I)) /= Lower_ASCII (Right.Data (I)) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Same_Hostname;
    --  RFC 7748 6.1 / RFC 8422 5.10: see the contract in the spec.
    --  The body accumulates a byte-wise OR; the loop invariant ties
    --  the accumulator to the existence of a non-zero byte seen so

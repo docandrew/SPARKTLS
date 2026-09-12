@@ -827,14 +827,21 @@ is
             end if;
 
             --  RFC 5246 7.4.1.4.1: pick a mutually supported scheme; PKCS#1
-            --  v1.5 is allowed in TLS 1.2 client auth.
+            --  v1.5 is allowed in TLS 1.2 client auth. An Ed25519 identity
+            --  is never picked: PureEdDSA signs the raw message
+            --  set, which the streamed transcript cannot replay, so the
+            --  CertificateVerify builder could not honour the pick.
+            --  Decline with an empty Certificate instead (7.4.6).
             Picked :=
-              Handshake.Pick_Sig_Algo_With_Prefs
-                (SA,
-                 S.HC.Cfg.Local.Sign_Algo,
-                 S.HC.Cfg.Sign_Sig_Algos,
-                 S.HC.Cfg.Sign_Sig_Algo_Count,
-                 Allow_PKCS1_v1_5 => True);
+              (if S.HC.Cfg.Local.Sign_Algo = Sign_Ed25519
+               then Scheme_None
+               else
+                 Handshake.Pick_Sig_Algo_With_Prefs
+                   (SA,
+                    S.HC.Cfg.Local.Sign_Algo,
+                    S.HC.Cfg.Sign_Sig_Algos,
+                    S.HC.Cfg.Sign_Sig_Algo_Count,
+                    Allow_PKCS1_v1_5 => True));
 
             if Picked /= Scheme_None then
                S.HC.Negotiated_Sig_Algo := Picked;
@@ -860,7 +867,11 @@ is
                end case;
             end if;
 
-            if S.HC.Cfg.Local.Has_Identity and then not S.HC.T12.Client_Cert_Allowed then
+            --  Ed25519 declines (above) rather than failing.
+            if S.HC.Cfg.Local.Has_Identity
+              and then S.HC.Cfg.Local.Sign_Algo /= Sign_Ed25519
+              and then not S.HC.T12.Client_Cert_Allowed
+            then
                Fail (Illegal_Parameter);
                return;
             end if;
@@ -1279,9 +1290,10 @@ is
       --  transcript with a signing-time-derived prefix, which the
       --  streaming transcript cannot provide. Ed25519 client auth
       --  works in TLS 1.3, where CertificateVerify signs a fixed
-      --  construction over the transcript HASH. The negotiation site
-      --  no longer selects 0x0807 for 1.2, so Use_Raw_For_CV is a
-      --  can't-happen; fail closed if it somehow occurs.
+      --  construction over the transcript HASH. Handle_CertReq_12 never
+      --  picks a scheme for an Ed25519 identity, so
+      --  Use_Raw_For_CV is a can't-happen; fail closed if it somehow
+      --  occurs.
       if Use_Raw_For_CV then
          CV_Len := 0;
       elsif Use_512_For_CV then
@@ -2269,7 +2281,8 @@ is
                Result := OK;
                return;
             elsif Lvl = 2 then
-               S.Last_Error := Unexpected_Message;
+               --  Peer's fatal alert: report its description.
+               S.Last_Error := Error_From_Alert (Dsc);
                Set_State (S, Error_State);
                Result := Error_Alert;
                return;
@@ -3686,8 +3699,9 @@ is
                         Result := OK;
                      end if;
                   else
-                     --  fatal alert from peer  record + close.
-                     S.Last_Error := Unexpected_Message;
+                     --  fatal alert from peer: record its description + close.
+                     S.Last_Error :=
+                       (if PL >= 2 then Error_From_Alert (Plaintext (1)) else Unexpected_Message);
                      if S.State = Connected then
                         Set_State (S, Closing);
                      end if;
