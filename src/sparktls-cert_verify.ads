@@ -145,7 +145,11 @@ is
       Now              : X509.Date_Time;
       Must_Be_CA       : Boolean;
       CAs_Below_Issuer : Natural;
-      Mode             : Validation_Mode := Mode_WebPKI)
+      Mode             : Validation_Mode := Mode_WebPKI;
+      --  The purpose the chain is validated for. An EKU-bearing issuer
+      --  must carry it (CA/Browser Forum, Chromium, NSS); Purpose_Any
+      --  accepts either TLS purpose, the pre-2026-09 behaviour.
+      Purpose          : Validation_Purpose := Purpose_Any)
       return Validation_Result
    with
      Pre  =>

@@ -157,6 +157,9 @@ is
    with Volatile_Function;
 
    --  Drop every key. Intended for tests and for shutdown.
+   --  Zero every key in the ring. The ring is the only long-lived copy
+   --  of the ticket-encryption keys, so call this before the process
+   --  exits (or before dropping the keys for any other reason).
    procedure Reset;
 
 end SPARKTLS.Ticket_Keys;

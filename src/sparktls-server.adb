@@ -140,30 +140,6 @@ is
       end return;
    end Configure;
 
-   procedure Scrub_Handshake_Context (HC : in out Handshake_Context) is
-   begin
-      HC.KE.Shared := (others => 0);
-      HC.Client_HS_Secret := (others => 0);
-      HC.Server_HS_Secret := (others => 0);
-      HC.Handshake_Secret := (others => 0);
-      HC.Master_Secret := (others => 0);
-      HC.Master_Secret_12 := (others => 0);
-      HC.KE.Local_SK := (others => 0);
-      HC.KE.P256_SK := (others => 0);
-      HC.KE.P384_SK := (others => 0);
-      SPARKTLS_Transcript.Wipe (HC.TS);
-      HC.T12.Resumed_Master_Secret := (others => 0);
-      HC.T12.Client_Authed := False;
-      HC.EMS_Session_Hash := (others => 0);
-      HC.PSK.Value := (others => 0);
-      HC.PSK.Binder := (others => 0);
-      HC.PSK.Offer_ID := (others => 0);
-      HC.PSK.Offer_ID_Len := 0;
-      HC.PSK.Offer_Age := 0;
-      HC.PSK.Age_Fresh := False;
-      HC.Client_Random := (others => 0);
-      HC.Server_Random := (others => 0);
-   end Scrub_Handshake_Context;
 
    procedure Advance_Server_Non_Handshake
      (S : in out Session; Result : out Action; Handled : out Boolean)
@@ -222,12 +198,9 @@ is
                --  Both directions are closed: our close_notify is sent
                --  and the peer's has arrived. THIS -- not our own send
                --  buffer draining -- is what completes a TLS close.
-               --  Zero the traffic keys here, where the connection is
-               --  genuinely finished.
-               S.Server_App.Key := (others => 0);
-               S.Server_App.IV := (others => 0);
-               S.Client_App.Key := (others => 0);
-               S.Client_App.IV := (others => 0);
+               --  Zero the connection's key material here, where the
+               --  connection is genuinely finished.
+               Sanitize_Keys (S);
                Set_State (S, Closed);
                Result := Shutdown;
             else
@@ -258,10 +231,8 @@ is
             if Output_Pending (S) > 0 then
                Result := Has_Output;
             else
-               S.Server_App.Key := (others => 0);
-               S.Server_App.IV := (others => 0);
-               S.Client_App.Key := (others => 0);
-               S.Client_App.IV := (others => 0);
+               Sanitize_Keys (S);
+               Scrub_Ticket_Secrets (S);
                Set_State (S, Closed);
                Result := Error_Alert;
             end if;
@@ -339,6 +310,12 @@ is
          if S.State in Connected | Error_State | Closed then
             S.Peer_Cert_Valid := SPARKTLS.HS_Pool.Slots (Slot).Peer_Leaf.Present;
             S.Use_EMS := S.HC.Use_EMS;
+            --  A handshake that failed leaves no connection behind:
+            --  zero its key material and ticket secrets as well.
+            if S.State = Error_State then
+               Sanitize_Keys (S);
+               Scrub_Ticket_Secrets (S);
+            end if;
             --  Zero ALL key material, then free the slot (Release wipes
             --  the data-plane).
             Scrub_Handshake_Context (S.HC);

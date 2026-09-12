@@ -225,6 +225,75 @@ procedure Test_Revocation is
       end if;
    end Store_Case;
 
+   --  The policy layer the TLS client runs: Evaluate over a chain
+   --  leaf -> intermediate(s) -> root, with a CRL store. Ints/Roots hold
+   --  one certificate each (the fixture chain sub_leaf -> sub -> ca).
+   procedure Eval_Case
+     (Name      : String;
+      Policy    : SPARKTLS.Revocation_Policy;
+      Leaf_File : String;
+      Int_File  : String;           --  "" = leaf issued by the root
+      CRL_A     : String;
+      CRL_B     : String;           --  "" = only CRL_A
+      Expect    : Decision)
+   is
+      use type SPARKTLS.Revocation_Policy;
+      function Entry_Of (File : String) return SPARKTLS.Pool_Entry is
+         DER  : constant X509.Byte_Seq := Load (File);
+         Cert : X509.Certificate;
+         OK   : Boolean;
+         E    : SPARKTLS.Pool_Entry;
+      begin
+         X509.Parse (DER, Cert, OK);
+         Check (Name & ": " & File & " parses", OK);
+         E.DER (0 .. DER'Last) := DER;
+         E.DER_Len := DER'Length;
+         E.Cert := Cert;
+         E.Present := True;
+         return E;
+      end Entry_Of;
+      Leaf      : constant SPARKTLS.Pool_Entry := Entry_Of (Leaf_File);
+      Ints      : SPARKTLS.Cert_Pool := (others => <>);
+      Int_Count : Natural := 0;
+      Roots     : SPARKTLS.Root_Pool := (others => <>);
+      Store     : aliased SPARKTLS.CRL_Store;
+      No_Staple : constant X509.Byte_Seq (0 .. SPARKTLS.Max_OCSP_Response - 1) := (others => 0);
+      OK        : Boolean;
+      V         : Decision;
+   begin
+      Roots (0) := Entry_Of ("ca.der");
+      if Int_File /= "" then
+         Ints (0) := Entry_Of (Int_File);
+         Int_Count := 1;
+      end if;
+      if CRL_A /= "" then
+         Add_CRL (Store, new X509.Byte_Seq'(Load (CRL_A)), OK);
+         Check (Name & ": " & CRL_A & " loads", OK);
+      end if;
+      if CRL_B /= "" then
+         Add_CRL (Store, new X509.Byte_Seq'(Load (CRL_B)), OK);
+         Check (Name & ": " & CRL_B & " loads", OK);
+      end if;
+      Evaluate
+        (Policy          => Policy,
+         Staple_Asked    => False,
+         Allow_SHA1      => True,
+         Skew_Seconds    => Skew,
+         CRLs            => Store'Unchecked_Access,
+         Now             => Now,
+         Leaf_DER        => Leaf.DER (0 .. Leaf.DER_Len - 1),
+         Leaf            => Leaf.Cert,
+         Ints            => Ints,
+         Int_Count       => Int_Count,
+         Roots           => Roots,
+         Root_Count      => 1,
+         Stapled         => No_Staple,
+         Stapled_Len     => 0,
+         Stapled_Too_Big => False,
+         Verdict         => V);
+      Check (Name & " => " & Expect'Image & " (got " & V'Image & ")", V = Expect);
+   end Eval_Case;
+
    procedure Time_Cases is
       use type Interfaces.Unsigned_64;
    begin
@@ -285,6 +354,29 @@ begin
                "crl_shard1.der", "crl_shard2.der", Rev_Revoked);
    Store_Case ("shard: store [shard2 only], leaf1 => no evidence", "shard1.der",
                "crl_shard2.der", "", Rev_Insufficient);
+
+   --  Evaluate: the whole path below the trust anchor is checked.
+   --  Chain: sub_leaf -> sub (intermediate) -> ca (root).
+   --  crl_sub_empty.der: sub's CRL, lists nothing (the leaf is good).
+   --  crl_root_sub_revoked.der: the root's CRL, lists sub.
+   --  crl.der: the root's earlier CRL, sub not listed (sub is good).
+   Eval_Case ("eval: revoked intermediate, Hard_Fail", Hard_Fail, "sub_leaf.der", "sub.der",
+              "crl_sub_empty.der", "crl_root_sub_revoked.der", Fail_Revoked);
+   Eval_Case ("eval: revoked intermediate, Soft_Fail", Soft_Fail, "sub_leaf.der", "sub.der",
+              "crl_sub_empty.der", "crl_root_sub_revoked.der", Fail_Revoked);
+   Eval_Case ("eval: revoked intermediate, Ignore",    Ignore,    "sub_leaf.der", "sub.der",
+              "crl_sub_empty.der", "crl_root_sub_revoked.der", Proceed);
+   Eval_Case ("eval: good leaf + good intermediate, Hard_Fail", Hard_Fail, "sub_leaf.der", "sub.der",
+              "crl_sub_empty.der", "crl.der", Proceed);
+   Eval_Case ("eval: no CRL for the intermediate, Hard_Fail", Hard_Fail, "sub_leaf.der", "sub.der",
+              "crl_sub_empty.der", "", Fail_No_Evidence);
+   Eval_Case ("eval: no CRL for the intermediate, Soft_Fail", Soft_Fail, "sub_leaf.der", "sub.der",
+              "crl_sub_empty.der", "", Proceed);
+   Eval_Case ("eval: no CRL for the leaf, Hard_Fail", Hard_Fail, "sub_leaf.der", "sub.der",
+              "crl.der", "", Fail_No_Evidence);
+   --  Leaf directly under the root: the pre-existing path, unchanged.
+   Eval_Case ("eval: root-issued good leaf, Hard_Fail",    Hard_Fail, "good.der",    "", "crl.der", "", Proceed);
+   Eval_Case ("eval: root-issued revoked leaf, Soft_Fail", Soft_Fail, "revoked.der", "", "crl.der", "", Fail_Revoked);
 
    Put_Line ("Revocation:" & Pass'Image & " passed," & Fail'Image & " failed");
 end Test_Revocation;

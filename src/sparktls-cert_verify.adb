@@ -639,6 +639,13 @@ is
    --  Validate one link in the chain
    ----------------------------------------------------------------------------
 
+   --  Validation_Purpose as the X509 EKU check wants it.
+   function EKU_Purpose_Of (P : Validation_Purpose) return X509.EKU_Purpose is
+     (case P is
+        when Purpose_Server => X509.EKU_Server_Auth,
+        when Purpose_Client => X509.EKU_Client_Auth,
+        when Purpose_Any    => X509.EKU_Any_Purpose);
+
    function Validate_Link
      (Cert_DER         : X509.Byte_Seq;
       Cert             : X509.Certificate;
@@ -647,7 +654,8 @@ is
       Now              : X509.Date_Time;
       Must_Be_CA       : Boolean;
       CAs_Below_Issuer : Natural;
-      Mode             : Validation_Mode := Mode_WebPKI) return Validation_Result is
+      Mode             : Validation_Mode := Mode_WebPKI;
+      Purpose          : Validation_Purpose := Purpose_Any) return Validation_Result is
    begin
       --  1. Full structural validation (parse, dates, extensions, encoding).
       if not X509.Is_Structurally_Valid (Cert, Now) then
@@ -682,8 +690,8 @@ is
          return Err_Signature_Invalid;
       end if;
 
-      --  6. Issuer EKU must allow signing (if present)
-      if not X509.Issuer_EKU_Allows_Signing (Issuer) then
+      --  6. Issuer EKU must allow signing for this purpose (if present)
+      if not X509.Issuer_EKU_Allows_Signing (Issuer, EKU_Purpose_Of (Purpose)) then
          return Err_Forbidden_EKU;
       end if;
 
@@ -1311,7 +1319,8 @@ is
                           Now              => Now,
                           Must_Be_CA       => Depth > 0,
                           CAs_Below_Issuer => PL_Depth,
-                          Mode             => Mode);
+                          Mode             => Mode,
+                          Purpose          => Purpose);
                      if R = Valid
                        and then Below_Satisfies_NC
                                   (Roots (Ri).DER (0 .. Roots (Ri).DER_Len - 1),
@@ -1350,7 +1359,8 @@ is
                     Now              => Now,
                     Must_Be_CA       => Depth > 0,
                     CAs_Below_Issuer => PL_Depth,
-                    Mode             => Mode);
+                    Mode             => Mode,
+                    Purpose          => Purpose);
                if R = Valid
                  and then Below_Satisfies_NC
                             (Ints (Ii).DER (0 .. Ints (Ii).DER_Len - 1),

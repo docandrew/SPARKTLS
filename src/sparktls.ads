@@ -1346,14 +1346,21 @@ is
    ----------------------------------------------------------------------------
 
    --  Ignore:    no revocation processing at all (not even must-staple).
-   --  Soft_Fail: revoked => fail; no usable evidence => proceed (the
-   --             industry default -- responder outages and captive portals).
+   --  Soft_Fail: revoked => fail; no evidence => proceed (the industry
+   --             default -- responder outages and captive portals). An
+   --             attached CRL that is malformed (bad signature, unknown
+   --             critical extension, issuer without cRLSign) fails in
+   --             this mode too: it is the application's own store, a
+   --             misconfiguration to surface rather than evidence to
+   --             skip. A malformed staple, being peer-supplied, is
+   --             ignored here and only fails under Hard_Fail.
    --  Hard_Fail: revoked => fail; no usable evidence => fail.
-   --  SCOPE: evidence is evaluated for the LEAF certificate only. The
-   --  intermediates of the validated chain are not checked against the
-   --  supplied CRLs or the staple, so a revoked intermediate is not
-   --  detected by this policy. Deployments that need it should
-   --  check intermediates out of band via Config.Verify_Peer for now.
+   --  SCOPE: every certificate below the trust anchor is evaluated. The
+   --  leaf against the stapled response and then the CRLs; each
+   --  intermediate against the CRLs (a staple only speaks for the leaf).
+   --  Under Hard_Fail that means a chain with intermediates needs their
+   --  issuers' CRLs attached (Config.CRLs), or the handshake fails with
+   --  no evidence for them.
    --  A leaf carrying RFC 7633 TLS Feature status_request ("must-staple")
    --  fails without a stapled response under both Soft_Fail and Hard_Fail.
    type Revocation_Policy is (Ignore, Soft_Fail, Hard_Fail);
@@ -2858,10 +2865,18 @@ is
    --  Empty string if no ALPN or not yet negotiated.
    function Get_ALPN (S : Session) return String;
 
-   --  Zero all key material in a Session.
-   --  Call after Close_Notify or on error to prevent key leakage.
-   --  Uses volatile writes to prevent compiler from optimizing
-   --  the zeroing away.
+   --  Zero the connection's key material: application traffic keys, IVs
+   --  and counters, the application traffic secrets they are re-derived
+   --  from on KeyUpdate, the resumption master secret, the exporter
+   --  material and the TLS 1.2 implicit IVs. The library calls this
+   --  itself when a connection completes its close or enters
+   --  Error_State; applications may call it earlier. These are fields
+   --  of an in-out object, so the stores are not dead and the compiler
+   --  keeps them (stack copies of secrets go through SPARKNaCl.Sanitize
+   --  instead, which pins the store with an inspection point).
+   --  The resumption ticket (Get_Session_Ticket) is deliberately NOT
+   --  covered: applications and other processes read it after close.
+   --  See Scrub_Ticket_Secrets.
    procedure Sanitize_Keys (S : in out Session)
    with
      Post =>
@@ -2871,6 +2886,20 @@ is
        and Server_App (S).IV = Bytes_12'(others => 0)
        and Res_Master (S) = Bytes_48'(others => 0)
        and Exporter_Secret (S) = Bytes_48'(others => 0);
+
+   --  Zero the resumption secrets held for the application: the TLS 1.3
+   --  ticket PSK and the TLS 1.2 ticket master secret. Called by the
+   --  library on Error_State only -- a failed connection has nothing to
+   --  resume -- never on a clean close, where the application is entitled
+   --  to collect the ticket afterwards.
+   procedure Scrub_Ticket_Secrets (S : in out Session);
+
+   --  Zero every secret in a Handshake_Context: ECDHE private scalars and
+   --  shared secret, the handshake/master/resumption secrets, the
+   --  handshake traffic keys and IVs (both versions), PSK and binder
+   --  material, the peer's TLS 1.2 ticket, the transcript and the randoms.
+   --  Called by both engines right before the handshake slot is released.
+   procedure Scrub_Handshake_Context (HC : in out Handshake_Context);
 
    --  RFC 5705 / RFC 8446 7.5: derive application-specific exporter
    --  bytes from a completed TLS session. Label is an ASCII exporter label.

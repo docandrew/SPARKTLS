@@ -487,7 +487,7 @@ is
 
    procedure Sanitize_Keys (S : in out Session) is
    begin
-      --  Zero traffic keys (both directions)
+      --  Traffic keys (both directions), counters included
       S.Client_App.Key := (others => 0);
       S.Client_App.IV := (others => 0);
       S.Client_App.Counter := 0;
@@ -495,22 +495,78 @@ is
       S.Server_App.IV := (others => 0);
       S.Server_App.Counter := 0;
 
-      --  Zero resumption master secret
+      --  The traffic secrets the keys above are re-derived from on
+      --  KeyUpdate: strictly more valuable than the keys themselves.
+      S.Client_App_Secret := (others => 0);
+      S.Server_App_Secret := (others => 0);
+
+      --  Resumption master secret
       S.Res_Master := (others => 0);
       S.Res_Master_Len := 0;
 
-      --  Zero exporter material
+      --  Exporter material
       S.Exporter_Secret := (others => 0);
       S.Exporter_Secret_Len := 0;
       S.Exporter_Client_Random := (others => 0);
       S.Exporter_Server_Random := (others => 0);
 
-      --  Zero TLS 1.2 implicit IVs
+      --  TLS 1.2 implicit IVs
       S.Client_IV_12 := (others => 0);
       S.Server_IV_12 := (others => 0);
-      --  The channel counters are zeroed with the channels themselves
-      --  (Client_App / Server_App are sanitized above, Counter included).
    end Sanitize_Keys;
+
+   procedure Scrub_Ticket_Secrets (S : in out Session) is
+   begin
+      S.Ticket.PSK := (others => 0);
+      S.Ticket.Ticket := (others => 0);
+      S.Ticket.Valid := False;
+      S.TLS12_New_Ticket.Master_Secret := (others => 0);
+      S.TLS12_New_Ticket.Valid := False;
+   end Scrub_Ticket_Secrets;
+
+   procedure Scrub_Handshake_Context (HC : in out Handshake_Context) is
+   begin
+      --  Key exchange: private scalars and the shared secret
+      HC.KE.Shared := (others => 0);
+      HC.KE.Local_SK := (others => 0);
+      HC.KE.P256_SK := (others => 0);
+      HC.KE.P384_SK := (others => 0);
+      --  Key schedule
+      HC.Client_HS_Secret := (others => 0);
+      HC.Server_HS_Secret := (others => 0);
+      HC.Handshake_Secret := (others => 0);
+      HC.Master_Secret := (others => 0);
+      --  Handshake traffic keys and IVs (the pre-2026-09 scrub missed
+      --  these: the one category of live key material it skipped)
+      HC.Client_HS.Key := (others => 0);
+      HC.Client_HS.IV := (others => 0);
+      HC.Client_HS.Counter := 0;
+      HC.Server_HS.Key := (others => 0);
+      HC.Server_HS.IV := (others => 0);
+      HC.Server_HS.Counter := 0;
+      --  TLS 1.2
+      HC.Master_Secret_12 := (others => 0);
+      HC.Client_Write_IV_12 := (others => 0);
+      HC.Server_Write_IV_12 := (others => 0);
+      HC.T12.Resumed_Master_Secret := (others => 0);
+      HC.T12.Peer_Ticket := (others => 0);
+      HC.T12.Peer_Ticket_Len := 0;
+      HC.T12.Client_Authed := False;
+      HC.EMS_Session_Hash := (others => 0);
+      --  PSK / binder
+      HC.PSK.Value := (others => 0);
+      HC.PSK.Binder := (others => 0);
+      HC.PSK.Binder_Hash_256 := (others => 0);
+      HC.PSK.Binder_Hash_384 := (others => 0);
+      HC.PSK.Offer_ID := (others => 0);
+      HC.PSK.Offer_ID_Len := 0;
+      HC.PSK.Offer_Age := 0;
+      HC.PSK.Age_Fresh := False;
+      --  Transcript (plaintext handshake) and randoms
+      SPARKTLS_Transcript.Wipe (HC.TS);
+      HC.Client_Random := (others => 0);
+      HC.Server_Random := (others => 0);
+   end Scrub_Handshake_Context;
 
    ----------------------------------------------------------------------------
    --  RFC 8446 4.2 extension policy table
