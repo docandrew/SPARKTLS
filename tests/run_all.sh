@@ -360,6 +360,16 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # Peer alert description -> Error_Code mapping
+    if [ -f bin/tests/test_error_from_alert ]; then
+        output=$(bin/tests/test_error_from_alert 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_error_from_alert: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # TLS 1.3 PSK resumption wiring (mirror existing pattern)
     if [ -f bin/tests/test_psk_resume ]; then
         output=$(bin/tests/test_psk_resume 2>&1 || true)

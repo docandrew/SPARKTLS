@@ -875,6 +875,13 @@ is
       Len  : Hostname_Length := 0;
    end record;
 
+   --  Case-insensitive (ASCII) hostname equality on the used prefix. Both
+   --  clients gate resumption on it: a ticket is used only for the name it
+   --  was issued under (RFC 6066 3; RFC 8446 4.6.1), TLS 1.3 subject to the
+   --  ticket's resumption_across_names flag, TLS 1.2 unconditionally.
+   function Same_Hostname (Left, Right : Hostname_Buf) return Boolean
+   with Post => (if Same_Hostname'Result then Left.Len = Right.Len);
+
    Max_Config_ALPN_Protocols : constant := 8;
    subtype ALPN_Index is Natural range 1 .. Max_Config_ALPN_Protocols;
    type ALPN_Protocol_List is array (ALPN_Index) of Hostname_Buf;
@@ -1345,8 +1352,7 @@ is
    --  SCOPE: evidence is evaluated for the LEAF certificate only. The
    --  intermediates of the validated chain are not checked against the
    --  supplied CRLs or the staple, so a revoked intermediate is not
-   --  detected by this policy (tracked as SR-10 in
-   --  SECURITY_BURNDOWN_2026_09.md). Deployments that need it should
+   --  detected by this policy. Deployments that need it should
    --  check intermediates out of band via Config.Verify_Peer for now.
    --  A leaf carrying RFC 7633 TLS Feature status_request ("must-staple")
    --  fails without a stapled response under both Soft_Fail and Hard_Fail.
@@ -1898,7 +1904,7 @@ is
       Server_Echoed_SID     : Boolean := False;
       Resuming              : Boolean := False;
       Ticket_Offered        : Boolean := False;
-      --  SR-04: the peer proved possession of a validated client cert in
+      --  The peer proved possession of a validated client cert in
       --  THIS handshake (set after CertificateVerify succeeds), or the
       --  session was resumed from a ticket that says so. Sealed into every
       --  TLS 1.2 ticket we issue so an mTLS-required listener can refuse
@@ -1940,7 +1946,7 @@ is
    --  Hash output length (== resumption PSK length) for a cipher suite.
    --  32 for the SHA-256 suites, 48 for AES-256-GCM-SHA384. Used by the
    --  client's ServerHello check to reject a PSK selection whose suite
-   --  hash does not match the offered ticket (RFC 8446 4.2.11, SR-01):
+   --  hash does not match the offered ticket (RFC 8446 4.2.11):
    --  a resumption ticket is bound to exactly one hash, and accepting a
    --  mismatched suite would collapse the PSK to all-zeros while skipping
    --  certificate verification. Exposed so the decision is unit-testable.
@@ -2085,6 +2091,12 @@ is
       --  match our policy, the server MUST reply with
       --  protocol_version. BoGo NoSupportedVersions.
       SV_Has_Acceptable      : Boolean := False;
+      --  RFC 8446 4.2.1: supported_versions listed 0x0303. A TLS_1_2_Only
+      --  server may answer a 1.3 offer with TLS 1.2 only when this is set;
+      --  negotiating a version the client never listed is a MUST NOT
+      -- . Legacy clients without the extension never set it and
+      --  take the legacy_version path instead.
+      SV_Has_TLS_1_2         : Boolean := False;
 
       --  TLS 1.2: ClientKeyExchange already received
       CKE_Received_12 : Boolean := False;

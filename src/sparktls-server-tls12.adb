@@ -260,7 +260,7 @@ is
                  | Suite_ECDHE_ECDSA_CHACHA20_SHA256
               and then Plain.Suite = Wire_Of (S.Negotiated_Suite)
             then
-               --  SR-04 / RFC 7627 5.3: the original session used the
+               --  RFC 7627 5.3: the original session used the
                --  extended master secret but this ClientHello does not
                --  offer it. The client has dropped EMS between sessions;
                --  the server MUST abort rather than resume or downgrade.
@@ -272,12 +272,12 @@ is
                --  Resume only when EMS state is unchanged (a client that
                --  newly offers EMS gets a full handshake, RFC 7627 5.3) and,
                --  when this listener requires client auth, the ticket says
-               --  the original session was client-authenticated (SR-04):
+               --  the original session was client-authenticated:
                --  an abbreviated handshake skips CertificateRequest, so an
                --  unauthenticated ticket would otherwise admit the peer.
                --  Anything else falls through to a full handshake, which
                --  RFC 5077 3.4 permits and which will request the cert.
-               --  SR-03 / RFC 6066 3: "A server ... MUST NOT accept the request
+               --  RFC 6066 3: "A server ... MUST NOT accept the request
                --  to resume the session if the server_name extension contains
                --  a different name. Instead, it proceeds with a full
                --  handshake." Compare the sealed SNI hash with this
@@ -899,12 +899,12 @@ is
       Plain.Secret_Len := 48;
       Plain.Kind := SPARKTLS.Tickets.Kind_TLS12;
       Plain.Suite := Wire_Of (S.Negotiated_Suite);
-      --  SR-04: seal the session's EMS state and client-auth status. On the
+      --  Seal the session's EMS state and client-auth status. On the
       --  abbreviated path both were carried in from the ticket we resumed
       --  (the gate only resumes when EMS matches the new ClientHello).
       Plain.EMS := S.HC.Use_EMS;
       Plain.Client_Auth := S.HC.T12.Client_Authed;
-      --  SR-03: bind the SNI (RFC 6066 3). TLS 1.2 never resumes across
+      --  Bind the SNI (RFC 6066 3). TLS 1.2 never resumes across
       --  names, so Across_Names stays False; Age_Add is a 1.3 concept.
       SPARKTLS.Tickets.Hash_Server_Name (S.HC.Peer_SNI, Plain.SNI_Hash);
 
@@ -1521,7 +1521,8 @@ is
             Result := Shutdown;
          end if;
       else
-         S.Last_Error := Unexpected_Message;
+         --  Peer's alert: report its description.
+         S.Last_Error := Error_From_Alert (Alert_Desc);
          Set_State (S, Error_State);
          Result := Error_Alert;
       end if;
@@ -2194,7 +2195,7 @@ is
                return;
             end if;
 
-            --  SR-04: signature verified AND cert validated -- the peer is
+            --  Signature verified AND cert validated -- the peer is
             --  authenticated for this session. Recorded here (not at
             --  Certificate time, which only proves the chain parsed) so the
             --  ticket we issue after Finished carries the truth.
@@ -2387,11 +2388,11 @@ is
             Plain.Secret_Len := 48;
             Plain.Kind := SPARKTLS.Tickets.Kind_TLS12;
             Plain.Suite := Wire_Of (S.Negotiated_Suite);
-            --  SR-04: seal EMS state and whether the client authenticated
+            --  Seal EMS state and whether the client authenticated
             --  (CertificateVerify + validation) in this full handshake.
             Plain.EMS := S.HC.Use_EMS;
             Plain.Client_Auth := S.HC.T12.Client_Authed;
-            --  SR-03: bind the SNI this ticket is issued under (RFC 6066 3).
+            --  Bind the SNI this ticket is issued under (RFC 6066 3).
             SPARKTLS.Tickets.Hash_Server_Name (S.HC.Peer_SNI, Plain.SNI_Hash);
             Plain.Created_At :=
               (if S.HC.Cfg.Get_Time /= null
@@ -2921,20 +2922,23 @@ is
                      --  warning level (1) before tearing the
                      --  connection down. Without this TLS-Anvil's
                      --  closeNotify test sees a level-2 alert from us.
-                     declare
-                        A : N32;
-                     begin
-                        Abort_Flight (S);
-                        Records.TLS12.Build_Alert_Record_12
-                          (Level       => 1,
-                           Desc        => 0,
-                           Keys        => S.Server_App,
-                           Implicit_IV => S.Server_IV_12,
-                           Output      => S.Output,
-                           Bytes_Out   => A);
-                        pragma Assert (A <= N32 (S.Output.Storage'Length));
-                     end;
+                     --  Reply only from Connected: in Closing ours is
+                     --  already on the wire and this is the peer's answer
+                     --  to it (same as the TLS 1.3 engines).
                      if S.State = Connected then
+                        declare
+                           A : N32;
+                        begin
+                           Abort_Flight (S);
+                           Records.TLS12.Build_Alert_Record_12
+                             (Level       => 1,
+                              Desc        => 0,
+                              Keys        => S.Server_App,
+                              Implicit_IV => S.Server_IV_12,
+                              Output      => S.Output,
+                              Bytes_Out   => A);
+                           pragma Assert (A <= N32 (S.Output.Storage'Length));
+                        end;
                         Set_State (S, Closing);
                      end if;
                      if Output_Pending (S) > 0 then
@@ -2943,7 +2947,9 @@ is
                         Result := Shutdown;
                      end if;
                   else
-                     S.Last_Error := Unexpected_Message;
+                     --  Peer's fatal alert: report its description.
+                     S.Last_Error :=
+                       (if PL >= 2 then Error_From_Alert (Plaintext (1)) else Unexpected_Message);
                      Set_State (S, Error_State);
                      Result := Error_Alert;
                   end if;

@@ -987,7 +987,13 @@ is
       subtype TLS12_Ticket_Data_Len_Range is N32 range 0 .. Max_TLS12_Ticket_Len;
 
       TLS12_Ticket_Data_Len : constant TLS12_Ticket_Data_Len_Range :=
-        (if Offer_TLS12_Ticket and then HC.Cfg.TLS12_Resume_Ticket.Valid
+        (if Offer_TLS12_Ticket
+           and then HC.Cfg.TLS12_Resume_Ticket.Valid
+           --  RFC 6066 3: offer the stored ticket only for the host it
+           --  was issued under (the server MUST NOT resume under a different
+           --  name, so offering it would waste the ticket and leak that we hold
+           --  one for another host). Same_Hostname is the 1.3 client's gate too.
+           and then Same_Hostname (HC.Cfg.TLS12_Resume_Ticket.Server_Name, HC.Cfg.Server_Name)
          then HC.Cfg.TLS12_Resume_Ticket.Ticket_Len
          else 0);
       TLS12_Ticket_Ext_Len  : constant N32 :=
@@ -2687,7 +2693,7 @@ is
       --  otherwise Derive_Handshake_Keys would fall back to an all-zero PSK
       --  while Using_PSK stays set, completing the handshake with no
       --  Certificate/CertificateVerify and a public early secret -- full
-      --  server impersonation against any client holding a ticket (SR-01).
+      --  server impersonation against any client holding a ticket.
       --  The HRR offer path already enforces the same rule when it rebuilds
       --  CH2 (see Append_PSK_Extension's Needed_PSK_Len); this is the
       --  initial-ServerHello arm that was missing.

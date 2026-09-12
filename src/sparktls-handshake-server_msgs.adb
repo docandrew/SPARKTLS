@@ -504,6 +504,7 @@ is
             HC.SV_Has_Acceptable := True;
          elsif N32 (Data (Off)) = 3 and then N32 (Data (Off + 1)) = 3 then
             HC.SV_Has_Acceptable := True;
+            HC.SV_Has_TLS_1_2 := True;
          end if;
       end Check_At;
    begin

@@ -259,7 +259,7 @@ begin
       Check ("CH does not contain early_data ext (0x002A)", No_ED);
    end;
 
-   --  SR-01 regression: the ServerHello PSK-hash-match decision.
+   --  Regression: the ServerHello PSK-hash-match decision.
    --  A resumption ticket is bound to a single hash (PSK_Len 32 for the
    --  SHA-256 suites, 48 for AES-256-GCM-SHA384). RFC 8446 4.2.11 requires
    --  the client to reject a ServerHello that accepts the PSK but selects a
@@ -267,25 +267,52 @@ begin
    --  check were dropped, the key schedule would substitute an all-zero PSK
    --  while skipping certificate verification -- full server impersonation.
    --  This locks in the suite<->hash mapping and the mismatch decision.
-   Check ("SR-01: Suite_Hash_Len AES-256-GCM-SHA384 = 48",
+   Check ("Suite_Hash_Len AES-256-GCM-SHA384 = 48",
           SPARKTLS.Suite_Hash_Len (SPARKTLS.Suite_AES_256_GCM_SHA384) = 48);
-   Check ("SR-01: Suite_Hash_Len AES-128-GCM-SHA256 = 32",
+   Check ("Suite_Hash_Len AES-128-GCM-SHA256 = 32",
           SPARKTLS.Suite_Hash_Len (SPARKTLS.Suite_AES_128_GCM_SHA256) = 32);
-   Check ("SR-01: Suite_Hash_Len CHACHA20-POLY1305-SHA256 = 32",
+   Check ("Suite_Hash_Len CHACHA20-POLY1305-SHA256 = 32",
           SPARKTLS.Suite_Hash_Len (SPARKTLS.Suite_CHACHA20_POLY1305_SHA256) = 32);
    --  A SHA-256 (32-byte) ticket against a SHA-384 suite is a mismatch:
-   --  the exact SR-01 case -- the client MUST reject (Check_SH returns
+   --  the exact case -- the client MUST reject (Check_SH returns
    --  illegal_parameter before deriving keys).
-   Check ("SR-01: SHA-256 ticket vs SHA-384 suite is a mismatch (reject)",
+   Check ("SHA-256 ticket vs SHA-384 suite is a mismatch (reject)",
           Make_Ticket.PSK_Len /=
             SPARKTLS.Suite_Hash_Len (SPARKTLS.Suite_AES_256_GCM_SHA384));
    --  The matching cases must NOT be flagged.
-   Check ("SR-01: SHA-256 ticket vs SHA-256 suite matches (accept)",
+   Check ("SHA-256 ticket vs SHA-256 suite matches (accept)",
           Make_Ticket.PSK_Len =
             SPARKTLS.Suite_Hash_Len (SPARKTLS.Suite_AES_128_GCM_SHA256));
-   Check ("SR-01: SHA-256 ticket vs ChaCha20 suite matches (accept)",
+   Check ("SHA-256 ticket vs ChaCha20 suite matches (accept)",
           Make_Ticket.PSK_Len =
             SPARKTLS.Suite_Hash_Len (SPARKTLS.Suite_CHACHA20_POLY1305_SHA256));
+
+   --  Regression: the TLS 1.2 client now gates both the ticket offer
+   --  (Build_Client_Hello) and the Resuming decision on Same_Hostname, the
+   --  same predicate the TLS 1.3 client uses in Check_Resume_Ticket_Usable.
+   --  This locks in the predicate's semantics: ASCII case-insensitive
+   --  equality over the used prefix, never a prefix/suffix match, empty
+   --  equals empty (no SNI on either side is "the same name").
+   Check ("Same_Hostname identical",
+          SPARKTLS.Same_Hostname (SPARKTLS.To_Name ("example.com"),
+                                  SPARKTLS.To_Name ("example.com")));
+   Check ("Same_Hostname is ASCII case-insensitive",
+          SPARKTLS.Same_Hostname (SPARKTLS.To_Name ("Example.COM"),
+                                  SPARKTLS.To_Name ("example.com")));
+   Check ("Same_Hostname rejects a different host",
+          not SPARKTLS.Same_Hostname (SPARKTLS.To_Name ("example.com"),
+                                      SPARKTLS.To_Name ("example.org")));
+   Check ("Same_Hostname rejects a prefix (no partial match)",
+          not SPARKTLS.Same_Hostname (SPARKTLS.To_Name ("example.com"),
+                                      SPARKTLS.To_Name ("example.com.evil")));
+   Check ("Same_Hostname rejects a sub-label",
+          not SPARKTLS.Same_Hostname (SPARKTLS.To_Name ("www.example.com"),
+                                      SPARKTLS.To_Name ("example.com")));
+   Check ("Same_Hostname empty = empty (no SNI on either side)",
+          SPARKTLS.Same_Hostname (SPARKTLS.To_Name (""), SPARKTLS.To_Name ("")));
+   Check ("Same_Hostname empty /= named",
+          not SPARKTLS.Same_Hostname (SPARKTLS.To_Name (""),
+                                      SPARKTLS.To_Name ("example.com")));
 
    Put_Line ("");
    Put_Line ("=== Total:" & Total'Image &

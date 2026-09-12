@@ -19,7 +19,7 @@
 --    ticket resumes only under the name it was issued for.
 --
 --  The Kind tag, checked on Decrypt, stops a ticket sealed for one TLS
---  version being replayed against the other (SR-04). The secret is the
+--  version being replayed against the other. The secret is the
 --  TLS 1.2 master_secret (always 48 bytes) or the TLS 1.3 resumption
 --  PSK (32 or 48 bytes per the suite hash); secret_len says how many of
 --  the 48 bytes are meaningful.
@@ -62,7 +62,7 @@ is
    Max_Ticket_Wire_Len : constant := 256;
 
    --  TLS version a ticket was sealed for. Checked on Decrypt so a
-   --  1.2 ticket can't resume a 1.3 session or vice versa (SR-04).
+   --  1.2 ticket can't resume a 1.3 session or vice versa.
    type Ticket_Kind is (Kind_TLS12, Kind_TLS13);
 
    --  Decoded ticket plaintext.
@@ -72,9 +72,9 @@ is
       Suite       : Unsigned_16 := 0;
       Created_At  : Unsigned_64 := 0;            --  seconds since epoch
       Kind        : Ticket_Kind := Kind_TLS12;
-      Client_Auth : Boolean := False;            --  SR-03: peer was mTLS-authed
+      Client_Auth : Boolean := False;            --  peer was mTLS-authed
       EMS         : Boolean := False;            --  extended master secret (1.2)
-      --  SR-03 residuals: SNI binding (RFC 6066 3 / RFC 8446 4.6.1) and the
+      --  SNI binding (RFC 6066 3 / RFC 8446 4.6.1) and the
       --  ticket_age_add needed for the RFC 8446 4.2.11 age check.
       Across_Names : Boolean := False;           --  may resume under another SNI
       Age_Add      : Unsigned_32 := 0;           --  NST ticket_age_add (1.3)

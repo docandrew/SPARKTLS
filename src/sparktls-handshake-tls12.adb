@@ -793,6 +793,20 @@ is
             pragma Assert (Alg_Value <= RFLX.RFLX_Types.Base_Integer (Unsigned_16'Last));
             Sig_Scheme := Scheme_From_Wire (Unsigned_16 (Alg_Value));
 
+            --  RFC 5246 7.4.3: the pair MUST be one the client listed in
+            --  signature_algorithms. The TLS 1.3 CertificateVerify path
+            --  already checks Cfg.Verify_Sig_Algos; mirror it here
+            --  so a disabled algorithm cannot authenticate the ECDHE params.
+            if HC.Cfg.Verify_Sig_Algo_Count > 0
+              and then not Sig_Scheme_In_List
+                             (Sig_Scheme, HC.Cfg.Verify_Sig_Algos, HC.Cfg.Verify_Sig_Algo_Count)
+            then
+               HC.Ext_Parse_Err := Illegal_Parameter;
+               SKE.Take_Buffer (Ctx, Buf);
+               SPARKTLS.RFLX_Borrow.Discard (Buf);
+               return;
+            end if;
+
             Sig_Input (0 .. 31) := Byte_Seq (HC.Client_Random);
             Sig_Input (32 .. 63) := Byte_Seq (HC.Server_Random);
             --  params is the first Params_Len bytes of the input
