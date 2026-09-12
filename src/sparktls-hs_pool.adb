@@ -30,6 +30,10 @@ is
       Slots (Slot).Stapled_OCSP := (others => 0);
       Slots (Slot).Stapled_OCSP_Len := 0;
       Slots (Slot).Stapled_Too_Big := False;
+      --  The RecordFlux arena held the handshake messages of this
+      --  connection (key shares, certificates, ...). The slot is reused
+      --  by the next connection: clear it, as the header promises.
+      Slots (Slot).Arena_Storage := (others => 0);
       In_Use (Slot) := False;
    end Release;
 

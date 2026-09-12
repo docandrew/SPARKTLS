@@ -200,7 +200,12 @@ is
    --  chain has been validated. Stapled (0 .. Stapled_Len - 1) is the
    --  stapled OCSPResponse DER (Stapled_Len = 0: none); Stapled_Too_Big
    --  says the server stapled something over the size cap. Evidence
-   --  precedence: stapled OCSP, then CRLs.
+   --  precedence: stapled OCSP, then CRLs. Every certificate below the
+   --  trust anchor is evaluated: the leaf against the staple and then the
+   --  CRLs, each intermediate (found by Find_Issuer from the leaf up)
+   --  against the CRLs. Under Hard_Fail every one of them needs a verdict,
+   --  so a chain with intermediates needs their CRLs attached; a staple
+   --  alone only ever speaks for the leaf.
    procedure Evaluate
      (Policy        : in     Revocation_Policy;
       Staple_Asked  : in     Boolean;

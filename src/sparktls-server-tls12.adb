@@ -249,6 +249,11 @@ is
                   Plain       => Plain,
                   Status      => OK);
             end if;
+            --  The ticket key has done its work; the ring keeps the
+            --  live copy.
+            pragma Warnings (GNATProve, Off, "statement has no effect");
+            Sanitize (TEK);
+            pragma Warnings (GNATProve, On, "statement has no effect");
             if OK
               and then
                 S.Negotiated_Suite
@@ -265,6 +270,9 @@ is
                --  offer it. The client has dropped EMS between sessions;
                --  the server MUST abort rather than resume or downgrade.
                if Plain.EMS and then not S.HC.Use_EMS then
+                  pragma Warnings (GNATProve, Off, "statement has no effect");
+                  Sanitize (Plain.Secret);
+                  pragma Warnings (GNATProve, On, "statement has no effect");
                   Send_Alert_And_Error (S, Handshake_Failure, Result);
                   return;
                end if;
@@ -294,6 +302,9 @@ is
                   --  and carry the authenticated status into the ticket we
                   --  re-issue on this flight.
                   S.HC.Master_Secret_12 := Plain.Secret;
+                  pragma Warnings (GNATProve, Off, "statement has no effect");
+                  Sanitize (Plain.Secret);
+                  pragma Warnings (GNATProve, On, "statement has no effect");
                   S.Negotiated_Suite := To_Suite (Plain.Suite);
                   S.HC.T12.Resuming := True;
                   S.HC.T12.Client_Authed := Plain.Client_Auth;
@@ -302,6 +313,10 @@ is
                end if;
                end;
             end if;
+            --  Declined: the stack copy of the sealed secret goes.
+            pragma Warnings (GNATProve, Off, "statement has no effect");
+            Sanitize (Plain.Secret);
+            pragma Warnings (GNATProve, On, "statement has no effect");
          end;
       end if;
 
@@ -923,6 +938,10 @@ is
          Nonce      => SPARKTLS.Tickets.Bytes_12 (Nonce_Buf),
          Ticket     => Ticket_Buf,
          Ticket_Len => Ticket_Len);
+      --  Sealed; the plaintext copy of the master secret goes.
+      pragma Warnings (GNATProve, Off, "statement has no effect");
+      Sanitize (Plain.Secret);
+      pragma Warnings (GNATProve, On, "statement has no effect");
 
       SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12
         (Lifetime_Hint => Cfg.TLS12_Ticket_Lifetime,
@@ -1043,6 +1062,9 @@ is
             SPARKTLS.Tickets.Bytes_4 (Active_Key_ID),
             SPARKTLS.Tickets.Bytes_32 (Active_TEK),
             NST_OK);
+         pragma Warnings (GNATProve, Off, "statement has no effect");
+         Sanitize (Active_TEK);
+         pragma Warnings (GNATProve, On, "statement has no effect");
 
          if not NST_OK then
             Send_Alert_And_Error (S, Insufficient_Buffer, Result);
@@ -2408,6 +2430,11 @@ is
                Nonce      => SPARKTLS.Tickets.Bytes_12 (Nonce_Buf),
                Ticket     => Ticket_Buf,
                Ticket_Len => Ticket_Len);
+            --  Sealed; the key and the plaintext master secret go.
+            pragma Warnings (GNATProve, Off, "statement has no effect");
+            Sanitize (TEK_Buf);
+            Sanitize (Plain.Secret);
+            pragma Warnings (GNATProve, On, "statement has no effect");
 
             --  Build NewSessionTicket handshake message via RFLX.
             SPARKTLS.Handshake.TLS12.Build_New_Session_Ticket_12

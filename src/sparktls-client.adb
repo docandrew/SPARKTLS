@@ -1000,30 +1000,6 @@ is
             Result := Error_Alert;
       end case;
    end Advance_Handshake;
-   procedure Scrub_Handshake_Context (HC : in out Handshake_Context) is
-   begin
-      HC.KE.Shared := (others => 0);
-      HC.Client_HS_Secret := (others => 0);
-      HC.Server_HS_Secret := (others => 0);
-      HC.Handshake_Secret := (others => 0);
-      HC.Master_Secret := (others => 0);
-      HC.Master_Secret_12 := (others => 0);
-      HC.KE.Local_SK := (others => 0);
-      HC.KE.P256_SK := (others => 0);
-      HC.KE.P384_SK := (others => 0);
-      SPARKTLS_Transcript.Wipe (HC.TS);
-      HC.T12.Resumed_Master_Secret := (others => 0);
-      HC.T12.Client_Authed := False;
-      HC.EMS_Session_Hash := (others => 0);
-      HC.PSK.Value := (others => 0);
-      HC.PSK.Binder := (others => 0);
-      HC.PSK.Offer_ID := (others => 0);
-      HC.PSK.Offer_ID_Len := 0;
-      HC.PSK.Offer_Age := 0;
-      HC.PSK.Age_Fresh := False;
-      HC.Client_Random := (others => 0);
-      HC.Server_Random := (others => 0);
-   end Scrub_Handshake_Context;
 
    procedure Advance_Client_Non_Handshake
      (S : in out Session; Result : out Action; Handled : out Boolean)
@@ -1100,12 +1076,10 @@ is
                --  Both directions are closed: our close_notify is sent
                --  and the peer's has arrived. THIS -- not our own send
                --  buffer draining -- is what completes a TLS close.
-               --  Zero the traffic keys here, where the connection is
-               --  genuinely finished.
-               S.Server_App.Key := (others => 0);
-               S.Server_App.IV := (others => 0);
-               S.Client_App.Key := (others => 0);
-               S.Client_App.IV := (others => 0);
+               --  Zero the connection's key material here, where the
+               --  connection is genuinely finished. The resumption
+               --  ticket stays for the application to collect.
+               Sanitize_Keys (S);
                Set_State (S, Closed);
                Result := Shutdown;
             else
@@ -1223,12 +1197,12 @@ is
                S.Use_EMS := S.HC.Use_EMS;
                --  Persist resumption flags out of HC before free.
                S.Resumed_From_PSK := S.HC.Using_PSK;
-               --  Zero traffic keys on error (Connected path keeps them)
+               --  Zero the key material on error (the Connected path
+               --  keeps it); a failed connection has nothing to resume,
+               --  so the ticket secrets go too.
                if S.State = Error_State then
-                  S.Server_App.Key := (others => 0);
-                  S.Server_App.IV := (others => 0);
-                  S.Client_App.Key := (others => 0);
-                  S.Client_App.IV := (others => 0);
+                  Sanitize_Keys (S);
+                  Scrub_Ticket_Secrets (S);
                end if;
                --  Zero ALL key material before freeing S.HC.
                --  This includes ephemeral keys (forward secrecy),

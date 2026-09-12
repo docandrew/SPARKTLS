@@ -358,64 +358,41 @@ procedure X509_Validate is
       end if;
    end Load_CRL;
 
-   --  Walk the validated path (leaf, then each issuer found among the
-   --  intermediates) and check every certificate against the CRLs.
+   --  Apply the library's revocation policy to the validated chain --
+   --  the same SPARKTLS.Revocation.Evaluate the TLS client runs, so the
+   --  PKITS 4.4.x revoked-intermediate cases exercise the real path.
    --  Returns True when nothing is revoked (and, in hard mode, every
    --  status was determined).
    function Path_Not_Revoked
      (Leaf_DER : X509.Byte_Seq; Leaf : X509.Certificate) return Boolean
    is
       use SPARKTLS.Revocation;
-      Cur_DER  : Cert_DER_Buf := (others => 0);
-      Cur_Len  : X509.N32 := Leaf_DER'Length;
-      Cur      : X509.Certificate := Leaf;
+      No_Staple : constant X509.Byte_Seq (0 .. SPARKTLS.Max_OCSP_Response - 1) :=
+        (others => 0);
+      V : Decision;
    begin
-      Cur_DER (0 .. Cur_Len - 1) := Leaf_DER;
-      for Depth in 0 .. Max_Pool_Size loop
-         declare
-            Found, In_Roots : Boolean;
-            Index           : Natural;
-            R               : Revocation_Result;
-         begin
-            Find_Issuer (Cur_DER (0 .. Cur_Len - 1), Cur, Ints, Int_Count,
-                         Roots.Roots, Roots.Root_Count, Found, In_Roots, Index);
-            if not Found then
-               return not CRL_Hard;
-            end if;
-            if In_Roots then
-               Check_CRLs (Cur_DER (0 .. Cur_Len - 1), Cur,
-                           Roots.Roots (Index).DER (0 .. Roots.Roots (Index).DER_Len - 1),
-                           Roots.Roots (Index).Cert, CRLs,
-                           Ints, Int_Count, Roots.Roots, Roots.Root_Count,
-                           Val_Time, 300, R);
-            else
-               Check_CRLs (Cur_DER (0 .. Cur_Len - 1), Cur,
-                           Ints (Index).DER (0 .. Ints (Index).DER_Len - 1),
-                           Ints (Index).Cert, CRLs,
-                           Ints, Int_Count, Roots.Roots, Roots.Root_Count,
-                           Val_Time, 300, R);
-            end if;
-            if Verbose then
-               Ada.Text_IO.Put_Line
-                 (Ada.Text_IO.Standard_Error,
-                  "revocation: depth" & Depth'Image & " issuer="
-                  & (if In_Roots then "root" else "int") & Index'Image
-                  & " -> " & R'Image);
-            end if;
-            case R is
-               when Rev_Revoked | Rev_Malformed => return False;
-               when Rev_Insufficient => if CRL_Hard then return False; end if;
-               when Rev_Ok => null;
-            end case;
-            exit when In_Roots;
-            --  Climb to the issuer (an intermediate)
-            Cur_Len := Ints (Index).DER_Len;
-            Cur_DER := (others => 0);
-            Cur_DER (0 .. Cur_Len - 1) := Ints (Index).DER (0 .. Cur_Len - 1);
-            Cur := Ints (Index).Cert;
-         end;
-      end loop;
-      return True;
+      Evaluate
+        (Policy          => (if CRL_Hard then SPARKTLS.Hard_Fail else SPARKTLS.Soft_Fail),
+         Staple_Asked    => False,
+         Allow_SHA1      => True,
+         Skew_Seconds    => 300,
+         CRLs            => CRLs'Unchecked_Access,
+         Now             => Val_Time,
+         Leaf_DER        => Leaf_DER,
+         Leaf            => Leaf,
+         Ints            => Ints,
+         Int_Count       => Int_Count,
+         Roots           => Roots.Roots,
+         Root_Count      => Roots.Root_Count,
+         Stapled         => No_Staple,
+         Stapled_Len     => 0,
+         Stapled_Too_Big => False,
+         Verdict         => V);
+      if Verbose then
+         Ada.Text_IO.Put_Line
+           (Ada.Text_IO.Standard_Error, "revocation: " & V'Image);
+      end if;
+      return V = Proceed;
    end Path_Not_Revoked;
 begin
    --  Initialize validation time from system clock

@@ -879,6 +879,11 @@ is
                   Expect_Kind => SPARKTLS.Tickets.Kind_TLS13,
                   Plain       => Plain,
                   Status      => Open_OK);
+               --  The ticket key has done its work; the ring keeps the
+               --  live copy.
+               pragma Warnings (GNATProve, Off, "statement has no effect");
+               Sanitize (TEK);
+               pragma Warnings (GNATProve, On, "statement has no effect");
                if Open_OK then
                   declare
                      Cur_SNI : SPARKTLS.Tickets.Bytes_32;
@@ -925,6 +930,11 @@ is
                   end;
                end if;
             end if;
+            --  The resumption secret now lives in PSK / S.HC (scrubbed
+            --  with the handshake context); drop the stack copy.
+            pragma Warnings (GNATProve, Off, "statement has no effect");
+            Sanitize (Plain.Secret);
+            pragma Warnings (GNATProve, On, "statement has no effect");
          end;
       end if;
 
@@ -2611,6 +2621,11 @@ is
                   Ticket     => Ticket,
                   Ticket_Len => Ticket_Len);
             end if;
+            --  Sealed: the stack copies of the key and the secret go.
+            pragma Warnings (GNATProve, Off, "statement has no effect");
+            Sanitize (TEK);
+            Sanitize (Plain.Secret);
+            pragma Warnings (GNATProve, On, "statement has no effect");
          end;
       end if;
    end Store_Resumption_Secrets;

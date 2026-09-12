@@ -1042,6 +1042,7 @@ is
          return;
       end if;
 
+      --  1. The leaf: stapled OCSP first, then CRLs.
       declare
          Issuer_DER_Len : constant X509.N32 :=
            (if In_Roots then Roots (Index).DER_Len else Ints (Index).DER_Len);
@@ -1050,8 +1051,10 @@ is
             else Ints (Index).DER (0 .. Issuer_DER_Len - 1));
          Issuer : constant X509.Certificate :=
            (if In_Roots then Roots (Index).Cert else Ints (Index).Cert);
+         --  A good staple settles the leaf; the CRLs are then only for
+         --  the intermediates.
+         Leaf_Settled : Boolean := False;
       begin
-         --  1. Stapled OCSP
          if Stapled_Too_Big then
             OCSP_R := Rev_Malformed;
          elsif Stapled_Len > 0 then
@@ -1065,7 +1068,7 @@ is
                Verdict := Fail_Revoked;
                return;
             when Rev_Ok =>
-               return;
+               Leaf_Settled := True;
             when Rev_Malformed =>
                if Must_Staple or else Policy = Hard_Fail then
                   Verdict := Fail_Bad_Status;
@@ -1078,22 +1081,114 @@ is
                end if;
          end case;
 
-         --  2. CRLs
-         if CRLs /= null then
-            Check_CRLs (Leaf_DER, Leaf, Issuer_DER, Issuer, CRLs.all,
-                        Ints, Int_Count, Roots, Root_Count,
-                        Now, Skew_Seconds, CRL_R);
-         end if;
-         case CRL_R is
-            when Rev_Revoked =>
-               Verdict := Fail_Revoked;
-            when Rev_Ok =>
-               null;
-            when Rev_Malformed | Rev_Insufficient =>
-               if Policy = Hard_Fail then
+         if not Leaf_Settled then
+            if CRLs /= null then
+               Check_CRLs (Leaf_DER, Leaf, Issuer_DER, Issuer, CRLs.all,
+                           Ints, Int_Count, Roots, Root_Count,
+                           Now, Skew_Seconds, CRL_R);
+            end if;
+            case CRL_R is
+               when Rev_Revoked =>
+                  Verdict := Fail_Revoked;
+                  return;
+               when Rev_Ok =>
+                  null;
+               when Rev_Malformed =>
+                  --  The application's own CRL for this issuer is
+                  --  unusable (bad signature, unknown critical
+                  --  extension, issuer without cRLSign, ...): a
+                  --  misconfiguration to surface in every mode, not
+                  --  evidence to skip. Soft_Fail is for ABSENT evidence.
                   Verdict := Fail_No_Evidence;
+                  return;
+               when Rev_Insufficient =>
+                  if Policy = Hard_Fail then
+                     Verdict := Fail_No_Evidence;
+                     return;
+                  end if;
+            end case;
+         end if;
+      end;
+
+      --  2. Every intermediate between the leaf and the trust anchor,
+      --  against the CRLs. A revoked sub-CA key can mint a leaf and a
+      --  delegated OCSP responder that staples "good", so the leaf's
+      --  evidence says nothing about the certificates above it. Climb by
+      --  Find_Issuer (name match plus signature) from the leaf's issuer
+      --  until a trust anchor is reached; under Hard_Fail each hop needs
+      --  a verdict of its own. A leaf issued directly by a root has no
+      --  intermediates.
+      if In_Roots then
+         return;
+      end if;
+
+      declare
+         Cur_Index    : Natural := Index;
+         Reached_Root : Boolean := False;
+      begin
+         for Depth in 1 .. Max_Pool_Size loop
+            pragma Loop_Invariant (Cur_Index < Int_Count);
+            pragma Loop_Invariant (Ints (Cur_Index).Present);
+            pragma Loop_Invariant (not Reached_Root);
+            declare
+               Cur_Len : constant X509.N32 := Ints (Cur_Index).DER_Len;
+               Cur_DER : constant X509.Byte_Seq := Ints (Cur_Index).DER (0 .. Cur_Len - 1);
+               Cur     : constant X509.Certificate := Ints (Cur_Index).Cert;
+               Up_Found, Up_In_Roots : Boolean;
+               Up_Index : Natural;
+               R        : Revocation_Result := Rev_Insufficient;
+            begin
+               Find_Issuer (Cur_DER, Cur, Ints, Int_Count, Roots, Root_Count,
+                            Up_Found, Up_In_Roots, Up_Index);
+               if not Up_Found then
+                  if Policy = Hard_Fail then
+                     Verdict := Fail_No_Evidence;
+                  end if;
+                  return;
                end if;
-         end case;
+               if CRLs /= null then
+                  if Up_In_Roots then
+                     Check_CRLs (Cur_DER, Cur,
+                                 Roots (Up_Index).DER (0 .. Roots (Up_Index).DER_Len - 1),
+                                 Roots (Up_Index).Cert, CRLs.all,
+                                 Ints, Int_Count, Roots, Root_Count,
+                                 Now, Skew_Seconds, R);
+                  else
+                     Check_CRLs (Cur_DER, Cur,
+                                 Ints (Up_Index).DER (0 .. Ints (Up_Index).DER_Len - 1),
+                                 Ints (Up_Index).Cert, CRLs.all,
+                                 Ints, Int_Count, Roots, Root_Count,
+                                 Now, Skew_Seconds, R);
+                  end if;
+               end if;
+               case R is
+                  when Rev_Revoked =>
+                     Verdict := Fail_Revoked;
+                     return;
+                  when Rev_Ok =>
+                     null;
+                  when Rev_Malformed =>
+                     Verdict := Fail_No_Evidence;   --  as for the leaf
+                     return;
+                  when Rev_Insufficient =>
+                     if Policy = Hard_Fail then
+                        Verdict := Fail_No_Evidence;
+                        return;
+                     end if;
+               end case;
+               if Up_In_Roots then
+                  Reached_Root := True;
+               else
+                  Cur_Index := Up_Index;
+               end if;
+            end;
+            exit when Reached_Root;
+         end loop;
+         --  The climb ran out of pool before a trust anchor (a cycle
+         --  among cross-signed intermediates): no verdict for the rest.
+         if not Reached_Root and then Policy = Hard_Fail then
+            Verdict := Fail_No_Evidence;
+         end if;
       end;
    end Evaluate;
 
