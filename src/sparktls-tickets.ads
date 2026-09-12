@@ -24,9 +24,15 @@
 --  PSK (32 or 48 bytes per the suite hash); secret_len says how many of
 --  the 48 bytes are meaningful.
 --
---  AES-256-GCM in encrypt-then-MAC mode; the Key_ID is included as
---  AAD so a ticket encrypted under key A can't be replayed against
---  key B (defence in depth against TEK confusion).
+--  Sealed with AES-256-GCM (an AEAD: the 16-byte GCM tag provides
+--  integrity and authenticity, there is no separate HMAC). This is the
+--  RFC 5077 4 recommended construction with the AEAD standing in for its
+--  AES-CBC + HMAC-SHA-256 example. The Key_ID is included as AAD so a
+--  ticket encrypted under key A can't be replayed against key B (defence
+--  in depth against TEK confusion). The 12-byte nonce is drawn from
+--  Cfg.Random per ticket; with random nonces a single TEK must not seal
+--  more than about 2**32 tickets (NIST SP 800-38D), one more reason the
+--  key ring rotates daily by default.
 
 with Interfaces; use Interfaces;
 with SPARKNaCl;  use SPARKNaCl;
