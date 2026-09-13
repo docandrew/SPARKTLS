@@ -2154,7 +2154,8 @@ is
                  Leaf_DER => Cert_X (0 .. D.Peer_Leaf.DER_Len - 1),
                  Hostname => "",
                  Purpose  => Purpose_Client,
-                 Mode     => Cfg.Verify_Mode);
+                 Mode     => Cfg.Verify_Mode,
+                 Min_RSA_Bits => Cfg.Min_RSA_Bits);
             if VR /= Valid then
                Send_Encrypted_Alert (S, Bad_Certificate, Result);
                pragma Assert (S.Last_Error /= Unexpected_Message);
@@ -2182,7 +2183,8 @@ is
                     Now        => Cfg.Get_Time.all,
                     Hostname   => "",
                     Purpose    => Purpose_Client,
-                    Mode       => Cfg.Verify_Mode);
+                    Mode       => Cfg.Verify_Mode,
+                    Min_RSA_Bits => Cfg.Min_RSA_Bits);
                --  Application veto (Config.Verify_Peer): consulted only
                --  after the core accepted the chain, never when
                --  Skip_Verify is set.

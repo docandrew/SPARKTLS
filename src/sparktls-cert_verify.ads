@@ -64,7 +64,8 @@ is
      (Root     : X509.Certificate;
       Root_DER : X509.Byte_Seq;
       Now      : X509.Date_Time;
-      Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
+      Mode     : Validation_Mode := Mode_WebPKI;
+      Min_RSA_Bits : Natural := 2048) return Validation_Result
    with
      Pre  =>
        Root_DER'First = 0
@@ -149,7 +150,9 @@ is
       --  The purpose the chain is validated for. An EKU-bearing issuer
       --  must carry it (CA/Browser Forum, Chromium, NSS); Purpose_Any
       --  accepts either TLS purpose, the pre-2026-09 behaviour.
-      Purpose          : Validation_Purpose := Purpose_Any)
+      Purpose          : Validation_Purpose := Purpose_Any;
+      --  Smallest RSA modulus accepted (Config.Min_RSA_Bits), every mode.
+      Min_RSA_Bits     : Natural := 2048)
       return Validation_Result
    with
      Pre  =>
@@ -198,7 +201,8 @@ is
       Leaf_DER : X509.Byte_Seq;
       Hostname : String;
       Purpose  : Validation_Purpose := Purpose_Server;
-      Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result
+      Mode     : Validation_Mode := Mode_WebPKI;
+      Min_RSA_Bits : Natural := 2048) return Validation_Result
    with
      Pre  =>
        Leaf_DER'First = 0
@@ -398,7 +402,8 @@ is
       Now        : X509.Date_Time;
       Hostname   : String;
       Purpose    : Validation_Purpose := Purpose_Server;
-      Mode       : Validation_Mode := Mode_WebPKI) return Chain_Verdict
+      Mode       : Validation_Mode := Mode_WebPKI;
+      Min_RSA_Bits : Natural := 2048) return Chain_Verdict
    with
      Pre  =>
        Leaf_DER'First = 0
@@ -422,9 +427,11 @@ is
       Now        : X509.Date_Time;
       Hostname   : String;
       Purpose    : Validation_Purpose := Purpose_Server;
-      Mode       : Validation_Mode := Mode_WebPKI) return Validation_Result
+      Mode       : Validation_Mode := Mode_WebPKI;
+      Min_RSA_Bits : Natural := 2048) return Validation_Result
    is (Validate_Chain_Anchored
-         (Leaf_DER, Leaf, Ints, Int_Count, Roots, Root_Count, Now, Hostname, Purpose, Mode)
+         (Leaf_DER, Leaf, Ints, Int_Count, Roots, Root_Count, Now, Hostname, Purpose, Mode,
+          Min_RSA_Bits)
          .Result)
    with
      Pre =>

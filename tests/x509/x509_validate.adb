@@ -268,6 +268,7 @@ procedure X509_Validate is
    Have_CRL  : Boolean := False;
    CRL_Bad   : Boolean := False;   --  a --crl file did not parse as a CRL
    CRL_Hard  : Boolean := False;
+   Min_RSA   : Natural := 2048;   --  --min-rsa-bits N (Config.Min_RSA_Bits)
 
    --  Register one CRL file (PEM block(s) or raw DER) with the store.
    --  Raw bytes of a file (binary-safe; Read_File is line-oriented and
@@ -484,6 +485,11 @@ begin
                I := I + 1;
                Val_Time := Unix_To_DateTime
                   (Parse_Nat (Ada.Command_Line.Argument (I)));
+            elsif Arg = "--min-rsa-bits"
+               and I < Ada.Command_Line.Argument_Count
+            then
+               I := I + 1;
+               Min_RSA := Parse_Nat (Ada.Command_Line.Argument (I));
             elsif Arg = "--mode"
                and I < Ada.Command_Line.Argument_Count
             then
@@ -540,7 +546,8 @@ begin
             Root_Count => Roots.Root_Count,
             Now        => Val_Time,
             Hostname   => Hostname (1 .. Host_Len),
-            Mode       => Val_Mode);
+            Mode       => Val_Mode,
+            Min_RSA_Bits => Min_RSA);
       end loop;
 
       if Repeat > 1 then

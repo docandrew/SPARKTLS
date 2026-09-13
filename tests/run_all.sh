@@ -360,6 +360,16 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # Certificate signature hash/curve combinations (SHA-256 under P-384)
+    if [ -f bin/tests/test_cert_sig_algos ]; then
+        output=$(bin/tests/test_cert_sig_algos 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_cert_sig_algos: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # Peer alert description -> Error_Code mapping
     if [ -f bin/tests/test_error_from_alert ]; then
         output=$(bin/tests/test_error_from_alert 2>&1 || true)
