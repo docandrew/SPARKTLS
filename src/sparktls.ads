@@ -1588,6 +1588,13 @@ is
       --  Validation settings
       Verify_Mode    : Validation_Mode := Mode_WebPKI;
       Verify_Purpose : Validation_Purpose := Purpose_Server;
+      --  Smallest RSA modulus (in bits) accepted anywhere in a chain, in
+      --  every validation mode. 2048 is the CA/Browser Forum floor and
+      --  what every current browser enforces; a 1024-bit modulus is within
+      --  reach of a well-funded adversary and 512 bits is factorable in
+      --  hours. Lower it only for a legacy PKI you control. The crypto
+      --  layer's own limit is 512 .. 8192.
+      Min_RSA_Bits   : Natural range 512 .. 8192 := 2048;
       Get_Time       : Get_Time_Fn := null;
 
       --  Application veto hook, consulted only after the core has fully

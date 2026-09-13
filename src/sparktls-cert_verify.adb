@@ -340,11 +340,16 @@ is
                      if Sig_Algo = X509.Algo_ECDSA_P384_SHA384 then
                         SPARKNaCl.Hashing.SHA384.Hash (H, TBS_Bytes);
                      else
-                        --  SHA-256 hash, zero-pad to 48 bytes for P-384
+                        --  SHA-256 under a P-384 key: e = OS2IP (H), the
+                        --  32-byte digest right-aligned in the 48-byte
+                        --  scalar (FIPS 186-4 6.4 / RFC 6979 2.3.2: the
+                        --  leftmost min (hashlen, qlen) bits become the
+                        --  integer). Left-aligning it multiplied e by 2^128
+                        --  and rejected every conforming signature.
                         SPARKTLSCrypto.Hashing.SHA256.Hash (H32, TBS_Bytes);
                         H := (others => 0);
                         for I in N32 range 0 .. 31 loop
-                           H (I) := H32 (I);
+                           H (16 + I) := H32 (I);
                         end loop;
                      end if;
 
@@ -516,11 +521,50 @@ is
    --  Validate a trust anchor (root CA)
    ----------------------------------------------------------------------------
 
+   --  RSA modulus size in bits from the parsed key (leading zero octet
+   --  already stripped by the parser, so the top octet is non-zero).
+   function RSA_Modulus_Bits (Cert : X509.Certificate) return Natural
+   with Pre => X509.PK_Length (Cert) > 0 and X509.PK_Length (Cert) <= X509.Max_PK_Bytes
+   is
+      Lead : Natural := 0;
+      T    : X509.Byte := X509.PK_Data (Cert) (0);
+   begin
+      --  Count the leading zero bits of the top octet (8 when it is 0).
+      while T < 16#80# and then Lead < 8 loop
+         pragma Loop_Invariant (Lead < 8);
+         pragma Loop_Variant (Increases => Lead);
+         T := T * 2;
+         Lead := Lead + 1;
+      end loop;
+      return Natural (X509.PK_Length (Cert)) * 8 - Lead;
+   end RSA_Modulus_Bits;
+
+   --  Config.Min_RSA_Bits floor, every mode; the CA/Browser Forum's
+   --  "multiple of 8 bits" rule additionally in WebPKI mode (the old
+   --  test was on the octet count, i.e. multiples of 64 bits).
+   function RSA_Key_Acceptable
+     (Cert : X509.Certificate; Mode : Validation_Mode; Min_RSA_Bits : Natural) return Boolean
+   is
+   begin
+      if X509.PK_Algorithm (Cert) /= X509.Algo_RSA then
+         return True;
+      end if;
+      if X509.PK_Length (Cert) = 0 or else X509.PK_Length (Cert) > X509.Max_PK_Bytes then
+         return False;
+      end if;
+      declare
+         Bits : constant Natural := RSA_Modulus_Bits (Cert);
+      begin
+         return Bits >= Min_RSA_Bits and then (Mode /= Mode_WebPKI or else Bits mod 8 = 0);
+      end;
+   end RSA_Key_Acceptable;
+
    function Validate_Root
      (Root     : X509.Certificate;
       Root_DER : X509.Byte_Seq;
       Now      : X509.Date_Time;
-      Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result is
+      Mode     : Validation_Mode := Mode_WebPKI;
+      Min_RSA_Bits : Natural := 2048) return Validation_Result is
    begin
       --  RFC 5280 6.1: Structural validation of trust anchor.
       --  Trust anchors are trusted by definition (RFC 5280 6.1.1),
@@ -600,12 +644,12 @@ is
             return Err_Missing_AKI;
          end if;
 
-         --  CABF 6.1.5: RSA keys must be >= 2048 bits and divisible by 8
-         if X509.PK_Algorithm (Root) = X509.Algo_RSA then
-            if X509.PK_Length (Root) < 256 or else (X509.PK_Length (Root) mod 8) /= 0 then
-               return Err_Weak_Key;
-            end if;
-         end if;
+      end if;
+
+      --  RSA key size: Config.Min_RSA_Bits in every mode (CABF 6.1.5's
+      --  2048 by default), plus the WebPKI multiple-of-8 rule.
+      if not RSA_Key_Acceptable (Root, Mode, Min_RSA_Bits) then
+         return Err_Weak_Key;
       end if;
 
       return Valid;
@@ -655,7 +699,8 @@ is
       Must_Be_CA       : Boolean;
       CAs_Below_Issuer : Natural;
       Mode             : Validation_Mode := Mode_WebPKI;
-      Purpose          : Validation_Purpose := Purpose_Any) return Validation_Result is
+      Purpose          : Validation_Purpose := Purpose_Any;
+      Min_RSA_Bits     : Natural := 2048) return Validation_Result is
    begin
       --  1. Full structural validation (parse, dates, extensions, encoding).
       if not X509.Is_Structurally_Valid (Cert, Now) then
@@ -721,11 +766,10 @@ is
          return Err_Signature_Invalid;
       end if;
 
-      --  10. WebPKI: RSA key must be >= 2048 bits and divisible by 8
-      if Mode = Mode_WebPKI and then X509.PK_Algorithm (Cert) = X509.Algo_RSA then
-         if X509.PK_Length (Cert) < 256 or else (X509.PK_Length (Cert) mod 8) /= 0 then
-            return Err_Weak_Key;
-         end if;
+      --  10. RSA key size: Config.Min_RSA_Bits in every mode, plus the
+      --  WebPKI multiple-of-8 rule (CABF 6.1.5).
+      if not RSA_Key_Acceptable (Cert, Mode, Min_RSA_Bits) then
+         return Err_Weak_Key;
       end if;
 
       return Valid;
@@ -740,7 +784,8 @@ is
       Leaf_DER : X509.Byte_Seq;
       Hostname : String;
       Purpose  : Validation_Purpose := Purpose_Server;
-      Mode     : Validation_Mode := Mode_WebPKI) return Validation_Result is
+      Mode     : Validation_Mode := Mode_WebPKI;
+      Min_RSA_Bits : Natural := 2048) return Validation_Result is
    begin
       --  1. EKU check: if present, must match purpose (RFC 5280)
       if X509.Has_EKU (Leaf) then
@@ -794,15 +839,13 @@ is
             return Err_Not_CA;
          end if;
 
-         --  CABF 6.1.5: RSA keys must be >= 2048 bits and divisible by 8
-         if X509.PK_Algorithm (Leaf) = X509.Algo_RSA then
-            if X509.PK_Length (Leaf) < 256 or else (X509.PK_Length (Leaf) mod 8) /= 0 then
-               return Err_Weak_Key;
-            end if;
-         end if;
-
       end if;
 
+      --  RSA key size: Config.Min_RSA_Bits in every mode, plus the WebPKI
+      --  multiple-of-8 rule (CABF 6.1.5).
+      if not RSA_Key_Acceptable (Leaf, Mode, Min_RSA_Bits) then
+         return Err_Weak_Key;
+      end if;
       --  RFC 8446 4.4.2.2 + RFC 5246 7.4.2 + RFC 5280 4.2.1.3:
       --  when the leaf's keyUsage extension is present, it MUST allow
       --  digitalSignature for the negotiated certificate role. Server
@@ -1185,7 +1228,8 @@ is
       Now        : X509.Date_Time;
       Hostname   : String;
       Purpose    : Validation_Purpose := Purpose_Server;
-      Mode       : Validation_Mode := Mode_WebPKI) return Chain_Verdict
+      Mode       : Validation_Mode := Mode_WebPKI;
+      Min_RSA_Bits : Natural := 2048) return Chain_Verdict
    is
       --  Recursive DFS: try to chain Cert to a trust anchor.
       --  Depth = number of intermediates between this cert and the leaf.
@@ -1300,7 +1344,8 @@ is
                declare
                   VR : constant Validation_Result :=
                     Validate_Root
-                      (Roots (Ri).Cert, Roots (Ri).DER (0 .. Roots (Ri).DER_Len - 1), Now, Mode);
+                      (Roots (Ri).Cert, Roots (Ri).DER (0 .. Roots (Ri).DER_Len - 1), Now, Mode,
+                       Min_RSA_Bits);
                begin
                   if VR = Valid then
                      pragma
@@ -1320,7 +1365,8 @@ is
                           Must_Be_CA       => Depth > 0,
                           CAs_Below_Issuer => PL_Depth,
                           Mode             => Mode,
-                          Purpose          => Purpose);
+                          Purpose          => Purpose,
+                          Min_RSA_Bits     => Min_RSA_Bits);
                      if R = Valid
                        and then Below_Satisfies_NC
                                   (Roots (Ri).DER (0 .. Roots (Ri).DER_Len - 1),
@@ -1360,7 +1406,8 @@ is
                     Must_Be_CA       => Depth > 0,
                     CAs_Below_Issuer => PL_Depth,
                     Mode             => Mode,
-                    Purpose          => Purpose);
+                    Purpose          => Purpose,
+                    Min_RSA_Bits     => Min_RSA_Bits);
                if R = Valid
                  and then Below_Satisfies_NC
                             (Ints (Ii).DER (0 .. Ints (Ii).DER_Len - 1),
@@ -1430,7 +1477,8 @@ is
               Leaf_DER => Leaf_DER,
               Hostname => Hostname,
               Purpose  => Purpose,
-              Mode     => Mode),
+              Mode     => Mode,
+              Min_RSA_Bits => Min_RSA_Bits),
          Anchor_Index => A);
    end Validate_Chain_Anchored;
 

@@ -2034,7 +2034,8 @@ is
            Leaf_DER => Cert_X,
            Hostname => "",
            Purpose  => Purpose_Client,
-           Mode     => Cfg.Verify_Mode);
+           Mode     => Cfg.Verify_Mode,
+           Min_RSA_Bits => Cfg.Min_RSA_Bits);
       if VR /= Valid then
          return;
       end if;
@@ -2055,7 +2056,8 @@ is
               Now        => Cfg.Get_Time.all,
               Hostname   => "",
               Purpose    => Purpose_Client,
-              Mode       => Cfg.Verify_Mode);
+              Mode       => Cfg.Verify_Mode,
+              Min_RSA_Bits => Cfg.Min_RSA_Bits);
          --  Application veto (Config.Verify_Peer): consulted only after
          --  the core accepted the chain, never when Skip_Verify is set.
          if Verdict.Result /= Valid then

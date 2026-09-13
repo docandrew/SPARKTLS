@@ -198,6 +198,15 @@ is
          Enc : Byte_Seq (0 .. 64);
       begin
          P256_Encode (Enc, Peer_Pt);
+         --  RFC 8422 5.11 / RFC 8446 7.4.2: [sk]*peer = O (encoded as an
+         --  all-zero x) is no shared secret -- the peer share was
+         --  degenerate. P-384 (P384_ECDHE's OK) and X25519
+         --  (Shared_Secret_Is_Acceptable) already reject this; same alert.
+         if (for all I in N32 range 1 .. 32 => Enc (I) = 0) then
+            HC.KE.Shared := (others => 0);
+            HC.Ext_Parse_Err := Illegal_Parameter;
+            return;
+         end if;
          HC.KE.Shared := (others => 0);
          HC.KE.Shared (0 .. 31) := Enc (1 .. 32);
       end;

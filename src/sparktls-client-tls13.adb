@@ -1180,7 +1180,8 @@ is
                  Now        => S.HC.Cfg.Get_Time.all,
                  Hostname   => S.HC.Cfg.Server_Name.Data (1 .. S.HC.Cfg.Server_Name.Len),
                  Purpose    => S.HC.Cfg.Verify_Purpose,
-                 Mode       => S.HC.Cfg.Verify_Mode);
+                 Mode       => S.HC.Cfg.Verify_Mode,
+                 Min_RSA_Bits => S.HC.Cfg.Min_RSA_Bits);
             --  Application veto (Config.Verify_Peer): consulted only after
             --  the core accepted the chain, never when Skip_Verify is set.
             if Verdict.Result /= Valid then

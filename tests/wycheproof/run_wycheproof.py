@@ -102,6 +102,18 @@ SET_SPECS = {
         ('rsa_pkcs1_sha256', rsa_args(32)),
     'rsa_signature_4096_sha512_test':
         ('rsa_pkcs1_sha512', rsa_args(64)),
+    'rsa_signature_3072_sha384_test':
+        ('rsa_pkcs1_sha384', rsa_args(48)),
+    'rsa_signature_4096_sha256_test':
+        ('rsa_pkcs1_sha256', rsa_args(32)),
+    'rsa_signature_4096_sha384_test':
+        ('rsa_pkcs1_sha384', rsa_args(48)),
+    'rsa_signature_8192_sha256_test':
+        ('rsa_pkcs1_sha256', rsa_args(32)),
+    'rsa_signature_8192_sha384_test':
+        ('rsa_pkcs1_sha384', rsa_args(48)),
+    'rsa_signature_8192_sha512_test':
+        ('rsa_pkcs1_sha512', rsa_args(64)),
     'rsa_pss_2048_sha256_mgf1_32_test':
         ('rsa_pss_sha256', rsa_args(32)),
     'rsa_pss_2048_sha384_mgf1_48_test':
@@ -110,6 +122,10 @@ SET_SPECS = {
         ('rsa_pss_sha256', rsa_args(32)),
     'rsa_pss_4096_sha512_mgf1_64_test':
         ('rsa_pss_sha512', rsa_args(64)),
+    'rsa_pss_4096_sha384_mgf1_48_test':
+        ('rsa_pss_sha384', rsa_args(48)),
+    'rsa_pss_4096_sha256_mgf1_32_test':
+        ('rsa_pss_sha256', rsa_args(32)),
     'ecdsa_secp256r1_sha256_test':
         ('ecdsa_p256_sha256', ecdsa_args(32)),
     'ecdsa_secp384r1_sha384_test':
