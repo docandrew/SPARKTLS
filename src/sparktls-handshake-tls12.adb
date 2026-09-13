@@ -42,7 +42,7 @@ is
    use type RBT.Bytes_Ptr;
    use type RFLX.RFLX_Types.Base_Integer;
 
-   Max_Sig : constant := 512;  --  max RSA-4096 signature
+   Max_Sig : constant := Max_Sig_Bytes;  --  RSA-8192; see the spec
    --  Helper: write a 3-byte big-endian length
    procedure Put24 (Buf : in out Byte_Seq; Pos : N32; Val : N32)
    with
@@ -123,7 +123,7 @@ is
       Sig_Len := 0;
       OK := False;
       if Id.RSA_Mod_Len < 64
-        or Id.RSA_Mod_Len > Max_Sig  --  layer max: RSA-4096 (Sig buffers)
+        or Id.RSA_Mod_Len > Max_Sig  --  Sig buffer bound (identities are <= RSA-4096 anyway)
         or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
         or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
       then
@@ -209,7 +209,7 @@ is
       Sig_Len := 0;
       OK := False;
       if Id.RSA_Mod_Len < 64
-        or Id.RSA_Mod_Len > Max_Sig  --  layer max: RSA-4096 (Sig buffers)
+        or Id.RSA_Mod_Len > Max_Sig  --  Sig buffer bound (identities are <= RSA-4096 anyway)
         or Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
         or Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
       then
@@ -998,7 +998,7 @@ is
       Sig := (others => 0);
       Sig_Len := 0;
       OK := False;
-      if Id.RSA_Mod_Len not in 64 .. Max_Sig  --  layer max: RSA-4096
+      if Id.RSA_Mod_Len not in 64 .. Max_Sig  --  Sig buffer bound (identities are <= RSA-4096 anyway)
         or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
         or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
         or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1
@@ -1093,7 +1093,7 @@ is
       Sig := (others => 0);
       Sig_Len := 0;
       OK := False;
-      if Id.RSA_Mod_Len not in 64 .. Max_Sig  --  layer max: RSA-4096
+      if Id.RSA_Mod_Len not in 64 .. Max_Sig  --  Sig buffer bound (identities are <= RSA-4096 anyway)
         or else Id.RSA_Modulus'Last < N32 (Id.RSA_Mod_Len) - 1
         or else Id.RSA_Priv_Exp'Last < N32 (Id.RSA_Mod_Len) - 1
         or else Sig'Last < N32 (Id.RSA_Mod_Len) - 1

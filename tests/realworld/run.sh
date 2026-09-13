@@ -103,8 +103,8 @@ done
 # The curated list above is all TLS 1.3 (verified 2026-08-16: every one of
 # the nine negotiates TLSv1.3). Combined with tlsfuzzer/BoGo/integration --
 # which exercise TLS 1.2 only over loopback -- that left "TLS 1.2 against a
-# real server" untested by anything, which is exactly the configuration
-# where badssl.com currently fails for us.
+# real server" untested by anything, which is exactly where the RSA-4096
+# ServerKeyExchange size bug hid until this matrix caught it.
 #
 # These entries are "expect", not "must connect": most of these hosts are
 # SUPPOSED to be rejected, and accepting one is a security failure, not a
@@ -123,7 +123,7 @@ BADSSL=(
     "ecc384.badssl.com|connect|ECDSA P-384 leaf"
     "rsa2048.badssl.com|connect|RSA-2048 leaf"
     "rsa4096.badssl.com|connect|RSA-4096 leaf"
-    "extended-validation.badssl.com|connect|EV cert"
+    "extended-validation.badssl.com|reject|EV cert, leaf expired 2022-08-10 (curl rejects it too)"
     "tls-v1-2.badssl.com:1012|connect|TLS 1.2 pinned port"
     "expired.badssl.com|reject|notAfter in the past"
     "wrong.host.badssl.com|reject|SAN does not match hostname"

@@ -63,8 +63,18 @@ is
    P384_Point_Len : constant := 97;
    X25519_Point_Len : constant := 32;
 
-   --  Maximum buffer sizes
-   Max_Server_Key_Exchange : constant := 512;
+   --  Maximum buffer sizes.
+   --  ServerKeyExchange = params (4) + point (<= 97, P-384) + scheme (2)
+   --  + sig_len (2) + signature (<= 1024, RSA-8192) = 1129. The old cap of
+   --  512 rejected every RSA-4096 server (585 bytes) with decode_error --
+   --  rsa4096.badssl.com -- and stopped our own server signing with a key
+   --  above 3072 bits.
+   Max_Server_Key_Exchange : constant := 1152;
+   --  Largest signature this layer signs or verifies: RSA-8192, matching
+   --  X509.Max_Sig_Bytes. A TLS 1.2 CertificateVerify is
+   --  type (1) + length (3) + scheme (2) + sig_len (2) + signature.
+   Max_Sig_Bytes             : constant := 1024;
+   Max_Certificate_Verify_12 : constant := 8 + Max_Sig_Bytes;
    Max_Client_Key_Exchange : constant := 128;
    Max_Server_Hello_12 : constant := 512;
 
@@ -360,7 +370,7 @@ is
    with
      Pre =>
        Result'First = 0
-       and Result'Last >= 523
+       and Result'Last >= Max_Certificate_Verify_12 - 1
        and Transcript_Hash'First = 0
        and (if Sig_Algo_Wire = Sig_Ed25519 then Transcript_Hash'Last <= N32'Last - 65
             elsif Sig_Algo_Wire in Sig_RSA_PKCS1_SHA512 | Sig_RSA_PSS_SHA512
@@ -370,7 +380,7 @@ is
             then Transcript_Hash'Length = 48
             else Transcript_Hash'Length = 32)
        and Id.Has_Identity,
-     Post => Len <= 520;
+     Post => Len <= Max_Certificate_Verify_12;
 
    --  RFC 5246 7.4.1.2: Build TLS 1.2 ServerHello.
    --

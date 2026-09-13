@@ -511,19 +511,32 @@ is
       --  Constant-time padding removal: scan ALL bytes to find
       --  the last non-zero byte (content type). No early exit
       --  prevents timing leaks of the padding length.
+      --  Branch-free: the position of the last non-zero octet and the
+      --  octet itself are selected with masks, so neither the padding
+      --  length nor the content type steers a branch or an index (the
+      --  old scan branched per octet and then indexed Decrypted by the
+      --  secret position).
       declare
-         Last_Nonzero : N32 := 0;
-         Found        : Boolean := False;
+         Last_Nonzero : Unsigned_32 := 0;
+         CT_Byte      : Unsigned_32 := 0;
+         Found_Mask   : Unsigned_32 := 0;
       begin
          for I in N32 range 0 .. Cipher_Len - 1 loop
-            pragma Loop_Invariant (Last_Nonzero in 0 .. Cipher_Len - 1);
-            if Decrypted (I) /= 0 then
-               Last_Nonzero := I;
-               Found := True;
-            end if;
+            pragma Loop_Invariant (Last_Nonzero <= Unsigned_32 (Cipher_Len - 1));
+            pragma Loop_Invariant (CT_Byte <= 255);
+            declare
+               V  : constant Unsigned_32 := Unsigned_32 (Decrypted (I));
+               --  All-ones iff V /= 0: (V or -V) has its top bit set
+               --  exactly when V is non-zero.
+               NZ : constant Unsigned_32 := 0 - Shift_Right (V or (0 - V), 31);
+            begin
+               Last_Nonzero := (Last_Nonzero and not NZ) or (Unsigned_32 (I) and NZ);
+               CT_Byte      := (CT_Byte and not NZ) or (V and NZ);
+               Found_Mask   := Found_Mask or NZ;
+            end;
          end loop;
 
-         if not Found then
+         if Found_Mask = 0 then
             --  All zeros  content type is zero (invalid per RFC 8446 5.4).
             --  AEAD succeeded but inner plaintext is all zeros.
             --  Return Valid = True, Inner_Type = 0, Plain_Len = 0.
@@ -534,8 +547,8 @@ is
             return;
          end if;
 
-         Inner_Type := Decrypted (Last_Nonzero);
-         Plain_Len := Last_Nonzero;
+         Inner_Type := Byte (CT_Byte);
+         Plain_Len := N32 (Last_Nonzero);
          --  Last_Nonzero < Cipher_Len <= Encrypted'Length - Tag_Size
          --  Plaintext has same bounds as Encrypted
          pragma Assert (Plain_Len < Cipher_Len);

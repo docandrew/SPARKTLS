@@ -1491,12 +1491,20 @@ is
       if HC.Seen_Ext_Count < HC.Seen_Ext_Tags'Last then
          HC.Seen_Ext_Count := HC.Seen_Ext_Count + 1;
          HC.Seen_Ext_Tags (HC.Seen_Ext_Count) := Code;
+      else
+         --  Table full: a 65th extension used to go unrecorded, so a
+         --  duplicate beyond that point was not detected. Real ClientHellos
+         --  carry 10-20; refuse instead.
+         OK := False;
       end if;
       pragma Assert (No_Duplicate_Extensions_RFC_8446_4_2 (HC));
 
       --  Record extension order fingerprint (rolling polynomial hash).
-      --  Skip cookie (0x002C)  it's added after HRR.
-      if Code /= 16#002C# then
+      --  Skip the extensions RFC 8446 4.1.2 lets CH2 add, drop or change:
+      --  cookie (0x002C, added after HRR), early_data (0x002A, removed
+      --  after HRR) and pre_shared_key (0x0029, updated -- or dropped, as
+      --  BoringSSL does -- after HRR).
+      if Code not in 16#002C# | 16#002A# | 16#0029# then
          HC.CH_Ext_Hash := HC.CH_Ext_Hash * 31 xor Code;
          --  Saturating increment: the loop bound (max ~16K extensions
          --  in a 64K extensions field) is far below Natural'Last but

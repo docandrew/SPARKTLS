@@ -90,6 +90,29 @@ procedure Test_TLS12_ECDSA is
      ("e171e86163bf4911a96fee81a758a964dcbeffd5532b448df5a92a490366"
       & "fff4"));
 
+   --  A real P-256 identity (self-signed leaf + its private scalar) for
+   --  the chain-emission test: Set_Identity binds the key to the
+   --  certificate's SPKI, so a synthetic key no longer loads.
+   Chain_Leaf_DER : constant Byte_Seq := From_Hex
+     ("308201c430820169a003020102021446214cc4639d1f8e95be2b8a40345a75"
+      & "21efd733300a06082a8648ce3d04030230183116301406035504030c0d6368"
+      & "61696e2d69642e74657374301e170d3236303931333035353730365a170d33"
+      & "36303931303035353730365a30183116301406035504030c0d636861696e2d"
+      & "69642e746573743059301306072a8648ce3d020106082a8648ce3d03010703"
+      & "42000476211a64001c2eae8210409630a525e1b5d3388778a1d020cbb68f3d"
+      & "be6c66ef17a5c3abd5e18e0ad38e95b3cdd3afa14b5f1735abaec4c67c2e44"
+      & "6149561119a3819030818d301d0603551d0e041604141bfc7db9c4fd8d43ca"
+      & "83202e716f0168ceccb19c301f0603551d230418301680141bfc7db9c4fd8d"
+      & "43ca83202e716f0168ceccb19c300c0603551d130101ff04023000300e0603"
+      & "551d0f0101ff04040302078030130603551d25040c300a06082b0601050507"
+      & "030130180603551d110411300f820d636861696e2d69642e74657374300a06"
+      & "082a8648ce3d04030203490030460221008c845f006b3a83ef65d129781c17"
+      & "15113e5f1cc6c9f3aba2af9f0a769cc368e1022100d3d89e69b740c1a00762"
+      & "2833028768c27fec0b46c27ff09f271201b09de8db64");
+   Chain_Leaf_Key : constant Byte_Seq := From_Hex
+     ("27be933393ee7e0276d00d73ae555db61aa08955b7116d048f022ec2886726"
+      & "08");
+
    Cert : X509.Certificate;
    OK   : Boolean;
 
@@ -97,15 +120,15 @@ procedure Test_TLS12_ECDSA is
       Id      : Identity;
       Id_OK   : Boolean;
       Add_OK  : Boolean;
-      Key     : Byte_Seq (0 .. 31) := (0 => 1, others => 16#42#);
       Result  : Byte_Seq (0 .. 4095) := (others => 0);
       Len     : N32;
+      Leaf_Len : constant N32 := N32 (Chain_Leaf_DER'Length);
       Cert_Len : constant N32 := N32 (Cert_DER'Length);
-      List_Len : constant N32 := 3 * (Cert_Len + 3);
+      List_Len : constant N32 := (Leaf_Len + 3) + 2 * (Cert_Len + 3);
       P       : N32;
    begin
       SPARKTLS.Cert_Verify.Set_Identity
-        (Id, X509.Byte_Seq (Cert_DER), Key, Id_OK);
+        (Id, X509.Byte_Seq (Chain_Leaf_DER), Chain_Leaf_Key, Id_OK);
       Check ("TLS 1.2 chain test identity loads", Id_OK);
       if not Id_OK then
          return;
@@ -143,12 +166,12 @@ procedure Test_TLS12_ECDSA is
       for Entry_No in 1 .. 3 loop
          Check ("TLS 1.2 cert entry" & Integer'Image (Entry_No)
                 & " length matches",
-                U24 (Result, P) = Cert_Len);
+                U24 (Result, P) = (if Entry_No = 1 then Leaf_Len else Cert_Len));
          P := P + 3;
          Check ("TLS 1.2 cert entry" & Integer'Image (Entry_No)
                 & " DER starts with SEQUENCE",
                 Result (P) = 16#30#);
-         P := P + Cert_Len;
+         P := P + (if Entry_No = 1 then Leaf_Len else Cert_Len);
       end loop;
 
       Check ("TLS 1.2 cert entries consume full message", P = Len);

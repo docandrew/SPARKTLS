@@ -771,13 +771,17 @@ is
                Always_In_CH   => True);
 
          when 16#FF01# =>
-            --  renegotiation_info (RFC 5746)
+            --  renegotiation_info (RFC 5746). The client offers neither
+            --  the extension nor the SCSV, so a server echo is unsolicited
+            --  and rejected here (3.4: a client that did not offer it MUST
+            --  abort on receipt). Apply_SH_Extension validates the body for
+            --  the case where it is ever offered.
             return
               (Known          => True,
                Where_Allowed  => (E_CH | E_SH12 => True, others => False),
                Requires_Offer => True,
                Empty_Echo     => False,
-               Always_In_CH   => True);
+               Always_In_CH   => False);
 
          when others =>
             --  Unknown / unsupported extension. Where_Allowed empty,

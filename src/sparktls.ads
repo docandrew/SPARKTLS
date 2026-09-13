@@ -911,6 +911,14 @@ is
    --  backstop is subsumed: a wrap is now ~2**40 range-check failures
    --  away instead of one.
    Rekey_After_Records : constant := 2 ** 23;
+   --  Two caps, on purpose. This one is POLICY: the TLS 1.3 writer sends
+   --  KeyUpdate (SPARKTLS.Flush_Pending_Key_Update) once the write counter
+   --  reaches it, and the TLS 1.2 writer -- which cannot rekey -- stops.
+   --  Max_Record_Counter below is the ARITHMETIC bound both sides fail
+   --  closed at (Records.Build_Encrypted_Record / Decrypt_Record refuse
+   --  rather than wrap). The gap between them is what makes the policy
+   --  cap "soft": a TLS 1.3 peer that never rekeys is only ever refused
+   --  at the arithmetic bound, roughly 2**40 records later.
 
    --  The TYPE bound is the RECEIVE-side / arithmetic limit: a conforming
    --  peer (TLS 1.3 ChaCha with no rekey obligation, or any TLS 1.2 peer)
@@ -988,6 +996,14 @@ is
    ----------------------------------------------------------------------------
 
    type Random_Bytes_Fn is access procedure (Output : out Byte_Seq);
+
+   --  A Random_Bytes_Fn cannot report failure. The one failure that is
+   --  detectable from the outside is a generator that returned nothing
+   --  (all zero): the private-scalar and ticket-key draws test for it and
+   --  fail the handshake (internal_error) rather than proceed with a
+   --  known key. Probability for a live generator: 2^-256 per draw.
+   function All_Zero_Bytes (B : Byte_Seq) return Boolean
+   is (for all I in B'Range => B (I) = 0);
 
    --  The null-excluding view: subprograms that WILL call the generator
    --  take this subtype, so "is there a generator?" is answered by the
@@ -1615,6 +1631,15 @@ is
       --  Client: send status_request in ClientHello so a server that
       --  staples can. Off => never ask, stapled responses are ignored
       --  and must-staple is not enforced.
+      --  The two knobs are independent, deliberately: Request_OCSP_Staple
+      --  alone decides whether status_request goes on the wire, and
+      --  Revocation alone decides what is done with the evidence. So
+      --  Revocation => Ignore still asks for a staple (harmless), and
+      --  Hard_Fail with Request_OCSP_Staple => False can only ever be
+      --  satisfied by CRLs. Must-staple (RFC 7633) is enforced only when
+      --  we asked -- a server cannot staple unsolicited -- and only when
+      --  Revocation /= Ignore; a deployment that turns either off has
+      --  chosen not to enforce it.
       Request_OCSP_Staple : Boolean := True;
       --  Accept SHA-1 CertIDs in OCSP responses (RFC 5019 profile; what
       --  responders emit in practice). SHA-1 here only names the issuer
@@ -1926,6 +1951,13 @@ is
       Client_Authed         : Boolean := False;
       Ticket_Resume_OK      : Boolean := False;
       Ticket_Will_Issue     : Boolean := False;
+      --  Client: which server-flight messages have arrived, so each is
+      --  accepted once and in RFC 5246 7.3 order (Certificate,
+      --  [CertificateStatus], ServerKeyExchange, [CertificateRequest],
+      --  ServerHelloDone). SKE is tracked by KE.Negotiated.
+      Cert_Received         : Boolean := False;
+      Status_Received       : Boolean := False;
+      NST_Received          : Boolean := False;
       Resumed_Master_Secret : Byte_Seq (0 .. 47) := (others => 0);
       Resumed_Suite         : Unsigned_16 := 0;
       Peer_Ticket_Len       : TLS12_Ticket_Length := 0;

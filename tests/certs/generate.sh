@@ -60,6 +60,21 @@ openssl req -x509 -key "$DIR/rsa2056.key" -out "$DIR/rsa2056.crt" \
     -addext "basicConstraints=critical,CA:TRUE" 2>/dev/null
 echo "  Created rsa2056.crt and rsa2056.key"
 
+# RSA-4096: a ServerKeyExchange signature of 512 bytes. The TLS 1.2 SKE
+# buffer cap used to be 512 bytes total, which rejected every RSA-4096
+# server (rsa4096.badssl.com) with decode_error; the integration lane
+# now drives both directions with this key.
+echo "Generating RSA-4096 test certificate..."
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+    -out "$DIR/rsa4096.key" 2>/dev/null
+openssl req -x509 -key "$DIR/rsa4096.key" -out "$DIR/rsa4096.crt" \
+    -days 3650 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+    -addext "extendedKeyUsage=serverAuth,clientAuth" \
+    -addext "keyUsage=digitalSignature,keyEncipherment,keyCertSign" \
+    -addext "basicConstraints=critical,CA:TRUE" 2>/dev/null
+echo "  Created rsa4096.crt and rsa4096.key"
+
 # Convenience symlinks for default server cert (Ed25519)
 ln -sf ed25519.crt "$DIR/server.crt"
 ln -sf ed25519.key "$DIR/server.key"

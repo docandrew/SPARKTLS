@@ -229,6 +229,15 @@ is
 
       Bytes_Out := 0;
 
+      --  Atomic record emission: refuse up front if the WHOLE record does
+      --  not fit, BEFORE the AEAD consumes a nonce -- the TLS 1.3 builder's
+      --  order. Until 2026-09 this check sat after the seal, so an
+      --  output-full refusal burned a sequence number (latent: every
+      --  caller treats Bytes_Out = 0 as fatal or pre-checks the space).
+      if Free_Space (Output) < Total then
+         return;
+      end if;
+
       --  Construct the AEAD nonce per suite (see helpers above).
       if Is_ChaCha20 then
          Nonce := Make_Nonce_ChaCha20 (Implicit_IV, Seq_Num);
@@ -285,22 +294,12 @@ is
             end;
       end case;
 
-      --  Advance the channel AFTER sealing with this nonce and BEFORE the
-      --  output writes: the AEAD call above consumed the nonce, so even
-      --  an output-full early return below must leave it burned.
+      --  The nonce is consumed: advance the channel. Nothing below can
+      --  refuse any more (space was checked before the seal).
       Keys.Counter := Keys.Counter + 1;
 
       --  Build record header: content_type || 0x0303 || fragment_length.
       --  RFC 5246 6.2.1: version = negotiated (0x0303 for TLS 1.2).
-      --  Atomic record emission (review fix, 2026-08-27): refuse up
-      --  front if the WHOLE record does not fit, mirroring the TLS 1.3
-      --  builder. Without this, a partial header could reach Output
-      --  while the ciphertext write is refused -- 5 stray bytes
-      --  corrupting the stream with Bytes_Out = 0.
-      if Free_Space (Output) < Total then
-         return;
-      end if;
-
       pragma Assert (SPARKTLS.Record_Version_RFC_8446_5_1 (TLS12_Version_Major, TLS12_Version_Minor));
 
       --  Write: header || [explicit_nonce for GCM] || ciphertext || tag

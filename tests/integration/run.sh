@@ -168,10 +168,12 @@ echo ""
 # ===================================================================
 echo "--- TLS 1.2: OpenSSL client → SPARKTLS server ---"
 
-# TLS 1.2: RSA certs with ECDHE-RSA suites
+# TLS 1.2: RSA certs with ECDHE-RSA suites (rsa4096: our SKE carries a
+# 512-byte signature, which the old 512-byte SKE buffer could not hold)
+for rsa_name in rsa rsa4096; do
 for suite in ECDHE-RSA-AES128-GCM-SHA256 ECDHE-RSA-AES256-GCM-SHA384 ECDHE-RSA-CHACHA20-POLY1305; do
     cleanup
-    "$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" 2>/dev/null &
+    "$SERVER" "$CERT_DIR/$rsa_name.crt" "$CERT_DIR/$rsa_name.key" 2>/dev/null &
     sleep 1
 
     output=$(echo "hello" | timeout 5 openssl s_client \
@@ -180,10 +182,11 @@ for suite in ECDHE-RSA-AES128-GCM-SHA256 ECDHE-RSA-AES256-GCM-SHA384 ECDHE-RSA-C
     cleanup
 
     if echo "$output" | grep -qi "hello\|GET\|HTTP"; then
-        pass "Server TLS1.2 rsa+$suite"
+        pass "Server TLS1.2 $rsa_name+$suite"
     else
-        fail "Server TLS1.2 rsa+$suite"
+        fail "Server TLS1.2 $rsa_name+$suite"
     fi
+done
 done
 
 # TLS 1.2: ECDSA certs with ECDHE-ECDSA suites
@@ -217,21 +220,25 @@ echo ""
 # ===================================================================
 echo "--- TLS 1.2: SPARKTLS client → OpenSSL server ---"
 
+# rsa4096: ServerKeyExchange carries a 512-byte signature (585-byte SKE),
+# which the old 512-byte SKE cap rejected with decode_error.
+for rsa_name in rsa rsa4096; do
 for suite in ECDHE-RSA-AES128-GCM-SHA256 ECDHE-RSA-AES256-GCM-SHA384; do
     cleanup
-    openssl s_server -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" \
+    openssl s_server -cert "$CERT_DIR/$rsa_name.crt" -key "$CERT_DIR/$rsa_name.key" \
         -accept $PORT -tls1_2 -cipher "$suite" -www 2>/dev/null &
     sleep 1
 
-    output=$(timeout 10 "$FETCH" --cafile "$CERT_DIR/rsa.crt" --rfc5280 "https://localhost:$PORT/" 2>&1 || true)
+    output=$(timeout 10 "$FETCH" --cafile "$CERT_DIR/$rsa_name.crt" --rfc5280 "https://localhost:$PORT/" 2>&1 || true)
     cleanup
 
     if echo "$output" | grep -qi "HTTP/1\|200\|html"; then
-        pass "Client TLS1.2 rsa+$suite"
+        pass "Client TLS1.2 $rsa_name+$suite"
     else
-        fail "Client TLS1.2 rsa+$suite"
+        fail "Client TLS1.2 $rsa_name+$suite"
         echo "    $(echo "$output" | head -1)"
     fi
+done
 done
 
 echo ""

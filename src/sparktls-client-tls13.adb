@@ -3104,8 +3104,11 @@ is
          Dec_Valid  : Boolean;
       begin
          if Frag_Len <= Records.Tag_Size then
+            --  RFC 8446 5.4: too short for the AEAD tag plus the inner
+            --  content-type octet. Reject (the server does); silently
+            --  skipping let a peer feed records we never processed.
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
+            Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
             return;
          end if;
 
@@ -3348,14 +3351,21 @@ is
       --  them. Anything else (CCS, alert, raw handshake) post-
       --  handshake is a state-machine violation. BoGo
       --  SendPostHandshakeChangeCipherSpec-TLS13.
-      if Rec.Content = Records.Content_Change_Cipher_Spec then
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
-         return;
-      end if;
       if Rec.Content /= Records.Content_Application_Data then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Result := OK;
+         if Rec.Content = Records.Content_Alert then
+            --  RFC 8446 5.1: an unencrypted alert after the handshake.
+            --  Close without answering (no alerts about alerts), as the
+            --  server does.
+            S.Last_Error := Unexpected_Message;
+            Set_State (S, Error_State);
+            Result := Error_Alert;
+         else
+            --  CCS, plaintext handshake, or an unknown type: reject with
+            --  an encrypted alert. Plaintext handshake records used to be
+            --  skipped silently.
+            Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+         end if;
          return;
       end if;
 

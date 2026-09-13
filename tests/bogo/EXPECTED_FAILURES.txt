@@ -110,7 +110,6 @@ Resume-Server-DeclineCrossVersion
 Resume-Server-DeclineCrossVersion-TLS13
 Resume-Server-NoPSKBinder-SecondBinder
 Resume-Server-NoTickets-TLS12-TLS12-TLS
-Resume-Server-OmitAllPSKsOnSecondClientHello
 Server-VerifyDefault-Ed25519-TLS12
 Server-VerifyDefault-Ed25519-TLS13
 Server-Verify-Ed25519-TLS12

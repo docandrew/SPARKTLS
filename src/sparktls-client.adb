@@ -42,8 +42,12 @@ is
          return;
       end if;
 
+      --  RFC 8446 4.6.1: a ticket MUST NOT be used past its lifetime, so
+      --  a ticket whose age we cannot know is not usable. Received_At = 0
+      --  means it was captured by a clockless client; Clock = null is a
+      --  configuration error that Client_Config_Can_Start reports.
       if Clock = null or else T.Received_At = 0 then
-         Usable := True;
+         Usable := False;
          return;
       end if;
 
@@ -62,6 +66,10 @@ is
    --  Certificate checking ON (not Skip_Verify) requires a CLOCK, with no
    --  exception for resumption.
    --
+   --  A resumption ticket requires a CLOCK too (RFC 8446 4.6.1 lifetime):
+   --  configuring Resume_Ticket without Get_Time is a Bad_Configuration
+   --  at Init rather than a ticket that silently never gets offered.
+   --
    --  A missing TRUST STORE is deliberately NOT fatal here: a client that
    --  only ever resumes legitimately has no roots, and the second
    --  conjunct still lets it start. If such a client is forced into a
@@ -74,6 +82,7 @@ is
        --  server's Configure check; predicates do not execute in shipped builds).
        and then Identity_Valid (Cfg.Local.all)
        and then (Cfg.Skip_Verify or else Cfg.Get_Time /= null)
+       and then (not Cfg.Resume_Ticket.Valid or else Cfg.Get_Time /= null)
        and then
          (Cfg.Skip_Verify
           or else (Cfg.Trust /= null and then Cfg.Get_Time /= null)

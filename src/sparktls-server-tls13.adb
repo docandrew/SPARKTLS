@@ -84,7 +84,10 @@ is
      (S     : in out Session;
       D     : in out SPARKTLS.HS_Pool.HS_Data;
       Msg   : in Byte_Seq;
-      Valid : out Boolean)
+      Valid : out Boolean;
+      --  Alert to send when not Valid: illegal_parameter, or
+      --  missing_extension when CH2 dropped CH1's pre_shared_key.
+      Err   : out Error_Code)
    with
      Pre =>
        Server_Active (S)
@@ -353,14 +356,17 @@ is
      (S     : in out Session;
       D     : in out SPARKTLS.HS_Pool.HS_Data;
       Msg   : in Byte_Seq;
-      Valid : out Boolean)
+      Valid : out Boolean;
+      Err   : out Error_Code)
    is
       Parse_OK          : Boolean;
       Candidate_Version : TLS_Version;
       Candidate_12      : Supported_Suite := Suite_None;
       CH1_Hash          : constant Unsigned_32 := S.HC.CH_Ext_Hash;
+      CH1_PSK_Offered   : constant Boolean := S.HC.PSK.Offered;
    begin
       Valid := False;
+      Err := Illegal_Parameter;
 
       --  Reset for CH2 parsing. Seen_Ext_Count + Tags also reset:
       --  duplicate-extension checks are intra-ClientHello, not CH1 vs CH2.
@@ -376,6 +382,23 @@ is
       S.HC.CH_Ext_Count := 0;
       S.HC.Seen_Ext_Count := 0;
       S.HC.Seen_Ext_Tags := (others => 0);
+      --  The PSK decision is CH2's to make again (RFC 8446 4.1.2 lets the
+      --  client update or, as BoringSSL does, drop pre_shared_key). Until
+      --  2026-09 CH1's Using_PSK / PSK stayed installed, so a CH2 with a
+      --  different or absent identity kept CH1's PSK and its binder length
+      --  (BoGo Resume-Server-OmitAllPSKsOnSecondClientHello).
+      S.HC.Using_PSK := False;
+      S.HC.PSK.Offered := False;
+      S.HC.PSK.Offer_ID_Len := 0;
+      S.HC.PSK.Offer_Age := 0;
+      S.HC.PSK.Age_Fresh := False;
+      S.HC.PSK.Binder_Len := 0;
+      S.HC.PSK.Binder_Hash_Taken := False;
+      S.HC.PSK.Has_DHE_KE := False;
+      S.HC.PSK.Value := (others => 0);
+      S.HC.PSK.Value_Len := 0;
+      S.HC.PSK.Binder := (others => 0);
+      S.HC.Early_Data_Offered := False;
       pragma Assert (S.HC.Legacy_Session_ID_Len in 0 .. 32);
 
       Handshake.Server_Msgs.Parse_Client_Hello
@@ -405,6 +428,14 @@ is
          return;
       end if;
 
+      --  RFC 8446 4.1.2: CH2 may UPDATE pre_shared_key (new binders), not
+      --  drop it. BoGo Resume-Server-OmitAllPSKsOnSecondClientHello expects
+      --  missing_extension.
+      if CH1_PSK_Offered and then not S.HC.PSK.Offered then
+         Err := Missing_Extension;
+         return;
+      end if;
+
       Valid := True;
    end Validate_Client_Hello_Retry;
 
@@ -418,6 +449,7 @@ is
       Result                 : out Action)
    is
       Valid_CH2 : Boolean;
+      CH2_Err   : Error_Code;
 
       --  Operates on the input buffer alone (passed as S.Input): the rest of
       --  the session is structurally untouched, so no frame facts about S
@@ -464,13 +496,14 @@ is
          return;
       end if;
 
-      Validate_Client_Hello_Retry (S, D, Msg, Valid_CH2);
+      Validate_Client_Hello_Retry (S, D, Msg, Valid_CH2, CH2_Err);
       if not Valid_CH2 then
          --  After HRR, CH2 parse/version/order failures are
-         --  illegal_parameter (RFC 8446 4.1.4).
+         --  illegal_parameter (RFC 8446 4.1.4); a dropped pre_shared_key
+         --  is missing_extension.
          Consume_Record (S.Input);
          Free_CH2_Reasm;
-         Send_Alert_And_Error (S, Illegal_Parameter, Result);
+         Send_Alert_And_Error (S, CH2_Err, Result);
          return;
       end if;
       pragma Assert (S.State = Wait_Client_Hello_Retry);
@@ -2962,6 +2995,7 @@ is
          Plain_Len  : N32;
          Inner_Type : Byte;
          Dec_Valid  : Boolean;
+         HS_Copy    : Traffic_Keys := S.HC.Client_HS;
       begin
          if Frag_Len < Records.Tag_Size + 1 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
@@ -2980,11 +3014,19 @@ is
          Records.Decrypt_Record
            (Encrypted  => Encrypted,
             Record_Hdr => Hdr,
-            Keys       => S.HC.Client_HS,
+            Keys       => HS_Copy,
             Plaintext  => Plaintext,
             Plain_Len  => Plain_Len,
             Inner_Type => Inner_Type,
             Valid      => Dec_Valid);
+         --  Commit the read counter only when the record was ours. A 0-RTT
+         --  record we skip (below) must NOT advance client_handshake's
+         --  sequence number: the client's Finished follows at seq 0 under
+         --  these keys, and up to 32 skipped records used to desynchronise it
+         --  into bad_record_mac.
+         if Dec_Valid then
+            S.HC.Client_HS := HS_Copy;
+         end if;
 
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
 
