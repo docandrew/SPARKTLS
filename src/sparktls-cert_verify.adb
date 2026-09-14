@@ -1117,6 +1117,8 @@ is
       Id.RSA_Priv_Exp := (others => 0);
       Id.RSA_Pub_Exp := 0;
       Id.RSA_CRT := SPARKTLSCrypto.RSA.No_CRT;
+      Id.OCSP_Staple := (others => 0);
+      Id.OCSP_Staple_Len := 0;
       Id.Has_Identity := False;
 
       if Cert_DER'Length = 0 then

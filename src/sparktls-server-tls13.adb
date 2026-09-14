@@ -187,11 +187,18 @@ is
    --  S.HC.Cfg directly alongside `in out HC` would alias). The configured-
    --  server fact rides the subtype; no Server_Configured contract needed
    --  anywhere in this chain.
+   --  Forward: defined after Process_Client_Auth, used by its message pump.
+   procedure Fail_With_App_Alert
+     (S : in out Session; Desc : in Byte; Err : in Error_Code; Result : out Action)
+   with Pre => Desc /= 0 and then Desc /= 90;
+
    procedure Process_Client_Auth
      (S      : in out Session;
       D      : in out SPARKTLS.HS_Pool.HS_Data;
       Cfg    : in Ready_Config;
-      Result : out Action);
+      Result : out Action)
+   with
+     Pre => S.Role = Role_Server and then S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify;
 
    procedure Process_Client_Finished
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
@@ -378,6 +385,7 @@ is
       S.HC.Client_Supports_X25519 := False;
       S.HC.Client_Supports_P256 := False;
       S.HC.Client_Supports_P384 := False;
+      S.HC.Client_Wants_Staple := False;
       S.HC.CH_Ext_Hash := 0;
       S.HC.CH_Ext_Count := 0;
       S.HC.Seen_Ext_Count := 0;
@@ -395,6 +403,8 @@ is
       S.HC.PSK.Binder_Len := 0;
       S.HC.PSK.Binder_Hash_Taken := False;
       S.HC.PSK.Has_DHE_KE := False;
+      S.HC.PSK.Saw_KE_Modes := False;
+      S.HC.PSK.Binders_Block_Len := 0;
       S.HC.PSK.Value := (others => 0);
       S.HC.PSK.Value_Len := 0;
       S.HC.PSK.Binder := (others => 0);
@@ -514,10 +524,11 @@ is
       --  suffix is CH2 truncated before binders.
       if S.HC.PSK.Offered
         and then S.HC.PSK.Binder_Len > 0
-        and then N32 (Msg'Length) > 3 + S.HC.PSK.Binder_Len
+        and then S.HC.PSK.Binders_Block_Len > 0
+        and then N32 (Msg'Length) > S.HC.PSK.Binders_Block_Len
       then
          declare
-            T : constant N32 := N32 (Msg'Length) - (3 + S.HC.PSK.Binder_Len);
+            T : constant N32 := N32 (Msg'Length) - S.HC.PSK.Binders_Block_Len;
          begin
             SPARKTLS_Transcript.Suffix_256
               (S.HC.TS,
@@ -989,6 +1000,14 @@ is
       if Found and then Cfg.Require_Client_Cert and then not Client_Auth then
          Found := False;
       end if;
+
+      --  RFC 8446 4.2.9: resumption needs a PSK key-exchange mode we
+      --  support (psk_dhe_ke). A client listing only modes we do not know
+      --  gets a full handshake (and, since Has_DHE_KE stays False, no new
+      --  ticket) rather than an error.
+      if Found and then not S.HC.PSK.Has_DHE_KE then
+         Found := False;
+      end if;
       pragma Assert (if Found then Suite = Wire_Of (S.Negotiated_Suite));
       pragma Assert (if Found then PSK_Len in 32 | 48);
 
@@ -1014,7 +1033,7 @@ is
 
       declare
          Binder_OK    : Boolean := False;
-         Binders_Size : constant N32 := 2 + 1 + S.HC.PSK.Binder_Len;
+         Binders_Size : constant N32 := S.HC.PSK.Binders_Block_Len;
          Trunc_Len    : N32;
       begin
          --  The binder transcript hash was drawn at CH time (before
@@ -1288,7 +1307,7 @@ is
           and then S.Negotiated_Suite = S.Negotiated_Suite'Old)
    is
       --  Max: leaf + 8 intermediates, each up to 8 KB + 5 bytes overhead
-      Cert_Buf : Byte_Seq (0 .. 9 * (Max_Cert_DER_Len + 5) + 10);
+      Cert_Buf : Byte_Seq (0 .. 9 * (Max_Cert_DER_Len + 5) + 10 + Max_OCSP_Response + 8);
       Cert_Len : N32;
    begin
       Emitted := False;
@@ -1304,7 +1323,11 @@ is
       end if;
 
       Handshake.TLS13.Build_Certificate_Chain
-        (Id => Cfg.Local.all, Arena_Storage => D.Arena_Storage, Result => Cert_Buf, Len => Cert_Len);
+        (Id            => Cfg.Local.all,
+         Staple        => S.HC.Client_Wants_Staple,
+         Arena_Storage => D.Arena_Storage,
+         Result        => Cert_Buf,
+         Len           => Cert_Len);
 
       if Cert_Len = 0
         or else Cert_Len >= Transcript_Capacity
@@ -2261,6 +2284,195 @@ is
       Result : out Action)
    is
       Rec : Records.Parse_Result;
+
+      --  RFC 8446 5.1: one record may carry several handshake messages and
+      --  one message may span records. The client's authentication flight
+      --  (Certificate, CertificateVerify, Finished) is therefore read as a
+      --  message STREAM: complete messages in a record are dispatched in
+      --  turn, an unfinished tail is parked in D.Reasm and completed by the
+      --  next record (in this procedure, or -- once the state has moved to
+      --  Wait_Client_Finished -- by Handle_PCF_App_Data, which drains the
+      --  same buffer). BoGo PackHandshake / SplitHandshakeRecords.
+
+      --  One complete handshake message, dispatched on the current state.
+      procedure Dispatch_Client_Auth_Message (Msg : in Byte_Seq; Result : out Action)
+      with
+        Pre =>
+          Msg'First = 0
+          and then Msg'Length >= 4
+          and then Msg'Last < Transcript_Capacity
+          and then S.Role = Role_Server
+          and then S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify | Wait_Client_Finished
+      is
+         Msg_Type : Maybe_HS_Msg;
+         Msg_Len  : N32;
+         Parse_OK : Boolean;
+      begin
+         Result := OK;
+         Handshake.Parse_Handshake_Header (Msg, Msg_Type, Msg_Len, Parse_OK);
+         if not Parse_OK then
+            --  Unknown handshake type is a state-machine error
+            --  (unexpected_message); malformed shape for a known type is
+            --  decode_error.
+            declare
+               Is_Known : constant Boolean :=
+                 Msg (0) in
+                   16#01# | 16#02# | 16#04# | 16#08# | 16#0B# | 16#0C# | 16#0D# | 16#0E# | 16#0F#
+                   | 16#10# | 16#14#;
+            begin
+               Send_Encrypted_Alert
+                 (S, (if Is_Known then Decode_Error else Unexpected_Message), Result);
+            end;
+            return;
+         end if;
+
+         case S.State is
+            when Wait_Client_Certificate =>
+               if Msg_Type /= HT_Certificate then
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+                  return;
+               end if;
+               Handle_Client_Cert_13 (S, D, Cfg, Msg, Result);
+
+            when Wait_Client_Cert_Verify =>
+               if Msg_Type /= HT_Certificate_Verify then
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+                  return;
+               end if;
+               --  RFC 8446 4.4.3: CertificateVerify is only legal after a
+               --  nonempty client Certificate. Fail closed; the guard also
+               --  unlocks Pool_Entry's predicate.
+               if not D.Peer_Leaf.Present then
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+                  return;
+               end if;
+               pragma Assert (X509.Spans_Valid (D.Peer_Leaf.Cert, D.Peer_Leaf.DER_Len - 1));
+               Handle_Client_CertVerify_13 (S, D, Cfg, Msg, Msg_Len, Result);
+
+            when Wait_Client_Finished =>
+               --  Finished packed into the same record as the
+               --  authentication messages.
+               if Msg_Type /= HT_Finished then
+                  Fail_With_App_Alert (S, AD_Unexpected_Message, Unexpected_Message, Result);
+                  return;
+               end if;
+               Verify_Client_Finished (S, D, Msg, Msg'Length, Msg_Len, Result);
+
+            when others =>
+               S.Last_Error := Internal_Error;
+               Set_State (S, Error_State);
+               Result := Error_Alert;
+         end case;
+      end Dispatch_Client_Auth_Message;
+
+      --  Feed a record's plaintext into a message parked in D.Reasm; when
+      --  that completes it, dispatch it. Pos = bytes of Plaintext consumed.
+      procedure Continue_Client_Auth_Reasm
+        (Plaintext : in Byte_Seq; Plain_Len : in N32; Pos : out N32; Result : out Action)
+      with
+        Pre =>
+          Plaintext'First = 0
+          and then Plain_Len >= 1
+          and then Plaintext'Last >= Plain_Len - 1
+          and then Plain_Len <= Records.Max_Fragment + Max_Record_Overhead
+          and then Used (D.Reasm) > 0
+          and then S.Role = Role_Server
+          and then S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify | Wait_Client_Finished,
+        Post => Pos <= Plain_Len
+      is
+      begin
+         Result := OK;
+         Pos := 0;
+         --  Two rounds: the first may only complete the 4-byte header, after
+         --  which the body size (and so Wanted) is known.
+         for Round in 1 .. 2 loop
+            pragma Loop_Invariant (Pos <= Plain_Len);
+            exit when Message_Too_Large (D.Reasm) or else Has_Message (D.Reasm);
+            declare
+               Take : constant HS_Msg_Len :=
+                 N32'Min (N32'Min (Wanted (D.Reasm), Plain_Len - Pos), Free_Space (D.Reasm));
+            begin
+               if Take > 0 then
+                  Append (D.Reasm, Plaintext (Pos .. Pos + Take - 1));
+                  Pos := Pos + Take;
+               end if;
+            end;
+         end loop;
+
+         if Message_Too_Large (D.Reasm) then
+            Reset (D.Reasm);
+            Send_Encrypted_Alert (S, Decode_Error, Result);
+            Pos := Plain_Len;
+            return;
+         end if;
+
+         if Has_Message (D.Reasm) then
+            if Message_Length (D.Reasm) > Transcript_Capacity then
+               Reset (D.Reasm);
+               Send_Encrypted_Alert (S, Decode_Error, Result);
+               Pos := Plain_Len;
+               return;
+            end if;
+            declare
+               Full : constant Byte_Seq := Byte_Seq (Message (D.Reasm));
+            begin
+               Reset (D.Reasm);
+               Dispatch_Client_Auth_Message (Full, Result);
+            end;
+         else
+            --  Still incomplete: the whole record went into the buffer.
+            Pos := Plain_Len;
+         end if;
+      end Continue_Client_Auth_Reasm;
+
+      --  The next message starting at Pos: dispatch it if it is complete
+      --  in this record, otherwise park the tail in D.Reasm.
+      procedure Process_One_Client_Auth_Message
+        (Plaintext : in Byte_Seq; Plain_Len : in N32; Pos : in out N32; Result : out Action)
+      with
+        Pre =>
+          Plaintext'First = 0
+          and then Pos < Plain_Len
+          and then Plaintext'Last >= Plain_Len - 1
+          and then Plain_Len <= Records.Max_Fragment + Max_Record_Overhead
+          and then S.Role = Role_Server
+          and then S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify | Wait_Client_Finished,
+        Post => Pos > Pos'Old and then Pos <= Plain_Len
+      is
+      begin
+         Result := OK;
+         if Plain_Len - Pos < 4 then
+            Reset (D.Reasm);
+            Append (D.Reasm, Plaintext (Pos .. Plain_Len - 1));
+            Pos := Plain_Len;
+            return;
+         end if;
+         declare
+            HS_Len    : constant N32 :=
+              N32 (Plaintext (Pos + 1)) * 65536 + N32 (Plaintext (Pos + 2)) * 256
+              + N32 (Plaintext (Pos + 3));
+            Msg_Total : constant N32 := 4 + HS_Len;
+         begin
+            if Msg_Total > Transcript_Capacity then
+               Send_Encrypted_Alert (S, Decode_Error, Result);
+               Pos := Plain_Len;
+               return;
+            end if;
+            if Pos + Msg_Total > Plain_Len then
+               Reset (D.Reasm);
+               Append (D.Reasm, Plaintext (Pos .. Plain_Len - 1));
+               Pos := Plain_Len;
+               return;
+            end if;
+            declare
+               Msg : constant Byte_Seq (0 .. Msg_Total - 1) :=
+                 Plaintext (Pos .. Pos + Msg_Total - 1);
+            begin
+               Dispatch_Client_Auth_Message (Msg, Result);
+            end;
+            Pos := Pos + Msg_Total;
+         end;
+      end Process_One_Client_Auth_Message;
    begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
@@ -2398,79 +2610,39 @@ is
                end if;
 
                declare
-                  Msg_Type        : Maybe_HS_Msg;
-                  Msg_Len         : N32;
-                  Parse_OK        : Boolean;
                   Plain_Len_Const : constant N32 := Plain_Len;
-                  Data            : constant Byte_Seq := Plaintext (0 .. Plain_Len_Const - 1);
+                  Pos             : N32 := 0;
                begin
-                  Handshake.Parse_Handshake_Header (Data, Msg_Type, Msg_Len, Parse_OK);
-
-                  if not Parse_OK then
-                     --  Unknown handshake type is a state-machine error
-                     --  (unexpected_message); malformed shape for a known
-                     --  handshake type is decode_error.
-                     declare
-                        Raw_Type : constant Byte := (if Plain_Len_Const >= 1 then Data (0) else 0);
-                        Is_Known : constant Boolean :=
-                          Raw_Type in
-                            16#01#
-                            | 16#02#
-                            | 16#04#
-                            | 16#08#
-                            | 16#0B#
-                            | 16#0C#
-                            | 16#0D#
-                            | 16#0E#
-                            | 16#0F#
-                            | 16#10#
-                            | 16#14#;
-                     begin
-                        Send_Encrypted_Alert
-                          (S, (if Is_Known then Decode_Error else Unexpected_Message), Result);
-                     end;
-                     return;
+                  Result := OK;
+                  if Used (D.Reasm) > 0 then
+                     Continue_Client_Auth_Reasm (Plaintext, Plain_Len_Const, Pos, Result);
+                     if Result /= OK or else S.State = Error_State then
+                        return;
+                     end if;
                   end if;
 
-                  if Plain_Len_Const < 4 then
-                     Send_Encrypted_Alert (S, Decode_Error, Result);
-                     return;
+                  while Pos < Plain_Len_Const loop
+                     pragma Loop_Invariant (Pos <= Plain_Len_Const);
+                     pragma Loop_Invariant (Result = OK);
+                     pragma Loop_Invariant (S.Role = Role_Server);
+                     pragma Loop_Variant (Increases => Pos);
+                     if S.State not in
+                          Wait_Client_Certificate | Wait_Client_Cert_Verify | Wait_Client_Finished
+                     then
+                        --  Excess handshake data after the flight is complete.
+                        Fail_With_App_Alert (S, AD_Unexpected_Message, Unexpected_Message, Result);
+                        return;
+                     end if;
+                     Process_One_Client_Auth_Message (Plaintext, Plain_Len_Const, Pos, Result);
+                     exit when Result /= OK or else S.State = Error_State;
+                  end loop;
+
+                  --  RFC 8446 4.4.4: Finished ends the client's flight; bytes
+                  --  after it in the same record are excess handshake data
+                  --  (BoGo TrailingDataWithFinished: unexpected_message).
+                  if S.State = Connected and then Pos < Plain_Len_Const then
+                     Fail_With_App_Alert (S, AD_Unexpected_Message, Unexpected_Message, Result);
                   end if;
-
-                  case S.State is
-                     when Wait_Client_Certificate =>
-                        if Msg_Type /= HT_Certificate then
-                           Send_Encrypted_Alert (S, Unexpected_Message, Result);
-                           return;
-                        end if;
-                        Handle_Client_Cert_13 (S, D, Cfg, Data, Result);
-
-                     when Wait_Client_Cert_Verify =>
-                        if Msg_Type /= HT_Certificate_Verify then
-                           Send_Encrypted_Alert (S, Unexpected_Message, Result);
-                           return;
-                        end if;
-                        --  RFC 8446 4.4.3: CertificateVerify is only legal
-                        --  after a nonempty client Certificate. Fail closed;
-                        --  the guard also unlocks Pool_Entry's predicate.
-                        if not D.Peer_Leaf.Present then
-                           Send_Encrypted_Alert (S, Unexpected_Message, Result);
-                           return;
-                        end if;
-                        --  Lemma step (one hop from the predicate; the callee
-                        --  Pre consumes the assumed result -- same pattern as
-                        --  Validate_Client_Cert_12).
-                        pragma
-                          Assert
-                            (X509.Spans_Valid
-                               (D.Peer_Leaf.Cert, D.Peer_Leaf.DER_Len - 1));
-                        Handle_Client_CertVerify_13 (S, D, Cfg, Data, Msg_Len, Result);
-
-                     when others =>
-                        S.Last_Error := Internal_Error;
-                        Set_State (S, Error_State);
-                        Result := Error_Alert;
-                  end case;
                end;
             end;
 
@@ -2488,8 +2660,8 @@ is
    procedure Fail_With_App_Alert
      (S : in out Session; Desc : in Byte; Err : in Error_Code; Result : out Action)
    --  RFC 8446 6.1: fatal (level 2) alerts exclude close_notify (0) and
-   --  user_canceled (90) -- the emission predicate's Level-2 arm.
-   with Pre => Desc /= 0 and then Desc /= 90
+   --  user_canceled (90) -- the emission predicate's Level-2 arm (Pre on
+   --  the forward declaration above).
    is
       Ignored_A : N32;
    begin

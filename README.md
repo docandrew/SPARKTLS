@@ -28,7 +28,12 @@ paths in SPARKTLSCrypto use x86 inline assembly.
 - Certificate revocation: stapled OCSP (TLS 1.3 and 1.2) and
   application-supplied CRLs, evaluated for every certificate below the
   trust anchor, with `Ignore` / `Soft_Fail` / `Hard_Fail` policies and
-  RFC 7633 must-staple.
+  RFC 7633 must-staple. A `Verify_Staple` hook lets the application
+  apply its own OCSP policy on top.
+- OCSP stapling on the server: an identity carries its OCSP response
+  (`Set_OCSP_Staple` / `Credentials.Load_Staple`) and the server staples
+  it for clients that send `status_request`, as a TLS 1.3 CertificateEntry
+  extension or a TLS 1.2 CertificateStatus message.
 - Stateless session tickets on both versions: the resumption secret is
   sealed under a server ticket-encryption key (AES-256-GCM) and the
   ticket *is* the identity, so no server-side session store exists.
@@ -52,6 +57,12 @@ paths in SPARKTLSCrypto use x86 inline assembly.
   poisons secrets — and, for the signature verifiers, the attacker-
   controlled inputs — and fails on any data-dependent branch or index.
   A dudect statistical lane exists for local use.
+- Conformance suites (2026-09-14): BoringSSL's BoGo runner passes
+  1393 of 1576 cases, with the 66 failures each documented in
+  `tests/bogo/EXPECTED_FAILURES.txt` and 117 cases blocked on
+  multi-credential selection (see `tests/bogo/CLASSIFICATION.md`);
+  x509-limbo 9738/9759 and NIST PKITS 189/249 with the deviations listed
+  under `tests/x509/`; Wycheproof and NIST CAVP vectors pass in full.
 
 ## Not Supported
 
@@ -124,10 +135,12 @@ sent. The known x509-limbo and PKITS deviations are listed in
 
 ## Known Issues
 
-- The realworld matrix (`tests/realworld/run.sh`) lists two known
-  deviations: `extended-validation.badssl.com` (certificate rejected) and
-  `revoked.badssl.com` (accepted, because no revocation evidence is
-  available without fetching).
+- None open in the realworld matrix (`tests/realworld/run.sh`). Note that
+  `revoked.badssl.com` is only refused when the runner attaches the
+  issuer's CRL: the library never fetches revocation data, so without a
+  stapled OCSP response or an application-supplied CRL a revoked leaf is
+  accepted under the default `Soft_Fail` policy, exactly as curl accepts
+  it. Use `Hard_Fail` where that is unacceptable.
 
 ## Planned Work
 

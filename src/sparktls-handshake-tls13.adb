@@ -867,6 +867,7 @@ is
 
    procedure Build_Certificate_Chain
      (Id            : in Identity;
+      Staple        : in Boolean;
       Arena_Storage : in out Arena_Bytes;
       Result        : out Byte_Seq;
       Len           : out N32) is
@@ -878,6 +879,15 @@ is
       --  Wire size of one CertificateEntry: 3-byte length + DER + 2-byte
       --  (empty) extensions_length.
       Entry_Overhead : constant N32 := 5;
+
+      --  The leaf's status_request extension (RFC 6066 8), when stapling:
+      --  extension_type(2) + extension_data length(2) + CertificateStatus
+      --  { status_type(1) = ocsp, response<1..2^24-1> (3 + N) }.
+      Staple_Len   : constant N32 :=
+        (if Staple then Id.OCSP_Staple_Len else 0);
+      Leaf_Ext_Len : constant N32 := (if Staple_Len > 0 then 8 + Staple_Len else 0);
+      --  Wire size of the leaf entry, extension included.
+      Leaf_Len     : constant N32 := Entry_Overhead + Id.NaCl_Cert_Len + Leaf_Ext_Len;
 
       --  Ghost tally: wire bytes of the intermediates From .. Int_Count - 1.
       --  Both loops below are invariant-linked to it, so the space the
@@ -904,22 +914,20 @@ is
       end if;
 
       --  Leaf first, then every present intermediate.
-      List_Len := Entry_Overhead + Id.NaCl_Cert_Len;
+      List_Len := Leaf_Len;
       for I in 0 .. Id.Int_Count - 1 loop
          pragma
            Loop_Invariant
-             (List_Len <= Entry_Overhead + Id.NaCl_Cert_Len
-                          + N32 (I) * (Entry_Overhead + N32 (Max_Cert_DER)));
-         pragma Loop_Invariant (List_Len >= Entry_Overhead + Id.NaCl_Cert_Len);
+             (List_Len <= Leaf_Len + N32 (I) * (Entry_Overhead + N32 (Max_Cert_DER)));
+         pragma Loop_Invariant (List_Len >= Leaf_Len);
          pragma
            Loop_Invariant
-             (List_Len = Entry_Overhead + Id.NaCl_Cert_Len
-                         + (Tail_Len (Id, 0) - Tail_Len (Id, I)));
+             (List_Len = Leaf_Len + (Tail_Len (Id, 0) - Tail_Len (Id, I)));
          if Id.Ints (I).Present then
             List_Len := List_Len + Entry_Overhead + N32 (Id.Ints (I).DER_Len);
          end if;
       end loop;
-      pragma Assert (List_Len = Entry_Overhead + Id.NaCl_Cert_Len + Tail_Len (Id, 0));
+      pragma Assert (List_Len = Leaf_Len + Tail_Len (Id, 0));
 
       declare
          Body_Len : constant N32 := 1 + 3 + List_Len;
@@ -962,6 +970,44 @@ is
             C13_Entry.Set_Extensions_Empty (E);
             C13_Entries.Update (Entries, E);
          end Put_Entry;
+
+         --  The leaf entry with an extensions block of Ext_Len bytes reserved
+         --  for status_request (RFC 6066 8). Same frame as Put_Entry; the
+         --  block's content is written straight into Result once the message
+         --  is assembled (below), which keeps this on Put_Entry's proof path
+         --  instead of driving the RFLX extension sequence.
+         procedure Put_Leaf_Entry (DER : in Byte_Seq; DER_Len : in N32; Ext_Len : in N32)
+         with
+           Pre =>
+             DER'First = 0
+             and then DER_Len in 1 .. N32 (Max_Cert_DER)
+             and then DER'Last >= DER_Len - 1
+             and then Ext_Len in 9 .. 8 + N32 (Max_OCSP_Response)
+             and then C13_Entries.Has_Buffer (Entries)
+             and then C13_Entries.Valid (Entries)
+             and then C13_Entries.Available_Space (Entries)
+                      >= RBT.Bit_Length (Entry_Overhead + DER_Len + Ext_Len) * 8,
+           Post =>
+             C13_Entries.Has_Buffer (Entries)
+             and C13_Entries.Valid (Entries)
+             and C13_Entries.Available_Space (Entries)
+                 = C13_Entries.Available_Space (Entries)'Old
+                   - RBT.Bit_Length (Entry_Overhead + DER_Len + Ext_Len) * 8
+             and Entries.Buffer_First = Entries.Buffer_First'Old
+             and Entries.Buffer_Last = Entries.Buffer_Last'Old
+             and Entries.First = Entries.First'Old
+             and Entries.Last = Entries.Last'Old
+         is
+            E : C13_Entry.Context;
+         begin
+            C13_Entries.Switch (Entries, E);
+            C13_Entry.Set_Cert_Data_Length (E, RFLX.TLS_Handshake.Cert_Data_Length (DER_Len));
+            C13_Entry.Set_Cert_Data (E, To_RFLX (DER (0 .. DER_Len - 1)));
+            C13_Entry.Set_Extensions_Length
+              (E, RFLX.TLS_Handshake.Certificate_Extensions_Length (Ext_Len));
+            C13_Entry.Initialize_Extensions (E);
+            C13_Entries.Update (Entries, E);
+         end Put_Leaf_Entry;
       begin
          --  The body must also fit the arena the message is built in: a chain
          --  larger than that is refused here (Len = 0), never written past it.
@@ -989,7 +1035,11 @@ is
          pragma
            Assert (C13_Entries.Available_Space (Entries) = RBT.Bit_Length (List_Len) * 8);
 
-         Put_Entry (Id.NaCl_Cert_DER, Id.NaCl_Cert_Len);
+         if Leaf_Ext_Len > 0 then
+            Put_Leaf_Entry (Id.NaCl_Cert_DER, Id.NaCl_Cert_Len, Leaf_Ext_Len);
+         else
+            Put_Entry (Id.NaCl_Cert_DER, Id.NaCl_Cert_Len);
+         end if;
 
          for I in 0 .. Id.Int_Count - 1 loop
             pragma Loop_Invariant (C13_Entries.Has_Buffer (Entries));
@@ -1023,6 +1073,29 @@ is
          Result (3) := Byte (Body_Len mod 256);
          Result (4 .. 4 + Body_Len - 1) := To_NaCl (Buf.all (1 .. RBT.Index (Body_Len)));
          SPARKTLS.RFLX_Borrow.Discard (Buf);
+
+         --  Fill the leaf's reserved extensions block: after the handshake
+         --  header (4), context length (1), list length (3), cert length (3),
+         --  the DER and the extensions length (2):
+         --    extension_type 0x0005 || extension_data length ||
+         --    CertificateStatus { status_type ocsp(1), response<1..2^24-1> }
+         if Leaf_Ext_Len > 0 then
+            declare
+               X  : constant N32 := 4 + 1 + 3 + 3 + Id.NaCl_Cert_Len + 2;
+               SL : constant N32 := Staple_Len;
+            begin
+               pragma Assert (X + 7 + SL <= 4 + Body_Len - 1);
+               Result (X)     := 0;
+               Result (X + 1) := 5;
+               Result (X + 2) := Byte ((4 + SL) / 256);
+               Result (X + 3) := Byte ((4 + SL) mod 256);
+               Result (X + 4) := 1;
+               Result (X + 5) := Byte (SL / 65536);
+               Result (X + 6) := Byte ((SL / 256) mod 256);
+               Result (X + 7) := Byte (SL mod 256);
+               Result (X + 8 .. X + 7 + SL) := Id.OCSP_Staple (0 .. SL - 1);
+            end;
+         end if;
          Len := Msg_Len;
       end;
    end Build_Certificate_Chain;

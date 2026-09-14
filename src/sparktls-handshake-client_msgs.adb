@@ -978,7 +978,8 @@ is
       --  produces the correct bytes. Empty data on initial CH
       --  ("I support tickets but have none yet"); on resumption, the
       --  previously-issued ticket bytes go in the data field.
-      Offer_TLS12_Ticket : constant Boolean := HC.Cfg.Versions in TLS_1_2_Only | Allow_Both;
+      Offer_TLS12_Ticket : constant Boolean :=
+        HC.Cfg.TLS12_Offer_Session_Ticket and then HC.Cfg.Versions in TLS_1_2_Only | Allow_Both;
       --  The bound comes from Build_Client_Hello's Pre (see the spec:
       --  "if TLS12_Resume_Ticket.Valid then Ticket_Len <=
       --  Max_TLS12_Ticket_Len"). Carrying it in the type keeps it available
@@ -1079,6 +1080,12 @@ is
       Generate_CH_Ephemerals
         (HC.Cfg, HC.KE, HC.Client_Random, HC.Legacy_Session_ID,
          Retry_Mode, PK_Bytes, P256_PK_Enc, P384_PK_Enc);
+      --  Record the length actually put on the wire (below): the TLS 1.2
+      --  ServerHello check compares the echo against it. It was never set
+      --  here before, so a TLS 1.2 server that echoed our session_id (RFC
+      --  5077 3.4 resumption signal) was not seen as echoing at all
+      --  (BoGo Basic-Client-RenewTicket-*).
+      HC.Legacy_Session_ID_Len := (if HC.Cfg.Versions = TLS_1_2_Only then 0 else 32);
 
       --  PK_Bytes already set by X25519.Scalar_Mult above
 
@@ -2722,6 +2729,16 @@ is
                end;
             end if;
             HC.T12.Server_Echoed_SID := Echoed;
+            --  An echo claims resumption of a session. We only ever hold one
+            --  resumable TLS 1.2 session -- the ticket we offered -- so an
+            --  echo with no ticket on offer resumes nothing we know
+            --  (BoGo EchoTLS13CompatibilitySessionID: illegal_parameter).
+            if Echoed
+              and then not (HC.T12.Sent_Ticket_Ext and then HC.Cfg.TLS12_Resume_Ticket.Valid)
+            then
+               Err := Illegal_Parameter;
+               return;
+            end if;
          end;
 
          --  RFC 5246 7.4.1.3: in TLS 1.2 the server may assign a new

@@ -1700,6 +1700,26 @@ is
          end if;
       end if;
 
+      --  Application verdict on the staple (Config.Verify_Staple), whenever
+      --  we asked for one; Present = False when nothing usable arrived.
+      if S.HC.Cfg.Request_OCSP_Staple and then S.HC.Cfg.Verify_Staple /= null then
+         declare
+            Accepted : Boolean;
+         begin
+            if D.Stapled_OCSP_Len > 0 then
+               Accepted :=
+                 S.HC.Cfg.Verify_Staple (D.Stapled_OCSP (0 .. D.Stapled_OCSP_Len - 1), True);
+            else
+               Accepted := S.HC.Cfg.Verify_Staple (D.Stapled_OCSP (1 .. 0), False);
+            end if;
+            if not Accepted then
+               Reset (D.Reasm);
+               Send_Alert_And_Error (S, Bad_Certificate_Status_Response, Result);
+               return;
+            end if;
+         end;
+      end if;
+
       --  Revocation (stapled OCSP, then configured CRLs): the whole server
       --  flight is in, so the staple (if any) is known. Same gating as the
       --  chain validation in Validate_Server_Cert_12.

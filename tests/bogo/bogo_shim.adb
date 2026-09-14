@@ -65,12 +65,30 @@ procedure Bogo_Shim is
       Check_Close_Notify   : Boolean := False;
       Request_Client_Cert  : Boolean := False;
       Require_Client_Cert  : Boolean := False;
+      --  -verify-fail: BoringSSL's verify callback reports failure. It is
+      --  only fatal together with -verify-peer; on its own the BoringSSL
+      --  client is in "soft fail" mode and the handshake completes
+      --  (CertificateVerificationSoftFail-*). We mirror that: verify-peer +
+      --  verify-fail turns real chain validation on with whatever trust
+      --  store the test supplied (usually none), so the peer is refused.
+      Verify_Fail          : Boolean := False;
       --  OCSP stapling (RFC 6066 8). BoringSSL does not request a staple
       --  unless -enable-ocsp-stapling, so the shim mirrors that and
       --  leaves the library default (request) off otherwise.
       Enable_OCSP_Stapling : Boolean := False;
       Expect_OCSP_File     : Unbounded_Text := (others => Character'Val (0));
       Expect_OCSP_Len      : Natural := 0;
+      --  Server side: -ocsp-response B64 is the staple to send when the
+      --  client asks. BoringSSL's legacy OCSP callback knobs:
+      --  -use-ocsp-callback / -set-ocsp-in-callback change only which API
+      --  installs the staple; -decline-ocsp-callback means "do not
+      --  staple"; -fail-ocsp-callback aborts on the server and, on the
+      --  client, fails the staple verdict hook (Config.Verify_Staple).
+      OCSP_Response        : String (1 .. 32768) := (others => Character'Val (0));
+      OCSP_Response_Len    : Natural := 0;
+      Use_OCSP_Callback    : Boolean := False;
+      Decline_OCSP         : Boolean := False;
+      Fail_OCSP_Callback   : Boolean := False;
       Expect_Hs_Fails      : Boolean := False;
       Resume_Count         : Natural := 0;
       --  ALPN (RFC 7301). BoGo wire-encodes -advertise-alpn as a
@@ -115,10 +133,20 @@ procedure Bogo_Shim is
       Resumption_Delay_Seconds : Natural := 0;
       Time_Offset_Seconds      : Natural := 0;
       No_Ticket                 : Boolean := False;
+      --  -on-resume-no-ticket: tickets disabled only on the resume
+      --  connection(s); applied through Iteration below.
+      No_Ticket_On_Resume       : Boolean := False;
       Resumption_Across_Names   : Boolean := False;
    end record;
 
    Cfg : Config_T;
+
+   --  0 on the first connection, then 1 .. Resume_Count.
+   Iteration : Natural := 0;
+
+   --  -no-ticket, or -on-resume-no-ticket on a resume connection.
+   function Tickets_Off return Boolean
+   is (Cfg.No_Ticket or else (Cfg.No_Ticket_On_Resume and then Iteration > 0));
    Sock    : Socket_Type;
    Channel : Stream_Access;
 
@@ -209,6 +237,17 @@ procedure Bogo_Shim is
       return (Year   => Y, Month => Mo, Day => D,
               Hour   => Hr, Minute => Mn, Second => Sc);
    end Current_Time;
+
+   --  -use-ocsp-callback / -fail-ocsp-callback on the client: BoringSSL's
+   --  OCSP callback is an alternate verifier; failing it must abort with
+   --  bad_certificate_status_response even when nothing was stapled.
+   function Bogo_Staple_Verdict
+     (Response : X509.Byte_Seq; Present : Boolean) return Boolean
+   is
+      pragma Unreferenced (Response, Present);
+   begin
+      return not Cfg.Fail_OCSP_Callback;
+   end Bogo_Staple_Verdict;
 
    function State_Name (State : SPARKTLS.Connection_State) return String is
    begin
@@ -301,6 +340,7 @@ procedure Bogo_Shim is
              & " version=" & TLS_Version'Image (SPARKTLS.Get_Version (S))
              & " suite13=" & Unsigned_16'Image (Negotiated_Suite (S))
              & " suite12=" & Unsigned_16'Image (Negotiated_Suite_12 (S))
+             & SPARKTLS.Test_Support.T12_Flags (S)
              & " cApp=" & Unsigned_64'Image
                  (SPARKTLS.Test_Support.Client_App_Counter (S))
              & " sApp=" & Unsigned_64'Image
@@ -692,8 +732,25 @@ procedure Bogo_Shim is
                Cfg.Require_Client_Cert := True;
             elsif A = "-verify-peer" then
                Cfg.Request_Client_Cert := True;
+            elsif A = "-verify-fail" then
+               Cfg.Verify_Fail := True;
             elsif A = "-enable-ocsp-stapling" then
                Cfg.Enable_OCSP_Stapling := True;
+            elsif A = "-ocsp-response" then
+               declare
+                  V : constant String := Next_Arg;
+               begin
+                  if V'Length <= Cfg.OCSP_Response'Length then
+                     Cfg.OCSP_Response (1 .. V'Length) := V;
+                     Cfg.OCSP_Response_Len := V'Length;
+                  end if;
+               end;
+            elsif A = "-use-ocsp-callback" or A = "-set-ocsp-in-callback" then
+               Cfg.Use_OCSP_Callback := True;
+            elsif A = "-decline-ocsp-callback" then
+               Cfg.Decline_OCSP := True;
+            elsif A = "-fail-ocsp-callback" then
+               Cfg.Fail_OCSP_Callback := True;
             elsif A = "-expect-ocsp-response" then
                declare
                   V : constant String := Next_Arg;
@@ -862,7 +919,6 @@ procedure Bogo_Shim is
               or A = "-expect-peer-cert-file"
               or A = "-expect-client-ca-list"
               or A = "-expect-peer-verify-pref"
-              or A = "-expect-verify-result"
               or A = "-expect-cipher-aes"
               or A = "-expect-cipher-no-aes"
               or A = "-expect-resumable-across-names"
@@ -940,6 +996,27 @@ procedure Bogo_Shim is
                Cfg.Ack_Server_Name := False;
             elsif A = "-no-ticket" then
                Cfg.No_Ticket := True;
+            elsif A = "-on-resume-no-ticket" then
+               Cfg.No_Ticket_On_Resume := True;
+            elsif A = "-expect-verify-result"
+              or A = "-use-custom-verify-callback"
+              or A = "-reverify-on-resume"
+              or A = "-use-old-client-cert-callback"
+            then
+               --  BoringSSL verifier-API shape, not protocol behaviour.
+               --  -expect-verify-result: SSL_get_verify_result must be OK
+               --  after the handshake, which for us is simply "the
+               --  handshake completed" (a rejected chain never gets
+               --  there). -use-custom-verify-callback vs the legacy
+               --  callback only changes which BoringSSL API installs the
+               --  verifier (and its default alert). -reverify-on-resume
+               --  re-runs verification on a resumed session; SPARKTLS
+               --  tickets carry no peer chain, so a resumed session is
+               --  never re-verified (CertificateVerificationFailsOnResume-*
+               --  therefore fail and are listed in EXPECTED_FAILURES.txt).
+               --  -use-old-client-cert-callback selects BoringSSL's older
+               --  client-certificate callback; same behaviour for us.
+               null;
             elsif A = "-enable-grease"
               or A = "-jdk11-workaround"
               or A = "-filter-extra-algorithms"
@@ -1340,6 +1417,40 @@ procedure Bogo_Shim is
                Run_Failed := True;
                return;
             end if;
+            if Cfg.Use_OCSP_Callback and then Cfg.Fail_OCSP_Callback then
+               --  BoringSSL's server OCSP callback signalled an error: the
+               --  handshake never starts.
+               Err ("bogo_shim: OCSP callback failed (-fail-ocsp-callback)");
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               Run_Failed := True;
+               return;
+            end if;
+            if Cfg.OCSP_Response_Len > 0 and then not Cfg.Decline_OCSP then
+               declare
+                  Resp : constant X509.Byte_Seq :=
+                    Base64_Decode (Cfg.OCSP_Response (1 .. Cfg.OCSP_Response_Len));
+                  St_OK : Boolean := False;
+               begin
+                  if Resp'Length > 0 then
+                     declare
+                        Raw : Byte_Seq (0 .. N32 (Resp'Length) - 1);
+                     begin
+                        for I in Raw'Range loop
+                           Raw (I) := Byte (Resp (Resp'First + X509.N32 (I)));
+                        end loop;
+                        SPARKTLS.Set_OCSP_Staple (Id, Raw, St_OK);
+                     end;
+                  end if;
+                  if not St_OK then
+                     Err ("bogo_shim: -ocsp-response unusable");
+                     Ada.Command_Line.Set_Exit_Status
+                       (Ada.Command_Line.Exit_Status (Exit_Failure));
+                     Run_Failed := True;
+                     return;
+                  end if;
+               end;
+            end if;
             if Trust /= "" then
                SPARKTLS.Credentials.Load_Trust_Store (Roots, Trust, Roots_OK);
                if not Roots_OK then
@@ -1365,17 +1476,22 @@ procedure Bogo_Shim is
                  (if Trust /= "" then Roots'Unchecked_Access else null);
                Server_Cfg.Request_Client_Cert := Cfg.Request_Client_Cert;
                Server_Cfg.Require_Client_Cert := Cfg.Require_Client_Cert;
-               Server_Cfg.Skip_Verify := Cfg.Request_Client_Cert;
+               --  -verify-peer alone: BoringSSL's shim accepts any client
+               --  chain (its callback returns success), so skip validation.
+               --  With -verify-fail the chain must be refused: validate it
+               --  for real against the (usually empty) trust store.
+               Server_Cfg.Skip_Verify :=
+                 Cfg.Request_Client_Cert and not Cfg.Verify_Fail;
                --  Resumption is stateless (RFC 5077): the PSK is sealed into
                --  the ticket under the TEK ring, so the key callbacks drive
                --  both TLS 1.2 and 1.3 tickets. Null them for -no-ticket.
                Server_Cfg.TLS13_Resumption_Across_Names :=
                  Cfg.Resumption_Across_Names;
                Server_Cfg.Get_Active_TEK :=
-                 (if Cfg.No_Ticket then null
+                 (if Tickets_Off then null
                   else SPARKTLS.Ticket_Keys.Get_Active_TEK'Access);
                Server_Cfg.Get_TEK_By_Id :=
-                 (if Cfg.No_Ticket then null
+                 (if Tickets_Off then null
                   else SPARKTLS.Ticket_Keys.Get_TEK_By_Id'Access);
                Server_Cfg.Versions := Policy;
                Server_Cfg.TLS12_Cipher_List := Cfg.TLS12_Cipher_List;
@@ -1455,8 +1571,19 @@ procedure Bogo_Shim is
                Client_Cfg.Client_Key_Share_Group := Group_From_Wire (Cfg.Preferred_Group);
                Client_Cfg.Resume_Ticket := Saved_Ticket;
                Client_Cfg.TLS12_Resume_Ticket := Saved_Ticket_12;
-               Client_Cfg.Skip_Verify := True;
+               --  BoGo's client accepts any server chain unless
+               --  -verify-peer AND -verify-fail are both given (see
+               --  Verify_Fail above); then validate for real so the
+               --  handshake is refused.
+               Client_Cfg.Skip_Verify :=
+                 not (Cfg.Request_Client_Cert and Cfg.Verify_Fail);
                Client_Cfg.Request_OCSP_Staple := Cfg.Enable_OCSP_Stapling;
+               --  -no-ticket on the client: never offer session_ticket
+               --  (BoGo TLS12-NoTicket-NoOffer).
+               Client_Cfg.TLS12_Offer_Session_Ticket := not Tickets_Off;
+               if Cfg.Use_OCSP_Callback then
+                  Client_Cfg.Verify_Staple := Bogo_Staple_Verdict'Unrestricted_Access;
+               end if;
                Client_Cfg.Observe_Staple := Note_Staple'Unrestricted_Access;
                Client_Cfg.Skip_Hostname_Verify := True;
                Client_Cfg.Verify_Sig_Algos := Cfg.Verify_Sig_Algos;
@@ -1946,6 +2073,7 @@ begin
    --  server sent on success. Run_Failed is set by the inner
    --  early-exit paths.
    for I in 0 .. Cfg.Resume_Count loop
+      Iteration := I;
       Connect_And_Greet;
       Run_Handshake;
       exit when Run_Failed;

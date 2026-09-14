@@ -1265,6 +1265,42 @@ if [ -x "$REV_GEN" ] && bash "$REV_GEN" "$REV_DIR" >/dev/null 2>&1; then
         rev_case "CRL shards: other only, soft $v"  "$v" shard1.crt shard1.key -                       "--crl $REV_DIR/crl_shard2.der" ok
     done
 
+    #  Server side: our server staples the fixture response for a client
+    #  that asks (openssl s_client -status), on both versions, and sends
+    #  nothing when not asked.
+    staple_case() {
+        local label="$1" vflag="$2" ask="$3" expect="$4"
+        cleanup
+        "$SERVER" "$REV_DIR/good.crt" "$REV_DIR/good.key" --staple "$REV_DIR/ocsp_good_ca.der" 2>/dev/null &
+        wait_for_port
+        local output
+        # shellcheck disable=SC2086
+        output=$(echo "" | timeout 10 openssl s_client -connect 127.0.0.1:$PORT $vflag $ask \
+                    -CAfile "$REV_DIR/ca.crt" 2>&1 || true)
+        cleanup
+        if [ "$expect" = "stapled" ]; then
+            if echo "$output" | grep -q "OCSP Response Status: successful"; then
+                pass "Revocation server staple $label"
+            else
+                fail "Revocation server staple $label (s_client saw no staple)"
+                echo "    $(echo "$output" | grep -i "OCSP" | head -1)"
+            fi
+        else
+            if echo "$output" | grep -q "OCSP Response Status"; then
+                fail "Revocation server staple $label (stapled without being asked)"
+            elif echo "$output" | grep -qi "Verify return code: 0"; then
+                pass "Revocation server staple $label"
+            else
+                fail "Revocation server staple $label (handshake failed)"
+                echo "    $(echo "$output" | grep -i "error\|alert" | head -1)"
+            fi
+        fi
+    }
+    staple_case "TLS 1.3" -tls1_3 -status stapled
+    staple_case "TLS 1.2" -tls1_2 -status stapled
+    staple_case "TLS 1.3 not asked" -tls1_3 "" none
+    staple_case "TLS 1.2 not asked" -tls1_2 "" none
+
     #  The revocation example program (examples/tls_revocation_check):
     #  same fixtures, its own verdict line. Keeps the documented sample
     #  honest against the library it demonstrates.

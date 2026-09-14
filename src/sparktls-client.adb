@@ -230,6 +230,7 @@ is
             Client_Supports_X25519      => S.HC.Client_Supports_X25519,
             Client_Supports_P256        => S.HC.Client_Supports_P256,
             Client_Supports_P384        => S.HC.Client_Supports_P384,
+            Client_Wants_Staple        => S.HC.Client_Wants_Staple,
             KE                          => S.HC.KE,
             HRR_Sent                    => S.HC.HRR_Sent,
             Got_HRR                     => S.HC.Got_HRR,

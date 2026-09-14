@@ -717,6 +717,28 @@ is
             end if;
          end;
 
+         --  2b. CertificateStatus (RFC 6066 8): only when ServerHello echoed
+         --  status_request, which Build_Server_Hello_12 does only for a
+         --  staple that fits one handshake fragment.
+         if S.HC.T12.Server_Will_Staple then
+            declare
+               Status_Buf : Byte_Seq (0 .. Max_Certificate_Status_12 - 1);
+               Status_Len : N32;
+            begin
+               Build_Certificate_Status_12 (Cfg.Local.all, Status_Buf, Status_Len);
+               if Status_Len = 0 or else Status_Len > Max_Fragment then
+                  Send_Alert_And_Error (S, Internal_Error, Result);
+                  return;
+               end if;
+               Append_Transcript (S.HC, Status_Buf (0 .. Status_Len - 1));
+               Records.Build_Handshake_Record (Status_Buf (0 .. Status_Len - 1), S.Output, Rec_Out);
+               if Rec_Out = 0 then
+                  Send_Alert_And_Error (S, Insufficient_Buffer, Result);
+                  return;
+               end if;
+            end;
+         end if;
+
          --  3. ServerKeyExchange
          declare
             SKE_Buf : Byte_Seq (0 .. Max_Server_Key_Exchange - 1);
@@ -1144,7 +1166,16 @@ is
       End_Flight (S, Failed => Result = Error_Alert or else State (S) = Error_State);
    end Build_Abbreviated_Server_Flight_12;
 
-   procedure Derive_Keys_12 (S : in out Session; Cfg : in Ready_Config) is
+   procedure Derive_Keys_12 (S : in out Session; Cfg : in Ready_Config)
+   with
+     --  Frame for the client-flight message pump: key derivation touches
+     --  neither the state machine, the negotiated suite nor the
+     --  configuration.
+     Post =>
+       S.State = S.State'Old
+       and then S.Negotiated_Suite = S.Negotiated_Suite'Old
+       and then S.HC.CKE_Received_12 = S.HC.CKE_Received_12'Old
+   is
       use Key_Schedule_12;
       Use_384    : constant Boolean :=
         S.Negotiated_Suite
@@ -1616,28 +1647,279 @@ is
       end if;
    end Shared_Secret_P384_12;
 
+   procedure Handle_Client_Certificate_Msg_12
+     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Msg : in Byte_Seq; Result : out Action)
+   with
+     Pre  =>
+       Msg'First = 0
+       and then Msg'Length >= 4
+       and then Msg'Last < N32'Last - 256
+       and then S.State = Wait_Client_Certificate,
+     Post =>
+       S.Negotiated_Suite = S.Negotiated_Suite'Old
+       and then (if Result = OK
+                 then S.State in Wait_Client_Cert_Verify | Wait_Client_Finished
+                 else S.State = Error_State);
+
+   procedure Handle_Client_CertVerify_Msg_12
+     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Msg : in Byte_Seq; Result : out Action)
+   with
+     Pre  =>
+       Msg'First = 0
+       and then Msg'Length >= 4
+       and then Msg'Last < N32'Last - 256
+       and then S.State = Wait_Client_Cert_Verify
+       and then S.HC.CKE_Received_12,
+     Post =>
+       S.Negotiated_Suite = S.Negotiated_Suite'Old
+       and then (if Result = OK then S.State = Wait_Client_Finished else S.State = Error_State);
+
+   --  RFC 5246 7.2.2 / RFC 8446 6.2: invalid peer share is
+   --  illegal_parameter; an unselectable group is the generic
+   --  handshake_failure.
+   procedure Compute_Shared_Secret_12
+     (KE : in out KE_State; OK : out Boolean; Err : out Error_Code) is
+   begin
+      case KE.Curve is
+         when Group_X25519    =>
+            Shared_Secret_X25519_12 (KE, OK, Err);
+
+         when Group_Secp256r1 =>
+            Shared_Secret_P256_12 (KE, OK, Err);
+
+         when Group_Secp384r1 =>
+            Shared_Secret_P384_12 (KE, OK, Err);
+      end case;
+   end Compute_Shared_Secret_12;
+
+   --  A complete ClientKeyExchange message (reassembled, header included):
+   --  parse it, extend the transcript, take the EMS session hash (RFC 7627)
+   --  at exactly this point, then derive the keys. Msg-level twin of the
+   --  former record-level Finish_CKE_12 path: the caller has already
+   --  consumed the record, so no Read_Pos here.
+   procedure Handle_Client_Key_Exchange_Msg_12
+     (S : in out Session; Msg : in Byte_Seq; Result : out Action)
+   with
+     Pre  =>
+       Msg'First = 0
+       and then Msg'Length >= 4
+       and then Msg'Last < N32'Last - 256
+       and then S.HC.Cfg in Ready_Config
+       and then not S.HC.CKE_Received_12,
+     Post =>
+       S.Negotiated_Suite = S.Negotiated_Suite'Old
+       and then (if Result = OK then S.State = S.State'Old and then S.HC.CKE_Received_12
+                 else S.State = Error_State)
+   is
+      CKE_OK                 : Boolean;
+      Saved_Negotiated_Suite : constant Supported_Suite := S.Negotiated_Suite
+      with Ghost;
+   begin
+      Parse_Complete_CKE_12 (S.HC, Msg, CKE_OK);
+      if not CKE_OK then
+         if S.HC.Ext_Parse_Err /= No_Error then
+            Send_Alert_And_Error (S, S.HC.Ext_Parse_Err, Result);
+         else
+            Send_Alert_And_Error (S, Decode_Error, Result);
+         end if;
+         pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
+         return;
+      end if;
+
+      Append_Transcript (S.HC, Msg);
+      if S.Negotiated_Suite
+         in Suite_ECDHE_RSA_AES256_GCM_SHA384 | Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+      then
+         declare
+            D : SPARKNaCl.Hashing.SHA384.Digest;
+         begin
+            SPARKTLS_Transcript.Current_384 (S.HC.TS, D);
+            S.HC.EMS_Session_Hash := Bytes_48 (D);
+         end;
+      else
+         declare
+            D : Digest;
+         begin
+            SPARKTLS_Transcript.Current_256 (S.HC.TS, D);
+            S.HC.EMS_Session_Hash := (others => 0);
+            S.HC.EMS_Session_Hash (0 .. 31) := Byte_Seq (D);
+         end;
+      end if;
+      S.HC.EMS_Hash_Taken := True;
+
+      --  Compute ECDHE shared secret
+      declare
+         SS_OK  : Boolean := False;
+         SS_Err : Error_Code := Handshake_Failure;
+      begin
+         Compute_Shared_Secret_12 (S.HC.KE, SS_OK, SS_Err);
+         if not SS_OK then
+            Send_Alert_And_Error (S, SS_Err, Result);
+            pragma Assert (S.Negotiated_Suite = Saved_Negotiated_Suite);
+            return;
+         end if;
+      end;
+      if S.HC.Cfg not in Ready_Config then
+         --  Fail closed (Init's gate makes this unreachable).
+         Send_Alert_And_Error (S, Internal_Error, Result);
+         return;
+      end if;
+      declare
+         Cfg : constant Ready_Config := S.HC.Cfg;
+      begin
+         Derive_Keys_12 (S, Cfg);
+      end;
+      S.HC.CKE_Received_12 := True;
+      Result := OK;
+      --  RFC 5246 7.4.7: at this exit point, the single-CKE
+      --  invariant MUST hold. A future edit that drops the
+      --  S.HC.CKE_Received_12 := True assignment above would fail
+      --  this pragma  that's the point.
+      pragma Assert (Single_CKE_RFC_5246_7_4_7 (S.HC));
+   end Handle_Client_Key_Exchange_Msg_12;
+
+   --  The handshake messages of the client's flight before CCS --
+   --  Certificate, ClientKeyExchange, CertificateVerify -- read as a
+   --  message STREAM (RFC 5246 6.2.1: several messages per record, a
+   --  message across records; BoGo PackHandshake / SplitHandshakeRecords).
+   --  The record is consumed up front; D.Reasm carries an unfinished
+   --  message to the next record. Each complete message is dispatched on
+   --  the current state.
+   procedure Process_Client_Handshake_Record_12
+     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Rec : in Records.Parse_Result; Result : out Action)
+   with
+     Pre =>
+       Rec.OK
+       and then Rec.Content = Records.Content_Handshake
+       and then Rec.Fragment_Pos <= N32'Last - Rec.Fragment_Len
+       and then Rec.Record_Len = Rec.Fragment_Pos + Rec.Fragment_Len
+       and then Rec.Fragment_Len <= Records.Max_Fragment + Max_Record_Overhead
+       and then S.Input.Read_Pos <= N32'Last - Rec.Record_Len
+       and then S.Input.Read_Pos + Rec.Record_Len <= S.Input.Write_Pos
+       and then S.Input.Read_Pos + Rec.Record_Len <= IO_Buffer_Capacity
+       and then S.HC.Cfg in Ready_Config
+       and then S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify | Wait_Client_Finished
+       and then (if S.State = Wait_Client_Finished then not S.HC.CKE_Received_12)
+   is
+      Frag_Len : constant N32 := Rec.Fragment_Len;
+      FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
+   begin
+      Result := OK;
+      pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+
+      if Frag_Len = 0 then
+         Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
+         return;
+      end if;
+
+      declare
+         Frag : constant Byte_Seq (0 .. Frag_Len - 1) :=
+           Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
+         Pos  : N32 := 0;
+      begin
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+
+         while Pos < Frag_Len loop
+            pragma Loop_Invariant (Pos <= Frag_Len);
+            pragma Loop_Invariant (Result = OK);
+            pragma
+              Loop_Invariant
+                (S.State in Wait_Client_Certificate | Wait_Client_Cert_Verify | Wait_Client_Finished);
+            pragma Loop_Invariant (if S.State = Wait_Client_Finished then not S.HC.CKE_Received_12);
+            pragma Loop_Variant (Increases => Pos);
+
+            if Used (D.Reasm) = 0 then
+               Reset (D.Reasm);
+            end if;
+
+            declare
+               Take : constant HS_Msg_Len :=
+                 N32'Min (N32'Min (Wanted (D.Reasm), Frag_Len - Pos), Free_Space (D.Reasm));
+            begin
+               if Take = 0 then
+                  --  Nothing wanted or no room: the buffer is stuck on an
+                  --  oversize message.
+                  Reset (D.Reasm);
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+                  return;
+               end if;
+               Append (D.Reasm, Frag (Pos .. Pos + Take - 1));
+               Pos := Pos + Take;
+            end;
+
+            if Header_Ready (D.Reasm) then
+               declare
+                  --  The one message type the state admits.
+                  Expected : constant Byte :=
+                    (if S.State = Wait_Client_Certificate then HS_Msg_Wire (HT_Certificate)
+                     elsif not S.HC.CKE_Received_12 then HS_Msg_Wire (HT_Client_Key_Exchange)
+                     else HS_Msg_Wire (HT_Certificate_Verify));
+               begin
+                  if Declared_Type (D.Reasm) /= Expected then
+                     Reset (D.Reasm);
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+                  if Expected = HS_Msg_Wire (HT_Client_Key_Exchange)
+                    and then Declared_Size (D.Reasm) - 4 > Max_Client_Key_Exchange
+                  then
+                     Reset (D.Reasm);
+                     Send_Alert_And_Error (S, Decode_Error, Result);
+                     return;
+                  end if;
+               end;
+               if Message_Too_Large (D.Reasm) then
+                  Reset (D.Reasm);
+                  Send_Alert_And_Error (S, Decode_Error, Result);
+                  return;
+               end if;
+            end if;
+
+            --  Only the header (or part of the body) so far: the rest is
+            --  later in this record or in the next one.
+            if Has_Message (D.Reasm) then
+               declare
+                  Full : constant Byte_Seq := Byte_Seq (Message (D.Reasm));
+               begin
+                  Reset (D.Reasm);
+                  if S.State = Wait_Client_Certificate then
+                     Handle_Client_Certificate_Msg_12 (S, D, Full, Result);
+                  elsif not S.HC.CKE_Received_12 then
+                     if S.HC.Cfg not in Ready_Config then
+                        Send_Alert_And_Error (S, Internal_Error, Result);
+                        return;
+                     end if;
+                     Handle_Client_Key_Exchange_Msg_12 (S, Full, Result);
+                  else
+                     Handle_Client_CertVerify_Msg_12 (S, D, Full, Result);
+                  end if;
+               end;
+               if Result /= OK or else S.State = Error_State then
+                  return;
+               end if;
+
+               --  RFC 5246 7.4.7 / 7.3: after ClientKeyExchange (with no
+               --  CertificateVerify to come) the next thing on the wire is
+               --  the ChangeCipherSpec record; more handshake bytes in this
+               --  record are a state-machine violation.
+               if S.State = Wait_Client_Finished and then S.HC.CKE_Received_12 then
+                  if Pos < Frag_Len then
+                     Send_Alert_And_Error (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+                  exit;
+               end if;
+            end if;
+         end loop;
+      end;
+
+      Result := (if Input_Available (S) > 0 then OK else Need_Input);
+   end Process_Client_Handshake_Record_12;
+
    procedure Process_Client_Key_Exchange_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
       Rec : Records.Parse_Result;
-
-      procedure Compute_Shared_Secret_12
-        (KE : in out KE_State; OK : out Boolean; Err : out Error_Code) is
-      begin
-         --  RFC 5246 7.2.2 / RFC 8446 6.2: invalid peer share is
-         --  illegal_parameter; an unselectable group is the generic
-         --  handshake_failure.
-         case KE.Curve is
-            when Group_X25519    =>
-               Shared_Secret_X25519_12 (KE, OK, Err);
-
-            when Group_Secp256r1 =>
-               Shared_Secret_P256_12 (KE, OK, Err);
-
-            when Group_Secp384r1 =>
-               Shared_Secret_P384_12 (KE, OK, Err);
-         end case;
-      end Compute_Shared_Secret_12;
    begin
       if Input_Available (S) = 0 then
          Result := Need_Input;
@@ -1683,151 +1965,91 @@ is
          return;
       end if;
 
-      declare
-         Frag_Len : constant N32 := Rec.Fragment_Len;
-         FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-
-      begin
-         --  Slice bound: Parse_Record_Header Post gives Record_Len <= Avail,
-         --  i.e., Read_Pos + Record_Len <= Write_Pos <= IO_Buffer_Capacity.
-         --  So FS + Frag_Len = Read_Pos + Fragment_Pos + Fragment_Len
-         --                  = Read_Pos + Record_Len <= Write_Pos.
-         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
-
-         if Used (D.Reasm) > 0 then
-
-            declare
-               --  Was "(if Len <= Need then Need - Len else 0)" -- a guard
-               --  that substituted a ZERO-LENGTH COPY for a state it could
-               --  not handle, hiding the underflow rather than preventing it
-               --  (task #89). Wanted computes the shortfall inside the module
-               --  where the subtraction is safe, and the Min against
-               --  Free_Space discharges Append's precondition, so the
-               --  buffer-overflow branch is gone too.
-               Take : constant HS_Msg_Len :=
-                 N32'Min (N32'Min (Wanted (D.Reasm), Frag_Len), Free_Space (D.Reasm));
-            begin
-               if Take > 0 then
-                  Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Take - 1))));
-               end if;
-
-               if Take /= Frag_Len then
-                  --  A CKE handshake message may span records, but this
-                  --  state expects exactly that one message before CCS.
-                  Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
-                  return;
-               end if;
-            end;
-
-            if Header_Ready (D.Reasm) then
-               if Declared_Type (D.Reasm) /= HS_Msg_Wire (HT_Client_Key_Exchange) then
-                  Consume_And_Alert_12 (S, Rec, Unexpected_Message, Result);
-                  return;
-               end if;
-               if Declared_Size (D.Reasm) - 4 > Max_Client_Key_Exchange then
-                  Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
-                  return;
-               end if;
-            end if;
-
-            if not Has_Message (D.Reasm) then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Result := OK;
-               return;
-            end if;
-
-            declare
-               Full : constant Message_Bytes := Message (D.Reasm);
-            begin
-               begin
-                  Reset (D.Reasm);
-                  Finish_CKE_12 (S, Rec, Byte_Seq (Full), Result);
-                  if Result /= OK then
-                     return;
-                  end if;
-               end;
-            end;
-         elsif Frag_Len < 4 then
-            if Frag_Len = 0 then
-               Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
-               return;
-            end if;
-
-            Reset (D.Reasm);
-            Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1))));
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Result := OK;
-            return;
-         else
-            declare
-               HS_Msg_Len : constant N32 :=
-                 N32 (S.Input.Storage (Ix (FS + 1))) * 65536
-                 + N32 (S.Input.Storage (Ix (FS + 2))) * 256
-                 + N32 (S.Input.Storage (Ix (FS + 3)));
-               HS_Total   : constant N32 := HS_Msg_Len + 4;
-            begin
-               if S.Input.Storage (Ix (FS)) /= HS_Msg_Wire (HT_Client_Key_Exchange) then
-                  Consume_And_Alert_12 (S, Rec, Unexpected_Message, Result);
-                  return;
-               end if;
-               if HS_Msg_Len > Max_Client_Key_Exchange then
-                  Consume_And_Alert_12 (S, Rec, Decode_Error, Result);
-                  return;
-               end if;
-
-               if HS_Total > Frag_Len then
-                  Reset (D.Reasm);
-                  Append (D.Reasm, Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1))));
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Result := OK;
-                  return;
-               end if;
-            end;
-
-            declare
-               Frag : constant Byte_Seq := Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
-            begin
-               Result := OK;
-               Finish_CKE_12 (S, Rec, Frag, Result);
-               if Result /= OK then
-                  return;
-               end if;
-            end;
-         end if;
-      end;
-
-      --  Compute ECDHE shared secret
-      declare
-         SS_OK  : Boolean := False;
-         SS_Err : Error_Code := Handshake_Failure;
-      begin
-         Compute_Shared_Secret_12 (S.HC.KE, SS_OK, SS_Err);
-         if not SS_OK then
-            Send_Alert_And_Error (S, SS_Err, Result);
-            return;
-         end if;
-      end;
-      if S.HC.Cfg not in Ready_Config then
+      if S.HC.Cfg not in Ready_Config
+        or else S.State not in Wait_Client_Certificate | Wait_Client_Cert_Verify | Wait_Client_Finished
+      then
          --  Fail closed (Init's gate makes this unreachable).
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
          S.Last_Error := Internal_Error;
          Set_State (S, Error_State);
          Result := Error_Alert;
          return;
       end if;
-      declare
-         Cfg : constant Ready_Config := S.HC.Cfg;
-      begin
-         Derive_Keys_12 (S, Cfg);
-      end;
-      S.HC.CKE_Received_12 := True;
-      Result := (if Input_Available (S) > 0 then OK else Need_Input);
-      --  RFC 5246 7.4.7: at this exit point, the single-CKE
-      --  invariant MUST hold. A future edit that drops the
-      --  S.HC.CKE_Received_12 := True assignment above would fail
-      --  this pragma  that's the point.
-      pragma Assert (Single_CKE_RFC_5246_7_4_7 (S.HC));
+
+      Process_Client_Handshake_Record_12 (S, D, Rec, Result);
    end Process_Client_Key_Exchange_12;
 
+   --  A complete client Certificate message (RFC 5246 7.4.6), header
+   --  included. Parses the chain, extends the transcript and moves the
+   --  state on: CertificateVerify next when a certificate was sent, else
+   --  straight to the ClientKeyExchange/Finished phase.
+   procedure Handle_Client_Certificate_Msg_12
+     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Msg : in Byte_Seq; Result : out Action)
+   is
+      Msg_Type : Maybe_HS_Msg;
+      Msg_Len  : N32;
+      Parse_OK : Boolean;
+   begin
+      Result := OK;
+      Handshake.Parse_Handshake_Header (Msg, Msg_Type, Msg_Len, Parse_OK);
+
+      if not Parse_OK or else Msg_Type /= HT_Certificate then
+         Send_Alert_And_Error (S, Unexpected_Message, Result);
+         return;
+      end if;
+
+      if Msg_Len < 3 or else Msg_Len + 4 /= N32 (Msg'Length) or else Msg'Length < 7 then
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
+
+      declare
+         List_Len : constant N32 :=
+           N32 (Msg (4)) * 65536 + N32 (Msg (5)) * 256 + N32 (Msg (6));
+      begin
+         if List_Len /= Msg_Len - 3 then
+            Send_Alert_And_Error (S, Decode_Error, Result);
+            return;
+         end if;
+         if List_Len = 0 and then S.HC.Cfg.Require_Client_Cert then
+            Send_Alert_And_Error (S, Handshake_Failure, Result);
+            return;
+         end if;
+      end;
+
+      declare
+         Chain_OK  : Boolean;
+         Chain_Err : Error_Code;
+      begin
+         SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
+           (HC => S.HC, D => D, HS_Msg => Msg, OK => Chain_OK, Err => Chain_Err);
+
+         if not Chain_OK then
+            Send_Alert_And_Error (S, Chain_Err, Result);
+            return;
+         end if;
+      end;
+
+      Append_Transcript (S.HC, Msg);
+      if D.Peer_Leaf.Present then
+         --  Bounds + Spans_Valid ride Pool_Entry's predicate.
+         pragma Assert (D.Peer_Leaf.Present);
+         Set_State (S, Wait_Client_Cert_Verify);
+      elsif D.Peer_Leaf.DER_Len > 0 then
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      elsif S.HC.Cfg.Require_Client_Cert then
+         Send_Alert_And_Error (S, Handshake_Failure, Result);
+         return;
+      else
+         Set_State (S, Wait_Client_Finished);
+      end if;
+      Result := OK;
+   end Handle_Client_Certificate_Msg_12;
+
+   --  Record-level entry for the client-authentication states: any
+   --  handshake record goes through the message pump; anything else is a
+   --  state-machine violation.
    procedure Process_Client_Certificate_12
      (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
    is
@@ -1858,118 +2080,17 @@ is
          return;
       end if;
 
-      declare
-         Frag_Len : constant N32 := Rec.Fragment_Len;
-         FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-      begin
-         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+      if S.HC.Cfg not in Ready_Config
+        or else S.State not in Wait_Client_Certificate | Wait_Client_Cert_Verify
+      then
+         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+         S.Last_Error := Internal_Error;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
+         return;
+      end if;
 
-         if Frag_Len < 7 then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Send_Alert_And_Error (S, Decode_Error, Result);
-            return;
-         end if;
-
-         declare
-            Frag     : constant Byte_Seq := Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
-            Msg_Type : Maybe_HS_Msg;
-            Msg_Len  : N32;
-            Parse_OK : Boolean;
-         begin
-            Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
-
-            if not Parse_OK then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error
-                 (S,
-                  (if Frag (Frag'First)
-                      in 16#01#
-                       | 16#02#
-                       | 16#04#
-                       | 16#08#
-                       | 16#0B#
-                       | 16#0C#
-                       | 16#0D#
-                       | 16#0E#
-                       | 16#0F#
-                       | 16#10#
-                       | 16#14#
-                   then Decode_Error
-                   else Unexpected_Message),
-                  Result);
-               return;
-            end if;
-
-            if Msg_Type /= HT_Certificate then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Unexpected_Message, Result);
-               return;
-            end if;
-
-            if Msg_Len < 3 or else Msg_Len + 4 /= Frag_Len then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result);
-               return;
-            end if;
-
-            declare
-               F : constant N32 := Frag'First;
-            begin
-               pragma Assert (Frag_Len >= 7);
-               pragma Assert (F + 6 <= Frag'Last);
-               declare
-                  List_Len : constant N32 :=
-                    N32 (Frag (F + 4)) * 65536 + N32 (Frag (F + 5)) * 256 + N32 (Frag (F + 6));
-               begin
-                  if List_Len /= Msg_Len - 3 then
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     Send_Alert_And_Error (S, Decode_Error, Result);
-                     return;
-                  end if;
-                  if List_Len = 0 and then S.HC.Cfg.Require_Client_Cert then
-                     S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                     Send_Alert_And_Error (S, Handshake_Failure, Result);
-                     return;
-                  end if;
-               end;
-            end;
-
-            declare
-               HS_Msg    : Byte_Seq (0 .. Frag_Len - 1);
-               Chain_OK  : Boolean;
-               Chain_Err : Error_Code;
-            begin
-               for I in N32 range 0 .. Frag_Len - 1 loop
-                  HS_Msg (I) := Frag (Frag'First + I);
-               end loop;
-               SPARKTLS.Handshake.Certs.Parse_Certificate_Chain_12
-                 (HC => S.HC, D => D, HS_Msg => HS_Msg, OK => Chain_OK, Err => Chain_Err);
-
-               if not Chain_OK then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, Chain_Err, Result);
-                  return;
-               end if;
-            end;
-
-            Append_Transcript (S.HC, Frag);
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            if D.Peer_Leaf.Present then
-               --  Bounds + Spans_Valid ride Pool_Entry's predicate.
-               pragma Assert (D.Peer_Leaf.Present);
-               Set_State (S, Wait_Client_Cert_Verify);
-            elsif D.Peer_Leaf.DER_Len > 0 then
-               Send_Alert_And_Error (S, Decode_Error, Result);
-               return;
-            elsif S.HC.Cfg.Require_Client_Cert then
-               Send_Alert_And_Error (S, Handshake_Failure, Result);
-               return;
-            else
-               Set_State (S, Wait_Client_Finished);
-            end if;
-            Result := (if Input_Available (S) > 0 then OK else Need_Input);
-         end;
-      end;
+      Process_Client_Handshake_Record_12 (S, D, Rec, Result);
    end Process_Client_Certificate_12;
 
    ------------------------------------------------------------------
@@ -2095,155 +2216,92 @@ is
       end;
    end Validate_Client_Cert_12;
 
-   procedure Process_Client_CertVerify_12
-     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Result : out Action)
+   --  A complete client CertificateVerify message (RFC 5246 7.4.8), header
+   --  included: check the signature over the transcript so far, then
+   --  validate the chain, then extend the transcript.
+   procedure Handle_Client_CertVerify_Msg_12
+     (S : in out Session; D : in out SPARKTLS.HS_Pool.HS_Data; Msg : in Byte_Seq; Result : out Action)
    is
-      Rec : Records.Parse_Result;
+      Msg_Type    : Maybe_HS_Msg;
+      Msg_Len     : N32;
+      Parse_OK    : Boolean;
+      Cert_OK     : Boolean;
+      Cert_Vetoed : Boolean;
    begin
-      if Input_Available (S) = 0 then
-         Result := Need_Input;
-         return;
-      end if;
+      Result := OK;
+      Handshake.Parse_Handshake_Header (Msg, Msg_Type, Msg_Len, Parse_OK);
 
-      Records.Parse_Record_Header
-        (Byte_Seq (S.Input.Storage (Ix (S.Input.Read_Pos) .. Ix (S.Input.Write_Pos - 1))), Available (S.Input), Rec);
-
-      if not Rec.OK then
-         if Rec.Bad_Version then
-            Send_Alert_And_Error (S, Protocol_Version, Result);
-         elsif Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
-         else
-            Result := Need_Input;
-         end if;
-         return;
-      end if;
-
-      if Rec.Content /= Records.Content_Handshake then
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      if not Parse_OK or else Msg_Type /= HT_Certificate_Verify then
          Send_Alert_And_Error (S, Unexpected_Message, Result);
          return;
       end if;
 
-      declare
-         Frag_Len : constant N32 := Rec.Fragment_Len;
-         FS       : constant N32 := S.Input.Read_Pos + Rec.Fragment_Pos;
-      begin
-         pragma Assert (FS + Frag_Len <= S.Input.Write_Pos);
+      if Msg_Len < 4 or else Msg_Len + 4 /= N32 (Msg'Length) or else Msg'Length < 8 then
+         Send_Alert_And_Error (S, Decode_Error, Result);
+         return;
+      end if;
 
-         if Frag_Len < 8 then
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+      declare
+         Scheme   : constant Maybe_Sig_Scheme :=
+           Scheme_From_Wire (Unsigned_16 (Msg (4)) * 256 + Unsigned_16 (Msg (5)));
+         Sig_Len  : constant N32 := N32 (Msg (6)) * 256 + N32 (Msg (7));
+         Verified : Boolean;
+      begin
+         if Sig_Len = 0 or else Sig_Len /= Msg_Len - 4 or else 8 + Sig_Len - 1 > Msg'Last then
             Send_Alert_And_Error (S, Decode_Error, Result);
             return;
          end if;
 
+         --  Ed25519 CertificateVerify in TLS 1.2 signs the raw handshake
+         --  transcript, which the streaming transcript cannot replay, so
+         --  the scheme is not one we can verify here: illegal_parameter,
+         --  not a signature failure (RFC 5246 7.4.8).
+         if Scheme = Sig_Ed25519 then
+            Send_Alert_And_Error (S, Illegal_Parameter, Result);
+            return;
+         end if;
+
+         if S.HC.Cfg.Verify_Sig_Algo_Count > 0
+           and then
+             not Sig_Scheme_In_List
+                   (Scheme, S.HC.Cfg.Verify_Sig_Algos, S.HC.Cfg.Verify_Sig_Algo_Count)
+         then
+            Send_Alert_And_Error (S, Illegal_Parameter, Result);
+            return;
+         end if;
+
          declare
-            Frag     : constant Byte_Seq := Byte_Seq (S.Input.Storage (Ix (FS) .. Ix (FS + Frag_Len - 1)));
-            Msg_Type : Maybe_HS_Msg;
-            Msg_Len  : N32;
-            Parse_OK : Boolean;
-            Cert_OK  : Boolean;
-            Cert_Vetoed : Boolean;
+            Sig : Byte_Seq (0 .. Sig_Len - 1);
          begin
-            Handshake.Parse_Handshake_Header (Frag, Msg_Type, Msg_Len, Parse_OK);
-
-            if not Parse_OK then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error
-                 (S,
-                  (if Frag (Frag'First)
-                      in 16#01#
-                       | 16#02#
-                       | 16#04#
-                       | 16#08#
-                       | 16#0B#
-                       | 16#0C#
-                       | 16#0D#
-                       | 16#0E#
-                       | 16#0F#
-                       | 16#10#
-                       | 16#14#
-                   then Decode_Error
-                   else Unexpected_Message),
-                  Result);
-               return;
-            end if;
-
-            if Msg_Type /= HT_Certificate_Verify then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Unexpected_Message, Result);
-               return;
-            end if;
-
-            if Msg_Len < 4 or else Msg_Len + 4 /= Frag_Len then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result);
-               return;
-            end if;
-
-            declare
-               F        : constant N32 := Frag'First;
-               Scheme   : constant Maybe_Sig_Scheme :=
-                 Scheme_From_Wire (Unsigned_16 (Frag (F + 4)) * 256 + Unsigned_16 (Frag (F + 5)));
-               Sig_Len  : constant N32 := N32 (Frag (F + 6)) * 256 + N32 (Frag (F + 7));
-               Verified : Boolean;
-            begin
-               if Sig_Len = 0
-                 or else Sig_Len /= Msg_Len - 4
-                 or else F + 8 + Sig_Len - 1 > Frag'Last
-               then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, Decode_Error, Result);
-                  return;
-               end if;
-
-               if S.HC.Cfg.Verify_Sig_Algo_Count > 0
-                 and then
-                   not Sig_Scheme_In_List
-                         (Scheme, S.HC.Cfg.Verify_Sig_Algos, S.HC.Cfg.Verify_Sig_Algo_Count)
-               then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, Illegal_Parameter, Result);
-                  return;
-               end if;
-
-               declare
-                  Sig : Byte_Seq (0 .. Sig_Len - 1);
-               begin
-                  for I in N32 range 0 .. Sig_Len - 1 loop
-                     Sig (I) := Frag (F + 8 + I);
-                  end loop;
-                  Verified := CV_Signature_Valid_12 (S.HC.TS, Sig, D.Peer_Leaf.Cert, Scheme);
-               end;
-
-               if not Verified then
-                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Alert_And_Error (S, Certificate_Verify_Failed, Result);
-                  return;
-               end if;
-            end;
-
-            Validate_Client_Cert_12 (S.HC.Cfg, D, Cert_OK, Cert_Vetoed);
-            if not Cert_OK then
-               S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error
-                 (S, (if Cert_Vetoed then Certificate_Unknown else Bad_Certificate), Result);
-               return;
-            end if;
-
-            --  Signature verified AND cert validated -- the peer is
-            --  authenticated for this session. Recorded here (not at
-            --  Certificate time, which only proves the chain parsed) so the
-            --  ticket we issue after Finished carries the truth.
-            S.HC.T12.Client_Authed := True;
-
-            Append_Transcript (S.HC, Frag);
-            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-            Set_State (S, Wait_Client_Finished);
-            Result := (if Input_Available (S) > 0 then OK else Need_Input);
+            for I in N32 range 0 .. Sig_Len - 1 loop
+               Sig (I) := Msg (8 + I);
+            end loop;
+            Verified := CV_Signature_Valid_12 (S.HC.TS, Sig, D.Peer_Leaf.Cert, Scheme);
          end;
+
+         if not Verified then
+            Send_Alert_And_Error (S, Certificate_Verify_Failed, Result);
+            return;
+         end if;
       end;
-   end Process_Client_CertVerify_12;
+
+      Validate_Client_Cert_12 (S.HC.Cfg, D, Cert_OK, Cert_Vetoed);
+      if not Cert_OK then
+         Send_Alert_And_Error
+           (S, (if Cert_Vetoed then Certificate_Unknown else Bad_Certificate), Result);
+         return;
+      end if;
+
+      --  Signature verified AND cert validated -- the peer is
+      --  authenticated for this session. Recorded here (not at
+      --  Certificate time, which only proves the chain parsed) so the
+      --  ticket we issue after Finished carries the truth.
+      S.HC.T12.Client_Authed := True;
+
+      Append_Transcript (S.HC, Msg);
+      Set_State (S, Wait_Client_Finished);
+      Result := OK;
+   end Handle_Client_CertVerify_Msg_12;
 
    ------------------------------------------------------------------
    ------------------------------------------------------------------
@@ -2769,13 +2827,10 @@ is
             end if;
 
          when Wait_Client_Certificate | Wait_Client_Cert_Verify =>
-            if S.State = Wait_Client_Certificate then
-               Process_Client_Certificate_12 (S, D, Result);
-            elsif not S.HC.CKE_Received_12 then
-               Process_Client_Key_Exchange_12 (S, D, Result);
-            else
-               Process_Client_CertVerify_12 (S, D, Result);
-            end if;
+            --  Certificate, ClientKeyExchange and CertificateVerify all
+            --  arrive as handshake records and go through one message pump
+            --  (they may share a record or span several).
+            Process_Client_Certificate_12 (S, D, Result);
 
          when Wait_Client_Finished                              =>
             if not S.HC.CKE_Received_12 then

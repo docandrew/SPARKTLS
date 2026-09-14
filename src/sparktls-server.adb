@@ -761,11 +761,12 @@ is
                               SPARKTLS_Transcript.Start (L);
                               if S.HC.PSK.Offered
                                 and then S.HC.PSK.Binder_Len > 0
-                                and then N32 (Full_Msg'Length) > 3 + S.HC.PSK.Binder_Len
+                                and then S.HC.PSK.Binders_Block_Len > 0
+                                and then N32 (Full_Msg'Length) > S.HC.PSK.Binders_Block_Len
                               then
                                  declare
                                     T : constant N32 :=
-                                      N32 (Full_Msg'Length) - (3 + S.HC.PSK.Binder_Len);
+                                      N32 (Full_Msg'Length) - S.HC.PSK.Binders_Block_Len;
                                  begin
                                     SPARKTLS_Transcript.Suffix_256
                                       (L,
@@ -797,6 +798,7 @@ is
                                  Client_Supports_X25519      => S.HC.Client_Supports_X25519,
                                  Client_Supports_P256        => S.HC.Client_Supports_P256,
                                  Client_Supports_P384        => S.HC.Client_Supports_P384,
+                                 Client_Wants_Staple        => S.HC.Client_Wants_Staple,
                                  KE                          => S.HC.KE,
                                  HRR_Sent                    => S.HC.HRR_Sent,
                                  Got_HRR                     => S.HC.Got_HRR,
@@ -941,10 +943,11 @@ is
                         --  silently refreshed BoGo baseline.
                         if S.HC.PSK.Offered
                           and then S.HC.PSK.Binder_Len > 0
-                          and then Frag_Len > 3 + S.HC.PSK.Binder_Len
+                          and then S.HC.PSK.Binders_Block_Len > 0
+                          and then Frag_Len > S.HC.PSK.Binders_Block_Len
                         then
                            declare
-                              T : constant N32 := Frag_Len - (3 + S.HC.PSK.Binder_Len);
+                              T : constant N32 := Frag_Len - S.HC.PSK.Binders_Block_Len;
                            begin
                               SPARKTLS_Transcript.Suffix_256
                                 (L,
@@ -973,6 +976,7 @@ is
                            Client_Supports_X25519      => S.HC.Client_Supports_X25519,
                            Client_Supports_P256        => S.HC.Client_Supports_P256,
                            Client_Supports_P384        => S.HC.Client_Supports_P384,
+                           Client_Wants_Staple        => S.HC.Client_Wants_Staple,
                            KE                          => S.HC.KE,
                            HRR_Sent                    => S.HC.HRR_Sent,
                            Got_HRR                     => S.HC.Got_HRR,

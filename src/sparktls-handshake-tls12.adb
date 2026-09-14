@@ -43,6 +43,10 @@ is
    use type RFLX.RFLX_Types.Base_Integer;
 
    Max_Sig : constant := Max_Sig_Bytes;  --  RSA-8192; see the spec
+   --  RFC 5246 6.2.1: largest handshake fragment one record can carry;
+   --  a CertificateStatus larger than this would need fragmenting, so the
+   --  server does not offer to staple such a response.
+   Max_HS_Fragment_12 : constant := 16_384;
    --  Helper: write a 3-byte big-endian length
    procedure Put24 (Buf : in out Byte_Seq; Pos : N32; Val : N32)
    with
@@ -1311,10 +1315,10 @@ is
       subtype TLS12_SID_Len is N32 range 0 .. 32;
       subtype TLS12_ALPN_Data_Len is N32 range 0 .. 258;
       subtype TLS12_ALPN_Ext_Len is N32 range 0 .. 262;
-      subtype TLS12_SH_Ext_Total is N32 range 0 .. 279;
-      subtype TLS12_SH_Ext_Block_Len is N32 range 0 .. 281;
-      subtype TLS12_SH_Body_Len is N32 range 38 .. 351;
-      subtype TLS12_SH_Msg_Len is N32 range 42 .. 355;
+      subtype TLS12_SH_Ext_Total is N32 range 0 .. 283;
+      subtype TLS12_SH_Ext_Block_Len is N32 range 0 .. 285;
+      subtype TLS12_SH_Body_Len is N32 range 38 .. 355;
+      subtype TLS12_SH_Msg_Len is N32 range 42 .. 359;
 
       procedure Gen_Random (Output : out Byte_Seq) renames HC.Cfg.Random.all;
 
@@ -1367,9 +1371,21 @@ is
         HC.T12.Ticket_Offered and then HC.Cfg.Get_Active_TEK /= null;
       ST_Ext_Len  : constant N32 := (if Emit_ST_Ext then 4 else 0);
 
+      --  RFC 6066 8 status_request (0x0005): empty echo when the client
+      --  asked, this is a full handshake (an abbreviated one has no
+      --  Certificate to follow) and the identity carries a staple that
+      --  fits one handshake fragment. CertificateStatus then follows
+      --  Certificate in the flight (Build_Certificate_Status_12).
+      Emit_SR_Ext : constant Boolean :=
+        HC.Client_Wants_Staple
+        and then not HC.T12.Resuming
+        and then HC.Cfg.Local.OCSP_Staple_Len > 0
+        and then HC.Cfg.Local.OCSP_Staple_Len <= Max_HS_Fragment_12 - 8;
+      SR_Ext_Len  : constant N32 := (if Emit_SR_Ext then 4 else 0);
+
       --  Extensions total
       Ext_Total     : constant TLS12_SH_Ext_Total :=
-        RI_Ext_Len + EMS_Ext_Len + SNI_Ext_Len + ALPN_Ext_Len + ST_Ext_Len;
+        RI_Ext_Len + EMS_Ext_Len + SNI_Ext_Len + ALPN_Ext_Len + ST_Ext_Len + SR_Ext_Len;
       Ext_Block_Len : constant TLS12_SH_Ext_Block_Len :=
         (if Ext_Total > 0 then 2 + Ext_Total else 0);
 
@@ -1506,6 +1522,15 @@ is
          Put16 (Result, Pos, 16#0023#);
          Put16 (Result, Pos + 2, 0);
          Pos := Pos + ST_Ext_Len;
+      end if;
+
+      --  RFC 6066 8 status_request (0x0005) -- empty body; promises a
+      --  CertificateStatus message after Certificate.
+      if Emit_SR_Ext then
+         Put16 (Result, Pos, 16#0005#);
+         Put16 (Result, Pos + 2, 0);
+         Pos := Pos + SR_Ext_Len;
+         HC.T12.Server_Will_Staple := True;
       end if;
 
       --  ALPN (0x0010)  if client offered and server matches.
@@ -1724,5 +1749,30 @@ is
 
       OK := True;
    end Parse_New_Session_Ticket_12;
+
+   ------------------------------------------------------------------
+   --  Build_Certificate_Status_12 (RFC 6066 8)
+   ------------------------------------------------------------------
+   procedure Build_Certificate_Status_12
+     (Id : in Identity; Result : out Byte_Seq; Len : out N32)
+   is
+      SL : constant N32 := Id.OCSP_Staple_Len;
+   begin
+      Result := (others => 0);
+      Len := 0;
+      if SL = 0 then
+         return;
+      end if;
+      Result (0) := HS_Msg_Wire (HT_Certificate_Status);
+      Result (1) := Byte ((4 + SL) / 65536);
+      Result (2) := Byte (((4 + SL) / 256) mod 256);
+      Result (3) := Byte ((4 + SL) mod 256);
+      Result (4) := 1;  --  status_type ocsp
+      Result (5) := Byte (SL / 65536);
+      Result (6) := Byte ((SL / 256) mod 256);
+      Result (7) := Byte (SL mod 256);
+      Result (8 .. 7 + SL) := Id.OCSP_Staple (0 .. SL - 1);
+      Len := 8 + SL;
+   end Build_Certificate_Status_12;
 
 end SPARKTLS.Handshake.TLS12;

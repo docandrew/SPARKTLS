@@ -1103,6 +1103,12 @@ is
 
    Max_RSA_Key_Bytes : constant := 512;  --  RSA-4096
 
+   --  Largest OCSP response handled in either direction: the client
+   --  accepts a staple up to this size (a response with an embedded
+   --  responder certificate is 1-3 KB; larger ones are treated as absent)
+   --  and a server identity may carry one this large to staple.
+   Max_OCSP_Response : constant := 16384;
+
    type Identity is record
       --  Leaf cert in X509 format (for chain validation)
       Cert_DER     : X509.Byte_Seq (0 .. X509.N32 (Max_Cert_DER) - 1) := (others => 0);
@@ -1132,12 +1138,31 @@ is
       --  is ~4x faster with it; without it the plain d exponent is used.
       RSA_CRT        : SPARKTLSCrypto.RSA.CRT_Params;
 
+      --  RFC 6066 8: OCSP response stapled for the leaf when a client asks
+      --  (status_request) -- a CertificateEntry extension in TLS 1.3, the
+      --  CertificateStatus message in TLS 1.2. Zero length = never staple.
+      --  Set with Set_OCSP_Staple (or Credentials.Load_Staple).
+      OCSP_Staple     : Byte_Seq (0 .. N32 (Max_OCSP_Response) - 1) := (others => 0);
+      OCSP_Staple_Len : N32 range 0 .. N32 (Max_OCSP_Response) := 0;
+
       Has_Identity : Boolean := False;
    end record;
 
    type Identity_Access is not null access constant Identity;
 
    No_Identity : aliased constant Identity := (Has_Identity => False, others => <>);
+
+   --  Attach (or, with an empty Response, clear) the OCSP response a server
+   --  identity staples for clients that ask. OK is False and the staple
+   --  cleared when Response exceeds Max_OCSP_Response. Servers only staple
+   --  when the response also fits the flight: with the chain in a 32 KB
+   --  arena for TLS 1.3, in one 16 KB handshake fragment for TLS 1.2.
+   procedure Set_OCSP_Staple
+     (Id : in out Identity; Response : in Byte_Seq; OK : out Boolean)
+   with
+     Pre  => Response'Last < N32'Last,
+     Post => (if OK then Id.OCSP_Staple_Len = Response'Length
+              else Id.OCSP_Staple_Len = 0);
 
    --  Length bounds every Identity must satisfy for the certificate and
    --  signature paths to index it safely. Identical in content to
@@ -1381,11 +1406,6 @@ is
    --  fails without a stapled response under both Soft_Fail and Hard_Fail.
    type Revocation_Policy is (Ignore, Soft_Fail, Hard_Fail);
 
-   --  Largest stapled OCSP response accepted (a response with an
-   --  embedded responder certificate is 1-3 KB; larger ones are treated
-   --  as absent).
-   Max_OCSP_Response : constant := 16384;
-
    --  Application-owned CRL store. The application keeps each CRL's DER
    --  alive for the store's lifetime and registers it with Add_CRL, which
    --  parses it once; sessions read the store through CRL_Store_Access,
@@ -1417,6 +1437,15 @@ is
    --  Must not retain Response.
    type Staple_Observer is access procedure
      (Response : X509.Byte_Seq; Too_Big : Boolean);
+
+   --  Client-side verdict on the stapled OCSP response, consulted after
+   --  Observe_Staple whenever status_request was sent -- Present = False
+   --  when the server stapled nothing -- and regardless of Skip_Verify, so
+   --  an application can run its own OCSP policy next to (or instead of)
+   --  Revocation. False aborts the handshake with
+   --  bad_certificate_status_response (alert 113). Must not retain Response.
+   type Staple_Verify_Hook is access function
+     (Response : X509.Byte_Seq; Present : Boolean) return Boolean;
 
    --  Add_CRL (parse + register) lives in SPARKTLS.Revocation.
 
@@ -1652,6 +1681,8 @@ is
       CRLs : CRL_Store_Access := null;
       --  Observer for stapled OCSP responses (null = none).
       Observe_Staple : Staple_Observer := null;
+      --  Verdict hook for stapled OCSP responses (null = none).
+      Verify_Staple : Staple_Verify_Hook := null;
 
       --  Local identity (certificate + signing key).
       --  Required for server.  Optional for client (mTLS only).
@@ -1790,6 +1821,12 @@ is
       --  An app that supplies its OWN Get_Active_TEK / Get_TEK_By_Id
       --  callbacks owns rotation entirely and gets none of this for free.
 
+      --  Client: offer RFC 5077 session tickets in a TLS 1.2 ClientHello
+      --  (the empty session_ticket extension, or the saved ticket when
+      --  resuming). Off => the extension is never sent and TLS 1.2 sessions
+      --  cannot be resumed.
+      TLS12_Offer_Session_Ticket : Boolean := True;
+
       TLS12_Resume_Ticket : Session_Ticket_12;
 
       --  Client: previously-saved resumption ticket (RFC 8446
@@ -1927,6 +1964,15 @@ is
       Binder            : Bytes_48 := (others => 0);   --  received binder
       Binder_Len        : PSK_Binder_Length := 0;
       Has_DHE_KE        : Boolean := False;
+      --  psk_key_exchange_modes was present at all (RFC 8446 4.2.9: absent
+      --  with pre_shared_key is missing_extension; present without a mode
+      --  we support only declines the PSK).
+      Saw_KE_Modes      : Boolean := False;
+      --  Wire size of the whole PskBinderEntry list (its 2-byte length plus
+      --  every binder), i.e. how much to cut off the ClientHello for the
+      --  binder transcript. Covers offers with several identities; the
+      --  server only ever resolves the first (Binder above).
+      Binders_Block_Len : N32 range 0 .. 1024 := 0;
       Binder_Hash_256   : Bytes_32 := (others => 0);
       Binder_Hash_384   : Bytes_48 := (others => 0);
       Binder_Hash_Taken : Boolean := False;
@@ -2036,6 +2082,9 @@ is
       Client_Supports_X25519      : Boolean := False;
       Client_Supports_P256        : Boolean := False;
       Client_Supports_P384        : Boolean := False;
+      --  Server-side: the ClientHello carried status_request (RFC 6066 8)
+      --  with status_type ocsp, so the identity's staple (if any) is sent.
+      Client_Wants_Staple         : Boolean := False;
       KE                          : KE_State;
       --  HelloRetryRequest state (server-side: we sent HRR)
       HRR_Sent                    : Boolean := False;

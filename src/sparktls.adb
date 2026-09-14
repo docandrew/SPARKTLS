@@ -1188,4 +1188,27 @@ is
       return F = Not_Random'Access;
    end Is_Sentinel_Random;
 
+   ----------------------------------------------------------------------------
+   --  Set_OCSP_Staple
+   ----------------------------------------------------------------------------
+   procedure Set_OCSP_Staple
+     (Id : in out Identity; Response : in Byte_Seq; OK : out Boolean) is
+   begin
+      Id.OCSP_Staple := (others => 0);
+      if Response'Length > Max_OCSP_Response then
+         Id.OCSP_Staple_Len := 0;
+         OK := False;
+         return;
+      end if;
+      declare
+         L : constant N32 := N32 (Response'Length);
+      begin
+         if L > 0 then
+            Id.OCSP_Staple (0 .. L - 1) := Response (Response'First .. Response'First + L - 1);
+         end if;
+         Id.OCSP_Staple_Len := L;
+      end;
+      OK := True;
+   end Set_OCSP_Staple;
+
 end SPARKTLS;

@@ -29,4 +29,10 @@ is
    --  or client-side server cert validation).
    procedure Load_Trust_Store (Store : out Trust_Store; Path : String; OK : out Boolean);
 
+   --  Load a DER-encoded OCSPResponse (what `openssl ocsp -respout`
+   --  writes) and attach it to Id as the response it staples for clients
+   --  that ask (Set_OCSP_Staple). OK = False if the file cannot be read,
+   --  is empty, or exceeds Max_OCSP_Response; the staple is then cleared.
+   procedure Load_Staple (Id : in out Identity; Path : String; OK : out Boolean);
+
 end SPARKTLS.Credentials;

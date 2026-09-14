@@ -101,4 +101,7 @@ is
    --  irrelevant and always reports as enabled").
    function Extended_Master_Secret_Used (S : Session) return Boolean;
 
+   --  TLS 1.2 resumption bookkeeping, for the BoGo shim trace.
+   function T12_Flags (S : Session) return String;
+
 end SPARKTLS.Test_Support;

@@ -1,4 +1,6 @@
 with Ada.Text_IO;
+with Ada.Streams;
+with Ada.Streams.Stream_IO;
 with Ada.Unchecked_Deallocation;
 with X509;
 use type X509.Byte_Seq;
@@ -174,5 +176,36 @@ is
 
       OK := Loaded > 0;
    end Load_Trust_Store;
+
+   procedure Load_Staple (Id : in out Identity; Path : String; OK : out Boolean) is
+      use Ada.Streams;
+      use Ada.Streams.Stream_IO;
+      --  One byte more than the cap so an oversized file is detected.
+      Cap  : constant Stream_Element_Offset := Stream_Element_Offset (Max_OCSP_Response) + 1;
+      F    : File_Type;
+      SE   : Stream_Element_Array (1 .. Cap);
+      Last : Stream_Element_Offset := 0;
+   begin
+      OK := False;
+      Open (F, In_File, Path);
+      Read (F, SE, Last);
+      Close (F);
+      if Last = 0 or else Last > Cap - 1 then
+         Set_OCSP_Staple (Id, Byte_Seq'(1 .. 0 => 0), OK);
+         OK := False;
+         return;
+      end if;
+      declare
+         Raw : Byte_Seq (0 .. N32 (Last) - 1);
+      begin
+         for I in Raw'Range loop
+            Raw (I) := Byte (SE (Stream_Element_Offset (I) + 1));
+         end loop;
+         Set_OCSP_Staple (Id, Raw, OK);
+      end;
+   exception
+      when others =>
+         OK := False;
+   end Load_Staple;
 
 end SPARKTLS.Credentials;

@@ -420,6 +420,17 @@ if echo "$SUITES" | grep -q "unit"; then
         UNIT_FAIL=$((UNIT_FAIL + fail))
     fi
 
+    # Server-side OCSP stapling: TLS 1.3 CertificateEntry extension round-trips
+    # through the client parser; TLS 1.2 CertificateStatus wire layout.
+    if [ -f bin/tests/test_ocsp_staple ]; then
+        output=$(bin/tests/test_ocsp_staple tests/certs/p256.crt tests/certs/p256.key 2>&1 || true)
+        pass=$(echo "$output" | grep -c "^  PASS:" || true)
+        fail=$(echo "$output" | grep -c "^  FAIL:" || true)
+        echo "  test_ocsp_staple: $pass passed, $fail failed"
+        UNIT_PASS=$((UNIT_PASS + pass))
+        UNIT_FAIL=$((UNIT_FAIL + fail))
+    fi
+
     # AES-NI hardware path: FIPS 197 KAT + 1024 random equivalence cases
     # vs SPARKNaCl software AES (skipped on non-AES-NI CPUs)
     if [ -f bin/tests/test_aes_ni ]; then

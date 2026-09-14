@@ -276,7 +276,7 @@ begin
 
    if Ada.Command_Line.Argument_Count < 2 then
       Put_Line ("Usage: tls_blocking_server <cert.pem> <key.pem>" &
-                " [--mtls <ca.pem>]");
+                " [--mtls <ca.pem>] [--staple <ocsp.der>]");
       return;
    end if;
 
@@ -289,6 +289,25 @@ begin
       Put_Line ("Failed to load identity");
       return;
    end if;
+
+   --  Optional --staple <ocsp.der>: RFC 6066 stapled OCSP response, sent
+   --  to clients that ask (TLS 1.3 CertificateEntry extension, TLS 1.2
+   --  CertificateStatus). Any argument position after the key.
+   for I in 3 .. Ada.Command_Line.Argument_Count - 1 loop
+      if Ada.Command_Line.Argument (I) = "--staple" then
+         declare
+            St_OK : Boolean;
+         begin
+            Credentials.Load_Staple (Id, Ada.Command_Line.Argument (I + 1), St_OK);
+            if St_OK then
+               Put_Line ("OCSP staple: loaded (" & Id.OCSP_Staple_Len'Image & " bytes)");
+            else
+               Put_Line ("Warning: failed to load OCSP staple "
+                         & Ada.Command_Line.Argument (I + 1));
+            end if;
+         end;
+      end if;
+   end loop;
 
    --  Check for --mtls / --mtls-require flag
    if Ada.Command_Line.Argument_Count >= 4
