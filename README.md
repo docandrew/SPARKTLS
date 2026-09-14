@@ -1,120 +1,191 @@
 # SparkTLS
 
-SparkTLS is a TLS 1.3 and TLS 1.2 implementation in SPARK/Ada, designed for
-formal verification. The library contains no C code; the accelerated crypto
-paths in SPARKTLSCrypto use x86 inline assembly, gated by runtime CPUID
-dispatch.
+SparkTLS is a TLS 1.3 and TLS 1.2 implementation in SPARK/Ada. 
+The library contains no C code; the accelerated crypto
+paths in SPARKTLSCrypto use x86 inline assembly.
 
-**Note: This project is still in development and is not suitable for production use.**
+**Note: this project is pre-release and not yet suitable for production use.**
 
 ## Features
 
-- TLS 1.3 client + server handshake (full flight, HelloRetryRequest)
-- TLS 1.2 client + server (mTLS, ECDHE, RSA + ECDSA suites, ChaCha20-Poly1305 per RFC 7905)
-- Key exchange: X25519, secp256r1 (P-256), secp384r1 (P-384) ECDHE
-- Cipher suites: ChaCha20-Poly1305-SHA256, AES-128-GCM-SHA256, AES-256-GCM-SHA384
-- Signature verification: Ed25519, ECDSA P-256/P-384, RSA-PSS + RSA-PKCS1 v1.5 (SHA-256/384/512)
-- X.509 certificate parsing + chain validation via SPARKx509
-- TLS 1.3 PSK session resumption (psk_dhe_ke mode, forward-secret)
-- TLS 1.2 client + server session ticket resumption (RFC 5077 tickets)
-- ALPN with strict echo-check (RFC 7301 §3.1/§3.2)
-- RecordFlux-generated message serialization/parsing with SPARK contracts
-- Crypto provided by SPARKNaCl + SPARKTLSCrypto (formally verified, AES-NI / VAES / VPCLMULQDQ / AVX-512 ChaCha20 fast paths)
+- TLS 1.3 client and server: full handshake, HelloRetryRequest, PSK
+  resumption (`psk_dhe_ke` only, forward secret), KeyUpdate, exporters,
+  mutual authentication, SNI-based identity selection.
+- TLS 1.2 client and server: ECDHE suites only (RSA and ECDSA
+  authentication), extended master secret, mutual authentication,
+  RFC 5077 session-ticket resumption.
+- Key exchange: X25519, secp256r1 (P-256), secp384r1 (P-384).
+- Cipher suites: ChaCha20-Poly1305-SHA256, AES-128-GCM-SHA256,
+  AES-256-GCM-SHA384.
+- Signatures: Ed25519, ECDSA P-256/P-384, RSA-PSS and RSA-PKCS#1 v1.5
+  (SHA-256/384/512). Peer RSA keys from `Min_RSA_Bits` (default 2048) up
+  to 8192 bits are verified on both versions, including TLS 1.2
+  ServerKeyExchange signatures; a local RSA identity may be up to 4096
+  bits. RSA public keys are checked for a sane exponent (odd, at least 3).
+- X.509 parsing and RFC 5280 chain validation via SPARKx509, with name
+  constraints (including CN-only leaves), EKU chaining, and a WebPKI
+  policy mode.
+- Certificate revocation: stapled OCSP (TLS 1.3 and 1.2) and
+  application-supplied CRLs, evaluated for every certificate below the
+  trust anchor, with `Ignore` / `Soft_Fail` / `Hard_Fail` policies and
+  RFC 7633 must-staple.
+- Stateless session tickets on both versions: the resumption secret is
+  sealed under a server ticket-encryption key (AES-256-GCM) and the
+  ticket *is* the identity, so no server-side session store exists.
+- ALPN with strict echo checking (RFC 7301).
+- Key material is scrubbed when a handshake context is released and when
+  a connection closes or fails; private keys handed to `Set_Identity`
+  are checked against the certificate's public key.
+- RecordFlux-generated message serialization and parsing with SPARK
+  contracts; crypto from SPARKNaCl and SPARKTLSCrypto (AES-NI, VAES,
+  VPCLMULQDQ and AVX-512 ChaCha20 fast paths).
+
+## Verification Status
+
+- Every unit in `sparktls`, `sparkx509` and `sparktlscrypto` discharges
+  under `gnatprove --level=1` with no unproved checks; the whole-project
+  run (`ci/prove.sh`) is the release gate and is expected to report only
+  the handful of known findings in upstream SPARKNaCl and in
+  RecordFlux-generated code.
+- Constant-time behaviour of the crypto kernels is checked with a
+  valgrind/ctgrind lane (`sparktlscrypto/ci/timing.sh ctgrind`) that
+  poisons secrets — and, for the signature verifiers, the attacker-
+  controlled inputs — and fails on any data-dependent branch or index.
+  A dudect statistical lane exists for local use.
 
 ## Not Supported
 
-- **TLS 1.3 0-RTT / early data.** Intentionally not implemented on
-  either side. The `early_data` extension is never emitted or
-  accepted; `client_early_traffic_secret` is never derived; the
-  `end_of_early_data` message is never produced or consumed.
-
-  A peer that *offers* 0-RTT is interoperable: the server silently
-  drops up to 32 undecryptable early-data records during the
-  CH→client-Finished window, then proceeds with a normal 1-RTT
-  handshake. The client never offers 0-RTT.
-
-- **Active GREASE emission.** SPARKTLS aims for deterministic ClientHello
-  serialization. It tolerates unknown/reserved values where the TLS RFCs require
-  extensibility, but it does not intentionally emit reserved GREASE cipher
-  suites, groups, signature schemes, versions, or extensions to exercise peer
-  tolerance. This is a deliberate product choice, not a missing MVP feature.
+- **TLS 1.3 0-RTT / early data.** Intentionally not implemented on either
+  side. The `early_data` extension is never emitted or accepted. A peer
+  that *offers* 0-RTT is interoperable: the server skips up to 32
+  undecryptable early-data records without disturbing its handshake read
+  counter, then proceeds with a normal 1-RTT handshake.
+- **Renegotiation** (TLS 1.2), including the `renegotiation_info`
+  extension: not offered; an unsolicited server echo is rejected.
+- **TLS 1.1 and earlier, SSL, RSA key exchange, static DH, compression.**
+- **DTLS, QUIC, ECH, certificate compression, SCTs, delegated
+  credentials.**
+- **TLS 1.2 session-ID resumption** (tickets only) and **Ed25519 client
+  authentication in TLS 1.2** (the client declines with an empty
+  Certificate: PureEdDSA needs the raw transcript, which this stack does
+  not keep).
+- **Fetching revocation data.** The library never performs network I/O of
+  its own: OCSP evidence arrives stapled from the server and CRLs are
+  attached by the application.
+- **Active GREASE emission.** SparkTLS aims for deterministic ClientHello
+  serialization. It tolerates unknown or reserved values where the TLS
+  RFCs require extensibility, but does not intentionally emit reserved
+  cipher suites, groups, signature schemes, versions, or extensions.
 
 ## Session Ticket Policy
 
-TLS 1.3 session tickets are hostname-scoped by default. Servers only mark
-NewSessionTicket values with the `resumption_across_names` ticket flag when
-`Config.TLS13_Resumption_Across_Names` is set to `True`.
+Tickets on both versions are sealed under the server's ticket-encryption
+key ring (`SPARKTLS.Ticket_Keys`), which the application owns: a single
+process rotates it in place, a fleet shares the key material through its
+own channel. The ring is the only long-lived copy of the keys; call
+`Ticket_Keys.Reset` before the process exits.
 
-Leave this setting disabled unless the deployment intentionally shares a ticket
-store and resumption policy across the relevant hostnames, such as a single
-service fleet serving multiple names inside the same trust boundary. Enabling it
-asks clients that honor the flag to treat the ticket as reusable across names, so
-it should not be used to bridge unrelated services or administrative domains.
+TLS 1.3 tickets are hostname-scoped by default. Servers mark
+NewSessionTicket with the `resumption_across_names` flag only when
+`Config.TLS13_Resumption_Across_Names` is set. Leave it off unless the
+deployment intentionally shares a ticket key ring and resumption policy
+across the relevant hostnames inside one trust boundary. TLS 1.2 tickets
+never resume across names; both versions bind the ticket to the cipher
+suite, the client-authentication status and (TLS 1.2) the
+extended-master-secret state of the original session.
 
-TLS 1.2 resumption uses RFC 5077 session tickets. TLS 1.2 session-ID
-resumption is intentionally not implemented.
+A client that is configured with a resumption ticket must also supply
+`Get_Time`: ticket lifetimes are enforced, and a ticket whose age cannot
+be known is refused at configuration time rather than offered forever.
 
 ## Certificate Validation Policy
 
 `Mode_WebPKI` is the default validation mode for public web-style TLS. It
-applies RFC 5280 chain validation plus WebPKI-oriented leaf policy checks.
-`Mode_RFC5280` is available for private PKI and development certificates where
-WebPKI issuance policy is not the right compatibility target.
+applies RFC 5280 chain validation plus the CA/Browser Forum leaf policy
+checks. `Mode_RFC5280` is for private PKI and development certificates
+where WebPKI issuance policy is not the right target.
 
-`Skip_Verify` is only a chain-validation opt-out. When `Server_Name` is set,
-hostname verification still runs even with `Skip_Verify => True`, so a
-self-signed development certificate for the wrong hostname is rejected. Set
-`Skip_Hostname_Verify => True` as a separate explicit opt-out only when hostname
-binding is not desired.
+`Config.Min_RSA_Bits` (default 2048) is enforced in every mode. Lower it
+only for a legacy PKI you control.
 
-Current x509-limbo expected failures are documented in
-`PRODUCTION_READINESS.md`. The release policy treats the path-building capacity
-limit and public-suffix dependency as compatibility limits, and the remaining
-false-reject policy cases as conservative behavior to resolve or document before
-a production-facing release.
+`Skip_Verify` is only a chain-validation opt-out. When `Server_Name` is
+set, hostname verification still runs even with `Skip_Verify => True`, so
+a self-signed development certificate for the wrong hostname is rejected.
+`Skip_Hostname_Verify => True` is the separate, explicit opt-out.
+
+Revocation is governed by `Config.Revocation`. `Soft_Fail` (the default)
+fails on a revoked certificate and proceeds when no evidence is
+available; `Hard_Fail` also fails without evidence, which with
+intermediates in the chain means their issuers' CRLs must be attached; a
+malformed CRL from the application's own store fails in every mode.
+`Request_OCSP_Staple` independently controls whether `status_request` is
+sent. The known x509-limbo and PKITS deviations are listed in
+`tests/x509/` alongside the runners.
+
+## Known Issues
+
+- The realworld matrix (`tests/realworld/run.sh`) lists two known
+  deviations: `extended-validation.badssl.com` (certificate rejected) and
+  `revoked.badssl.com` (accepted, because no revocation evidence is
+  available without fetching).
 
 ## Planned Work
 
-- Post-quantum key exchange (ML-KEM hybrid). SPARKTLS currently *tolerates*
-  PQ peers without negotiating with them: `Wire_Key_Share_Len` is sized at
-  16 KB so real ClientHellos carrying `X25519MLKEM768` (1220 bytes per entry)
-  parse rather than being dropped, but only X25519 / secp256r1 / secp384r1 are
-  offered or selected.
-
-- **Certificate revocation checking (CRL / OCSP).** Neither is performed.
-  A certificate that has been revoked but is otherwise well-formed, in-date
-  and chains to a trusted root **will be accepted** (verifiable against
-  `revoked.badssl.com`, which is in the `tests/realworld` matrix as a known
-  failure). We also do not send `status_request`, so no stapled OCSP
-  response is requested or received. This is planned.
-
-- **RSA-4096 server certificates (known issue, not by design).**
-  RSA-2048 leaf certificates work; RSA-4096 currently fails the handshake
-  (`rsa4096.badssl.com` in the realworld matrix). `Max_RSA_Key_Bytes` is
-  512 bytes, so 4096-bit keys are nominally within range and this is
-  believed to be a bug rather than a deliberate limit. Being tracked.
+- Full BoGo coverage: Make currently unimplemented cases run, with an explicit list of out-of-scope features.
+- TLS-Anvil and tlsfuzzer conformance runs with documented intentional gaps.
+- Post-quantum key exchange: the `X25519MLKEM768` hybrid, built on the
+  SPARK ML-KEM implementation. Today the stack *tolerates* PQ peers
+  (ClientHellos carrying 1220-byte hybrid shares parse) but negotiates
+  only classical groups.
 
 ## Dependencies
 
 | Dependency | Source | Notes |
 |------------|--------|-------|
-| [SPARKNaCl](https://github.com/rod-chapman/SPARKNaCl) | git | Crypto library (SPARK proven) |
-| [SPARKTLSCrypto](https://github.com/docandrew/sparktlscrypto) | git | AES-GCM, ChaCha20-Poly1305, P-256/P-384, RSA, SHA-2, HKDF |
-| [SPARKx509](https://github.com/docandrew/sparkx509) | git | X.509 certificate parser |
-| [sparkentropy](https://github.com/docandrew/sparkentropy) | git | Needed by `examples/` only |
-| [RecordFlux](https://github.com/AdaCore/RecordFlux) | pip / GitHub | Only needed to regenerate `generated/` |
+| [SPARKNaCl](https://github.com/rod-chapman/SPARKNaCl) | git | Core crypto (SPARK proven) |
+| [SPARKTLSCrypto](https://github.com/docandrew/sparktlscrypto) | git | AES-GCM, ChaCha20-Poly1305, P-256/P-384, RSA, SHA-2, HKDF, SHA-1 (OCSP CertID only) |
+| [SPARKx509](https://github.com/docandrew/sparkx509) | git | X.509, CRL and OCSP parsing |
+| [sparkentropy](https://github.com/docandrew/sparkentropy) | git | Entropy source for `examples/` and tests only (brings libkeccak) |
+| [RecordFlux](https://github.com/AdaCore/RecordFlux) | pip / GitHub | Only needed to regenerate `generated/` from `specs/` |
 
-**These are not pulled automatically.** `SPARKTLSCrypto` and `SPARKx509` are not
-published to the Alire community index, and `alire.toml` pins all of them by
-relative path (`../sparkx509`, `../sparktlscrypto`, `../sparknacl`) so they can
-be developed side by side. A checkout of `sparktls` on its own will fail to
-resolve. RecordFlux is only needed if you modify the `.rflx` specs in `specs/`.
+**Two of these are not pulled automatically.** `SPARKTLSCrypto` and
+`SPARKx509` are not in the Alire community index; `alire.toml` pins them by
+relative path (`../sparkx509`, `../sparktlscrypto`) so they can be developed
+side by side. `sparknacl` resolves from the Alire index. A checkout of
+`sparktls` on its own will not resolve.
 
 ## Building
 
-TODO
+Prerequisites: [Alire](https://alire.ada.dev) 2.x with GNAT 16 and
+gnatprove 16 (Alire fetches the toolchain), OpenSSL for the test fixtures,
+and Go for the BoGo runner (downloaded on first run). The repository ships
+a Nix flake that provides all of this reproducibly:
+
+```sh
+# sibling checkouts
+git clone https://github.com/docandrew/sparkx509
+git clone https://github.com/docandrew/sparktlscrypto
+git clone https://github.com/docandrew/sparkentropy
+git clone https://github.com/docandrew/sparktls
+cd sparktls
+
+alr build                                     # the library
+(cd examples && alr build)                    # example clients and servers
+nix develop --command bash ci/check.sh        # the CI lane: versions + full test suite
+```
+
+Test suites can be run individually with `tests/run_all.sh unit|integration|protocol|x509|bogo|fuzz`;
+`tests/bogo/run.sh -test "Pattern"` runs a subset of BoGo. Proofs:
+
+```sh
+nix develop --command bash ci/prove.sh                    # whole project, level 1 (the release gate)
+nix develop --command bash ci/prove.sh -u sparktls-client.adb   # one unit
+```
+
+`sparktlscrypto/ci/timing.sh ctgrind` runs the constant-time lane. The
+`cli/` directory holds `sparktls_cli`, a development tool for generating
+keys, certificates and CSRs and for inspecting and verifying chains.
 
 ## Disclaimer
 
-SparkTLS is a proof-of-concept project and is provided "as is" without any warranty.
-Use at your own risk.
+SparkTLS is provided "as is" without any warranty. Use at your own risk.

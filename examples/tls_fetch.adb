@@ -442,7 +442,12 @@ begin
 
             when SPARKTLS.Handshake_Done =>
                if Verbose then
-                  Put ("* TLS 1.3 handshake complete (");
+                  case SPARKTLS.Get_Version (S) is
+                     when SPARKTLS.TLS_1_3 => Put ("* TLS 1.3 handshake complete (");
+                     when SPARKTLS.TLS_1_2 => Put ("* TLS 1.2 handshake complete (");
+                     when SPARKTLS.TLS_Undetermined =>
+                        Put ("* TLS handshake complete (");
+                  end case;
                   case Negotiated_Suite (S) is
                      when SPARKTLS.Wire_Suite_AES_128_GCM_SHA256 =>
                         Put ("TLS_AES_128_GCM_SHA256");
@@ -450,6 +455,12 @@ begin
                         Put ("TLS_CHACHA20_POLY1305_SHA256");
                      when SPARKTLS.Wire_Suite_AES_256_GCM_SHA384 =>
                         Put ("TLS_AES_256_GCM_SHA384");
+                     when SPARKTLS.Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256   => Put ("ECDHE-RSA-AES128-GCM-SHA256");
+                     when SPARKTLS.Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384   => Put ("ECDHE-RSA-AES256-GCM-SHA384");
+                     when SPARKTLS.Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256 => Put ("ECDHE-ECDSA-AES128-GCM-SHA256");
+                     when SPARKTLS.Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384 => Put ("ECDHE-ECDSA-AES256-GCM-SHA384");
+                     when SPARKTLS.Wire_Suite_ECDHE_RSA_CHACHA20_SHA256     => Put ("ECDHE-RSA-CHACHA20-POLY1305");
+                     when SPARKTLS.Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256   => Put ("ECDHE-ECDSA-CHACHA20-POLY1305");
                      when others =>
                         Put ("0x" & Negotiated_Suite (S)'Image);
                   end case;

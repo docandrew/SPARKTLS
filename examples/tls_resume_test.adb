@@ -100,6 +100,9 @@ procedure TLS_Resume_Test is
       Was_PSK := False;
 
       Cfg.Random := Entropy_Random.Random'Access;
+      --  A resumption ticket needs a clock (RFC 8446 4.6.1 lifetime):
+      --  Configure refuses Resume_Ticket without Get_Time.
+      Cfg.Get_Time := Current_Time'Unrestricted_Access;
       Cfg.Versions := TLS_1_3_Only;
       --  Integration test runs against an OpenSSL self-signed test cert.
       Cfg.Skip_Verify := True;

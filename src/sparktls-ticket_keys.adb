@@ -161,9 +161,14 @@ is
          Now := SPARKTLS.Tickets.To_Unix_Seconds (Clock.all);
       end if;
 
-      --  Generated outside the lock, installed inside it.
+      --  Generated outside the lock, installed inside it. A generator that
+      --  returned an all-zero key is dead: install nothing, so no ticket is
+      --  ever sealed under a known key.
       Random.all (Key_ID);
       Random.all (TEK);
+      if All_Zero_Bytes (TEK) then
+         return;
+      end if;
       Cache.Rotate (Key_ID, TEK, Now);
    end Initialize;
 

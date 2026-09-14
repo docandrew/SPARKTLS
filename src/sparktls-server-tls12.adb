@@ -644,12 +644,24 @@ is
          case S.HC.KE.Curve is
             when Group_X25519    =>
                Gen_Random (Byte_Seq (S.HC.KE.Local_SK));
+               if All_Zero_Bytes (Byte_Seq (S.HC.KE.Local_SK)) then
+                  Send_Alert_And_Error (S, Internal_Error, Result);
+                  return;
+               end if;
 
             when Group_Secp256r1 =>
                Gen_Random (Byte_Seq (S.HC.KE.P256_SK));
+               if All_Zero_Bytes (Byte_Seq (S.HC.KE.P256_SK)) then
+                  Send_Alert_And_Error (S, Internal_Error, Result);
+                  return;
+               end if;
 
             when Group_Secp384r1 =>
                Gen_Random (Byte_Seq (S.HC.KE.P384_SK));
+               if All_Zero_Bytes (Byte_Seq (S.HC.KE.P384_SK)) then
+                  Send_Alert_And_Error (S, Internal_Error, Result);
+                  return;
+               end if;
 
             when others          =>
                null;

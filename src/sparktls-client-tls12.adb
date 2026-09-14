@@ -1267,10 +1267,10 @@ is
    with
      Pre  =>
        CV_Buf'First = 0
-       and then CV_Buf'Last >= 523
+       and then CV_Buf'Last >= Max_Certificate_Verify_12 - 1
        and then HC.Cfg.Local /= null
        and then HC.Cfg.Local.Has_Identity,
-     Post => CV_Len <= 520;
+     Post => CV_Len <= Max_Certificate_Verify_12;
 
    procedure Build_Client_Certificate_Verify_12_Message
      (HC : in Engaged_Context; CV_Buf : out Byte_Seq; CV_Len : out N32)
@@ -1345,13 +1345,13 @@ is
       D       : in out SPARKTLS.HS_Pool.HS_Data;
       Result  : out Action)
    is
-      CV_Buf : Byte_Seq (0 .. 523);
+      CV_Buf : Byte_Seq (0 .. Max_Certificate_Verify_12 - 1);
       CV_Len : N32;
    begin
       Result := OK;
 
       Build_Client_Certificate_Verify_12_Message (S.HC, CV_Buf, CV_Len);
-      pragma Assert (Result = OK and then CV_Len <= 520);
+      pragma Assert (Result = OK and then CV_Len <= Max_Certificate_Verify_12);
 
       if CV_Len = 0 then
          Send_Cleartext_Handshake_Error_12 (S, D, Internal_Error, Result);
@@ -1963,6 +1963,14 @@ is
             --  Parse_Cert_Chain_12; subsequent validation gates
             --  (keyUsage, suite<->cert algorithm match, hostname,
             --  chain) live in Validate_Server_Cert_12.
+            --  RFC 5246 7.3: first message of the flight, exactly once,
+            --  never in an abbreviated (resumed) handshake.
+            if S.HC.T12.Cert_Received or else S.HC.KE.Negotiated or else S.HC.T12.Resuming then
+               Reset (D.Reasm);
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               return;
+            end if;
+            S.HC.T12.Cert_Received := True;
             if Msg_Len < 3 then
                Reset (D.Reasm);
                Send_Alert_And_Error (S, Decode_Error, Result);
@@ -1990,6 +1998,15 @@ is
             Result := OK;
 
          when HT_Certificate_Status =>
+            --  RFC 6066 8: directly after Certificate, before SKE, once.
+            if not S.HC.T12.Cert_Received or else S.HC.T12.Status_Received
+              or else S.HC.KE.Negotiated
+            then
+               Reset (D.Reasm);
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               return;
+            end if;
+            S.HC.T12.Status_Received := True;
             Handle_Cert_Status_12 (S, D, Frag, Msg_Len, Result);
 
          when HT_Certificate_Request =>
@@ -1997,8 +2014,8 @@ is
             --  mandatory and precedes CertificateRequest. Selected_Group
             --  is only set (to a valid group) by a successfully processed
             --  SKE, so a zero group here means the peer sent this message
-            --  out of order.
-            if not S.HC.KE.Negotiated then
+            --  out of order. Once only.
+            if not S.HC.KE.Negotiated or else S.HC.Cert_Request_Received then
                Reset (D.Reasm);
                Send_Alert_And_Error (S, Unexpected_Message, Result);
                return;
@@ -2006,6 +2023,13 @@ is
             Handle_CertReq_12 (S, D, Frag, Msg_Len, Result);
 
          when HT_Server_Key_Exchange =>
+            --  RFC 5246 7.3: after Certificate (every implemented suite
+            --  authenticates the server), once; never when resuming.
+            if not S.HC.T12.Cert_Received or else S.HC.KE.Negotiated or else S.HC.T12.Resuming then
+               Reset (D.Reasm);
+               Send_Alert_And_Error (S, Unexpected_Message, Result);
+               return;
+            end if;
             Handle_SKE_12 (S, D, Frag, Msg_Len, Result);
 
          when HT_Server_Hello_Done   =>
@@ -2027,14 +2051,19 @@ is
             Handle_SHD_12 (S, D, Frag, Msg_Len, Result);
 
          when HT_New_Session_Ticket  =>
-            --  RFC 5077 3.3: NewSessionTicket belongs after the key
-            --  exchange; SKE is mandatory for ECDHE, so a zero group
-            --  here means the flight is out of order.
-            if not S.HC.KE.Negotiated then
+            --  RFC 5077 3.3: NewSessionTicket is the server's reply to
+            --  our Finished flight (full handshake: after we sent
+            --  CKE/CCS/Finished) or the first message of the abbreviated
+            --  server flight (resumption). Never inside the first flight
+            --  before ServerHelloDone, and once only.
+            if not (S.HC.T12.Resuming or else S.HC.CKE_Received_12)
+              or else S.HC.T12.NST_Received
+            then
                Reset (D.Reasm);
                Send_Alert_And_Error (S, Unexpected_Message, Result);
                return;
             end if;
+            S.HC.T12.NST_Received := True;
             if Msg_Len < 6 then
                Reset (D.Reasm);
                if S.HC.CKE_Received_12 then
@@ -3557,15 +3586,18 @@ is
       --  asserts about FS + Frag_Len can chain.
       pragma Assert (Rec.Record_Len <= S.Input.Write_Pos - S.Input.Read_Pos);
 
-      if Rec.Content = Records.Content_Change_Cipher_Spec then
-         S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Result := OK;
-         return;
-      end if;
-
+      --  RFC 5246 7.2 / 7.4.1.1: after the handshake only application
+      --  data and alerts are expected. A ChangeCipherSpec is a state
+      --  machine violation, and a handshake record can only be a
+      --  renegotiation attempt (HelloRequest), which this stack does not
+      --  support. Both used to be skipped without decrypting -- which also
+      --  desynchronised the read sequence number, so the connection died
+      --  later with bad_record_mac instead of here.
       if Rec.Content not in Records.Content_Application_Data | Records.Content_Alert then
          S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-         Result := OK;
+         S.Last_Error := Unexpected_Message;
+         Set_State (S, Error_State);
+         Result := Error_Alert;
          return;
       end if;
 
@@ -3612,8 +3644,13 @@ is
                   else Explicit_Nonce_Len + GCM_Tag_Len);
             begin
                if Frag_Len < Min_Frag then
+                  --  Too short for nonce + tag: reject rather than skip
+                  --  (skipping without decrypting also desynchronises
+                  --  the read sequence number).
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Result := OK;
+                  S.Last_Error := Unexpected_Message;
+                  Set_State (S, Error_State);
+                  Result := Error_Alert;
                   return;
                end if;
             end;

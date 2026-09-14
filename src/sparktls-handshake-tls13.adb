@@ -115,6 +115,12 @@ is
       KS_Raw := (others => 0);
 
       Gen_Random (Byte_Seq (Tmp_SK));
+      if All_Zero_Bytes (Byte_Seq (Tmp_SK)) then
+         HC.Ext_Parse_Err := Internal_Error;
+         KS_Raw_Len := 0;
+         OK := False;
+         return;
+      end if;
       HC.KE.Local_SK := Tmp_SK;
       SPARKTLSCrypto.X25519.Scalar_Mult (PK_Bytes, HC.KE.Local_SK, Basepoint);
       SPARKTLSCrypto.X25519.Scalar_Mult (HC.KE.Shared (0 .. 31), HC.KE.Local_SK, HC.KE.Peer_PK);
@@ -180,6 +186,10 @@ is
       OK := False;
 
       Gen_Random (Byte_Seq (Tmp_SK));
+      if All_Zero_Bytes (Byte_Seq (Tmp_SK)) then
+         HC.Ext_Parse_Err := Internal_Error;
+         return;
+      end if;
       HC.KE.P256_SK := Tmp_SK;
       --  Our public key
       P256_Mulgen (PK_Jac, HC.KE.P256_SK, 32);
@@ -250,6 +260,10 @@ is
       OK := False;
 
       Gen_Random (Byte_Seq (Tmp_SK));
+      if All_Zero_Bytes (Byte_Seq (Tmp_SK)) then
+         HC.Ext_Parse_Err := Internal_Error;
+         return;
+      end if;
       HC.KE.P384_SK := Tmp_SK;
       SPARKTLSCrypto.P384.Point.P384_Mulgen (PK_Enc, HC.KE.P384_SK);
       SPARKTLSCrypto.P384.Point.P384_ECDHE

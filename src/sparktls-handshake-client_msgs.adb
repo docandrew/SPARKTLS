@@ -2019,9 +2019,14 @@ is
          end;
       end if;
 
-      if Has_TLS13 then
-         HC.Has_TLS_1_3 := True;
+      --  RFC 8446 4.1.4: supported_versions is mandatory in a
+      --  HelloRetryRequest (it is how the message is known to be TLS 1.3
+      --  at all). Without it the HRR was accepted and 1.3 assumed.
+      if not Has_TLS13 then
+         Err := Missing_Extension;
+         return;
       end if;
+      HC.Has_TLS_1_3 := True;
 
       --  RFC 8446 4.1.4: an HRR must ask for a change -- key_share or
       --  cookie (BoGo HelloRetryRequest-Empty-TLS13) ...
@@ -2029,10 +2034,17 @@ is
          Err := Illegal_Parameter;
          return;
       end if;
-      --  ... and the change must be real: CH1 already offered X25519 in
-      --  the default profile, or exactly the configured group.
-      if (if HC.Cfg.Client_Key_Share_Group /= Group_None then True
-          else HC.HRR_Selected_Group = Group_X25519)
+      --  ... and the change must be real and possible. A cookie-only HRR
+      --  (Group_None) passes. With a configured group, supported_groups
+      --  advertised that group ALONE and CH1 already carried its share, so
+      --  any selected_group is either no change or a group we never
+      --  offered (RFC 8446 4.1.4 / 4.2.8; BoGo UnnecessaryHelloRetryRequest,
+      --  DisabledCurve-HelloRetryRequest). In the default profile CH1
+      --  offered all three groups with an X25519 share, so only X25519 is
+      --  no change.
+      if HC.HRR_Selected_Group /= Group_None
+        and then (HC.Cfg.Client_Key_Share_Group /= Group_None
+                  or else HC.HRR_Selected_Group = Group_X25519)
       then
          Err := Illegal_Parameter;
          return;
@@ -2166,6 +2178,18 @@ is
    is
       DLen : constant N32 := N32 (RFLX.TLS_Handshake.SH_Extension_TLS.Get_Data_Length (E));
       KS   : RFLX.TLS_Handshake.Key_Share_SH.Context;
+      --  RFC 8446 4.2.8: the server's group MUST be one we sent a share
+      --  for, and after an HRR that selected a group it MUST be that
+      --  group (4.1.4). Our ClientHello carries exactly one share: the
+      --  configured group (X25519 by default), or the HRR's selected_group
+      --  in CH2. Anything else is illegal_parameter (BoGo
+      --  HelloRetryRequestCurveMismatch, SecondClientHelloWrongCurve).
+      Expected : constant ECDHE_Group :=
+        (if HC.Got_HRR and then HC.HRR_Selected_Group /= Group_None
+         then HC.HRR_Selected_Group
+         elsif HC.Cfg.Client_Key_Share_Group /= Group_None
+         then HC.Cfg.Client_Key_Share_Group
+         else Group_X25519);
    begin
       RFLX.TLS_Handshake.Key_Share_SH.Initialize (KS, Scratch);
       RFLX.TLS_Handshake.Contains.Copy_Data (E, KS);
@@ -2181,7 +2205,9 @@ is
               RFLX.TLS_Handshake.Key_Share_SH.Get_Group (KS);
             KX_Len : constant N32 := N32 (RFLX.TLS_Handshake.Key_Share_SH.Get_Length (KS));
          begin
-            if Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.X25519 and then KX_Len = 32 then
+            if Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.X25519 and then KX_Len = 32
+              and then Expected = Group_X25519
+            then
                declare
                   KB : RBT.Bytes (1 .. 32);
                begin
@@ -2190,7 +2216,9 @@ is
                   HC.KE.Curve := Group_X25519;
                   HC.KE.Negotiated := True;
                end;
-            elsif Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.Secp256r1 and then KX_Len = 65 then
+            elsif Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.Secp256r1 and then KX_Len = 65
+              and then Expected = Group_Secp256r1
+            then
                declare
                   KB : RBT.Bytes (1 .. 65);
                begin
@@ -2201,7 +2229,9 @@ is
                   HC.KE.Curve := Group_Secp256r1;
                   HC.KE.Negotiated := True;
                end;
-            elsif Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.Secp384r1 and then KX_Len = 97 then
+            elsif Grp.Known and then Grp.Enum = RFLX.Tls_Parameters.Secp384r1 and then KX_Len = 97
+              and then Expected = Group_Secp384r1
+            then
                declare
                   KB : RBT.Bytes (1 .. 97);
                begin
@@ -2212,6 +2242,10 @@ is
                   HC.KE.Curve := Group_Secp384r1;
                   HC.KE.Negotiated := True;
                end;
+            else
+               --  Unknown group, wrong point length, or a group we did
+               --  not offer (or not the HRR's choice).
+               HC.Ext_Parse_Err := Illegal_Parameter;
             end if;
          end;
       end if;
@@ -2353,6 +2387,28 @@ is
          --  RFC 6066 8: the server will send CertificateStatus after
          --  Certificate (Validate_Server_Ext already required our offer).
          HC.T12.Server_Will_Staple := True;
+
+      elsif Where = E_SH12 and then Tag = 16#FF01# then
+         --  RFC 5746 3.4: on an initial handshake the server's
+         --  renegotiation_info MUST be the empty renegotiated_connection,
+         --  a single length octet 0x00; anything else is
+         --  handshake_failure. (We never renegotiate, so this is the only
+         --  body that can ever be right; and since we do not offer the
+         --  extension, Validate_Server_Ext already rejects an unsolicited
+         --  echo -- this arm covers the day the client does offer it.)
+         if DLen /= 1 then
+            Fail := Handshake_Failure;
+            return;
+         end if;
+         declare
+            Raw : RBT.Bytes (1 .. 1);
+         begin
+            Get_Data (E, Raw);
+            if Raw (1) /= 0 then
+               Fail := Handshake_Failure;
+               return;
+            end if;
+         end;
       end if;
    end Apply_SH_Extension;
 
@@ -2702,6 +2758,22 @@ is
       then
          Err := Illegal_Parameter;
          return;   --  OK stays False (set at entry)
+      end if;
+
+      --  Extension body verdicts first (a malformed key_share is a
+      --  decode/illegal_parameter error, not a missing extension).
+      if HC.Ext_Parse_Err /= No_Error then
+         Err := HC.Ext_Parse_Err;
+         return;
+      end if;
+
+      --  RFC 8446 4.1.3 / 9.2: we only ever offer psk_dhe_ke, so a
+      --  ServerHello MUST carry key_share. Before this the DH step ran on
+      --  an all-zero peer key and failed by accident of the small-subgroup
+      --  check, with illegal_parameter (BoGo MissingKeyShare-Client-TLS13).
+      if not HC.KE.Negotiated then
+         Err := Missing_Extension;
+         return;
       end if;
 
       --  TLS 1.3: ECDHE shared secret from the key_share.

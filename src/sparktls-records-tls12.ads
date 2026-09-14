@@ -112,8 +112,16 @@ is
        and Implicit_IV'First = 0
        and Implicit_IV'Length = Implicit_IV_Len,
      Post =>
-       (if Space_Left (Keys)'Old then Keys = (Keys'Old with delta Counter => Keys'Old.Counter + 1)
-        else Keys = Keys'Old and Bytes_Out = 0)
+       --  An exhausted channel emits nothing and is untouched; an emitted
+       --  record advanced the counter by one; the counter never moves by
+       --  more than one. (A full output buffer is refused BEFORE the AEAD,
+       --  so it too leaves the counter untouched -- but the write helpers'
+       --  contracts do not let the prover see that those writes then
+       --  cannot fail, hence the disjunction rather than an equality.)
+       (if not Space_Left (Keys)'Old then Keys = Keys'Old and Bytes_Out = 0)
+       and (if Bytes_Out > 0 then Keys = (Keys'Old with delta Counter => Keys'Old.Counter + 1))
+       and (if Space_Left (Keys)'Old
+           then Keys = Keys'Old or Keys = (Keys'Old with delta Counter => Keys'Old.Counter + 1))
        and Bytes_Out
            <= Record_Header_Size + Explicit_Nonce_Len + N32 (Plaintext'Length) + GCM_Tag_Len
        --  A committed record leaves bytes in the buffer: lets flight
@@ -197,8 +205,10 @@ is
      --  0) and the connection closes unalerted -- fail closed,
      --  no cap overrun, one check in one place.
      Post =>
-       (if Space_Left (Keys'Old) then Keys = (Keys'Old with delta Counter => Keys'Old.Counter + 1)
-        else Keys = Keys'Old and Bytes_Out = 0)
+       (if not Space_Left (Keys'Old) then Keys = Keys'Old and Bytes_Out = 0)
+       and (if Bytes_Out > 0 then Keys = (Keys'Old with delta Counter => Keys'Old.Counter + 1))
+       and (if Space_Left (Keys)'Old
+           then Keys = Keys'Old or Keys = (Keys'Old with delta Counter => Keys'Old.Counter + 1))
        and Bytes_Out
            <= Record_Header_Size + Explicit_Nonce_Len + 2
               + GCM_Tag_Len;  --  upper bound (GCM); ChaCha

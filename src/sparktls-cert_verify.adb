@@ -6,6 +6,8 @@ with SPARKTLSCrypto.Ed25519;
 with SPARKTLSCrypto.RSA;
 with SPARKTLSCrypto.P256.ECDSA;
 with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLSCrypto.P256.Point;
+with SPARKTLSCrypto.P384.Point;
 use SPARKTLSCrypto;
 
 package body SPARKTLS.Cert_Verify
@@ -1039,11 +1041,61 @@ is
    --  Identity helpers
    ----------------------------------------------------------------------------
 
+   --  Big-endian A < B over equal-length byte strings (private-key range
+   --  checks at configuration time; not on any per-connection path).
+   function Bytes_Below (A, B : Byte_Seq) return Boolean
+   with Pre => A'First = 0 and B'First = 0 and A'Length = B'Length and A'Length > 0
+   is
+   begin
+      for I in A'Range loop
+         if A (I) < B (I) then
+            return True;
+         elsif A (I) > B (I) then
+            return False;
+         end if;
+      end loop;
+      return False;
+   end Bytes_Below;
+
+   --  Byte-for-byte equality between a SPARKNaCl string and the parsed
+   --  certificate's public key bytes.
+   function Matches_PK (A : Byte_Seq; C : X509.Certificate) return Boolean
+   with Pre => A'First = 0 and X509.PK_Length (C) > 0 and X509.PK_Length (C) <= X509.Max_PK_Bytes
+   is
+      PK : constant X509.Byte_Seq := X509.PK_Data (C);
+   begin
+      if PK'Length /= A'Length then
+         return False;
+      end if;
+      for I in A'Range loop
+         if Unsigned_8 (A (I)) /= Unsigned_8 (PK (X509.N32 (I))) then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Matches_PK;
+
+   --  Group orders, big-endian, for 1 <= d < n.
+   P256_Order : constant Bytes_32 :=
+     (16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#00#, 16#00#, 16#00#, 16#00#,
+      16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#,
+      16#BC#, 16#E6#, 16#FA#, 16#AD#, 16#A7#, 16#17#, 16#9E#, 16#84#,
+      16#F3#, 16#B9#, 16#CA#, 16#C2#, 16#FC#, 16#63#, 16#25#, 16#51#);
+   P384_Order : constant Bytes_48 :=
+     (16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#,
+      16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#,
+      16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#, 16#FF#,
+      16#C7#, 16#63#, 16#4D#, 16#81#, 16#F4#, 16#37#, 16#2D#, 16#DF#,
+      16#58#, 16#1A#, 16#0D#, 16#B2#, 16#48#, 16#B0#, 16#A7#, 16#7A#,
+      16#EC#, 16#EC#, 16#19#, 16#6A#, 16#CC#, 16#C5#, 16#29#, 16#73#);
+
    procedure Set_Identity
      (Id : out Identity; Cert_DER : X509.Byte_Seq; Key : Byte_Seq; OK : out Boolean)
    is
       C    : X509.Certificate;
       P_OK : Boolean;
+      Zero_32 : constant Bytes_32 := (others => 0);
+      Zero_48 : constant Bytes_48 := (others => 0);
    begin
       OK := False;
       --  Initialize all Id fields explicitly so SPARK flow analysis
@@ -1086,6 +1138,17 @@ is
             for I in N32 range 0 .. 63 loop
                Id.Ed25519_Key (I) := Key (Key'First + I);
             end loop;
+            --  The key blob is seed || public key: the public half MUST be
+            --  the certificate's. A key that belongs to another certificate
+            --  used to be installed as long as it was 64 bytes long.
+            declare
+               Pub : Bytes_32;
+            begin
+               Pub := Id.Ed25519_Key (32 .. 63);
+               if X509.PK_Length (C) /= 32 or else not Matches_PK (Byte_Seq (Pub), C) then
+                  return;
+               end if;
+            end;
 
          when X509.Algo_EC_P256                        =>
             if Key'Length /= 32 then
@@ -1095,6 +1158,25 @@ is
             for I in N32 range 0 .. 31 loop
                Id.ECDSA_P256_Key (I) := Key (Key'First + I);
             end loop;
+            --  1 <= d < n, and [d]G MUST be the certificate's public point.
+            --  (Sign does not validate d -- that early return was a timing
+            --  leak -- so this is the one gate.)
+            if Id.ECDSA_P256_Key = Zero_32
+              or else not Bytes_Below (Byte_Seq (Id.ECDSA_P256_Key), Byte_Seq (P256_Order))
+            then
+               return;
+            end if;
+            declare
+               Pt  : SPARKTLSCrypto.P256.Point.P256_Jacobian;
+               Enc : Byte_Seq (0 .. 64);
+            begin
+               SPARKTLSCrypto.P256.Point.P256_Mulgen (Pt, Byte_Seq (Id.ECDSA_P256_Key), 32);
+               SPARKTLSCrypto.P256.Point.P256_To_Affine (Pt);
+               SPARKTLSCrypto.P256.Point.P256_Encode (Enc, Pt);
+               if X509.PK_Length (C) /= 65 or else not Matches_PK (Enc, C) then
+                  return;
+               end if;
+            end;
 
          when X509.Algo_EC_P384                        =>
             if Key'Length /= 48 then
@@ -1104,6 +1186,19 @@ is
             for I in N32 range 0 .. 47 loop
                Id.ECDSA_P384_Key (I) := Key (Key'First + I);
             end loop;
+            if Id.ECDSA_P384_Key = Zero_48
+              or else not Bytes_Below (Byte_Seq (Id.ECDSA_P384_Key), Byte_Seq (P384_Order))
+            then
+               return;
+            end if;
+            declare
+               Enc : Byte_Seq (0 .. 96);
+            begin
+               SPARKTLSCrypto.P384.Point.P384_Mulgen (Enc, Byte_Seq (Id.ECDSA_P384_Key));
+               if X509.PK_Length (C) /= 97 or else not Matches_PK (Enc, C) then
+                  return;
+               end if;
+            end;
 
          when X509.Algo_RSA                            =>
             --  Key is packed: n_len(2) || n || d_len(2) || d || e(4)
@@ -1155,6 +1250,14 @@ is
                  Unsigned_32 (Key (E_Off)) * 2 ** 24 + Unsigned_32 (Key (E_Off + 1)) * 2 ** 16
                  + Unsigned_32 (Key (E_Off + 2)) * 2 ** 8
                  + Unsigned_32 (Key (E_Off + 3));
+
+               --  The modulus and public exponent MUST be the certificate's.
+               if X509.PK_Length (C) /= X509.N32 (N_Len)
+                 or else not Matches_PK (Id.RSA_Modulus (0 .. N_Len - 1), C)
+                 or else Id.RSA_Pub_Exp /= X509.RSA_Exponent (C)
+               then
+                  return;
+               end if;
 
                --  Optional CRT trailer: k(2) || p || q || dP || dQ || qInv,
                --  each k bytes. Absent or malformed => plain-d signing.
