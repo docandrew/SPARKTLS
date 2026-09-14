@@ -6,13 +6,16 @@
 --  removes the coupling to stack size and is the pattern we want as
 --  this grows.
 
+with Ada.Real_Time;
 with Interfaces.C; use Interfaces.C;
 with SPARKNaCl;    use SPARKNaCl;
 with SPARKTLS;
 
 package TLS_Echo_Pool is
 
-   type Conn_State is (Handshaking, Ready, Closing, Closed);
+   type Conn_State is (Handshaking, Ready, Sending, Closing, Closed);
+
+   type Body_Access is access all Byte_Seq;
 
    type Connection is record
       S       : SPARKTLS.Server_Session;
@@ -20,6 +23,22 @@ package TLS_Echo_Pool is
       State   : Conn_State := Closed;
       Req_Buf : Byte_Seq (0 .. 4095) := (others => 0);
       Req_Len : N32 := 0;
+      --  Monotonic clock stamps for the deadlines (see tls_web_epoll):
+      --  when the socket was accepted, and when bytes last arrived on it.
+      Opened_At     : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
+      Last_Activity : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
+      --  Response in flight (tls_web_epoll): the body by reference and how
+      --  much of it has been handed to the session; ciphertext the socket
+      --  has not accepted yet; whether close_notify has been queued; and
+      --  whether EPOLLOUT is armed. Non-blocking write(2) may take part of
+      --  a buffer, so the remainder waits here for the socket to drain.
+      Body_Ref     : Body_Access := null;
+      Body_Off     : N32 := 0;
+      Out_Buf      : Byte_Seq (0 .. 16639) := (others => 0);
+      Out_Len      : N32 := 0;
+      Out_Sent     : N32 := 0;
+      Close_Queued : Boolean := False;
+      Want_Out     : Boolean := False;
    end record;
 
    Max_Conns : constant := 16;

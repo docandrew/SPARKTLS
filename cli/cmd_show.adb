@@ -16,7 +16,7 @@ package body Cmd_Show is
       function Span_Str (S : X509.Span) return String is
       begin
          if S.Present then
-            return Span_To_String (DER, S);
+            return CLI_Util.Printable (Span_To_String (DER, S));
          else
             return "(not present)";
          end if;
@@ -259,7 +259,7 @@ package body Cmd_Show is
       function Span_Str (S : X509.Span) return String is
       begin
          if S.Present then
-            return Span_To_String (DER, S);
+            return CLI_Util.Printable (Span_To_String (DER, S));
          else
             return "";
          end if;
@@ -357,7 +357,7 @@ package body Cmd_Show is
          begin
             if Arg = "--brief" or Arg = "-b" then
                Brief := True;
-            elsif Arg (Arg'First) = '-' then
+            elsif Arg'Length > 0 and then Arg (Arg'First) = '-' then
                Put_Line (Standard_Error,
                          "Unknown option: " & Arg);
                Ada.Command_Line.Set_Exit_Status (2);

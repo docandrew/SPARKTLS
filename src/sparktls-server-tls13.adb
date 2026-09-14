@@ -421,6 +421,18 @@ is
          Parse_OK);
 
       if not Parse_OK then
+         --  A CH2 that fails to PARSE gets the parser's own alert, as CH1
+         --  does (Dispatch_CH_Parse_Error_Alert): a truncated or empty
+         --  binders list is decode_error whether it arrives in CH1 or CH2
+         --  (BoGo Resume-Server-NoPSKBinder-SecondBinder). Only the
+         --  CH1/CH2 consistency failures below are illegal_parameter
+         --  (RFC 8446 4.1.4).
+         if S.Last_Error in Decode_Error | Unexpected_Message | Protocol_Version
+                            | Illegal_Parameter | Certificate_Verify_Failed
+                            | Missing_Extension
+         then
+            Err := S.Last_Error;
+         end if;
          return;
       end if;
 
@@ -508,9 +520,10 @@ is
 
       Validate_Client_Hello_Retry (S, D, Msg, Valid_CH2, CH2_Err);
       if not Valid_CH2 then
-         --  After HRR, CH2 parse/version/order failures are
-         --  illegal_parameter (RFC 8446 4.1.4); a dropped pre_shared_key
-         --  is missing_extension.
+         --  After HRR, CH2 version/order failures are illegal_parameter
+         --  (RFC 8446 4.1.4), a dropped pre_shared_key is
+         --  missing_extension, and a parse failure carries the parser's
+         --  own alert.
          Consume_Record (S.Input);
          Free_CH2_Reasm;
          Send_Alert_And_Error (S, CH2_Err, Result);
@@ -1141,10 +1154,16 @@ is
       Cfg     : in Ready_Config;
       Algo_OK : out Boolean;
       Result  : out Action) is
+      --  The identity's own scheme preferences replace Config's when set.
+      Use_Id_Prefs : constant Boolean := Cfg.Local.Sign_Pref_Count > 0;
+      Prefs        : constant Sig_Algo_List :=
+        (if Use_Id_Prefs then Cfg.Local.Sign_Prefs else Cfg.Sign_Sig_Algos);
+      Pref_Count   : constant Natural :=
+        (if Use_Id_Prefs then Cfg.Local.Sign_Pref_Count else Cfg.Sign_Sig_Algo_Count);
    begin
       Result := OK;
       Algo_OK := False;
-      if Cfg.Sign_Sig_Algo_Count > 0 then
+      if Pref_Count > 0 then
          for J in Sig_Algo_Index loop
             pragma Loop_Invariant (S.State = S.State'Loop_Entry);
             pragma Loop_Invariant (S.Role = S.Role'Loop_Entry);
@@ -1158,12 +1177,11 @@ is
                      S.HC.Negotiated_Sig_Algo /= Scheme_None
                      and then Handshake.Sig_Algo_Compatible_With_Cert
                                 (S.HC.Negotiated_Sig_Algo, Cfg.Local.Sign_Algo));
-            exit when J >= Cfg.Sign_Sig_Algo_Count;
-            if Local_Sig_Compatible (Cfg.Sign_Sig_Algos (J), Cfg.Local.Sign_Algo)
-              and then Sig_Scheme_In_List
-                         (Cfg.Sign_Sig_Algos (J), S.HC.Peer_Sig_Algos, S.HC.Peer_Sig_Algo_Count)
+            exit when J >= Pref_Count;
+            if Local_Sig_Compatible (Prefs (J), Cfg.Local.Sign_Algo)
+              and then Sig_Scheme_In_List (Prefs (J), S.HC.Peer_Sig_Algos, S.HC.Peer_Sig_Algo_Count)
             then
-               S.HC.Negotiated_Sig_Algo := Cfg.Sign_Sig_Algos (J);
+               S.HC.Negotiated_Sig_Algo := Prefs (J);
                Algo_OK := True;
                exit;
             end if;
@@ -3538,18 +3556,27 @@ is
       --  per-message. Defer it: a burst of requests collapses to a single
       --  KeyUpdate, which is what the peer expects. Replying inline would
       --  make every reply after the first look unsolicited.
+      --  RFC 8446 4.6.3: our own KeyUpdate goes out before our next
+      --  application data. It is deferred to that write (Write_Plaintext
+      --  flushes it), which is what BoringSSL does and what BoGo
+      --  KeyUpdate-Requested pins: a KeyUpdate sent on its own is rejected
+      --  there as unsolicited. tlsfuzzer models the other legal timing
+      --  (reply first, then data); see tests/protocol/run.sh keyupdate.
       S.Key_Update_Pending := True;
       Result := OK;
    end Process_Key_Update_Message;
 
-   procedure Dispatch_Post_HS_Message (S : in out Session; Result : out Action)
+   procedure Dispatch_Post_HS_Message
+     (S : in out Session; Was_Key_Update : out Boolean; Result : out Action)
    with Pre => Post_HS_Reasm.Has_Message (S.Post_HS), Post => Post_HS_Reasm.Used (S.Post_HS) = 0;
 
-   procedure Dispatch_Post_HS_Message (S : in out Session; Result : out Action) is
+   procedure Dispatch_Post_HS_Message
+     (S : in out Session; Was_Key_Update : out Boolean; Result : out Action) is
       Msg_Len : constant N32 := Post_HS_Reasm.Message_Length (S.Post_HS);
       Msg     : constant Byte_Seq (0 .. Msg_Len - 1) :=
         Byte_Seq (Post_HS_Reasm.Message (S.Post_HS));
    begin
+      Was_Key_Update := Msg (0) = Key_Update.HS_Key_Update;
       if Msg (0) = Key_Update.HS_Key_Update then
          if S.App_Secret_Len in 32 | 48
            and then S.Client_App.Suite in TLS13_Suite
@@ -3610,10 +3637,23 @@ is
             end if;
 
             if Has_Message (S.Post_HS) then
-               Dispatch_Post_HS_Message (S, Result);
-               if Result /= OK then
-                  return;
-               end if;
+               declare
+                  Was_KU : Boolean;
+               begin
+                  Dispatch_Post_HS_Message (S, Was_KU, Result);
+                  if Result /= OK then
+                     return;
+                  end if;
+                  --  RFC 8446 5.1: handshake messages must not span a key
+                  --  change, so a KeyUpdate has to be the last message in
+                  --  its record; more handshake bytes after it in the same
+                  --  record are unexpected_message (tlsfuzzer keyupdate "two
+                  --  KeyUpdates in one record", BoGo KeyUpdate-*).
+                  if Was_KU and then Pos < Plain_Len then
+                     Send_Encrypted_Alert (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+               end;
             end if;
          end;
       end loop;

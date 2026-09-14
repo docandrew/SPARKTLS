@@ -10,7 +10,9 @@ paths in SPARKTLSCrypto use x86 inline assembly.
 
 - TLS 1.3 client and server: full handshake, HelloRetryRequest, PSK
   resumption (`psk_dhe_ke` only, forward secret), KeyUpdate, exporters,
-  mutual authentication, SNI-based identity selection.
+  mutual authentication, SNI-based identity selection, and a server-side
+  identity set (`Config.Identities`) chosen by the client's signature
+  algorithms, cipher-suite family, curves and certificate_authorities.
 - TLS 1.2 client and server: ECDHE suites only (RSA and ECDSA
   authentication), extended master secret, mutual authentication,
   RFC 5077 session-ticket resumption.
@@ -58,11 +60,22 @@ paths in SPARKTLSCrypto use x86 inline assembly.
   controlled inputs — and fails on any data-dependent branch or index.
   A dudect statistical lane exists for local use.
 - Conformance suites (2026-09-14): BoringSSL's BoGo runner passes
-  1393 of 1576 cases, with the 66 failures each documented in
-  `tests/bogo/EXPECTED_FAILURES.txt` and 117 cases blocked on
-  multi-credential selection (see `tests/bogo/CLASSIFICATION.md`);
-  x509-limbo 9738/9759 and NIST PKITS 189/249 with the deviations listed
-  under `tests/x509/`; Wycheproof and NIST CAVP vectors pass in full.
+  1464 of 1534 cases, with the 70 failures each documented in
+  `tests/bogo/EXPECTED_FAILURES.txt` and nothing left unimplemented (see
+  `tests/bogo/CLASSIFICATION.md` for the out-of-scope list); tlsfuzzer
+  runs 2600+ conversations across 90 scripts with every failing script
+  classified in `tests/protocol/run.sh`; TLS-Anvil passes 152 of the 199
+  tests its scan enables, with the 47 failures grouped and dispositioned
+  in `tests/tlsanvil/EXPECTED_FAILURES.txt`; x509-limbo 9738/9759 and
+  NIST PKITS 189/249 with the deviations listed under `tests/x509/`;
+  Wycheproof and NIST CAVP vectors pass in full. `tests/README.md`
+  describes every lane, its baseline file and how to reproduce one case.
+- The example programs and `sparktls_cli` are covered by the test lanes
+  (integration and `tests/cli`) and were reviewed for the failure modes
+  that get CVEs filed against sample code: path traversal, unbounded
+  reads, ignored short writes, missing timeouts, world-readable key
+  files, silently overwritten files, unverified CSRs and exit codes that
+  hide failures.
 
 ## Not Supported
 
@@ -79,7 +92,9 @@ paths in SPARKTLSCrypto use x86 inline assembly.
 - **TLS 1.2 session-ID resumption** (tickets only) and **Ed25519 client
   authentication in TLS 1.2** (the client declines with an empty
   Certificate: PureEdDSA needs the raw transcript, which this stack does
-  not keep).
+  not keep). In TLS 1.2 an ECDSA key signs only with the hash of its own
+  curve (P-256 with SHA-256, P-384 with SHA-384), so a peer that offers
+  `ecdsa_secp256r1_sha256` alone cannot use a P-384 identity.
 - **Fetching revocation data.** The library never performs network I/O of
   its own: OCSP evidence arrives stapled from the server and CRLs are
   attached by the application.
@@ -87,6 +102,30 @@ paths in SPARKTLSCrypto use x86 inline assembly.
   serialization. It tolerates unknown or reserved values where the TLS
   RFCs require extensibility, but does not intentionally emit reserved
   cipher suites, groups, signature schemes, versions, or extensions.
+
+## Session Lifecycle
+
+A session ends in one of two ways. `Close_Notify` is the orderly path: it
+queues the close_notify alert and the session keeps being driven through
+`Advance` until the peer has answered, at which point the handshake slot is
+freed. `Drop` is the other one: the transport died, a timeout fired, or the
+application is done with the connection. It scrubs every key and handshake
+secret and frees the slot without touching the wire, and it is safe and
+idempotent in every state. Call it on every path that stops driving a
+session; a server that forgets does not answer anyone once `Max_Inflight`
+(16) peers have disconnected mid-handshake, which scanners and browsers'
+speculative connections do routinely. Close_Notify only has meaning once the
+handshake is complete, and a peer that never answers it is finished with
+`Drop` as well.
+
+Neither is a callback. The library never calls the application about a
+session's lifetime; everything it has to say arrives as the `Action` that
+`Advance` returns (`Has_Output`, `Need_Input`, `Handshake_Done`,
+`Plaintext_Ready`, `Error_Alert`, `Shutdown`), and the application drives
+the socket. The only callbacks are the hooks the application installs in
+`Config`: the random source, the clock, the peer-verification veto, the
+client-identity selector, the OCSP-staple policy hooks and the ticket-key
+ring accessors.
 
 ## Session Ticket Policy
 
@@ -144,7 +183,6 @@ sent. The known x509-limbo and PKITS deviations are listed in
 
 ## Planned Work
 
-- Full BoGo coverage: Make currently unimplemented cases run, with an explicit list of out-of-scope features.
 - TLS-Anvil and tlsfuzzer conformance runs with documented intentional gaps.
 - Post-quantum key exchange: the `X25519MLKEM768` hybrid, built on the
   SPARK ML-KEM implementation. Today the stack *tolerates* PQ peers

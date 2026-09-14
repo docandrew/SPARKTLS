@@ -31,4 +31,12 @@ package CSR_Builder is
       OK       : out Boolean)
    with Pre => DER'First = 0 and SPKI'First = 0 and SPKI'Length >= 256;
 
+   --  Proof of possession: the CSR's signature, over its
+   --  CertificationRequestInfo, verifies with the public key it carries.
+   --  A CA that skips this issues certificates for keys the requester does
+   --  not hold (RFC 2986 4.2). Ed25519, ECDSA P-256 (SHA-256) and P-384
+   --  (SHA-384) are accepted; anything else is False.
+   procedure Verify_CSR (DER : X509.Byte_Seq; OK : out Boolean)
+   with Pre => DER'First = 0;
+
 end CSR_Builder;

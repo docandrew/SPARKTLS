@@ -60,7 +60,7 @@ package body Cmd_Verify is
                   return;
                end if;
                Hostname := new String'(Argument (I));
-            elsif Arg (Arg'First) = '-' then
+            elsif Arg'Length > 0 and then Arg (Arg'First) = '-' then
                Put_Line (Standard_Error, "Unknown option: " & Arg);
                Set_Exit_Status (2);
                return;

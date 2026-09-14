@@ -93,6 +93,9 @@ procedure TLS_Blocking_Server is
    end Get_TEK_Rotate_Secs;
    TEK_Rotate_Secs : constant Unsigned_32 := Get_TEK_Rotate_Secs;
 
+   Trace   : constant Boolean := Ada.Environment_Variables.Exists ("SPARKTLS_TRACE");
+   Conn_No : Natural := 0;
+
    procedure Handle_Connection (Client_Sock : Socket_Type) is
       S         : SPARKTLS.Server_Session;
       Res       : SPARKTLS.Action;
@@ -142,6 +145,71 @@ procedure TLS_Blocking_Server is
          when others => Read_Dead := True;
       end Read_Input;
 
+      --  Application data held back until a newline arrives (see the
+      --  Plaintext_Ready arm below).
+      Echo_Buf : Byte_Seq (0 .. 65535);
+      Echo_Len : N32 := 0;
+
+      --  How much of Echo_Buf to answer now. Everything, unless the buffer
+      --  looks like the start of an HTTP request ("GET ", "POST ", ...)
+      --  that has not reached its blank line yet: tlsfuzzer's KeyUpdate
+      --  scripts split "GET / HTTP/1.0" around a KeyUpdate and expect the
+      --  server's KeyUpdate before any application data, which is what an
+      --  HTTP server answering complete requests would do. Anything else
+      --  (an integration client sending "hello" with no newline) is echoed
+      --  as soon as the input is drained.
+      function Echo_Cut return N32 is
+         function Starts (P : String) return Boolean is
+           (Echo_Len >= P'Length
+            and then (for all I in P'Range =>
+                        Echo_Buf (N32 (I - P'First)) = Character'Pos (P (I))));
+         --  Fewer bytes than the method token itself, all matching it so
+         --  far ("G", "GE", "GET"): hold, it may still become a request
+         --  (tlsfuzzer chacha20 "1/n-1 record splitting" sends the first
+         --  byte alone).
+         function Prefix_Of (P : String) return Boolean is
+           (Echo_Len < P'Length
+            and then (for all I in 0 .. Echo_Len - 1 =>
+                        Echo_Buf (I) = Character'Pos (P (P'First + Integer (I)))));
+      begin
+         if Echo_Len > 0
+           and then (Prefix_Of ("GET ") or else Prefix_Of ("POST ")
+                     or else Prefix_Of ("HEAD ") or else Prefix_Of ("PUT "))
+         then
+            return 0;
+         end if;
+         if Starts ("GET ") or else Starts ("POST ") or else Starts ("HEAD ")
+           or else Starts ("PUT ")
+         then
+            for I in 1 .. Echo_Len - 1 loop
+               if Echo_Buf (I) = 10
+                 and then (Echo_Buf (I - 1) = 10
+                           or else (I >= 3 and then Echo_Buf (I - 1) = 13
+                                    and then Echo_Buf (I - 2) = 10))
+               then
+                  return I + 1;   --  through the blank line
+               end if;
+            end loop;
+            return 0;             --  request still incomplete: hold
+         end if;
+         return Echo_Len;
+      end Echo_Cut;
+
+      --  Echo the first Cut bytes of Echo_Buf and keep the rest.
+      procedure Flush_Echo (Cut : N32) is
+         Written : N32;
+      begin
+         if Cut = 0 then
+            return;
+         end if;
+         SPARKTLS.Write_Plaintext (S, Echo_Buf (0 .. Cut - 1), Written);
+         Send_Output;
+         if Cut < Echo_Len then
+            Echo_Buf (0 .. Echo_Len - Cut - 1) := Echo_Buf (Cut .. Echo_Len - 1);
+         end if;
+         Echo_Len := Echo_Len - Cut;
+      end Flush_Echo;
+
    begin
       --  Receive timeout. 30 s suits an interactive example, but it is
       --  far too long for a conformance harness: this server handles one
@@ -161,6 +229,9 @@ procedure TLS_Blocking_Server is
                     (Ada.Environment_Variables.Value
                        ("SPARKTLS_RECV_TIMEOUT"))
              else 30.0)));
+      --  A peer that stops reading (zero window) must not pin the task.
+      Set_Socket_Option
+        (Client_Sock, Socket_Level, (Name => Send_Timeout, Timeout => 10.0));
       Set_Socket_Option
         (Client_Sock, IP_Protocol_For_TCP_Level,
          (Name => No_Delay, Enabled => True));
@@ -192,27 +263,35 @@ procedure TLS_Blocking_Server is
 
             when Need_Input =>
                if Read_Dead then exit; end if;
+               --  Input drained: every record the peer sent so far has been
+               --  processed (KeyUpdate replies and tickets are queued), so
+               --  now answer the complete lines received. An event-driven
+               --  server behaves the same way: it reads everything the
+               --  socket holds before the application gets to write.
+               Flush_Echo (Echo_Cut);
                Read_Input;
-               if Read_Dead then exit; end if;
+               if Read_Dead then
+                  --  Peer closed: send whatever unterminated tail is held.
+                  Flush_Echo (Echo_Len);
+                  exit;
+               end if;
 
             when Handshake_Done =>
                null;  --  Handshake complete, continue processing
 
             when Plaintext_Ready =>
-               --  Read decrypted data, echo it back verbatim
+               --  Read decrypted data and queue it for the echo. It is
+               --  answered once the input is drained (Need_Input above, see
+               --  Echo_Cut for the one case that is held back longer); the
+               --  tail is flushed when the peer closes.
                declare
                   App   : Byte_Seq (0 .. 16383);
                   App_N : N32;
                begin
                   Read_Plaintext (S, App, App_N);
-                  if App_N > 0 then
-                     declare
-                        Written : N32;
-                     begin
-                        SPARKTLS.Write_Plaintext
-                          (S, App (0 .. App_N - 1), Written);
-                        Send_Output;
-                     end;
+                  if App_N > 0 and then Echo_Len <= Echo_Buf'Last - App_N then
+                     Echo_Buf (Echo_Len .. Echo_Len + App_N - 1) := App (0 .. App_N - 1);
+                     Echo_Len := Echo_Len + App_N;
                   end if;
                end;
 
@@ -254,13 +333,78 @@ procedure TLS_Blocking_Server is
          end case;
       end loop;
 
+      --  Whatever ended the connection, give the handshake slot back
+      --  (see SPARKTLS.Drop): a peer that disconnects after our
+      --  ServerHello otherwise pins it for the life of the process.
+      SPARKTLS.Drop (S);
+
    exception
       when Socket_Error =>
-         null;
+         SPARKTLS.Drop (S);
       when E : others =>
+         SPARKTLS.Drop (S);
          Put_Line ("  Connection error: " &
                    Ada.Exceptions.Exception_Message (E));
    end Handle_Connection;
+
+   task type Worker with Storage_Size => 8 * 1024 * 1024 is
+      entry Start (Sock : Socket_Type; No : Natural);
+   end Worker;
+   type Worker_Access is access Worker;
+
+   --  Bound on connections in flight. Beyond it new connections are
+   --  refused at accept: a task per connection with no ceiling lets a
+   --  slow-trickling peer population grow memory without limit.
+   Max_Workers : constant := 64;
+   protected Workers is
+      procedure Try_Acquire (Got : out Boolean);
+      procedure Release;
+   private
+      Count : Natural := 0;
+   end Workers;
+   protected body Workers is
+      procedure Try_Acquire (Got : out Boolean) is
+      begin
+         Got := Count < Max_Workers;
+         if Got then
+            Count := Count + 1;
+         end if;
+      end Try_Acquire;
+      procedure Release is
+      begin
+         if Count > 0 then
+            Count := Count - 1;
+         end if;
+      end Release;
+   end Workers;
+
+   task body Worker is
+      Client_Sock : Socket_Type;
+      Conn        : Natural;
+   begin
+      accept Start (Sock : Socket_Type; No : Natural) do
+         Client_Sock := Sock;
+         Conn        := No;
+      end Start;
+      if Trace then
+         Put_Line ("conn" & Conn'Image & " accept");
+      end if;
+      Handle_Connection (Client_Sock);
+      begin
+         Shutdown_Socket (Client_Sock, Shut_Read_Write);
+      exception
+         when others => null;
+      end;
+      Close_Socket (Client_Sock);
+      Workers.Release;
+      if Trace then
+         Put_Line ("conn" & Conn'Image & " done");
+      end if;
+   exception
+      when E : others =>
+         Workers.Release;
+         Put_Line ("Error: " & Ada.Exceptions.Exception_Message (E));
+   end Worker;
 
 begin
    Entropy_Random.Init;
@@ -347,20 +491,42 @@ begin
 
    Put_Line ("Ready.");
 
-   --  Accept connections forever
+   --  Accept connections forever, one task per connection. Each
+   --  connection is still handled by the blocking loop in
+   --  Handle_Connection; the tasks only let several run at once. That
+   --  matters for conformance scanners: TLS-Scanner (TLS-Anvil's feature
+   --  scan) probes from three threads with a one-second timeout, and a
+   --  server that answers one connection at a time misses every probe
+   --  queued behind a peer that is still waiting (2026-09-14: every
+   --  TLS-Anvil test came back "disabled" for this reason). Shared state is
+   --  task-safe: the identity and trust store are read-only after start-up,
+   --  Entropy_Random has no state, and SPARKTLS.Ticket_Keys is a protected
+   --  object. Terminated Worker objects are not reclaimed; this is a test
+   --  server.
    loop
       declare
          Client_Sock : Socket_Type;
          Client_Addr : Sock_Addr_Type;
+         W           : Worker_Access;
       begin
          Accept_Socket (Server_Sock, Client_Sock, Client_Addr);
-         Handle_Connection (Client_Sock);
+         --  SPARKTLS_TRACE=1: one line per connection, so a harness log
+         --  shows which connection a stall belongs to.
+         Conn_No := Conn_No + 1;
+         declare
+            Got : Boolean;
          begin
-            Shutdown_Socket (Client_Sock, Shut_Read_Write);
-         exception
-            when others => null;
+            Workers.Try_Acquire (Got);
+            if Got then
+               W := new Worker;
+               W.Start (Client_Sock, Conn_No);
+            else
+               if Trace then
+                  Put_Line ("conn" & Conn_No'Image & " refused (Max_Workers)");
+               end if;
+               Close_Socket (Client_Sock);
+            end if;
          end;
-         Close_Socket (Client_Sock);
       exception
          when E : others =>
             Put_Line ("Error: " & Ada.Exceptions.Exception_Message (E));

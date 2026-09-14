@@ -101,16 +101,59 @@
 # mismatch, the alert the sibling Extra* cases require) and
 # CertificateRequestInResumption-TLS13 (our client does not resume after an
 # mTLS session in this configuration; not yet diagnosed).
-CertificateRequestInResumption-TLS13
+#
+# 2026-09-14 UPDATE 4 (chore/bogo, multi-credential selection): Config.Identities
+# (server-side identity set chosen by the client's signature_algorithms,
+# cipher-suite family, ECDSA curve and, for Must_Match_Issuer identities, its
+# certificate_authorities), per-identity Sign_Prefs honoured by selection and
+# by the scheme negotiators, Select_Client_Identity gets certificate_types,
+# Local_Identity accessor; shim credential blocks + -expect-selected-credential.
+# 1393 -> 1461 passing; unimplemented 117 -> 5. The CertificateSelection cases
+# still listed are all CLIENT side:
+#  (d) *-MatchNone-* (12): no configured credential fits the CertificateRequest.
+#      RFC 8446 4.4.2 / RFC 5246 7.4.6 say the client MUST then send an empty
+#      Certificate, which we do; BoringSSL aborts with handshake_failure and
+#      BoGo pins that. Intentional deviation.
+#  (e) Client-ClientCertificateTypes-ECDSA-Ed25519-* (4): Ed25519 client
+#      authentication in TLS 1.2 is declined by design (see the Ed25519 notes).
+#  (f) Client-SignatureAlgorithmECDSACurve-TLS-TLS12 (1): a P-384 client key
+#      offered only ecdsa_secp256r1_sha256; TLS 1.2 lets ECDSA hash and curve
+#      be independent, our signer binds P-384 to SHA-384. Gap.
+#
+# 2026-09-14 UPDATE 5 (chore/bogo, one-off investigation): 1462 -> 1464
+# passing, 74 -> 70 known failures. Two were REAL BUGS:
+#  - CertificateRequestInResumption-TLS13: the client silently dropped any
+#    TLS 1.3 ticket longer than 256 bytes (Max_Ticket_Len). Servers embed the
+#    client's certificate chain in the ticket after mutual authentication
+#    (OpenSSL 3: 208 bytes plain, 1072 with a client cert; Go about 830), so
+#    no mTLS session ever resumed. Cap raised to 2048, matching TLS 1.2.
+#  - Resume-Server-NoPSKBinder-SecondBinder: after HelloRetryRequest the
+#    server replaced every CH2 PARSE error with illegal_parameter; a
+#    truncated binders list is decode_error in CH2 as in CH1. The CH1/CH2
+#    consistency checks keep illegal_parameter.
+# Two moved to the out-of-scope skip list: {Client,Server}-VerifyDefault-
+# Ed25519-TLS13 assert BoringSSL's default verify-preference table (Ed25519
+# off unless enabled); SPARKTLS accepts Ed25519 by default, as browsers do.
+# Still open and understood: (f) above, the TLS 1.2 ECDSA hash/curve
+# decoupling, which needs the P-384 signer to take a SHA-256 digest and the
+# scheme matcher to relax the curve in TLS 1.2 mode.
+CertificateSelection-Client-CheckIssuer-MatchNone-TLS-TLS12
+CertificateSelection-Client-CheckIssuer-MatchNone-TLS-TLS13
+CertificateSelection-Client-CheckIssuerFallback-MatchNone-TLS-TLS12
+CertificateSelection-Client-CheckIssuerFallback-MatchNone-TLS-TLS13
+CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-MatchDefault-TLS-TLS12
+CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-MatchFirst-TLS-TLS12
 CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-MatchNone-TLS-TLS12
+CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-MatchSecond-TLS-TLS12
 CertificateSelection-Client-ClientCertificateTypes-ECDSA-MatchNone-TLS-TLS12
 CertificateSelection-Client-ClientCertificateTypes-RSA-Ed25519-MatchNone-TLS-TLS12
 CertificateSelection-Client-ClientCertificateTypes-RSA-MatchNone-TLS-TLS12
 CertificateSelection-Client-SignatureAlgorithm-MatchNone-TLS-TLS12
+CertificateSelection-Client-SignatureAlgorithm-MatchNone-TLS-TLS13
+CertificateSelection-Client-SignatureAlgorithmECDSACurve-MatchNone-TLS-TLS13
+CertificateSelection-Client-SignatureAlgorithmECDSACurve-TLS-TLS12
 CertificateSelection-Client-SignatureAlgorithmKeyPrefs-MatchNone-TLS-TLS12
-CertificateSelection-Server-CertificateType-Unknown-X509-MatchNone-TLS-TLS12
-CertificateSelection-Server-CertificateType-Unknown-X509-MatchNone-TLS-TLS13
-CertificateSelection-Server-CipherSuite-NoECDHE-MatchNone-TLS-TLS12
+CertificateSelection-Client-SignatureAlgorithmKeyPrefs-MatchNone-TLS-TLS13
 CertificateVerificationFail-Client-TLS12-CustomCallback-TLS-Sync
 CertificateVerificationFail-Client-TLS12-CustomCallback-TLS-Sync-ImplicitHandshake
 CertificateVerificationFail-Client-TLS12-CustomCallback-TLS-Sync-PackHandshake
@@ -163,7 +206,4 @@ Client-Sign-Ed25519-TLS12
 Client-Sign-Negotiate-Ed25519-TLS12
 Client-SignDefault-Ed25519-TLS12
 Client-VerifyDefault-Ed25519-TLS12
-Client-VerifyDefault-Ed25519-TLS13
-Resume-Server-NoPSKBinder-SecondBinder
 Server-Verify-Ed25519-TLS12
-Server-VerifyDefault-Ed25519-TLS13

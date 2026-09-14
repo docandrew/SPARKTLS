@@ -415,6 +415,12 @@ is
    is
       Client_Sent_Recognized_Group : constant Boolean :=
         HC.Client_Supports_X25519 or else HC.Client_Supports_P256 or else HC.Client_Supports_P384;
+      --  The identity's own scheme preferences replace Config's when set.
+      Use_Id_Prefs : constant Boolean := Cfg.Local.Sign_Pref_Count > 0;
+      Prefs        : constant Sig_Algo_List :=
+        (if Use_Id_Prefs then Cfg.Local.Sign_Prefs else Cfg.Sign_Sig_Algos);
+      Pref_Count   : constant Natural :=
+        (if Use_Id_Prefs then Cfg.Local.Sign_Pref_Count else Cfg.Sign_Sig_Algo_Count);
 
       function Compatible_Local_Sig (Scheme : Maybe_Sig_Scheme) return Boolean is
       begin
@@ -486,19 +492,17 @@ is
            Assert
              (Negotiated = Scheme_None
               or else Sig_Scheme_Has_Strong_Hash_RFC_5246_7_4_1_4_1 (Negotiated));
-      elsif Cfg.Sign_Sig_Algo_Count > 0 then
+      elsif Pref_Count > 0 then
          for J in Sig_Algo_Index loop
             pragma
               Loop_Invariant
                 (Negotiated_Sig_Algo_From_Offered_RFC_5246_7_4_1_4_1
                    (Negotiated, HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count));
-            exit when J >= Cfg.Sign_Sig_Algo_Count;
-            if Compatible_Local_Sig (Cfg.Sign_Sig_Algos (J))
-              and then
-                Sig_Scheme_In_List
-                  (Cfg.Sign_Sig_Algos (J), HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count)
+            exit when J >= Pref_Count;
+            if Compatible_Local_Sig (Prefs (J))
+              and then Sig_Scheme_In_List (Prefs (J), HC.Peer_Sig_Algos, HC.Peer_Sig_Algo_Count)
             then
-               Negotiated := Cfg.Sign_Sig_Algos (J);
+               Negotiated := Prefs (J);
                exit;
             end if;
          end loop;
@@ -2663,8 +2667,11 @@ is
                else Explicit_Nonce_Len + GCM_Tag_Len + 1);
          begin
             if Frag_Len < Min_Frag then
+               --  RFC 5246 6.2.3.3: a record too short to hold nonce and
+               --  tag cannot decrypt, and a decryption failure is
+               --  bad_record_mac.
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result);
+               Send_Alert_And_Error (S, Bad_Record_MAC, Result);
                return;
             end if;
          end;
@@ -2959,8 +2966,19 @@ is
                   else Explicit_Nonce_Len + GCM_Tag_Len);
             begin
                if Frag_Len < Min_Frag then
+                  --  RFC 5246 6.2.3.3: too short to decrypt is a decryption
+                  --  failure, bad_record_mac (tlsfuzzer chacha20 "N bytes
+                  --  long ciphertext").
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  Send_Encrypted_Alert_Connected_12 (S, Unexpected_Message, Result);
+                  Send_Encrypted_Alert_Connected_12 (S, Bad_Record_MAC, Result);
+                  return;
+               end if;
+               if Frag_Len - Min_Frag > Max_Record_Plaintext then
+                  --  RFC 5246 6.2.1: the plaintext this record carries would
+                  --  exceed 2^14 bytes; record_overflow, not a MAC failure
+                  --  (tlsfuzzer chacha20 "too big plaintext").
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Encrypted_Alert_Connected_12 (S, Record_Overflow, Result);
                   return;
                end if;
             end;

@@ -33,6 +33,7 @@ with SPARKNaCl;            use SPARKNaCl;
 
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Client;
+with SPARKTLS.Credentials;
 with Entropy_Random;
 with X509;
 
@@ -41,13 +42,27 @@ with GNAT.Sockets;         use GNAT.Sockets;
 procedure TLS_Resume_Test is
 
    --  Defaults
-   Host : String (1 .. 256) := (others => ' ');
+   Host : String (1 .. 255) := (others => ' ');   --  Max_Hostname_Len
    Host_Len : Natural := 0;
    Port : Port_Type := 8443;
    Want_0RTT : Boolean := False;
 
+   --  Optional client identity (-cert/-key): the server then requests
+   --  client authentication and embeds our chain in the ticket, which is
+   --  how tickets grow past 1 KB (OpenSSL 3: 1072 bytes). Resuming such a
+   --  session is the regression guard for the Max_Ticket_Len bug.
+   Cert_Path  : String (1 .. 1024) := (others => ' ');
+   Cert_Len   : Natural := 0;
+   Key_Path   : String (1 .. 1024) := (others => ' ');
+   Key_Len    : Natural := 0;
+   Id         : aliased Identity;
+   Have_Local : Boolean := False;
+
    --  Carried across the two connections.
    Saved_Ticket : Session_Ticket;
+   Roots      : aliased Trust_Store;
+   Roots_OK   : Boolean := False;
+   Have_Roots : Boolean := False;
 
    function Current_Time return X509.Date_Time is
       use Ada.Calendar;
@@ -92,7 +107,7 @@ procedure TLS_Resume_Test is
       Res      : Action;
       Sock     : Socket_Type;
       Channel  : Stream_Access;
-      Net_Buf  : Byte_Seq (0 .. 16383);
+      Net_Buf  : Byte_Seq (0 .. 16644);   --  5-byte header + 2^14 + 256 (RFC 8446 5.2)
       N        : N32;
       Iter     : Natural := 0;
    begin
@@ -104,14 +119,23 @@ procedure TLS_Resume_Test is
       --  Configure refuses Resume_Ticket without Get_Time.
       Cfg.Get_Time := Current_Time'Unrestricted_Access;
       Cfg.Versions := TLS_1_3_Only;
-      --  Integration test runs against an OpenSSL self-signed test cert.
-      Cfg.Skip_Verify := True;
+      --  -cafile verifies the server against that trust store (RFC 5280
+      --  mode: the test certificates are self-signed). Without it
+      --  verification is OFF and says so; do not copy that into a product.
+      if Have_Roots then
+         Cfg.Trust := Roots'Unchecked_Access;
+         Cfg.Verify_Mode := Mode_RFC5280;
+      else
+         Put_Line ("WARNING: no -cafile given; certificate verification disabled");
+         Cfg.Skip_Verify := True;
+      end if;
       declare
          H : constant String := Host (1 .. Host_Len);
       begin
          Cfg.Server_Name.Data (1 .. H'Length) := H;
          Cfg.Server_Name.Len := H'Length;
       end;
+      Cfg.Local := (if Have_Local then Id'Unchecked_Access else No_Identity'Access);
       if Resume and then Saved_Ticket.Valid then
          Cfg.Resume_Ticket := Saved_Ticket;
          --  With_0RTT historically enabled 0-RTT mode; the
@@ -251,7 +275,7 @@ procedure TLS_Resume_Test is
       --  Cleanly close socket. Don't bother with close_notify on
       --  the first connection — server will tear down on FIN too.
       begin
-         Close_Socket (Sock);
+         SPARKTLS.Drop (S); Close_Socket (Sock);
       exception when others => null;
       end;
    end Run_One_Connection;
@@ -284,6 +308,19 @@ begin
                   Host_Len := V'Length;
                end;
                I := I + 2;
+            elsif A = "-cafile" and then I < Ada.Command_Line.Argument_Count then
+               declare
+                  V : constant String := Ada.Command_Line.Argument (I + 1);
+               begin
+                  SPARKTLS.Credentials.Load_Trust_Store (Roots, V, Roots_OK);
+                  if not Roots_OK then
+                     Put_Line ("FAIL: cannot load trust store " & V);
+                     Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
+                     return;
+                  end if;
+                  Have_Roots := True;
+               end;
+               I := I + 2;
             elsif A = "-port" and then I < Ada.Command_Line.Argument_Count then
                Port := Port_Type'Value
                          (Ada.Command_Line.Argument (I + 1));
@@ -291,12 +328,43 @@ begin
             elsif A = "-0rtt" then
                Want_0RTT := True;
                I := I + 1;
+            elsif A = "-cert" and then I < Ada.Command_Line.Argument_Count then
+               declare
+                  V : constant String := Ada.Command_Line.Argument (I + 1);
+               begin
+                  Cert_Path (1 .. V'Length) := V;
+                  Cert_Len := V'Length;
+               end;
+               I := I + 2;
+            elsif A = "-key" and then I < Ada.Command_Line.Argument_Count then
+               declare
+                  V : constant String := Ada.Command_Line.Argument (I + 1);
+               begin
+                  Key_Path (1 .. V'Length) := V;
+                  Key_Len := V'Length;
+               end;
+               I := I + 2;
             else
                I := I + 1;
             end if;
          end;
       end loop;
    end;
+
+   if Cert_Len > 0 and then Key_Len > 0 then
+      declare
+         Id_OK : Boolean;
+      begin
+         SPARKTLS.Credentials.Load_Identity
+           (Id, Cert_Path (1 .. Cert_Len), Key_Path (1 .. Key_Len), Id_OK);
+         if not Id_OK then
+            Put_Line ("FAIL: could not load client identity " & Cert_Path (1 .. Cert_Len));
+            Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
+            return;
+         end if;
+         Have_Local := True;
+      end;
+   end if;
 
    Put_Line ("=== tls_resume_test ===");
    Put_Line ("Host: " & Host (1 .. Host_Len) & ":" & Port'Image);

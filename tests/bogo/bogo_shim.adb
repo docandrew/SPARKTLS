@@ -29,6 +29,7 @@ with SPARKTLS;                   use SPARKTLS;
 with SPARKTLS.Server;
 with SPARKTLS.Client;
 with SPARKTLS.Credentials;
+with SPARKTLS.Handshake;
 with Entropy_Random;
 with X509;
 
@@ -133,6 +134,14 @@ procedure Bogo_Shim is
       Resumption_Delay_Seconds : Natural := 0;
       Time_Offset_Seconds      : Natural := 0;
       No_Ticket                 : Boolean := False;
+      --  -expect-selected-credential N: index (0-based, -1 = the legacy
+      --  default credential) of the identity the handshake must have used.
+      --  -2 = not asserted.
+      Expect_Selected           : Integer := -2;
+      --  -expect-certificate-types B64: the TLS 1.2 CertificateRequest
+      --  certificate_types the server must have sent.
+      Expect_Cert_Types         : Unbounded_Text := (others => Character'Val (0));
+      Expect_Cert_Types_Len     : Natural := 0;
       --  -on-resume-no-ticket: tickets disabled only on the resume
       --  connection(s); applied through Iteration below.
       No_Ticket_On_Resume       : Boolean := False;
@@ -140,6 +149,33 @@ procedure Bogo_Shim is
    end record;
 
    Cfg : Config_T;
+
+   --  BoGo credential blocks (runner.go appendCredentialFlags): each
+   --  -new-x509-credential opens a block whose -cert-file / -key-file /
+   --  -ocsp-response / -signing-prefs / -must-match-issuer follow, in
+   --  preference order. The legacy -cert-file/-key-file outside any block
+   --  is the default credential (index -1), tried last.
+   Max_Creds : constant := SPARKTLS.Max_Identities;
+   type Cred_T is record
+      Cert_File      : Unbounded_Text := (others => Character'Val (0));
+      Key_File       : Unbounded_Text := (others => Character'Val (0));
+      OCSP           : String (1 .. 32768) := (others => Character'Val (0));
+      OCSP_Len       : Natural := 0;
+      Sign_Prefs     : SPARKTLS.Sig_Algo_List := (others => Scheme_None);
+      Sign_Count     : Natural range 0 .. Max_Sig_Algos := 0;
+      Must_Match_Issuer : Boolean := False;
+      Id             : aliased SPARKTLS.Identity;
+      Loaded         : Boolean := False;
+   end record;
+   Creds      : array (1 .. Max_Creds) of Cred_T;
+   Cred_Count : Natural range 0 .. Max_Creds := 0;
+   --  Block currently being filled by the credential flags; 0 = legacy.
+   Cur_Cred   : Natural range 0 .. Max_Creds := 0;
+   Id_Set     : aliased SPARKTLS.Identity_Set;
+   --  The legacy (default) identity; module-level so the client selector
+   --  can fall back to it.
+   Id      : aliased SPARKTLS.Identity;
+   Id_OK   : Boolean := False;
 
    --  0 on the first connection, then 1 .. Resume_Count.
    Iteration : Natural := 0;
@@ -248,6 +284,7 @@ procedure Bogo_Shim is
    begin
       return not Cfg.Fail_OCSP_Callback;
    end Bogo_Staple_Verdict;
+
 
    function State_Name (State : SPARKTLS.Connection_State) return String is
    begin
@@ -631,17 +668,51 @@ procedure Bogo_Shim is
                declare
                   V : constant String := Next_Arg;
                begin
-                  Cfg.Cert_File (1 .. V'Length) := V;
-                  Cfg.Cert_File (V'Length + 1 .. Cfg.Cert_File'Last)
-                    := (others => Character'Val (0));
+                  if Cur_Cred > 0 then
+                     Creds (Cur_Cred).Cert_File := (others => Character'Val (0));
+                     Creds (Cur_Cred).Cert_File (1 .. V'Length) := V;
+                  else
+                     Cfg.Cert_File (1 .. V'Length) := V;
+                     Cfg.Cert_File (V'Length + 1 .. Cfg.Cert_File'Last)
+                       := (others => Character'Val (0));
+                  end if;
                end;
             elsif A = "-key-file" then
                declare
                   V : constant String := Next_Arg;
                begin
-                  Cfg.Key_File (1 .. V'Length) := V;
-                  Cfg.Key_File (V'Length + 1 .. Cfg.Key_File'Last)
-                    := (others => Character'Val (0));
+                  if Cur_Cred > 0 then
+                     Creds (Cur_Cred).Key_File := (others => Character'Val (0));
+                     Creds (Cur_Cred).Key_File (1 .. V'Length) := V;
+                  else
+                     Cfg.Key_File (1 .. V'Length) := V;
+                     Cfg.Key_File (V'Length + 1 .. Cfg.Key_File'Last)
+                       := (others => Character'Val (0));
+                  end if;
+               end;
+            elsif A = "-expect-selected-credential" then
+               Cfg.Expect_Selected := Integer'Value (Next_Arg);
+            elsif A = "-expect-certificate-types" then
+               declare
+                  V : constant String := Next_Arg;
+               begin
+                  if V'Length <= Cfg.Expect_Cert_Types'Length then
+                     Cfg.Expect_Cert_Types (1 .. V'Length) := V;
+                     Cfg.Expect_Cert_Types_Len := V'Length;
+                  end if;
+               end;
+            elsif A = "-must-match-issuer" then
+               if Cur_Cred > 0 then
+                  Creds (Cur_Cred).Must_Match_Issuer := True;
+               end if;
+            elsif A = "-signed-cert-timestamps" then
+               --  SCTs (RFC 6962) are not implemented; the value is consumed
+               --  so the credential block still parses.
+               declare
+                  Ignore : constant String := Next_Arg;
+                  pragma Unreferenced (Ignore);
+               begin
+                  null;
                end;
             elsif A = "-trust-cert" then
                declare
@@ -740,7 +811,12 @@ procedure Bogo_Shim is
                declare
                   V : constant String := Next_Arg;
                begin
-                  if V'Length <= Cfg.OCSP_Response'Length then
+                  if Cur_Cred > 0 then
+                     if V'Length <= Creds (Cur_Cred).OCSP'Length then
+                        Creds (Cur_Cred).OCSP (1 .. V'Length) := V;
+                        Creds (Cur_Cred).OCSP_Len := V'Length;
+                     end if;
+                  elsif V'Length <= Cfg.OCSP_Response'Length then
                      Cfg.OCSP_Response (1 .. V'Length) := V;
                      Cfg.OCSP_Response_Len := V'Length;
                   end if;
@@ -939,7 +1015,20 @@ procedure Bogo_Shim is
             elsif A = "-verify-prefs" then
                Add_Verify_Sig_Algo (Next_Arg);
             elsif A = "-signing-prefs" then
-               Add_Sign_Sig_Algo (Next_Arg);
+               if Cur_Cred > 0 then
+                  declare
+                     Scheme : constant Maybe_Sig_Scheme := Scheme_From_Wire (Dec_To_U16 (Next_Arg));
+                  begin
+                     if Scheme /= Scheme_None
+                       and then Creds (Cur_Cred).Sign_Count < Max_Sig_Algos
+                     then
+                        Creds (Cur_Cred).Sign_Prefs (Creds (Cur_Cred).Sign_Count) := Scheme;
+                        Creds (Cur_Cred).Sign_Count := Creds (Cur_Cred).Sign_Count + 1;
+                     end if;
+                  end;
+               else
+                  Add_Sign_Sig_Algo (Next_Arg);
+               end if;
             elsif A = "-export-keying-material" then
                declare
                   V : constant Natural := Natural'Value (Next_Arg);
@@ -1032,18 +1121,18 @@ procedure Bogo_Shim is
                --  mere argv-parser gaps.
                null;
             elsif A = "-new-x509-credential" then
-               --  A MARKER, not a feature. runner.go:appendCredentialFlags
-               --  emits it to open a credential block; the material itself
-               --  follows as -cert-file / -key-file, which we already parse.
-               --  Accepting it means the LAST credential in argv wins, since
-               --  Cfg.Cert_File / Key_File hold exactly one pair.
-               --
-               --  So: tests carrying a single credential now RUN. Tests that
-               --  genuinely need multi-credential selection now FAIL visibly
-               --  instead of hiding as UNIMPLEMENTED -- which is the point,
-               --  per CLASSIFICATION.md's "a stale skip and a real gap look
-               --  identical from the outside".
-               null;
+               --  runner.go:appendCredentialFlags opens a credential block;
+               --  the following -cert-file / -key-file / -ocsp-response /
+               --  -signing-prefs / -must-match-issuer belong to it.
+               if Cred_Count < Max_Creds then
+                  Cred_Count := Cred_Count + 1;
+                  Cur_Cred := Cred_Count;
+               else
+                  Err ("bogo_shim: too many credentials");
+                  Ada.Command_Line.Set_Exit_Status
+                    (Ada.Command_Line.Exit_Status (Exit_Unimplemented));
+                  raise Program_Error;
+               end if;
             elsif A = "-resumption-across-names-enabled" then
                Cfg.Resumption_Across_Names := True;
             elsif A'Length >= 11
@@ -1130,6 +1219,132 @@ procedure Bogo_Shim is
    --  ------------------------------------------------------------------
    --  Run a single TLS handshake (no resumption yet — Phase 1).
    --  ------------------------------------------------------------------
+   --  Load every credential block's identity (and staple). False = some
+   --  block could not be loaded.
+   function Load_Creds return Boolean is
+   begin
+      for I in 1 .. Cred_Count loop
+         declare
+            OK : Boolean;
+         begin
+            SPARKTLS.Credentials.Load_Identity
+              (Creds (I).Id, Trim_Path (Creds (I).Cert_File), Trim_Path (Creds (I).Key_File), OK);
+            if not OK then
+               Err ("bogo_shim: load credential" & Integer'Image (I) & " failed");
+               return False;
+            end if;
+            if Creds (I).OCSP_Len > 0 and then not Cfg.Decline_OCSP then
+               declare
+                  Resp : constant X509.Byte_Seq :=
+                    Base64_Decode (Creds (I).OCSP (1 .. Creds (I).OCSP_Len));
+               begin
+                  if Resp'Length > 0 then
+                     declare
+                        Raw : Byte_Seq (0 .. N32 (Resp'Length) - 1);
+                     begin
+                        for K in Raw'Range loop
+                           Raw (K) := Byte (Resp (Resp'First + X509.N32 (K)));
+                        end loop;
+                        SPARKTLS.Set_OCSP_Staple (Creds (I).Id, Raw, OK);
+                     end;
+                  end if;
+               end;
+            end if;
+            Creds (I).Id.Must_Match_Issuer := Creds (I).Must_Match_Issuer;
+            Creds (I).Id.Sign_Prefs := Creds (I).Sign_Prefs;
+            Creds (I).Id.Sign_Pref_Count := Creds (I).Sign_Count;
+            Creds (I).Loaded := True;
+            Id_Set.Items (I) := Creds (I).Id'Unchecked_Access;
+         end;
+      end loop;
+      Id_Set.Count := Cred_Count;
+      return True;
+   end Load_Creds;
+
+   --  BoringSSL credential selection on the client (ssl_credential.cc):
+   --  first credential, in order, whose key the server's CertificateRequest
+   --  can accept -- certificate_types in TLS 1.2, a compatible signature
+   --  scheme (also restricted by the credential's own -signing-prefs).
+   --  -must-match-issuer: the CertificateRequest's certificate_authorities
+   --  must name an issuer of the credential's chain.
+   function Cred_Fits
+     (Id         : SPARKTLS.Identity;
+      Prefs      : SPARKTLS.Sig_Algo_List;
+      Pref_Count : Natural;
+      Sig_Algos  : Byte_Seq;
+      Cert_Types : Byte_Seq;
+      CA_Names   : Byte_Seq) return Boolean
+   is
+      Is_12  : constant Boolean := Cert_Types'Length > 0;
+      Sig_OK : Boolean := Sig_Algos'Length < 2;
+      CT_OK  : Boolean := not Is_12;
+   begin
+      if not Id.Has_Identity then
+         return False;
+      end if;
+      if Id.Must_Match_Issuer
+        and then (CA_Names'Length = 0 or else CA_Names'Length > SPARKTLS.Max_Peer_CA_Names
+                  or else not SPARKTLS.Identity_Issuer_In (Id, CA_Names))
+      then
+         return False;
+      end if;
+      for K in Cert_Types'Range loop
+         if (Id.Sign_Algo = Sign_RSA_PSS and then Cert_Types (K) = 1)
+           or else (Id.Sign_Algo in Sign_ECDSA_P256 | Sign_ECDSA_P384 | Sign_Ed25519
+                    and then Cert_Types (K) = 64)
+         then
+            CT_OK := True;
+         end if;
+      end loop;
+      declare
+         K : N32 := Sig_Algos'First;
+      begin
+         while K + 1 <= Sig_Algos'Last loop
+            declare
+               Scheme : constant Maybe_Sig_Scheme :=
+                 Scheme_From_Wire (Unsigned_16 (Sig_Algos (K)) * 256 + Unsigned_16 (Sig_Algos (K + 1)));
+               In_Prefs : Boolean := Pref_Count = 0;
+            begin
+               for P in 0 .. Pref_Count - 1 loop
+                  if Prefs (P) = Scheme then
+                     In_Prefs := True;
+                  end if;
+               end loop;
+               if Scheme /= Scheme_None and then In_Prefs
+                 and then SPARKTLS.Handshake.Sig_Algo_Compatible_With_Cert
+                            (Scheme, Id.Sign_Algo, Allow_PKCS1_v1_5 => Is_12)
+               then
+                  Sig_OK := True;
+               end if;
+            end;
+            K := K + 2;
+         end loop;
+      end;
+      return CT_OK and then Sig_OK;
+   end Cred_Fits;
+
+   function Bogo_Select_Client
+     (CA_Names : Byte_Seq; Sig_Algos : Byte_Seq; Cert_Types : Byte_Seq)
+      return SPARKTLS.Maybe_Identity_Access
+   is
+   begin
+      for I in 1 .. Cred_Count loop
+         if Creds (I).Loaded
+           and then Cred_Fits (Creds (I).Id, Creds (I).Sign_Prefs, Creds (I).Sign_Count,
+                               Sig_Algos, Cert_Types, CA_Names)
+         then
+            return Creds (I).Id'Unchecked_Access;
+         end if;
+      end loop;
+      --  The default credential comes last.
+      if Id.Has_Identity
+        and then Cred_Fits (Id, Cfg.Sign_Sig_Algos, Cfg.Sign_Sig_Count, Sig_Algos, Cert_Types, CA_Names)
+      then
+         return Id'Unchecked_Access;
+      end if;
+      return null;
+   end Bogo_Select_Client;
+
    procedure Run_Handshake is
       S   : SPARKTLS.Session
         ((if Cfg.Is_Server then SPARKTLS.Role_Server else SPARKTLS.Role_Client));
@@ -1163,8 +1378,6 @@ procedure Bogo_Shim is
          else N32'Value
                 (Ada.Environment_Variables.Value ("BOGO_FEED_CHUNK", "0")));
 
-      Id      : aliased SPARKTLS.Identity;
-      Id_OK   : Boolean;
       Roots   : aliased SPARKTLS.Trust_Store;
       Roots_OK : Boolean;
 
@@ -1409,9 +1622,21 @@ procedure Bogo_Shim is
             Key  : constant String := Trim_Path (Cfg.Key_File);
             Trust : constant String := Trim_Path (Cfg.Trust_Cert);
          begin
-            SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
+            if Cert /= "" and then Key /= "" then
+               SPARKTLS.Credentials.Load_Identity (Id, Cert, Key, Id_OK);
+            else
+               --  Only credential blocks: no default identity.
+               Id := SPARKTLS.No_Identity;
+               Id_OK := Cred_Count > 0;
+            end if;
             if not Id_OK then
                Err ("bogo_shim: load identity failed");
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               Run_Failed := True;
+               return;
+            end if;
+            if not Load_Creds then
                Ada.Command_Line.Set_Exit_Status
                  (Ada.Command_Line.Exit_Status (Exit_Failure));
                Run_Failed := True;
@@ -1471,7 +1696,17 @@ procedure Bogo_Shim is
                Server_Cfg : SPARKTLS.Config;
             begin
                Server_Cfg.Random := Entropy_Random.Random'Access;
-               Server_Cfg.Local := Id'Unchecked_Access;
+               --  Config.Local is the default, tried after the identity set;
+               --  with credential blocks only, the first block stands in so
+               --  the configuration is complete (selection still runs the
+               --  set in order and refuses when nothing fits).
+               Server_Cfg.Local :=
+                 (if Id.Has_Identity then Id'Unchecked_Access
+                  elsif Cred_Count > 0 then Creds (1).Id'Unchecked_Access
+                  else SPARKTLS.No_Identity'Access);
+               if Cred_Count > 0 then
+                  Server_Cfg.Identities := Id_Set'Unchecked_Access;
+               end if;
                Server_Cfg.Trust :=
                  (if Trust /= "" then Roots'Unchecked_Access else null);
                Server_Cfg.Request_Client_Cert := Cfg.Request_Client_Cert;
@@ -1598,6 +1833,15 @@ procedure Bogo_Shim is
                Client_Cfg.Local :=
                  (if Have_Local then Id'Unchecked_Access
                   else SPARKTLS.No_Identity'Access);
+               if Cred_Count > 0 then
+                  if not Load_Creds then
+                     Ada.Command_Line.Set_Exit_Status
+                       (Ada.Command_Line.Exit_Status (Exit_Failure));
+                     Run_Failed := True;
+                     return;
+                  end if;
+                  Client_Cfg.Select_Client_Identity := Bogo_Select_Client'Unrestricted_Access;
+               end if;
 
                if Cfg.Host_Name_Len > 0 then
                   Client_Cfg.Server_Name.Data (1 .. Cfg.Host_Name_Len) :=
@@ -1728,6 +1972,53 @@ procedure Bogo_Shim is
            (Ada.Command_Line.Exit_Status (Exit_Failure));
          Run_Failed := True;
          return;
+      end if;
+
+      --  -expect-certificate-types B64: the CertificateRequest's list.
+      if Cfg.Expect_Cert_Types_Len > 0 then
+         declare
+            Want : constant X509.Byte_Seq :=
+              Base64_Decode (Cfg.Expect_Cert_Types (1 .. Cfg.Expect_Cert_Types_Len));
+            Got  : constant Byte_Seq := SPARKTLS.TLS12_Cert_Request_Types (S);
+            Same : Boolean := Want'Length = Got'Length;
+         begin
+            if Same then
+               for I in Got'Range loop
+                  if X509.Byte (Got (I)) /= Want (Want'First + X509.N32 (I)) then
+                     Same := False;
+                  end if;
+               end loop;
+            end if;
+            if not Same then
+               Err ("expect-certificate-types mismatch: got" & Got'Length'Image
+                    & " types, want" & Want'Length'Image);
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               Run_Failed := True;
+               return;
+            end if;
+         end;
+      end if;
+
+      --  -expect-selected-credential N: the identity the handshake used.
+      if Cfg.Expect_Selected /= -2 then
+         declare
+            Sel  : constant SPARKTLS.Maybe_Identity_Access := SPARKTLS.Local_Identity (S);
+            Want : SPARKTLS.Maybe_Identity_Access := null;
+         begin
+            if Cfg.Expect_Selected = -1 then
+               Want := Id'Unchecked_Access;
+            elsif Cfg.Expect_Selected >= 0 and then Cfg.Expect_Selected < Cred_Count then
+               Want := Creds (Cfg.Expect_Selected + 1).Id'Unchecked_Access;
+            end if;
+            if Sel /= Want then
+               Err ("expect-selected-credential mismatch: wanted" & Integer'Image (Cfg.Expect_Selected));
+               Ada.Command_Line.Set_Exit_Status
+                 (Ada.Command_Line.Exit_Status (Exit_Failure));
+               Run_Failed := True;
+               return;
+            end if;
+         end;
       end if;
 
       --  -expect-ocsp-response BASE64: the stapled OCSP response must equal

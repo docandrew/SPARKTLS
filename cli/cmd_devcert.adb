@@ -1,3 +1,4 @@
+with CLI_Util;
 --  sparktls_cli devcert <name> to <key-file> <cert-file> [options]
 --
 --  One command to generate a key + self-signed cert for dev/testing.
@@ -57,7 +58,7 @@ package body Cmd_Devcert is
       SAN_Count := SAN_Count + 1;
       declare
          Len : constant Natural :=
-            Natural'Min (Name'Length, SANs (SAN_Count).Name'Length);
+            CLI_Util.Fit_Len (Name'Length, SANs (SAN_Count).Name'Length, "Name");
       begin
          SANs (SAN_Count).Name (1 .. Len) :=
             Name (Name'First .. Name'First + Len - 1);
@@ -96,12 +97,9 @@ package body Cmd_Devcert is
          K : constant String := Argument (4);
          C : constant String := Argument (5);
       begin
-         Name_Len := Natural'Min (N'Length, Name'Length);
-         Name (1 .. Name_Len) := N (N'First .. N'First + Name_Len - 1);
-         Key_Len := Natural'Min (K'Length, Key_Path'Length);
-         Key_Path (1 .. Key_Len) := K (K'First .. K'First + Key_Len - 1);
-         Cert_Len := Natural'Min (C'Length, Cert_Path'Length);
-         Cert_Path (1 .. Cert_Len) := C (C'First .. C'First + Cert_Len - 1);
+         CLI_Util.Fit (N, Name, Name_Len, "name");
+         CLI_Util.Fit (K, Key_Path, Key_Len, "key path");
+         CLI_Util.Fit (C, Cert_Path, Cert_Len, "certificate path");
       end;
 
       --  Auto-populate SANs

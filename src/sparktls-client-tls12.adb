@@ -778,6 +778,14 @@ is
          CT := To_NaCl (CT_R);
          SA := To_NaCl (SA_R);
 
+         --  Keep the certificate_types for the application (first 16).
+         S.HC.T12.Peer_Cert_Types := (others => 0);
+         S.HC.T12.Peer_Cert_Types_Len := N32'Min (CT_Len, 16);
+         for I in N32 range 0 .. N32'Min (CT_Len, 16) - 1 loop
+            pragma Loop_Invariant (I < N32'Min (CT_Len, 16));
+            S.HC.T12.Peer_Cert_Types (I) := CT (I);
+         end loop;
+
          S.HC.Cert_Request_Received := True;
          S.HC.T12.Client_Cert_Allowed := False;
 
@@ -797,7 +805,7 @@ is
                end if;
                Picked_Id :=
                  S.HC.Cfg.Select_Client_Identity
-                   ((if CA_Len = 0 then Byte_Seq'(1 .. 0 => 0) else CA (0 .. CA_Len - 1)), SA);
+                   ((if CA_Len = 0 then Byte_Seq'(1 .. 0 => 0) else CA (0 .. CA_Len - 1)), SA, CT);
                if Picked_Id = null then
                   S.HC.Cfg.Local := No_Identity'Access;
                elsif Picked_Id.Has_Identity and then Identity_Valid (Picked_Id.all) then
@@ -840,8 +848,10 @@ is
                  Handshake.Pick_Sig_Algo_With_Prefs
                    (SA,
                     S.HC.Cfg.Local.Sign_Algo,
-                    S.HC.Cfg.Sign_Sig_Algos,
-                    S.HC.Cfg.Sign_Sig_Algo_Count,
+                    (if S.HC.Cfg.Local.Sign_Pref_Count > 0
+                     then S.HC.Cfg.Local.Sign_Prefs else S.HC.Cfg.Sign_Sig_Algos),
+                    (if S.HC.Cfg.Local.Sign_Pref_Count > 0
+                     then S.HC.Cfg.Local.Sign_Pref_Count else S.HC.Cfg.Sign_Sig_Algo_Count),
                     Allow_PKCS1_v1_5 => True));
 
             if Picked /= Scheme_None then
@@ -3395,8 +3405,9 @@ is
                return;
             end if;
             if Frag_Len < Min_Frag then
+               --  RFC 5246 6.2.3.3: too short to decrypt is bad_record_mac.
                S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-               Send_Alert_And_Error (S, Decode_Error, Result);
+               Send_Alert_And_Error (S, Bad_Record_MAC, Result);
                return;
             end if;
          end;
@@ -3664,13 +3675,18 @@ is
                   else Explicit_Nonce_Len + GCM_Tag_Len);
             begin
                if Frag_Len < Min_Frag then
-                  --  Too short for nonce + tag: reject rather than skip
-                  --  (skipping without decrypting also desynchronises
-                  --  the read sequence number).
+                  --  Too short for nonce + tag: a decryption failure, so
+                  --  bad_record_mac (RFC 5246 6.2.3.3). Reject rather than
+                  --  skip: skipping without decrypting also desynchronises
+                  --  the read sequence number.
                   S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
-                  S.Last_Error := Unexpected_Message;
-                  Set_State (S, Error_State);
-                  Result := Error_Alert;
+                  Send_Encrypted_Alert_Connected_12 (S, Bad_Record_MAC, Result);
+                  return;
+               end if;
+               if Frag_Len - Min_Frag > Max_Record_Plaintext then
+                  --  RFC 5246 6.2.1: plaintext would exceed 2^14 bytes.
+                  S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+                  Send_Encrypted_Alert_Connected_12 (S, Record_Overflow, Result);
                   return;
                end if;
             end;

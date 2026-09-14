@@ -10,6 +10,8 @@ config/
 #  failures as unexpected until this exception was added).
 !tests/bogo/EXPECTED_FAILURES.txt
 !tests/x509/PKITS_EXPECTED_FAILURES.txt
+!tests/x509/EXPECTED_FAILURES.txt
+!tests/tlsanvil/EXPECTED_FAILURES.txt
 
 # Generated on demand by tests/Makefile for manual openssl s_server
 # sessions. Not used by any automated suite -- those use tests/certs/.

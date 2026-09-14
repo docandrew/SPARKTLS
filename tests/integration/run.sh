@@ -90,6 +90,52 @@ echo "=== SPARKTLS Integration Tests ==="
 echo ""
 
 # ===================================================================
+# Abandoned handshakes must not exhaust the handshake pool
+# ===================================================================
+# A peer that disconnects after our ServerHello (scanners, speculative
+# browser connections) leaves the session mid-handshake. The server
+# must hand the SPARKTLS.HS_Pool slot back (SPARKTLS.Drop) or, after
+# Max_Inflight = 16 such peers, answer nobody: found 2026-09-14 when
+# every TLS-Anvil test came back disabled.
+echo "--- Abandoned handshakes: pool release ---"
+cleanup
+"$SERVER" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" 2>/dev/null &
+sleep 1
+if python3 "$DIR/abandoned_handshakes.py" "$PORT" 20 >/dev/null 2>&1; then
+    output=$(echo "hello" | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -tls1_2 -quiet 2>&1 || true)
+    if echo "$output" | grep -qi "hello\|verify return"; then
+        pass "Server still answers after 20 abandoned handshakes"
+    else
+        fail "Server still answers after 20 abandoned handshakes (pool exhausted)"
+    fi
+else
+    fail "Abandoned-handshake driver: not every ClientHello got a ServerHello"
+fi
+cleanup
+
+# The event-driven example must impose the deadline itself: a client that
+# sends a few bytes and stalls holds a connection slot and a handshake
+# slot until SPARKTLS_HANDSHAKE_TIMEOUT expires and the server Drops it.
+echo "--- Silent clients: epoll server handshake deadline ---"
+WEB_EPOLL="$REPO_ROOT/bin/examples/tls_web_epoll"
+if [ -x "$WEB_EPOLL" ]; then
+    cleanup
+    SPARKTLS_HANDSHAKE_TIMEOUT=2 "$WEB_EPOLL" "$CERT_DIR/rsa.crt" "$CERT_DIR/rsa.key" > /tmp/epoll_deadline.log 2>&1 &
+    sleep 1
+    python3 "$DIR/silent_connections.py" "$PORT" 20 4 >/dev/null 2>&1
+    output=$(echo | timeout 5 openssl s_client -connect 127.0.0.1:$PORT -tls1_3 2>&1 || true)
+    if echo "$output" | grep -q "Cipher is TLS" && grep -q "handshake timeout" /tmp/epoll_deadline.log; then
+        pass "epoll server drops silent clients at the handshake deadline and keeps serving"
+    else
+        fail "epoll server drops silent clients at the handshake deadline and keeps serving"
+        grep -c "handshake timeout" /tmp/epoll_deadline.log | sed 's/^/    timeouts logged: /'
+    fi
+    cleanup
+else
+    echo "  (skipped: tls_web_epoll not built)"
+fi
+
+# ===================================================================
 # TLS 1.3 — Server tests (OpenSSL s_client → our server)
 # ===================================================================
 echo "--- TLS 1.3: OpenSSL client → SPARKTLS server ---"
@@ -676,13 +722,36 @@ else
         -num_tickets 1 -quiet \
         > /tmp/resume_srv.log 2>&1 &
     sleep 0.5
-    output=$(timeout 10 "$RESUME_CLIENT" -port $PORT -host localhost 2>&1)
+    output=$(timeout 10 "$RESUME_CLIENT" -port $PORT -host localhost -cafile "$CERT_DIR/p256.crt" 2>&1)
     rc=$?
     cleanup
     if [ $rc -eq 0 ] && echo "$output" | grep -q "PASS: resumption succeeded"; then
         pass "TLS 1.3 PSK resumption (two connections)"
     else
         fail "TLS 1.3 PSK resumption (two connections)"
+        echo "$output" | sed 's/^/    /' | head -10
+    fi
+
+    # Same round trip with client authentication. OpenSSL embeds the
+    # client's certificate chain in the ticket (1072 bytes for rsa.crt),
+    # which the client used to drop silently (Max_Ticket_Len was 256), so
+    # no mTLS session ever resumed.
+    cleanup
+    openssl s_server -accept 0:$PORT \
+        -cert "$CERT_DIR/p256.crt" -key "$CERT_DIR/p256.key" \
+        -Verify 1 -CAfile "$CERT_DIR/rsa.crt" \
+        -tls1_3 -ciphersuites TLS_AES_128_GCM_SHA256 \
+        -num_tickets 1 -quiet \
+        > /tmp/resume_srv.log 2>&1 &
+    sleep 0.5
+    output=$(timeout 10 "$RESUME_CLIENT" -port $PORT -host localhost -cafile "$CERT_DIR/p256.crt" \
+        -cert "$CERT_DIR/rsa.crt" -key "$CERT_DIR/rsa.key" 2>&1)
+    rc=$?
+    cleanup
+    if [ $rc -eq 0 ] && echo "$output" | grep -q "PASS: resumption succeeded"; then
+        pass "TLS 1.3 PSK resumption after client auth (ticket > 256 bytes)"
+    else
+        fail "TLS 1.3 PSK resumption after client auth (ticket > 256 bytes)"
         echo "$output" | sed 's/^/    /' | head -10
     fi
 fi
@@ -915,7 +984,7 @@ else
     wait_for_port
 
     output=$(timeout 10 "$RESUME_TEST" \
-                -host 127.0.0.1 -port $PORT 2>&1)
+                -host 127.0.0.1 -port $PORT -cafile "$CERT_DIR/rsa.crt" 2>&1)
     cleanup
     if echo "$output" | grep -q "PASS: resumption succeeded"; then
         pass "TLS 1.2 ticket resumption (SPARKTLS client → openssl)"

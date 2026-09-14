@@ -16,16 +16,19 @@ fi
 
 # Ed25519
 echo "Generating Ed25519 test certificate..."
+rm -f "$DIR/ed25519.key" "$DIR/ed25519.crt"   # the CLI never overwrites; these are throwaway fixtures
 "$CLI" devcert localhost to "$DIR/ed25519.key" "$DIR/ed25519.crt" algo ed25519
 echo "  Created ed25519.crt and ed25519.key"
 
 # ECDSA P-256
 echo "Generating ECDSA P-256 test certificate..."
+rm -f "$DIR/p256.key" "$DIR/p256.crt"   # the CLI never overwrites; these are throwaway fixtures
 "$CLI" devcert localhost to "$DIR/p256.key" "$DIR/p256.crt" algo p256
 echo "  Created p256.crt and p256.key"
 
 # ECDSA P-384
 echo "Generating ECDSA P-384 test certificate..."
+rm -f "$DIR/p384.key" "$DIR/p384.crt"   # the CLI never overwrites; these are throwaway fixtures
 "$CLI" devcert localhost to "$DIR/p384.key" "$DIR/p384.crt" algo p384
 echo "  Created p384.crt and p384.key"
 

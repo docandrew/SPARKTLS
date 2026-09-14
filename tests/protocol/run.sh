@@ -254,8 +254,9 @@ classify_failure() {
         #
         #  DELIBERATELY NOT LISTED, because they DO reference supported
         #  suites and so may contain real failures: aes-gcm-nonces,
-        #  chacha20, extended-master-secret-extension, fuzzed-ciphertext,
-        #  large-hello. Those stay UNEXPECTED on purpose.
+        #  chacha20, fuzzed-ciphertext (run with their ECDHE flags, see
+        #  extra_args). extended-master-secret-extension and large-hello
+        #  are classified individually below.
         alpn-negotiation \
         | certificate-request \
         | certificate-verify \
@@ -295,6 +296,10 @@ classify_failure() {
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
             FAIL_REASON="script uses only RSA-KX/CBC/DHE suites; unsupported by design"
             FAIL_CLASS="unsupported" ;;
+        aes-gcm-nonces)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="expected pass=4 fail=1: the script's default suites are RSA-kx/CBC, so it runs with -C and ONE GCM suite; its AES-256 nonce-monotonicity check (hard-coded outside the conversation list, so neither -e nor -x reaches it) then cannot collect nonces. The sanity, AES-128 and nonce checks all pass."
+            FAIL_CLASS="mismatch" ;;
         rsapss-signatures)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
             FAIL_REASON="script needs a server with an RSASSA-PSS (id-RSASSA-PSS) certificate; ours is rsaEncryption (its twin rsa-signatures covers that)"
@@ -311,6 +316,22 @@ classify_failure() {
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
             FAIL_REASON="tlsfuzzer external-PSK modes are outside the supported ticket-resumption path"
             FAIL_CLASS="unsupported" ;;
+        extended-master-secret-extension)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="every conversation needs session-ID resumption, renegotiation or a CBC suite, none of which we implement; EMS itself is covered by BoGo ExtendedMasterSecret-* (all pass)"
+            FAIL_CLASS="unsupported" ;;
+        sessionID-resumption)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="TLS 1.2 session-ID resumption is not implemented (tickets only, RFC 5077)"
+            FAIL_CLASS="unsupported" ;;
+        shuffled-extentions)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="the script reorders extensions in the second ClientHello after HelloRetryRequest; RFC 8446 4.1.2 requires the client to resend it unmodified, so we answer illegal_parameter (BoGo agrees)"
+            FAIL_CLASS="mismatch" ;;
+        large-hello)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="a ClientHello larger than the 32 KB handshake reassembly buffer (SPARKTLS_Reassembly capacity) is refused with decode_error; the script samples sizes up to 64 KB"
+            FAIL_CLASS="mismatch" ;;
         session-resumption)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
             FAIL_REASON="tlsfuzzer resumption edge cases exceed the current ticket-resumption profile"
@@ -404,6 +425,29 @@ for test in "${TESTS[@]}"; do
     FAIL_CLASS=""
     case "$test" in
         count-tickets) extra_args=(-t 1) ;;
+        #  RFC 8446 4.6.3 lets the KeyUpdate reply wait for our next
+        #  application write; we defer it, as BoringSSL does and BoGo
+        #  KeyUpdate-Requested requires. These two conversations wait for the
+        #  reply BEFORE sending the rest of their request, so they deadlock
+        #  against a server that answers complete requests only.
+        keyupdate) extra_args=(-e "app data split, conversation with KeyUpdate msg"
+                               -e "multiple KeyUpdate messages") ;;
+        #  These scripts default to RSA key exchange (or, for chacha20, to a
+        #  ClientHello with no extensions at all, so RFC 5246 7.4.1.4.1
+        #  implies SHA-1 signatures). Their ECDHE/extension modes are what
+        #  we implement, and without the flag the sanity conversation fails
+        #  before the feature under test is reached (2026-09-14: 396 cases
+        #  reported as unexpected failures for this reason alone).
+        fuzzed-ciphertext|large-hello) extra_args=(-d) ;;
+        #  -d alone selects CBC suites for its sanity run; name a GCM suite.
+        #  The AES-256 conversation needs a second suite the script cannot
+        #  take alongside -C; the nonce checks it exists for run under AES-128.
+        aes-gcm-nonces) extra_args=(-C TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+                                    -e "aes-256-gcm cipher"
+                                    -e "aes-256-gcm Nonce monotonicity") ;;
+        #  "Chacha20 in TLS1.1" expects handshake_failure for a TLS 1.1
+        #  ClientHello; we answer protocol_version (RFC 5246 E.1).
+        chacha20) extra_args=(--extra-exts -e "Chacha20 in TLS1.1") ;;
         finished)
             script_timeout="${TLSFUZZER_FINISHED_SCRIPT_TIMEOUT:-300}" ;;
         serverhello-random)
@@ -517,9 +561,11 @@ done
 stop_server
 
 echo ""
-echo "=== Protocol: PASS=$TOTAL_PASS FAIL=$TOTAL_FAIL SKIP=$TOTAL_SKIP ==="
-echo "    Expected Unsupported Feature failures: $TOTAL_EXPECTED_UNSUPPORTED"
-echo "    Expected Intentional Behavior Mismatch failures: $TOTAL_EXPECTED_MISMATCH"
+#  Counts are tlsfuzzer conversations. "failed" is what no classification
+#  in this file covers; "known" is the sum of the Unsupported Feature and
+#  Intentional Behavior Mismatch classes, each listed above with its reason.
+echo "=== Protocol: $TOTAL_PASS passed, $TOTAL_UNEXPECTED failed, $((TOTAL_EXPECTED_UNSUPPORTED + TOTAL_EXPECTED_MISMATCH)) known, $TOTAL_SKIP skipped ==="
+echo "    Known: $TOTAL_EXPECTED_UNSUPPORTED unsupported feature, $TOTAL_EXPECTED_MISMATCH intentional behaviour mismatch"
 echo "    Unexpected failures: $TOTAL_UNEXPECTED"
 echo ""
 echo -e "$RESULTS"

@@ -1145,6 +1145,16 @@ is
       OCSP_Staple     : Byte_Seq (0 .. N32 (Max_OCSP_Response) - 1) := (others => 0);
       OCSP_Staple_Len : N32 range 0 .. N32 (Max_OCSP_Response) := 0;
 
+      --  Selection hints for Config.Identities / Select_Client_Identity.
+      --  Must_Match_Issuer: usable only when the peer's
+      --  certificate_authorities (RFC 8446 4.2.4) names an issuer of this
+      --  chain. Sign_Prefs: the schemes this key may sign with, in
+      --  preference order (empty = any the key supports); when set they
+      --  replace Config.Sign_Sig_Algos for this identity.
+      Must_Match_Issuer : Boolean := False;
+      Sign_Prefs        : Sig_Algo_List := (others => Scheme_None);
+      Sign_Pref_Count   : Natural range 0 .. Max_Sig_Algos := 0;
+
       Has_Identity : Boolean := False;
    end record;
 
@@ -1207,6 +1217,37 @@ is
    type Maybe_Identity_Access is access constant Identity;
 
    ----------------------------------------------------------------------------
+   --  Server-side identity set (RFC 8446 4.4.2.2, RFC 5246 7.4.2 / RFC 8422
+   --  5.1.1): several identities for one listener, in preference order. After
+   --  the ClientHello is parsed the server takes the first one the client can
+   --  use -- a signature scheme it offered fits the key; for TLS 1.2 a
+   --  cipher suite of the key's family (ECDHE_ECDSA / ECDHE_RSA) was offered
+   --  and an ECDSA certificate's curve is in the client's supported_groups.
+   --  Config.Local is tried last, as the default. No usable identity is a
+   --  handshake_failure. Every entry must satisfy Identity_Valid and outlive
+   --  the sessions that use it.
+   ----------------------------------------------------------------------------
+   Max_Identities : constant := 8;
+   type Identity_Access_Array is array (1 .. Max_Identities) of Maybe_Identity_Access;
+   type Identity_Set is record
+      Count : Natural range 0 .. Max_Identities := 0;
+      Items : Identity_Access_Array := (others => null);
+   end record;
+   type Identity_Set_Access is access constant Identity_Set;
+
+   --  Largest certificate_authorities list kept for identity selection
+   --  (RFC 8446 4.2.4); longer lists are treated as absent.
+   Max_Peer_CA_Names : constant := 1024;
+
+   --  Does the peer's certificate_authorities list name an issuer of Id's
+   --  chain? CA_Names is the wire list -- 2-byte-length-prefixed DER
+   --  DistinguishedNames, with or without the outer 2-byte list length --
+   --  and an entry matches when its Name content equals the issuer Name of
+   --  the leaf or of any configured intermediate.
+   function Identity_Issuer_In (Id : Identity; CA_Names : Byte_Seq) return Boolean
+   with Pre => CA_Names'Length <= Max_Peer_CA_Names and then Id.Int_Count <= Max_Pool_Size;
+
+   ----------------------------------------------------------------------------
    --  SNI-based certificate selection (RFC 6066 3, RFC 8446 4.4.2.4)
    --
    --  Servers that host multiple virtual hosts on one listener install
@@ -1255,8 +1296,11 @@ is
    --  outlive the session.
    ----------------------------------------------------------------------------
 
+   --  Cert_Types is the TLS 1.2 CertificateRequest certificate_types list
+   --  (rsa_sign = 1, ecdsa_sign = 64, one byte each); empty in TLS 1.3.
    type Client_Cert_Selector is
-     access function (CA_Names : Byte_Seq; Sig_Algos : Byte_Seq) return Maybe_Identity_Access;
+     access function (CA_Names : Byte_Seq; Sig_Algos : Byte_Seq; Cert_Types : Byte_Seq)
+                      return Maybe_Identity_Access;
 
    ----------------------------------------------------------------------------
    --  PSK length bound.
@@ -1281,7 +1325,14 @@ is
    --  Cfg.Resume_Ticket embeds it.
    ----------------------------------------------------------------------------
 
-   Max_Ticket_Len : constant := 256;
+   --  Client-side cap on a stored TLS 1.3 ticket. Real servers embed the
+   --  peer's certificate chain in the ticket after client authentication:
+   --  OpenSSL 3 issues 208 bytes without and 1072 with a client cert, Go
+   --  about 830 with one. The former 256 silently dropped every such
+   --  ticket, so mutual-auth sessions never resumed (BoGo
+   --  CertificateRequestInResumption-TLS13). Longer tickets are still
+   --  dropped; matches Max_TLS12_Ticket_Len.
+   Max_Ticket_Len : constant := 2048;
 
    subtype Ticket_Length is N32 range 0 .. Max_Ticket_Len;
 
@@ -1469,25 +1520,34 @@ is
    ----------------------------------------------------------------------------
 
    type DoS_Caps is record
-      --  Max cipher_suite entries consumed from a CH. Wire allows
-      --  ~32767. Real clients send 5-30; cap of 256 is comfortably
-      --  above any legitimate peer.
-      Max_Cipher_Suites : N32 := 256;
+      --  Max cipher_suite entries consumed from a CH. The wire allows
+      --  32767 and the default admits them all: entries past the cap are
+      --  dropped, and a peer whose only mutual suite sits beyond it gets
+      --  handshake_failure for a legal ClientHello. At 256 that broke
+      --  TLS-Anvil's feature scan (every test disabled) and tlsfuzzer's
+      --  large-hello script (2026-09-14). Scanning the list is one
+      --  compare per entry over bytes already bounded by the message
+      --  size, so there is nothing to protect here; lower it only for a
+      --  deployment that wants a hard limit.
+      Max_Cipher_Suites : N32 := 32767;
 
       --  Max supported_groups entries consumed from the named-group
-      --  extension. Real clients send 4-12; cap of 64.
-      Max_Supported_Groups : N32 := 64;
+      --  extension. Real clients send 4-12; scanners (TLS-Anvil's
+      --  TLS-Scanner) offer every registered group, well past 64, with
+      --  the ones we support anywhere in the list. Entries past the cap
+      --  are dropped, so the default admits the whole wire range.
+      Max_Supported_Groups : N32 := 32767;
 
       --  Max key_share entries consumed from a TLS 1.3 ClientHello.
-      --  Real clients send 1-3; cap of 64 leaves ample room while
-      --  bounding duplicate/share parsing work.
-      Max_Key_Shares : N32 := 64;
+      --  Real clients send 1-3; the default admits as many as a 64 KB
+      --  extension can hold (each entry is at least 4 bytes).
+      Max_Key_Shares : N32 := 16383;
 
       --  Max signature_algorithms entries CONSUMED from the wire
       --  (distinct from Max_Sig_Algos which caps how many we STORE
-      --  in HC.Peer_Sig_Algos). Wire allows ~32767. Real clients
-      --  send 6-15; cap of 64.
-      Max_Sig_Algs_Wire : N32 := 64;
+      --  in HC.Peer_Sig_Algos). Real clients send 6-15; the default
+      --  admits the whole wire range for the same reason as the groups.
+      Max_Sig_Algs_Wire : N32 := 32767;
 
       --  Max ALPN protocol entries in the client's offer. Real
       --  clients send 1-5 (typically just "h2" or "http/1.1"+"h2").
@@ -1501,10 +1561,10 @@ is
    end record;
 
    Default_DoS_Caps : constant DoS_Caps :=
-     (Max_Cipher_Suites    => 256,
-      Max_Supported_Groups => 64,
-      Max_Key_Shares       => 64,
-      Max_Sig_Algs_Wire    => 64,
+     (Max_Cipher_Suites    => 32767,
+      Max_Supported_Groups => 32767,
+      Max_Key_Shares       => 16383,
+      Max_Sig_Algs_Wire    => 32767,
       Max_ALPN_Protocols   => 32,
       Max_Warning_Alerts   => 4);
 
@@ -1703,6 +1763,10 @@ is
       --  (if non-null) overrides Local for this session. See the
       --  SNI_Cert_Selector type comments above for the contract.
       Select_Identity : SNI_Cert_Selector := null;
+
+      --  Server-side identity set, tried in order after SNI selection; see
+      --  Identity_Set above. Null = only Local.
+      Identities : Identity_Set_Access := null;
 
       --  Client-side credential selector, consulted when the server sends
       --  CertificateRequest. See Client_Cert_Selector above.
@@ -1980,6 +2044,11 @@ is
 
    type TLS12_State is record
       Client_Cert_Allowed   : Boolean := False;
+      --  Client: the certificate_types list of the server's TLS 1.2
+      --  CertificateRequest (RFC 5246 7.4.4), first 16 entries, for
+      --  inspection through TLS12_Cert_Request_Types.
+      Peer_Cert_Types       : Byte_Seq (0 .. 15) := (others => 0);
+      Peer_Cert_Types_Len   : N32 range 0 .. 16 := 0;
       Sent_Ticket_Ext       : Boolean := False;
       Server_Will_Issue     : Boolean := False;
       --  RFC 6066 8: server echoed status_request in the TLS 1.2
@@ -2085,6 +2154,15 @@ is
       --  Server-side: the ClientHello carried status_request (RFC 6066 8)
       --  with status_type ocsp, so the identity's staple (if any) is sent.
       Client_Wants_Staple         : Boolean := False;
+      --  Server-side, TLS 1.2: the best offered ECDHE suite per certificate
+      --  family, independent of which identity is configured, so the
+      --  identity set can be matched against the client's suites.
+      Best_12_ECDSA               : Supported_Suite := Suite_None;
+      Best_12_RSA                 : Supported_Suite := Suite_None;
+      --  Server-side: the ClientHello certificate_authorities list (DN
+      --  entries only, outer length stripped), for Must_Match_Issuer.
+      Peer_CA_Names               : Byte_Seq (0 .. Max_Peer_CA_Names - 1) := (others => 0);
+      Peer_CA_Len                 : N32 range 0 .. Max_Peer_CA_Names := 0;
       KE                          : KE_State;
       --  HelloRetryRequest state (server-side: we sent HRR)
       HRR_Sent                    : Boolean := False;
@@ -2945,6 +3023,17 @@ is
    --  Only meaningful after Handshake_Done.
    function Get_Version (S : Session) return TLS_Version;
 
+   --  The identity this session authenticates with: after the server's
+   --  SNI / identity-set selection, or the client's CertificateRequest
+   --  selection. Config.Local (or No_Identity) until then.
+   function Local_Identity (S : Session) return Maybe_Identity_Access;
+
+   --  Client, TLS 1.2: the certificate_types the server's CertificateRequest
+   --  listed (first 16), empty until one arrived.
+   function TLS12_Cert_Request_Types (S : Session) return Byte_Seq
+   with Post => TLS12_Cert_Request_Types'Result'First = 0
+                and then TLS12_Cert_Request_Types'Result'Length <= 16;
+
    --  Which cipher suite was negotiated? (wire value)
    --  Only meaningful after Handshake_Done.
    function Get_Cipher_Suite (S : Session) return Unsigned_16;
@@ -3049,6 +3138,25 @@ is
    --  no-op there.
    procedure Request_Key_Update (S : in out Session)
    with Pre => State (S) = Connected;
+
+   --  Drop a session whose transport went away: the peer disconnected, a
+   --  timeout fired, or the application is giving up on it. Advance frees
+   --  the session's handshake slot only when the handshake completes or
+   --  fails ON THE WIRE, so a session that is merely forgotten part-way
+   --  through keeps its slot in SPARKTLS.HS_Pool for the life of the
+   --  process, and Max_Inflight such sessions leave every later Configure
+   --  failing with No_Free_Sessions and the server silently answering
+   --  nothing (2026-09-14: TLS-Anvil's feature scan opens and drops one
+   --  handshake per probe, and every test came back disabled).
+   --
+   --  Scrubs all key material and handshake secrets, frees the slot and
+   --  leaves the session Closed. Safe in every state and idempotent: after a
+   --  completed handshake it only zeroes the traffic keys, and on a session
+   --  that never held a slot it is a scrub. Call it on every path that stops
+   --  driving a session before Advance has reported Handshake_Done or an
+   --  error, on both client and server.
+   procedure Drop (S : in out Session)
+   with Post => State (S) = Closed;
 
    procedure Write_Plaintext (S : in out Session; Plaintext : in Byte_Seq; Bytes_Written : out N32)
    with

@@ -17,6 +17,8 @@
 --       with CCS → Finished only).
 --  Exit 0 if both succeed and the second resumed.
 
+with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Ada.Command_Line;
 with Ada.Exceptions;
 with Ada.Streams;          use Ada.Streams;
@@ -27,6 +29,7 @@ with SPARKNaCl;            use SPARKNaCl;
 
 with SPARKTLS;             use SPARKTLS;
 with SPARKTLS.Client;
+with SPARKTLS.Credentials;
 with Entropy_Random;
 with X509;
 
@@ -34,11 +37,32 @@ with GNAT.Sockets;         use GNAT.Sockets;
 
 procedure TLS12_Resume_Test is
 
-   Host : String (1 .. 256) := (others => ' ');
+   Host : String (1 .. 255) := (others => ' ');   --  Max_Hostname_Len
    Host_Len : Natural := 0;
    Port : Port_Type := 18443;
 
    Saved_Ticket : Session_Ticket_12;
+
+   --  UTC clock for certificate validity (see tls_resume_test).
+   function Current_Time return X509.Date_Time is
+      use Ada.Calendar;
+      Now : constant Time := Clock;
+      Y   : Year_Number;
+      Mo  : Month_Number;
+      D   : Day_Number;
+      Hr  : Ada.Calendar.Formatting.Hour_Number;
+      Mn  : Ada.Calendar.Formatting.Minute_Number;
+      Sc  : Ada.Calendar.Formatting.Second_Number;
+      SS  : Ada.Calendar.Formatting.Second_Duration;
+   begin
+      Ada.Calendar.Formatting.Split
+        (Now, Y, Mo, D, Hr, Mn, Sc, SS, Time_Zone => 0);
+      return (Year   => Y, Month => Mo, Day => D,
+              Hour   => Hr, Minute => Mn, Second => Sc);
+   end Current_Time;
+   Roots      : aliased Trust_Store;
+   Roots_OK   : Boolean := False;
+   Have_Roots : Boolean := False;
 
    procedure Run_One_Connection
      (Resume : in     Boolean;
@@ -50,7 +74,7 @@ procedure TLS12_Resume_Test is
       Res     : Action;
       Sock    : Socket_Type;
       Channel : Stream_Access;
-      Net     : Byte_Seq (0 .. 16383);
+      Net     : Byte_Seq (0 .. 16644);   --  5-byte header + 2^14 + 256 (RFC 8446 5.2)
       N       : N32;
       Iter    : Natural := 0;
    begin
@@ -59,8 +83,17 @@ procedure TLS12_Resume_Test is
 
       Cfg.Random := Entropy_Random.Random'Access;
       Cfg.Versions := TLS_1_2_Only;
-      --  Integration test runs against an OpenSSL self-signed test cert.
-      Cfg.Skip_Verify := True;
+      Cfg.Get_Time := Current_Time'Unrestricted_Access;
+      --  -cafile verifies the server against that trust store (RFC 5280
+      --  mode: the test certificates are self-signed). Without it
+      --  verification is OFF and says so; do not copy that into a product.
+      if Have_Roots then
+         Cfg.Trust := Roots'Unchecked_Access;
+         Cfg.Verify_Mode := Mode_RFC5280;
+      else
+         Put_Line ("WARNING: no -cafile given; certificate verification disabled");
+         Cfg.Skip_Verify := True;
+      end if;
       declare
          H : constant String := Host (1 .. Host_Len);
       begin
@@ -124,6 +157,9 @@ procedure TLS12_Resume_Test is
                SPARKTLS.Read_Plaintext (S, Net, N);
 
             when Error_Alert | Shutdown =>
+               if Res = Error_Alert then
+                  Put_Line ("  TLS error: " & SPARKTLS.Describe (SPARKTLS.Last_Error (S)));
+               end if;
                exit Loop_HS;
 
             when SPARKTLS.OK =>
@@ -175,7 +211,7 @@ procedure TLS12_Resume_Test is
          end if;
       end if;
 
-      begin Close_Socket (Sock); exception when others => null; end;
+      begin SPARKTLS.Drop (S); Close_Socket (Sock); exception when others => null; end;
    end Run_One_Connection;
 
 begin
@@ -201,6 +237,19 @@ begin
                begin
                   Host (1 .. V'Length) := V;
                   Host_Len := V'Length;
+               end;
+               I := I + 2;
+            elsif A = "-cafile" and then I < Ada.Command_Line.Argument_Count then
+               declare
+                  V : constant String := Ada.Command_Line.Argument (I + 1);
+               begin
+                  SPARKTLS.Credentials.Load_Trust_Store (Roots, V, Roots_OK);
+                  if not Roots_OK then
+                     Put_Line ("FAIL: cannot load trust store " & V);
+                     Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
+                     return;
+                  end if;
+                  Have_Roots := True;
                end;
                I := I + 2;
             elsif A = "-port"

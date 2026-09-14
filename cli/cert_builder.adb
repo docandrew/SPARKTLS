@@ -3,9 +3,11 @@ with Ada.Calendar.Formatting;
 with SPARKNaCl.Sign;
 with SPARKNaCl.Sign.Utils;
 with SPARKNaCl.Hashing.SHA256;
+with SPARKTLSCrypto.Hashing.SHA1;
 with SPARKNaCl.Hashing.SHA384;
 with SPARKTLSCrypto.P256.ECDSA;
 with SPARKTLSCrypto.P384.ECDSA;
+with SPARKTLSCrypto.RFC6979;
 with SPARKEntropy;
 
 package body Cert_Builder is
@@ -26,11 +28,16 @@ package body Cert_Builder is
       end if;
    end Ensure_Entropy;
 
-   procedure Get_Random (Output : out X509.Byte_Seq) is
+   --  OK = False means the entropy source failed its health test; the
+   --  caller must abort, never use the (zeroed) output.
+   procedure Get_Random (Output : out X509.Byte_Seq; OK : out Boolean) is
       Buf : SPARKEntropy.Byte_Seq (0 .. Output'Length - 1);
-      OK  : Boolean;
    begin
+      Output := (others => 0);
       SPARKEntropy.Generate (Entropy, Buf, OK);
+      if not OK then
+         return;
+      end if;
       for I in Output'Range loop
          Output (I) := X509.Byte (Buf (Natural (I - Output'First)));
       end loop;
@@ -233,6 +240,77 @@ package body Cert_Builder is
       end if;
    end Parse_IPv4;
 
+   --  Locate the subjectPublicKey BIT STRING content inside a DER
+   --  SubjectPublicKeyInfo: SEQUENCE { AlgorithmIdentifier, BIT STRING }.
+   --  The first content byte of the BIT STRING is the unused-bits count and
+   --  is not part of the key. Lengths up to 65535 (short, 0x81 and 0x82 forms).
+   procedure Public_Key_Bits
+     (SPKI : X509.Byte_Seq; First : out X509.N32; Length : out X509.N32; OK : out Boolean)
+   is
+      P : X509.N32 := SPKI'First;
+      procedure Read_Len (L : out X509.N32; Good : out Boolean) is
+      begin
+         L := 0; Good := False;
+         if P > SPKI'Last then return; end if;
+         if SPKI (P) < 16#80# then
+            L := X509.N32 (SPKI (P)); P := P + 1; Good := True;
+         elsif SPKI (P) = 16#81# and then P + 1 <= SPKI'Last then
+            L := X509.N32 (SPKI (P + 1)); P := P + 2; Good := True;
+         elsif SPKI (P) = 16#82# and then P + 2 <= SPKI'Last then
+            L := X509.N32 (SPKI (P + 1)) * 256 + X509.N32 (SPKI (P + 2)); P := P + 3; Good := True;
+         end if;
+      end Read_Len;
+      L    : X509.N32;
+      Good : Boolean;
+   begin
+      First := SPKI'First; Length := 0; OK := False;
+      if SPKI'Length < 4 or else SPKI (P) /= 16#30# then return; end if;
+      P := P + 1; Read_Len (L, Good);
+      if not Good or else P > SPKI'Last or else SPKI (P) /= 16#30# then return; end if;
+      P := P + 1; Read_Len (L, Good);                    --  AlgorithmIdentifier
+      if not Good or else L > SPKI'Last - P then return; end if;
+      P := P + L;
+      if P > SPKI'Last or else SPKI (P) /= 16#03# then return; end if;
+      P := P + 1; Read_Len (L, Good);                    --  BIT STRING
+      if not Good or else L < 2 or else L > SPKI'Last - P + 1 then return; end if;
+      First := P + 1;                                    --  skip unused-bits byte
+      Length := L - 1;
+      OK := True;
+   end Public_Key_Bits;
+
+   procedure Set_Issuer_Key_ID
+     (Params : in out Cert_Params; CA_DER : X509.Byte_Seq; CA : X509.Certificate)
+   is
+      SKID : constant X509.Span := X509.Subject_Key_ID (CA);
+      Bits : constant X509.Span := X509.Subject_Public_Key_Bits (CA);
+   begin
+      Params.Issuer_Key_ID := (others => 0);
+      Params.Issuer_Key_ID_Len := 0;
+      if SKID.Present and then SKID.First <= SKID.Last
+        and then SKID.First >= CA_DER'First and then SKID.Last <= CA_DER'Last
+        and then SKID.Last - SKID.First < 32
+      then
+         Params.Issuer_Key_ID_Len := SKID.Last - SKID.First + 1;
+         Params.Issuer_Key_ID (0 .. Params.Issuer_Key_ID_Len - 1) := CA_DER (SKID.First .. SKID.Last);
+      elsif Bits.Present and then Bits.First <= Bits.Last
+        and then Bits.First >= CA_DER'First and then Bits.Last <= CA_DER'Last
+      then
+         declare
+            B : Byte_Seq (0 .. N32 (Bits.Last - Bits.First));
+            H : SPARKTLSCrypto.Hashing.SHA1.Digest;
+         begin
+            for I in X509.N32 range 0 .. Bits.Last - Bits.First loop
+               B (N32 (I)) := Byte (CA_DER (Bits.First + I));
+            end loop;
+            H := SPARKTLSCrypto.Hashing.SHA1.Hash (B);
+            for I in 0 .. 19 loop
+               Params.Issuer_Key_ID (X509.N32 (I)) := X509.Byte (H (N32 (I)));
+            end loop;
+            Params.Issuer_Key_ID_Len := 20;
+         end;
+      end if;
+   end Set_Issuer_Key_ID;
+
    procedure Build_Certificate
      (Params   : Cert_Params;
       Cert_DER : out Cert_DER_Buf;
@@ -255,13 +333,24 @@ package body Cert_Builder is
       OK := False;
 
       if not Params.Key.Valid then return; end if;
+      --  RFC 5280 4.1.2.5: notAfter must be representable (GeneralizedTime
+      --  year <= 9999); 100 years is more than any policy allows.
+      if Params.Valid_Days = 0 or else Params.Valid_Days > 36500 then return; end if;
 
       Ensure_Entropy;
       if not Entropy_Ready then return; end if;
 
-      --  Generate random serial number (20 bytes, high bit clear)
-      Get_Random (Serial);
+      --  RFC 5280 4.1.2.2 / CA/Browser Forum: a positive, unique serial
+      --  with at least 64 bits of entropy. 20 random bytes, high bit
+      --  clear; an entropy failure aborts rather than issuing serial 0.
+      declare
+         R_OK : Boolean;
+      begin
+         Get_Random (Serial, R_OK);
+         if not R_OK then return; end if;
+      end;
       Serial (0) := Serial (0) and 16#7F#;  --  must be positive
+      if (for all B of Serial => B = 0) then return; end if;
 
       --  ====== Build TBSCertificate ======
       declare
@@ -388,12 +477,13 @@ package body Cert_Builder is
                            Addr_OK : Boolean;
                         begin
                            Parse_IPv4 (S.Name (1 .. S.Name_Len), Addr, Addr_OK);
-                           if Addr_OK then
-                              Put_Byte (SAN_Buf, SAN_Pos,
-                                        16#87#);  --  context [7]
-                              Put_Length (SAN_Buf, SAN_Pos, 4);
-                              Put_Bytes (SAN_Buf, SAN_Pos, Addr);
+                           if not Addr_OK then
+                              return;   --  unusable SAN: refuse, never drop it
                            end if;
+                           Put_Byte (SAN_Buf, SAN_Pos,
+                                     16#87#);  --  context [7]
+                           Put_Length (SAN_Buf, SAN_Pos, 4);
+                           Put_Bytes (SAN_Buf, SAN_Pos, Addr);
                         end;
                      else
                         --  dNSName [2] IMPLICIT IA5String
@@ -442,64 +532,64 @@ package body Cert_Builder is
             end;
          end if;
 
-         --  Subject Key Identifier (RFC 5280 §4.2.1.2)
-         --  Value = SHA-1 hash of the SPKI BIT STRING content.
-         --  For simplicity, use first 20 bytes of SHA-256 of SPKI.
+         --  Subject Key Identifier (RFC 5280 4.2.1.2, method 1): SHA-1 of
+         --  the subjectPublicKey BIT STRING content, the convention OpenSSL
+         --  and most CAs use, so identifiers match across tools.
          if Params.SPKI_Len > 0 then
             declare
-               use SPARKNaCl.Hashing.SHA256;
-               Ext_S : X509.N32;
-               SPKI_N : Byte_Seq (0 .. N32 (Params.SPKI_Len) - 1);
-               Hash   : Digest;
-               --  SKI value: OCTET STRING of 20 bytes (truncated SHA-256)
-               SKI_Val : X509.Byte_Seq (0 .. 23) := (others => 0);
-               SKI_Pos : X509.N32 := 0;
+               Ext_S   : X509.N32;
+               Bits_First, Bits_Len : X509.N32;
+               Bits_OK : Boolean;
+               SKI     : SPARKTLSCrypto.Hashing.SHA1.Digest := (others => 0);
+               --  SKI value: OCTET STRING { 20 bytes }
+               SKI_Val : X509.Byte_Seq (0 .. 21) := (others => 0);
             begin
-               --  Hash the SPKI
-               for I in X509.N32 range 0 .. Params.SPKI_Len - 1 loop
-                  SPKI_N (N32 (I)) := Byte (Params.SPKI (I));
-               end loop;
-               SPARKNaCl.Hashing.SHA256.Hash (Hash, SPKI_N);
-
-               --  Build SKI value: OCTET STRING { 20 bytes }
+               Public_Key_Bits (Params.SPKI (0 .. Params.SPKI_Len - 1), Bits_First, Bits_Len, Bits_OK);
+               if Bits_OK then
+                  declare
+                     Bits : Byte_Seq (0 .. N32 (Bits_Len) - 1);
+                  begin
+                     for I in X509.N32 range 0 .. Bits_Len - 1 loop
+                        Bits (N32 (I)) := Byte (Params.SPKI (Bits_First + I));
+                     end loop;
+                     SKI := SPARKTLSCrypto.Hashing.SHA1.Hash (Bits);
+                  end;
+               end if;
                SKI_Val (0) := X509.Byte (16#04#);   --  OCTET STRING tag
                SKI_Val (1) := X509.Byte (16#14#);   --  length 20
                for I in 0 .. 19 loop
-                  SKI_Val (X509.N32 (2 + I)) := X509.Byte (Hash (N32 (I)));
+                  SKI_Val (X509.N32 (2 + I)) := X509.Byte (SKI (N32 (I)));
                end loop;
-               SKI_Pos := 22;
 
-               --  Extension SEQUENCE { OID, OCTET STRING value }
                Start_Sequence (TBS_Buf, TBS_Pos, Ext_S);
                Put_OID (TBS_Buf, TBS_Pos,
                   X509.Byte_Seq'(16#55#, 16#1D#, 16#0E#));  --  OID 2.5.29.14 (SKI)
-               Put_Octet_String (TBS_Buf, TBS_Pos,
-                  SKI_Val (0 .. SKI_Pos - 1));
+               Put_Octet_String (TBS_Buf, TBS_Pos, SKI_Val);
                End_Sequence (TBS_Buf, TBS_Pos, Ext_S);
 
-               --  Authority Key Identifier (RFC 5280 §4.2.1.1)
-               --  For self-signed: AKI keyIdentifier = SKI value
+               --  Authority Key Identifier (RFC 5280 4.2.1.1): the ISSUER's
+               --  key identifier. Self-signed: our own SKI.
                declare
-                  AKI_S : X509.N32;
+                  AKI_S   : X509.N32;
+                  Own     : constant Boolean := Params.Issuer_Key_ID_Len = 0;
+                  KID_Len : constant X509.N32 :=
+                    (if Own then 20 else X509.N32'Min (Params.Issuer_Key_ID_Len, 32));
                   --  AKI value: SEQUENCE { [0] IMPLICIT keyIdentifier }
-                  AKI_Val : X509.Byte_Seq (0 .. 25) := (others => 0);
-                  AKI_Pos : X509.N32 := 0;
+                  AKI_Val : X509.Byte_Seq (0 .. 3 + KID_Len) := (others => 0);
                begin
-                  AKI_Val (0) := X509.Byte (16#30#);   --  SEQUENCE tag
-                  AKI_Val (1) := X509.Byte (16#16#);   --  length 22
-                  AKI_Val (2) := X509.Byte (16#80#);   --  [0] IMPLICIT tag
-                  AKI_Val (3) := X509.Byte (16#14#);   --  length 20
-                  for I in 0 .. 19 loop
-                     AKI_Val (X509.N32 (4 + I)) :=
-                        X509.Byte (Hash (N32 (I)));
+                  AKI_Val (0) := X509.Byte (16#30#);              --  SEQUENCE
+                  AKI_Val (1) := X509.Byte (2 + KID_Len);         --  length
+                  AKI_Val (2) := X509.Byte (16#80#);              --  [0] IMPLICIT
+                  AKI_Val (3) := X509.Byte (KID_Len);
+                  for I in X509.N32 range 0 .. KID_Len - 1 loop
+                     AKI_Val (4 + I) :=
+                       (if Own then X509.Byte (SKI (N32 (I))) else Params.Issuer_Key_ID (I));
                   end loop;
-                  AKI_Pos := 24;
 
                   Start_Sequence (TBS_Buf, TBS_Pos, AKI_S);
                   Put_OID (TBS_Buf, TBS_Pos,
                      X509.Byte_Seq'(16#55#, 16#1D#, 16#23#));  --  OID 2.5.29.35 (AKI)
-                  Put_Octet_String (TBS_Buf, TBS_Pos,
-                     AKI_Val (0 .. AKI_Pos - 1));
+                  Put_Octet_String (TBS_Buf, TBS_Pos, AKI_Val);
                   End_Sequence (TBS_Buf, TBS_Pos, AKI_S);
                end;
             end;
@@ -544,7 +634,6 @@ package body Cert_Builder is
                   H     : Digest;
                   D     : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                   K     : Bytes_32;
-                  K_X   : X509.Byte_Seq (0 .. 31);
                   R_Out, S_Out : SPARKTLSCrypto.P256.ECDSA.ECDSA_Sig_Half;
                   Sig_OK : Boolean;
                begin
@@ -558,12 +647,13 @@ package body Cert_Builder is
                   end loop;
 
                   --  Random nonce K
-                  Get_Random (K_X);
-                  for I in N32 range 0 .. 31 loop
-                     K (I) := Byte (K_X (X509.N32 (I)));
-                  end loop;
-
-                  SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K),
+                  --  RFC 6979: deterministic nonce from the key and the
+                  --  digest. No RNG in the signing path, and K is in range
+                  --  by construction; Sign does not validate it.
+                  SPARKTLSCrypto.RFC6979.Derive_K_P256
+                    (Bytes_32 (D), Bytes_32 (H), K, Sig_OK);
+                  if not Sig_OK then return; end if;
+SPARKTLSCrypto.P256.ECDSA.Sign (H, D, Byte_Seq (K),
                                              R_Out, S_Out, Sig_OK);
                   if not Sig_OK then return; end if;
 
@@ -578,7 +668,6 @@ package body Cert_Builder is
                   H     : Digest;
                   D     : Byte_Seq (0 .. 47);
                   K     : Bytes_48;
-                  K_X   : X509.Byte_Seq (0 .. 47);
                   R_Out, S_Out : Byte_Seq (0 .. 47);
                   Sig_OK : Boolean;
                begin
@@ -591,12 +680,10 @@ package body Cert_Builder is
                      D (I) := Params.Key.Raw (I);
                   end loop;
 
-                  Get_Random (K_X);
-                  for I in N32 range 0 .. 47 loop
-                     K (I) := Byte (K_X (X509.N32 (I)));
-                  end loop;
-
-                  SPARKTLSCrypto.P384.ECDSA.Sign (H, D, Byte_Seq (K),
+                  SPARKTLSCrypto.RFC6979.Derive_K_P384
+                    (Bytes_48 (D), Bytes_48 (H), K, Sig_OK);
+                  if not Sig_OK then return; end if;
+SPARKTLSCrypto.P384.ECDSA.Sign (H, D, Byte_Seq (K),
                                              R_Out, S_Out, Sig_OK);
                   if not Sig_OK then return; end if;
 

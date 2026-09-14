@@ -397,6 +397,12 @@ UNSUPPORTED_SKIPS=(
   # protocol decision: we do not implement renegotiation at all.
   'ExtendedMasterSecret-Renego-*'
   'Ed25519DefaultDisable-*'
+  # {Client,Server}-VerifyDefault-Ed25519-TLS13 assert BoringSSL's OWN default
+  # verify-preference table, in which Ed25519 is off unless enabled ("test
+  # whether the shim expects the algorithm enabled by default"). SPARKTLS
+  # accepts Ed25519 peer signatures by default, as browsers do; not a
+  # conformance property.
+  '*-VerifyDefault-Ed25519-TLS13'
   'PostQuantumNotEnabledByDefaultInClients'
   'SendClientVersion-RSA' 'SkipChangeCipherSpec-*'
   'NoCommonSignatureAlgorithms-TLS12-Fallback' 'NoCommonCurves'
@@ -432,6 +438,17 @@ UNSUPPORTED_SKIPS=(
   'Resume-Server-NoTickets-*' 'TLS12-NoTicket-NoMint'
   # The original session is CBC-only, which we never negotiate.
   'Resume-Server-CipherNotPreferred'
+  # Certificate selection probes whose configurations only offer CBC or
+  # static-RSA cipher suites (never negotiated here), or that negotiate the
+  # RFC 7250 certificate_type extension (not implemented).
+  'CertificateSelection-Server-CipherSuite-*'
+  'CertificateSelection-Server-SignatureAlgorithm-Match*-TLS-TLS12'
+  'CertificateSelection-Server-SignatureAlgorithmECDSACurve-TLS-TLS12'
+  'CertificateSelection-Server-SignatureAlgorithmImpactsECDHEOnly-*'
+  'CertificateSelection-*-CertificateType-*'
+  # 0-RTT (earlyData) probes of the ticket-age window; early data is not
+  # implemented (the plain TLS13-TicketAgeSkew-Forward/Backward cases run).
+  'TLS13-TicketAgeSkew-*-6*'
 )
 
 # Join with ';' for the runner.

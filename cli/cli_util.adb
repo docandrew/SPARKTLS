@@ -391,4 +391,32 @@ package body CLI_Util is
       end if;
    end Put_Check;
 
+
+   procedure Fit (Src : String; Dst : out String; Len : out Natural; What : String) is
+   begin
+      Dst := (others => ' ');
+      Len := Fit_Len (Src'Length, Dst'Length, What);
+      Dst (Dst'First .. Dst'First + Len - 1) := Src;
+   end Fit;
+
+   function Fit_Len (Src_Len, Max : Natural; What : String) return Natural is
+   begin
+      if Src_Len > Max then
+         raise Argument_Error with
+           What & " is" & Src_Len'Image & " characters; at most" & Max'Image & " allowed";
+      end if;
+      return Src_Len;
+   end Fit_Len;
+
+   function Printable (S : String) return String is
+      R : String := S;
+   begin
+      for I in R'Range loop
+         if Character'Pos (R (I)) < 32 or else Character'Pos (R (I)) > 126 then
+            R (I) := '?';
+         end if;
+      end loop;
+      return R;
+   end Printable;
+
 end CLI_Util;

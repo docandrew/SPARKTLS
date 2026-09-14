@@ -1119,6 +1119,9 @@ is
       Id.RSA_CRT := SPARKTLSCrypto.RSA.No_CRT;
       Id.OCSP_Staple := (others => 0);
       Id.OCSP_Staple_Len := 0;
+      Id.Must_Match_Issuer := False;
+      Id.Sign_Prefs := (others => Scheme_None);
+      Id.Sign_Pref_Count := 0;
       Id.Has_Identity := False;
 
       if Cert_DER'Length = 0 then

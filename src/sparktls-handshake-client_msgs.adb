@@ -355,7 +355,12 @@ is
          end;
       end if;
       HC.PSK.Offered := True;
-      if Ticket.Ticket_Len > Max_Ticket_Len or else Len > N32 (Result'Length) - 319 then
+      --  Worst-case pre_shared_key extension: type+len (4), identities
+      --  len (2), ticket len (2) + ticket + age (4), binders len (2),
+      --  binder len (1) + SHA-384 binder (48) = Max_Ticket_Len + 63.
+      if Ticket.Ticket_Len > Max_Ticket_Len
+        or else Len > N32 (Result'Length) - (Max_Ticket_Len + 63)
+      then
          return;
       end if;
       --  (Old transcript-capacity guard deleted with the buffer: the

@@ -84,6 +84,8 @@ procedure TLS_Bench_Server is
       Dummy := Epoll_Ctl (Epfd, EPOLL_CTL_DEL, Conns (Idx).FD, null);
       Dummy := C_Close (Conns (Idx).FD);
       Conns (Idx).State := Closed;
+      --  Give the handshake slot back (see SPARKTLS.Drop).
+      SPARKTLS.Drop (Conns (Idx).S);
    end Close_Conn;
 
    procedure Handle_Readable (Idx : Conn_Index) is
@@ -201,6 +203,13 @@ begin
       return;
    end if;
 
+   --  A peer that closes before we finish writing must not kill the
+   --  process (write(2) raises SIGPIPE; GNAT.Sockets is not used here).
+   declare
+      Old_Handler : System.Address;
+   begin
+      Old_Handler := C_Signal (SIGPIPE, SIG_IGN);
+   end;
    Epfd := Epoll_Create1 (0);
    Ev.Events := unsigned (EPOLLIN);
    Ev.Data.FD := Sock_FD;

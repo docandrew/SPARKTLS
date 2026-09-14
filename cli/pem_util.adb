@@ -1,3 +1,7 @@
+with Interfaces.C;
+with Interfaces.C.Strings;
+with GNAT.OS_Lib;
+with Ada.Directories;
 with Ada.Text_IO;
 with SPARKTLSCrypto.Base64;
 
@@ -58,24 +62,47 @@ package body PEM_Util is
       end;
    end Encode_PEM;
 
+   --  open(2) with O_CREAT|O_EXCL: a private key is created 0600 and no
+   --  existing file is ever replaced (the old Ada.Text_IO.Create wrote
+   --  keys world-readable under the umask and truncated whatever was
+   --  there). Certificates and CSRs get 0644.
+   O_WRONLY : constant := 1;
+   O_CREAT  : constant := 8#100#;
+   O_EXCL   : constant := 8#200#;
+   function C_Open (Path : Interfaces.C.Strings.chars_ptr; Flags : Interfaces.C.int;
+                    Mode : Interfaces.C.unsigned) return Interfaces.C.int;
+   pragma Import (C, C_Open, "open");
+
    procedure Write_PEM_File
      (Path  : String;
       DER   : X509.Byte_Seq;
       Label : String;
       OK    : out Boolean)
    is
-      use Ada.Text_IO;
-      F   : File_Type;
-      PEM : constant String := Encode_PEM (DER, Label);
+      use type Interfaces.C.int;
+      PEM     : constant String := Encode_PEM (DER, Label);
+      Secret  : constant Boolean := Label = "PRIVATE KEY";
+      C_Path  : Interfaces.C.Strings.chars_ptr := Interfaces.C.Strings.New_String (Path);
+      FD      : Interfaces.C.int;
+      Written : Integer;
    begin
       OK := False;
-      Create (F, Out_File, Path);
-      Put (F, PEM);
-      Close (F);
-      OK := True;
-   exception
-      when others =>
-         if Is_Open (F) then Close (F); end if;
+      if Ada.Directories.Exists (Path) then
+         Ada.Text_IO.Put_Line
+           (Ada.Text_IO.Standard_Error,
+            "Error: " & Path & " already exists; remove it or choose another name");
+         Interfaces.C.Strings.Free (C_Path);
+         return;
+      end if;
+      FD := C_Open (C_Path, O_WRONLY + O_CREAT + O_EXCL, (if Secret then 8#600# else 8#644#));
+      Interfaces.C.Strings.Free (C_Path);
+      if FD < 0 then
+         Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, "Error: cannot create " & Path);
+         return;
+      end if;
+      Written := GNAT.OS_Lib.Write (GNAT.OS_Lib.File_Descriptor (FD), PEM'Address, PEM'Length);
+      GNAT.OS_Lib.Close (GNAT.OS_Lib.File_Descriptor (FD));
+      OK := Written = PEM'Length;
    end Write_PEM_File;
 
 end PEM_Util;

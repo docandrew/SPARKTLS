@@ -1,3 +1,5 @@
+with Ada.Command_Line;
+with SPARKTLS.Credentials;
 --  Test client using the SPARKTLS library API.
 --  Connects to openssl s_server on 127.0.0.1:8443.
 --
@@ -54,7 +56,7 @@ procedure TLS_Test_Client is
    Res : SPARKTLS.Action;
 
    --  Network I/O buffers
-   Net_Buf : Byte_Seq (0 .. 16383);
+   Net_Buf : Byte_Seq (0 .. 16644);   --  5-byte header + 2^14 + 256 (RFC 8446 5.2)
    N       : N32;
 
    --  Socket
@@ -63,6 +65,8 @@ procedure TLS_Test_Client is
 
    --  Set hostname for SNI
    Host : constant String := "localhost";
+   Roots    : aliased SPARKTLS.Trust_Store;
+   Roots_OK : Boolean := False;
 
 begin
    Entropy_Random.Init;
@@ -92,13 +96,27 @@ begin
    Channel := GNAT.Sockets.Stream (Sock);
    Put_Line ("Connected.");
 
-   --  Initialize TLS client session (skip verification for test)
+   --  Optional argument: a PEM trust store. With it the server is
+   --  verified (RFC 5280 mode, the test certificates are self-signed);
+   --  without it verification is OFF and the run says so.
+   if Ada.Command_Line.Argument_Count >= 1 then
+      SPARKTLS.Credentials.Load_Trust_Store
+        (Roots, Ada.Command_Line.Argument (1), Roots_OK);
+      if not Roots_OK then
+         Put_Line ("Fatal: cannot load trust store " & Ada.Command_Line.Argument (1));
+         Ada.Command_Line.Set_Exit_Status (1);
+         return;
+      end if;
+   else
+      Put_Line ("WARNING: no trust store argument; certificate verification disabled");
+   end if;
    S := SPARKTLS.Client.Configure
      ((Server_Name => SPARKTLS.To_Name (Host),
-       Trust       => null,
+       Trust       => (if Roots_OK then Roots'Unchecked_Access else null),
+       Verify_Mode => Mode_RFC5280,
        Random      => Entropy_Random.Random'Access,
        Get_Time    => Current_Time'Unrestricted_Access,
-       Skip_Verify => True,
+       Skip_Verify => not Roots_OK,
        others      => <>));
    Put_Line ("ClientHello built, output pending:" &
       SPARKTLS.Output_Pending (S)'Image & " bytes");
@@ -298,12 +316,15 @@ begin
    Put_Line ("Final state: " & State (S)'Image);
    Put_Line ("Done.");
 
+   SPARKTLS.Drop (S);
+
    GNAT.Sockets.Close_Socket (Sock);
 
 exception
    when E : others =>
       Put_Line ("Fatal: " & Ada.Exceptions.Exception_Message (E));
       begin
+         SPARKTLS.Drop (S);
          GNAT.Sockets.Close_Socket (Sock);
       exception
          when others => null;

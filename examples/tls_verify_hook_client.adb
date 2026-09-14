@@ -59,7 +59,7 @@ procedure TLS_Verify_Hook_Client is
    Empty_Path : constant Path_Buf := (others => Character'Val (0));
 
    Cfg_Port        : Natural := 0;
-   Cfg_Host        : String (1 .. 256) := (others => Character'Val (0));
+   Cfg_Host        : String (1 .. 255) := (others => Character'Val (0));
    Cfg_Host_Len    : Natural := 0;
    Cfg_Cert        : Path_Buf := Empty_Path;
    Cfg_Key         : Path_Buf := Empty_Path;
@@ -374,8 +374,9 @@ procedure TLS_Verify_Hook_Client is
       end;
    end Issuer_Named;
 
-   function Pick_Identity (CA_Names : Byte_Seq; Sig_Algos : Byte_Seq)
+   function Pick_Identity (CA_Names : Byte_Seq; Sig_Algos : Byte_Seq; Cert_Types : Byte_Seq)
      return SPARKTLS.Maybe_Identity_Access is
+      pragma Unreferenced (Cert_Types);
    begin
       if Cfg_Audit then
          Put_Line ("AUDIT CertificateRequest: certificate_authorities_bytes="
@@ -611,6 +612,8 @@ begin
             exit Loop1;
       end case;
    end loop Loop1;
+   --  Whatever ended the loop, release the session (see SPARKTLS.Drop).
+   SPARKTLS.Drop (S);
 
    declare
       Success : constant Boolean := not Run_Failed
@@ -634,8 +637,12 @@ begin
    end;
 
 exception
-   when Program_Error =>
-      null;
+   when E : Program_Error =>
+      --  Raised by the argument parser for a bad option; also anything the
+      --  library or runtime raises. Never exit 0 on it.
+      Err (Ada.Exceptions.Exception_Message (E));
+      Ada.Command_Line.Set_Exit_Status
+        (Ada.Command_Line.Exit_Status (Exit_Failure));
    when E : others =>
       Err (Ada.Exceptions.Exception_Message (E));
       Ada.Command_Line.Set_Exit_Status

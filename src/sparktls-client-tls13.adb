@@ -941,7 +941,8 @@ is
                   else Byte_Seq'(1 .. 0 => 0)),
                  (if Sig_Found
                   then Data (Data'First + 3 + SA_Start .. Data'First + 2 + SA_Start + SA_Cnt)
-                  else Byte_Seq'(1 .. 0 => 0)));
+                  else Byte_Seq'(1 .. 0 => 0)),
+                 Byte_Seq'(1 .. 0 => 0));
          begin
             if Picked_Id = null then
                S.HC.Cfg.Local := No_Identity'Access;
@@ -956,8 +957,10 @@ is
                  Handshake.Pick_Sig_Algo_With_Prefs
                    (Data (Data'First + 3 + SA_Start .. Data'First + 2 + SA_Start + SA_Cnt),
                     S.HC.Cfg.Local.Sign_Algo,
-                    S.HC.Cfg.Sign_Sig_Algos,
-                    S.HC.Cfg.Sign_Sig_Algo_Count);
+                    (if S.HC.Cfg.Local.Sign_Pref_Count > 0
+                     then S.HC.Cfg.Local.Sign_Prefs else S.HC.Cfg.Sign_Sig_Algos),
+                    (if S.HC.Cfg.Local.Sign_Pref_Count > 0
+                     then S.HC.Cfg.Local.Sign_Pref_Count else S.HC.Cfg.Sign_Sig_Algo_Count));
             end if;
          end;
       end if;
@@ -2925,7 +2928,8 @@ is
       Post_HS_Reasm.Reset (S.Post_HS);
    end Reset_Post_HS_Reasm;
 
-   procedure Dispatch_Post_HS_Message (S : in out Session; Result : out Action)
+   procedure Dispatch_Post_HS_Message
+     (S : in out Session; Was_Key_Update : out Boolean; Result : out Action)
    with Pre => Post_HS_Reasm.Has_Message (S.Post_HS), Post => Post_HS_Reasm.Used (S.Post_HS) = 0;
 
    --  RFC 8446 4.6.3. A KeyUpdate from the peer rotates the peer's WRITE
@@ -3005,15 +3009,19 @@ is
       --  per-message. Defer it: a burst of requests collapses to a single
       --  KeyUpdate, which is what the peer expects. Replying inline would
       --  make every reply after the first look unsolicited.
+      --  Deferred to the next write, as on the server side (see
+      --  sparktls-server-tls13.adb Process_Key_Update_Message).
       S.Key_Update_Pending := True;
       Result := OK;
    end Process_Key_Update_Message;
 
-   procedure Dispatch_Post_HS_Message (S : in out Session; Result : out Action) is
+   procedure Dispatch_Post_HS_Message
+     (S : in out Session; Was_Key_Update : out Boolean; Result : out Action) is
       Msg_Len : constant N32 := Post_HS_Reasm.Message_Length (S.Post_HS);
       Msg     : constant Byte_Seq (0 .. Msg_Len - 1) :=
         Byte_Seq (Post_HS_Reasm.Message (S.Post_HS));
    begin
+      Was_Key_Update := Msg (0) = Key_Update.HS_Key_Update;
       if Msg (0) = 16#04# then
          Process_NST_Message (S, Msg, Msg_Len, Result);
       elsif Msg (0) = Key_Update.HS_Key_Update then
@@ -3096,10 +3104,20 @@ is
             end if;
 
             if Has_Message (S.Post_HS) then
-               Dispatch_Post_HS_Message (S, Result);
-               if Result /= OK then
-                  return;
-               end if;
+               declare
+                  Was_KU : Boolean;
+               begin
+                  Dispatch_Post_HS_Message (S, Was_KU, Result);
+                  if Result /= OK then
+                     return;
+                  end if;
+                  --  RFC 8446 5.1: a KeyUpdate must end its record (see the
+                  --  server-side note in sparktls-server-tls13.adb).
+                  if Was_KU and then Pos < Plain_Len then
+                     Send_App_Encrypted_Alert (S, Unexpected_Message, Result);
+                     return;
+                  end if;
+               end;
             end if;
          end;
       end loop;

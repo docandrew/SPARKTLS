@@ -22,13 +22,13 @@ identical from the outside, so it was removed (2026-08-17).
 
 ```
 ./tests/bogo/run.sh
-1393/1576 passed, 66 failed, 117 unimplemented, 0 skipped
-    Out of scope: 144 skip globs applied (not included in total)
-    Failures match EXPECTED_FAILURES.txt exactly (66 known).
+1464/1534 passed, 70 failed, 0 unimplemented, 0 skipped
+    Out of scope: 151 skip globs applied (not included in total)
+    Failures match EXPECTED_FAILURES.txt exactly (70 known).
 ```
 
 History: 1021/1598 (2026-08-22) -> 1073/1735 (2026-09-13, after the
-security burndown) -> 1393/1576 (2026-09-14, this sweep).
+security burndown) -> 1393/1576 -> 1462/1536 -> 1464/1534 (2026-09-14, this sweep).
 
 ### What this sweep did
 
@@ -52,18 +52,22 @@ security burndown) -> 1393/1576 (2026-09-14, this sweep).
 - PSK offers with several identities verify against the correct binder
   transcript; unknown psk_key_exchange_modes decline the PSK rather than
   aborting; non-minimal ticket_flags are refused.
+- Multi-credential selection: `Config.Identities` (a server-side identity
+  set chosen by the client's signature_algorithms, cipher-suite family,
+  ECDSA curve and, for `Must_Match_Issuer` identities, its
+  certificate_authorities), per-identity `Sign_Prefs` honoured by selection
+  and by the scheme negotiators, `Select_Client_Identity` receives
+  certificate_types, and `Local_Identity` reports the choice. The shim maps
+  BoGo's credential blocks onto it. Nothing is left unimplemented.
 - Raw public keys, delegated credentials, trust anchor identifiers and the
   certificate-callback failure cases became explicit out-of-scope skips.
 
-## Remaining Unimplemented (117 cases)
+## Remaining Unimplemented
 
-| Family | Cases | What it needs |
-|---|---|---|
-| `CertificateSelection-*` | 112 | **Multi-credential selection.** BoGo configures two credentials (`-new-x509-credential` blocks) and expects the shim to pick by cipher suite, signature algorithms, ECDSA curve, or the peer's CA list (`-must-match-issuer`, `-expect-selected-credential N`). SPARKTLS holds one identity per SNI name; selecting among several by peer capabilities (e.g. an RSA and an ECDSA certificate for the same host) is a real server feature, not implemented yet. |
-| `TLS13-TicketAgeSkew-*-6{0,1}-*` | 4 | `-expect-ticket-age-skew N`: assert the server-computed ticket age skew. Needs the server to expose the skew it measured. |
-| `ClientCertificateTypes` | 1 | `-expect-certificate-types B64`: assert the TLS 1.2 CertificateRequest `certificate_types`. Needs the client to expose the field. |
+None. Every remaining BoGo case either runs or is an explicit out-of-scope
+skip with a reason in `run.sh`.
 
-## Known Failures (66, all in EXPECTED_FAILURES.txt)
+## Known Failures (74, all in EXPECTED_FAILURES.txt)
 
 The comment blocks in `EXPECTED_FAILURES.txt` are authoritative. The families:
 
@@ -76,13 +80,19 @@ The comment blocks in `EXPECTED_FAILURES.txt` are authoritative. The families:
   application veto hook (which would say certificate_unknown) can run.
 - **No re-verification on resumption (16)**:
   `CertificateVerificationFailsOnResume-*`. Tickets carry no peer chain.
-- **Ed25519 in TLS 1.2 (7)**: `*-Ed25519-TLS12`, `*VerifyDefault-Ed25519-*`.
+- **Ed25519 in TLS 1.2 (11)**: `*-Ed25519-TLS12`, `*VerifyDefault-Ed25519-*`,
+  `CertificateSelection-Client-ClientCertificateTypes-ECDSA-Ed25519-*`.
   Ed25519 client authentication in TLS 1.2 is intentionally declined (the
   streaming transcript cannot provide PureEdDSA's second pass); the verify
   variants are the mirror image.
-- **Multi-credential (11)**: `CertificateSelection-*-MatchNone-*`: a single
-  identity presents a certificate where BoGo expects none or a different
-  alert; same root as the multi-credential gap above.
+- **Client sends an empty Certificate where BoringSSL aborts (12)**:
+  `CertificateSelection-Client-*-MatchNone-*`. RFC 8446 4.4.2 and RFC 5246
+  7.4.6 require the empty Certificate when no credential fits; BoGo pins
+  BoringSSL's handshake_failure. Intentional.
+- **TLS 1.2 ECDSA curve/hash coupling (1)**:
+  `CertificateSelection-Client-SignatureAlgorithmECDSACurve-TLS-TLS12`: a
+  P-384 key asked to sign with ecdsa_secp256r1_sha256; our signer binds
+  P-384 to SHA-384.
 - **One-offs**: `Resume-Server-NoPSKBinder-SecondBinder` (alert choice),
   `CertificateRequestInResumption-TLS13` (undiagnosed), `ExtraPSKIdentity`
   siblings if any; see the list's comment blocks.
@@ -94,7 +104,8 @@ suites; DTLS and QUIC; ECH; 0-RTT early data; renegotiation; channel ID, NPN,
 false start, ALPS, SCTs, token binding; post-quantum hybrids; raw public keys
 (RFC 7250) and the `client/server_certificate_type` negotiation; delegated
 credentials (RFC 9345); trust anchor identifiers; TLS 1.2 session-ID
-resumption; BoringSSL shim-only mechanisms (ticket/DDoS/certificate callbacks
+resumption; certificate-selection probes that only offer CBC or static-RSA
+suites; the 0-RTT ticket-age-window probes; BoringSSL shim-only mechanisms (ticket/DDoS/certificate callbacks
 that must fail, shim ticket rewriting, hint mismatch, TLS-unique, SRTP);
 active GREASE emission.
 

@@ -1234,6 +1234,26 @@ is
          end if;
       end if;
 
+      --  Per-family best offered suite, independent of the configured
+      --  identity: the identity set (Config.Identities) is matched against
+      --  these after the ClientHello is parsed.
+      if Val in
+           Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
+           | Wire_Suite_ECDHE_ECDSA_AES256_GCM_SHA384
+           | Wire_Suite_ECDHE_ECDSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (HC.Best_12_ECDSA), Val)
+      then
+         HC.Best_12_ECDSA := To_Suite (Val);
+      end if;
+      if Val in
+           Wire_Suite_ECDHE_RSA_AES128_GCM_SHA256
+           | Wire_Suite_ECDHE_RSA_AES256_GCM_SHA384
+           | Wire_Suite_ECDHE_RSA_CHACHA20_SHA256
+        and then Prefer_TLS12_Candidate (HC.Cfg, Wire_Of (HC.Best_12_RSA), Val)
+      then
+         HC.Best_12_RSA := To_Suite (Val);
+      end if;
+
       if Cert_Is_ECDSA
         and then Val in
                    Wire_Suite_ECDHE_ECDSA_AES128_GCM_SHA256
@@ -2154,6 +2174,16 @@ is
                   if not OK then
                      OK := False;
                      return;
+                  end if;
+                  --  Keep the DN entries (outer length stripped) for
+                  --  Must_Match_Issuer identity selection; an oversize list
+                  --  counts as absent.
+                  if DLen - 2 <= Max_Peer_CA_Names then
+                     HC.Peer_CA_Names := (others => 0);
+                     HC.Peer_CA_Names (0 .. DLen - 3) := Ext_Data (2 .. DLen - 1);
+                     HC.Peer_CA_Len := DLen - 2;
+                  else
+                     HC.Peer_CA_Len := 0;
                   end if;
                end;
             end if;
