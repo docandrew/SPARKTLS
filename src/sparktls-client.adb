@@ -878,7 +878,7 @@ is
          --  check the parser would loop on Need_Input
          --  forever. BoGo LargePlaintext sends maxPlaintext+1.
          if Rec.Overflow then
-            S.Last_Error := Record_Overflow;
+            S.Last_Error := Records.Overflow_Error (Rec, Read_Encrypted => False);
             Set_State (S, Error_State);
             Result := Error_Alert;
             return;

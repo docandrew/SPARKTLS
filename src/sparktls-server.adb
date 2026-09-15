@@ -605,7 +605,7 @@ is
             Loose_Initial => True);
 
          if Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
             return;
          end if;
 

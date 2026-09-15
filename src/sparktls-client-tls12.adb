@@ -2308,6 +2308,7 @@ is
       Rec :=
         (OK           => False,
          Overflow     => False,
+         Empty        => False,
          Bad_Version  => False,
          Content      => Records.Content_Unknown,
          Fragment_Pos => 0,
@@ -2337,7 +2338,7 @@ is
          --  2026-09) left the record unread and the client hanging, the
          --  twin of the server-side gap TLS-Anvil found.
          if Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
          elsif Rec.Record_Len > 0 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Unexpected_Message, Result);
@@ -3106,7 +3107,7 @@ is
          --  2026-09) left the record unread and the client hanging, the
          --  twin of the server-side gap TLS-Anvil found.
          if Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
          elsif Rec.Record_Len > 0 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Unexpected_Message, Result);
@@ -3407,7 +3408,7 @@ is
          --  2026-09) left the record unread and the client hanging, the
          --  twin of the server-side gap TLS-Anvil found.
          if Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
          elsif Rec.Record_Len > 0 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Alert_And_Error (S, Unexpected_Message, Result);
@@ -3665,7 +3666,7 @@ is
          --  2026-09) left the record unread and the client hanging, the
          --  twin of the server-side gap TLS-Anvil found.
          if Rec.Overflow then
-            Send_Encrypted_Alert_Connected_12 (S, Record_Overflow, Result);
+            Send_Encrypted_Alert_Connected_12 (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
          elsif Rec.Record_Len > 0 then
             S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
             Send_Encrypted_Alert_Connected_12 (S, Unexpected_Message, Result);

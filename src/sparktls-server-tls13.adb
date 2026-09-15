@@ -606,7 +606,7 @@ is
             Result => Rec);
 
          if Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
             return;
          end if;
 
@@ -2513,7 +2513,7 @@ is
          Result => Rec);
 
       if Rec.Overflow then
-         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         Send_Encrypted_Alert (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
          return;
       end if;
       --  A record-layer version outside 0x0301..0x0304 (RFC 8446 5.1 policy,
@@ -3403,7 +3403,7 @@ is
          Result => Rec);
 
       if Rec.Overflow then
-         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         Send_Encrypted_Alert (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
          return;
       end if;
       --  A record-layer version outside 0x0301..0x0304 (RFC 8446 5.1 policy,
@@ -3707,7 +3707,7 @@ is
          Result => Rec);
 
       if Rec.Overflow then
-         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         Send_Encrypted_Alert (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
          return;
       end if;
       --  A record-layer version outside 0x0301..0x0304 (RFC 8446 5.1 policy,

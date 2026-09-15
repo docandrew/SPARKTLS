@@ -445,7 +445,10 @@ for test in "${TESTS[@]}"; do
                                     -e "aes-256-gcm Nonce monotonicity") ;;
         #  "Chacha20 in TLS1.1" expects handshake_failure for a TLS 1.1
         #  ClientHello; we answer protocol_version (RFC 5246 E.1).
-        chacha20) extra_args=(--extra-exts -e "Chacha20 in TLS1.1") ;;
+        #  The script samples 50 of its 74 conversations by default; -n
+        #  runs every one, so a per-case regression ("0 bytes long
+        #  ciphertext", 2026-09-15) cannot hide from a local run.
+        chacha20) extra_args=(--extra-exts -e "Chacha20 in TLS1.1" -n 100) ;;
         finished)
             script_timeout="${TLSFUZZER_FINISHED_SCRIPT_TIMEOUT:-300}" ;;
         serverhello-random)

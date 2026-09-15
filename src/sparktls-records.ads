@@ -35,7 +35,8 @@ is
    --  RFC 8446 5.1: Parsed TLS record header.
    type Parse_Result is record
       OK           : Boolean := False;
-      Overflow     : Boolean := False;  --  fragment exceeds RFC limit
+      Overflow     : Boolean := False;  --  fragment exceeds RFC limit, or is empty
+      Empty        : Boolean := False;  --  fragment length is zero (Overflow also set)
       Bad_Version  : Boolean := False;  --  record version not in {3,1}..{3,4}
       Content      : Record_Content := Content_Unknown;
       Fragment_Pos : N32 := 0;  --  offset of fragment in Data
@@ -52,7 +53,25 @@ is
           Parse_Result.Content /= Content_Unknown
           and Parse_Result.Fragment_Pos = Record_Header_Size
           and not Parse_Result.Overflow
+          and not Parse_Result.Empty
           and not Parse_Result.Bad_Version);
+
+   --  Alert for a record the header parser refused for its length. A
+   --  fragment above the RFC limit is record_overflow (RFC 8446 5.2,
+   --  RFC 5246 6.2.3). A zero-length fragment is not an overflow: with the
+   --  read side encrypted, an application_data record shorter than the AEAD
+   --  tag cannot be decrypted, and a decryption failure is bad_record_mac
+   --  (RFC 5246 6.2.3.3, RFC 8446 5.2); every other empty record is illegal
+   --  where it arrives (RFC 8446 5.1 forbids zero-length handshake and
+   --  alert fragments) and is unexpected_message. The parser fills Content
+   --  for an empty record so this decision needs nothing else.
+   function Overflow_Error
+     (Rec : Parse_Result; Read_Encrypted : Boolean) return Error_Code
+   is (if not Rec.Empty then Record_Overflow
+       elsif Read_Encrypted and then Rec.Content = Content_Application_Data
+       then Bad_Record_MAC
+       else Unexpected_Message)
+   with Pre => Rec.Overflow;
 
    --  RFC 8446 5.1: Parse a TLS record header (5 bytes).
    --  Validates content type and fragment length bounds.

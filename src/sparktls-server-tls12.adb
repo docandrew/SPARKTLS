@@ -1937,7 +1937,7 @@ is
          if Rec.Bad_Version then
             Send_Alert_And_Error (S, Protocol_Version, Result);
          elsif Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
          elsif Rec.Record_Len > 0 then
             --  A complete record with an undefined content type (RFC 5246
             --  6.2.1: ContentType is one of 20..23). Waiting for more input
@@ -2078,7 +2078,7 @@ is
          if Rec.Bad_Version then
             Send_Alert_And_Error (S, Protocol_Version, Result);
          elsif Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
          elsif Rec.Record_Len > 0 then
             --  A complete record with an undefined content type (RFC 5246
             --  6.2.1: ContentType is one of 20..23). Waiting for more input
@@ -2661,7 +2661,7 @@ is
          if Rec.Bad_Version then
             Send_Alert_And_Error (S, Protocol_Version, Result);
          elsif Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
          elsif Rec.Record_Len > 0 then
             --  A complete record with an undefined content type (RFC 5246
             --  6.2.1: ContentType is one of 20..23). Waiting for more input
@@ -2904,7 +2904,7 @@ is
       --  bad record type on the peer (same root cause as the 2.8
       --  TLS 1.3 mTLS bypass).
       if Rec.Overflow then
-         Send_Encrypted_Alert_Connected_12 (S, Record_Overflow, Result);
+         Send_Encrypted_Alert_Connected_12 (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
          return;
       end if;
       if Rec.Bad_Version then

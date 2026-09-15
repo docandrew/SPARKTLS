@@ -113,6 +113,16 @@ is
       SPARKTLS.RFLX_Borrow.Discard (P);
    end Put_Header_At;
 
+   --  RFC 8446 5.1 ContentType, shared by the accept path and the
+   --  empty-record path of Parse_Record_Header.
+   function Content_Of (CT : Byte) return Record_Content is
+     (case CT is
+        when 16#14# => Content_Change_Cipher_Spec,
+        when 16#15# => Content_Alert,
+        when 16#16# => Content_Handshake,
+        when 16#17# => Content_Application_Data,
+        when others => Content_Unknown);
+
    procedure Parse_Record_Header
      (Data          : in Byte_Seq;
       Avail         : in N32;
@@ -194,7 +204,14 @@ is
          Max_Len : constant N32 := (if CT = 16#17# then Max_Fragment + 256 else Max_Fragment);
       begin
          if Frag_Len = 0 or else Frag_Len > Max_Len then
+            --  Both faults raise Overflow, so every consumer fails closed
+            --  on one flag. Empty and Content let the consumer choose the
+            --  RFC alert through Overflow_Error: a zero-length record is
+            --  not an overflow (tlsfuzzer chacha20 "0 bytes long
+            --  ciphertext" expects bad_record_mac).
             Result.Overflow := True;
+            Result.Empty    := Frag_Len = 0;
+            Result.Content  := Content_Of (CT);
             return;
          end if;
       end;

@@ -2649,7 +2649,7 @@ is
       end if;
 
       if Rec.Overflow then
-         S.Last_Error := Record_Overflow;
+         S.Last_Error := Records.Overflow_Error (Rec, Read_Encrypted => True);
          Set_State (S, Error_State);
          Result := Error_Alert;
          return;
@@ -3412,7 +3412,7 @@ is
       end if;
 
       if Rec.Overflow then
-         Send_App_Encrypted_Alert (S, Record_Overflow, Result);
+         Send_App_Encrypted_Alert (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
          return;
       end if;
 
