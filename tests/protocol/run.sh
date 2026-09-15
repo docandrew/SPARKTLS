@@ -8,6 +8,14 @@ CERT_DIR="$DIR/../certs"
 TLSFUZZER_DIR="$DIR/tlsfuzzer"
 VENV_DIR="$DIR/.venv"
 SERVER="$REPO_ROOT/bin/examples/tls_blocking_server"
+#  The server under test is the example binary, linked statically against
+#  the library. Rebuild it here so a library edit is what gets tested when
+#  this script is run on its own (tests/run_all.sh builds it too; on
+#  2026-09-15 an hour of "fixes had no effect" was a stale binary).
+if [ "${TLSFUZZER_REUSE_SERVER:-0}" != "1" ]; then
+    (cd "$REPO_ROOT/examples" && ALR_NON_INTERACTIVE=1 NO_COLOR=1 alr -n --no-tty build >/dev/null 2>&1) \
+        || echo "WARN: examples build failed; $SERVER may be stale"
+fi
 PORT=8443
 LOG_ROOT="${TLSFUZZER_LOG_ROOT:-$DIR/logs}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -239,29 +247,29 @@ classify_failure() {
     FAIL_CLASS="unexpected"
 
     case "$test" in
-        #  Scripts whose every conversation uses RSA key exchange, CBC, or
-        #  DHE. We support none of those: no RSA-KX (Bleichenbacher), no
-        #  CBC (Lucky13), no DHE. tlsfuzzer's default sanity conversation
-        #  is TLS_RSA_WITH_AES_128_CBC_SHA, so these scripts fail at their
-        #  own sanity probe before touching the feature under test -- they
-        #  cannot pass against our profile and are not evidence about it.
+        #  ---------------------------------------------------------------
+        #  Scripts whose sanity conversation cannot complete against this
+        #  profile. tlsfuzzer's default TLS 1.2 conversation negotiates
+        #  TLS_RSA_WITH_AES_128_CBC_SHA (RSA key exchange, CBC); we offer
+        #  ECDHE + AEAD only (no RSA-KX: Bleichenbacher/ROBOT class; no CBC:
+        #  Lucky13/POODLE class; no DHE). Every conversation that needs one
+        #  of those suites ends at the first ServerHello with
+        #  handshake_failure (RFC 5246 7.4.1.2), so the feature under test
+        #  is never reached. Conversations in these scripts that do use a
+        #  supported suite are exercised and must pass: since 2026-09-15
+        #  the runner's per-script summary shows them (e.g. invalid-
+        #  client-hello 50/52, extensions 255/292, message-skipping 6/11).
         #
         #  Derived mechanically 2026-08-19 by scanning each script for
         #  TLS_ECDHE_*_WITH_{AES_*_GCM,CHACHA20_POLY1305} versus
-        #  TLS_RSA_WITH / _CBC_ / TLS_DHE_ / 3DES / RC4 / NULL. These 36
-        #  matched zero supported suites. Re-derive rather than extend by
-        #  hand if the vendored tlsfuzzer is updated.
-        #
-        #  DELIBERATELY NOT LISTED, because they DO reference supported
-        #  suites and so may contain real failures: aes-gcm-nonces,
-        #  chacha20, fuzzed-ciphertext (run with their ECDHE flags, see
-        #  extra_args). extended-master-secret-extension and large-hello
-        #  are classified individually below.
+        #  TLS_RSA_WITH / _CBC_ / TLS_DHE_ / 3DES / RC4 / NULL; re-derive if
+        #  the vendored tlsfuzzer is updated. Not listed because they DO
+        #  reference supported suites and get their own entry below:
+        #  aes-gcm-nonces, chacha20, fuzzed-ciphertext, large-hello,
+        #  extended-master-secret-extension.
         alpn-negotiation \
         | certificate-request \
-        | certificate-verify \
         | client-hello-max-size \
-        | downgrade-protection \
         | early-application-data \
         | ecdhe-padded-shared-secret \
         | ecdsa-in-certificate-verify \
@@ -279,7 +287,6 @@ classify_failure() {
         | invalid-server-name-extension \
         | invalid-session-id \
         | invalid-version \
-        | large-number-of-extensions \
         | message-duplication \
         | message-skipping \
         | record-layer-fragmentation \
@@ -291,11 +298,30 @@ classify_failure() {
         | ssl-death-alert \
         | truncating-of-client-hello \
         | truncating-of-finished \
-        | version-numbers \
         | x25519)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
-            FAIL_REASON="script uses only RSA-KX/CBC/DHE suites; unsupported by design"
+            FAIL_REASON="sanity conversation needs RSA key exchange or a CBC/DHE suite (handshake_failure at ServerHello, RFC 5246 7.4.1.2); the conversations on supported suites pass"
             FAIL_CLASS="unsupported" ;;
+        version-numbers \
+        | version-negotiation \
+        | downgrade-protection)
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="conversations negotiate TLS 1.0/1.1 (refused with protocol_version, RFC 5246 E.1 / RFC 8446 4.2.1) or TLS 1.2 with RSA-KX/CBC suites (handshake_failure); the TLS 1.2 downgrade sentinel itself is covered by BoGo Downgrade-*"
+            FAIL_CLASS="unsupported" ;;
+        certificate-verify)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="the script's client certificate is the self-signed test CA presented as a leaf, refused with bad_certificate (same policy as x509-limbo rfc5280--ca-as-leaf); and it expects an RSA-only signature_algorithms list in CertificateRequest where we offer Ed25519/ECDSA/RSA-PSS. The 'is refused' cases (unknown, SHA-1 and rsa_pss_pss schemes -> illegal_parameter, RFC 8446 4.4.3) pass since 2026-09-15"
+            FAIL_CLASS="mismatch" ;;
+        large-number-of-extensions \
+        | shuffled-extentions \
+        | signature-algorithms)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="DoS bounds: a ClientHello with more than 64 extensions is decode_error (the duplicate-extension table, SECURITY_BURNDOWN SR-38) and one over the 32 KB handshake reassembly capacity is decode_error; these scripts send thousands of extensions or 65 KB signature-algorithm lists"
+            FAIL_CLASS="mismatch" ;;
+        large-hello)
+            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
+            FAIL_REASON="a ClientHello larger than the 32 KB handshake reassembly buffer (SPARKTLS_Reassembly capacity) is refused with decode_error; the script samples sizes up to 64 KB"
+            FAIL_CLASS="mismatch" ;;
         aes-gcm-nonces)
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
             FAIL_REASON="expected pass=4 fail=1: the script's default suites are RSA-kx/CBC, so it runs with -C and ONE GCM suite; its AES-256 nonce-monotonicity check (hard-coded outside the conversation list, so neither -e nor -x reaches it) then cannot collect nonces. The sanity, AES-128 and nonce checks all pass."
@@ -306,15 +332,15 @@ classify_failure() {
             FAIL_CLASS="unsupported" ;;
         keyupdate-from-server)
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="probe expects the server to initiate KeyUpdate(update_requested) after the first record; SPARKTLS rekeys on its record counter (2^23), the example server has no trigger knob"
+            FAIL_REASON="probe expects the server to initiate KeyUpdate(update_requested) after the first record; SPARKTLS rekeys on its record counter (2^23, RFC 8446 4.6.3 leaves the trigger to the implementation) and the example server has no trigger knob"
             FAIL_CLASS="mismatch" ;;
         ecdhe-curves)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
-            FAIL_REASON="unsupported groups and malformed curve points are intentionally rejected"
+            FAIL_REASON="x448 and secp521r1 are not offered (RFC 8446 4.2.7: the server chooses among mutually supported groups -> handshake_failure); the invalid-point cases on those curves are therefore never reached. Point validation on X25519/P-256/P-384 is covered by Wycheproof and BoGo"
             FAIL_CLASS="unsupported" ;;
         psk_dhe_ke)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
-            FAIL_REASON="tlsfuzzer external-PSK modes are outside the supported ticket-resumption path"
+            FAIL_REASON="external (out-of-band) PSKs are not supported; only ticket resumption with psk_dhe_ke (README Session Ticket Policy)"
             FAIL_CLASS="unsupported" ;;
         extended-master-secret-extension)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
@@ -324,63 +350,35 @@ classify_failure() {
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
             FAIL_REASON="TLS 1.2 session-ID resumption is not implemented (tickets only, RFC 5077)"
             FAIL_CLASS="unsupported" ;;
-        shuffled-extentions)
-            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="the script reorders extensions in the second ClientHello after HelloRetryRequest; RFC 8446 4.1.2 requires the client to resend it unmodified, so we answer illegal_parameter (BoGo agrees)"
-            FAIL_CLASS="mismatch" ;;
-        large-hello)
-            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="a ClientHello larger than the 32 KB handshake reassembly buffer (SPARKTLS_Reassembly capacity) is refused with decode_error; the script samples sizes up to 64 KB"
-            FAIL_CLASS="mismatch" ;;
         session-resumption)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
-            FAIL_REASON="tlsfuzzer resumption edge cases exceed the current ticket-resumption profile"
+            FAIL_REASON="psk_ke (no ECDHE) resumption is not offered and a TLS 1.2 ticket is never accepted in TLS 1.3 (RFC 8446 4.2.9 lets the server restrict modes; README Session Ticket Policy); the TLS 1.2 sanity needs RSA-KX"
             FAIL_CLASS="unsupported" ;;
         symetric-ciphers)
             FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
-            FAIL_REASON="CCM and NULL cipher suites are intentionally unsupported"
+            FAIL_REASON="TLS_AES_128_CCM_SHA256 / _CCM_8_ are not implemented (RFC 8446 9.1 mandates only AES-128-GCM); those conversations get handshake_failure. The AES-GCM and ChaCha20-Poly1305 tag-fuzz cases pass"
             FAIL_CLASS="unsupported" ;;
-        version-negotiation)
-            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
-            FAIL_REASON="TLS 1.0/1.1 and TLS 1.3 draft fallback paths are intentionally unsupported"
-            FAIL_CLASS="unsupported" ;;
-
         connection-abort)
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="close behavior after NewSessionTicket differs from tlsfuzzer expectation"
+            FAIL_REASON="the 'After NewSessionTicket' conversation expects the ticket to arrive before any application data; the example echo server answers the request first and the ticket flight follows. RFC 8446 4.6.1 imposes no order"
             FAIL_CLASS="mismatch" ;;
         count-tickets)
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="ticket-count behavior differs from tlsfuzzer expectation"
+            FAIL_REASON="one NewSessionTicket per handshake by policy (README Session Ticket Policy); the script waits for more"
             FAIL_CLASS="mismatch" ;;
-        empty-alert)
+        finished \
+        | record-layer-limits)
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="empty encrypted alert and padding handling differs from tlsfuzzer expectation"
-            FAIL_CLASS="mismatch" ;;
-        finished)
-            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="malformed Finished padding/truncation alert behavior differs from tlsfuzzer expectation"
+            FAIL_REASON="a Finished message of the wrong length (padded or truncated verify_data) is answered with decrypt_error: RFC 8446 4.4.4 makes any incorrect Finished decrypt_error and BoGo TrailingMessageData-TLS13-ClientFinished requires it; the script expects decode_error"
             FAIL_CLASS="mismatch" ;;
         multiple-ccs-messages)
             FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="middlebox-compat CCS tolerance is intentionally narrow"
+            FAIL_REASON="the script sends its post-ClientHello ChangeCipherSpec records with record version 0x0300; after the initial record we require 0x0301..0x0304 (BoringSSL policy, BoGo CheckRecordVersion-*; RFC 8446 5.1 would have the field ignored) and answer protocol_version. Until 2026-09-15 this stalled the connection instead"
             FAIL_CLASS="mismatch" ;;
         non-support)
-            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="unsupported-feature alert codes differ from tlsfuzzer expectation"
-            FAIL_CLASS="mismatch" ;;
-        record-layer-limits)
-            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="maximum-size padded Finished record handling differs from tlsfuzzer expectation"
-            FAIL_CLASS="mismatch" ;;
-        signature-algorithms)
-            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="pathologically large/duplicated signature-algorithm lists are bounded"
-            FAIL_CLASS="mismatch" ;;
-        zero-content-type)
-            FAIL_LABEL="FAIL - Expected (Intentional Behavior Mismatch)"
-            FAIL_REASON="zero content-type handling differs from tlsfuzzer expectation"
-            FAIL_CLASS="mismatch" ;;
+            FAIL_LABEL="FAIL - Expected (Unsupported Feature)"
+            FAIL_REASON="script is written for servers WITHOUT TLS 1.3 (it expects a TLS 1.2 fallback with no middlebox CCS); not applicable to a TLS 1.3 server"
+            FAIL_CLASS="unsupported" ;;
     esac
 }
 
@@ -447,7 +445,10 @@ for test in "${TESTS[@]}"; do
                                     -e "aes-256-gcm Nonce monotonicity") ;;
         #  "Chacha20 in TLS1.1" expects handshake_failure for a TLS 1.1
         #  ClientHello; we answer protocol_version (RFC 5246 E.1).
-        chacha20) extra_args=(--extra-exts -e "Chacha20 in TLS1.1") ;;
+        #  The script samples 50 of its 74 conversations by default; -n
+        #  runs every one, so a per-case regression ("0 bytes long
+        #  ciphertext", 2026-09-15) cannot hide from a local run.
+        chacha20) extra_args=(--extra-exts -e "Chacha20 in TLS1.1" -n 100) ;;
         finished)
             script_timeout="${TLSFUZZER_FINISHED_SCRIPT_TIMEOUT:-300}" ;;
         serverhello-random)

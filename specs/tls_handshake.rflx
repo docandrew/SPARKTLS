@@ -259,30 +259,15 @@ package TLS_Handshake is
    -- Extensions for the CR (CertificateRequest) message
    type CR_Extension is
       message
-         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values
-            then Data_Length
-               if
-               -- Message type specific constraints
-               (
-                  --
-                  -- Automatically generated condition that selects the enum literals having
-                  -- the following properties:
-                  --
-                  -- tls13 = .*CR.*
-                  --
-                  -- NOTE: Remove or amend this comment when the condition below is modified.
-                  --
-                  Tag = Tls_Extensiontype_Values::Server_Name or
-                  Tag = Tls_Extensiontype_Values::Status_Request or
-                  Tag = Tls_Extensiontype_Values::Signature_Algorithms or
-                  Tag = Tls_Extensiontype_Values::Signed_Certificate_Timestamp or
-                  Tag = Tls_Extensiontype_Values::Compress_Certificate or
-                  Tag = Tls_Extensiontype_Values::Delegated_Credential or
-                  Tag = Tls_Extensiontype_Values::Certificate_Authorities or
-                  Tag = Tls_Extensiontype_Values::Oid_Filters or
-                  Tag = Tls_Extensiontype_Values::Signature_Algorithms_Cert or
-                  Tag = Tls_Extensiontype_Values::Transparency_Info
-               );
+         -- Tag constraint removed (2026-09-15), as for CH/SH/EE/NST: RFC 8446
+         -- 4.3.2 has the client IGNORE unrecognized CertificateRequest
+         -- extensions, so an unknown tag must parse as a well-formed element
+         -- the client-side walker can skip (SPARKTLS.Validate_Server_Ext with
+         -- E_CR decides policy). With the whitelist a foreign tag made the
+         -- element malformed, indistinguishable from a length fault, and once
+         -- the walker started refusing malformed lists (decode_error) BoGo
+         -- UnknownExtensionInCertificateRequest-TLS13 failed.
+         Tag : Tls_Extensiontype_Values::Tls_Extensiontype_Values;
          Data_Length : Data_Length;
          Data : Opaque
             with Size => 8 * Data_Length;

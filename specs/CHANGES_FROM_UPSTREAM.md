@@ -69,6 +69,19 @@ single-null requirement is enforced in `Parse_Client_Hello` after
 When regenerating, make sure the generated
 `Valid_Legacy_Compression_Methods_Length` predicate also accepts `1 .. 255`.
 
+## tls_handshake.rflx — `CR_Extension` Tag constraint (2026-09-15)
+
+**Upstream** whitelists the extension Tags allowed in a CertificateRequest
+(`tls13 = .*CR.*`), so an unrecognised Tag makes the element malformed.
+
+**Our change**: Tag unconstrained, as already done for `CH/SH/EE/NST`. RFC
+8446 4.3.2 requires the client to ignore unrecognised CertificateRequest
+extensions, so an unknown Tag must parse as a well-formed element the walker
+can skip; policy lives in `SPARKTLS.Validate_Server_Ext` (E_CR). The whitelist
+became visible when the client walker started refusing malformed extension
+lists with decode_error (BoGo `UnknownExtensionInCertificateRequest-TLS13`).
+Only `rflx-tls_handshake-cr_extension.ads/.adb` change on regeneration.
+
 ## tls_handshake.rflx — `Tls_Extension_TLS` Tag constraint
 
 **Upstream** (RecordFlux `main`, around line 94 of the `Tls_Extension_TLS`

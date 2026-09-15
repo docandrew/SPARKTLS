@@ -394,6 +394,7 @@ is
       Ctx                  : C12.Context;
       B                    : constant N32 := Frag'First + 4;
       Cert_Idx             : Natural := 0;
+      List_Bad             : Boolean := False;
       Saved_Selected_Group : constant ECDHE_Group := HC.KE.Curve
       with Ghost;
    begin
@@ -470,7 +471,11 @@ is
                              N32 (C12_Entry.Get_Cert_Data_Length (E_Ctx));
                            Cert_RFLX : RBT.Bytes (1 .. RBT.Index (C_Len));
                         begin
-                           if C_Len > 0 and C_Len <= N32 (Max_Cert_DER) then
+                           if C_Len = 0 then
+                              --  RFC 5246 7.4.2: ASN.1Cert<1..2^24-1>; an
+                              --  empty entry is malformed.
+                              List_Bad := True;
+                           elsif C_Len <= N32 (Max_Cert_DER) then
                               C12_Entry.Get_Cert_Data (E_Ctx, Cert_RFLX);
                               if Cert_Idx = 0 then
                                  SPARKTLS.Handshake.Certs.Copy_Cert_To_Peer_DER
@@ -531,6 +536,17 @@ is
                           then X509.Spans_Valid (D.Peer_Leaf.Cert, D.Peer_Leaf.DER_Len - 1));
                   end;
                end loop;
+               --  RFC 5246 7.4.2: certificate_list tiles its declared
+               --  length. RFLX marks the sequence invalid on a malformed
+               --  entry and the loop ends; until 2026-09 the chain parsed so
+               --  far was then validated as if complete. Decode_Error via
+               --  OK = False, as the shared TLS 1.2 chain parser does.
+               if List_Bad or else not C12_Entries.Valid (Entries_Ctx) then
+                  C12_Entries.Take_Buffer (Entries_Ctx, Buf);
+                  SPARKTLS.RFLX_Borrow.Discard (Buf);
+                  OK := False;
+                  return;
+               end if;
                C12_Entries.Take_Buffer (Entries_Ctx, Buf);
                SPARKTLS.RFLX_Borrow.Discard (Buf);
                OK := True;
@@ -2292,6 +2308,7 @@ is
       Rec :=
         (OK           => False,
          Overflow     => False,
+         Empty        => False,
          Bad_Version  => False,
          Content      => Records.Content_Unknown,
          Fragment_Pos => 0,
@@ -2315,7 +2332,19 @@ is
          return;
       end if;
       if not Rec.OK then
-         Result := Need_Input;
+         --  RFC 5246 6.2.1/6.2.3: an oversized fragment is record_overflow;
+         --  a complete record with an undefined content type is
+         --  unexpected_message. Waiting for more input here (as until
+         --  2026-09) left the record unread and the client hanging, the
+         --  twin of the server-side gap TLS-Anvil found.
+         if Rec.Overflow then
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
+         elsif Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -3072,7 +3101,19 @@ is
          return;
       end if;
       if not Rec.OK then
-         Result := Need_Input;
+         --  RFC 5246 6.2.1/6.2.3: an oversized fragment is record_overflow;
+         --  a complete record with an undefined content type is
+         --  unexpected_message. Waiting for more input here (as until
+         --  2026-09) left the record unread and the client hanging, the
+         --  twin of the server-side gap TLS-Anvil found.
+         if Rec.Overflow then
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
+         elsif Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -3361,7 +3402,19 @@ is
          return;
       end if;
       if not Rec.OK then
-         Result := Need_Input;
+         --  RFC 5246 6.2.1/6.2.3: an oversized fragment is record_overflow;
+         --  a complete record with an undefined content type is
+         --  unexpected_message. Waiting for more input here (as until
+         --  2026-09) left the record unread and the client hanging, the
+         --  twin of the server-side gap TLS-Anvil found.
+         if Rec.Overflow then
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
+         elsif Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Alert_And_Error (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -3607,7 +3660,19 @@ is
          return;
       end if;
       if not Rec.OK then
-         Result := Need_Input;
+         --  RFC 5246 6.2.1/6.2.3: an oversized fragment is record_overflow;
+         --  a complete record with an undefined content type is
+         --  unexpected_message. Waiting for more input here (as until
+         --  2026-09) left the record unread and the client hanging, the
+         --  twin of the server-side gap TLS-Anvil found.
+         if Rec.Overflow then
+            Send_Encrypted_Alert_Connected_12 (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
+         elsif Rec.Record_Len > 0 then
+            S.Input.Read_Pos := S.Input.Read_Pos + Rec.Record_Len;
+            Send_Encrypted_Alert_Connected_12 (S, Unexpected_Message, Result);
+         else
+            Result := Need_Input;
+         end if;
          return;
       end if;
 
@@ -3751,9 +3816,27 @@ is
                      --  the Closing branch know the close is complete.
                      S.Peer_Closed_Cleanly := True;
                      if S.State = Connected then
+                        --  RFC 5246 7.2.1: the other party MUST respond
+                        --  with a close_notify of its own. Answer here, as
+                        --  the TLS 1.3 client and both servers already do,
+                        --  so that Close_Notify can treat Closing as "ours
+                        --  is out" on every path and an application that
+                        --  calls it anyway sends nothing extra.
+                        declare
+                           A : N32;
+                        begin
+                           Abort_Flight (S);
+                           Records.TLS12.Build_Alert_Record_12
+                             (Level       => 1,
+                              Desc        => 0,
+                              Keys        => S.Client_App,
+                              Implicit_IV => S.Client_IV_12,
+                              Output      => S.Output,
+                              Bytes_Out   => A);
+                        end;
                         Set_State (S, Closing);
                      end if;
-                     Result := Shutdown;
+                     Result := (if Output_Pending (S) > 0 then Has_Output else Shutdown);
                   elsif PL >= 1 and then Plaintext (0) = 1 then
                      --  warning (non-close_notify)  count + cap.
                      --  RFC 8446 6.1 / BoGo SendWarningAlerts-TooMany:

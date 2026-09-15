@@ -878,7 +878,7 @@ is
          --  check the parser would loop on Need_Input
          --  forever. BoGo LargePlaintext sends maxPlaintext+1.
          if Rec.Overflow then
-            S.Last_Error := Record_Overflow;
+            S.Last_Error := Records.Overflow_Error (Rec, Read_Encrypted => False);
             Set_State (S, Error_State);
             Result := Error_Alert;
             return;
@@ -1237,13 +1237,17 @@ is
    procedure Close_Notify (S : in out Session) is
       Ignored_Alert_Out : N32;
    begin
-      --  See the server-side twin. Advance zeroes the traffic keys and
-      --  sets Closed once both directions have closed, but reports it with
-      --  the same Shutdown result used for a half-duplex close, so an
-      --  application cannot tell them apart. Encrypting here would build
-      --  an alert under the all-zero scrubbed key and burn a sequence
-      --  number on a dead session.
-      if S.State not in Connected | Closing then
+      --  See the server-side twin. Only a Connected session has a
+      --  close_notify left to send: Closing means one is already on the
+      --  wire, ours or the reply the record handlers build to the peer's
+      --  (both versions answer on receipt). RFC 8446 6.1 / RFC 5246 7.2.1
+      --  give each side exactly one; until 2026-09 a call in Closing sent a
+      --  second. Closed and Error: Advance zeroes the traffic keys once
+      --  both directions have closed but reports it with the same Shutdown
+      --  result used for a half-duplex close, so an application cannot
+      --  tell them apart. Encrypting here would build an alert under the
+      --  all-zero scrubbed key and burn a sequence number on a dead session.
+      if S.State /= Connected then
          return;
       end if;
 
@@ -1271,9 +1275,7 @@ is
             null;
       end case;
 
-      if S.State = Connected then
-         Set_State (S, Closing);
-      end if;
+      Set_State (S, Closing);
    end Close_Notify;
 
 end SPARKTLS.Client;

@@ -606,7 +606,7 @@ is
             Result => Rec);
 
          if Rec.Overflow then
-            Send_Alert_And_Error (S, Record_Overflow, Result);
+            Send_Alert_And_Error (S, Records.Overflow_Error (Rec, Read_Encrypted => False), Result);
             return;
          end if;
 
@@ -2164,6 +2164,16 @@ is
                Sig_Len    : constant N32 := N32 (Data (6)) * 256 + N32 (Data (7));
                Sig_Start  : constant N32 := 8;
             begin
+               --  RFC 8446 4.4.3: the algorithm MUST be one offered in
+               --  CertificateRequest. A code point we do not represent at
+               --  all (Scheme_None: unassigned, SHA-1, rsa_pss_pss_*) was
+               --  never offered: illegal_parameter. Until 2026-09 it fell
+               --  through to verification and drew decrypt_error
+               --  (tlsfuzzer tls13-certificate-verify "is refused").
+               if Sig_Scheme = Scheme_None then
+                  Send_Encrypted_Alert (S, Illegal_Parameter, Result);
+                  return;
+               end if;
                --  RFC 8446 4.2.3: rsa_pkcs1_* MUST NOT be used in
                --  TLS 1.3 CV.
                if Sig_Scheme in
@@ -2503,7 +2513,17 @@ is
          Result => Rec);
 
       if Rec.Overflow then
-         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         Send_Encrypted_Alert (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
+         return;
+      end if;
+      --  A record-layer version outside 0x0301..0x0304 (RFC 8446 5.1 policy,
+      --  BoGo CheckRecordVersion-TLS13). Parse_Record_Header reports it with
+      --  Record_Len = 0, and until 2026-09 the generic not-OK branch below
+      --  read that as "need more input": the record was never consumed and
+      --  the connection stalled with no alert (tlsfuzzer multiple-ccs sends
+      --  its post-ClientHello ChangeCipherSpec with record version 0x0300).
+      if Rec.Bad_Version then
+         Send_Encrypted_Alert (S, Protocol_Version, Result);
          return;
       end if;
 
@@ -3383,7 +3403,17 @@ is
          Result => Rec);
 
       if Rec.Overflow then
-         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         Send_Encrypted_Alert (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
+         return;
+      end if;
+      --  A record-layer version outside 0x0301..0x0304 (RFC 8446 5.1 policy,
+      --  BoGo CheckRecordVersion-TLS13). Parse_Record_Header reports it with
+      --  Record_Len = 0, and until 2026-09 the generic not-OK branch below
+      --  read that as "need more input": the record was never consumed and
+      --  the connection stalled with no alert (tlsfuzzer multiple-ccs sends
+      --  its post-ClientHello ChangeCipherSpec with record version 0x0300).
+      if Rec.Bad_Version then
+         Send_Encrypted_Alert (S, Protocol_Version, Result);
          return;
       end if;
 
@@ -3677,7 +3707,17 @@ is
          Result => Rec);
 
       if Rec.Overflow then
-         Send_Encrypted_Alert (S, Record_Overflow, Result);
+         Send_Encrypted_Alert (S, Records.Overflow_Error (Rec, Read_Encrypted => True), Result);
+         return;
+      end if;
+      --  A record-layer version outside 0x0301..0x0304 (RFC 8446 5.1 policy,
+      --  BoGo CheckRecordVersion-TLS13). Parse_Record_Header reports it with
+      --  Record_Len = 0, and until 2026-09 the generic not-OK branch below
+      --  read that as "need more input": the record was never consumed and
+      --  the connection stalled with no alert (tlsfuzzer multiple-ccs sends
+      --  its post-ClientHello ChangeCipherSpec with record version 0x0300).
+      if Rec.Bad_Version then
+         Send_Encrypted_Alert (S, Protocol_Version, Result);
          return;
       end if;
 
@@ -3874,7 +3914,11 @@ is
                --  rotates its write key when it sends the KeyUpdate, so a
                --  shim that skips it can no longer decrypt anything that
                --  follows -- including the close_notify it is waiting for.
-               if S.State in Connected | Closing then
+               if Plain_Len = 0 then
+                  --  RFC 8446 5.4: a zero-length Handshake or Alert
+                  --  content MUST be answered with unexpected_message.
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+               elsif S.State in Connected | Closing then
                   Process_Post_HS_Handshake_Bytes (S, Plaintext, Plain_Len, Result);
                else
                   Result := OK;
@@ -3886,7 +3930,12 @@ is
                --  close_notify, tolerate user_canceled (with cap),
                --  reject every other warning with decode_error, and
                --  reject bogus levels with illegal_parameter.
-               if Plain_Len < 2 then
+               if Plain_Len = 0 then
+                  --  RFC 8446 5.4: zero-length Alert content is
+                  --  unexpected_message (tlsfuzzer empty-alert); a 1-byte
+                  --  alert below is a truncated one, decode_error.
+                  Send_Encrypted_Alert (S, Unexpected_Message, Result);
+               elsif Plain_Len < 2 then
                   declare
                      Ignored_A : N32;
                   begin
