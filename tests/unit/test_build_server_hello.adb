@@ -280,10 +280,11 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S1, HC1);
       Init_Context (S2, HC2);
+      --  Explicit suite: a fresh session has none (see the note above).
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S1)), HC1, Arena, R1, L1);
+        (Suite_AES_128_GCM_SHA256, HC1, Arena, R1, L1);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S2)), HC2, Arena, R2, L2);
+        (Suite_AES_128_GCM_SHA256, HC2, Arena, R2, L2);
 
       Check ("Two identical inputs produce identical lengths", L1 = L2);
       Check ("Two identical inputs produce identical bytes",

@@ -69,7 +69,7 @@ paths in SPARKTLSCrypto use x86 inline assembly.
   runs 2600+ conversations across 90 scripts with every failing script
   classified in `tests/protocol/run.sh`; TLS-Anvil passes 152 of the 199
   tests its scan enables, with the 47 failures grouped and dispositioned
-  in `tests/tlsanvil/EXPECTED_FAILURES.txt`; x509-limbo 9738/9759 and
+  in `tests/tlsanvil/EXPECTED_FAILURES.txt`; x509-limbo 9750/9778 and
   NIST PKITS 189/249 with the deviations listed under `tests/x509/`;
   Wycheproof and NIST CAVP vectors pass in full. `tests/README.md`
   describes every lane, its baseline file and how to reproduce one case.

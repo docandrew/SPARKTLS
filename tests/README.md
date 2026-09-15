@@ -40,6 +40,21 @@ at the top of `tests/bogo/EXPECTED_FAILURES.txt` are the model.
     tests/tlsanvil/run.sh --update-baseline
     tests/x509/PKITS_EXPECTED_FAILURES.txt   (edit by hand; keyed "<test number> <title>")
 
+## Pinned dependencies
+
+CI checks out only this repository. Everything else it tests against is
+fetched at a **commit pin**, never a branch head:
+
+| What | Pin | Bump procedure |
+|---|---|---|
+| sparkx509, sparktlscrypto, sparkentropy | `*_REF` in `ci/fetch-deps.sh` | After the sibling commit is **pushed**, set the SHA (check with `git ls-remote <url> refs/heads/<branch>`), run the affected lanes locally against that checkout, commit the bump with the sparktls change that needs it. |
+| x509-limbo corpus | `LIMBO_REF` in `tests/x509/generate.sh` | Delete `tests/x509/x509-limbo` and `tests/x509/generated`, run `tests/x509/run.sh`, triage every new failure into `EXPECTED_FAILURES.txt` (annotated, corpus SHA in the header) or fix it, update the README numbers, commit pin and baseline together. |
+
+Unpinned, CI silently tests code and corpora the local box never ran: on
+2026-09-15 the sibling heads were ahead of the local checkouts and the
+corpus had grown by seven cases the baseline had never seen. A sibling
+commit that sparktls depends on is not done until the pin here moves.
+
 ## Reproducing one case
 
     # BoGo: one or more test-name globs, results in tests/bogo/_cache/last_results.log
