@@ -54,11 +54,14 @@ paths in SPARKTLSCrypto use x86 inline assembly.
   run (`ci/prove.sh`) is the release gate and is expected to report only
   the handful of known findings in upstream SPARKNaCl and in
   RecordFlux-generated code.
-- Constant-time behaviour of the crypto kernels is checked with a
-  valgrind/ctgrind lane (`sparktlscrypto/ci/timing.sh ctgrind`) that
-  poisons secrets — and, for the signature verifiers, the attacker-
-  controlled inputs — and fails on any data-dependent branch or index.
-  A dudect statistical lane exists for local use.
+- Constant-time behaviour of the crypto kernels is checked in CI by
+  `ci/timing.sh all`: a valgrind/ctgrind lane that poisons secrets — and,
+  for the signature verifiers, the attacker-controlled inputs — and fails
+  on any data-dependent branch or index, plus a dudect statistical lane
+  run against the optimised build (so the AVX-512 and AES-NI paths that
+  valgrind cannot execute are covered). Both lanes carry a canary with a
+  planted leak that must be flagged, so a harness that loses sensitivity
+  fails the build rather than passing silently.
 - Conformance suites (2026-09-14): BoringSSL's BoGo runner passes
   1464 of 1534 cases, with the 70 failures each documented in
   `tests/bogo/EXPECTED_FAILURES.txt` and nothing left unimplemented (see

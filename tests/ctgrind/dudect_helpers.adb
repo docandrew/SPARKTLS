@@ -8,7 +8,9 @@
 --
 --  Important details that make a dudect harness sound vs. flaky:
 --   - Interleave samples (don't run all of class 0 then all of
---     class 1 — system load drifts contaminate that).
+--     class 1 — system load drifts contaminate that), and randomise
+--     which class goes first in each pair (a fixed order turns any
+--     first-slot/second-slot effect into a constant class offset).
 --   - Drop "outlier" samples at the high tail (interrupts, page
 --     faults, etc. show up as large positive cycle counts).
 --   - Do many iterations: 100K+ for rare leaks, 10K for obvious ones.
@@ -41,39 +43,87 @@ package body Dudect_Helpers is
    --  Welch's t-statistic.
    ----------------------------------------------------------------
 
-   procedure Time_Test
+   --  Core: per class, an untimed Prepare followed by a timed Subject,
+   --  both told the class as a Boolean. The two public forms map onto
+   --  it: the two-closure form dispatches on the Boolean (a branch, so
+   --  two code paths; fine for slow subjects), the dudect form passes
+   --  it straight through to the caller's Prepare and ignores it in
+   --  Subject.
+   procedure Time_Test_Core
      (Name      : String;
-      Subject_0 : not null access procedure;
-      Subject_1 : not null access procedure;
-      N         : Positive := 50_000;
-      Threshold : Float := 4.5)
+      Prepare   : not null access procedure (Second : Boolean);
+      Subject   : not null access procedure (Second : Boolean);
+      N         : Positive;
+      Threshold : Float)
    is
       type Sample_Array is array (Positive range <>) of Unsigned_64;
-      T0 : Sample_Array (1 .. N);
-      T1 : Sample_Array (1 .. N);
+      subtype Samples is Sample_Array (1 .. N);
+      --  Indexed by the class Boolean so the store after each
+      --  measurement is the same instruction for both classes.
+      T : array (Boolean) of Samples;
 
       --  Warm-up: prime caches / branch predictor. Discarded.
       Warmup : constant := 1_000;
+
+      --  Per-iteration class order, and ONE code path for both classes.
+      --
+      --  Running class 0 first and class 1 second in every pair let a
+      --  systematic slot effect (back-to-back rdtsc, cache/TLB state
+      --  left by the previous call, frequency ramp, ...) appear as a
+      --  constant offset between the classes. On a ~5K-cycle subject
+      --  with n = 20K the standard error of the mean difference is
+      --  ~0.3 cycles, so a 1-2 cycle slot bias alone reads as t = 5..9
+      --  and fails the 4.5 threshold even though the code is
+      --  data-oblivious (observed on dudect_aead; class 0 was slower by
+      --  the same 1-2 cycles in every run). Real dudect draws the class
+      --  at random per sample for this reason. Drawing the order at
+      --  random averages the slot bias out while keeping n equal per
+      --  class. xorshift64 with a fixed seed: reproducible, no I/O.
+      --
+      --  The order must also not select between two copies of the
+      --  measurement code. An `if` with a Measure call per arm gets
+      --  Measure inlined four times, so each class runs through its own
+      --  two copies of the rdtsc/call sequence at its own addresses,
+      --  and how those alias in the branch predictors varies with the
+      --  per-process load address. Measured: t up to ~20 with the class
+      --  a pure data value in the subject, sign flipping between
+      --  builds and runs. So: one Measure call site, the class is a
+      --  Boolean computed with xor and used as an array index, never
+      --  branched on.
+      Rng : Unsigned_64 := 16#9E37_79B9_7F4A_7C15#;
+
+      procedure Measure (Second : Boolean; Cycles : out Unsigned_64) is
+         Pre, Post : Unsigned_64;
+      begin
+         Prepare (Second);
+         Pre := Rdtsc;
+         Subject (Second);
+         Post := Rdtsc;
+         Cycles := Post - Pre;
+      end Measure;
    begin
       for I in 1 .. Warmup loop
-         Subject_0.all;
-         Subject_1.all;
+         Prepare (False);
+         Subject (False);
+         Prepare (True);
+         Subject (True);
       end loop;
 
-      --  Interleaved measurement.
+      --  Interleaved measurement, random order within each pair.
       for I in 1 .. N loop
+         Rng := Rng xor Shift_Left (Rng, 13);
+         Rng := Rng xor Shift_Right (Rng, 7);
+         Rng := Rng xor Shift_Left (Rng, 17);
          declare
-            Pre, Post : Unsigned_64;
+            First_Is_Second : constant Boolean := (Rng and 1) = 1;
          begin
-            Pre := Rdtsc;
-            Subject_0.all;
-            Post := Rdtsc;
-            T0 (I) := Post - Pre;
-
-            Pre := Rdtsc;
-            Subject_1.all;
-            Post := Rdtsc;
-            T1 (I) := Post - Pre;
+            for Slot in Boolean loop
+               declare
+                  Class : constant Boolean := First_Is_Second xor Slot;
+               begin
+                  Measure (Class, T (Class) (I));
+               end;
+            end loop;
          end;
       end loop;
 
@@ -124,8 +174,8 @@ package body Dudect_Helpers is
          N0, N1 : Natural;
          T_Stat : Float;
       begin
-         N0 := Trimmed_Stats (T0, M0, V0);
-         N1 := Trimmed_Stats (T1, M1, V1);
+         N0 := Trimmed_Stats (T (False), M0, V0);
+         N1 := Trimmed_Stats (T (True), M1, V1);
          T_Stat := abs (M0 - M1) /
            Sqrt (V0 / Float (N0) + V1 / Float (N1));
 
@@ -145,6 +195,43 @@ package body Dudect_Helpers is
                       & " (within statistical noise)");
          end if;
       end;
+   end Time_Test_Core;
+
+   procedure Time_Test
+     (Name      : String;
+      Subject_0 : not null access procedure;
+      Subject_1 : not null access procedure;
+      N         : Positive := 50_000;
+      Threshold : Float := 4.5)
+   is
+      procedure No_Prepare (Second : Boolean) is null;
+      procedure Dispatch (Second : Boolean) is
+      begin
+         if Second then
+            Subject_1.all;
+         else
+            Subject_0.all;
+         end if;
+      end Dispatch;
+   begin
+      Time_Test_Core
+        (Name, No_Prepare'Access, Dispatch'Access, N, Threshold);
+   end Time_Test;
+
+   procedure Time_Test
+     (Name      : String;
+      Prepare   : not null access procedure (Second : Boolean);
+      Subject   : not null access procedure;
+      N         : Positive := 50_000;
+      Threshold : Float := 4.5)
+   is
+      procedure Run (Second : Boolean) is
+         pragma Unreferenced (Second);
+      begin
+         Subject.all;
+      end Run;
+   begin
+      Time_Test_Core (Name, Prepare, Run'Access, N, Threshold);
    end Time_Test;
 
 end Dudect_Helpers;

@@ -42,7 +42,11 @@ procedure Test_Build_Server_Hello is
    ----------------------------------------------------------------------------
 
    --  Set up a minimal Session + Handshake_Context that's enough for
-   --  Build_Server_Hello to run on the x25519 happy path.
+   --  Build_Server_Hello to run on the x25519 happy path. The suite is
+   --  passed explicitly: a fresh session has none negotiated, and
+   --  converting Suite_None to TLS13_Suite is out of range (the checked
+   --  library build caught it as invalid data, 2026-09-14; this crate is
+   --  built with checks off so the conversion itself never raised).
    procedure Init_Context
      (S      : out Session;
       HC     : out Handshake_Context;
@@ -97,7 +101,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
+        (Suite_AES_128_GCM_SHA256, HC, Arena, Result, Len);
 
       Check ("X25519: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -137,7 +141,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
+        (Suite_AES_128_GCM_SHA256, HC, Arena, Result, Len);
 
       Check ("X25519: negotiated curve is 0x001D (x25519)",
              HC.KE.Negotiated and then HC.KE.Curve = Group_X25519);
@@ -152,7 +156,7 @@ procedure Test_Build_Server_Hello is
    begin
       Init_Context (S, HC);
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
+        (Suite_AES_128_GCM_SHA256, HC, Arena, Result, Len);
       Check ("Min-size buffer (256B): fits", Len > 0 and Len <= 256);
    end Test_Buffer_Too_Small;
 
@@ -168,7 +172,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P256_PK      := Make_P256_Peer_PK;
 
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
+        (Suite_AES_128_GCM_SHA256, HC, Arena, Result, Len);
 
       Check ("P-256: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -192,7 +196,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P384_PK      := Make_P384_Peer_PK;
 
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
+        (Suite_AES_128_GCM_SHA256, HC, Arena, Result, Len);
 
       Check ("P-384: produces non-empty message", Len > 4);
       if Len <= 4 then return; end if;
@@ -216,7 +220,7 @@ procedure Test_Build_Server_Hello is
       HC.KE.P256_PK      := (others => 0);  --  not a valid point
 
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
+        (Suite_AES_128_GCM_SHA256, HC, Arena, Result, Len);
       Check ("P-256: invalid peer pubkey → Len = 0", Len = 0);
    end Test_P256_Invalid_Peer_PK_Rejected;
 
@@ -231,7 +235,7 @@ procedure Test_Build_Server_Hello is
       HC.Client_Has_P256   := False;
       HC.Client_Has_P384   := False;
       SPARKTLS.Handshake.TLS13.Build_Server_Hello
-        (TLS13_Suite (Suite (S)), HC, Arena, Result, Len);
+        (Suite_AES_128_GCM_SHA256, HC, Arena, Result, Len);
       Check ("No common group → Len = 0", Len = 0);
    end Test_No_Common_Group;
 
